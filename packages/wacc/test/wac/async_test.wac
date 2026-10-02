@@ -1,14 +1,12 @@
 // `async` and `await` as syntax — `design/lang/0014` step 3.
 //
-// Step 3 is the notation and the refusals, not the lowering: a body containing `await` is **declined
-// by the emitter** with a sentence naming step 4, rather than emitted as something that runs and
-// lies. So everything here is a question about diagnostics, asked through `diagnoseGraph` on
+// Everything here is a question about diagnostics, asked through `diagnoseGraph` on
 // self-contained sources — the same shape `voidtypearg_test.wac` settled on, and for the same
-// reason: that entry point resolves no built-ins, so a case written against the real `Pending` would
+// reason: that entry point resolves no built-ins, so a case written against the real `Ticket` would
 // answer `""` and pass whatever the rules did.
 //
-// Two of A5's refusals are the point of the file. The third — a chain that cannot advance — is D7
-// and needs a message `trap` cannot carry yet (`issues/lang/0147`).
+// Two of A5's refusals are the point of the file. The third — a chain that cannot advance — is
+// `wait` answering `Err`, which `spec/cases/0312` holds.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
@@ -22,16 +20,16 @@ string diagnose(string src) {
 }
 
 /** A stand-in for the real ticket, since `diagnoseGraph` resolves no built-ins. */
-static string TICKET = "struct Pending<T> {\n"
+static string TICKET = "struct Ticket<T> {\n"
                     + "  i32 id;\n"
-                    + "  Pending<T> of(i32 id) { return Pending<T>(id); }\n"
+                    + "  Ticket<T> of(i32 id) { return Ticket<T>(id); }\n"
                     + "}\n";
 
 export string test_await_outside_an_async_function_is_refused() {
   T t = T.create();
   string out = diagnose(TICKET
     + "i32 main() {\n"
-    + "  Pending<i32> p = Pending<i32>.of(1);\n"
+    + "  Ticket<i32> p = Ticket<i32>.of(1);\n"
     + "  return await p;\n"
     + "}\n");
   // `[§wac-await-inside-3nq7wbe]`. **The declaration is named, not the operand.** The operand here is a perfectly good ticket, so a
@@ -51,7 +49,7 @@ export string test_awaiting_something_that_is_not_a_ticket_names_its_type() {
     + "  return await n;\n"
     + "}\n"
     + "i32 main() { return 0; }\n");
-  // `[§wac-await-pending-9km2xtr]` — only a `Pending<T>` may be awaited, and the type is named.
+  // `[§wac-await-pending-9km2xtr]` — only a `Ticket<T>` may be awaited, and the type is named.
   t.isTrue(contains(out, "cannot be awaited"), "refused — got \"" + out + "\"");
   // *What did I await then* is the whole question, so the type is in the sentence.
   t.isTrue(contains(out, "and this is i32"),
@@ -64,7 +62,7 @@ export string test_await_on_a_ticket_inside_async_is_accepted() {
   // The control for both cases above: same `await`, same ticket, and now in a function that may say
   // it. Without this the two refusals would pass just as well if `await` were refused everywhere.
   string out = diagnose(TICKET
-    + "async i32 f(Pending<i32> p) {\n"
+    + "async i32 f(Ticket<i32> p) {\n"
     + "  return await p;\n"
     + "}\n"
     + "i32 main() { return 0; }\n");
@@ -93,7 +91,7 @@ export string test_an_async_function_without_await_is_an_ordinary_program() {
   t.eqStr(diagnose("async i32 f() { return 1; }\ni32 main() { return 0; }\n"), "",
           "a plain async function");
   t.eqStr(diagnose("export async void tick() { }\ni32 main() { return 0; }\n"), "",
-          "`export async void`, which is the D5 case that needed `Pending<void>` to exist");
+          "`export async void`, which is the D5 case that needed `Ticket<void>` to exist");
   return t.report();
 }
 
@@ -109,7 +107,7 @@ export string test_await_inside_a_plain_lambda_is_refused() {
   // environment, so `async` on one is the same transform applied twice. This is the refusal that has
   // to exist in the meantime.
   string out = diagnose(TICKET
-    + "async i32 f(Pending<i32> p) {\n"
+    + "async i32 f(Ticket<i32> p) {\n"
     + "  fn<void()> g = () => { i32 z = await p; };\n"
     + "  g();\n"
     + "  return 0;\n"
@@ -123,7 +121,7 @@ export string test_await_inside_a_plain_lambda_is_refused() {
 export string test_a_caller_of_an_async_function_receives_a_ticket() {
   T t = T.create();
   // D3's other half, and the one that makes `async i32` mean anything: the declaration states what
-  // the *body* answers and the caller gets a `Pending<i32>`. Recorded once, where the signature is
+  // the *body* answers and the caller gets a `Ticket<i32>`. Recorded once, where the signature is
   // written down, rather than at every call — the body is still checked against `i32`, which is what
   // the two cases below say together.
   string bad = diagnose(TICKET
@@ -132,31 +130,31 @@ export string test_a_caller_of_an_async_function_receives_a_ticket() {
     + "  i32 n = size();\n"
     + "  return n;\n"
     + "}\n");
-  t.isTrue(contains(bad, "Pending<i32>"),
+  t.isTrue(contains(bad, "Ticket<i32>"),
            "the caller should be told it got a ticket — got \"" + bad + "\"");
 
   string ok = diagnose(TICKET
     + "async i32 size() { return 7; }\n"
     + "i32 main() {\n"
-    + "  Pending<i32> p = size();\n"
+    + "  Ticket<i32> p = size();\n"
     + "  return 0;\n"
     + "}\n");
-  t.eqStr(ok, "", "and a `Pending<i32>` slot takes it");
+  t.eqStr(ok, "", "and a `Ticket<i32>` slot takes it");
   return t.report();
 }
 
 export string test_returning_a_ticket_from_an_async_function_says_both_readings() {
   T t = T.create();
   // `[§wac-async-mismatch-8dxr5va]` — A5's first refusal, with D4's help rather than the general one. Returning a ticket *is* a real
-  // program — the caller gets `Pending<Pending<T>>` and awaits twice — so the mismatch has two fixes
+  // program — the caller gets `Ticket<Ticket<T>>` and awaits twice — so the mismatch has two fixes
   // and nothing here can tell which was meant. What the general help offers is a cast, which is the
   // one thing that cannot be right: there is no conversion from a ticket to what it will answer.
   string out = diagnose(TICKET
-    + "async i32 size(Pending<i32> p) { return p; }\n"
+    + "async i32 size(Ticket<i32> p) { return p; }\n"
     + "i32 main() { return 0; }\n");
-  t.isTrue(contains(out, "expected i32, found Pending<i32>"), "the mismatch — got \"" + out + "\"");
+  t.isTrue(contains(out, "expected i32, found Ticket<i32>"), "the mismatch — got \"" + out + "\"");
   t.isTrue(contains(out, "`await` it for the i32"), "the first reading — got \"" + out + "\"");
-  t.isTrue(contains(out, "declare `async Pending<i32>`"), "the second — got \"" + out + "\"");
+  t.isTrue(contains(out, "declare `async Ticket<i32>`"), "the second — got \"" + out + "\"");
   t.isFalse(contains(out, "as!"), "and not a cast, which cannot convert a ticket");
   return t.report();
 }
@@ -168,7 +166,7 @@ export string test_await_binds_tighter_than_a_binary_operator() {
   // where the grouping shows. If `await` bound looser than `+`, this would be `await (t + 1)` and
   // `t + 1` would be an arithmetic operator applied to a ticket, which is an error.
   t.eqStr(diagnose(TICKET
-    + "async i32 f(Pending<i32> t) {\n"
+    + "async i32 f(Ticket<i32> t) {\n"
     + "  return await t + 1;\n"
     + "}\n"
     + "i32 main() { return 0; }\n"), "", "`await t + 1` types as `(await t) + 1`");

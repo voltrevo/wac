@@ -86,7 +86,7 @@
 // never be converted into this one. See wac's `design/0001`. (That reason was written as "with no
 // closures in the language", which is both out of date and never the reason: two declarations of a
 // shape are two types whatever a funcref can capture.)
-import { Read } from "core";
+import { Continuation, Queue, Read, Ticket, TicketBase, __wacScheduleTarget, __wacSetScheduleTarget } from "core";
 
 /** A handler slot that does nothing, so a table can be filled before anything is registered. */
 void schedIdle(i32 id) { }
@@ -115,9 +115,17 @@ export struct Sched {
   /** Each ticket's own `drop`, so abandoning releases the host's slot rather than forgetting it. */
   fn<void(i32)>[] drops;
   i32 n;
+  /**
+   * The continuations nobody awaited — the program's schedule target, installed by `Core.of`, and
+   * what `Core.drain` runs (spec/next ch35). Here rather than on `Core` because the host builds this
+   * with `create` and marshals `Core` field by field.
+   */
+  Queue<Continuation> queued;
 
   Sched create() {
-    return Sched(i32[].filled(8, 0), fn<void(i32)>[].filled(8, schedIdle), fn<void(i32)>[].filled(8, schedIdle), 0);
+    Queue<Continuation> queued;
+    return Sched(i32[].filled(8, 0), fn<void(i32)>[].filled(8, schedIdle), fn<void(i32)>[].filled(8, schedIdle), 0,
+                 queued);
   }
 
   /** How much work is outstanding — what the host asks before deciding a clean exit. */
@@ -262,6 +270,24 @@ export struct Sched {
       ran = ran + 1;
     }
     return ran;
+  }
+
+  /**
+   * Wait for one registered ticket and run its handler — the single round `Core.drain` interleaves
+   * with the continuations it runs. Answers how many ran: one, or none when nothing is registered or
+   * nothing answered within `millis` (below zero: as long as it takes).
+   */
+  i32 runOne(this, const Core core, i32 millis) {
+    if (this.n == 0) { return 0; }
+    i32[] live = i32[].filled(this.n, 0);
+    for (i32 i = 0; i < this.n; i++) { live[i] = this.ids[i]; }
+    i32 which = core.waitAny(live, millis);
+    if (which < 0) { return 0; }
+    i32 id = this.ids[which];
+    fn<void(i32)> handler = this.handlers[which];
+    this.removeAt(which);
+    handler(id);
+    return 1;
   }
 
   /**
@@ -454,6 +480,27 @@ export struct Pending<T> {
 
   /** Whether `wait` would return immediately. Never blocks. */
   bool isDone(const this) { return this.settled(this.id); }
+
+  /**
+   * This host ticket as core's `Ticket`, which is what `await` takes (spec/next ch35).
+   *
+   * **A bridge, and a temporary one**: `design/lang/0016` phase 2 has the host hand out `Ticket`s
+   * itself and deletes `Pending`, and this with it. Until then a `wait` on the result blocks on the
+   * host, and a linked ticket is also answered by `core.drain()`'s `waitAny`, so several awaits on
+   * host work still advance together.
+   */
+  Ticket<T> ticket(this) {
+    Ticket<T> t;
+    if (this.sched is not null) {
+      this.sched!.on(this.id, (i32 id) => { if (!t.done) { t.resolve(this.resolve(id)); } }, this.drop);
+    }
+    t.drive = () => {
+      if (this.sched is not null) { this.sched!.detach(this.id); }
+      if (!t.done) { t.resolve(this.wait()); }
+      return true;
+    };
+    return t;
+  }
 
   /**
    * Stop caring. **Detach, not abort**: the host may already be inside the work and
@@ -932,7 +979,52 @@ export struct Core {
    * `main` that schedules and returns without draining leaves work outstanding, which the host
    * treats as an error; `dropAll` is how a program says it meant to.
    */
-  i32 drain(this) { return this.sched.run(this, -1); }
+  i32 drain(this) { return this.drainWithin(0 - 1); }
+
+  /**
+   * `drain`, bounded: ready continuations first, then one round of the host's — a continuation whose
+   * ticket has settled runs, one still waiting goes back in order, and when none could run one
+   * `waitAny` answers whichever host ticket is first, which may settle a ticket a continuation waits
+   * on. Answers how many host answers it dispatched, which is what it answered before continuations
+   * were queued here. `millis` below zero is no bound.
+   */
+  i32 drainWithin(this, i32 millis) {
+    bool bounded = millis >= 0;
+    i64 deadline = 0 as i64;
+    if (bounded) { deadline = this.monotonicNanos().wait() + millisToNanos(millis); }
+    i32 ran = 0;
+    while (true) {
+      Queue<Continuation> later;
+      bool moved = false;
+      while (true) {
+        Continuation? c = this.sched.queued.pop();
+        if (c is null) { break; }
+        TicketBase? on = c!.t;
+        if (on is null || on!.done) {
+          c!.call();
+          moved = true;
+        } else {
+          later.push(c!);
+        }
+      }
+      while (true) {
+        Continuation? back = later.pop();
+        if (back is null) { break; }
+        this.sched.queued.push(back!);
+      }
+      if (moved) { continue; }
+      if (this.sched.pending() == 0) { return ran; }
+      i32 budget = 0 - 1;
+      if (bounded) {
+        i64 left = deadline - this.monotonicNanos().wait();
+        if (left <= 0 as i64) { return ran; }
+        budget = (left / (1000000 as i64)) as! i32;
+      }
+      i32 one = this.sched.runOne(this, budget);
+      if (one == 0) { return ran; }
+      ran = ran + one;
+    }
+  }
 
   /**
    * `drain`, for at most `millis` — and answers how many ran, so what is left is `outstanding()`.
@@ -943,7 +1035,7 @@ export struct Core {
    * **What is left over is still outstanding**, so a program that leaves after a partial drain gets the
    * same error as one that never drained. Running out of time is not a decision; `dropAll` is.
    */
-  i32 drainFor(this, i32 millis) { return this.sched.run(this, millis); }
+  i32 drainFor(this, i32 millis) { return this.drainWithin(millis); }
 
   /**
    * Abandon every outstanding continuation, releasing each ticket. Answers how many there were.
@@ -952,10 +1044,14 @@ export struct Core {
    * `const` receiver is const too, and both of these write to it. That is the aliasing rule doing its
    * job — a `Core` held const cannot quietly run somebody\'s continuations.
    */
-  i32 dropAll(this) { return this.sched.dropAll(); }
+  i32 dropAll(this) {
+    i32 queued = this.sched.queued.len();
+    while (this.sched.queued.pop() is not null) { }
+    return this.sched.dropAll() + queued;
+  }
 
   /** How much work is outstanding — the question the host asks when `main` returns. */
-  i32 outstanding(const this) { return this.sched.pending(); }
+  i32 outstanding(const this) { return this.sched.pending() + this.sched.queued.len(); }
 
   /**
    * Whether the user has asked to interrupt. Call it once per *block* of work, never per byte:
@@ -983,6 +1079,10 @@ export struct Core {
     // out arrives able to carry a continuation. `then` on an unlinked ticket is a bare trap, and
     // requiring `core.randomBytes(8).linkedTo(core).then(f)` made the world ask the caller to hand
     // it back something it already had.
+    // The program's own queue is the schedule target where no `schedule` statement is in force
+    // (`§wac-schedule-default-is8g8z4`) — the first world's, which is the host's: a `Core` a test
+    // builds afterwards must not take the program's continuations away from it.
+    if (__wacScheduleTarget() is null) { __wacSetScheduleTarget(sched.queued.push); }
     return Core(() => nowMillis().on(sched),
                 () => monotonicNanos().on(sched),
                 (i32 ms) => sleepMillis(ms).on(sched),

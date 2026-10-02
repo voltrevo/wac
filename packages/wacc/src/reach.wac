@@ -25,8 +25,8 @@
 
 import { Res } from "./path.wac";
 import { resolveVia } from "./path.wac";
-import { kConst, kExport, kIdent } from "./kinds.wac";
-import { tokenStride } from "./lex.wac";
+import { kAsync, kConst, kExport, kIdent, kString } from "./kinds.wac";
+import { lex, Lexed, tokenStride } from "./lex.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { Decl, DeclKind, ImportItem } from "./ast.wac";
 
@@ -368,8 +368,13 @@ export Pruned pruneFor(string[] paths, string[] sources, Res res, string entry) 
 export string pruneCoreMembers(string core, string[] paths, string[] sources) {
   Unit u = unitOf(" core", core);
   if (u.fe.errorCount > 0 || u.fe.lexed.errorCount > 0) { return core; }
+  bool tickets = wantsTickets(paths, sources);
   for (i32 d = 0; d < u.names.len(); d++) {
     string nm = u.names[d];
+    // **The ticket family goes with nothing that needs it.** `Continuation` holds a `fn<void()>`,
+    // which costs every module a host callback import — `packages/ts`'s transform, run with no host
+    // at all, could not be instantiated.
+    if (!tickets && isTicketFamily(nm)) { continue; }
     if (nm.indexOf(".") < 0) { u.retained[d] = true; continue; }
     string spelled = "@\"" + nm + "\"";
     for (i32 f = 0; f < sources.len(); f++) {
@@ -393,6 +398,45 @@ export string pruneCoreMembers(string core, string[] paths, string[] sources) {
     }
   }
   return blanked(u);
+}
+
+/** Core's declarations for tickets and scheduling (spec/next ch35). */
+bool isTicketFamily(string nm) {
+  return nm == "Ticket" || nm == "TicketBase" || nm == "Continuation" || nm == "Queue"
+      || nm == "__wacMachine" || nm == "__wacResumer" || nm == "__wacScheduleTarget"
+      || nm == "__wacSetScheduleTarget";
+}
+
+/**
+ * Whether anything in the program could reach core's tickets: `std`, which is built on them, or a
+ * source with an `async` token, or a name `schedule` or one of theirs. Tokens rather than text, so a
+ * program that only writes the word in a string — `packages/ts` emits JavaScript — does not pay.
+ */
+bool wantsTickets(string[] paths, string[] sources) {
+  for (i32 f = 0; f < sources.len(); f++) {
+    if (f < paths.len() && (paths[f] == "std" || paths[f] == " std")) { return true; }
+    if (f < paths.len() && builtinKey(paths[f])) { continue; }
+    if (sources[f].indexOf("std") < 0 && sources[f].indexOf("async") < 0
+        && sources[f].indexOf("schedule") < 0 && sources[f].indexOf("Ticket") < 0
+        && sources[f].indexOf("Continuation") < 0 && sources[f].indexOf("Queue") < 0
+        && sources[f].indexOf("__wac") < 0) { continue; }
+    u8[] b = sources[f].toBytes();
+    Lexed lx = lex(b);
+    for (i32 t = 0; t < lx.tokenCount; t++) {
+      i32 k = lx.tokens[t * tokenStride()];
+      if (k == kAsync()) { return true; }
+      if (k != kIdent() && k != kString()) { continue; }
+      i32 from = lx.tokens[t * tokenStride() + 1];
+      i32 len = lx.tokens[t * tokenStride() + 2];
+      u8[] w = u8[].filled(len, 0);
+      w.copyFrom(b, from, 0, len);
+      string nm = string.fromBytes(w);
+      // `"std"` — std is carried rather than listed, and it is built on tickets.
+      if (k == kString()) { if (nm == "\"std\"") { return true; } continue; }
+      if (nm == "schedule" || isTicketFamily(nm)) { return true; }
+    }
+  }
+  return false;
 }
 
 /** The text of declaration `d`, from its first token to its last. */

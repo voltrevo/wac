@@ -258,7 +258,7 @@ Client? streamOwner(Proxy x, i32 ci, i32 id) {
  */
 async void pumpGuard(Core core, Cli cli, Proxy x) {
   while (!x.stopped) {
-    Read got = await cli.recv(x.guard.link.sock);
+    Read got = await cli.recv(x.guard.link.sock).ticket();
     bool linkLive = false;
     match (got) {
       Data(bytes): { linkLive = feedLink(x.guard.link, bytes); }
@@ -401,10 +401,10 @@ static i32 IDLE_MS = 50;
 async void pumpAccept(Core core, Cli cli, Proxy x) {
   while (!x.stopped) {
     if (x.clients.len() >= MAX_CLIENTS) {
-      i64 unused = await core.delay(FULL_POLL_MS);
+      i64 unused = await core.delay(FULL_POLL_MS).ticket();
       continue;
     }
-    Socket incoming = await cli.accept(x.listener);
+    Socket incoming = await cli.accept(x.listener).ticket();
     if (x.stopped) { return; }
     if (incoming.handle < 0) {
       core.warn("tor: accept failed: " + incoming.error);
@@ -437,11 +437,11 @@ async void pumpClient(Core core, Cli cli, Proxy x, Client c) {
     // queued bytes the circuit has not taken yet, or a fast client with a slow exit grows `pending`
     // without bound.
     if (c.pending.len() >= CLIENT_BACKLOG) {
-      i64 unused = await core.delay(FULL_POLL_MS);
+      i64 unused = await core.delay(FULL_POLL_MS).ticket();
       continue;
     }
 
-    Read got = await cli.recv(c.sock);
+    Read got = await cli.recv(c.sock).ticket();
     if (c.gone || x.stopped) { return; }
 
     u8[] chunk = u8[]();

@@ -6,7 +6,7 @@
 // the canonical dump the parser's own tests read.
 
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
-import { kindName } from "./kinds.wac";
+import { kAsync, kindName } from "./kinds.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor,
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -170,8 +170,19 @@ export string blocked(u8[] src) {
  */
 bool needsLinking(u8[] src) {
   if (interpolates(src)) { return true; }
+  // **And an `async` body**, whose lowering builds core's `Ticket` (spec/next ch35).
+  if (saysAsync(src)) { return true; }
   string text = string.fromBytes(src);
   return loweredSources(onePath(), string[].filled(1, text))[0] != text;
+}
+
+/** Whether a source has an `async` token — which its lowering turns into uses of core's tickets. */
+bool saysAsync(u8[] src) {
+  Lexed lx = lex(src);
+  for (i32 t = 0; t < lx.tokenCount; t++) {
+    if (lx.tokens[t * tokenStride()] == kAsync()) { return true; }
+  }
+  return false;
 }
 
 /** Whether a source holds an interpolated literal — a `\{` the lexer turns into a `+`. */
@@ -1243,6 +1254,12 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
       match (prog.decls[d].kind) {
         StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
+          // **A parent is reached too**: its fields are the subtype's, and a default construction
+          // of `Ticket<i32>` asks whether `TicketBase`'s fields all have defaults.
+          if (parentTok >= 0) {
+            found[seen[0]] = tokenTextOf(src, lx, parentTok);
+            seen[0] = seen[0] + 1;
+          }
           for (i32 i = 0; i < fields.len(); i++) { tyNames(src, lx, fields[i].type, found, seen); }
           for (i32 i = 0; i < methods.len(); i++) {
             tyNames(src, lx, methods[i].returnType, found, seen);

@@ -1,0 +1,17 @@
+// expect: answers total = 21
+// why: an async body links core whether or not its file imports anything, because its lowering builds core's tickets
+// spec: §wac-async-decl-h3vq81m
+
+/**
+ * An `async` function in a file that imports nothing.
+ *
+ * Its lowering builds a `Ticket<i32>` and a `__wacMachine`, both core's, and the file names neither.
+ * **This case was `expect: declined` until 2026-10-02**, while the lowering built std's `Pending`:
+ * the program's graph never held `std/platform.wac`, so the template was absent, the instance never
+ * became a struct, and the construct was read as a call — *a call to Pending*. A file that says
+ * `async` now links core the way one with an interpolation does, which was the first of the two
+ * fixes this case used to set out.
+ */
+async i32 step(i32 v) { return v + 1; }
+
+export i32 total() { return step(20).wait()!; }

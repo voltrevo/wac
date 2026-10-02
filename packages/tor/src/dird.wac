@@ -144,7 +144,7 @@ export i32 main(Core core, Cli cli) {
  */
 async void accepting(Core core, Cli cli, i32 listener, Held held) {
   while (true) {
-    Socket conn = await cli.accept(listener);
+    Socket conn = await cli.accept(listener).ticket();
     if (conn.handle < 0) {
       core.warn("dird: accept: " + conn.error);
       return;
@@ -177,7 +177,7 @@ async void answer(Core core, Cli cli, Socket conn, Held held) {
       } else if (act.refusedFor != PUB_OK) {
         core.warn("dird: refused a descriptor, reason " + itoa(act.refusedFor));
       }
-      bool sent = await cli.send(conn.handle, act.response);
+      bool sent = await cli.send(conn.handle, act.response).ticket();
       if (!sent) { core.warn("dird: the reply could not be sent"); }
       cli.closeSocket(conn.handle);
       return;
@@ -188,7 +188,7 @@ async void answer(Core core, Cli cli, Socket conn, Held held) {
       return;
     }
     bool more = false;
-    Read got = await cli.recv(conn.handle);
+    Read got = await cli.recv(conn.handle).ticket();
     match (got) {
       Data(bytes): {
         pending.pushAll(bytes);

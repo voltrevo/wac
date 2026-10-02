@@ -1,30 +1,23 @@
 // expect: answers answer = 42
-// why: a lambda writes no return type, so `fn<Pending<R>(…)>` is what permits `async` and names `R`
+// why: a lambda writes no return type, so `fn<Ticket<R>(…)>` is what permits `async` and names `R`
 // from: issues/lang/0294c
 // spec: §wac-async-lambda-slot-9wq4nkz
-import { Pending } from "std";
+import { Ticket } from "core";
 
-/**
- * A ticket that is already answered — the same helper `0305` uses, and for the same reason.
- *
- * `driven` says waiting on it can advance it, which is what separates it from one only a
- * continuation could answer, `[§wac-async-unwaitable-4hpx2vn]`.
- */
-Pending<i32> ready(i32 v) {
-  i32[] cell = i32[].filled(1, v);
-  fn<i32(i32)> r = (i32 id) => cell[0];
-  fn<bool(i32)> s = (i32 id) => true;
-  fn<void(i32)> d = (i32 id) => { };
-  return Pending<i32>.driven(0, r, s, d);
+/** A ticket that is already answered: made directly, and settled with `resolve` (spec/next ch35). */
+Ticket<i32> ready(i32 v) {
+  Ticket<i32> t;
+  t.resolve(v);
+  return t;
 }
 
 export i32 answer() {
-  // The slot says `Pending<i32>`, so `async` is allowed and the body is checked against `i32` —
+  // The slot says `Ticket<i32>`, so `async` is allowed and the body is checked against `i32` —
   // `return v + v;` answers with the value, not with a ticket. The two readings are the same rule
   // a function states in the other direction.
-  fn<Pending<i32>(i32)> twice = async (i32 n) => {
+  fn<Ticket<i32>(i32)> twice = async (i32 n) => {
     i32 v = await ready(n);
     return v + v;
   };
-  return twice(21).wait();
+  return twice(21).wait()!;
 }

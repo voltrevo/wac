@@ -69,6 +69,8 @@ spec/next/1-programs/05-reachability.md#11
 spec/next/1-programs/05-reachability.md#12
 spec/next/1-programs/07-programs.md#1
 spec/next/1-programs/07-programs.md#4
+spec/next/1-programs/07-programs.md#13
+spec/next/1-programs/07-programs.md#14
 spec/next/2-types/08-primitives.md#1
 spec/next/2-types/08-primitives.md#2
 spec/next/2-types/08-primitives.md#3
@@ -316,6 +318,16 @@ spec/next/4-static/29-static-dependencies.md#7
 spec/next/4-static/31-static-control.md#3
 spec/next/4-static/31-static-control.md#7
 spec/next/5-inference/32-widening.md#1
+spec/next/6-concurrency/35-tickets-and-await.md#1
+spec/next/6-concurrency/35-tickets-and-await.md#2
+spec/next/6-concurrency/35-tickets-and-await.md#3
+spec/next/6-concurrency/35-tickets-and-await.md#4
+spec/next/6-concurrency/35-tickets-and-await.md#5
+spec/next/6-concurrency/35-tickets-and-await.md#6
+spec/next/6-concurrency/35-tickets-and-await.md#7
+spec/next/6-concurrency/35-tickets-and-await.md#8
+spec/next/6-concurrency/35-tickets-and-await.md#9
+spec/next/6-concurrency/35-tickets-and-await.md#14
 spec/next/7-library/37-core.md#1
 spec/next/7-library/38-vec.md#2
 spec/next/7-library/38-vec.md#3

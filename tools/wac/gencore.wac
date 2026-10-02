@@ -33,7 +33,8 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
 string[] coreTree() {
   return [
     "core/read.wac", "core/jsx.wac", "core/option.wac", "core/result.wac", "core/hash.wac",
-    "core/map.wac", "core/vec.wac", "core/buf.wac", "core/text.wac", "core/operators.wac", "core/html.wac"
+    "core/map.wac", "core/vec.wac", "core/buf.wac", "core/text.wac", "core/operators.wac", "core/html.wac",
+    "core/ticket.wac"
   ];
 }
 
@@ -128,8 +129,8 @@ bool startsWith(string s, string prefix) {
  *
  * Read from the declarations rather than listed, because a list is a second statement of what the files
  * already say. A top-level declaration starts in column 0, and its name is the word before the first
- * `(`, `{`, `=` or `;` once a generic parameter list there is stepped over — `export struct Vec<T> {`,
- * `export Option<B> mapOption<A, B>(`, `export static i32 N = 1;`.
+ * `(`, `{`, `=`, `;` or `:` once a generic parameter list there is stepped over — `export struct Vec<T> {`,
+ * `export Option<B> mapOption<A, B>(`, `export static i32 N = 1;`, `export struct Ticket<T> : TicketBase {`.
  */
 string[] exportsOf(string text) {
   string[] ls = splitKeepingEmpty(text);
@@ -144,7 +145,7 @@ string[] exportsOf(string text) {
       i32 c = b[end] as i32;
       if (c == 60) { depth = depth + 1; }
       if (c == 62) { depth = depth - 1; }
-      if (depth == 0 && (c == 40 || c == 123 || c == 61 || c == 59)) { break; }
+      if (depth == 0 && (c == 40 || c == 123 || c == 61 || c == 59 || c == 58)) { break; }
       end = end + 1;
     }
     while (end > 7 && b[end - 1] == 32) { end = end - 1; }

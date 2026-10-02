@@ -1,23 +1,13 @@
 // expect: answers answer = 6
 // why: a local that outlives a suspension survives it, including a loop's induction variable
 // from: design/lang/0014
-import { Pending } from "std";
+import { Ticket } from "core";
 
-/**
- * A ticket that is already answered.
- *
- * `driven` rather than the constructor, because it says the ticket is one **waiting can advance** —
- * which is what separates it from one only a continuation could answer,
- * `[§wac-async-unwaitable-4hpx2vn]`. The real `Pending` rather than a look-alike, because the
- * lowering constructs that one and a program declaring its own would have to match it field for
- * field.
- */
-Pending<i32> ready(i32 v) {
-  i32[] cell = i32[].filled(1, v);
-  fn<i32(i32)> r = (i32 id) => cell[0];
-  fn<bool(i32)> s = (i32 id) => true;
-  fn<void(i32)> d = (i32 id) => { };
-  return Pending<i32>.driven(0, r, s, d);
+/** A ticket that is already answered: made directly, and settled with `resolve` (spec/next ch35). */
+Ticket<i32> ready(i32 v) {
+  Ticket<i32> t;
+  t.resolve(v);
+  return t;
 }
 async i32 sum(i32 n) {
   i32 total = 0;
@@ -27,4 +17,4 @@ async i32 sum(i32 n) {
   }
   return total;
 }
-export i32 answer() { return sum(3).wait(); }
+export i32 answer() { return sum(3).wait()!; }

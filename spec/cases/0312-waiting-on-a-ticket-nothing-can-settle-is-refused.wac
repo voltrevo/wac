@@ -1,0 +1,19 @@
+// expect: answers answer = -1
+// why: a wait drives only what its ticket depends on, so a ticket nothing will resolve is refused at once rather than waited on for ever
+// from: design/lang/0014 D7
+// spec: §wac-wait-refuses-jj8u2ie
+import { Ticket } from "core";
+
+/**
+ * A ticket nobody will settle: made directly and never resolved.
+ *
+ * Under `Pending` this trapped, because `wait` answered the bare value and had nothing else to say.
+ * `wait` answers a `Result` now (spec/next ch35), so the refusal is a value the caller can match on.
+ */
+export i32 answer() {
+  Ticket<i32> orphan;
+  return match (orphan.wait()) {
+    Ok(v):  v,
+    Err(_): -1,
+  };
+}

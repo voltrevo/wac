@@ -132,7 +132,8 @@ export enum ExprKind {
    * variant makes every match that must care say so, and the ones that genuinely do not keep
    * their `else`.
    */
-  Await(Expr operand),
+  /** `operand` is null for a bare `await;` — one step boundary (spec/next ch35). */
+  Await(Expr? operand),
   Binary(i32 op, Expr left, Expr right),
   /** One of `as`, `as!`, `as~`, `as@` — which is in `op`. */
   Cast(i32 op, Expr operand, Ty target),
@@ -375,6 +376,8 @@ export enum StmtKind {
   ExprStmt(Expr expr),
   /** `defer s;` — `s` runs when the enclosing block is left, however it is left. spec/next ch25. */
   Defer(Stmt body),
+  /** `schedule f;` — `f` is the schedule target to the end of the enclosing block. spec/next ch35. */
+  Schedule(Expr target),
 }
 
 // ── Declarations ──────────────────────────────────────────────────────────────

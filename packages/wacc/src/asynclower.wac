@@ -1,4 +1,5 @@
-// Rewriting an `async` function into ordinary wac — `design/lang/0014` step 4.
+// Rewriting an `async` function into ordinary wac — `design/lang/0014` step 4, retargeted onto
+// core's `Ticket` by spec/next ch35.
 //
 // The body becomes a **flattened state machine**: a `while (true)` over a `switch` on a state
 // variable, where each `await` ends one arm and begins the next. The machine's locals live in the
@@ -8,31 +9,33 @@
 //
 // What comes out, for `async R f(…) { T x = await e; return g(x); }`:
 //
-//     Pending<R> f(…) {
-//       i32[] __wacState = i32[].filled(1, 0);
-//       bool[] __wacDone = bool[].filled(1, false);
-//       R[] __wacRes = R[].defaulted(1);
+//     Ticket<R> f(…) {
+//       i32[] __wacState = i32[].defaulted(1);
+//       Ticket<R> __wacT;
 //       T[] x = T[].defaulted(1);
-//       Pending<T>? __wacUp0 = null;
-//       fn<bool()> __wacStep = () => {
+//       Ticket<T>? __wacUp0 = null;
+//       __wacMachine __wacM = __wacMachine(__wacT, __wacNoStep, __wacScheduleTarget(), 0);
+//       fn<bool()> __wacStepFn = () => {
 //         while (true) {
 //           switch (__wacState[0]) {
-//             case 0: { __wacUp0 = e; __wacState[0] = 1; return false; }
-//             case 1: { x[0] = __wacUp0!.wait();
-//                       { __wacRes[0] = g(x[0]); __wacDone[0] = true; return true; } }
+//             case 0: { __wacUp0 = e; __wacM.park(__wacUp0); __wacState[0] = 1; return false; }
+//             case 1: { x[0] = __wacUp0!.value();
+//                       { __wacT.resolve(g(x[0])); return true; } }
 //             default: { return true; }
 //           }
 //         }
 //       };
-//       __wacStep();                     // eager — D1: runs to the first await and stops
-//       fn<R(i32)> __wacResolve = (i32 id) => {
-//         while (!__wacDone[0]) { __wacStep(); }
-//         return __wacRes[0];
-//       };
-//       fn<bool(i32)> __wacSettled = (i32 id) => __wacDone[0];
-//       fn<void(i32)> __wacDrop = (i32 id) => { };
-//       return Pending<R>(0 - 1, __wacResolve, __wacSettled, __wacDrop, null, true);
+//       __wacM.step = __wacStepFn;
+//       __wacState[0] = 0;
+//       __wacM.run();                    // eager: runs to the first suspension and stops
+//       return __wacT;
 //     }
+//
+// **Every `await` suspends**, settled ticket or not (ch35): `park` records a `Continuation` on the
+// machine's ticket, and `run` hands it to the schedule target in force where the call was made. What
+// drives the machine on is either that continuation being called — by `sys.drain()`, or whoever holds
+// the target — or a `wait` on the ticket, which follows the parked continuation to what it waits on.
+// Both reach the same `call`, and `__wacMachine` lets only the current suspension's copy resume it.
 //
 // **Every hoisted local is a one-element array.** `T[].defaulted(1)` works for any `T`, struct included, which
 // is what makes this uniform: there is no default value to invent. The cost is that every mention of
@@ -40,31 +43,31 @@
 // lambdas, because a lambda that captured `x` now captures the array.
 //
 // **`return` is rewritten everywhere except inside a lambda.** A `return` in the body leaves the
-// *machine*, so it becomes "record the answer, mark done, stop stepping". A `return` inside a lambda
-// in the body leaves the lambda and must be left exactly as it is — the same distinction the checker
-// makes when it clears `inAsync` for a lambda body.
+// *machine*, so it becomes "settle the ticket, stop stepping". A `return` inside a lambda in the body
+// leaves the lambda and must be left exactly as it is — the same distinction the checker makes when
+// it clears `inAsync` for a lambda body.
 //
-// **The three ticket functions are bound to locals, never written inline.** A lambda written
-// directly as an argument is *"in a position the walk does not type yet"*, which cost four refusals
-// at once when `asynclower_test.wac` was written by hand. That is where this was learnt.
-//
-// This cut is `wait`-driven: nothing registers with a scheduler, so a machine advances when somebody
-// waits on its ticket. Registration is the next increment, and it is one statement in the suspend
-// arm.
+// **What an `await` answers has to be written somewhere**, because this pass runs on a tree with no
+// types: the slot a value-reading `await` keeps its ticket in is a `Ticket<X>?`. `T x = await e;`
+// writes `X`, and `return await e;` writes the function's return type; an `await` nested in a larger
+// expression is hoisted into a temporary when `e` is a parameter, a local or a call whose declaration
+// in this file says what ticket it is — and declined by name when it is not. An `await` whose value
+// is thrown away needs no slot at all: its ticket is parked as a `TicketBase?`.
 
 import {
   Arm, Case, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param,
   Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
-import { Lexed } from "./lex.wac";
-import { AsyncPlan, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
+import { Lexed, tokenStride } from "./lex.wac";
+import { AsyncPlan, awaitInExpr, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
 import {
   synthSource, synthTokens, synthTok, synthTextAt,
-  synthPending, synthWait, synthThen, synthSched, synthDetach, synthState, synthDone, synthRes,
-  synthStep, synthAssign, synthI32, synthBool, synthVoid, synthId, synthV, synthResolve,
-  synthSettled, synthDrop, synthArmed, synthWaitAt, synthNoStep, synthStepFn, synthMachine,
-  synthSlot, synthVal, synthHand, synthNum, synthZero, synthOne, synthArg,
+  synthTicket, synthValue, synthPark, synthRun, synthStepName, synthResolve, synthSettleWith,
+  synthNothing, synthState, synthTicketVar, synthMachineVar, synthMachineType, synthTargetGet, synthTargetSet,
+  synthAssign, synthI32, synthBool, synthVoid, synthNoStep, synthStepFn,
+  synthSlot, synthAw, synthNum, synthZero, synthOne, synthArg,
 } from "./asyncsynth.wac";
+import { kAndAnd, kAwait, kOrOr, kQuestion } from "./kinds.wac";
 
 /** Everything the rewrite needs that is not the statement in front of it. */
 struct Ctx {
@@ -96,33 +99,29 @@ struct Ctx {
   bool[] inLam;
 }
 
-i32 tPend(Ctx c)   { return synthTok(c.first, synthPending()); }
-i32 tWait(Ctx c)   { return synthTok(c.first, synthWait()); }
-i32 tState(Ctx c)  { return synthTok(c.first, synthState()); }
-i32 tDone(Ctx c)   { return synthTok(c.first, synthDone()); }
-i32 tRes(Ctx c)    { return synthTok(c.first, synthRes()); }
-i32 tStep(Ctx c)   { return synthTok(c.first, synthStep()); }
-i32 tEq(Ctx c)     { return synthTok(c.first, synthAssign()); }
-i32 tI32(Ctx c)    { return synthTok(c.first, synthI32()); }
-i32 tBool(Ctx c)   { return synthTok(c.first, synthBool()); }
-i32 tVoid(Ctx c)   { return synthTok(c.first, synthVoid()); }
-i32 tId(Ctx c)     { return synthTok(c.first, synthId()); }
-i32 tResolve(Ctx c){ return synthTok(c.first, synthResolve()); }
-i32 tSettled(Ctx c){ return synthTok(c.first, synthSettled()); }
-i32 tDrop(Ctx c)   { return synthTok(c.first, synthDrop()); }
-i32 tThen(Ctx c)   { return synthTok(c.first, synthThen()); }
-i32 tSched(Ctx c)  { return synthTok(c.first, synthSched()); }
-i32 tDetach(Ctx c) { return synthTok(c.first, synthDetach()); }
-i32 tV(Ctx c)      { return synthTok(c.first, synthV()); }
-i32 tArmed(Ctx c)  { return synthTok(c.first, synthArmed()); }
-i32 tWaitAt(Ctx c) { return synthTok(c.first, synthWaitAt()); }
-i32 tNoStep(Ctx c) { return synthTok(c.first, synthNoStep()); }
-i32 tStepFn(Ctx c) { return synthTok(c.first, synthStepFn()); }
-i32 tMachine(Ctx c) { return synthTok(c.first, synthMachine()); }
+i32 tTicket(Ctx c)   { return synthTok(c.first, synthTicket()); }
+i32 tValue(Ctx c)    { return synthTok(c.first, synthValue()); }
+i32 tPark(Ctx c)     { return synthTok(c.first, synthPark()); }
+i32 tRun(Ctx c)      { return synthTok(c.first, synthRun()); }
+i32 tStepName(Ctx c) { return synthTok(c.first, synthStepName()); }
+i32 tResolve(Ctx c)  { return synthTok(c.first, synthResolve()); }
+i32 tSettleWith(Ctx c)   { return synthTok(c.first, synthSettleWith()); }
+i32 tState(Ctx c)    { return synthTok(c.first, synthState()); }
+i32 tT(Ctx c)        { return synthTok(c.first, synthTicketVar()); }
+i32 tM(Ctx c)        { return synthTok(c.first, synthMachineVar()); }
+i32 tMachineTy(Ctx c) { return synthTok(c.first, synthMachineType()); }
+i32 tTargetGet(Ctx c) { return synthTok(c.first, synthTargetGet()); }
+i32 tTargetSet(Ctx c) { return synthTok(c.first, synthTargetSet()); }
+i32 tEq(Ctx c)       { return synthTok(c.first, synthAssign()); }
+i32 tI32(Ctx c)      { return synthTok(c.first, synthI32()); }
+i32 tBool(Ctx c)     { return synthTok(c.first, synthBool()); }
+i32 tVoid(Ctx c)     { return synthTok(c.first, synthVoid()); }
+i32 tNoStep(Ctx c)   { return synthTok(c.first, synthNoStep()); }
+i32 tStepFn(Ctx c)   { return synthTok(c.first, synthStepFn()); }
+i32 tNothing(Ctx c)  { return synthTok(c.first, synthNothing()); }
 
 i32 tUp(Ctx c, i32 k) { return synthTok(c.first, synthSlot(k)); }
-i32 tVal(Ctx c, i32 k) { return synthTok(c.first, synthVal(k)); }
-i32 tHand(Ctx c, i32 k) { return synthTok(c.first, synthHand(k)); }
+i32 tAw(Ctx c, i32 k) { return synthTok(c.first, synthAw(k)); }
 i32 tNum(Ctx c, i32 k) { return synthTok(c.first, synthNum(c.ups, c.args, k)); }
 /** The synthetic name an async lambda's parameter `k` is renamed to — `issues/lang/0294c`. */
 i32 tArg(Ctx c, i32 k) { return synthTok(c.first, synthArg(c.ups, k)); }
@@ -193,18 +192,17 @@ Expr eCallLocal(Ctx c, i32 tok) {
 }
 
 /**
- * `__wacStep[0]()`, as the two statements it has to be.
- *
- * Read into a local first and then called, which is what the emitter's call path names directly; a
- * call through an index was unspellable until `issues/lang/0265c` closed and is not needed here.
- * Wrapped in a block so it reads as one statement wherever one is wanted.
+ * `name(args)` — a call to a top-level function, as the parser writes one: a `Construct` of the
+ * name, for the reason `eCallLocal` gives.
  */
-Stmt sCallStep(Ctx c) {
-  Stmt[] out = Stmt[].filled(2, sRet(c, null));
-  out[0] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tBool(c)), Ty[]()), tStepFn(c),
-                             eCell(c, tStep(c)), false), c.line, freshCol(c));
-  out[1] = sExpr(c, eCallLocal(c, tStepFn(c)));
-  return sBlock(c, out);
+Expr eCallFn(Ctx c, i32 tok, Expr[] args) {
+  return Expr(ExprKind.Construct(Ty(TyKind.Named(tok, Ty[]()), c.line, c.col), args, NamedArg[]()),
+              c.line, c.col);
+}
+
+/** `recv.m(args)` — a method call. */
+Expr eMethod(Ctx c, Expr recv, i32 m, Expr[] args) {
+  return Expr(ExprKind.Call(eDot(c, recv, m), args, Ty[]()), c.line, c.col);
 }
 
 /** `name[0]` — reading a cell. */
@@ -228,7 +226,7 @@ Stmt sSet(Ctx c, i32 nameTok, Expr v) {
  *
  * **Because a node is a reference, and source never shares one.** The machine mentions the
  * function's return type in three places — the ticket it hands back, the cell that holds the answer,
- * and the `Pending<R>` it constructs — and handing the same `Ty` object to all three is a shape no
+ * and the `Ticket<R>` it declares — and handing the same `Ty` object to all three is a shape no
  * parser produces. Any walk that remembers what it has already visited would then see one node where
  * a reader sees three.
  */
@@ -259,7 +257,7 @@ Ty cloneTy(Ty t) {
  * Whether `t` is `void`.
  *
  * **A machine for an `async void` has no answer to keep.** Every other return type gets a cell to
- * lowPut the answer in; `void[].defaulted(1)` is not a thing, and `Pending<void>`'s resolver takes no value and
+ * lowPut the answer in; `void[].defaulted(1)` is not a thing, and `Ticket<void>` is settled rather than resolved, and
  * returns none — which is what `design/lang/0014` D5 made expressible in the first place.
  */
 bool isVoidTy(Ctx c, Ty t) {
@@ -272,8 +270,8 @@ bool isVoidTy(Ctx c, Ty t) {
 Ty lowPrimTy(Ctx c, i32 tok) { return Ty(TyKind.Prim(tok), c.line, c.col); }
 Ty lowArrTy(Ctx c, Ty el) { return Ty(TyKind.Arr(el), c.line, c.col); }
 Ty lowOptTy(Ctx c, Ty el) { return Ty(TyKind.Nullable(el), c.line, c.col); }
-Ty lowPendingTy(Ctx c, Ty el) {
-  return Ty(TyKind.Named(tPend(c), Ty[].filled(1, cloneTy(el))), c.line, c.col);
+Ty lowTicketTy(Ctx c, Ty el) {
+  return Ty(TyKind.Named(tTicket(c), Ty[].filled(1, cloneTy(el))), c.line, c.col);
 }
 Ty lowFnTy(Ctx c, Ty ret, Ty[] ps) { return Ty(TyKind.Funcref(ret, ps), c.line, c.col); }
 
@@ -295,9 +293,9 @@ Stmt sCellFrom(Ctx c, i32 nameTok, Ty el, Expr init) {
   return Stmt(StmtKind.Var(lowArrTy(c, el), nameTok, mk, false), c.line, freshCol(c));
 }
 
-/** `Pending<T>? name = null;` */
+/** `Ticket<T>? name = null;` */
 Stmt sSlotDecl(Ctx c, i32 nameTok, Ty el) {
-  return Stmt(StmtKind.Var(lowOptTy(c, lowPendingTy(c, el)), nameTok, eNull(c), false),
+  return Stmt(StmtKind.Var(lowOptTy(c, lowTicketTy(c, el)), nameTok, eNull(c), false),
               c.line, freshCol(c));
 }
 
@@ -305,14 +303,19 @@ Stmt sRet(Ctx c, Expr? v) { return Stmt(StmtKind.Return(v), c.line, c.col); }
 Stmt sBlock(Ctx c, Stmt[] b) { return Stmt(StmtKind.Block(b), c.line, c.col); }
 Stmt sExpr(Ctx c, Expr e) { return Stmt(StmtKind.ExprStmt(e), c.line, c.col); }
 
-/** `__wacRes[0] = v; __wacDone[0] = true; return true;` — how a `return` in the body ends. */
+/**
+ * `__wacT.resolve(v); return true;` — how a `return` in the body ends — or
+ * `__wacT.settleWith(__wacNothing)` for one that answers nothing, since a `void` argument is not
+ * something a call can be handed.
+ */
 Stmt sFinish(Ctx c, Expr? v) {
-  i32 n = (v is null) ? 2 : 3;
-  Stmt[] out = Stmt[].filled(n, sRet(c, null));
-  i32 at = 0;
-  if (v is not null) { out[0] = sCellSet(c, tRes(c), v!); at = 1; }
-  out[at] = sCellSet(c, tDone(c), eBool(c, true));
-  out[at + 1] = sRet(c, eBool(c, true));
+  Stmt[] out = Stmt[].filled(2, sRet(c, null));
+  if (v is not null) {
+    out[0] = sExpr(c, eMethod(c, eId(c, tT(c)), tResolve(c), Expr[].filled(1, v!)));
+  } else {
+    out[0] = sExpr(c, eMethod(c, eId(c, tT(c)), tSettleWith(c), Expr[].filled(1, eId(c, tNothing(c)))));
+  }
+  out[1] = sRet(c, eBool(c, true));
   return sBlock(c, out);
 }
 
@@ -340,7 +343,10 @@ Expr subExpr(Ctx c, Expr e) {
       if (!isHoisted(c, tok)) { return e; }
       return eIx(c, e, eInt(c, 0));
     }
-    Await(operand): { return Expr(ExprKind.Await(subExpr(c, operand)), e.line, e.col); }
+    Await(operand): {
+      if (operand is null) { return e; }
+      return Expr(ExprKind.Await(subExpr(c, operand!)), e.line, e.col);
+    }
     Unary(op, operand): {
       return Expr(ExprKind.Unary(op, subExpr(c, operand)), e.line, e.col);
     }
@@ -529,6 +535,7 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
     }
     Block(body): { return sBlock(c, subBody(c, body, inLambda, brkTo, contTo)); }
     ExprStmt(expr): { return sExpr(c, subExpr(c, expr)); }
+    Schedule(target): { return Stmt(StmtKind.Schedule(subExpr(c, target)), s.line, s.col); }
     // Only ever inside a lambda: `planBody` declines a machine whose own body holds one.
     Defer(body): {
       return Stmt(StmtKind.Defer(subStmt(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
@@ -559,9 +566,10 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
 // ── Assembling the machine ───────────────────────────────────────────────────
 
 
+/** What an `await` waits on — `null` for a bare `await;` — or `e` itself when it is not one. */
 Expr innerAwait(Ctx c, Expr e) {
   match (e.kind) {
-    Await(operand): { return operand; }
+    Await(operand): { return (operand is null) ? eNull(c) : operand!; }
     default: { return e; }
   }
 }
@@ -601,6 +609,8 @@ struct Bld {
    * meaning anything the moment a suspension could be inside a loop.
    */
   Ty[] slotTy;
+  /** Whether slot `k` is read back, and so needs declaring as a `Ticket<X>?`. */
+  bool[] slotUsed;
   Ty ret;
 }
 
@@ -644,7 +654,7 @@ i32 lowerSeq(Bld b, Stmt[] body, i32 next) {
       i32 brkTo = b.depth > 0 ? b.brk[b.depth - 1] : 0 - 1;
       i32 contTo = b.depth > 0 ? b.cont[b.depth - 1] : 0 - 1;
       for (i32 k = 0; k < count; k++) {
-        run[k] = subStmt(b.c, body[j + 1 + k], false, brkTo, contTo);
+        run[k] = flatStmt(b.c, body[j + 1 + k], brkTo, contTo);
       }
       i32 e = lowAlloc(b);
       lowPut(b, e, lowJoin(b.c, run, gotoS(b.c, entry)));
@@ -656,50 +666,57 @@ i32 lowerSeq(Bld b, Stmt[] body, i32 next) {
 }
 
 /**
- * A suspension, as three states: the one that suspends, the one that takes the answer by waiting,
- * and `rest`, which the caller supplies and which reads the answer out of the slot.
+ * One statement of a flattened run.
  *
- * **Both drivers write the same cell**, which is what makes them one machine. A registered
- * continuation is handed the value and puts it there; a `wait` takes it and puts it there. `rest`
- * does not know or care which happened.
- *
- * Registration is conditional on the ticket carrying a scheduler, because `then` traps without one
- * and most capabilities hand out unlinked tickets. An unlinked chain still advances under `wait` —
- * D2's *host-backed → block* — and cannot advance under `drain`, having had nowhere to register.
+ * **A `schedule` here sets the target and does not restore it at the end of the state**, because
+ * the block it applies to goes on past this state's transfer — and the machine saves the target the
+ * body left in force each time it suspends and restores it on resume, so a plain write is the whole
+ * of it. The end of the *function* is restored by `__wacMachine.run`. A `schedule` in a nested block
+ * that holds no suspension is left alone, and restores where that block ends as everywhere else.
  */
-i32 lowerSuspend(Bld b, Expr awaited, Ty ty, i32 rest) {
+Stmt flatStmt(Ctx c, Stmt s, i32 brkTo, i32 contTo) {
+  match (s.kind) {
+    Schedule(target): {
+      return sExpr(c, eCallFn(c, tTargetSet(c), Expr[].filled(1, subExpr(c, target))));
+    }
+    default: { return subStmt(c, s, false, brkTo, contTo); }
+  }
+}
+
+/**
+ * A suspension: park on what is awaited and stop stepping, with `rest` where the machine carries on
+ * once a continuation or a `wait` resumes it.
+ *
+ * `ty` is what the awaited ticket answers when `rest` reads the value, and null when nothing does —
+ * a bare `await;`, an `await e;` whose value is thrown away, an `await` on a `TicketBase?`. A typed
+ * suspension keeps its ticket in slot `k` for `rest` to read with `value()`; an untyped one hands it
+ * straight to `park`, which takes any ticket at all.
+ */
+i32 lowerSuspend(Bld b, Expr awaited, Ty? ty, i32 rest) {
   Ctx c = b.c;
   i32 k = b.slot[0];
   b.slot[0] = b.slot[0] + 1;
-  if (k < b.slotTy.len()) { b.slotTy[k] = cloneTy(ty); }
+  bool typed = ty is not null && k < b.slotTy.len();
+  if (typed) { b.slotTy[k] = cloneTy(ty!); b.slotUsed[k] = true; }
 
-  // Taking the answer by waiting — and taking back the continuation first, or it is delivered twice.
-  i32 waitS = lowAlloc(b);
-  Expr up = eBang(c, eId(c, tUp(c, k)));
-  Expr sched = eBang(c, eDot(c, up, tSched(c)));
-  Stmt[] det = Stmt[].filled(2, sRet(c, null));
-  det[0] = sExpr(c, eCall1(c, eDot(c, sched, tDetach(c)), eDot(c, up, tId(c))));
-  det[1] = sCellSet(c, tArmed(c), eBool(c, false));
-  Stmt[] w = Stmt[].filled(2, sRet(c, null));
-  w[0] = Stmt(StmtKind.If(eCell(c, tArmed(c)), det, Stmt[]()), c.line, c.col);
-  w[1] = sCellSet(c, tVal(c, k), eCall0(c, eDot(c, up, tWait(c))));
-  lowPut(b, waitS, lowJoin(c, w, gotoS(c, rest)));
-
-  // Suspending. The default is "only a wait can move this"; registering upgrades it.
   i32 susp = lowAlloc(b);
-  Stmt[] arm = Stmt[].filled(3, sRet(c, null));
-  arm[0] = sCellSet(c, tState(c), eInt(c, rest));
-  arm[1] = sCellSet(c, tArmed(c), eBool(c, true));
-  arm[2] = sExpr(c, eCall1(c, eDot(c, up, tThen(c)), eId(c, tHand(c, k))));
-
-  Stmt[] sus = Stmt[].filled(5, sRet(c, null));
-  sus[0] = sSet(c, tUp(c, k), awaited);
-  sus[1] = sCellSet(c, tWaitAt(c), eInt(c, waitS));
-  sus[2] = sCellSet(c, tState(c), eInt(c, waitS));
-  sus[3] = Stmt(StmtKind.If(eNotNull(c, eDot(c, up, tSched(c))), arm, Stmt[]()), c.line, c.col);
-  sus[4] = sRet(c, eBool(c, false));
+  Stmt[] sus = Stmt[].filled(typed ? 4 : 3, sRet(c, null));
+  i32 at = 0;
+  Expr parked = awaited;
+  if (typed) {
+    sus[at] = sSet(c, tUp(c, k), awaited); at = at + 1;
+    parked = eId(c, tUp(c, k));
+  }
+  sus[at] = sExpr(c, eMethod(c, eId(c, tM(c)), tPark(c), Expr[].filled(1, parked))); at = at + 1;
+  sus[at] = sCellSet(c, tState(c), eInt(c, rest)); at = at + 1;
+  sus[at] = sRet(c, eBool(c, false));
   lowPut(b, susp, sus);
   return susp;
+}
+
+/** `__wacUpK!.value()` — the answer of the ticket slot `k` suspended on. */
+Expr eSlotValue(Ctx c, i32 k) {
+  return eMethod(c, eBang(c, eId(c, tUp(c, k))), tValue(c), Expr[]());
 }
 
 /** One statement that contains a suspension, as states. */
@@ -710,7 +727,7 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
     Var(type, nameTok, init, isConst): {
       i32 rest = lowAlloc(b);
       i32 k = b.slot[0];
-      lowPut(b, rest, lowJoin(c, Stmt[].filled(1, sCellSet(c, nameTok, eCell(c, tVal(c, k)))),
+      lowPut(b, rest, lowJoin(c, Stmt[].filled(1, sCellSet(c, nameTok, eSlotValue(c, k))),
                         gotoS(c, next)));
       return lowerSuspend(b, subExpr(c, innerAwait(c, init!)), type, rest);
     }
@@ -718,9 +735,13 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
     Return(value): {
       i32 rest = lowAlloc(b);
       i32 k = b.slot[0];
-      lowPut(b, rest, Stmt[].filled(1, sFinish(c, eCell(c, tVal(c, k)))));
+      lowPut(b, rest, Stmt[].filled(1, sFinish(c, eSlotValue(c, k))));
       return lowerSuspend(b, subExpr(c, innerAwait(c, (value is null) ? eNull(c) : value!)),
                           cloneTy(b.ret), rest);
+    }
+    // `await e;` and `await;` — suspend, and carry straight on: nothing reads what it answered.
+    ExprStmt(expr): {
+      return lowerSuspend(b, subExpr(c, innerAwait(c, expr)), null, next);
     }
     Block(body): { return lowerSeq(b, body, next); }
     If(cond, then, els): {
@@ -798,14 +819,17 @@ struct Arms {
   i32 entry;
   /** One per suspension, in the order the slots were handed out. */
   Ty[] slotTy;
+  bool[] slotUsed;
   i32 slots;
 }
 
 Arms buildArms(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
   Bld b = Bld(c, Stmt[][].filled(256, Stmt[]()), 0, i32[].filled(64, 0), i32[].filled(64, 0), 0, i32[].filled(1, 0),
-              Ty[].filled(64, fnRet), fnRet);
+              Ty[].filled(64, fnRet), bool[].filled(64, false), fnRet);
+  // Falling off the end settles a body that answers nothing; one that answers something returns on
+  // every path, so for it this state is unreachable.
   i32 done = lowAlloc(b);
-  lowPut(b, done, Stmt[].filled(1, sFinish(c, null)));
+  lowPut(b, done, Stmt[].filled(1, isVoidTy(c, fnRet) ? sFinish(c, null) : sRet(c, eBool(c, true))));
   i32 entry = lowerSeq(b, body, done);
   Case[] arms = Case[].filled(b.n + 1, Case(null, Stmt[](), c.line, c.col));
   for (i32 i = 0; i < b.n; i++) {
@@ -813,7 +837,7 @@ Arms buildArms(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
   }
   Stmt[] dflt = Stmt[].filled(1, sRet(c, eBool(c, true)));
   arms[b.n] = Case(null, dflt, c.line, c.col);
-  return Arms(arms, entry, b.slotTy, b.slot[0]);
+  return Arms(arms, entry, b.slotTy, b.slotUsed, b.slot[0]);
 }
 
 /** `while (true) { switch (__wacState[0]) { … } }` — the step lambda's whole body. */
@@ -824,147 +848,402 @@ Stmt[] stepBody(Ctx c, Case[] arms) {
   return Stmt[].filled(1, loop);
 }
 
-/** `(i32 id)`, the parameter every one of the ticket's three functions takes. */
-Param[] idParam(Ctx c) {
-  return Param[].filled(1, Param(tId(c), lowPrimTy(c, tI32(c)), false));
-}
-
-/**
- * The resolver: step until done, then answer.
- *
- * Written as `while (true) { if (done) break; step(); }` rather than `while (!done)`, because `!`
- * would need an operator token of its own in the tail — and `if`/`break` need none. The machine is
- * full of choices like this one, where the cheaper spelling is the one that borrows no new spelling.
- */
-Expr resolveLambda(Ctx c, Ty fnRet) {
-  bool isVoid = isVoidTy(c, fnRet);
-  Stmt[] brk = Stmt[].filled(1, Stmt(StmtKind.Break, c.line, c.col));
-  Stmt gate = Stmt(StmtKind.If(eCell(c, tDone(c)), brk, Stmt[]()), c.line, c.col);
-  // **Take over from the scheduler.** If a continuation is registered, this machine is somebody
-  // else's to advance; the state that waits is where it becomes ours, and detaching happens there
-  // because that state knows which slot it is holding.
-  Stmt[] take = Stmt[].filled(1, sCellSet(c, tState(c), eCell(c, tWaitAt(c))));
-  Stmt seize = Stmt(StmtKind.If(eCell(c, tArmed(c)), take, Stmt[]()), c.line, c.col);
-  Stmt tick = sCallStep(c);
-  Stmt[] loopBody = Stmt[].filled(3, gate);
-  loopBody[0] = gate;
-  loopBody[1] = seize;
-  loopBody[2] = tick;
-  Stmt loop = Stmt(StmtKind.While(eBool(c, true), loopBody), c.line, c.col);
-  if (isVoid) { return eLambda(c, idParam(c), Stmt[].filled(1, loop)); }
-  Stmt[] body = Stmt[].filled(2, loop);
-  body[0] = loop;
-  body[1] = sRet(c, eCell(c, tRes(c)));
-  return eLambda(c, idParam(c), body);
-}
-
 /**
  * The whole rewritten body.
  *
  * Order matters and is the order a reader would write it: the cells first, because everything else
- * mentions them; the step next, because it captures them; the eager call after that, because D1 says
- * the body runs to its first `await` when it is *called* rather than when it is driven; and the
- * ticket last, out of three functions bound to locals rather than written inline.
+ * mentions them; the machine next, with a placeholder step, because the step captures it; the step,
+ * assigned in; and the eager `run` after that, because the body runs to its first `await` when it is
+ * *called* rather than when it is driven (`§wac-async-eager-2rf9kdp`).
  */
 Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
-  i32 m = planSuspends(plan);
-  // Three cells, the hoisted ones, one slot per suspension, then: the step, its eager call, the
-  // three ticket functions, and the `return`. Counted rather than guessed — an array one short here
-  // traps inside the *compiler*, which reads as `wac.wac trapped` and says nothing about async.
-  i32 n = 5 + plan.hoist.len() + 3 * m + 9;
+  Arms made = buildArms(c, body, plan, fnRet);
+  i32 n = 9 + plan.hoist.len() + made.slots;
   Stmt[] out = Stmt[].filled(n, sRet(c, null));
   i32 at = 0;
 
   out[at] = sCellDecl(c, tState(c), lowPrimTy(c, tI32(c))); at = at + 1;
-  out[at] = sCellDecl(c, tDone(c), lowPrimTy(c, tBool(c))); at = at + 1;
-  if (!isVoidTy(c, fnRet)) { out[at] = sCellDecl(c, tRes(c), cloneTy(fnRet)); at = at + 1; }
-  // Whether a continuation is registered, and where to go when a waiter takes over from it.
-  out[at] = sCellDecl(c, tArmed(c), lowPrimTy(c, tBool(c))); at = at + 1;
-  out[at] = sCellDecl(c, tWaitAt(c), lowPrimTy(c, tI32(c))); at = at + 1;
+  // `Ticket<R> __wacT;` — a ticket made directly, which the body settles.
+  out[at] = Stmt(StmtKind.Var(lowTicketTy(c, fnRet), tT(c), null, false), c.line, freshCol(c));
+  at = at + 1;
   for (i32 i = 0; i < plan.hoist.len(); i++) {
     out[at] = sCellDecl(c, plan.hoist[i], cloneTy(plan.hoistTy[i])); at = at + 1;
   }
-  // **The step cell first**, because the handlers read it and the machine writes it. Filled with a
-  // no-op so it holds something before either exists.
-  out[at] = Stmt(StmtKind.Var(lowArrTy(c, lowFnTy(c, lowPrimTy(c, tBool(c)), Ty[]())), tStep(c),
-                              Expr(ExprKind.ArrNew(lowFnTy(c, lowPrimTy(c, tBool(c)), Ty[]()),
-                                                   eInt(c, 1), eId(c, tNoStep(c)), Expr[]()),
-                                   c.line, c.col), false), c.line, freshCol(c));
-  at = at + 1;
-
-  Arms made = buildArms(c, body, plan, fnRet);
   for (i32 k = 0; k < made.slots; k++) {
+    if (!made.slotUsed[k]) { continue; }
     out[at] = sSlotDecl(c, tUp(c, k), cloneTy(made.slotTy[k]));
     at = at + 1;
-    // **Where the answer lands, however it arrives** — handed to a registered continuation, or
-    // taken by a wait. One cell, so the state that carries on need not know which happened.
-    out[at] = sCellDecl(c, tVal(c, k), cloneTy(made.slotTy[k]));
+  }
+  // `fn<void()> __wacNothing = () => { };` — what a body answering nothing settles its ticket with.
+  // A local rather than a function named as a value, which the step lambda would have to capture.
+  if (isVoidTy(c, fnRet)) {
+    out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tVoid(c)), Ty[]()), tNothing(c),
+                                eLambda(c, Param[](), Stmt[]()), false), c.line, freshCol(c));
     at = at + 1;
   }
 
+  // `__wacMachine __wacM = __wacMachine(__wacT, __wacNoStep, __wacScheduleTarget(), 0);` — the target
+  // in force here is the one the body starts under.
+  Expr[] margs = Expr[].filled(4, eNull(c));
+  margs[0] = eId(c, tT(c));
+  margs[1] = eId(c, tNoStep(c));
+  margs[2] = eCallFn(c, tTargetGet(c), Expr[]());
+  margs[3] = eInt(c, 0);
+  Ty mty = Ty(TyKind.Named(tMachineTy(c), Ty[]()), c.line, c.col);
+  Expr mk = Expr(ExprKind.Construct(Ty(TyKind.Named(tMachineTy(c), Ty[]()), c.line, c.col), margs,
+                                    NamedArg[]()), c.line, c.col);
+  out[at] = Stmt(StmtKind.Var(mty, tM(c), mk, false), c.line, freshCol(c)); at = at + 1;
 
-  // **The continuations, after the step they call.** Built here rather than at the suspension that
-  // registers them, because that arm lives inside `__wacStep`'s own initialiser where `__wacStep` is
-  // not yet a name. Each takes the value the scheduler hands it, puts it in its slot, and drives the
-  // machine on — which is the whole of `drain` support.
-  for (i32 k = 0; k < made.slots; k++) {
-    Stmt[] hb = Stmt[].filled(3, sRet(c, null));
-    hb[0] = sCellSet(c, tVal(c, k), eId(c, tV(c)));
-    hb[1] = sCellSet(c, tArmed(c), eBool(c, false));
-    hb[2] = sCallStep(c);
-    Param[] hp = Param[].filled(1, Param(tV(c), cloneTy(made.slotTy[k]), false));
-    Ty[] hpt = Ty[].filled(1, cloneTy(made.slotTy[k]));
-    out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tVoid(c)), hpt), tHand(c, k),
-                                eLambda(c, hp, hb), false), c.line, freshCol(c));
-    at = at + 1;
-  }
-
-  // The machine itself, bound to a local and then lowPut in the cell: a lambda written straight into
-  // an array element is in a position the walk does not type.
+  // The step, bound to a local and then assigned in: a lambda written straight into a field is in a
+  // position the walk does not type.
   Expr step = eLambda(c, Param[](), stepBody(c, made.cases));
-  out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tBool(c)), Ty[]()), tMachine(c), step, false),
+  out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tBool(c)), Ty[]()), tStepFn(c), step, false),
                  c.line, freshCol(c));
   at = at + 1;
-  out[at] = sCellSet(c, tStep(c), eId(c, tMachine(c))); at = at + 1;
+  Lvalue mstep = Lvalue(LvalueKind.LField(Lvalue(LvalueKind.LIdent(tM(c)), c.line, c.col),
+                                          tStepName(c)), c.line, c.col);
+  out[at] = Stmt(StmtKind.Assign(mstep, tEq(c), eId(c, tStepFn(c))), c.line, c.col); at = at + 1;
 
   // **The machine starts where the flattening says, not at zero.** States are numbered as they are
-  // allocated and the entry is whatever the body's first statement became, so the cell is set before
-  // the eager step rather than relying on `i32[].filled(1, 0)` happening to be right.
+  // allocated and the entry is whatever the body's first statement became.
   out[at] = sCellSet(c, tState(c), eInt(c, made.entry)); at = at + 1;
-  out[at] = sCallStep(c); at = at + 1;
-
-  Ty[] oneI32 = Ty[].filled(1, lowPrimTy(c, tI32(c)));
-  out[at] = Stmt(StmtKind.Var(lowFnTy(c, cloneTy(fnRet), oneI32), tResolve(c),
-                              resolveLambda(c, fnRet), false), c.line, freshCol(c));
-  at = at + 1;
-
-  Stmt[] setBody = Stmt[].filled(1, sRet(c, eCell(c, tDone(c))));
-  Expr setL = eLambda(c, idParam(c), setBody);
-  out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tBool(c)), oneI32), tSettled(c), setL, false),
-                 c.line, freshCol(c));
-  at = at + 1;
-
-  Expr drpL = eLambda(c, idParam(c), Stmt[]());
-  out[at] = Stmt(StmtKind.Var(lowFnTy(c, lowPrimTy(c, tVoid(c)), oneI32), tDrop(c), drpL, false),
-                 c.line, freshCol(c));
-  at = at + 1;
-
-  // **`waitable` is true**: this ticket's resolver drives the machine, so waiting on one does
-  // advance it — `design/lang/0014` D7. The flag exists to separate that from a ticket only a
-  // continuation can answer, which waiting cannot help and which now says so.
-  Expr[] args = Expr[].filled(6, eNull(c));
-  args[0] = eInt(c, 0);
-  args[1] = eId(c, tResolve(c));
-  args[2] = eId(c, tSettled(c));
-  args[3] = eId(c, tDrop(c));
-  args[4] = eNull(c);
-  args[5] = eBool(c, true);
-  Expr ticket = Expr(ExprKind.Construct(lowPendingTy(c, fnRet), args, NamedArg[]()), c.line, c.col);
-  out[at] = sRet(c, ticket); at = at + 1;
+  out[at] = sExpr(c, eMethod(c, eId(c, tM(c)), tRun(c), Expr[]())); at = at + 1;
+  out[at] = sRet(c, eId(c, tT(c))); at = at + 1;
 
   Stmt[] trimmed = Stmt[].filled(at, sRet(c, null));
   for (i32 i = 0; i < at; i++) { trimmed[i] = out[i]; }
   return trimmed;
+}
+
+// ── What an awaited ticket answers, from what the file writes ─────────────────
+//
+// The machine keeps a value-reading `await`'s ticket in a slot of type `Ticket<X>?`, and this pass has
+// no types — so `X` is read off declarations: a parameter's or a local's written type, a function's
+// or a method's written return (a `Ticket` of it when `async`), a field's. Only this file's, and only
+// non-generic ones. Anything else answers null and the `await` is declined by name, with the fix —
+// `T v = await e;` — that writes the type down.
+
+/** Where a body sits, for reading the types its names were declared with. */
+struct Rz {
+  Ctx c;
+  Param[] params;
+  Stmt[] body;
+  Program prog;
+  /** The struct whose method this is, or -1 — what `this` names. */
+  i32 selfTok;
+  /** How many temporaries have been handed out — `__wacAwK`. */
+  i32[] next;
+}
+
+string rzText(Rz z, i32 tok) { return synthTextAt(z.c.src, z.c.lexed, tok); }
+
+bool isAutoTyL(Rz z, Ty t) {
+  match (t.kind) {
+    Named(tok, typeArgs): { return typeArgs.len() == 0 && rzText(z, tok) == "auto"; }
+    default: { return false; }
+  }
+}
+
+/** A local's written type, searched for at any depth outside lambdas; null when `auto` or absent. */
+Ty? localTyIn(Rz z, Stmt[] body, string nm) {
+  for (i32 i = 0; i < body.len(); i++) {
+    Ty? got = null;
+    match (body[i].kind) {
+      Var(type, nameTok, init, isConst): {
+        if (rzText(z, nameTok) == nm && !isAutoTyL(z, type)) { return type; }
+      }
+      If(cond, then, els): {
+        got = localTyIn(z, then, nm);
+        if (got is null) { got = localTyIn(z, els, nm); }
+      }
+      While(cond, b): { got = localTyIn(z, b, nm); }
+      DoWhile(b, cond): { got = localTyIn(z, b, nm); }
+      For(init, cond, update, b): {
+        if (init is not null) { got = localTyIn(z, Stmt[].filled(1, init!), nm); }
+        if (got is null) { got = localTyIn(z, b, nm); }
+      }
+      Block(b): { got = localTyIn(z, b, nm); }
+      default: { }
+    }
+    if (got is not null) { return got; }
+  }
+  return null;
+}
+
+Ty? nameTy(Rz z, string nm) {
+  if (nm == "this") {
+    return z.selfTok >= 0 ? Ty(TyKind.Named(z.selfTok, Ty[]()), z.c.line, z.c.col) : null;
+  }
+  for (i32 i = 0; i < z.params.len(); i++) {
+    if (rzText(z, z.params[i].nameTok) == nm) { return z.params[i].type; }
+  }
+  return localTyIn(z, z.body, nm);
+}
+
+/** `ret` as a caller sees it: a `Ticket` of it when the declaration is `async`. */
+Ty callerTy(Rz z, Ty ret, bool isAsync) { return isAsync ? lowTicketTy(z.c, ret) : ret; }
+
+/** A same-file, non-generic function's return as its caller sees it. */
+Ty? funcRetTy(Rz z, string nm) {
+  for (i32 d = 0; d < z.prog.decls.len(); d++) {
+    match (z.prog.decls[d].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (typeParams.len() == 0 && rzText(z, nameTok) == nm) { return callerTy(z, returnType, isAsync); }
+      }
+      default: { }
+    }
+  }
+  return null;
+}
+
+/** A field's type, or a method's return as its caller sees it, on a same-file non-generic struct. */
+Ty? memberTy(Rz z, Ty recv, string m, bool call) {
+  string owner = "";
+  match (recv.kind) {
+    Named(tok, typeArgs): { if (typeArgs.len() == 0) { owner = rzText(z, tok); } }
+    default: { }
+  }
+  if (owner == "") { return null; }
+  for (i32 d = 0; d < z.prog.decls.len(); d++) {
+    match (z.prog.decls[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0 || rzText(z, nameTok) != owner) { continue; }
+        if (call) {
+          for (i32 i = 0; i < methods.len(); i++) {
+            if (rzText(z, methods[i].nameTok) == m && methods[i].typeParams.len() == 0) {
+              return callerTy(z, methods[i].returnType, methods[i].isAsync);
+            }
+          }
+        } else {
+          for (i32 i = 0; i < fields.len(); i++) {
+            if (rzText(z, fields[i].nameTok) == m) { return fields[i].type; }
+          }
+        }
+      }
+      default: { }
+    }
+  }
+  return null;
+}
+
+/** The written type of `e`, as far as declarations in this file say it; null past that. */
+Ty? tyOfE(Rz z, Expr e) {
+  match (e.kind) {
+    Ident(tok): { return nameTy(z, rzText(z, tok)); }
+    Unwrap(inner): {
+      Ty? t = tyOfE(z, inner);
+      if (t is null) { return null; }
+      match (t!.kind) {
+        Nullable(under): { return under; }
+        default: { return t; }
+      }
+    }
+    Construct(ctype, args, named): {
+      match (ctype.kind) {
+        Named(tok, typeArgs): {
+          if (typeArgs.len() > 0) { return null; }
+          return funcRetTy(z, rzText(z, tok));
+        }
+        default: { return null; }
+      }
+    }
+    Call(callee, args, typeArgs): {
+      match (callee.kind) {
+        Member(obj, nameTok): {
+          Ty? rt = tyOfE(z, obj);
+          return (rt is null) ? null : memberTy(z, rt!, rzText(z, nameTok), true);
+        }
+        default: { return null; }
+      }
+    }
+    Member(obj, nameTok): {
+      Ty? rt = tyOfE(z, obj);
+      return (rt is null) ? null : memberTy(z, rt!, rzText(z, nameTok), false);
+    }
+    default: { return null; }
+  }
+}
+
+/** The `X` of the `Ticket<X>` that `operand` is, or null when nothing written says. */
+Ty? awaitedTy(Rz z, Expr operand) {
+  Ty? t = tyOfE(z, operand);
+  if (t is null) { return null; }
+  match (t!.kind) {
+    Named(tok, typeArgs): {
+      if (typeArgs.len() == 1 && rzText(z, tok) == "Ticket") { return typeArgs[0]; }
+      return null;
+    }
+    default: { return null; }
+  }
+}
+
+// ── An `await` inside a larger expression ─────────────────────────────────────
+//
+// `return (await t) * 2;` becomes `X __wacAw0 = await t; return __wacAw0 * 2;` — the shapes the
+// flattening already takes. **The awaits run before the rest of their statement**, which is the
+// order a reader expects only where nothing to their left has an effect; where something must run
+// conditionally — the right of `&&`, `||` or `??`, an arm of `?:` or `match`, a lambda — the `await`
+// is left in place and the plan declines it.
+
+/** What hoisting one statement's awaits produced. */
+struct Pulled {
+  Stmt[] pre;
+  i32 n;
+  bool failed;
+}
+
+void pushPre(Pulled p, Stmt s) {
+  if (p.n >= p.pre.len()) {
+    Stmt[] more = Stmt[].filled(p.pre.len() * 2 + 4, s);
+    for (i32 i = 0; i < p.n; i++) { more[i] = p.pre[i]; }
+    p.pre = more;
+  }
+  p.pre[p.n] = s;
+  p.n = p.n + 1;
+}
+
+bool isShortCircuit(Rz z, i32 op) {
+  i32 k = z.c.lexed.tokens[op * tokenStride()];
+  return k == kAndAnd() || k == kOrOr() || k == kQuestion();
+}
+
+Expr[] pullAll(Rz z, Expr[] es, Pulled p) {
+  Expr[] out = Expr[].filled(es.len(), es.len() > 0 ? es[0] : eNull(z.c));
+  for (i32 i = 0; i < es.len(); i++) { out[i] = pullE(z, es[i], p); }
+  return out;
+}
+
+/** `e` with each `await` in it replaced by a temporary declared in `p.pre`, in evaluation order. */
+Expr pullE(Rz z, Expr e, Pulled p) {
+  if (p.failed || !awaitInExpr(e)) { return e; }
+  Ctx c = z.c;
+  match (e.kind) {
+    Await(operand): {
+      if (operand is null) { p.failed = true; return e; }
+      Expr inner = pullE(z, operand!, p);
+      Ty? x = awaitedTy(z, inner);
+      if (x is null) { p.failed = true; return e; }
+      i32 k = z.next[0];
+      z.next[0] = z.next[0] + 1;
+      pushPre(p, Stmt(StmtKind.Var(cloneTy(x!), tAw(c, k), Expr(ExprKind.Await(inner), e.line, e.col),
+                                   false), e.line, freshCol(c)));
+      return Expr(ExprKind.Ident(tAw(c, k)), e.line, e.col);
+    }
+    Binary(op, left, right): {
+      if (isShortCircuit(z, op) && awaitInExpr(right)) { p.failed = true; return e; }
+      Expr l = pullE(z, left, p);
+      return Expr(ExprKind.Binary(op, l, pullE(z, right, p)), e.line, e.col);
+    }
+    Unary(op, operand): { return Expr(ExprKind.Unary(op, pullE(z, operand, p)), e.line, e.col); }
+    Cast(op, operand, target): {
+      return Expr(ExprKind.Cast(op, pullE(z, operand, p), target), e.line, e.col);
+    }
+    Call(callee, args, typeArgs): {
+      Expr cl = pullE(z, callee, p);
+      return Expr(ExprKind.Call(cl, pullAll(z, args, p), typeArgs), e.line, e.col);
+    }
+    Construct(ctype, args, named): {
+      if (named.len() > 0) { p.failed = true; return e; }
+      return Expr(ExprKind.Construct(ctype, pullAll(z, args, p), named), e.line, e.col);
+    }
+    Member(obj, nameTok): { return Expr(ExprKind.Member(pullE(z, obj, p), nameTok), e.line, e.col); }
+    Unwrap(operand): { return Expr(ExprKind.Unwrap(pullE(z, operand, p)), e.line, e.col); }
+    Index(arr, index): {
+      Expr a = pullE(z, arr, p);
+      return Expr(ExprKind.Index(a, pullE(z, index, p)), e.line, e.col);
+    }
+    ArrLit(elements): { return Expr(ExprKind.ArrLit(pullAll(z, elements, p)), e.line, e.col); }
+    TupleLit(elements): { return Expr(ExprKind.TupleLit(pullAll(z, elements, p)), e.line, e.col); }
+    Is(left, target, other, negated): {
+      if (other is not null) { p.failed = true; return e; }
+      return Expr(ExprKind.Is(pullE(z, left, p), target, other, negated), e.line, e.col);
+    }
+    default: { p.failed = true; return e; }
+  }
+}
+
+bool isAwaitL(Expr e) {
+  match (e.kind) {
+    Await(operand): { return true; }
+    default: { return false; }
+  }
+}
+
+/** `s` preceded by the temporaries its nested awaits became — or `s` alone when it cannot be split. */
+Stmt[] splitStmt(Rz z, Stmt s) {
+  Pulled p = Pulled(Stmt[](), 0, false);
+  Stmt made = s;
+  match (s.kind) {
+    Var(type, nameTok, init, isConst): {
+      if (init is null) { return Stmt[].filled(1, s); }
+      if (isAwaitL(init!)) {
+        // `auto x = await e;` — the slot needs `X`, so the local gets it written.
+        if (!isAutoTyL(z, type)) { return Stmt[].filled(1, s); }
+        Ty? x = awaitedTy(z, innerAwait(z.c, init!));
+        if (x is null) { return Stmt[].filled(1, s); }
+        return Stmt[].filled(1, Stmt(StmtKind.Var(cloneTy(x!), nameTok, init!, isConst), s.line, s.col));
+      }
+      made = Stmt(StmtKind.Var(type, nameTok, pullE(z, init!, p), isConst), s.line, s.col);
+    }
+    Return(value): {
+      if (value is null || isAwaitL(value!)) { return Stmt[].filled(1, s); }
+      made = Stmt(StmtKind.Return(pullE(z, value!, p)), s.line, s.col);
+    }
+    ExprStmt(expr): {
+      if (isAwaitL(expr)) { return Stmt[].filled(1, s); }
+      made = Stmt(StmtKind.ExprStmt(pullE(z, expr, p)), s.line, s.col);
+    }
+    Assign(target, op, rhs): {
+      if (isAwaitL(rhs)) {
+        Pulled q = Pulled(Stmt[](), 0, false);
+        Expr v = pullE(z, rhs, q);
+        if (q.failed) { return Stmt[].filled(1, s); }
+        p = q;
+        made = Stmt(StmtKind.Assign(target, op, v), s.line, s.col);
+      } else {
+        made = Stmt(StmtKind.Assign(target, op, pullE(z, rhs, p)), s.line, s.col);
+      }
+    }
+    If(cond, then, els): {
+      made = Stmt(StmtKind.If(pullE(z, cond, p), splitBody(z, then), splitBody(z, els)), s.line, s.col);
+    }
+    While(cond, b): { return Stmt[].filled(1, Stmt(StmtKind.While(cond, splitBody(z, b)), s.line, s.col)); }
+    For(init, cond, update, b): {
+      return Stmt[].filled(1, Stmt(StmtKind.For(init, cond, update, splitBody(z, b)), s.line, s.col));
+    }
+    Block(b): { return Stmt[].filled(1, Stmt(StmtKind.Block(splitBody(z, b)), s.line, s.col)); }
+    default: { return Stmt[].filled(1, s); }
+  }
+  if (p.failed) { return Stmt[].filled(1, s); }
+  Stmt[] out = Stmt[].filled(p.n + 1, made);
+  for (i32 i = 0; i < p.n; i++) { out[i] = p.pre[i]; }
+  out[p.n] = made;
+  return out;
+}
+
+/** `body` with every statement split around its nested awaits. */
+Stmt[] splitBody(Rz z, Stmt[] body) {
+  i32 n = 0;
+  Stmt[][] parts = Stmt[][].filled(body.len(), Stmt[]());
+  for (i32 i = 0; i < body.len(); i++) {
+    parts[i] = awaitInStmt(body[i]) ? splitStmt(z, body[i]) : Stmt[].filled(1, body[i]);
+    n = n + parts[i].len();
+  }
+  Stmt[] out = Stmt[].filled(n, body.len() > 0 ? body[0] : sRet(z.c, null));
+  i32 at = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    for (i32 j = 0; j < parts[i].len(); j++) { out[at] = parts[i][j]; at = at + 1; }
+  }
+  return out;
+}
+
+/** The number of `await` tokens in a file — at least as many as any machine in it suspends. */
+i32 awaitTokens(Lexed lexed) {
+  i32 n = 0;
+  for (i32 i = 0; i < lexed.tokenCount; i++) {
+    if (lexed.tokens[i * tokenStride()] == kAwait()) { n = n + 1; }
+  }
+  return n;
 }
 
 // ── The entry ────────────────────────────────────────────────────────────────
@@ -976,6 +1255,8 @@ export struct Lowered {
   Lexed lexed;
   /** Whether anything was rewritten — when false the other three are the originals, untouched. */
   bool changed;
+  /** Why the first `async` body that could not be lowered was declined, or empty. */
+  string why;
 }
 
 // ── async lambdas — `issues/lang/0294c` ──────────────────────────────────────
@@ -986,7 +1267,7 @@ export struct Lowered {
 // **Where `R` comes from.** This pass runs on the tree with no type information at all, and
 // `machineBody` needs `R` to declare the cell the answer lands in. A function writes it; a lambda
 // takes it from the `fn<…>` it is assigned to. So the lowering takes an `async` lambda that is the
-// initialiser of a declaration whose type spells `Pending<R>` out, because that is the one place `R`
+// initialiser of a declaration whose type spells `Ticket<R>` out, because that is the one place `R`
 // is present in the AST — and the emitter declines the rest by name. That is less of a restriction
 // than it sounds: `async` is only *legal* on a slot naming a ticket, so the type has to be written
 // somewhere, and a declaration is where it is written.
@@ -998,14 +1279,14 @@ export struct Lowered {
 // its cell keeps the written one, which turns the capture into an ordinary hoisted local and needs
 // no change to the substitution:
 //
-//     fn<Pending<i32>(string)> f = async (string p) => { … p … };
-//     fn<Pending<i32>(string)> f = (string __wacArg0) => {
+//     fn<Ticket<i32>(string)> f = async (string p) => { … p … };
+//     fn<Ticket<i32>(string)> f = (string __wacArg0) => {
 //       string[] p = string[].filled(1, __wacArg0);   // `p` is a hoisted local now
 //       …                                          // and every read of it is `p[0]`
 //     };
 
 /**
- * The `R` of a `fn<Pending<R>(…)>`, or null when the type is not one.
+ * The `R` of a `fn<Ticket<R>(…)>`, or null when the type is not one.
  *
  * Read off the written type rather than resolved, so a slot spelled through an alias is not one this
  * finds. That is the honest limit of a pass with no types: it can read what the program says.
@@ -1015,7 +1296,7 @@ Ty? slotTicketTy(u8[] src, Lexed lexed, Ty t) {
     Funcref(ret, params): {
       match (ret.kind) {
         Named(tok, typeArgs): {
-          if (synthTextAt(src, lexed, tok) != "Pending") { return null; }
+          if (synthTextAt(src, lexed, tok) != "Ticket") { return null; }
           if (typeArgs.len() != 1) { return null; }
           return typeArgs[0];
         }
@@ -1026,7 +1307,7 @@ Ty? slotTicketTy(u8[] src, Lexed lexed, Ty t) {
   }
 }
 
-/** The `async` lambda `s` declares, or null — `fn<Pending<R>(…)> n = async (…) => { … };`. */
+/** The `async` lambda `s` declares, or null — `fn<Ticket<R>(…)> n = async (…) => { … };`. */
 Expr? asyncLambdaOf(u8[] src, Lexed lexed, Stmt s) {
   match (s.kind) {
     Var(type, nameTok, init, isConst): {
@@ -1049,7 +1330,7 @@ bool anyLambdaLowerable(Program prog, u8[] src, Lexed lexed) {
           Expr? lam = asyncLambdaOf(src, lexed, body[i]);
           if (lam is null) { continue; }
           match (lam!.kind) {
-            Lambda(lps, lbody, la): { if (planBody(lbody).ok) { return true; } }
+            Lambda(lps, lbody, la): { if (la) { return true; } }
             default: { }
           }
         }
@@ -1100,7 +1381,7 @@ i32 argsNeeded(Program prog, u8[] src, Lexed lexed) {
         if (lamM is null) { continue; }
         match (lamM!.kind) {
           Lambda(mps, mbody, ma): {
-            if (planBody(mbody).ok && mps.len() > most) { most = mps.len(); }
+            if (mps.len() > most) { most = mps.len(); }
           }
           default: { }
         }
@@ -1113,7 +1394,7 @@ i32 argsNeeded(Program prog, u8[] src, Lexed lexed) {
           if (lam is null) { continue; }
           match (lam!.kind) {
             Lambda(lps, lbody, la): {
-              if (planBody(lbody).ok && lps.len() > most) { most = lps.len(); }
+              if (lps.len() > most) { most = lps.len(); }
             }
             default: { }
           }
@@ -1138,13 +1419,13 @@ i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     Method[] ms = methodsOf(prog.decls[d]);
     for (i32 m = 0; m < ms.len(); m++) {
-      if (!ms[m].isAsync || !planBody(ms[m].body).ok) { continue; }
+      if (!ms[m].isAsync) { continue; }
       i32 wantM = statesNeeded(ms[m].body);
       if (wantM > most) { most = wantM; }
     }
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        if (isAsync && planBody(body).ok) {
+        if (isAsync) {
           i32 want = statesNeeded(body);
           if (want > most) { most = want; }
         }
@@ -1153,43 +1434,8 @@ i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
           if (lam is null) { continue; }
           match (lam!.kind) {
             Lambda(lps, lbody, la): {
-              if (!planBody(lbody).ok) { continue; }
               i32 w = statesNeeded(lbody);
               if (w > most) { most = w; }
-            }
-            default: { }
-          }
-        }
-      }
-      default: { }
-    }
-  }
-  return most;
-}
-
-/** How many suspension slots this file needs — the largest any one machine asks for. */
-i32 slotsNeeded(Program prog, u8[] src, Lexed lexed) {
-  i32 most = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    Method[] ms = methodsOf(prog.decls[d]);
-    for (i32 m = 0; m < ms.len(); m++) {
-      if (!ms[m].isAsync) { continue; }
-      AsyncPlan pm = planBody(ms[m].body);
-      if (pm.ok && planSuspends(pm) > most) { most = planSuspends(pm); }
-    }
-    match (prog.decls[d].kind) {
-      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        if (isAsync) {
-          AsyncPlan p = planBody(body);
-          if (p.ok && planSuspends(p) > most) { most = planSuspends(p); }
-        }
-        for (i32 i = 0; i < body.len(); i++) {
-          Expr? lam = asyncLambdaOf(src, lexed, body[i]);
-          if (lam is null) { continue; }
-          match (lam!.kind) {
-            Lambda(lps, lbody, la): {
-              AsyncPlan q = planBody(lbody);
-              if (q.ok && planSuspends(q) > most) { most = planSuspends(q); }
             }
             default: { }
           }
@@ -1206,16 +1452,82 @@ bool anyLowerable(Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     Method[] ms = methodsOf(prog.decls[d]);
     for (i32 m = 0; m < ms.len(); m++) {
-      if (ms[m].isAsync && planBody(ms[m].body).ok) { return true; }
+      if (ms[m].isAsync) { return true; }
     }
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        if (isAsync && planBody(body).ok) { return true; }
+        if (isAsync) { return true; }
       }
       default: { }
     }
   }
   return false;
+}
+
+/** What every machine in one file shares: the tail of spellings, and the file's declarations. */
+struct Lw {
+  i32 first;
+  i32 ups;
+  i32 args;
+  u8[] src;
+  Lexed lexed;
+  Program prog;
+  /** Temporaries handed out so far, across the file, so a lambda's never shadow its function's. */
+  i32[] next;
+  /** Why the first machine in the file that could not be built was declined, or empty. */
+  string[] why;
+}
+
+void noteWhy(Lw w, string why) { if (w.why[0] == "") { w.why[0] = why; } }
+
+/** Whether `body` still holds `auto x = await e;` — a slot whose ticket type nothing wrote. */
+bool autoAwaitIn(Rz z, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      Var(type, nameTok, init, isConst): {
+        if (init is not null && isAwaitL(init!) && isAutoTyL(z, type)) { return true; }
+      }
+      If(cond, then, els): { if (autoAwaitIn(z, then) || autoAwaitIn(z, els)) { return true; } }
+      While(cond, b): { if (autoAwaitIn(z, b)) { return true; } }
+      For(init, cond, update, b): { if (autoAwaitIn(z, b)) { return true; } }
+      Block(b): { if (autoAwaitIn(z, b)) { return true; } }
+      default: { }
+    }
+  }
+  return false;
+}
+
+/** Where one machine sits: its parameters, its receiver's struct, its position. */
+struct Site {
+  Param[] params;
+  i32 selfTok;
+  i32 line;
+  i32 col;
+  /** The first column handed to the lambdas it synthesises — the emitter keys a lambda by position. */
+  i32 colBase;
+}
+
+/**
+ * One body's machine: split around its nested awaits, planned, and built — or null when the plan does
+ * not hold, so the caller leaves the declaration as it was and the emitter names the refusal.
+ * `extra` are names that become cells beyond the ones the plan hoists — a lambda's parameters.
+ */
+Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
+  Ctx c0 = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
+               i32[].filled(1, at.colBase), bool[].filled(1, false));
+  Rz z = Rz(c0, at.params, body, w.prog, at.selfTok, w.next);
+  Stmt[] split = splitBody(z, body);
+  AsyncPlan plan = planBody(split);
+  if (!plan.ok) { noteWhy(w, plan.why); return null; }
+  if (autoAwaitIn(z, split)) {
+    noteWhy(w, "an `await` into an `auto` local, on a ticket whose type this file does not write — write the type");
+    return null;
+  }
+  string[] names = string[].filled(plan.hoist.len() + extra.len(), "");
+  for (i32 i = 0; i < plan.hoist.len(); i++) { names[i] = synthTextAt(w.src, w.lexed, plan.hoist[i]); }
+  for (i32 i = 0; i < extra.len(); i++) { names[plan.hoist.len() + i] = extra[i]; }
+  Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, names, w.src, w.lexed, c0.col2, c0.inLam);
+  return machineBody(c, split, plan, ret);
 }
 
 /**
@@ -1225,47 +1537,40 @@ bool anyLowerable(Program prog) {
  * declined by name, which is the same standard the four suspension shapes `design/lang/0014` could
  * not flatten are held to. Declaring a handler is a top-of-body act, so this is where they are.
  */
-Stmt[] lowerLambdasIn(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Stmt[] body) {
+Stmt[] lowerLambdasIn(Lw w, Stmt[] body, i32 selfTok) {
   if (body.len() == 0) { return body; }
   Stmt[] out = Stmt[].filled(body.len(), body[0]);
   for (i32 i = 0; i < body.len(); i++) {
     out[i] = body[i];
     match (body[i].kind) {
       Var(type, nameTok, init, isConst): {
-        Ty? tick = slotTicketTy(src2, lexed2, type);
+        Ty? tick = slotTicketTy(w.src, w.lexed, type);
         if (tick is null || (init is null)) { continue; }
         match (init!.kind) {
           Lambda(lps, lbody, la): {
             if (!la) { continue; }
-            AsyncPlan plan = planBody(lbody);
-            if (!plan.ok) { continue; }
-
-            // The names that become cells: the locals the plan hoisted, and **every parameter**.
-            // A parameter is hoisted whether or not it outlives a suspension, because the machine
-            // puts the whole body inside `__wacStep` — so even a read in state 0 is a capture.
-            string[] names = string[].filled(plan.hoist.len() + lps.len(), "");
-            for (i32 h = 0; h < plan.hoist.len(); h++) {
-              names[h] = synthTextAt(src2, lexed2, plan.hoist[h]);
-            }
-            for (i32 j = 0; j < lps.len(); j++) {
-              names[plan.hoist.len() + j] = synthTextAt(src2, lexed2, lps[j].nameTok);
-            }
+            // **Every parameter becomes a cell**, whether or not it outlives a suspension, because
+            // the machine puts the whole body inside the step — so even a read in state 0 is a capture.
+            string[] pnames = string[].filled(lps.len(), "");
+            for (i32 j = 0; j < lps.len(); j++) { pnames[j] = synthTextAt(w.src, w.lexed, lps[j].nameTok); }
             // A column of its own: the emitter keys a lambda by position, and this builds several.
-            Ctx c = Ctx(first, ups, args, init!.line, init!.col, names, src2, lexed2,
-                        i32[].filled(1, init!.col + 5000), bool[].filled(1, false));
+            Site at = Site(lps, selfTok, init!.line, init!.col, init!.col + 5000);
+            Stmt[]? mach = machineOf(w, at, lbody, tick!, pnames);
+            if (mach is null) { continue; }
+            Ctx c = Ctx(w.first, w.ups, w.args, init!.line, init!.col, pnames, w.src, w.lexed,
+                        i32[].filled(1, init!.col + 9000), bool[].filled(1, false));
 
             Param[] ps2 = Param[].filled(lps.len(), lps.len() > 0 ? lps[0]
                                                                : Param(0 - 1, type, false));
             for (i32 j = 0; j < lps.len(); j++) {
               ps2[j] = Param(tArg(c, j), cloneTy(lps[j].type), lps[j].isConst);
             }
-
-            Stmt[] mach = machineBody(c, lbody, plan, tick!);
-            Stmt[] full = Stmt[].filled(lps.len() + mach.len(), mach[0]);
+            Stmt[] m2 = mach!;
+            Stmt[] full = Stmt[].filled(lps.len() + m2.len(), m2[0]);
             for (i32 j = 0; j < lps.len(); j++) {
               full[j] = sCellFrom(c, lps[j].nameTok, cloneTy(lps[j].type), eId(c, tArg(c, j)));
             }
-            for (i32 k = 0; k < mach.len(); k++) { full[lps.len() + k] = mach[k]; }
+            for (i32 k = 0; k < m2.len(); k++) { full[lps.len() + k] = m2[k]; }
 
             Expr made = Expr(ExprKind.Lambda(ps2, full, false), init!.line, init!.col);
             out[i] = Stmt(StmtKind.Var(type, nameTok, made, isConst), body[i].line, body[i].col);
@@ -1279,48 +1584,42 @@ Stmt[] lowerLambdasIn(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Stm
   return out;
 }
 
+/** The name token of the struct `at` declares, or -1 for an enum — what `this` is in its methods. */
+i32 selfOf(Decl at) {
+  match (at.kind) {
+    StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
+      return sTypeParams.len() == 0 ? sName : 0 - 1;
+    }
+    default: { return 0 - 1; }
+  }
+}
+
 /**
  * `ms` with every `async` method rewritten into a machine, and every method's lambdas lowered.
  *
- * The same three calls `lowerProgram` makes for a free function — `lowerLambdasIn`, `planBody`,
- * `machineBody` — and the same rebuild with `lowPendingTy` and `isAsync: false`, because a lowered
- * machine is an ordinary function that answers a `Pending<T>` and must not be lowered twice.
- *
- * A method whose plan does not hold is left exactly as it was, which is what `lowerProgram` does
- * with a free function in the same position: the emitter then declines it by name rather than
- * emitting a half-rewritten body.
- *
- * **Six parameters, and it takes the `Decl` rather than the pieces for that reason.** This file has
- * to compile on **wac-L5**, the ladder rung that builds the compiler, and rung 5 has a fixed
- * parameter capacity: at eight it answers `wac-L5: ran out of room for parameters` and then buries
- * it under fifty-two cascading `unexpected token` lines from a parser that has given up. The decl
- * carries the methods — via `methodsOf` — and the line and column, which is three parameters in
- * one. `lowerLambdasIn` beside it takes six and is the shape to copy.
+ * The same calls `lowerProgram` makes for a free function, and the same rebuild with `lowTicketTy`
+ * and `isAsync: false`, because a lowered machine is an ordinary function that answers a `Ticket<T>`
+ * and must not be lowered twice. A method whose plan does not hold is left exactly as it was, so the
+ * emitter declines it by name rather than emitting a half-rewritten body.
  */
-Method[] loweredMethods(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, Decl at) {
+Method[] loweredMethods(Lw w, Decl at) {
   Method[] ms = methodsOf(at);
-  i32 line = at.line;
-  i32 col = at.col;
+  i32 self = selfOf(at);
   Method[] out = Method[].filled(ms.len(), ms[0]);
   for (i32 m = 0; m < ms.len(); m++) {
     Method me = ms[m];
-    Stmt[] body2 = lowerLambdasIn(first, ups, args, src2, lexed2, me.body);
+    Stmt[] body2 = lowerLambdasIn(w, me.body, self);
     if (!me.isAsync) {
       out[m] = Method(me.nameTok, me.returnType, me.params, body2, me.isOverride, me.overrideTok,
                       me.hasThis, me.thisConst, me.typeParams, false, me.isPrivate, me.isVirtual);
       continue;
     }
-    AsyncPlan plan = planBody(body2);
-    if (!plan.ok) { out[m] = me; continue; }
-
-    string[] names = string[].filled(plan.hoist.len(), "");
-    for (i32 i = 0; i < plan.hoist.len(); i++) {
-      names[i] = synthTextAt(src2, lexed2, plan.hoist[i]);
-    }
-    Ctx c = Ctx(first, ups, args, line, col, names, src2, lexed2,
-                i32[].filled(1, col + 1000), bool[].filled(1, false));
-    Stmt[] machine = machineBody(c, body2, plan, me.returnType);
-    out[m] = Method(me.nameTok, lowPendingTy(c, cloneTy(me.returnType)), me.params, machine,
+    Stmt[]? machine = machineOf(w, Site(me.params, self, at.line, at.col, at.col + 1000 + 100 * m),
+                                body2, me.returnType, string[]());
+    if (machine is null) { out[m] = me; continue; }
+    Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
+                i32[].filled(1, 0), bool[].filled(1, false));
+    out[m] = Method(me.nameTok, lowTicketTy(c, cloneTy(me.returnType)), me.params, machine!,
                     me.isOverride, me.overrideTok, me.hasThis, me.thisConst, me.typeParams, false,
                     me.isPrivate, me.isVirtual);
   }
@@ -1331,30 +1630,26 @@ Method[] loweredMethods(i32 first, i32 ups, i32 args, u8[] src2, Lexed lexed2, D
  * Every `async` function in `prog`, rewritten into a state machine.
  *
  * **A function this cut cannot flatten is left exactly as it was**, still marked `async`, so the
- * emitter's own refusal names it rather than this producing a half-machine. The two refusals are
- * different questions — *can I flatten this shape* and *do I know how to emit an async function at
- * all* — and running one of them here does not answer the other.
+ * emitter's own refusal names it rather than this producing a half-machine.
  *
  * The source is extended once for the whole file, not once per function, because `synthSource` is
- * idempotent and the token indices it hands out are absolute.
+ * idempotent and the token indices it hands out are absolute. It is sized from the file's `await`
+ * tokens, which bound both the slots any one machine needs and the temporaries the whole file does.
  */
 export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
   if (!anyLowerable(prog) && !anyLambdaLowerable(prog, src, lexed)) {
-    return Lowered(prog, src, lexed, false);
+    return Lowered(prog, src, lexed, false, "");
   }
-  i32 ups = slotsNeeded(prog, src, lexed);
-  i32 states = numsNeeded(prog, src, lexed);
+  i32 ups = awaitTokens(lexed);
+  i32 states = numsNeeded(prog, src, lexed) + 4 * ups;
   i32 args = argsNeeded(prog, src, lexed);
 
-  i32 line = 1;
-  i32 col = 1;
   u8[] src2 = synthSource(src, ups, states, args);
   i32 first = lexed.tokenCount;
-  Lexed lexed2 = synthTokens(lexed, src2, ups, states, args, line, col);
+  Lexed lexed2 = synthTokens(lexed, src2, ups, states, args, 1, 1);
+  Lw w = Lw(first, ups, args, src2, lexed2, prog, i32[].filled(1, 0), string[].filled(1, ""));
 
-  // **One extra declaration per file**: the no-op a step cell is filled with before the machine
-  // exists. A top-level function rather than a lambda, because it is what an `fn<bool()>[].filled(1, …)`
-  // needs and a lambda cannot be a fill.
+  // **One extra declaration per file**: the step a machine holds before its real one is assigned.
   Decl[] out = Decl[].filled(prog.decls.len() + 1, prog.decls[0]);
   for (i32 d = 0; d < prog.decls.len(); d++) {
     out[d] = prog.decls[d];
@@ -1362,46 +1657,34 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         // **Lambdas first.** An `async` function's own machine substitutes its hoisted names into
         // everything its body contains, lambdas included — so a lambda lowered beforehand is
-        // ordinary code by the time that walk reaches it, and its captures of the enclosing
-        // function's cells are rewritten with everything else.
-        Stmt[] body2 = lowerLambdasIn(first, ups, args, src2, lexed2, body);
+        // ordinary code by the time that walk reaches it.
+        Stmt[] body2 = lowerLambdasIn(w, body, 0 - 1);
         if (!isAsync) {
           out[d] = Decl(DeclKind.Func(nameTok, returnType, params, body2, exported, typeParams,
                                       false),
                         prog.decls[d].line, prog.decls[d].col);
           continue;
         }
-        AsyncPlan plan = planBody(body2);
-        if (!plan.ok) { continue; }
-
-        string[] names = string[].filled(plan.hoist.len(), "");
-        for (i32 i = 0; i < plan.hoist.len(); i++) {
-          names[i] = synthTextAt(src2, lexed2, plan.hoist[i]);
-        }
-        Ctx c = Ctx(first, ups, args, prog.decls[d].line, prog.decls[d].col, names, src2, lexed2,
-                    i32[].filled(1, prog.decls[d].col + 1000), bool[].filled(1, false));
-
-        Stmt[] machine = machineBody(c, body2, plan, returnType);
-        out[d] = Decl(DeclKind.Func(nameTok, lowPendingTy(c, cloneTy(returnType)), params, machine,
+        Site at = Site(params, 0 - 1, prog.decls[d].line, prog.decls[d].col, prog.decls[d].col + 1000);
+        Stmt[]? machine = machineOf(w, at, body2, returnType, string[]());
+        if (machine is null) { continue; }
+        Ctx c = Ctx(first, ups, args, 1, 1, string[](), src2, lexed2, i32[].filled(1, 0),
+                    bool[].filled(1, false));
+        out[d] = Decl(DeclKind.Func(nameTok, lowTicketTy(c, cloneTy(returnType)), params, machine!,
                                     exported, typeParams, false),
                       prog.decls[d].line, prog.decls[d].col);
       }
-      // **A method is a `Func` in all but name** — `nameTok`, `returnType`, `params`, `body` —
-      // and `this` is an ordinary parameter, so the machine that already survives a suspension
-      // over parameters needs nothing new for a receiver. `issues/lang/0301b`.
+      // **A method is a `Func` in all but name**, and `this` is an ordinary parameter, so the machine
+      // that already survives a suspension over parameters needs nothing new for a receiver.
       StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
         if (sMethods.len() == 0) { continue; }
-        out[d] = Decl(DeclKind.StructDecl(sName, sParent, sFields,
-                                          loweredMethods(first, ups, args, src2, lexed2,
-                                                         prog.decls[d]),
+        out[d] = Decl(DeclKind.StructDecl(sName, sParent, sFields, loweredMethods(w, prog.decls[d]),
                                           sExported, sConst, sTypeParams),
                       prog.decls[d].line, prog.decls[d].col);
       }
       EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): {
         if (eMethods.len() == 0) { continue; }
-        out[d] = Decl(DeclKind.EnumDecl(eName, eVariants, eExported,
-                                        loweredMethods(first, ups, args, src2, lexed2,
-                                                       prog.decls[d]),
+        out[d] = Decl(DeclKind.EnumDecl(eName, eVariants, eExported, loweredMethods(w, prog.decls[d]),
                                         eTypeParams),
                       prog.decls[d].line, prog.decls[d].col);
       }
@@ -1412,5 +1695,6 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
   Stmt[] noBody = Stmt[].filled(1, sRet(top, eBool(top, true)));
   out[prog.decls.len()] = Decl(DeclKind.Func(tNoStep(top), lowPrimTy(top, tBool(top)), Param[](),
                                              noBody, false, i32[](), false), 1, 1);
-  return Lowered(Program(out), src2, lexed2, true);
+
+  return Lowered(Program(out), src2, lexed2, true, w.why[0]);
 }

@@ -35,7 +35,7 @@
 import { lex, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { coreExports, isBuiltinSpec } from "./coretext.wac";
-import { endsWith } from "./path.wac";
+import { endsWith, startsWith } from "./path.wac";
 import { isTupleName, tupleMembers, tupleName } from "./tuples.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
@@ -327,12 +327,21 @@ export i32 errNoTextConversion() { return 230; }
  * overridden nor shadowed (spec/next ch12 `§wac-nonvirtual-final-7a4kz3t`).
  */
 export i32 errNotVirtual() { return 231; }
+/** `schedule f;` where `f` is not a `fn<void(Continuation)>` — spec/next ch35. */
+export i32 errScheduleTarget() { return 232; }
+
+/** Whether `t` is what a `schedule` statement takes: one `Continuation` in, nothing out. */
+bool isScheduleTarget(string t) {
+  if (!startsWithFn(t) || funcrefReturn(t) != "void" || funcrefParamCount(t) != 1) { return false; }
+  string p = funcrefParamAt(t, 0);
+  return p == "Continuation" || startsWith(p, "Continuation#");
+}
 
 /** What `for (… in e)` binds each time round: `e`'s element type, or `typeNone` when it has none. */
 string forInElemOf(C c, Expr iterable) {
   string it = typeOfExpr(c, iterable);
   if (it == typeNone() || it == "") { return typeNone(); }
-  if (isArrayName(it)) { return dropLast(it, 2); }
+  if (isArrayName(it)) { return unFn(dropLast(it, 2)); }
   if (templateOf(it) == "Vec") {
     string[] args = genericArgs(it);
     return args.len() == 1 ? args[0] : typeNone();
@@ -552,7 +561,7 @@ string safeMemberTypeOf(C c, Expr obj, i32 nameTok) {
   string ft = c.fieldType(tmpl, tokenText(c, nameTok));
   if (ft == "" || ft == typeNone()) { return typeNone(); }
   ft = substituteType(c, base, ft);
-  return endsWith(ft, "?") ? ft : ft + "?";
+  return isNullableName(ft) ? ft : suffixed(ft, "?");
 }
 
 /** `p?.m`: `p` must be able to be absent, and what it holds when present must have `m`. */
@@ -873,6 +882,7 @@ DA daStmt(C c, Stmt s, DA st, DAExit loop) {
     }
     // Run on the way out, so whatever it reads is read there; it assigns nothing the rest can see.
     Defer(inner): { daStmt(c, inner, st.copy(), loop); return st; }
+    Schedule(target): { daExpr(c, target, st); return st; }
   }
 }
 
@@ -951,7 +961,7 @@ void daExpr(C c, Expr e, DA st) {
   match (e.kind) {
     Ident(tok): { daRead(c, tokenText(c, tok), e.line, e.col, st); }
     Unary(op, operand): { daExpr(c, operand, st); }
-    Await(operand): { daExpr(c, operand, st); }
+    Await(operand): { if (operand is not null) { daExpr(c, operand!, st); } }
     Binary(op, l, r): { daExpr(c, l, st); daExpr(c, r, st); }
     Cast(op, operand, target): { daExpr(c, operand, st); }
     Ternary(cond, then, els): { daExpr(c, cond, st); daExpr(c, then, st); daExpr(c, els, st); }
@@ -1480,18 +1490,24 @@ bool rawCast(string from, string to) {
  * first, and the type arguments are what it substitutes afterwards.
  */
 /**
- * Whether `t` is a `Pending<…>` — the one type `await` accepts.
+ * Whether `t` is a `Ticket<…>` — what `await` answers the value of (spec/next ch35).
  *
- * Keyed names are accepted too: a second file declaring `Pending` is spelled `Pending@<file>`, and
+ * Keyed names are accepted too: a second file declaring `Ticket` is spelled `Ticket@<file>`, and
  * an `await` inside *that* file is asking about that one. Written once because both the type rule
  * and the diagnostic ask the same question, and two spellings of it would drift.
  */
-bool isPendingType(string t) {
+/** Whether `t` is the untyped `TicketBase`, nullable or not — awaited for a step, not a value. */
+bool isTicketBaseType(string t) {
+  string b = isNullableName(t) ? withoutNull(t) : t;
+  return b == "TicketBase" || startsWith(b, "TicketBase#");
+}
+
+bool isTicketType(string t) {
   string base = genericBase(t);
   if (base == "") { return false; }
-  if (base == "Pending") { return true; }
+  if (base == "Ticket") { return true; }
   u8[] a = base.toBytes();
-  u8[] want = "Pending@".toBytes();
+  u8[] want = "Ticket@".toBytes();
   if (a.len() < want.len()) { return false; }
   for (i32 i = 0; i < want.len(); i++) {
     if (a[i] != want[i]) { return false; }
@@ -1702,8 +1718,9 @@ string substituteType(C c, string owner, string written) {
   string core = written;
   string suffix = "";
   for (i32 guard = 0; guard < 8; guard++) {
-    if (endsWith(core, "[]")) { core = dropLast(core, 2); suffix = "[]" + suffix; }
-    else if (endsWith(core, "?")) { core = dropLast(core, 1); suffix = "?" + suffix; }
+    if (startsWithFn(core)) { break; }
+    if (endsWith(core, "[]")) { core = unFn(dropLast(core, 2)); suffix = "[]" + suffix; }
+    else if (endsWith(core, "?")) { core = unFn(dropLast(core, 1)); suffix = "?" + suffix; }
     else { break; }
   }
 
@@ -1726,7 +1743,7 @@ string substituteType(C c, string owner, string written) {
   for (i32 i = 0; i < params.len(); i++) {
     if (params[i] != core) { continue; }
     if (i >= args.len()) { return typeNone(); }
-    return args[i] + suffix;
+    return suffixed(args[i], suffix);
   }
   // **And inside a funcref**, which is a type holding one just as much as `Option<V>` is. A generic
   // whose method takes an `fn<T(i32)>`, or whose field is an `fn<T()>`, kept its `T` here and every
@@ -1748,7 +1765,7 @@ string substituteType(C c, string owner, string written) {
         out = out + pt;
         wrote = wrote + 1;
       }
-      return out + ") -> " + substituteType(c, owner, fret) + suffix;
+      return suffixed(out + ") -> " + substituteType(c, owner, fret), suffix);
     }
   }
   // **And inside an instantiation.** `Map<K, V>.get` returns `Option<V>`, whose core is not a
@@ -1819,12 +1836,36 @@ bool isIntegerName(string n) {
 }
 
 /** Whether a type is nullable, which is one of the ways to have a default value: null. */
-bool isNullableName(string n) { return endsWith(n, "?"); }
+bool isNullableName(string n) { return endsWith(n, "?") && !startsWithFn(n); }
+
+/**
+ * `t` with a `?` or `[]` after it — **parenthesised when `t` is a funcref**, since `fn(X) -> R?` is a
+ * funcref answering `R?`. Without the brackets `fn<i32()>?` and `fn<i32?()>` were one spelling, so
+ * one was accepted wherever the other was wanted.
+ */
+string suffixed(string t, string sfx) {
+  return startsWithFn(t) && sfx != "" ? "(" + t + ")" + sfx : t + sfx;
+}
+
+/** A type with the brackets `suffixed` put round a funcref taken off again. */
+string unFn(string t) {
+  if (t.len() < 5 || !startsWith(t, "(fn(") || !endsWith(t, ")")) { return t; }
+  i32 depth = 0;
+  u8[] b = t.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == 40) { depth = depth + 1; }
+    if (b[i] == 41) {
+      depth = depth - 1;
+      if (depth == 0 && i != b.len() - 1) { return t; }
+    }
+  }
+  return t.slice(1, t.len() - 1);
+}
 
 /** The type inside a `T?`, or `""` when it is not one. */
 string withoutNull(string n) {
-  if (!endsWith(n, "?")) { return ""; }
-  return dropLast(n, 1);
+  if (!isNullableName(n)) { return ""; }
+  return unFn(dropLast(n, 1));
 }
 
 /**
@@ -1953,10 +1994,10 @@ bool isReferenceType(C c, string t) {
  */
 export bool nullableIntoNonNull(C c, string want, string got) {
   if (want == "" || got == "") { return false; }
-  if (!endsWith(got, "?")) { return false; }
+  if (!isNullableName(got)) { return false; }
   // **One absence each, peeled together**: a `T??` into a `T?` is a `T?` into a `T` one layer down —
   // the `T??` has a state the `T?` cannot hold (spec/next ch10 `§wac-nested-not-collapsed-m6cz4gb`).
-  if (endsWith(want, "?")) { return nullableIntoNonNull(c, withoutNull(want), withoutNull(got)); }
+  if (isNullableName(want)) { return nullableIntoNonNull(c, withoutNull(want), withoutNull(got)); }
   // **`anyref` is already nullable**, so `anyref? into anyref` takes nothing away and the reference
   // accepts it. The old exact-name test reported it, which is the one cell of this family wacc
   // invented — found by putting `anyref?` in the slot grid.
@@ -1975,7 +2016,7 @@ export bool nullableIntoNonNull(C c, string want, string got) {
 }
 
 /** Whether `==` is refused on this type because it is a reference. Arrays are, as structs are. */
-bool isArrayName(string n) { return endsWith(n, "[]"); }
+bool isArrayName(string n) { return endsWith(n, "[]") && !startsWithFn(n); }
 
 /**
  * The storage types, which WasmGC allows as array elements and nowhere else.
@@ -3825,7 +3866,7 @@ export string typeOfTy(C c, Ty t) {
       if (reportBindingAsType(c, elem)) { return typeNone(); }
       string inner = typeOfTy(c, elem);
       if (inner == typeNone()) { return typeNone(); }
-      return inner + "[]";
+      return suffixed(inner, "[]");
     }
     Nullable(inner): {
       // The same hole as `Arr` above, and it was silent in the same way: `i32 zz = 1; zz? q = null;`
@@ -3834,7 +3875,7 @@ export string typeOfTy(C c, Ty t) {
       if (reportBindingAsType(c, inner)) { return typeNone(); }
       string base = typeOfTy(c, inner);
       if (base == typeNone()) { return typeNone(); }
-      return base + "?";
+      return suffixed(base, "?");
     }
     // A funcref spells itself the way the reference words it — `fn(i32) -> i32` — so two of them are
     // the same type exactly when their parameters and return agree, which is what the language means
@@ -4404,7 +4445,7 @@ export i32 litKindOf(Expr e) {
 export bool acceptsLiteral(string want, i32 lit) {
   // A `T?` takes a null, and takes whatever `T` takes: `i32? n = null;` and `i32? n = 5;` are both
   // legal. So the question for a nullable is the question for the type inside it, plus null.
-  if (endsWith(want, "?")) {
+  if (isNullableName(want)) {
     if (lit == litNull()) { return true; }
     return acceptsLiteral(withoutNull(want), lit);
   }
@@ -4478,7 +4519,7 @@ export string typeOfLvalue(C c, Lvalue lv) {
     LIndex(base, index): {
       string arr = typeOfLvalue(c, base);
       if (!isArrayName(arr)) { return typeNone(); }
-      return dropLast(arr, 2);
+      return unFn(dropLast(arr, 2));
     }
 
     LUnwrap(base): {
@@ -4714,7 +4755,7 @@ export string typeOfExpr(C c, Expr e) {
         // absences merged, said out loud (spec/next ch10 `§wac-nested-not-collapsed-m6cz4gb`).
         if (isNullLiteralExpr(right)) {
           string once = withoutNull(clt);
-          return endsWith(once, "?") ? once : clt;
+          return isNullableName(once) ? once : clt;
         }
         string cbase = withoutNull(clt);
         return cbase == "" ? typeNone() : cbase;
@@ -4793,7 +4834,13 @@ export string typeOfExpr(C c, Expr e) {
       return br;
     }
     Unwrap(operand): {
-      string inner = withoutNull(typeOfExpr(c, operand));
+      string whole = typeOfExpr(c, operand);
+      // **`r!` on a `Result` is its `Ok` value**, or a trap — how spec/next ch35 writes `t.wait()!`.
+      if (genericBase(whole) == "Result") {
+        string[] rargs = genericArgs(whole);
+        return rargs.len() >= 1 ? rargs[0] : typeNone();
+      }
+      string inner = withoutNull(whole);
       return inner == "" ? typeNone() : inner;
     }
     Index(arr, index): {
@@ -4805,7 +4852,7 @@ export string typeOfExpr(C c, Expr e) {
       // was accepted, while the *same rules* refuse `s - 1` and `i32 n = s;`. `issues/lang/0159`.
       if (a == "string") { return "string"; }
       if (!isArrayName(a)) { return typeNone(); }
-      string elem = dropLast(a, 2);
+      string elem = unFn(dropLast(a, 2));
       // Reading a packed element **widens to `i32`**, which is why `return this.data[i];` from an
       // `i32` function is the ordinary way this repository reads a byte. Calling it a `u8` reported
       // 115 files, and that is what this used to avoid by saying nothing at all — but nothing is not
@@ -4825,8 +4872,11 @@ export string typeOfExpr(C c, Expr e) {
     // not a ticket, which keeps this silent while `checkExpr` is the one that says so; a type made up
     // here would report the same fault a second time through whatever slot the value lands in.
     Await(operand): {
-      string at = typeOfExpr(c, operand);
-      if (!isPendingType(at)) { return typeNone(); }
+      // `await;`, and `await t` on a `TicketBase?`, answer nothing: one step boundary (ch35).
+      if (operand is null) { return "void"; }
+      string at = typeOfExpr(c, operand!);
+      if (isTicketBaseType(at)) { return "void"; }
+      if (!isTicketType(at)) { return typeNone(); }
       string[] aargs2 = genericArgs(at);
       if (aargs2.len() != 1) { return typeNone(); }
       return aargs2[0];
@@ -4997,7 +5047,7 @@ export string typeOfExpr(C c, Expr e) {
       // `reportBindingAsType` for why the two halves are split.
       if (bindingAsType(c, elem)) { return typeNone(); }
       string el = typeOfTy(c, elem);
-      return el == "" || el == typeNone() ? typeNone() : el + "[]";
+      return el == "" || el == typeNone() ? typeNone() : suffixed(el, "[]");
     }
     // `[a, b]` has the type `checkExpr` gave it, which is the slot's when it had one — `[short + len]`
     // returned from a `u8[]` function is a `u8[]`, and its elements alone would have said `i32[]`. A
@@ -5256,10 +5306,10 @@ i32 literalDigits(C c, Expr e) {
 string unifyArms(C c, string a, string b) {
   if (a == b) { return a; }
   if (a == typeNone() || b == typeNone() || a == "" || b == "") { return typeNone(); }
-  string ab = endsWith(a, "?") ? withoutNull(a) : a;
-  string bb = endsWith(b, "?") ? withoutNull(b) : b;
-  if (ab == bb) { return endsWith(a, "?") ? a : b; }
-  if (endsWith(a, "?") == endsWith(b, "?")) {
+  string ab = isNullableName(a) ? withoutNull(a) : a;
+  string bb = isNullableName(b) ? withoutNull(b) : b;
+  if (ab == bb) { return isNullableName(a) ? a : b; }
+  if (isNullableName(a) == isNullableName(b)) {
     if (assignable(c, b, a)) { return b; }
     if (assignable(c, a, b)) { return a; }
   }
@@ -5426,7 +5476,7 @@ void checkJsxChild(C c, Expr kid) {
     return;
   }
   // A `Node` is itself — a variant of one too, `Node.Text(…)`.
-  if (!endsWith(got, "?") && assignable(c, "Node", got)) { return; }
+  if (!isNullableName(got) && assignable(c, "Node", got)) { return; }
   if (nullableIntoNonNull(c, "Node", got)) {
     c.report(errNullableToNonNull(), kid.line, kid.col);
     return;
@@ -5941,7 +5991,7 @@ void checkExpr(C c, Expr e) {
       // types with no `?`, and `someEnum!` compiled. The `withoutNull` guard above is what makes
       // asking `isReferenceName` safe here, since it has already established there is no `?`.
       string ut2 = typeOfExpr(c, operand);
-      if (withoutNull(ut2) == "" &&
+      if (withoutNull(ut2) == "" && genericBase(ut2) != "Result" &&
           (isPrimitiveName(ut2) || ut2 == "bool" || isReferenceName(c, ut2))) {
         c.report(errNeedsNullable(), e.line, e.col);
       }
@@ -5951,7 +6001,7 @@ void checkExpr(C c, Expr e) {
       if (litKindOf(operand) == litNull()) { c.report(errNeedsNullable(), e.line, e.col); }
     }
     Await(operand): {
-      checkExpr(c, operand);
+      if (operand is not null) { checkExpr(c, operand!); }
       // **The declaration first.** `await` outside an `async` function is wrong wherever its operand
       // is a ticket or not, and saying so names the fix — the caller writes `async` — rather than
       // sending the reader after the operand's type.
@@ -5959,13 +6009,24 @@ void checkExpr(C c, Expr e) {
         c.report(errAwaitOutsideAsync(), e.line, e.col);
         return;
       }
-      string awt = typeOfExpr(c, operand);
+      if (operand is null) { return; }
+      // `await null;` — `null` has no type here to wait on (`§wac-await-bare-ge5p75p`).
+      if (litKindOf(operand!) == litNull()) {
+        c.reportWith(errAwaitNotPending(), e.line, e.col, "`null` has no type here — write `await;` for a step");
+        return;
+      }
+      // A literal has no type of its own to be a ticket of — `await 5` (`§wac-await-pending-9km2xtr`).
+      if (litKindOf(operand!) != litNone()) {
+        c.reportWith(errAwaitNotPending(), e.line, e.col, "`await` wants a Ticket<T>, and this is a literal");
+        return;
+      }
+      string awt = typeOfExpr(c, operand!);
       // Unknown stays silent, by the rule the rest of this checker keeps: the operand was already
       // reported by whatever could not name it.
       if (awt == typeNone() || awt == "") { return; }
-      if (!isPendingType(awt)) {
+      if (!isTicketType(awt) && !isTicketBaseType(awt)) {
         c.reportWith(errAwaitNotPending(), e.line, e.col,
-                     "`await` wants a Pending<T>, and this is " + awt);
+                     "`await` wants a Ticket<T>, and this is " + awt);
         return;
       }
     }
@@ -6111,8 +6172,8 @@ void checkExpr(C c, Expr e) {
     ArrLit(elements): {
       string slot = isNullableName(want) ? withoutNull(want) : want;
       string et = typeNone();
-      if (slot != typeNone() && slot != "anyref" && endsWith(slot, "[]")) {
-        et = slot.slice(0, slot.len() - 2);
+      if (slot != typeNone() && slot != "anyref" && isArrayName(slot)) {
+        et = unFn(slot.slice(0, slot.len() - 2));
       } else if (slot != typeNone() && slot != "anyref" && !wantUnknown) {
         c.reportWith(errArrayLiteralSlot(), e.line, e.col, expectedFound(want, "an array"));
       } else if (!wantUnknown) {
@@ -6122,7 +6183,7 @@ void checkExpr(C c, Expr e) {
           c.report(errArrayLiteralType(), e.line, e.col);
           return;
         }
-        et = inferred.slice(0, inferred.len() - 2);
+        et = unFn(inferred.slice(0, inferred.len() - 2));
       }
       for (i32 i = 0; i < elements.len(); i++) {
         c.expected = et;
@@ -6134,7 +6195,7 @@ void checkExpr(C c, Expr e) {
         if (guessed != typeNone()) { c.noteArrLit(e.line, e.col, guessed); }
         return;
       }
-      c.noteArrLit(e.line, e.col, et + "[]");
+      c.noteArrLit(e.line, e.col, suffixed(et, "[]"));
       for (i32 i = 0; i < elements.len(); i++) { checkPackedLiteral(c, et, elements[i]); }
       for (i32 i = 0; i < elements.len(); i++) { checkElement(c, et, elements[i]); }
     }
@@ -6544,7 +6605,7 @@ void checkVoidNullable(C c, string t, Ty at) {
   string inner = t;
   for (i32 guard = 0; guard < 8; guard++) {
     if (!isArrayName(inner)) { break; }
-    inner = dropLast(inner, 2);
+    inner = unFn(dropLast(inner, 2));
   }
   string unwrapped = withoutNull(inner);
   if (unwrapped == "void") {
@@ -6878,8 +6939,11 @@ string funcrefReturn(string t) {
  * same, and one comparison reports arity and parameter types together in the words the rest of this
  * checker uses: *expected fn(i32) -> i32, found fn() -> i32*.
  */
-void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stmt[] body,
+void checkLambda(C c, string slot, bool wantUnknown, Expr e, Param[] params, Stmt[] body,
                  bool isAsync) {
+  // **A nullable funcref slot takes a lambda as its funcref does** — `t.drive = () => { … };` into
+  // an `fn<bool()>?` field. The lambda is never the `null`.
+  string want = isNullableName(slot) && startsWithFn(withoutNull(slot)) ? withoutNull(slot) : slot;
   // Nothing wanted a funcref here. A lambda has no type of its own to fall back on, so this is the
   // one shape that cannot be reported as a mismatch by the caller: `typeOfExpr` answers unknown for
   // a lambda, and unknown is assignable to everything, which is exactly how `i32 g = () => 42;` was
@@ -6918,8 +6982,8 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   string bodyRet = ret;
   if (isAsync) {
     string[] rargs = genericArgs(ret);
-    if (!isPendingType(ret) || rargs.len() != 1) {
-      c.reportWith(errAsyncLambdaSlot(), e.line, e.col, expectedFound("a Pending<…>", ret));
+    if (!isTicketType(ret) || rargs.len() != 1) {
+      c.reportWith(errAsyncLambdaSlot(), e.line, e.col, expectedFound("a Ticket<…>", ret));
       return;
     }
     bodyRet = rargs[0];
@@ -7114,8 +7178,8 @@ string writtenTy(C c, Ty t) {
       }
       return out + ">";
     }
-    Arr(elem): { return writtenTy(c, elem) + "[]"; }
-    Nullable(inner): { return writtenTy(c, inner) + "?"; }
+    Arr(elem): { return suffixed(writtenTy(c, elem), "[]"); }
+    Nullable(inner): { return suffixed(writtenTy(c, inner), "?"); }
     // **A funcref, in the same spelling `typeOfTy` produces.** There was no arm for one, so a
     // parameter written `fn<U(U, T)>` came back as the empty string — which reads as "no slot" and
     // told a perfectly good lambda that *"nothing here wants a function"*. It mattered from the day
@@ -7943,7 +8007,7 @@ bool callsAFunction(C c, Expr e) {
  */
 /** Is this type one a write can reach shared state through — a struct, an enum or an array? */
 bool mutableRefName(C c, string t) {
-  string at = endsWith(t, "?") ? t.slice(0, t.len() - 1) : t;
+  string at = isNullableName(t) ? unFn(t.slice(0, t.len() - 1)) : t;
   return isArrayName(at) || c.isStruct(at) || c.isEnum(at);
 }
 
@@ -8280,8 +8344,9 @@ string armBindingType(C c, Expr subject, Arm arm, i32 b) {
 bool nameable(C c, string t) {
   string core = t;
   for (i32 guard = 0; guard < 8; guard++) {
-    if (endsWith(core, "[]")) { core = dropLast(core, 2); }
-    else if (endsWith(core, "?")) { core = dropLast(core, 1); }
+    if (startsWithFn(core)) { break; }
+    if (endsWith(core, "[]")) { core = unFn(dropLast(core, 2)); }
+    else if (endsWith(core, "?")) { core = unFn(dropLast(core, 1)); }
     else { break; }
   }
   string base = genericBase(core);
@@ -8506,15 +8571,23 @@ bool checkBuiltinCall(C c, Expr call, Expr recvExpr, string recv, string name, E
  * and answering the template's own text would claim a type no instance has.
  */
 string boundMethodType(C c, string recv, string name) {
-  if (recv == "" || c.isGeneric(recv) || !c.isStruct(recv)) { return typeNone(); }
-  i32 at = c.methodAt(recv, name);
+  if (recv == "" || c.isGeneric(recv)) { return typeNone(); }
+  // **An instantiation binds through its template**, with the receiver's arguments put in:
+  // `pending.push` on a `Vec<Continuation>` is an `fn<void(Continuation)>` (spec/next ch35's
+  // `schedule pending.push;`). A method with letters of its own is still left out.
+  string tmpl = templateOf(recv);
+  if (!c.isStruct(tmpl)) { return typeNone(); }
+  i32 at = c.methodAt(tmpl, name);
   if (at < 0 || c.methodStatics[at]) { return typeNone(); }
+  if (at < c.methodTypeParams.len() && c.methodTypeParams[at] != "") { return typeNone(); }
   string out = "fn(";
   for (i32 i = 0; i < c.methodParamCount[at]; i++) {
     if (i > 0) { out = out + ", "; }
-    out = out + c.methodParamTypes[c.methodParamAt[at] + i];
+    string pt = c.methodParamTypes[c.methodParamAt[at] + i];
+    out = out + (tmpl != recv ? substituteType(c, recv, pt) : pt);
   }
-  return out + ") -> " + c.methodReturns[at];
+  string rt = c.methodReturns[at];
+  return out + ") -> " + (tmpl != recv ? substituteType(c, recv, rt) : rt);
 }
 
 string staticMethodType(C c, Expr obj, string name) {
@@ -8620,8 +8693,8 @@ string receiverType(C c, Expr obj) {
 bool mentionsTypeParam(string written, string name) {
   if (written == "" || name == "") { return false; }
   if (written == name) { return true; }
-  if (endsWith(written, "[]")) { return mentionsTypeParam(dropLast(written, 2), name); }
-  if (endsWith(written, "?")) { return mentionsTypeParam(dropLast(written, 1), name); }
+  if (isArrayName(written)) { return mentionsTypeParam(unFn(dropLast(written, 2)), name); }
+  if (isNullableName(written)) { return mentionsTypeParam(unFn(dropLast(written, 1)), name); }
   if (genericBase(written) == "") { return false; }
   string[] wargs = genericArgs(written);
   for (i32 i = 0; i < wargs.len(); i++) {
@@ -8644,12 +8717,12 @@ void bindTypeParams(C c, string written, string actual, string[] names, string[]
       return;
     }
   }
-  if (endsWith(written, "[]") && endsWith(actual, "[]")) {
-    bindTypeParams(c, dropLast(written, 2), dropLast(actual, 2), names, bound, clashed);
+  if (isArrayName(written) && isArrayName(actual)) {
+    bindTypeParams(c, unFn(dropLast(written, 2)), unFn(dropLast(actual, 2)), names, bound, clashed);
     return;
   }
-  if (endsWith(written, "?") && endsWith(actual, "?")) {
-    bindTypeParams(c, dropLast(written, 1), dropLast(actual, 1), names, bound, clashed);
+  if (isNullableName(written) && isNullableName(actual)) {
+    bindTypeParams(c, unFn(dropLast(written, 1)), unFn(dropLast(actual, 1)), names, bound, clashed);
     return;
   }
   // **And through a funcref**, which holds a letter as readily as `Option<V>` does — and is where a
@@ -8684,14 +8757,15 @@ string applyBindings(string written, string[] names, string[] bound) {
   string core = written;
   string suffix = "";
   for (i32 guard = 0; guard < 8; guard++) {
-    if (endsWith(core, "[]")) { core = dropLast(core, 2); suffix = "[]" + suffix; }
-    else if (endsWith(core, "?")) { core = dropLast(core, 1); suffix = "?" + suffix; }
+    if (startsWithFn(core)) { break; }
+    if (endsWith(core, "[]")) { core = unFn(dropLast(core, 2)); suffix = "[]" + suffix; }
+    else if (endsWith(core, "?")) { core = unFn(dropLast(core, 1)); suffix = "?" + suffix; }
     else { break; }
   }
   for (i32 i = 0; i < names.len(); i++) {
     if (names[i] != core) { continue; }
     if (bound[i] == "") { return typeNone(); }
-    return bound[i] + suffix;
+    return suffixed(bound[i], suffix);
   }
   // **And inside a funcref**, which is a type holding a letter just as much as `Option<V>` is.
   // `substituteType` gained this arm for the owner's letters and this function never had it, because
@@ -8706,7 +8780,7 @@ string applyBindings(string written, string[] names, string[] bound) {
         if (i > 0) { out = out + ", "; }
         out = out + applyBindings(funcrefParamAt(core, i), names, bound);
       }
-      return out + ") -> " + applyBindings(fret, names, bound) + suffix;
+      return suffixed(out + ") -> " + applyBindings(fret, names, bound), suffix);
     }
   }
   // **And inside an instantiation.** `Box<T> wrap<T>(T v)` returns a `Box<T>`, whose core is not a
@@ -9363,7 +9437,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     // **A packed element widens to `i32` on the way out and takes one on the way in.** `u8[]` filled
     // from an `i32` is how `packages/zstd/src/block.wac` writes a run, and asking for a `u8` exactly
     // refused a working file — `spec/cases/0036`.
-    string el = dropLast(recv, 2);
+    string el = unFn(dropLast(recv, 2));
     if (litKindOf(args[0]) != litNone()) {
       reportLiteral(c, el, args[0], errBuiltinArg(), args[0].line, args[0].col);
     } else {
@@ -10335,6 +10409,13 @@ void checkStmt(C c, Stmt s, Ty want) {
     // expressions that were part of something default: a return, an initialiser, a condition. A
     // statement that is just a call is the commonest shape in the language and had no rule applied
     // to it at all, which is how the const-receiver check looked broken when it was merely unreached.
+    Schedule(target): {
+      checkExpr(c, target);
+      string tt = typeOfExpr(c, target);
+      if (tt != typeNone() && tt != "" && !isScheduleTarget(tt)) {
+        c.reportWith(errScheduleTarget(), target.line, target.col, expectedFound("fn<void(Continuation)>", tt));
+      }
+    }
     ExprStmt(expr): {
       checkExpr(c, expr);
       // `5;` — a value nothing reads and nothing types (`§wac-literal-no-fallback-9pffhd9`).
@@ -10623,7 +10704,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         // twice — so this mismatch has two fixes and no way to tell them apart. The general help here
         // offers a cast, which is the one thing that cannot be right: there is no conversion from a
         // ticket to what it will answer, only a wait.
-        if (c.inAsync && isPendingType(got) && !isPendingType(expected)) {
+        if (c.inAsync && isTicketType(got) && !isTicketType(expected)) {
           string[] pargs = genericArgs(got);
           string inner = pargs.len() == 1 ? pargs[0] : "what it answers";
           c.reportSpanHinted(errReturnTypeMismatch(), e.line, e.col, note,
@@ -10754,7 +10835,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       // **A written element type is the iterable's slot**, so `for (i32 x in [1, 2, 3])` has an
       // array type to give its literal, as `i32[] xs = [1, 2, 3];` does.
       string savedExpected = c.expected;
-      if (!(elemTy is null)) { c.expected = typeOfTy(c, elemTy!) + "[]"; }
+      if (!(elemTy is null)) { c.expected = suffixed(typeOfTy(c, elemTy!), "[]"); }
       checkExpr(c, iterable);
       c.expected = savedExpected;
       string et = forInElemOf(c, iterable);
@@ -10968,7 +11049,7 @@ bool numericShape(string t) {
  * why `c ? p : null` never reaches here.
  */
 bool literalNeverFits(C c, string t) {
-  string base = endsWith(t, "?") ? withoutNull(t) : t;
+  string base = isNullableName(t) ? withoutNull(t) : t;
   return c.isStruct(base) || c.isEnum(base) || isArrayName(base) || startsWithFn(base);
 }
 
@@ -11657,7 +11738,7 @@ export void declareModule(C c, Program prog, string[] only) {
         // can name and every slot would then disagree with. Left alone, by the same rule the rest of
         // the file keeps.
         string fret = typeOfTy(c, returnType);
-        if (isAsync && fret != "") { fret = "Pending<" + fret + ">"; }
+        if (isAsync && fret != "") { fret = "Ticket<" + fret + ">"; }
         string[] pnames = string[].defaulted(params.len());
         for (i32 i = 0; i < params.len(); i++) { pnames[i] = tokenText(c, params[i].nameTok); }
         c.declareFunc(c.renamed(tokenText(c, nameTok)), fret, prims,
@@ -12274,6 +12355,10 @@ export void checkModule(C c, Program prog) {
           // of any name nothing declares (`§wac-field-initialiser-no-this-tvimw93`).
           if (!(fields[fi].init is null) && ft != "void") {
             Expr init = fields[fi].init!;
+            // **A field mentioning the struct's own letter is unknown to `typeOfTy`**, deliberately, so
+            // its initialiser is checked against the type as written: `T? last = null` in a `Box<T>`
+            // takes the `null`, and was refused against *unknown* with an empty note.
+            if (ft == typeNone()) { ft = writtenTy(c, fields[fi].type); }
             if (litKindOf(init) != litNone()) {
               reportLiteral(c, ft, init, errInitTypeMismatch(), init.line, init.col);
             }
@@ -12369,7 +12454,7 @@ export void checkModule(C c, Program prog) {
  * Both method-declaring sites go through here so the two cannot drift. `issues/lang/0301b`.
  */
 string methodReturnFor(string written, bool isAsync) {
-  return isAsync && written != "" ? "Pending<" + written + ">" : written;
+  return isAsync && written != "" ? "Ticket<" + written + ">" : written;
 }
 
 /**
@@ -12394,8 +12479,8 @@ string arrLitType(C c, Expr[] elements) {
     return typeNone();
   }
   if (t == typeNone()) { return typeNone(); }
-  if (sawNull && !isNullableName(t)) { t = t + "?"; }
-  return t + "[]";
+  if (sawNull && !isNullableName(t)) { t = suffixed(t, "?"); }
+  return suffixed(t, "[]");
 }
 
 /** A primitive with no default value: the numbers and `bool`. */

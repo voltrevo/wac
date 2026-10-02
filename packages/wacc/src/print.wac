@@ -341,7 +341,7 @@ void printExpr(Pr w, Expr e) {
     }
     Await(operand): {
       w.open("await", e.line, e.col);
-      w.sp(); printExpr(w, operand);
+      if (operand is not null) { w.sp(); printExpr(w, operand!); }
       w.close();
     }
     Unary(op, operand): {
@@ -690,6 +690,11 @@ void printStmt(Pr w, Stmt s) {
     Block(body): {
       w.open("block", s.line, s.col);
       printStmtList(w, body);
+      w.close();
+    }
+    Schedule(target): {
+      w.open("schedule", s.line, s.col);
+      w.sp(); printExpr(w, target);
       w.close();
     }
     ExprStmt(expr): {

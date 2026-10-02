@@ -14,19 +14,20 @@
 
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, FileResult, Pending } from "std";
+import { Cli, Core, FileResult } from "std";
+import { Ticket } from "core";
 
 /** A2, exactly as `design/lang/0014` writes it. */
 async i32 fileSize(Cli cli, string path) {
-  FileResult f = await cli.readFile(path);
+  FileResult f = await cli.readFile(path).ticket();
   return f.ok ? f.bytes.len() : 0 - 1;
 }
 
 /** A3 — two awaits, and a branch between them that is not itself a suspension. */
 async i32 total(Cli cli, string one, string two) {
-  FileResult a = await cli.readFile(one);
+  FileResult a = await cli.readFile(one).ticket();
   if (!a.ok) { return 0 - 1; }
-  FileResult b = await cli.readFile(two);
+  FileResult b = await cli.readFile(two).ticket();
   return a.bytes.len() + b.bytes.len();
 }
 
@@ -44,26 +45,26 @@ export string test_one_await_answers_what_blocking_answers(Core core, Cli cli) {
   // `[§wac-async-wait-5tqm2wh]` — a plain `.wait()` drives the function's own chain to its answer.
   i32 want = sizeOf(cli, "README.md");
   t.isTrue(want > 0, "the oracle read the file");
-  t.eqI32(fileSize(cli, "README.md").wait(), want, "and so did the async version");
+  t.eqI32(fileSize(cli, "README.md").wait()!, want, "and so did the async version");
   return t.report();
 }
 
 export string test_the_caller_gets_a_ticket_not_a_value(Core core, Cli cli) {
   T t = T.create();
   // `[§wac-async-decl-h3vq81m]` and `[§wac-async-eager-2rf9kdp]` in the one place both are visible
-  // at runtime: the declaration says `i32` and this is a `Pending<i32>`, outstanding because the
+  // at runtime: the declaration says `i32` and this is a `Ticket<i32>`, outstanding because the
   // eager call stopped at the first await rather than running to the end.
-  Pending<i32> p = fileSize(cli, "README.md");
-  t.isFalse(p.isDone(), "eager ran the body to its first await and stopped");
-  t.eqI32(p.wait(), sizeOf(cli, "README.md"), "waiting drove the rest");
-  t.isTrue(p.isDone(), "and it remembers being finished");
+  Ticket<i32> p = fileSize(cli, "README.md");
+  t.isFalse(p.settled(), "eager ran the body to its first await and stopped");
+  t.eqI32(p.wait()!, sizeOf(cli, "README.md"), "waiting drove the rest");
+  t.isTrue(p.settled(), "and it remembers being finished");
   return t.report();
 }
 
 export string test_two_awaits_with_a_branch_between_them(Core core, Cli cli) {
   T t = T.create();
   i32 want = sizeOf(cli, "README.md") + sizeOf(cli, "MERGE.md");
-  t.eqI32(total(cli, "README.md", "MERGE.md").wait(), want, "the sum across two suspensions");
+  t.eqI32(total(cli, "README.md", "MERGE.md").wait()!, want, "the sum across two suspensions");
   return t.report();
 }
 
@@ -72,18 +73,18 @@ export string test_a_return_from_between_the_awaits_leaves_the_machine(Core core
   // The early `return` is what makes the second `await` conditional. If a `return` in the body only
   // left its own state rather than the whole machine, this would go on to read the second file and
   // answer a sum — so the number here is the test, not the fact that it ran.
-  t.eqI32(total(cli, "no-such-file-here.md", "MERGE.md").wait(), 0 - 1,
+  t.eqI32(total(cli, "no-such-file-here.md", "MERGE.md").wait()!, 0 - 1,
           "it stopped at the failure and never read the second file");
   return t.report();
 }
 
 export string test_an_async_function_that_never_suspends(Core core, Cli cli) {
   T t = T.create();
-  Pending<i32> p = seven();
-  // Nothing suspended, so the eager call ran the body to its end — `isDone` before anyone waits is
+  Ticket<i32> p = seven();
+  // Nothing suspended, so the eager call ran the body to its end — `settled` before anyone waits is
   // the difference between "no awaits" and "one await that happened to be ready".
-  t.isTrue(p.isDone(), "finished during the call");
-  t.eqI32(p.wait(), 7, "and the answer is there");
+  t.isTrue(p.settled(), "finished during the call");
+  t.eqI32(p.wait()!, 7, "and the answer is there");
   return t.report();
 }
 
@@ -92,10 +93,10 @@ export string test_two_async_calls_do_not_share_a_machine(Core core, Cli cli) {
   // Two calls of one function, both outstanding at once. Every local the machine keeps lives in the
   // call rather than beside the function, and this is what would catch it if one of them did not:
   // the second would overwrite the first's state and both would answer the same file.
-  Pending<i32> a = fileSize(cli, "README.md");
-  Pending<i32> b = fileSize(cli, "MERGE.md");
-  t.eqI32(a.wait(), sizeOf(cli, "README.md"), "the first kept its own path");
-  t.eqI32(b.wait(), sizeOf(cli, "MERGE.md"), "and the second kept its own");
+  Ticket<i32> a = fileSize(cli, "README.md");
+  Ticket<i32> b = fileSize(cli, "MERGE.md");
+  t.eqI32(a.wait()!, sizeOf(cli, "README.md"), "the first kept its own path");
+  t.eqI32(b.wait()!, sizeOf(cli, "MERGE.md"), "and the second kept its own");
   return t.report();
 }
 
@@ -105,7 +106,7 @@ export string test_two_async_calls_do_not_share_a_machine(Core core, Cli cli) {
 async i32 sumOf(Cli cli, string[] paths) {
   i32 total = 0;
   for (i32 i = 0; i < paths.len(); i++) {
-    FileResult f = await cli.readFile(paths[i]);
+    FileResult f = await cli.readFile(paths[i]).ticket();
     if (!f.ok) { return 0 - 1; }
     total = total + f.bytes.len();
   }
@@ -117,7 +118,7 @@ async i32 countReadable(Cli cli, string[] paths, i32 stopAt) {
   i32 i = 0;
   i32 seen = 0;
   while (i < paths.len()) {
-    FileResult f = await cli.readFile(paths[i]);
+    FileResult f = await cli.readFile(paths[i]).ticket();
     i = i + 1;
     if (!f.ok) { continue; }
     seen = seen + 1;
@@ -138,7 +139,7 @@ export string test_a_for_loop_suspends_once_per_iteration(Core core, Cli cli) {
   // **Three suspensions and three resumptions, all re-entering one loop.** `i` and `total` are
   // captured cells, so they survive; a plain local would reset on resume and this would either loop
   // for ever or answer the first file three times.
-  t.eqI32(sumOf(cli, ps).wait(), want, "the machine summed all three");
+  t.eqI32(sumOf(cli, ps).wait()!, want, "the machine summed all three");
   return t.report();
 }
 
@@ -146,7 +147,7 @@ export string test_a_return_from_inside_the_loop_leaves_the_machine(Core core, C
   T t = T.create();
   // Not `break` — a `return` from inside a flattened loop has to leave the *machine*, and the loop's
   // exit state is not where it goes.
-  t.eqI32(sumOf(cli, ["README.md", "no-such-file-here.md", "CLAUDE.md"]).wait(), 0 - 1,
+  t.eqI32(sumOf(cli, ["README.md", "no-such-file-here.md", "CLAUDE.md"]).wait()!, 0 - 1,
           "it stopped at the failure");
   return t.report();
 }
@@ -156,9 +157,9 @@ export string test_break_and_continue_survive_the_flattening(Core core, Cli cli)
   // After flattening there is no `while` left for these to leave — the only loop is the dispatch,
   // and breaking *that* would resume the machine at whatever state was set. Both become transfers.
   string[] ps = ["no-such-file-here.md", "README.md", "MERGE.md"];
-  t.eqI32(countReadable(cli, ps, 1).wait(), 1,
+  t.eqI32(countReadable(cli, ps, 1).wait()!, 1,
           "`continue` skipped the missing file and `break` stopped at the first readable one");
-  t.eqI32(countReadable(cli, ps, 1000000000).wait(), 2,
+  t.eqI32(countReadable(cli, ps, 1000000000).wait()!, 2,
           "and with nothing big enough to break on, both readable files were counted");
   return t.report();
 }
@@ -166,10 +167,10 @@ export string test_break_and_continue_survive_the_flattening(Core core, Cli cli)
 export string test_two_loops_in_flight_keep_their_own_counters(Core core, Cli cli) {
   T t = T.create();
   // Two machines over the same function, both mid-loop. Each iteration's state lives in the call.
-  Pending<i32> a = sumOf(cli, ["README.md"]);
-  Pending<i32> b = sumOf(cli, ["MERGE.md", "CLAUDE.md"]);
-  t.eqI32(a.wait(), sizeOf(cli, "README.md"), "the one-file loop");
-  t.eqI32(b.wait(), sizeOf(cli, "MERGE.md") + sizeOf(cli, "CLAUDE.md"), "and the two-file loop");
+  Ticket<i32> a = sumOf(cli, ["README.md"]);
+  Ticket<i32> b = sumOf(cli, ["MERGE.md", "CLAUDE.md"]);
+  t.eqI32(a.wait()!, sizeOf(cli, "README.md"), "the one-file loop");
+  t.eqI32(b.wait()!, sizeOf(cli, "MERGE.md") + sizeOf(cli, "CLAUDE.md"), "and the two-file loop");
   return t.report();
 }
 
@@ -178,13 +179,12 @@ export string test_two_loops_in_flight_keep_their_own_counters(Core core, Cli cl
 /**
  * Suspends `n` times on a **linked** ticket, writing a digit each time it resumes.
  *
- * `core.delay` is one of the four `Core` links itself, which is what makes registration possible:
- * `then` traps on a ticket that carries no scheduler, so a machine awaiting an unlinked one can only
- * be driven by a wait. That is D2's *host-backed → block*, and it is why this case uses `delay`.
+ * `core.delay` is one of the four `Core` links itself, so its ticket is answered by the `waitAny` in
+ * `core.drain()` as well as by a wait — which is what lets the drain alone finish the machine.
  */
 async i32 ticks(Core core, i32 n, i32[] log, i32 me) {
   for (i32 i = 0; i < n; i++) {
-    i64 at = await core.delay(1);
+    i64 at = await core.delay(1).ticket();
     log[0] = log[0] * 10 + me;
   }
   return n;
@@ -194,11 +194,11 @@ export string test_drain_alone_finishes_a_machine(Core core, Cli cli) {
   T t = T.create();
   // `[§wac-async-drain-7cvj4bn]` — registered, so the scheduler alone can finish it.
   i32[] log = i32[].filled(1, 0);
-  Pending<i32> p = ticks(core, 2, log, 1);
-  t.isFalse(p.isDone(), "eager stopped at the first await");
+  Ticket<i32> p = ticks(core, 2, log, 1);
+  t.isFalse(p.settled(), "eager stopped at the first await");
   t.eqI32(core.drain(), 2, "two suspensions, two continuations");
-  t.isTrue(p.isDone(), "and the drain finished it, with nobody waiting");
-  t.eqI32(p.wait(), 2, "the answer was already there");
+  t.isTrue(p.settled(), "and the drain finished it, with nobody waiting");
+  t.eqI32(p.wait()!, 2, "the answer was already there");
   return t.report();
 }
 
@@ -229,12 +229,12 @@ export string test_two_machines_interleave_under_one_drain(Core core, Cli cli) {
   string seen = "";
   for (i32 trial = 0; trial < 5; trial++) {
     i32[] log = i32[].filled(1, 0);
-    Pending<i32> a1 = ticks(core, 2, log, 1);
-    Pending<i32> b1 = ticks(core, 2, log, 2);
+    Ticket<i32> a1 = ticks(core, 2, log, 1);
+    Ticket<i32> b1 = ticks(core, 2, log, 2);
     core.drain();
     seen = seen + (trial == 0 ? "" : " ") + itoa(log[0]);
     if (log[0] != 1122 && log[0] != 2211) { interleaved = interleaved + 1; }
-    t.isTrue(a1.isDone() && b1.isDone(), "both machines finished in trial " + itoa(trial));
+    t.isTrue(a1.settled() && b1.settled(), "both machines finished in trial " + itoa(trial));
   }
   t.isTrue(interleaved > 0,
            "the two machines interleaved at least once in five runs — the logs were " + seen +
@@ -242,22 +242,23 @@ export string test_two_machines_interleave_under_one_drain(Core core, Cli cli) {
            + "`issues/lang/0302b`");
 
   i32[] log = i32[].filled(1, 0);
-  Pending<i32> a = ticks(core, 2, log, 1);
-  Pending<i32> b = ticks(core, 2, log, 2);
+  Ticket<i32> a = ticks(core, 2, log, 1);
+  Ticket<i32> b = ticks(core, 2, log, 2);
   core.drain();
-  t.isTrue(a.isDone() && b.isDone(), "and both finished");
+  t.isTrue(a.settled() && b.settled(), "and both finished");
   return t.report();
 }
 
 export string test_a_wait_takes_the_continuation_back(Core core, Cli cli) {
   T t = T.create();
-  // `[§wac-async-once-3jhw8qk]`. Registered *and* waited on. Without the detach the body would run twice — once where the wait
-  // drove it and once when `run` dispatched the continuation still sitting in the scheduler.
+  // `[§wac-async-once-3jhw8qk]`. Queued *and* waited on. The continuation the wait drove is the one still sitting in the queue, so
+  // calling it again must do nothing — or the body would run twice.
   i32[] log = i32[].filled(1, 0);
-  Pending<i32> p = ticks(core, 1, log, 7);
-  t.eqI32(p.wait(), 1, "waiting drove it");
+  Ticket<i32> p = ticks(core, 1, log, 7);
+  t.eqI32(p.wait()!, 1, "waiting drove it");
   t.eqI32(log[0], 7, "the body ran once, not twice");
-  t.eqI32(core.drain(), 0, "and nothing was left registered");
+  core.drain();
+  t.eqI32(log[0], 7, "and draining afterwards resumed nothing a second time");
   return t.report();
 }
 
@@ -266,42 +267,43 @@ export string test_a_wait_takes_the_continuation_back(Core core, Cli cli) {
 /**
  * An async function that hands a **ticket** back — `[§wac-async-nested-6bqt3jf]`.
  *
- * Its caller gets a `Pending<Pending<i64>>`: awaiting once passes the first delay and yields a
+ * Its caller gets a `Ticket<Ticket<i64>>`: awaiting once passes the first delay and yields a
  * second one already running, and awaiting that gives its answer. The two awaits mean different
  * things, which is why this is not flattened.
  */
-async Pending<i64> laterStill(Core core) {
-  i64 first = await core.delay(1);
-  return core.delay(1);
+async Ticket<i64> laterStill(Core core) {
+  i64 first = await core.delay(1).ticket();
+  return core.delay(1).ticket();
 }
 
 export string test_a_returned_ticket_is_not_flattened(Core core, Cli cli) {
   T t = T.create();
-  Pending<Pending<i64>> outer = laterStill(core);
-  Pending<i64> inner = outer.wait();
+  Ticket<Ticket<i64>> outer = laterStill(core);
+  Ticket<i64> inner = outer.wait()!;
   // The inner one is a real ticket, still outstanding — not a value dressed up as one.
-  t.isFalse(inner.isDone(), "the second delay is under way, not finished");
-  t.isTrue(inner.wait() > (0 as i64), "and awaiting it again answers");
+  t.isFalse(inner.settled(), "the second delay is under way, not finished");
+  t.isTrue(inner.wait()! > (0 as i64), "and awaiting it again answers");
   return t.report();
 }
 
-/** `async void` — the D5 case: no answer to keep, and a `Pending<void>` to hand back. */
+/** `async void` — the D5 case: no answer to keep, and a `Ticket<void>` to hand back. */
 async void bump(Core core, i32[] log) {
-  i64 at = await core.delay(1);
+  i64 at = await core.delay(1).ticket();
   log[0] = log[0] + 1;
 }
 
 export string test_an_async_void_function_has_a_ticket_with_no_answer(Core core, Cli cli) {
   T t = T.create();
   // Every other return type gets a cell to keep the answer in; `void[].defaulted(1)` is not a thing, so this
-  // machine has none — and `Pending<void>`'s resolver takes no value and returns none. That is what
+  // machine has none — and `Ticket<void>` is settled rather than resolved. That is what
   // `void` being a usable type argument was for.
   i32[] log = i32[].filled(1, 0);
-  Pending<void> p = bump(core, log);
+  Ticket<void> p = bump(core, log);
   t.eqI32(log[0], 0, "suspended before doing its work");
   t.eqI32(core.drain(), 1, "the drain ran its one continuation");
   t.eqI32(log[0], 1, "and the body finished");
-  p.wait();
-  t.isTrue(p.isDone(), "the ticket answers nothing and is settled");
+  // Not `p.wait()`: that answers a `Result<void, string>`, and a `void` payload is not laid out yet
+  // (`design/lang/0016`). The drain settled it, which is the fact this asks about.
+  t.isTrue(p.settled(), "the ticket answers nothing and is settled");
   return t.report();
 }

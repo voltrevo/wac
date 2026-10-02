@@ -16,7 +16,7 @@ import { tokenTextOf } from "../../src/emit.wac";
 import { kIdent, kInt, kAssign, kVoid } from "../../src/kinds.wac";
 import {
   synthSource, synthBase, synthOffset, synthTokens, synthTok, synthWords,
-  synthPending, synthStep, synthSlot, synthZero, synthNum, synthAssign, synthVoid, synthArg,
+  synthTicket, synthStepFn, synthAw, synthSlot, synthZero, synthNum, synthAssign, synthVoid, synthArg,
 } from "../../src/asyncsynth.wac";
 
 /** How many suspension slots the cases below ask for — three awaits' worth. */
@@ -54,15 +54,17 @@ export string test_a_synthetic_token_reads_back_as_its_spelling() {
 
   // **The point of the whole file.** `tokenTextOf` is what every later phase uses, so asking it is
   // asking the question that matters rather than a proxy for it.
-  t.eqStr(tokenTextOf(src, with, synthTok(first, synthPending())), "Pending",
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthTicket())), "Ticket",
           "the first word");
-  t.eqStr(tokenTextOf(src, with, synthTok(first, synthStep())), "__wacStep",
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthStepFn())), "__wacStepFn",
           "one in the middle, which is where an off-by-one in the offset walk would show");
   // **A generated slot, which is the part that is not a fixed list.** One per `await`, distinct
   // because they hold tickets of different types.
   t.eqStr(tokenTextOf(src, with, synthTok(first, synthSlot(0))), "__wacUp0", "the first slot");
   t.eqStr(tokenTextOf(src, with, synthTok(first, synthSlot(UPS - 1))), "__wacUp2",
           "and the last, which is where a length mistake would show");
+  t.eqStr(tokenTextOf(src, with, synthTok(first, synthAw(UPS - 1))), "__wacAw2",
+          "and the last temporary, which shares the slots' stride");
   // **`0` is lexed as an integer, not an identifier.** An `IntLit` reads its value out of its own
   // token, so a kind mismatch here would not fail — it would put a silent zero somewhere else.
   t.eqStr(tokenTextOf(src, with, synthTok(first, synthZero(UPS, ARGS))), "0", "the index literal");
@@ -126,6 +128,6 @@ export string test_a_synthetic_tokens_kind_is_not_always_an_identifier() {
   t.eqI32(with.tokens[synthTok(first, synthAssign()) * tokenStride()], kAssign(), "`=` is an assign");
   t.eqI32(with.tokens[synthTok(first, synthVoid()) * tokenStride()], kVoid(), "`void` is its own kind");
   t.eqI32(with.tokens[synthTok(first, synthZero(UPS, ARGS)) * tokenStride()], kInt(), "a numeral is an int");
-  t.eqI32(with.tokens[synthTok(first, synthPending()) * tokenStride()], kIdent(), "a name is an ident");
+  t.eqI32(with.tokens[synthTok(first, synthTicket()) * tokenStride()], kIdent(), "a name is an ident");
   return t.report();
 }

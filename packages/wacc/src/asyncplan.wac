@@ -205,6 +205,7 @@ export bool awaitInStmt(Stmt s) {
     }
     Block(body): { return awaitInBody(body); }
     ExprStmt(expr): { return awaitInExpr(expr); }
+    Schedule(target): { return awaitInExpr(target); }
   }
 }
 
@@ -310,13 +311,11 @@ void walkPlan(Stmt[] body, Walked w) {
           w.hoist[w.h] = nameTok; w.hoistTy[w.h] = type; w.h = w.h + 1;
         }
         if ((init is not null) && isAwait(init!)) { w.n = w.n + 1; }
-        else if ((init is not null) && awaitInExpr(init!)) { w.why = "an `await` nested inside a larger expression"; }
+        else if ((init is not null) && awaitInExpr(init!)) { w.why = "an `await` nested inside a larger expression, on a ticket whose type this file does not write — bind it first: `T v = await e;`"; }
       }
       Return(value): {
         if ((value is not null) && isAwait(value!)) { w.n = w.n + 1; }
-        else if ((value is not null) && awaitInExpr(value!)) {
-          w.why = "an `await` nested inside a larger expression";
-        }
+        else if ((value is not null) && awaitInExpr(value!)) { w.why = "an `await` nested inside a larger expression, on a ticket whose type this file does not write — bind it first: `T v = await e;`"; }
       }
       If(cond, then, els): {
         if (awaitInExpr(cond)) { w.why = "an `await` in an `if` condition"; }
@@ -347,10 +346,25 @@ void walkPlan(Stmt[] body, Walked w) {
         walkPlan(body2, w);
       }
       Block(body2): { walkPlan(body2, w); }
+      // `await e;` and `await;` — a suspension whose answer nothing reads, so it needs no slot type.
+      ExprStmt(expr): {
+        if (isAwait(expr)) {
+          w.n = w.n + 1;
+          if (awaitOperandHasAwait(expr)) { w.why = "an `await` nested inside a larger expression, on a ticket whose type this file does not write — bind it first: `T v = await e;`"; }
+        } else if (awaitInExpr(expr)) { w.why = "an `await` nested inside a larger expression, on a ticket whose type this file does not write — bind it first: `T v = await e;`"; }
+      }
       default: {
         if (awaitInStmt(s)) { w.why = declineFor(s); }
       }
     }
+  }
+}
+
+/** Whether an `await`'s own operand holds another `await`. */
+bool awaitOperandHasAwait(Expr e) {
+  match (e.kind) {
+    Await(operand): { return (operand is not null) && awaitInExpr(operand!); }
+    default: { return false; }
   }
 }
 
@@ -372,9 +386,7 @@ string declineFor(Stmt s) {
     Match(subject, arms): { return "an `await` inside a `match`"; }
     Block(body): { return "an `await` inside a nested block"; }
     Assign(target, op, rhs): { return "an `await` on the right of an assignment"; }
-    // Its value is thrown away, so nothing in the source says what the ticket answers — and the
-    // machine needs that type to declare the slot it suspends into. `T x = await e;` for now.
-    ExprStmt(expr): { return "an `await` whose value is discarded"; }
+    ExprStmt(expr): { return "an `await` nested inside a larger expression, on a ticket whose type this file does not write — bind it first: `T v = await e;`"; }
     default: { return "an `await` nested inside a larger expression"; }
   }
 }

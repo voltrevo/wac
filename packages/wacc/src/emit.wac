@@ -34,7 +34,7 @@ import {
   Param, Pattern, Program, Stmt, StmtKind, Ty, TyKind, lvalueExpr, TupleBinding,
 } from "./ast.wac";
 import {
-  kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
+  kAsync, kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
   kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde, kQuestion, kSymName, kInt, kNull,
@@ -339,6 +339,10 @@ void writeValType(B out, Env env, string t) {
   // program can construct (spec/next ch11). It still has a place in the enum's layout, so it is given
   // the cheapest storage there is; nothing will ever write to it or read from it.
   if (t == "never") { out.byte(127); return; }
+  // **So does a slot a `void` argument made** — `Result<void, E>.Ok`'s payload. Constructing one is
+  // declined where it is written (`design/lang/0016`); the layout still has to be writable, or every
+  // module naming `Result<void, E>` — `Ticket<void>.wait` — fails at its type section.
+  if (t == "void") { out.byte(127); return; }
   if (!isWritableValType(t)) {
     // **And where**, because the type alone has repeatedly not been enough. `$cell$…` names a
     // captured local's storage, and knowing *which lambda* was being emitted is the difference
@@ -2636,6 +2640,16 @@ export struct Env {
   string[] funcParamNames;
   /** `Owner.method` for each method a call dispatches on its receiver's runtime type (spec/next ch12). */
   string[] virtualMethods;
+  /**
+   * The global holding the schedule target (spec/next ch35), or -1 when core's
+   * `__wacScheduleTarget` is not in the program. Its type is that function's return type.
+   */
+  i32 schedGlobal;
+  string schedType;
+  /** Which of core's two schedule-target functions is being emitted: 1 the read, 2 the write, else 0. */
+  i32 intrinsic;
+  /** Why the async lowering declined a body, so the refusal of what is left can say so. */
+  string asyncWhy;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -2949,7 +2963,7 @@ export struct Env {
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
-               Expr?[](), u8[][](), Lexed?[](), string[](), string[]());
+               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "");
   }
 
   
@@ -3625,7 +3639,9 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
     }
     // **An interpolation converts through core** (spec/next ch23) — `"\{n}"` calls core's spelling of
     // an `i32` — so a file with one needs core linked whether or not it imports anything from it.
-    if (hasInterpolation(b, lexed)) {
+    // **And so does an `async` body**, whose lowering builds core's `Ticket` and `__wacMachine`
+    // (spec/next ch35) — `spec/cases/0319` is what that cost while the ticket type lived in `std`.
+    if (hasInterpolation(b, lexed) || hasAsync(lexed)) {
       if (qn >= queue.len()) { starts[0] = 2; return false; }
       queue[qn] = " core";
       queueSpec[qn] = "core";
@@ -4874,6 +4890,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
     if (progs[li] is null) { continue; }
     if (li >= lexeds.len() || (lexeds[li] is null) || li >= srcs.len()) { continue; }
     Lowered lo = lowerProgram(progs[li]!, srcs[li], lexeds[li]!);
+    if (lo.why != "" && envIn.asyncWhy == "") { envIn.asyncWhy = lo.why; }
     if (!lo.changed) { continue; }
     progs[li] = lo.prog;
     srcs[li] = lo.src;
@@ -6184,7 +6201,8 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // **The trap message's global comes last**, after the counters and the constants, so no constant's
   // index moves — the comment on `coverage` above is about exactly that hazard, one global earlier.
   i32 trapGlobals = 1;
-  globals.u32leb(globalCount + (env.coverage ? 1 : 0) + trapGlobals);
+  i32 schedGlobals = env.schedGlobal >= 0 ? 1 : 0;
+  globals.u32leb(globalCount + (env.coverage ? 1 : 0) + trapGlobals + schedGlobals);
   if (env.coverage) {
     // `i32[]`, mutable, one slot per point — `array.new_default` over a constant length is a
     // constant expression, so the counters exist before any code runs and `__cov_init` only has to
@@ -6230,6 +6248,13 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     wroteTrapGlobal = true;
   }
   if (trapGlobals > 0 && !wroteTrapGlobal) { env.declineFor("a trap message global"); }
+  // The schedule target: mutable, and null until a `schedule` statement sets it.
+  if (schedGlobals > 0) {
+    writeValType(globals, env, env.schedType);
+    globals.byte(1);
+    emitNull(globals, env, env.schedType);
+    globals.byte(11);
+  }
 
   // The start function goes last, so every index the constants can name is already assigned.
   if (startNeeded) {
@@ -7802,7 +7827,19 @@ void emitFrom(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from) {
   for (i32 i = from; i < body.len(); i++) {
     match (body[i].kind) {
       Defer(deferred): {
-        emitDeferred(fb, src, lexed, env, body, i + 1, deferred);
+        emitDeferred(fb, src, lexed, env, body, i + 1, deferred, 0 - 1);
+        return;
+      }
+      // `schedule f;` — the target saved, `f` put in its place, and the rest of the block a region
+      // whose every exit puts the saved one back, exactly as a `defer` of that write would
+      // (spec/next ch35 `§wac-schedule-block-wrhaazj`).
+      Schedule(target): {
+        i32 old = env.scratchNamed("schedule old " + numText(env.depth), env.schedType);
+        fb.byte(35); fb.u32leb(env.schedGlobal);     // global.get
+        fb.byte(33); fb.u32leb(old);                 // local.set
+        emitExprAt(fb, src, lexed, env, target, env.schedType);
+        fb.byte(36); fb.u32leb(env.schedGlobal);     // global.set
+        emitDeferred(fb, src, lexed, env, body, i + 1, null, old);
         return;
       }
       default: { emitStmt(fb, src, lexed, env, body[i]); }
@@ -7827,7 +7864,7 @@ void emitFrom(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from) {
  * deferred statement reads. A second `defer` in the region is a region inside this one, so the later
  * one runs first.
  */
-void emitDeferred(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from, Stmt deferred) {
+void emitDeferred(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from, Stmt? deferred, i32 restore) {
   i32 kind = env.scratchNamed("defer kind " + numText(env.depth), "i32");
   bool valued = env.returnType != "void" && env.returnType != "" && env.returnType != "never";
   i32 val = valued ? env.scratchNamed("defer value " + numText(env.depth), env.returnType) : 0 - 1;
@@ -7847,7 +7884,12 @@ void emitDeferred(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from, S
   env.deferAt = savedAt;
   env.deferKind = savedKind;
   env.deferVal = savedVal;
-  emitBody(fb, src, lexed, env, [deferred] as Stmt[]);
+  if (deferred is not null) { emitBody(fb, src, lexed, env, [deferred!] as Stmt[]); }
+  // A `schedule`'s region restores the target it saved in local `restore`.
+  if (restore >= 0) {
+    fb.byte(32); fb.u32leb(restore);             // local.get
+    fb.byte(36); fb.u32leb(env.schedGlobal);     // global.set
+  }
   emitDeferExit(fb, env, kind, 1);
   if (valued) { fb.byte(32); fb.u32leb(val); }
   emitLeave(fb, env, valued);
@@ -8239,6 +8281,12 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     // `emitBody` takes a `defer` with the rest of its block, so one reaching here alone has nothing
     // after it and runs on the spot.
     Defer(deferred): { emitBody(fb, src, lexed, env, [deferred] as Stmt[]); }
+    // Reached only for a `schedule` that is its own block — an `if`'s body written without braces —
+    // which is in force for no statement at all, so only its target's evaluation remains.
+    Schedule(target): {
+      emitExprAt(fb, src, lexed, env, target, env.schedType);
+      fb.byte(26);   // drop
+    }
     Trap(tvalue): {
       // **The message first**, because after `unreachable` there is nothing left to run. Emitted at
       // `string`, which is what the checker already required of it.
@@ -9794,6 +9842,16 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // with the same type — our references are all nullable — and a different answer: the reference
     // traps on a null and silence would return one.
     Unwrap(operand): {
+      // **On a `Result`, `!` is its `unwrap`** — the value, or a trap on `Err`. spec/next ch35 writes
+      // `t.wait()!`, where `wait` answers a `Result`.
+      string rt0 = typeOfE(src, lexed, env, operand);
+      if (genericBaseOf(rt0) == "Result") {
+        i32 um = env.methodAt(rt0, "unwrap");
+        if (um < 0 || env.funcIndex[um] < 0) { env.declineFor("`!` on a Result whose unwrap was not emitted"); return; }
+        emitExprAt(fb, src, lexed, env, operand, rt0);
+        fb.byte(16); fb.u32leb(env.funcIndex[um]);     // call
+        return;
+      }
       emitExpr(fb, src, lexed, env, operand);
       fb.byte(212);   // ref.as_non_null
       // **A boxed primitive needs two operations, not one.** `ref.as_non_null` is the whole of `!` for
@@ -10060,8 +10118,12 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     Unwrap(operand): {
       // Unwrapping a boxed primitive yields the primitive; for a nullable reference `T?` and `T` are
-      // already one name here, so this changes nothing for those.
+      // already one name here, so this changes nothing for those. A `Result` answers its `Ok` type.
       string ut = typeOfE(src, lexed, env, operand);
+      if (genericBaseOf(ut) == "Result") {
+        i32 um = env.methodAt(ut, "unwrap");
+        return um >= 0 ? env.funcReturns[um] : "";
+      }
       return isBoxedName(ut) ? boxedInner(ut) : ut;
     }
     MatchExpr(subject, arms): {
@@ -10611,6 +10673,14 @@ void emitVirtualCall(B fb, u8[] src, Lexed lexed, Env env, Expr obj, string ot, 
 bool hasInterpolation(u8[] src, Lexed lexed) {
   for (i32 t = 0; t < lexed.tokenCount; t++) {
     if (lexed.tokens[t * tokenStride()] == kPlus() && isInterpPlus(src, lexed, t)) { return true; }
+  }
+  return false;
+}
+
+/** Whether a file says `async` anywhere — which its lowering turns into uses of core's tickets. */
+bool hasAsync(Lexed lexed) {
+  for (i32 t = 0; t < lexed.tokenCount; t++) {
+    if (lexed.tokens[t * tokenStride()] == kAsync()) { return true; }
   }
   return false;
 }
@@ -11512,6 +11582,7 @@ LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
     Block(bbody): { findLambdas(env, src, lexed, bbody, ret); }
     Defer(dbody): { findLambdas(env, src, lexed, [dbody] as Stmt[], ret); }
     ExprStmt(expr): { findLambdasExpr(env, src, lexed, expr, ""); }
+    Schedule(target): { findLambdasExpr(env, src, lexed, target, env.schedType); }
   }
 }
 
@@ -11675,7 +11746,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     // the mark is its own parameter or local; a name resolving nowhere is a function, a struct or a
     // constant rather than a local, and is not captured either.
     Ident(tok): { env.noteRead(tokenTextOf(src, lexed, tok)); }
-    Await(operand): { findLambdasExpr(env, src, lexed, operand, ""); }
+    Await(operand): { if (operand is not null) { findLambdasExpr(env, src, lexed, operand!, ""); } }
     Unary(op, operand): { findLambdasExpr(env, src, lexed, operand, want); }
     Binary(op, left, right): {
       findLambdasExpr(env, src, lexed, left, "");
@@ -12884,9 +12955,16 @@ void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
 void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, Env env, Program prog,
                   string exportName, Ty returnType, Param[] params, Stmt[] body, string receiver,
                   i32 index, i32 declTypes, i32 nameTok) {
+  // **core's two schedule-target functions have bodies this replaces** with a read and a write of
+  // `env.schedGlobal` — the one piece of mutable module state a program has, and not one it can name
+  // (spec/next ch35, core/ticket.wac).
+  string fname = nameTok >= 0 ? tokenTextOf(src, lexed, nameTok) : "";
+  if (receiver == "" && fname == "__wacScheduleTarget") { env.intrinsic = 1; }
+  if (receiver == "" && fname == "__wacSetScheduleTarget") { env.intrinsic = 2; }
   emitFunctionOf(types, funcs, exports, code, src, lexed, env, prog, exportName,
                  typeOfTyName(env, src, lexed, returnType), params, body, receiver,
                  index, declTypes, lexedLine(lexed, nameTok), lexedCol(lexed, nameTok));
+  env.intrinsic = 0;
 }
 
 /**
@@ -13021,7 +13099,18 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
     insns.byte(33); insns.u32leb(env.localCount - 1);
   }
   covPoint(insns, env, "entry", line, col);
-  emitBody(insns, src, lexed, env, body);
+  if (env.intrinsic == 1 && env.schedGlobal >= 0) {
+    env.intrinsic = 0;
+    insns.byte(35); insns.u32leb(env.schedGlobal);    // global.get
+    insns.byte(15);                                    // return
+  } else if (env.intrinsic == 2 && env.schedGlobal >= 0) {
+    env.intrinsic = 0;
+    insns.byte(32); insns.u32leb(0);                   // local.get 0
+    insns.byte(36); insns.u32leb(env.schedGlobal);    // global.set
+  } else {
+    env.intrinsic = 0;
+    emitBody(insns, src, lexed, env, body);
+  }
 
   B fb = B.create();
   // One entry per local rather than runs of a repeated type. Both are legal, the runs form is
@@ -13226,6 +13315,10 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
         return "a return between related reference types";
       }
       return "";
+    }
+    Schedule(target): {
+      if (env.schedGlobal < 0) { return "a schedule statement in a program without core's schedule target"; }
+      return unsupportedExpr(src, lexed, env, target);
     }
     ExprStmt(e): {
       string r = unsupportedExpr(src, lexed, env, e);
@@ -13460,6 +13553,9 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
             if (args.len() != env.variantArity[vwi]) { return "a variant with the wrong count"; }
             string vwo = env.variantOwners[vwi];
             for (i32 i = 0; i < args.len(); i++) {
+              if (env.fieldTypeAt(vwo, env.variantSlot[vwi] + i) == "void") {
+                return "a value of a type this emitter cannot write: void";
+              }
               string a7 = unsupportedValueAt(src, lexed, env, args[i],
                                              env.fieldTypeAt(vwo, env.variantSlot[vwi] + i));
               if (a7 != "") { return a7; }
@@ -13692,7 +13788,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // one that says which feature it lacks. `design/lang/0002` tier two: the capture set and its
       // struct exist, and what is missing is the receiver and the field reads.
       // **An `async` lambda the lowering did not take.** Declined for the same reason an `async`
-      // function is: the slot says the value is a `Pending<R>` and this emitter would write a lambda
+      // function is: the slot says the value is a `Ticket<R>` and this emitter would write a lambda
       // answering `R`, so its caller and it would disagree about what came back. Refused by name
       // rather than mis-emitted — `issues/lang/0294c`.
       //
@@ -13705,7 +13801,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // declaration, and one whose body the flattening declined needs the body changed.
       if (lamAsync) {
         return "an `async` lambda the lowering did not take — either it is not the initialiser of a "
-             + "`fn[Pending<…>(…)]` declaration, which is where `issues/lang/0294c` reads what the "
+             + "`fn<Ticket<…>(…)>` declaration, which is where `issues/lang/0294c` reads what the "
              + "ticket carries, or its body suspends in a shape `design/lang/0014` cannot flatten";
       }
       i32 li = env.lambdaAtPos(e.line, e.col);
@@ -13728,8 +13824,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           env.addLocal(tokenTextOf(src, lexed, params[pi].nameTok),
                        typeOfTyName(env, src, lexed, params[pi].type));
         }
-        unsupportedIn(src, lexed, env, body);
+        string inner = unsupportedIn(src, lexed, env, body);
         env.localCount = lsaved;
+        // Except one verdict: a capture of a parameter a `void` argument erased has nothing to put in
+        // the cell, so the enclosing function is as uncallable as one reading it directly.
+        if (inner == "a read of a parameter of type void") { return inner; }
       }
       if (li >= 0 && env.lambdaSigs[li] != "") {
         //
@@ -13803,7 +13902,12 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
-      if (env.localAt(nm) >= 0) { return ""; }
+      // **A parameter a `void` argument erased has no slot** — the signature drops it — so a body
+      // that reads it cannot be emitted. `Ticket<void>.resolve(T v)` is the one there is, and nothing
+      // can call it: there is no `void` to pass.
+      i32 li = env.localAt(nm);
+      if (li >= 0 && env.localTypes[li] == "void") { return "a read of a parameter of type void"; }
+      if (li >= 0) { return ""; }
       i32 ci = env.constAt(nm);
       // **Through the import that names it**, as emitting does: `import { LIMIT as L }` reads `L`.
       if (ci < 0) { ci = env.constAt(nameKeyOf(env, src, lexed, tok)); }
@@ -13834,7 +13938,10 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (env.constInits[ci] is null) { return "a constant with no initialiser"; }
       return unsupportedValue(cSrc(env, src, ci), cLex(env, lexed, ci), env, env.constInits[ci]!);
     }
-    Await(operand): { return "`await`, which the emitter does not lower yet — `design/lang/0014` step 4"; }
+    // Reached only in a body the async lowering declined, so the reason is the lowering's.
+    Await(operand): {
+      return env.asyncWhy != "" ? env.asyncWhy : "an `await` in a shape the async lowering does not take";
+    }
     Unary(op, operand): { return unsupportedExpr(src, lexed, env, operand); }
     Binary(op, left, right): {
       // Two tuples compared: each side at the one tuple type, which is what types a literal member.
@@ -14038,6 +14145,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             // compiled by the compiler it is part of.
             string ven = env.variantOwners[cvi];
             for (i32 i = 0; i < args.len(); i++) {
+              // A payload slot a `void` argument made: no value goes in it, and the layout has no
+              // erased form yet (`design/lang/0016`).
+              if (env.fieldTypeAt(ven, env.variantSlot[cvi] + i) == "void") {
+                return "a value of a type this emitter cannot write: void";
+              }
               string a2 = unsupportedValueAt(src, lexed, env, args[i],
                                              env.fieldTypeAt(ven, env.variantSlot[cvi] + i));
               if (a2 != "") { return a2; }
@@ -14332,7 +14444,14 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
   // now, so the claim is a test rather than a paragraph.
   string why = unsupportedIn(src, lexed, env, body);
   env.lastWhy = why;
-  if (why != "" && env.blocked == "") { env.blocked = why; }
+  // **Uncallable is not a defect.** A body that reads a parameter a `void` argument erased cannot be
+  // called — there is no `void` to pass — so leaving it out loses nothing; whatever does reference it
+  // declines in its own right, with its own reason.
+  // The same holds for a body that needs a `void` *value* — `Result<void, E>.Ok(…)` — since a `void`
+  // payload is not laid out yet (`design/lang/0016`): left out, and a caller says so.
+  bool uncallable = why == "a read of a parameter of type void"
+                    || why == "a value of a type this emitter cannot write: void";
+  if (why != "" && !uncallable && env.blocked == "") { env.blocked = why; }
   env.localCount = savedCount;
   env.paramCount = savedParams;
   env.returnType = savedRet;
@@ -15966,6 +16085,13 @@ void assignGlobals(Env env, u8[] src, Lexed lexed) {
   // runs *after* this, so it was false here and the helper read global -1. One global, one three-byte
   // function and one export in every module is the honest price of not having to be right about that.
   env.trapGlobal = next;
+  // **The schedule target, after it** — only when core's read of it is in the program, and typed as
+  // that function answers, so the global is whatever `fn<void(Continuation)>?` is here.
+  i32 sf = env.funcAt("__wacScheduleTarget");
+  if (sf >= 0) {
+    env.schedGlobal = next + 1;
+    env.schedType = env.funcReturns[sf];
+  }
 }
 
 /** Every array type an expression constructs, which a constant's initialiser can do at module level. */
@@ -16052,7 +16178,7 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
       collectArrayTypesOfExpr(env, src, lexed, arr);
       collectArrayTypesOfExpr(env, src, lexed, index);
     }
-    Await(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
+    Await(operand): { if (operand is not null) { collectArrayTypesOfExpr(env, src, lexed, operand!); } }
     Unary(op, operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
     Unwrap(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
     Binary(op, left, right): {

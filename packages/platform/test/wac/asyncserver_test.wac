@@ -18,7 +18,7 @@
 // past before the log said `bytes=0`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Socket, Pending } from "std";
+import { Cli, Core, Socket } from "std";
 import { Read } from "core";
 
 /**
@@ -30,7 +30,7 @@ import { Read } from "core";
  */
 async void serve(Core core, Cli cli, i32 sock, i32[] served) {
   while (true) {
-    Read r = await cli.recv(sock);
+    Read r = await cli.recv(sock).ticket();
     u8[] echo = u8[]();
     bool over = false;
     match (r) {
@@ -39,7 +39,7 @@ async void serve(Core core, Cli cli, i32 sock, i32[] served) {
       Failed(why): { over = true; }
     }
     if (over) { cli.closeSocket(sock); return; }
-    bool ok = await cli.send(sock, echo);
+    bool ok = await cli.send(sock, echo).ticket();
     served[0] = served[0] + 1;
   }
 }
@@ -47,7 +47,7 @@ async void serve(Core core, Cli cli, i32 sock, i32[] served) {
 /** Take `n` connections, starting a server for each — eagerly, and deliberately not awaited. */
 async void accepting(Core core, Cli cli, i32 listener, i32 n, i32[] served) {
   for (i32 i = 0; i < n; i++) {
-    Socket s = await cli.accept(listener);
+    Socket s = await cli.accept(listener).ticket();
     if (s.handle < 0) { return; }
     serve(core, cli, s.handle, served);
   }

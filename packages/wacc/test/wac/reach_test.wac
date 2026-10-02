@@ -55,6 +55,8 @@ string[] statementLabels() {
   return [
     "Var", "Assign", "IncrStmt", "If", "If-else", "While", "For", "For-init", "DoWhile", "Switch",
     "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt", "Defer",
+    // `schedule f;` — spec/next ch35. It holds only its target, so the walk has to go on past it.
+    "Schedule",
     // `for (T x in e)` — spec/next ch25. The body holds the fault.
     "ForIn",
     // Tuples — spec/next ch14. Neither holds a body; the walk has to go on past them.
@@ -80,6 +82,7 @@ string[] statementSources() {
     "void f() { { " + BAD + " } }",
     "void g(i32 n) { } void f() { g(1); " + BAD + " }",
     "void f() { defer { " + BAD + " } }",
+    "struct Continuation { } struct Q { void push(this, Continuation c) { } } void f(Q q) { schedule q.push; " + BAD + " }",
     "void f(i32[] xs) { for (i32 x in xs) { " + BAD + " } }",
     "void f() { (i32 a, i32 b) = (1, 2); " + BAD + " }",
     "void f(i32 a, i32 b) { (a, b) = (1, 2); " + BAD + " }"

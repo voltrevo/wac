@@ -1,0 +1,197 @@
+// Tickets, and the scheduling they need — spec/next ch35.
+//
+// A `Ticket<T>` is a value that will answer a `T`. An `async` function hands its caller one, and the
+// lowering of its body is the only other thing that writes these fields: it parks a `Continuation`
+// on the ticket each time the body suspends, and resolves the ticket when the body returns.
+//
+// **Driving is by waiting.** Nothing here runs on its own. A ticket advances when somebody waits on
+// it — `wait` follows what the ticket's machine is parked on, and steps the machine once that has
+// settled — or when the continuation handed to the schedule target is called. Both routes reach the
+// same `call`, and a machine resumes once however many copies of its continuation are lying about:
+// `call` steps the machine only if that continuation is still the one parked, so a copy a `wait`
+// already took back does nothing (`§wac-async-once-3jhw8qk`).
+//
+// **The schedule target is the compiler's.** `scheduleTarget` and `setScheduleTarget` are bodies the
+// emitter replaces with a read and a write of one hidden global, because wac has no mutable module
+// state and the target is scoped dynamically: a `schedule` statement sets it to the end of its block,
+// and an `async` body restores the one it suspended under each time it resumes. Nothing else may
+// call them; the names begin `__wac` so no program does by accident.
+
+import { Result } from "./result.wac";
+import { Vec } from "./vec.wac";
+
+/** What a suspended machine is waiting on — `null` for a bare `await;` — and the call that resumes it. */
+export struct Continuation {
+  TicketBase? t;
+  fn<void()> call;
+}
+
+/**
+ * Everything about a ticket that does not depend on what it answers — which is everything a `wait`
+ * or a scheduler needs, so neither has to know `T`.
+ */
+export struct TicketBase {
+  bool done = false;
+  /** The machine's continuation while it is suspended, which a `wait` drives rather than the queue. */
+  Continuation? parked = null;
+  /** For a ticket the host answers: block until it has, answering false when it cannot. */
+  fn<bool()>? drive = null;
+  /** Set while this ticket's own `advance` is following what it is parked on. */
+  bool following = false;
+
+  bool settled(const this) { return this.done; }
+
+  /**
+   * One step towards settling. False when nothing a `wait` may drive can advance this ticket — it was
+   * made directly and nobody has resolved it, or what it is parked on is in that state.
+   *
+   * **A ticket that depends on itself answers true**, so the `wait` asking loops rather than refusing:
+   * nothing refused, and the program is running rather than idle (ch35, "A `wait` that depends on
+   * itself loops").
+   */
+  bool advance(this) {
+    if (this.done) { return true; }
+    if (this.following) { return true; }
+    Continuation? p = this.parked;
+    if (p is not null) {
+      TicketBase? up = p.t;
+      if (up is not null && !up.done) {
+        this.following = true;
+        bool moved = up.advance();
+        this.following = false;
+        return moved;
+      }
+      p.call();
+      return true;
+    }
+    fn<bool()>? d = this.drive;
+    if (d is not null) { return d(); }
+    return false;
+  }
+}
+
+/** A value that will answer a `T`. Settled once, by `resolve` or by the body of the `async` call that made it. */
+export struct Ticket<T> : TicketBase {
+  /**
+   * Null until settled, and then a function answering it. A function rather than the value, so `T`
+   * needs no default and `Ticket<void>` is a ticket like any other: its answer is a function
+   * answering nothing.
+   */
+  fn<T()>? answer = null;
+
+  /** Settle this ticket with `v`. Traps if it is already settled: a ticket answers once. */
+  void resolve(this, T v) { this.settleWith(() => v); }
+
+  /** Settle this ticket with what `f` answers — how an `async void` body settles, having no value. */
+  void settleWith(this, fn<T()> f) {
+    if (this.done) { trap; }
+    this.answer = f;
+    this.done = true;
+  }
+
+  /** The answer. Traps if the ticket has not settled. */
+  T value(const this) {
+    if (!this.done) { trap; }
+    return this.answer!();
+  }
+
+  /**
+   * Drive the work this ticket awaited until it answers, without suspending the caller
+   * (`§wac-async-wait-5tqm2wh`). `Err` when nothing it may drive can advance it
+   * (`§wac-wait-refuses-jj8u2ie`).
+   *
+   * `wait` stops between continuations, never inside one, so everything up to a refusal ran and is
+   * settled, and `await` on the same ticket afterwards picks up from the link that refused.
+   */
+  Result<T, string> wait(this) {
+    while (!this.done) {
+      if (!this.advance()) { return Result.Err("nothing this wait may drive can settle the ticket"); }
+    }
+    return Result.Ok(this.answer!());
+  }
+}
+
+/** First in, first out — what a program's pending continuations are kept in. */
+export struct Queue<T> {
+  Vec<T> items;
+  i32 head = 0;
+
+  void push(this, T v) { this.items.push(v); }
+
+  /** The oldest item, or `null` when there is none. */
+  T? pop(this) {
+    if (this.head >= this.items.len()) { return null; }
+    T v = this.items.get(this.head);
+    this.head++;
+    // Start afresh once everything has been taken, so a queue that is drained now and then does not
+    // grow forever.
+    if (this.head == this.items.len()) {
+      this.items = Vec<T>.create();
+      this.head = 0;
+    }
+    return v;
+  }
+
+  i32 len(const this) { return this.items.len() - this.head; }
+
+  bool isEmpty(const this) { return this.len() == 0; }
+}
+
+/**
+ * The runtime half of a lowered `async` body: its ticket, its step, and the schedule target it runs
+ * under. Nothing but the lowering names it.
+ *
+ * `step` runs the body from where it last stopped until it suspends (answering false) or ends
+ * (answering true, having settled `ticket`). `run` wraps every step in the body's own schedule
+ * target — the one in force where it was called, or whatever a `schedule` in it set since — and
+ * hands the continuation of a suspension to the target in force *outside*, which is where the
+ * suspended call was made (`§wac-schedule-target-fri2qzd`, `§wac-schedule-restored-b9qsydd`).
+ */
+export struct __wacMachine {
+  TicketBase ticket;
+  fn<bool()> step;
+  fn<void(Continuation)>? inner;
+  /** Which suspension is current, so a continuation from an earlier one does nothing when called. */
+  i32 seq;
+
+  void run(this) {
+    fn<void(Continuation)>? outer = __wacScheduleTarget();
+    __wacSetScheduleTarget(this.inner);
+    bool finished = this.step();
+    this.inner = __wacScheduleTarget();
+    __wacSetScheduleTarget(outer);
+    if (finished) { return; }
+    Continuation? k = this.ticket.parked;
+    if (outer is not null && k is not null) { outer!(k!); }
+  }
+
+  /** Suspend on `on` — `null` for a bare `await;` — parking the continuation on this machine's ticket. */
+  void park(this, TicketBase? on) {
+    this.seq++;
+    __wacResumer r = __wacResumer(this, this.seq);
+    this.ticket.parked = Continuation(on, r.call);
+  }
+}
+
+/** One suspension's `call`: resumes the machine if that suspension is still the current one. */
+struct __wacResumer {
+  __wacMachine m;
+  i32 seq;
+
+  void call(this) {
+    if (this.m.seq != this.seq) { return; }
+    Continuation? k = this.m.ticket.parked;
+    if (k is null) { return; }
+    TicketBase? on = k!.t;
+    // `§wac-continuation-early-trap-rg9d475`: the ticket it waits on has to have settled.
+    if (on is not null && !on!.done) { trap; }
+    this.m.ticket.parked = null;
+    this.m.run();
+  }
+}
+
+/** The schedule target in force. The emitter replaces this body with a read of its hidden global. */
+export fn<void(Continuation)>? __wacScheduleTarget() { return null; }
+
+/** Make `f` the schedule target. The emitter replaces this body with a write of its hidden global. */
+export void __wacSetScheduleTarget(fn<void(Continuation)>? f) { }
