@@ -1,0 +1,6 @@
+// expect: refused
+// why: a static evaluation that traps is an error, reported as the trap it executed
+// spec: §wac-static-eval-trap-yiybeke
+i32 zero() { return 0; }
+static i32 Y = 1 / zero();
+export i32 readsY() { return Y; }

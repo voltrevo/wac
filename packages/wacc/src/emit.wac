@@ -16,6 +16,12 @@
 // language and the point is not the fraction — it is that the shape is end to end, so the next rule
 // added is measured by running it rather than by reading it.
 
+import {
+  Decls, Ev, StaticBind, Value, bindStaticLocals, demandConst, evFinished, isIntName, outcomeName, declExportedOf, declNameOf,
+  decimalText, evalExpr, evLimit, evUnsupported, numValue, staticForCap, staticForName,
+  staticForType, staticForValues, truthy, wrapTo, vF32, vF64, vNum,
+} from "./consteval.wac";
+import { stringLiteralBytes } from "./strlit.wac";
 import { programGraph } from "./program.wac";
 import { blockValue, escapeValue, isBlockLiteral, isStringEscape, lex, Lexed, tokenStride,
          literalBodyStart, literalBodyEnd,
@@ -2631,6 +2637,13 @@ export struct Env {
    */
   Decl[] mergedDecls;
   i32[] mergedFiles;
+  /**
+   * The static evaluator (spec/next ch28), and what it was given to look at — built once, on the first
+   * static that wants a value, and kept because *one* run is what makes identity mean anything: two
+   * statics naming the same object have to come back with the same heap index.
+   */
+  Ev? staticEv;
+  Decls? staticCx;
 
   /**
    * The innermost `defer` region: the depth of its `block`, and the locals an exit through it records
@@ -2986,7 +2999,7 @@ export struct Env {
                i32[].filled(4096, 0), i32[].filled(4096, 0), i32[].filled(4096, 0), 0,
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
-               Decl[](), i32[](), 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
+               Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
                Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0);
   }
 
@@ -3258,6 +3271,15 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
         collectArrayTypes(env, src, lexed, then);
         collectArrayTypes(env, src, lexed, els);
       }
+      StaticIf(cond, then, els): {
+        i32 liveA = liveBranchOf(env, src, lexed, cond);
+        if (liveA == 1) { collectArrayTypes(env, src, lexed, then); }
+        if (liveA == 0) { collectArrayTypes(env, src, lexed, els); }
+      }
+      StaticFor(init, cond, update, inner): {
+        if (init is not null) { collectArrayTypes(env, src, lexed, [init!] as Stmt[]); }
+        collectArrayTypes(env, src, lexed, inner);
+      }
       While(cond, inner): {
         collectArrayTypesOfExpr(env, src, lexed, cond);
         collectArrayTypes(env, src, lexed, inner);
@@ -3321,6 +3343,23 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
       If(cond, then, els): {
         collectLocals(env, src, lexed, then);
         collectLocals(env, src, lexed, els);
+      }
+      // The branch in the program, whose locals are the only ones written.
+      StaticIf(cond, then, els): {
+        i32 liveL = liveBranchOf(env, src, lexed, cond);
+        if (liveL == 1) { collectLocals(env, src, lexed, then); }
+        if (liveL == 0) { collectLocals(env, src, lexed, els); }
+      }
+      StaticFor(init, cond, update, inner): {
+        if (init is not null) {
+          match (init!.kind) {
+            Var(type, nameTok, ini, isConst): {
+              env.addLocal(tokenTextOf(src, lexed, nameTok), varTypeOfE(env, src, lexed, type, ini));
+            }
+            default: { }
+          }
+        }
+        collectLocals(env, src, lexed, inner);
       }
       While(cond, inner): { collectLocals(env, src, lexed, inner); }
       DoWhile(inner, cond): { collectLocals(env, src, lexed, inner); }
@@ -8202,8 +8241,63 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
  */
 void emitBody(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body) {
   i32 saved = env.localCount;
+  i32 mark = bindBlockStatics(fb, src, lexed, env, body, true);
   emitFrom(fb, src, lexed, env, body, 0);
+  if (mark >= 0) {
+    Ev back = staticEvalOf(env, src, lexed);
+    back.localCount = mark;
+  }
   retireFrom(env, saved);
+}
+
+/**
+ * A block's own `static`s (spec/next ch27), bound where the block starts: each computed by the
+ * evaluator in dependency order, made a local, and — when `write` — given its value as a literal, so
+ * a read before the declaration reads the same number as one after. Answers the evaluator's mark to
+ * restore at the block's end, or -1 when the block has none.
+ */
+i32 bindBlockStatics(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, bool write) {
+  bool any = false;
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      StaticLocal(type, nameTok, init): { any = true; }
+      default: { }
+    }
+  }
+  if (!any) { return 0 - 1; }
+  Ev ev = staticEvalOf(env, src, lexed);
+  if (env.staticCx is null) { env.declineFor("a `static` in a function, with no evaluator"); return 0 - 1; }
+  StaticBind sb = bindStaticLocals(ev, env.staticCx!, env.curFile, body);
+  for (i32 j = 0; j < sb.names.len(); j++) {
+    if (sb.status[j] != 0) { env.declineFor("the static `" + sb.names[j] + "`: " + sb.why[j]); continue; }
+    i32 li = ev.localAt(sb.names[j], 0);
+    if (li < 0) { continue; }
+    string ty = ev.localTypes[li];
+    env.addLocal(sb.names[j], ty);
+    if (!write) { continue; }
+    if (!emitValueLiteral(fb, env, ev.localVals[li], ty)) {
+      env.declineFor("the static `" + sb.names[j] + "`, of a type this emitter writes only at module level: " + ty);
+      continue;
+    }
+    fb.byte(33); fb.u32leb(env.localCount - 1);       // local.set
+  }
+  return sb.mark;
+}
+
+/** A static scalar value as one instruction; answers whether it could be. */
+bool emitValueLiteral(B fb, Env env, Value v, string want) {
+  if (!isStaticScalarType(want) && want != "bool") { return false; }
+  if (v.kind == vNum()) {
+    if (want == "f32" || want == "f64") { return false; }
+    if (valType(want) == 126) { fb.byte(66); fb.i64leb(v.bits); return true; }
+    fb.byte(65); fb.i32leb(wrapTo("i32", v.bits) as@ i32);
+    return true;
+  }
+  if (v.kind == vF32() || v.kind == vF64()) {
+    if (want == "f32") { fb.byte(67); fb.f32bits(v.fval as~ f32); return true; }
+    if (want == "f64") { fb.byte(68); fb.f64bits(v.fval); return true; }
+  }
+  return false;
 }
 
 /** `body` from statement `from` on — where a `defer` takes the rest of its block with it. */
@@ -8356,8 +8450,66 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
   env.retireMatchBound(bound);
 }
 
+/** Which branch of a `static_if` this build takes — 1 the first, 0 the other — or -1 where it cannot say. */
+i32 liveBranchOf(Env env, u8[] src, Lexed lexed, Expr cond) {
+  Ev ev = staticEvalOf(env, src, lexed);
+  if (env.staticCx is null) { return 0 - 1; }
+  ev.status = 0;
+  ev.message = "";
+  i32 mark = ev.localCount;
+  Value v = evalExpr(ev, env.staticCx!, env.curFile, cond, "bool");
+  ev.localCount = mark;
+  if (!evFinished(ev.status)) { ev.status = 0; return 0 - 1; }
+  ev.status = 0;
+  return truthy(v) ? 1 : 0;
+}
+
+/** The values a `static_for`'s variable takes here, or none where it cannot be driven. */
+i64[] staticTurnsOf(Env env, u8[] src, Lexed lexed, Stmt? init, Expr? cond, Stmt? update) {
+  Ev ev = staticEvalOf(env, src, lexed);
+  if (env.staticCx is null) { return i64[](); }
+  i64[] vals = staticForValues(ev, env.staticCx!, env.curFile, init, cond, update, staticForCap());
+  ev.status = 0;
+  if (vals.len() >= staticForCap()) {
+    env.declineFor("a `static_for` that did not stop within " + decimalText(staticForCap()) + " turns");
+  }
+  return vals;
+}
+
 void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
+    // Only the branch in the program is written (spec/next ch31).
+    StaticIf(cond, then, els): {
+      i32 live = liveBranchOf(env, src, lexed, cond);
+      if (live < 0) { env.declineFor("a `static_if` whose condition has no static value"); return; }
+      Stmt[] body = live == 1 ? then : els;
+      for (i32 i = 0; i < body.len(); i++) { emitStmt(fb, src, lexed, env, body[i]); }
+    }
+    StaticTrap(message): { env.declineFor("`static_trap` was reached"); }
+    // Its value was written where the block starts (`emitBody`).
+    StaticLocal(type, nameTok, init): { }
+    // **The copies are ordinary code with an ordinary local**: `init` declares and sets it, each
+    // `update` advances it, and what makes the loop static is that the *number* of copies is decided
+    // here. The evaluator is bound to the same value at each turn, so a `static_if` inside sees what
+    // the checker saw.
+    StaticFor(init, cond, update, body): {
+      i64[] vals = staticTurnsOf(env, src, lexed, init, cond, update);
+      if (init is not null) { emitStmt(fb, src, lexed, env, init!); }
+      Ev ev = staticEvalOf(env, src, lexed);
+      string nm = env.staticCx is null ? "" : staticForName(env.staticCx!, env.curFile, init);
+      string ty = env.staticCx is null ? "i32" : staticForType(env.staticCx!, env.curFile, init);
+      for (i32 k = 0; k < vals.len(); k++) {
+        i32 mark = ev.localCount;
+        if (nm != "") { ev.declare(nm, ty, numValue(ty, vals[k])); }
+        // Each copy is a block of its own: its statics bound against this turn's value.
+        i32 savedTurn = env.localCount;
+        bindBlockStatics(fb, src, lexed, env, body, true);
+        for (i32 i = 0; i < body.len(); i++) { emitStmt(fb, src, lexed, env, body[i]); }
+        retireFrom(env, savedTurn);
+        ev.localCount = mark;
+        if (update is not null) { emitStmt(fb, src, lexed, env, update!); }
+      }
+    }
     Var(type, nameTok, init, isConst): {
       string vt = varTypeOfE(env, src, lexed, type, init);
       if (init is not null) {
@@ -9436,6 +9588,10 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         return;
       }
       if (env.constInits[ci] is null) { return; }
+      // **A scalar static is substituted as its value** (spec/next ch27-28). Re-emitting the
+      // initialiser at every use was equivalent while an initialiser was arithmetic on literals; once
+      // it can be a call it is not — the call would be *made* at each use.
+      if (emitStaticScalar(fb, env, src, lexed, ci, env.constTypes[ci])) { return; }
       emitExprAt(fb, cSrc(env, src, ci), cLex(env, lexed, ci), env, env.constInits[ci]!, env.constTypes[ci]);
     }
     // **Declined before emission reaches here** by `unsupportedExpr`, which names it. The arm exists
@@ -11955,6 +12111,24 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
 
 void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
   match (s.kind) {
+    // Only the live branch, or a lambda the build drops is still hoisted — and the count sizes the
+    // function section, so one too many renames every function index after it.
+    StaticIf(cond, then, els): {
+      i32 live = liveBranchOf(env, src, lexed, cond);
+      Stmt[] body = live == 1 ? then : els;
+      if (live >= 0) {
+        for (i32 i = 0; i < body.len(); i++) { findLambdasStmt(env, src, lexed, body[i], ret); }
+      }
+    }
+    StaticTrap(message): { }
+    StaticLocal(type, nameTok, init): { }
+    // Walked once: a lambda inside is refused by `unsupportedStmt`, because each emitted copy would
+    // want its own hoisted function while this walk counted one.
+    StaticFor(init, cond, update, body): {
+      if (init is not null) { findLambdasStmt(env, src, lexed, init!, ret); }
+      for (i32 i = 0; i < body.len(); i++) { findLambdasStmt(env, src, lexed, body[i], ret); }
+      if (update is not null) { findLambdasStmt(env, src, lexed, update!, ret); }
+    }
     // The declared type is the wanted type — the commonest position a lambda is written in, and the
     // only one where the answer is written down beside it.
     Var(type, nameTok, init, isConst): {
@@ -13631,17 +13805,17 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
 string unsupportedIn(u8[] src, Lexed lexed, Env env, Stmt[] body) {
   // The **same scope the emitter will have**, which is the point: this walk decides whether a name
   // is a local, and it has to decide that the same way twice or it approves a body the emitter
-  // cannot resolve — or declines one it can.
+  // cannot resolve — or declines one it can. The block's statics included, bound as `emitBody` will.
   i32 saved = env.localCount;
-  for (i32 i = 0; i < body.len(); i++) {
-    string r = unsupportedStmt(src, lexed, env, body[i]);
-    if (r != "") {
-      env.localCount = saved;
-      return r;
-    }
+  i32 mark = bindBlockStatics(B.create(), src, lexed, env, body, false);
+  string r = "";
+  for (i32 i = 0; i < body.len() && r == ""; i++) { r = unsupportedStmt(src, lexed, env, body[i]); }
+  if (mark >= 0) {
+    Ev back = staticEvalOf(env, src, lexed);
+    back.localCount = mark;
   }
   env.localCount = saved;
-  return "";
+  return r;
 }
 
 /**
@@ -13722,6 +13896,37 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
 
 string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
+    StaticIf(cond, then, els): {
+      i32 live = liveBranchOf(env, src, lexed, cond);
+      if (live < 0) { return "a `static_if` whose condition has no static value"; }
+      Stmt[] body = live == 1 ? then : els;
+      return unsupportedIn(src, lexed, env, body);
+    }
+    StaticTrap(message): { return ""; }
+    // Bound, with its value, where the block starts (`unsupportedIn`).
+    StaticLocal(type, nameTok, init): { return ""; }
+    StaticFor(init, cond, update, body): {
+      if (bodyHasLambda(src, lexed, body)) {
+        return "a lambda inside a `static_for`, whose body is written once per turn";
+      }
+      // **The variable in scope for both**: this walk declares the emitter's local, as the `for` arm
+      // does, *and* binds the evaluator's, because a `static_if` inside is decided against the value.
+      i32 savedSF = env.localCount;
+      string r = "";
+      if (init is not null) { r = unsupportedStmt(src, lexed, env, init!); }
+      Ev ev = staticEvalOf(env, src, lexed);
+      i64[] vals = staticTurnsOf(env, src, lexed, init, cond, update);
+      string nm = env.staticCx is null ? "" : staticForName(env.staticCx!, env.curFile, init);
+      string ty = env.staticCx is null ? "i32" : staticForType(env.staticCx!, env.curFile, init);
+      for (i32 k = 0; k < vals.len() && r == ""; k++) {
+        i32 mark = ev.localCount;
+        if (nm != "") { ev.declare(nm, ty, numValue(ty, vals[k])); }
+        r = unsupportedIn(src, lexed, env, body);
+        ev.localCount = mark;
+      }
+      env.localCount = savedSF;
+      return r;
+    }
     Var(type, nameTok, init, isConst): {
       string t = varTypeOfE(env, src, lexed, type, init);
       if (t == "") { return "local of an unspelled type"; }
@@ -16547,11 +16752,155 @@ bool needsStartFunction(Env env, u8[] src, Lexed lexed) {
  * In declaration order, which is the order a file reads and the order one constant may refer to
  * another in.
  */
+/**
+ * The evaluator for this module (spec/next ch28), built on the first static that wants a value.
+ *
+ * Lazy because most modules have none that need one, and because it must be built *after* the
+ * declaration passes, which is where the fields and statics it reads come from. Kept on the `Env`
+ * because one run is what makes identity mean anything.
+ */
+Ev staticEvalOf(Env env, u8[] src, Lexed lexed) {
+  if (env.staticEv is not null) { return env.staticEv!; }
+  Decl[] decls = env.mergedDecls.len() > 0 ? env.mergedDecls
+               : (env.prog is null ? Decl[]() : env.prog!.decls);
+  i32[] files = env.mergedFiles.len() > 0 ? env.mergedFiles : i32[].filled(decls.len() < 1 ? 1 : decls.len(), 0 - 1);
+  // **The import edges come from here or from nowhere**: the evaluator has no path resolver, so
+  // without them `import { SIZE as WIDTH }` would resolve to the word rather than to the thing.
+  i32 nd = decls.len() < 1 ? 1 : decls.len();
+  i32 ni = env.importCount < 1 ? 1 : env.importCount;
+  env.staticCx = Decls(decls, files, env.fileSrcs, env.fileLexeds, src, lexed,
+                       env.fieldOwners, env.fieldNames, env.fieldTypes, env.fieldCount,
+                       env.constNames, env.constTypes, env.constInits, env.constInitFiles,
+                       env.constCount,
+                       string[].filled(nd, ""), string[].filled(nd, ""), bool[].filled(nd, false),
+                       i32[].filled(env.constCount < 1 ? 1 : env.constCount, 0),
+                       i32[].filled(ni, 0), string[].filled(ni, ""), i32[].filled(ni, 0), string[].filled(ni, ""),
+                       env.importCount);
+  // Bound to a local first: an assignment through an unwrap does not parse on wac-L5.
+  Decls scx = env.staticCx!;
+  for (i32 e = 0; e < env.importCount; e++) {
+    scx.impFrom[e] = env.importFrom[e];
+    scx.impName[e] = env.importNames[e];
+    scx.impTo[e] = env.importTo[e];
+    scx.impDecl[e] = env.importDecls[e];
+  }
+  // **Env's keys, not a second set**: `Env.declare` has already decided every identity. Asked of every
+  // declaration, so the ambiguity `keyAt` records is put back: a name two files each declare is
+  // ambiguous only where a file *reads* it, and asking on every declaration's behalf is not a read.
+  bool wasAmbiguous = env.ambiguous;
+  string wasAmbiguousName = env.ambiguousName;
+  for (i32 d = 0; d < decls.len(); d++) {
+    string dn = declNameOf(scx, d);
+    scx.names[d] = dn;
+    scx.keys[d] = dn == "" ? "" : env.keyAt(dn, scx.declFiles[d]);
+    scx.exported[d] = declExportedOf(decls[d]);
+  }
+  env.ambiguous = wasAmbiguous;
+  env.ambiguousName = wasAmbiguousName;
+  for (i32 i = 0; i < env.constCount; i++) {
+    for (i32 d = 0; d < decls.len(); d++) {
+      if (scx.keys[d] != "" && scx.keys[d] == env.constNames[i]) { scx.constDecls[i] = d; }
+    }
+  }
+  env.staticEv = Ev.create();
+  return env.staticEv!;
+}
+
+/**
+ * The static value of static `ci`, or nothing where it has none.
+ *
+ * **A gap falls back; a fault declines.** `evUnsupported` is this evaluator not knowing a construct,
+ * and the resource limit is this compiler declining to keep trying — neither is a claim about the
+ * program, so both leave the static to be computed at instantiation. A trap and a cycle are facts
+ * about the program and refuse the module.
+ */
+Value? staticConst(Env env, u8[] src, Lexed lexed, i32 ci) {
+  Ev ev = staticEvalOf(env, src, lexed);
+  if (env.staticCx is null) { return null; }
+  ev.status = 0;
+  ev.message = "";
+  Value v = demandConst(ev, env.staticCx!, ci);
+  if (evFinished(ev.status)) { return v; }
+  if (ev.status == evUnsupported() || ev.status == evLimit()) { return null; }
+  env.declineFor("`" + env.constNames[ci] + "`: " + outcomeName(ev.status) + " — " + ev.message);
+  return null;
+}
+
+/** Write static `ci`'s value as a literal, if it has one and it is a number; answers whether it did. */
+bool emitStaticScalar(B fb, Env env, u8[] src, Lexed lexed, i32 ci, string want) {
+  if (!isStaticScalarType(want)) { return false; }
+  Value? got = staticConst(env, src, lexed, ci);
+  if (got is null) { return false; }
+  Value v = got!;
+  if (v.kind == vNum()) {
+    if (valType(want) == 126) { fb.byte(66); fb.i64leb(v.bits); return true; }
+    if (want == "f32" || want == "f64") { return false; }   // a float's value is never a `vNum`
+    // **Wrapped, not saturated**: a `static u32` of 4294967295 is the bits a 32-bit slot wants.
+    fb.byte(65); fb.i32leb(wrapTo("i32", v.bits) as@ i32);
+    return true;
+  }
+  if (v.kind == vF32() || v.kind == vF64()) {
+    if (want == "f32") { fb.byte(67); fb.f32bits(v.fval as~ f32); return true; }
+    fb.byte(68); fb.f64bits(v.fval);
+    return true;
+  }
+  return false;
+}
+
+/** A type whose value fits in one wasm instruction, which is the whole of what is folded so far. */
+bool isStaticScalarType(string t) { return isIntName(t) || t == "f32" || t == "f64"; }
+
+/**
+ * Whether `emitStaticScalar` will write this static as a literal at each of its uses — asked by
+ * `assignGlobals` before anything is emitted, so the two must ask the same questions in the same order.
+ */
+bool constSubstitutes(Env env, u8[] src, Lexed lexed, i32 ci) {
+  if (!isStaticScalarType(env.constTypes[ci])) { return false; }
+  Value? got = staticConst(env, src, lexed, ci);
+  if (got is null) { return false; }
+  i32 k = got!.kind;
+  return k == vNum() || k == vF32() || k == vF64();
+}
+
+/**
+ * Every static, in an order where one is written after everything it reads: the evaluator settles a
+ * static only once its dependencies have, so its order is a dependency order by construction. Statics
+ * it could not compute follow in the order the files write them.
+ */
+i32[] startOrder(Env env, u8[] src, Lexed lexed) {
+  i32[] out = i32[].filled(env.constCount < 1 ? 1 : env.constCount, 0);
+  bool[] placed = bool[].filled(env.constCount < 1 ? 1 : env.constCount, false);
+  i32 n = 0;
+  Ev ev = staticEvalOf(env, src, lexed);
+  if (env.staticCx is not null) {
+    for (i32 i = 0; i < env.constCount; i++) { staticConst(env, src, lexed, i); }
+    for (i32 k = 0; k < ev.constOrderCount; k++) {
+      i32 ci = ev.constOrder[k];
+      if (ci < 0 || ci >= env.constCount || placed[ci]) { continue; }
+      placed[ci] = true;
+      out[n] = ci;
+      n = n + 1;
+    }
+  }
+  for (i32 i = 0; i < env.constCount; i++) {
+    if (placed[i]) { continue; }
+    out[n] = i;
+    n = n + 1;
+  }
+  i32[] exact = i32[].filled(n, 0);
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
 void emitStartFunction(B funcs, B code, u8[] src, Lexed lexed, Env env, i32 index, i32 declTypes) {
   funcs.u32leb(env.sigType("fn[void()]"));
 
   B insns = B.create();
-  for (i32 i = 0; i < env.constCount; i++) {
+  // **Demand order, not the file's.** A static whose initialiser reads another is written after it,
+  // whichever way round the two are declared (spec/next ch29 `§wac-static-dep-order-free-au43dhv`).
+  i32[] order = startOrder(env, src, lexed);
+  for (i32 oi = 0; oi < order.len(); oi++) {
+    i32 i = order[oi];
     if (env.constGlobal[i] < 0) { continue; }
     if (env.constInits[i] is null) { continue; }
     if (isConstExpr(cSrc(env, src, i), cLex(env, lexed, i), env, env.constInits[i]!)) { continue; }
@@ -16580,10 +16929,19 @@ void emitStartFunction(B funcs, B code, u8[] src, Lexed lexed, Env env, i32 inde
 void assignGlobals(Env env, u8[] src, Lexed lexed) {
   // **Global 0 is the counter array** when instrumenting, so a constant's global starts at one.
   i32 next = env.coverage ? 1 : 0;
-  for (i32 i = 0; i < env.constCount; i++) {
+  i32[] order = startOrder(env, src, lexed);
+  for (i32 oi = 0; oi < order.len(); oi++) {
+    i32 i = order[oi];
     string t = env.constTypes[i];
-    if (!isArrayType(t) && !env.isStructName(t)) { continue; }
     if (env.constInits[i] is null) { continue; }
+    if (!isArrayType(t) && !env.isStructName(t)) {
+      // **A scalar needs storage exactly when substituting it would not be free.** One the evaluator
+      // folded is its value; a wasm constant expression duplicates instructions that do no work. One
+      // that does neither — a call it could not finish — is stored and written once at instantiation,
+      // as an array in this position always was, rather than called once per read.
+      if (constSubstitutes(env, src, lexed, i)) { continue; }
+      if (isConstExpr(cSrc(env, src, i), cLex(env, lexed, i), env, env.constInits[i]!)) { continue; }
+    }
     // **Not only the constant expressions.** wasm's sense of one is far narrower than wac's — no
     // arithmetic, no call, no concatenation — and a constant it cannot express is not a constant it
     // cannot *have*: the global is declared mutable and assigned at instantiation instead. What
@@ -16786,61 +17144,6 @@ string staticOwner(u8[] src, Lexed lexed, Env env, Expr obj) {
     }
     default: { return ""; }
   }
-}
-
-/**
- * A string literal's bytes, with the quotes dropped and the escapes resolved.
- *
- * The set is the language's, from `escapeValue` in `lex.wac`, rather than a list repeated here.
- * It was "the four this repository's own sources use" and the two lists agreed by luck: an escape
- * this did not know was emitted as its own two characters, a wrong string rather than a missing
- * feature, and `knownEscapes` beside it was the second copy that kept that from happening.
- * `design/lang/0013` moves the set twice more, and a set written down six times moves five times.
- */
-export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
-  i32 start = lexed.tokens[tok * tokenStride() + 1];
-  i32 len = lexed.tokens[tok * tokenStride() + 2];
-  if (isBlockLiteral(src, start, len)) { return blockValue(src, start, len); }
-  // **Sized by the span, which is always enough.** `\\u{1F600}` is nine source bytes and four
-  // encoded ones, and every other escape shrinks too; no escape encodes to more bytes than it is
-  // written with, so the literal's own length bounds the result.
-  u8[] out = u8[].filled(len, 0);
-  i32 n = 0;
-  // **The delimiters are one byte each, except the `\{` that ends an interpolated segment.**
-  // `"a\{e}bc"` lexes as `"a\{` `+` `e` `+` `}bc"` — `design/lang/0013` D7 — and the segments'
-  // spans are runs of the real file rather than synthesised source, so what varies is only which
-  // bytes are the delimiters. Opening is always one: a quote, or the `}` that closed the
-  // expression. Closing is two when it is `\{`, and a whole literal can never end that way, since
-  // an escaped backslash before a brace reads as `\\` then `{`.
-  i32 i = literalBodyStart(src, start, len);
-  i32 end = literalBodyEnd(src, start, len);
-  while (i < end) {
-    if (src[i] == 92 && i + 1 < end) {
-      // **`\\u{…}` is the one escape that is not one byte.** It denotes a character, so it encodes
-      // as UTF-8 here — which is what keeps a literal valid UTF-8 by construction, `design/lang/0013`
-      // D2 and D4. The lexer has already refused a malformed one, so a negative answer here cannot
-      // reach a module; it decodes as the plain `u` rather than trapping, because this runs on
-      // sources that may already carry a diagnostic and a second failure would bury the first.
-      if (src[i + 1] == 'u') {
-        i32 cp = unicodeEscapeValue(src, i + 1, end);
-        if (cp >= 0) {
-          n = n + utf8Into(out, n, cp);
-          i = unicodeEscapeEnd(src, i + 1, end);
-          continue;
-        }
-      }
-      out[n] = escapeValue(src[i + 1] as i32) as@ u8;
-      n = n + 1;
-      i = i + 2;
-      continue;
-    }
-    out[n] = src[i];
-    n = n + 1;
-    i = i + 1;
-  }
-  u8[] exact = u8[].filled(n, 0);
-  for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
-  return exact;
 }
 
 /** Whether a string literal uses only escapes this emitter resolves the same way the language does. */

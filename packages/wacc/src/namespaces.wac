@@ -268,12 +268,63 @@ string flattenInline(string text, NsLocal info) {
         t = close;
         continue;
       }
+      // A struct whose body declares a `static` field (spec/next ch27).
+      i32 sh = k == kExport() ? t + 1 : t;
+      if (f.kind(sh) == kConst()) { sh = sh + 1; }
+      if (f.kind(sh) == kStruct() && f.kind(sh + 1) == kIdent()) {
+        i32 sclose = hoistStaticFields(f, ed, info, sh, k == kExport());
+        if (sclose > t) { t = sclose; continue; }
+      }
     }
     if (k == kLbrace() || k == kLparen() || k == kLbrack()) { depth = depth + 1; }
     if (k == kRbrace() || k == kRparen() || k == kRbrack()) { depth = depth - 1; }
   }
   if (ed.n == 0) { return text; }
   return ed.apply(f.src, "");
+}
+
+/**
+ * A struct's `static` fields, moved out to the file's top level (spec/next ch27 `§wac-static-field-we2jbmc`).
+ *
+ * **A static field belongs to the type, not to an instance**, so it is a static declaration named for
+ * the type — `static i32 x = …;` in `Foo` becomes `static i32 @"Foo.x" = …;` after the struct — and the
+ * type is a namespace holding it, so `Foo.x` is rewritten to that name exactly as a namespace member
+ * is, and `Foo.make()` (no such member) is left alone. The field is blanked where it stood, so no line
+ * moves. A generic struct's statics are per instantiation and are left where they are.
+ *
+ * Answers the struct's closing brace, or -1 when it has no static field to move.
+ */
+i32 hoistStaticFields(NsFile f, NsEdits ed, NsLocal info, i32 structTok, bool exported) {
+  i32 open = structTok + 2;
+  if (f.kind(open) == kLt()) { return 0 - 1; }
+  while (open < f.count() && f.kind(open) != kLbrace() && f.kind(open) != kSemi()) { open = open + 1; }
+  if (f.kind(open) != kLbrace()) { return 0 - 1; }
+  i32 close = f.matching(open);
+  string owner = f.text(structTok + 1);
+  string hoisted = "";
+  i32 depth = 0;
+  for (i32 t = open + 1; t < close; t++) {
+    i32 k = f.kind(t);
+    if (depth == 0 && k == kStatic()) {
+      i32 nameTok = f.declName(t);
+      i32 end = f.declEnd(t);
+      if (nameTok < 0 || f.kind(nameTok) != kIdent()) { t = end; continue; }
+      string qualified = owner + "." + f.text(nameTok);
+      hoisted = hoisted + " " + (exported ? "export " : "") + "static"
+              + bytesText(f.src, f.end(t), f.outerStart(nameTok)) + "@\"" + qualified + "\""
+              + bytesText(f.src, f.outerEnd(nameTok), f.end(end));
+      ed.add(f.start(t), f.end(end), blankOf(f.src, f.start(t), f.end(end)));
+      info.members.push(qualified);
+      t = end;
+      continue;
+    }
+    if (k == kLbrace() || k == kLparen() || k == kLbrack()) { depth = depth + 1; }
+    if (k == kRbrace() || k == kRparen() || k == kRbrack()) { depth = depth - 1; }
+  }
+  if (hoisted == "") { return close; }
+  if (!info.spaces.has(owner)) { info.spaces.push(owner); }
+  ed.add(f.start(close), f.end(close), "}" + hoisted);
+  return close;
 }
 
 /** One `namespace name { … }` block, at tokens `first` (its `export` or `namespace`) to its `}`. */
@@ -384,7 +435,7 @@ export string[] lowerNamespaces(string[] paths, string[] sources, Res res) {
 /** Whether a source could hold anything this file lowers — a cheap test before any lexing. */
 bool mentionsNamespaces(string s) {
   return s.indexOf("namespace") >= 0 || s.indexOf("* as") >= 0 || s.indexOf("operators") >= 0
-      || dottedListItem(s);
+      || dottedListItem(s) || (s.indexOf("struct") >= 0 && s.indexOf("  static ") >= 0);
 }
 
 /** Whether an `import { … }` or `export { … }` list names a member by path — `html.div`. */

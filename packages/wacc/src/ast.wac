@@ -384,6 +384,24 @@ export enum StmtKind {
   Schedule(Expr target),
   /** `yield v;`, or `yield;` in a generator yielding `void` — spec/next ch36. */
   Yield(Expr? value),
+  /**
+   * `static_if (cond) { … } else { … }` — spec/next ch31. The condition is evaluated by the compiler
+   * and the branch not taken is dropped from the program, rather than folded away after being checked
+   * like an ordinary `if` with a constant condition.
+   */
+  StaticIf(Expr cond, Stmt[] then, Stmt[] els),
+  /** `static_trap "…";` — a compile error with that message, wherever the program reaches it. */
+  StaticTrap(Expr message),
+  /**
+   * `static_for (init; cond; update) { … }` — unrolled, so the body appears once per turn with the
+   * variable a static in each copy: a `static_if` inside is decided per turn.
+   */
+  StaticFor(Stmt? init, Expr? cond, Stmt? update, Stmt[] body),
+  /**
+   * `static T name = e;` in a function — spec/next ch27. Visible throughout its block, before its
+   * declaration as after, and computed by dependency order rather than when execution reaches it.
+   */
+  StaticLocal(Ty type, i32 nameTok, Expr init),
 }
 
 // ── Declarations ──────────────────────────────────────────────────────────────

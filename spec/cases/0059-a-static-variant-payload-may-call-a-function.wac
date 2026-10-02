@@ -1,7 +1,7 @@
-// expect: refused
+// expect: answers g = 1
 // why: and inside a variant's payload, which is the same rule one node along
-// from: specSingle's §wac-modconst-notconst cluster
+// spec: §wac-static-call-66kaqx5
 enum E { A(i32 v), B }
 i32 f() { return 1; }
 static E X = E.A(f());
-export i32 g() { return 0; }
+export i32 g() { return match (X) { A(v): v, B: 0 }; }

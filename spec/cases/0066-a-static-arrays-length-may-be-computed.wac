@@ -1,0 +1,6 @@
+// expect: answers f = 3
+// why: a static array's length may come from a call, because the whole initialiser is evaluated
+// spec: §wac-static-call-66kaqx5
+i32 n() { return 3; }
+static i32[] T = i32[].filled(n(), 0);
+export i32 f() { return T.len(); }

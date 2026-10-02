@@ -32,7 +32,10 @@
 // Column 28 is the `"`, column 21 is the `r` of `return`. Every AST node here carries its own line
 // and column, so this is `e.line, e.col` and not arithmetic.
 
-import { lex, tokenStride } from "./lex.wac";
+import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
+         evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
+         stringOf, truthy, StaticBind, bindStaticLocals } from "./consteval.wac";
+import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { coreExports, isBuiltinSpec } from "./coretext.wac";
 import { endsWith, startsWith } from "./path.wac";
@@ -812,6 +815,50 @@ struct DAExit {
   DA breaks;
 }
 
+/**
+ * A `static_for`'s body, with nothing for a `break` or `continue` to leave: one whose target would be
+ * the `static_for` would mean stopping the unrolling, and is refused (spec/next ch31
+ * `§wac-static-for-no-break-5mdxkf7`). A loop or switch *inside* the body is still one to leave.
+ */
+void checkStaticForBody(C c, Stmt[] body, Ty want) {
+  i32 loops = c.loopDepth;
+  i32 switches = c.switchDepth;
+  c.loopDepth = 0;
+  c.switchDepth = 0;
+  checkAll(c, body, want);
+  c.loopDepth = loops;
+  c.switchDepth = switches;
+}
+
+/**
+ * Which branch of a `static_if` is in the program — 1 the first, 0 the other — or -1 where this checker
+ * cannot say: before the declarations are in, or for a condition this evaluator cannot run.
+ */
+i32 liveBranch(C c, Expr cond) {
+  if ((c.sEv is null) || (c.sCx is null)) { return 0 - 1; }
+  Ev ev = c.sEv!;
+  ev.status = evOk();
+  ev.message = "";
+  i32 mark = ev.localCount;
+  Value v = evalExpr(ev, c.sCx!, c.sFile, cond, "bool");
+  ev.localCount = mark;
+  if (!evFinished(ev.status)) { ev.status = evOk(); return 0 - 1; }
+  ev.status = evOk();
+  return truthy(v) ? 1 : 0;
+}
+
+/** What a `static_trap` says, or "" where its operand is not a string this evaluator can build. */
+string staticTrapText(C c, Expr message) {
+  if ((c.sEv is null) || (c.sCx is null)) { return ""; }
+  Ev ev = c.sEv!;
+  ev.status = evOk();
+  ev.message = "";
+  Value v = evalExpr(ev, c.sCx!, c.sFile, message, "string");
+  if (!evFinished(ev.status)) { ev.status = evOk(); return ""; }
+  ev.status = evOk();
+  return stringOf(ev, refOf(v));
+}
+
 /** Whether struct type `t` — or a parent — declares a `const` field. */
 bool hasConstField(C c, string t) {
   string at = templateOf(t);
@@ -860,6 +907,24 @@ DA daBody(C c, Stmt[] body, DA st, DAExit loop) {
 
 DA daStmt(C c, Stmt s, DA st, DAExit loop) {
   match (s.kind) {
+    // **Only the branch in the program**, where it is known; both, joined, where it is not.
+    StaticIf(cond, then, els): {
+      i32 live = liveBranch(c, cond);
+      if (live == 1) { return daBody(c, then, st, loop); }
+      if (live == 0) { return daBody(c, els, st, loop); }
+      return daJoin(daBody(c, then, st.copy(), loop), daBody(c, els, st.copy(), loop));
+    }
+    StaticTrap(message): { st.dead = true; return st; }
+    // A static is assigned before anything in its block runs.
+    StaticLocal(type, nameTok, init): { st.remove(tokenText(c, nameTok)); return st; }
+    // As a `for`: the body may run no times.
+    StaticFor(init, cond, update, body): {
+      if (init is not null) { st = daStmt(c, init!, st, loop); }
+      DAExit hereSF = DAExit(DA.fresh());
+      hereSF.breaks.dead = true;
+      daBody(c, body, st.copy(), hereSF);
+      return daJoin(st, hereSF.breaks);
+    }
     Var(type, nameTok, init, isConst): {
       string name = tokenText(c, nameTok);
       if (init is not null) {
@@ -1403,7 +1468,20 @@ export i32 errNoLoop() { return 31; }
 /** A call with the wrong number of arguments. */
 export i32 errCallArity() { return 32; }
 /** A module-level `const` whose value cannot be computed at compile time. */
-export i32 errNotCompileTime() { return 34; }
+/** A static whose value needs itself, however far round the loop it goes (spec/next ch29). */
+export i32 errConstCycle() { return 34; }
+/** A static whose evaluation traps — the trap it executed (spec/next ch28). */
+export i32 errStaticTrapped() { return 238; }
+/** A static the compiler stopped evaluating: the answer is unknown, which says nothing of termination. */
+export i32 errStaticLimit() { return 239; }
+/** A static that uses a construct this compiler cannot evaluate yet — a property of the compiler. */
+export i32 errStaticUnsupported() { return 240; }
+/** `static_trap` was reached: a refusal the program asked for, with its own words (spec/next ch31). */
+export i32 errStaticTrap() { return 241; }
+/** A `static_if` whose condition this compiler cannot compute statically. */
+export i32 errStaticCondition() { return 242; }
+/** A static initialiser that reads a parameter or an ordinary local (spec/next ch27). */
+export i32 errStaticRuntime() { return 243; }
 /** Two declarations of one name at file scope. */
 export i32 errDuplicateName() { return 64; }
 /** Two fields, two methods, or a field and a method of one name in one struct. */
@@ -2783,6 +2861,15 @@ export struct C {
    * a `const` one is assigned twice, or after that use, is the definite-assignment walk's to say.
    */
   string pendingAt;
+  /**
+   * The static evaluator (spec/next ch28) and what it reads — set once the declarations are in. A
+   * `static_if`'s condition is decided here rather than left to the emitter, because the branch not
+   * taken is **not checked**; and a static that needs its own value is a cycle this reports.
+   */
+  Decls? sCx;
+  Ev? sEv;
+  /** Which file the checker is reading, in `sCx`'s numbering; -1 when there is one file. */
+  i32 sFile;
   /** What a `yield` in the function being checked yields, or `""` outside a generator (ch36). */
   string yieldType;
 
@@ -2893,7 +2980,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", "");
+             string[](), string[](), "", "", "", null, null, 0 - 1, "");
   }
 
   /**
@@ -5392,6 +5479,15 @@ bool leaves(C c, Stmt s) {
     ExprStmt(expr): { return isNeverExpr(c, expr); }
     Var(type, nameTok, init, isConst): { return (init is not null) && isNeverExpr(c, init!); }
     Block(body): { return alwaysLeaves(c, body); }
+    // **The live branch alone**, and there need not be another: `static_if (W) { return 1; }` with `W`
+    // true always leaves, where the same shape written `if` does not (spec/next ch31).
+    StaticIf(cond, then, els): {
+      i32 live = liveBranch(c, cond);
+      if (live == 1) { return alwaysLeaves(c, then); }
+      if (live == 0) { return alwaysLeaves(c, els); }
+      return els.len() > 0 && alwaysLeaves(c, then) && alwaysLeaves(c, els);
+    }
+    StaticTrap(message): { return true; }
     // Both arms, and there must be an arm to take: an `if` with no `else` falls through when the
     // condition is false.
     If(cond, then, els): {
@@ -10466,6 +10562,14 @@ void declareStmt(C c, Stmt s) {
     // A deferred statement is a scope of its own: what it declares lives only while it runs.
     Defer(body): { declareScoped(c, [body] as Stmt[]); }
     If(cond, then, els): { declareScoped(c, then); declareScoped(c, els); }
+    StaticIf(cond, then, els): { declareScoped(c, then); declareScoped(c, els); }
+    StaticLocal(type, nameTok, init): { c.declare(tokenText(c, nameTok), typeOfTy(c, type)); }
+    StaticFor(init, cond, update, body): {
+      c.pushScope(body);
+      if (init is not null) { declareStmt(c, init!); }
+      declareAll(c, body);
+      c.popScope();
+    }
     While(cond, body): { declareScoped(c, body); }
     DoWhile(body, cond): { declareScoped(c, body); }
     For(init, cond, update, body): {
@@ -10690,12 +10794,123 @@ void checkScoped(C c, Stmt[] body, Ty want) {
 }
 
 void checkAll(C c, Stmt[] body, Ty want) {
+  // **The block's statics first, all of them, by dependency** (spec/next ch27): each is visible before
+  // its declaration, and `static_if` and the static's own uses read the value.
+  StaticBind sb = StaticBind(string[](), i32[](), string[](), 0);
+  bool bound = (c.sEv is not null) && (c.sCx is not null) && hasStaticLocal(body);
+  if (bound) {
+    sb = bindStaticLocals(c.sEv!, c.sCx!, c.sFile, body);
+    reportStaticLocals(c, body, sb);
+  }
   for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], want); }
+  // Bound to a local first: wac-L5 cannot assign through an unwrap.
+  if (bound) {
+    Ev back = c.sEv!;
+    back.localCount = sb.mark;
+  }
+}
+
+/** Whether a block declares a `static` of its own. */
+bool hasStaticLocal(Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      StaticLocal(type, nameTok, init): { return true; }
+      default: { }
+    }
+  }
+  return false;
+}
+
+/** The statics of a block that did not settle, each at its initialiser, as the four outcomes and one more. */
+void reportStaticLocals(C c, Stmt[] body, StaticBind sb) {
+  i32 k = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      StaticLocal(type, nameTok, init): {
+        i32 st = k < sb.status.len() ? sb.status[k] : evOk();
+        string why = k < sb.why.len() ? sb.why[k] : "";
+        k = k + 1;
+        if (st == evOk()) { continue; }
+        // **A runtime value is a different mistake** from a construct this compiler lacks
+        // (`§wac-static-no-runtime-4yksuu4`): the name is a parameter or an ordinary local, here.
+        string read = runtimeNameIn(c, why);
+        if (read != "") {
+          c.reportWith(errStaticRuntime(), init.line, init.col,
+                       "a static initialiser cannot read the runtime value '" + read + "'");
+          continue;
+        }
+        i32 code = st == evCycle() ? errConstCycle() : st == evTrap() ? errStaticTrapped()
+                 : st == evLimit() ? errStaticLimit() : errStaticUnsupported();
+        c.reportWith(code, init.line, init.col, why);
+      }
+      default: { }
+    }
+  }
+}
+
+/** The name an evaluator message says it could not read, when that name is a runtime local here. */
+string runtimeNameIn(C c, string why) {
+  if (why.indexOf("`") != 0 || why.indexOf("which is neither a local nor a module constant") < 0) { return ""; }
+  string rest = why.slice(1, why.len());
+  i32 end = rest.indexOf("`");
+  if (end <= 0) { return ""; }
+  string nm = rest.slice(0, end);
+  return c.isDeclaredName(nm) ? nm : "";
 }
 
 /** Every `return` in a statement, however deeply nested, checked against `want`. */
 void checkStmt(C c, Stmt s, Ty want) {
   match (s.kind) {
+    // **The branch not taken is not checked** (spec/next ch31 `§wac-static-if-cphqxuz`): that is the
+    // whole difference from an `if` with a constant condition. One this checker cannot decide checks both.
+    StaticIf(cond, then, els): {
+      checkExpr(c, cond);
+      i32 live = liveBranch(c, cond);
+      if (live < 0) { c.reportWith(errStaticCondition(), cond.line, cond.col, ""); }
+      if (live != 0) { checkScoped(c, then, want); }
+      if (live != 1) { checkScoped(c, els, want); }
+    }
+    // The program wrote the sentence; printing that `static_trap` was reached and dropping it would
+    // leave the reader with the one thing they already knew.
+    StaticTrap(message): {
+      c.reportWith(errStaticTrap(), s.line, s.col, staticTrapText(c, message));
+    }
+    // Typed here; computed, with every other static of its block, where the block starts (`checkAll`).
+    StaticLocal(type, nameTok, init): {
+      string st = typeOfTy(c, type);
+      c.expected = st;
+      if (litKindOf(init) != litNone() && st != typeNone()) {
+        reportLiteral(c, st, init, errInitTypeMismatch(), init.line, init.col);
+      }
+      checkExpr(c, init);
+    }
+    StaticFor(init, cond, update, body): {
+      c.pushScope(body);
+      if (init is not null) { checkStmt(c, init!, want); }
+      if (cond is not null) { checkCond(c, cond!); }
+      if (update is not null) { checkStmt(c, update!, want); }
+      // **Once per turn, not once.** A `static_if` inside is decided against the variable's value, so
+      // checking the body once would check branches the emitter never writes and miss those it does.
+      if ((c.sEv is null) || (c.sCx is null)) {
+        checkStaticForBody(c, body, want);
+      } else {
+        Ev ev = c.sEv!;
+        i64[] vals = staticForValues(ev, c.sCx!, c.sFile, init, cond, update, staticForCap());
+        if (vals.len() >= staticForCap()) {
+          c.reportWith(errStaticLimit(), s.line, s.col,
+                       "a `static_for` that did not stop within " + countText(staticForCap()) + " turns");
+        }
+        string nm = staticForName(c.sCx!, c.sFile, init);
+        string ty = staticForType(c.sCx!, c.sFile, init);
+        for (i32 k = 0; k < vals.len(); k++) {
+          i32 mark = ev.localCount;
+          if (nm != "") { ev.declare(nm, ty, numValue(ty, vals[k])); }
+          checkStaticForBody(c, body, want);
+          ev.localCount = mark;
+        }
+      }
+      c.popScope();
+    }
     /**
      * An assignment, which is the initialiser question with the declared type coming from the target
      * rather than from a `Ty` node.
@@ -12736,8 +12951,6 @@ export void checkModule(C c, Program prog) {
   // one that already has a value. Reading itself is the same rule seen close up — `const i32 A = A +
   // 1` has nothing to read yet, and `A = B; B = A` has no order in which either could go first.
   // `spec/cases/0056` and `0057`.
-  string[] settled = string[].defaulted(256);
-  i32 settledCount = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       StaticDecl(nameTok, type, init, exported): {
@@ -12765,17 +12978,39 @@ export void checkModule(C c, Program prog) {
         }
         c.expected = constType;
         checkExpr(c, init);
-        if (callsAFunction(c, init)) { c.report(errNotCompileTime(), init.line, init.col); }
-        if (readsUnsettledConst(c, prog, init, settled, settledCount)) {
-          c.report(errNotCompileTime(), init.line, init.col);
-        }
-        if (settledCount < settled.len()) {
-          settled[settledCount] = tokenText(c, nameTok);
-          settledCount = settledCount + 1;
-        }
       }
       default: { }
     }
+  }
+
+  // **Every static is computed, and a failure is the checker's to report** (spec/next ch28-29). A
+  // call in an initialiser is run and the work is ordered by demand rather than by the file, so the
+  // two rules that refused a call and a forward read are gone. The four ways an evaluation fails are
+  // four errors: a cycle, a trap, a resource limit — which says the answer is unknown and nothing about
+  // termination — and a construct this evaluator has no arm for, which is a property of the compiler.
+  // A static is never quietly computed at run time instead: it promised a value at compile time.
+  if (c.sCx is null) {
+    c.sEv = Ev.create();
+    c.sCx = declsOfProgram(c.src, Lexed(c.toks, c.toks.len() / tokenStride(), i32[](), 0, 0, true),
+                           prog.decls);
+  }
+  Ev cev = c.sEv!;
+  Decls ccx = c.sCx!;
+  for (i32 ci = 0; ci < ccx.constCount; ci++) {
+    if (ccx.constFiles[ci] != c.sFile) { continue; }
+    Expr? cinit = ccx.constInits[ci];
+    if (cinit is null) { continue; }
+    cev.status = evOk();
+    cev.message = "";
+    demandConst(cev, ccx, ci);
+    // **Unsupported only with the whole program in view.** A one-file check cannot see what an import
+    // brings, so a static reading `CALL_SLOTS` from `std` comes back unsupported there for want of the
+    // file rather than of an evaluator arm — and the build, which has every file, says whether it is.
+    i32 why = cev.status == evCycle() ? errConstCycle()
+            : cev.status == evTrap() ? errStaticTrapped()
+            : cev.status == evLimit() ? errStaticLimit()
+            : cev.status == evUnsupported() && c.sFile >= 0 ? errStaticUnsupported() : 0;
+    if (why != 0) { c.reportWith(why, cinit!.line, cinit!.col, cev.message); }
   }
 
   for (i32 d = 0; d < prog.decls.len(); d++) {

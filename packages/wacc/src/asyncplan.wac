@@ -165,6 +165,13 @@ bool awaitInLvalue(Lvalue lv) {
 /** Whether `s` contains an `await` anywhere inside it. */
 export bool awaitInStmt(Stmt s) {
   match (s.kind) {
+    StaticIf(cond, then, els): { return awaitInExpr(cond) || awaitInBody(then) || awaitInBody(els); }
+    StaticTrap(message): { return false; }
+    StaticLocal(type, nameTok, init): { return false; }
+    StaticFor(init, cond, update, body): {
+      if ((init is not null) && awaitInStmt(init!)) { return true; }
+      return awaitInBody(body);
+    }
     Var(type, nameTok, init, isConst): { return (init is not null) && awaitInExpr(init!); }
     Assign(target, op, rhs): { return awaitInLvalue(target) || awaitInExpr(rhs); }
     IncrStmt(target, op): { return awaitInLvalue(target); }
@@ -399,6 +406,8 @@ string declineFor(Stmt s) {
     For(init, cond, update, body): { return "an `await` inside a `for`"; }
     DoWhile(body, cond): { return "an `await` inside a `do`"; }
     If(cond, then, els): { return "an `await` inside an `if`"; }
+    StaticIf(cond, then, els): { return "an `await` inside a `static_if`"; }
+    StaticFor(init, cond, update, body): { return "an `await` inside a `static_for`"; }
     Switch(subject, cases): { return "an `await` inside a `switch`"; }
     Match(subject, arms): { return "an `await` inside a `match`"; }
     Block(body): { return "an `await` inside a nested block"; }

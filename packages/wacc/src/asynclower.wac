@@ -516,6 +516,17 @@ Stmt[] subBody(Ctx c, Stmt[] body, bool inLambda, i32 brkTo, i32 contTo) {
 
 Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
   match (s.kind) {
+    // The condition is static and is left as written; the bodies are walked as any block's are.
+    StaticIf(cond, then, els): {
+      return Stmt(StmtKind.StaticIf(cond, subBody(c, then, inLambda, brkTo, contTo),
+                                    subBody(c, els, inLambda, brkTo, contTo)), s.line, s.col);
+    }
+    StaticTrap(message): { return s; }
+    StaticLocal(type, nameTok, init): { return s; }
+    StaticFor(init, cond, update, body): {
+      return Stmt(StmtKind.StaticFor(init, cond, update, subBody(c, body, inLambda, brkTo, contTo)),
+                  s.line, s.col);
+    }
     // **A declaration of a hoisted local becomes an assignment to its cell**, because the cell was
     // declared in the enclosing function. Nothing else could work: a second declaration inside the
     // switch arm would be a different variable, scoped to the arm, forgotten on resume.

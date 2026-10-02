@@ -10,6 +10,7 @@ import { kAsync, kIdent, kindName } from "./kinds.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor,
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
+import { Ev, declsOfFiles, declsOfProgram, evalAllConsts } from "./consteval.wac";
 import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
@@ -21,7 +22,7 @@ import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, 
          describeLinked, describeSep, buildLinked, Built,
          sourceOf, tokenTextOf, resolveImport, numText,
          emitDeclineLinked, lambdaReportLinked, exportForwards, splitTabs } from "./emit.wac";
-import { coreSource, isBuiltinSpec } from "./coretext.wac";
+import { coreSource, isBuiltinSpec, stdSource } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsOf } from "./files.wac";
@@ -143,6 +144,37 @@ export string dumpFirstTypeHint(u8[] src) {
   checkModule(c, prog);
   string[] hints = hintsOf(c);
   return hints.len() > 0 ? hints[0] : "";
+}
+
+/**
+ * Every static's value, as `NAME = value` or `NAME ! outcome: why` — spec/next ch28.
+ *
+ * The evaluator's oracle surface, and single-file on purpose: it asks what a value *is* with no
+ * emitter in the way, so a disagreement here is the interpreter's and nothing else's.
+ */
+export string[] dumpConstValues(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed);
+  Program prog = parseProgram(p);
+  return evalAllConsts(declsOfProgram(src, lexed, prog.decls));
+}
+
+/**
+ * Every static's value across a whole program — the surface that shows what the evaluator
+ * *resolved*: two files each with a private `helper` must each get their own.
+ */
+export string[] dumpConstValuesIn(string[] paths, string[] sources) {
+  Lexed?[] lexes = Lexed?[].filled(sources.len() < 1 ? 1 : sources.len(), null);
+  Program?[] progs = Program?[].filled(sources.len() < 1 ? 1 : sources.len(), null);
+  for (i32 i = 0; i < sources.len(); i++) {
+    u8[] b = sources[i].toBytes();
+    Lexed lx = lex(b);
+    lexes[i] = lx;
+    P pp = P.create(b, lx);
+    progs[i] = parseProgram(pp);
+  }
+  u8[] first = sources.len() > 0 ? sources[0].toBytes() : u8[]();
+  return evalAllConsts(declsOfFiles(paths, sources, lexes, progs, first, lex(first)));
 }
 
 /**
@@ -1730,6 +1762,40 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
 
   c.src = esrc;
   c.toks = elexed.tokens;
+  // **Every file, for the static evaluator** (spec/next ch28): a static calling an imported function
+  // is computed, and a `static_if` reading an imported static is decided, only with all of them.
+  // Only for an entry that says `static` at all — the view parses every file it reaches, `std`
+  // included, and a file with no static has nothing to ask it.
+  if (string.fromBytes(esrc).indexOf("static") >= 0) {
+    // **And `std`, which a caller need not supply** — it is carried, and a static reading one of its
+    // statics (`CALL_SLOTS / 4`) has nothing to read without it. Only the evaluator's view grows.
+    bool hasStd = false;
+    for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == "std") { hasStd = true; } }
+    if (!hasStd) {
+      string[] p2 = string[].filled(paths.len() + 1, "std");
+      string[] s2 = string[].filled(paths.len() + 1, stdSource());
+      for (i32 i = 0; i < paths.len(); i++) { p2[i] = paths[i]; s2[i] = sources[i]; }
+      paths = p2;
+      sources = s2;
+    }
+    Lexed?[] alx = Lexed?[].filled(paths.len() < 1 ? 1 : paths.len(), null);
+    Program?[] apg = Program?[].filled(paths.len() < 1 ? 1 : paths.len(), null);
+    for (i32 i = 0; i < paths.len(); i++) {
+      if (i < lexes.len() && (lexes[i] is not null) && i < progs.len() && (progs[i] is not null)) {
+        alx[i] = lexes[i];
+        apg[i] = progs[i];
+        continue;
+      }
+      if (i == eat) { alx[i] = elexed; apg[i] = eprog; continue; }
+      u8[] fb = sources[i].toBytes();
+      Lexed fl = lex(fb);
+      alx[i] = fl;
+      apg[i] = parseProgram(P.create(fb, fl));
+    }
+    c.sEv = Ev.create();
+    c.sCx = declsOfFiles(paths, sources, alx, apg, esrc, elexed);
+    c.sFile = eat;
+  }
   checkModule(c, eprog);
   return c;
 }

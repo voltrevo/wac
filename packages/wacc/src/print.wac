@@ -576,6 +576,34 @@ void printLvalue(Pr w, Lvalue lv) {
 
 void printStmt(Pr w, Stmt s) {
   match (s.kind) {
+    StaticIf(cond, then, els): {
+      w.open("static-if", s.line, s.col);
+      w.sp(); printExpr(w, cond);
+      for (i32 i = 0; i < then.len(); i++) { w.sp(); printStmt(w, then[i]); }
+      w.sp(); w.s("else");
+      for (i32 i = 0; i < els.len(); i++) { w.sp(); printStmt(w, els[i]); }
+      w.close();
+    }
+    StaticLocal(type, nameTok, init): {
+      w.open("static-local", s.line, s.col);
+      w.sp(); printTy(w, type);
+      w.sp(); w.tok(nameTok);
+      w.sp(); printExpr(w, init);
+      w.close();
+    }
+    StaticTrap(message): {
+      w.open("static-trap", s.line, s.col);
+      w.sp(); printExpr(w, message);
+      w.close();
+    }
+    StaticFor(init, cond, update, body): {
+      w.open("static-for", s.line, s.col);
+      w.sp(); if (init is null) { w.s("-"); } else { printStmt(w, init!); }
+      w.sp(); if (cond is null) { w.s("-"); } else { printExpr(w, cond!); }
+      w.sp(); if (update is null) { w.s("-"); } else { printStmt(w, update!); }
+      for (i32 i = 0; i < body.len(); i++) { w.sp(); printStmt(w, body[i]); }
+      w.close();
+    }
     Var(type, nameTok, init, isConst): {
       w.open("var", s.line, s.col);
       w.sp(); w.s(isConst ? "const" : "let");

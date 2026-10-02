@@ -2167,7 +2167,7 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
   return t.report();
 }
 
-export string test_rung3_arity_loop_depth_representation_and_compile_time_constants(
+export string test_rung3_arity_loop_depth_representation_and_static_evaluation(
     Core core, Cli cli) {
   T t = T.create();
   caughtAndQuiet(t, [
@@ -2184,11 +2184,14 @@ export string test_rung3_arity_loop_depth_representation_and_compile_time_consta
     "i32 g() { return 1; } export i32 f() { return g(1); }",
     "i32 g(i32 a) { return a; } export i32 f() { return g(); }",
     "i32 g(i32 a) { return a; } export i32 f() { return g(1, 2); }",
-    // A constant computed by calling something.
-    "i32 n() { return 3; } static i32 K = n(); export i32 f() { return K; }",
-    "i32 n() { return 3; } static i32[] T = i32[].filled(n(), 0); export i32 f() { return T[0]; }"
+    // A static whose evaluation traps (spec/next ch28) — computing a static by calling something was
+    // here, refused, until static evaluation made a call in an initialiser something that runs.
+    "i32 z() { return 0; } static i32 K = 1 / z(); export i32 f() { return K; }"
   ],
   [
+    // ...and a static computed by calling something, which is now accepted (spec/next ch27).
+    "i32 n() { return 3; } static i32 K = n(); export i32 f() { return K; }",
+    "i32 n() { return 3; } static i32[] T = i32[].filled(n(), 0); export i32 f() { return T[0]; }",
     // Every enclosing form that makes `break` legal. **`continue` in a switch was here** and both
     // compilers accepted it, where it silently meant `break` — it left the switch and carried on
     // after it. Now refused by both, stated at `[§wac-continue-not-switch-8kd3pq7]`, and moved to

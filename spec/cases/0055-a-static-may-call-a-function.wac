@@ -1,0 +1,6 @@
+// expect: answers g = 1
+// why: a static's initialiser runs at compile time, calls and all (restated: it was refused before static evaluation)
+// spec: §wac-static-call-66kaqx5
+i32 f() { return 1; }
+static i32 A = f();
+export i32 g() { return A; }

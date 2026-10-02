@@ -126,7 +126,7 @@ export string checkMessage(i32 code) {
   if (code == 30) { return "this cast goes down the hierarchy and must be checked"; }
   if (code == 31) { return "there is no loop here to break out of or continue"; }
   if (code == 32) { return "wrong number of arguments"; }
-  if (code == 34) { return "a static initialiser must be computable at compile time"; }
+  if (code == 34) { return "this static needs its own value to be computed — a dependency cycle"; }
   if (code == 35) { return "undefined name"; }
   if (code == 36) { return "void cannot be used as a type here"; }
   if (code == 37) { return "a return with a value in a void function, or without one where a value is wanted"; }
@@ -167,6 +167,12 @@ export string checkMessage(i32 code) {
   if (code == 234) { return "`try` needs a function that returns a Result"; }
   if (code == 235) { return "the error `try` passes on does not fit the function's error type"; }
   if (code == 236) { return "this `yield` has no generator to yield from, or yields the wrong thing"; }
+  if (code == 238) { return "computing this static traps"; }
+  if (code == 239) { return "static evaluation stopped at a resource limit — the answer is unknown"; }
+  if (code == 240) { return "this static uses something the compiler cannot evaluate statically yet"; }
+  if (code == 241) { return "static_trap"; }
+  if (code == 242) { return "a static_if condition must be computable at compile time"; }
+  if (code == 243) { return "a static initialiser cannot read a runtime value"; }
   if (code == 237) { return "an async generator is iterated with `for await`, and only it"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }

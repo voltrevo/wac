@@ -12,7 +12,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { lex, Lexed, tokenStride } from "../../src/lex.wac";
 import { kString } from "../../src/kinds.wac";
-import { stringLiteralBytes } from "../../src/emit.wac";
+import { stringLiteralBytes } from "../../src/strlit.wac";
 
 /** The bytes of the first string literal in `src`, or "<none>" when there is not one. */
 string firstString(string src) {

@@ -59,6 +59,11 @@ string[] statementLabels() {
     "Schedule",
     // `yield v;` — spec/next ch36. The fault is in the value.
     "Yield",
+    // spec/next ch31: the live branch holds the fault; a dead `static_trap` must not stop the walk;
+    // and a `static_for`'s body is checked once per turn.
+    "StaticIf", "StaticTrap", "StaticFor",
+    // A `static` in a function — ch27. The fault is in its initialiser.
+    "StaticLocal",
     // `for (T x in e)` — spec/next ch25. The body holds the fault.
     "ForIn",
     // Tuples — spec/next ch14. Neither holds a body; the walk has to go on past them.
@@ -86,6 +91,10 @@ string[] statementSources() {
     "void f() { defer { " + BAD + " } }",
     "struct Continuation { } struct Q { void push(this, Continuation c) { } } void f(Q q) { schedule q.push; " + BAD + " }",
     "gen<i32> void f(i32 p, f64 q) { yield " + SUB + "; }",
+    "static bool W = true; void f() { static_if (W) { " + BAD + " } }",
+    "void f() { static_if (false) { static_trap \"no\"; } " + BAD + " }",
+    "void f() { static_for (i32 i = 0; i < 1; i++) { " + BAD + " } }",
+    "void f() { static i32 s = \"s\"; }",
     "void f(i32[] xs) { for (i32 x in xs) { " + BAD + " } }",
     "void f() { (i32 a, i32 b) = (1, 2); " + BAD + " }",
     "void f(i32 a, i32 b) { (a, b) = (1, 2); " + BAD + " }"

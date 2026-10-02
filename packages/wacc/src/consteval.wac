@@ -1,0 +1,2148 @@
+// Static evaluation — running ordinary wac inside the compiler.
+//
+// A module constant's initialiser, a `static_if` condition and an array's length all ask the same
+// question: *what is this value, now?* This answers it by interpreting the tree the parser already
+// built, so there is one language rather than a compile-time dialect beside it.
+//
+// **Written against `emitExprAt`'s shape on purpose.** Every arm here has a counterpart there, and
+// the two must agree on the same source or a program means one thing when it is folded and another
+// when it is run. That is the whole risk of the feature, so the structure is kept parallel — the
+// same `want` threaded down, the same `typeOfE` asked for an operand's type — and the test is a
+// differential: evaluate an expression here, run it in the emitted module, and compare.
+//
+// **No `const` on a parameter in this file, deliberately.** `packages/wacc` is compiled by wac-L5,
+// the top rung of the bootstrap ladder, which refuses one — and refuses it as *"ran out of room for
+// parameters"*, a parser that has lost sync rather than a message about `const`. One of them here
+// cost 51 cascading refusals and a build that exited 0 with no binary. `bootstrap/README.md` has
+// the list; `const this` on a method is read and dropped, and is fine.
+//
+// What cannot be reached from here is not refused by a rule. A capability is a struct of funcrefs
+// the host fills in (`std/platform.wac`), and the compiler cannot make one, so there is no `Sys` to
+// call and nothing to ban. The only genuine wall is a wasm import, which no wac function is.
+
+import { Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind, Param, Program,
+         Stmt, StmtKind, Ty } from "./ast.wac";
+import { Lexed, tokenStride } from "./lex.wac";
+import { floatLit, parseInt } from "./lit.wac";
+import { stringLiteralBytes } from "./strlit.wac";
+import { resolveFrom } from "./path.wac";
+import {
+  kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
+  kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde,
+  kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
+  kShlEq, kShrEq, kShrUEq, kInc, kDec, kAs, kAsBang, kAsTilde, kAsAt, kAssign,
+} from "./kinds.wac";
+
+// ── Outcomes ──────────────────────────────────────────────────────────────────
+//
+// Five, and they stay distinguishable because they mean different things to whoever reads the
+// diagnostic: a cycle is the program's fault and always will be, a trap is the program's fault on
+// this input, and a limit is *this compiler declining to keep trying* — which is not a proof of
+// anything about the program. Saying "does not terminate" when the truth is "I stopped" would be a
+// claim no implementation is in a position to make.
+
+/**
+ * The most objects one module's evaluation may allocate.
+ *
+ * Large because the heap never shrinks and temporaries count, small enough that a runaway is
+ * noticed rather than swallowing the machine.
+ */
+export i32 heapCeiling() { return 1048576; }
+
+/**
+ * How deep a call may nest before this compiler stops.
+ *
+ * **Measured, not chosen.** The interpreter recurses on the host's own stack — `evalExpr` into
+ * `callNamed` into `execStmts` into `evalExpr` — so a guest recursion deep enough exhausts the
+ * *compiler* rather than this budget. On v8, 300 survives and 450 does not; 256 leaves the headroom
+ * that keeps the diagnostic ours rather than "Maximum call stack size exceeded".
+ */
+export i32 depthCeiling() { return 256; }
+
+/** Running normally. */
+export i32 evOk() { return 0; }
+/** A `return` is unwinding to the call that started it. */
+export i32 evReturn() { return 1; }
+/** A `break` is unwinding to its loop. */
+export i32 evBreak() { return 2; }
+/** A `continue` is unwinding to its loop's next turn. */
+export i32 evContinue() { return 3; }
+/** The program executed a `trap`, or an operation that traps. `message` says which. */
+export i32 evTrap() { return 4; }
+/** This compiler stopped trying. Says nothing about whether the program would have finished. */
+export i32 evLimit() { return 5; }
+/** A value's computation asked for itself. `message` holds the demand chain. */
+export i32 evCycle() { return 6; }
+/** A construct this evaluator does not implement. A prototype gap, not a rule. */
+export i32 evUnsupported() { return 7; }
+
+/** Did the run end with a value rather than with something to report? */
+export bool evFinished(i32 status) { return status == evOk() || status == evReturn(); }
+
+// ── Values ────────────────────────────────────────────────────────────────────
+
+/**
+ * A computed value.
+ *
+ * Integers and `bool` share one kind, held as `i64` **sign-extended for a signed type and
+ * zero-extended for an unsigned one**. That is not a detail: it makes `<`, `/` and `>>` on the i64
+ * give the unsigned answer for `u8`, `u16` and `u32` with no special case, because a zero-extended
+ * u32 is a small positive i64. Only `u64` has no room for the trick and is handled by name.
+ *
+ * **A tagged struct rather than the enum it wants to be**, because wac-L5 declares an `i64` *enum
+ * payload* as i32 and wraps every value on the way in — measured: an enum with an `i64` payload
+ * emits a spurious `i32.wrap_i64`, the same field on a struct emits none. There is no type checker
+ * on that rung, so the module builds and the engine refuses it two stages later. Making this an
+ * enum again breaks the bootstrap, not the tests.
+ */
+export struct Value {
+  /** Which of the six it is — `vNum()` and friends below. */
+  i32 kind;
+  /** For a number: the type it knows itself to be. Empty otherwise. */
+  string ty;
+  i64 bits;
+  f64 fval;
+  /** For a reference: the index into `Ev.heap`, which *is* the identity. */
+  i32 id;
+}
+
+export i32 vNum()  { return 0; }
+export i32 vF32()  { return 1; }
+export i32 vF64()  { return 2; }
+export i32 vRef()  { return 3; }
+export i32 vNull() { return 4; }
+export i32 vNone() { return 5; }
+
+export Value numValue(string ty, i64 bits) { return Value(vNum(), ty, bits, 0.0, 0 - 1); }
+export Value f32Value(f32 x) { return Value(vF32(), "f32", 0 as i64, x as f64, 0 - 1); }
+export Value f64Value(f64 x) { return Value(vF64(), "f64", 0 as i64, x, 0 - 1); }
+export Value refValue(i32 id) { return Value(vRef(), "", 0 as i64, 0.0, id); }
+export Value nullValue() { return Value(vNull(), "", 0 as i64, 0.0, 0 - 1); }
+export Value noneValue() { return Value(vNone(), "", 0 as i64, 0.0, 0 - 1); }
+
+/** An allocation the evaluator made. One of these is one object, and two are two. */
+export struct Obj {
+  /** `"Point"`, or `"i32[]"` — the same spelling the rest of the emitter uses for a type. */
+  string type;
+  bool isArray;
+  /** A struct's fields in declaration order, or an array's elements. */
+  Value[] slots;
+  i32 count;
+  /**
+   * Where the emitter put it. Assigned during materialisation, not here.
+   */
+  i32 global;
+}
+
+// ── Machine ───────────────────────────────────────────────────────────────────
+
+/**
+ * One evaluation, and everything it is allowed to touch.
+ *
+ * Locals are a flat stack with a frame base rather than a scope tree, which is what the rest of this
+ * package does for the same reason: wac has no growable array of arrays, and an index is the answer.
+ */
+export struct Ev {
+  i32 status;
+  Value result;
+  string message;
+
+  i32 steps;
+  i32 stepLimit;
+
+  /** The heap, in allocation order — which is a valid order to materialise it in. */
+  Obj[] heap;
+  i32 heapCount;
+
+  string[] localNames;
+  Value[] localVals;
+  string[] localTypes;
+  i32 localCount;
+
+  /** What is being computed, innermost last, so a cycle can be printed as the chain that made it. */
+  string[] demand;
+  i32 demandCount;
+
+  i32 depth;
+  i32 depthLimit;
+  /** The bottom of the running call's frame — a name below this belongs to a caller. */
+  i32 frameBase;
+  /** What the running function answers, so a bare literal in its `return` knows what to be. */
+  string returnType;
+
+  /** Per module constant: 0 not started, 1 being computed, 2 has a value, 3 gave up. */
+  i32[] constState;
+  Value[] constVals;
+  /**
+   * How a constant that gave up gave up, so the second ask gets the same answer as the first.
+   *
+   * Without it `state == 3` said only "no value", and the caller re-reported whatever it guessed —
+   * a gap became a cycle on the second use, and a cycle declines the module where a gap falls back.
+   */
+  i32[] constFail;
+  /** And what it said, because the second ask deserves the first ask's answer. */
+  string[] constWhy;
+  /**
+   * The constants that have a value, in the order they got one.
+   *
+   * Which is a dependency order: a constant settles only once everything it asked for has, so
+   * reading it back gives a sequence in which nothing is read before it is written. The start
+   * function needs exactly that, and the file's own order is not it.
+   */
+  i32[] constOrder;
+  i32 constOrderCount;
+
+  Ev create() {
+    return Ev(evOk(), noneValue(), "", 0, 8000000,
+              Obj[].filled(1024, Obj("", false, Value[].filled(1, noneValue()), 0, -1)), 0,
+              string[].filled(1024, ""), Value[].filled(1024, noneValue()), string[].filled(1024, ""), 0,
+              string[].filled(256, ""), 0,
+              0, depthCeiling(), 0, "",
+              i32[].filled(1024, 0), Value[].filled(1024, noneValue()), i32[].filled(1024, 0), string[].filled(1024, ""),
+              i32[].filled(1024, 0), 0);
+  }
+
+  /**
+   * One unit of work. Returns false once this compiler has decided to stop trying.
+   *
+   * Eight million is about three seconds, which is the number this trades: a budget large enough
+   * that no table anyone writes reaches it, and small enough that a runaway is noticed rather than
+   * waited out. It is a *time* limit wearing a step limit's clothes, because there is no clock here.
+   */
+  bool step(this) {
+    this.steps = this.steps + 1;
+    if (this.steps > this.stepLimit) {
+      this.status = evLimit();
+      this.message = "static evaluation used more than " + decimalText(this.stepLimit)
+                   + " steps and this compiler stopped trying";
+      return false;
+    }
+    return true;
+  }
+
+  void raise(this, string why) {
+    this.status = evTrap();
+    this.message = why;
+  }
+
+  void unsupported(this, string what) {
+    this.status = evUnsupported();
+    this.message = what;
+  }
+
+  /**
+   * A new object.
+   *
+   * **Grown rather than reserved.** A fixed 262144-slot heap was tried and is worse than the small
+   * one it replaced: it is allocated per module, for every module, and the cost showed up as a
+   * build failing with nothing at all to say. Doubling from 1024 means a program that allocates
+   * nothing pays for nothing.
+   *
+   * **And it is append-only**, so the ceiling covers a whole module's evaluation including
+   * everything temporary: a loop building a struct per turn and dropping it still pays. Reclaiming
+   * what no settled constant can reach needs a collector, which is the honest fix and is not this.
+   */
+  i32 alloc(this, string type, bool isArray, i32 n) {
+    if (this.heapCount >= this.heap.len()) {
+      if (this.heap.len() >= heapCeiling()) {
+        this.status = evLimit();
+        this.message = "static evaluation allocated more than " + decimalText(heapCeiling())
+                     + " objects and this compiler stopped trying";
+        return 0 - 1;
+      }
+      Obj[] bigger = Obj[].filled(this.heap.len() * 2, Obj("", false, Value[].filled(1, noneValue()), 0, -1));
+      for (i32 i = 0; i < this.heapCount; i++) { bigger[i] = this.heap[i]; }
+      this.heap = bigger;
+    }
+    i32 id = this.heapCount;
+    this.heap[id] = Obj(type, isArray, Value[].filled(n < 1 ? 1 : n, noneValue()), n, -1);
+    this.heapCount = this.heapCount + 1;
+    return id;
+  }
+
+  void declare(this, string name, string type, Value v) {
+    if (this.localCount >= this.localNames.len()) {
+      this.status = evLimit();
+      this.message = "static evaluation ran out of room for locals";
+      return;
+    }
+    this.localNames[this.localCount] = name;
+    this.localTypes[this.localCount] = type;
+    this.localVals[this.localCount] = v;
+    this.localCount = this.localCount + 1;
+  }
+
+  /** The innermost binding of `name`, or -1. Innermost because a loop body may shadow. */
+  i32 localAt(const this, string name, i32 base) {
+    for (i32 i = this.localCount - 1; i >= base; i--) {
+      if (this.localNames[i] == name) { return i; }
+    }
+    return -1;
+  }
+}
+
+// ── Integer width ─────────────────────────────────────────────────────────────
+
+/** Is this the name of something the evaluator holds in a `Num`? */
+export bool isIntName(string t) {
+  return t == "i8" || t == "u8" || t == "i16" || t == "u16"
+      || t == "i32" || t == "u32" || t == "i64" || t == "u64" || t == "bool";
+}
+
+export bool isUnsignedName(string t) {
+  return t == "u8" || t == "u16" || t == "u32" || t == "u64";
+}
+
+/** How many bits the type keeps. `bool` keeps one, and is 0 or 1 and nothing else. */
+export i32 bitsOf(string t) {
+  if (t == "bool") { return 1; }
+  if (t == "i8" || t == "u8") { return 8; }
+  if (t == "i16" || t == "u16") { return 16; }
+  if (t == "i64" || t == "u64") { return 64; }
+  return 32;
+}
+
+/**
+ * Put `v` back in `t`'s range the way the hardware would.
+ *
+ * Signed sign-extends and unsigned zero-extends, which is the representation the whole file rests
+ * on — see `Value`. A packed type wraps at its own width, which is what makes `u8 a = 200; u8 b =
+ * 100; a + b` answer 44 here as well as at run time.
+ */
+export i64 wrapTo(string t, i64 v) {
+  if (t == "bool") {
+    if (v != (0 as i64)) { return 1 as i64; }
+    return 0 as i64;
+  }
+  i32 w = bitsOf(t);
+  if (w == 64) { return v; }
+  i64 shift = (64 - w) as i64;
+  if (isUnsignedName(t)) {
+    return (v << shift) >>> shift;
+  }
+  return (v << shift) >> shift;
+}
+
+// ── Small helpers this package has nowhere else ──────────────────────────────
+
+/** Base-ten text for a step count in a diagnostic. `packages/fmt` is not in wacc's graph. */
+export string decimalText(i32 n) {
+  if (n == 0) { return "0"; }
+  bool neg = n < 0;
+  i64 v = neg ? 0 - (n as i64) : n as i64;
+  string out = "";
+  while (v > (0 as i64)) {
+    i32 d = (v % (10 as i64)) as~ i32;
+    out = string.fromCodepoint(48 + d) + out;
+    v = v / (10 as i64);
+  }
+  return neg ? "-" + out : out;
+}
+
+export i64 intOf(Value v) {
+  if (v.kind == vNum()) { return v.bits; }
+  return 0 as i64;
+}
+
+export f64 f64Of(Value v) {
+  if (v.kind == vF64() || v.kind == vF32()) { return v.fval; }
+  if (v.kind == vNum()) { return v.bits as~ f64; }
+  return 0.0;
+}
+
+export i32 refOf(Value v) {
+  if (v.kind == vRef()) { return v.id; }
+  return 0 - 1;
+}
+
+export bool isNullValue(Value v) { return v.kind == vNull(); }
+
+export bool truthy(Value v) { return intOf(v) != (0 as i64); }
+
+export Value boolValue(bool b) {
+  // Written as an `if` rather than a ternary, and so is every other one answering `i64` in this
+  // file. wac-L5 lowers an `i64` ternary through i32: the arms are wrapped and the result is an
+  // i32, which `struct.new` then refuses against this field. No type checker on that rung means it
+  // emits the module and the *engine* is what complains, two stages downstream — "struct.new[1]
+  // expected type i64, found i32.wrap_i64".
+  if (b) { return numValue("bool", 1 as i64); }
+  return numValue("bool", 0 as i64);
+}
+
+/** The type a value knows itself to be, or `""` where it does not carry one. */
+export string typeOfValue(Value v) { return v.ty; }
+
+// ── What the walk is allowed to see ───────────────────────────────────────────
+
+/**
+ * The declarations and the tables needed to read them.
+ *
+ * Passed in rather than reached for, so this file does not import the emitter and the emitter can
+ * import this one. The tables are the emitter's own, flat and by index, because that is the shape
+ * they already have.
+ */
+export struct Decls {
+  Decl[] decls;
+  i32[] declFiles;
+  u8[][] srcs;
+  Lexed?[] lexeds;
+  u8[] blobSrc;
+  Lexed blobLexed;
+
+  /** Struct fields, flat: owner, name and type share an index. */
+  string[] fieldOwners;
+  string[] fieldNames;
+  string[] fieldTypes;
+  i32 fieldCount;
+
+  /** Module constants, and the initialiser each one is. */
+  string[] constNames;
+  string[] constTypes;
+  Expr?[] constInits;
+  i32[] constFiles;
+  i32 constCount;
+
+  /**
+   * Every top-level declaration's **canonical key**, index for index with `decls`.
+   *
+   * A name inside a file is the name it happens to have *there*. The thing it names has an identity
+   * that outlives the spelling: another file may import it under a different one, or declare
+   * something else privately with the same one. A table keyed on the spelling answers the wrong
+   * question, and answers it confidently — two files each with a private `helper` had one file's
+   * constant computed by the other file's function, silently, in a compiled program.
+   *
+   * The key is the spelling where the program declares it once and `name@<file>` where it does not,
+   * which is the scheme `Env.declare` already uses, so the two agree wherever both can see.
+   */
+  string[] keys;
+  /** Each declaration's own spelling, and whether it is exported. Neither is its identity. */
+  string[] names;
+  bool[] exported;
+
+  /** Which declaration each constant came from, so a resolved key finds its value. */
+  i32[] constDecls;
+
+  /**
+   * The import edges: file `impFrom` names `impName`, meaning `impDecl` declared in `impTo`.
+   *
+   * Supplied rather than derived — the specifier is a path and this has no path resolver. With none
+   * supplied, resolution still refuses to guess; it just cannot follow an alias.
+   */
+  i32[] impFrom;
+  string[] impName;
+  i32[] impTo;
+  string[] impDecl;
+  i32 impCount;
+
+  u8[] srcOf(const this, i32 fi) {
+    return fi >= 0 && fi < this.srcs.len() ? this.srcs[fi] : this.blobSrc;
+  }
+
+  Lexed lexOf(const this, i32 fi) {
+    if (fi < 0 || fi >= this.lexeds.len() || (this.lexeds[fi] is null)) { return this.blobLexed; }
+    return this.lexeds[fi]!;
+  }
+
+  /**
+   * The declaration `name` means **in file `fi`**, or -1 where nothing does or more than one might.
+   *
+   * The same order `Env.keyAt` uses, and for the same reason: a file's own declarations shadow
+   * everything, an explicit import names exactly one thing however it is spelled here, and a bare
+   * exported name is only an answer when it is the only one.
+   */
+  i32 declAt(const this, string name, i32 fi) {
+    for (i32 d = 0; d < this.decls.len(); d++) {
+      if (this.keys[d] == "") { continue; }
+      if (this.nameOf(d) == name && this.declFiles[d] == fi) { return d; }
+    }
+    for (i32 e = 0; e < this.impCount; e++) {
+      if (this.impFrom[e] != fi || this.impName[e] != name) { continue; }
+      for (i32 d = 0; d < this.decls.len(); d++) {
+        if (this.keys[d] == "") { continue; }
+        if (this.nameOf(d) == this.impDecl[e] && this.declFiles[d] == this.impTo[e]) { return d; }
+      }
+    }
+    i32 found = 0 - 1;
+    for (i32 d = 0; d < this.decls.len(); d++) {
+      if (this.keys[d] == "" || this.nameOf(d) != name || !this.exported[d]) { continue; }
+      if (found >= 0) { return 0 - 1; }
+      found = d;
+    }
+    return found;
+  }
+
+  /** The canonical key `name` means in `fi`, or "" where it means nothing decidable. */
+  string keyAt(const this, string name, i32 fi) {
+    i32 d = this.declAt(name, fi);
+    return d < 0 ? "" : this.keys[d];
+  }
+
+  /** The constant `name` names in `fi`, or -1. */
+  i32 constAt(const this, string name, i32 fi) {
+    i32 d = this.declAt(name, fi);
+    if (d < 0) { return 0 - 1; }
+    for (i32 i = 0; i < this.constCount; i++) {
+      if (this.constDecls[i] == d) { return i; }
+    }
+    return 0 - 1;
+  }
+
+  /** A declaration's own spelling, which is not its identity. */
+  string nameOf(const this, i32 d) { return this.names[d]; }
+}
+
+/**
+ * A token's text.
+ *
+ * `emit.wac` has one of these and exporting it would make these two files import each other. They
+ * are five lines, and a cycle in the bootstrap ladder is not worth finding out about by accident.
+ */
+export string tokText(u8[] src, Lexed lexed, i32 t) {
+  if (t < 0) { return ""; }
+  i32 start = lexed.tokens[t * tokenStride() + 1];
+  i32 len = lexed.tokens[t * tokenStride() + 2];
+  u8[] out = u8[].filled(len, 0);
+  for (i32 i = 0; i < len; i++) { out[i] = src[start + i]; }
+  return string.fromBytes(out);
+}
+
+/**
+ * The kind of the operator token at index `op`.
+ *
+ * Every `op` field on the AST is a **token index**, not a kind — `Binary`, `Unary`, `Cast`,
+ * `Assign` and `IncrStmt` all store one, and the emitter reaches through `lexed.tokens` for the
+ * kind at each site. Comparing the index against `kPlus()` is silent and wrong: it type-checks, and
+ * every operator falls through to whatever the chain ends in.
+ */
+export i32 opKind(Lexed lx, i32 op) {
+  return lx.tokens[op * tokenStride()];
+}
+
+/** Is `name` a struct this program declares? `Foo(1)` is a construction only if it is. */
+/** Is `key` — already a canonical key, from `tyName` — a struct this program declares? */
+export bool isStructName(Decls cx, string key) {
+  for (i32 d = 0; d < cx.decls.len(); d++) {
+    if (cx.keys[d] != key) { continue; }
+    match (cx.decls[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        return true;
+      }
+      default: { }
+    }
+  }
+  return false;
+}
+
+/**
+ * The **spelling** a written type uses, before any resolution.
+ *
+ * Both are needed and confusing them is a real bug: `tyName` answers with the thing's identity, and
+ * `declAt` takes the word a file wrote. Handing a resolved key to a lookup that matches spellings
+ * finds nothing — and `helper()` then reads as a construction of a struct called `helper@0`.
+ */
+export string tySpelling(Decls cx, i32 fi, Ty t) {
+  match (t.kind) {
+    Prim(tok):            { return tokText(cx.srcOf(fi), cx.lexOf(fi), tok); }
+    Named(tok, typeArgs): { return tokText(cx.srcOf(fi), cx.lexOf(fi), tok); }
+    default:                      { return ""; }
+  }
+}
+
+/** A written type's identity — the canonical key, not the word. */
+export string tyName(Decls cx, i32 fi, Ty t) {
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+  match (t.kind) {
+    Prim(tok):             { return tokText(src, lx, tok); }
+    Named(tok, typeArgs):  {
+      // **The thing, not the spelling.** A struct's fields are filed under its identity, so a type
+      // named here has to resolve the same way a value would. Unresolvable falls back to the
+      // spelling, which is what a type parameter or a name from outside this view is.
+      string spelled = tokText(src, lx, tok);
+      string key = cx.keyAt(spelled, fi);
+      return key == "" ? spelled : key;
+    }
+    Arr(elem):             { return tyName(cx, fi, elem) + "[]"; }
+    Nullable(inner):       { return tyName(cx, fi, inner) + "?"; }
+    default:                       { return ""; }
+  }
+}
+
+// ── Arithmetic ────────────────────────────────────────────────────────────────
+//
+// Every operation below has a counterpart in the emitter, and the two answering differently on one
+// expression is the failure this feature can have that nothing else in the compiler can. So the
+// rules are written from wasm's, not from what looks reasonable: a shift count is masked, a divide
+// by zero traps rather than answering, and a signed division that overflows traps too.
+
+/** `a < b` as the type says — the representation makes every but `u64` a signed compare. */
+export bool lessThan(string t, i64 a, i64 b) {
+  if (t == "u64") {
+    // Both halves flipped across the sign bit, which orders them the way unsigned does.
+    i64 flip = (1 as i64) << (63 as i64);
+    return (a ^ flip) < (b ^ flip);
+  }
+  return a < b;
+}
+
+/** Integer division, with wasm's two traps. */
+export i64 divide(Ev ev, string t, i64 a, i64 b) {
+  if (b == (0 as i64)) { ev.raise("integer divide by zero"); return 0 as i64; }
+  if (isUnsignedName(t)) {
+    if (t == "u64") { return udiv64(a, b); }
+    return a / b;
+  }
+  // The one signed pair with no representable answer: the most negative value over -1.
+  if (b == (0 - 1 as i64) && a == minOf(t)) { ev.raise("integer overflow"); return 0 as i64; }
+  return a / b;
+}
+
+export i64 remainder(Ev ev, string t, i64 a, i64 b) {
+  if (b == (0 as i64)) { ev.raise("integer divide by zero"); return 0 as i64; }
+  if (t == "u64") { return a - udiv64(a, b) * b; }
+  // `%` does not trap on the overflow pair — wasm answers zero, and so does this.
+  if (!isUnsignedName(t) && b == (0 - 1 as i64) && a == minOf(t)) { return 0 as i64; }
+  return a % b;
+}
+
+/** The most negative value a signed type holds. */
+export i64 minOf(string t) {
+  i32 w = bitsOf(t);
+  if (w == 64) { return (1 as i64) << (63 as i64); }
+  return 0 - ((1 as i64) << ((w - 1) as i64));
+}
+
+/** Unsigned 64-bit division, built from the signed one the language gives. */
+export i64 udiv64(i64 a, i64 b) {
+  if (b < (0 as i64)) {
+    if (lessThan("u64", a, b)) { return 0 as i64; }
+    return 1 as i64;
+  }
+  if (a >= (0 as i64)) { return a / b; }
+  i64 half = (a >>> (1 as i64)) / b;
+  i64 rest = a - (half << (1 as i64)) * b;
+  i64 carry = 0 as i64;
+  if (!lessThan("u64", rest, b)) { carry = 1 as i64; }
+  return (half << (1 as i64)) + carry;
+}
+
+/**
+ * Shifts mask their count, and wac's packed types shift as the 32-bit values they are.
+ *
+ * Answers `i64` because every value it shifts is one. wac-L5 has no type checker and lowers an
+ * `i64 << i32` by wrapping the *left* operand, so the answer came back i32 and `struct.new` was
+ * handed one where a field wanted i64 — caught by the real compiler, one stage after the rung that
+ * emitted it, as *"expected type i64, found i32.wrap_i64"*.
+ */
+export i64 shiftCount(string t, i64 n) {
+  if (bitsOf(t) == 64) { return n & (63 as i64); }
+  return n & (31 as i64);
+}
+
+/** The value with only the bits its type keeps, zero-extended — what a logical shift starts from. */
+export i64 zeroExtend(string t, i64 v) {
+  i32 w = bitsOf(t);
+  if (w == 64) { return v; }
+  return v & (((1 as i64) << (w as i64)) - (1 as i64));
+}
+
+// ── Demanding a constant's value ──────────────────────────────────────────────
+
+/**
+ * The value of module constant `ci`, computing it if nobody has yet.
+ *
+ * Source order does not decide evaluation order — a constant declared last may be the first one
+ * anything asks for, and a function declared above a constant may read it. What orders the work is
+ * demand, so the cycle to detect is a demand that re-enters something already being computed, and
+ * the chain that got there is the only useful thing to print.
+ */
+export Value demandConst(Ev ev, Decls cx, i32 ci) {
+  if (ci < 0 || ci >= ev.constState.len()) { return noneValue(); }
+  if (ev.constState[ci] == 2) { return ev.constVals[ci]; }
+  if (ev.constState[ci] == 1) {
+    ev.status = evCycle();
+    ev.message = "the value of `" + cx.constNames[ci] + "` needs itself: " + chainOf(ev)
+               + " -> `" + cx.constNames[ci] + "`";
+    return noneValue();
+  }
+  if (ev.constState[ci] == 3) {
+    if (ev.status == evOk()) {
+      ev.status = ev.constFail[ci];
+      ev.message = ev.constWhy[ci];
+    }
+    return noneValue();
+  }
+  if (cx.constInits[ci] is null) { return noneValue(); }
+
+  ev.constState[ci] = 1;
+  pushDemand(ev, "`" + cx.constNames[ci] + "`");
+  i32 mark = ev.localCount;
+  Value v = evalExpr(ev, cx, cx.constFiles[ci], cx.constInits[ci]!, cx.constTypes[ci]);
+  ev.localCount = mark;
+  popDemand(ev);
+
+  if (!evFinished(ev.status)) {
+    ev.constState[ci] = 3;
+    ev.constFail[ci] = ev.status;
+    ev.constWhy[ci] = ev.message;
+    return noneValue();
+  }
+  ev.status = evOk();
+  ev.constState[ci] = 2;
+  ev.constVals[ci] = v;
+  if (ev.constOrderCount < ev.constOrder.len()) {
+    ev.constOrder[ev.constOrderCount] = ci;
+    ev.constOrderCount = ev.constOrderCount + 1;
+  }
+  return v;
+}
+
+export void pushDemand(Ev ev, string what) {
+  if (ev.demandCount < ev.demand.len()) { ev.demand[ev.demandCount] = what; }
+  ev.demandCount = ev.demandCount + 1;
+}
+
+export void popDemand(Ev ev) {
+  if (ev.demandCount > 0) { ev.demandCount = ev.demandCount - 1; }
+}
+
+/** The demand stack as one line, outermost first. */
+export string chainOf(Ev ev) {
+  string out = "";
+  i32 n = ev.demandCount < ev.demand.len() ? ev.demandCount : ev.demand.len();
+  for (i32 i = 0; i < n; i++) {
+    out = out + (i > 0 ? " -> " : "") + ev.demand[i];
+  }
+  return out;
+}
+
+// ── Calling ───────────────────────────────────────────────────────────────────
+
+/**
+ * The plain function `name` means **in file `fi`**, or -1.
+ *
+ * The file matters and taking the first match is a wrong answer, not an approximate one: two files
+ * each with a private `helper` had one file's constant computed by the other file's function, and
+ * the program carried the wrong number with nothing said.
+ */
+export i32 funcDeclAt(Decls cx, string name, i32 fi) {
+  i32 d = cx.declAt(name, fi);
+  if (d < 0) { return 0 - 1; }
+  match (cx.decls[d].kind) {
+    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      return typeParams.len() > 0 ? 0 - 1 : d;
+    }
+    default: { return 0 - 1; }
+  }
+}
+
+/**
+ * Run `name` with `argv`, and answer what it returned.
+ *
+ * The receiver-less only: a method needs the struct machinery, which arrives with the heap.
+ * Recursion is bounded by depth as well as by steps, because a runaway recursion is the shape that
+ * exhausts the interpreter's own stack before it exhausts a step budget.
+ */
+export Value callNamed(Ev ev, Decls cx, string name, Value[] argv, i32 argc, i32 fromFi) {
+  i32 d = funcDeclAt(cx, name, fromFi);
+  if (d < 0) {
+    ev.unsupported("a call to `" + name + "`, which is not a plain function in this program");
+    return noneValue();
+  }
+  ev.depth = ev.depth + 1;
+  if (ev.depth > ev.depthLimit) {
+    ev.status = evLimit();
+    ev.message = "static evaluation nested more than " + decimalText(ev.depthLimit)
+               + " calls deep and this compiler stopped trying";
+    ev.depth = ev.depth - 1;
+    return noneValue();
+  }
+
+  Value out = noneValue();
+  i32 fi = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+  match (cx.decls[d].kind) {
+    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      if (isAsync) {
+        ev.unsupported("a call to `" + name + "`, which is async — a ticket has nothing to answer with here");
+        ev.depth = ev.depth - 1;
+        return noneValue();
+      }
+      // A frame is a mark in the one locals stack: everything above `base` is this call's, and
+      // `localAt` is told not to look below it, so a name here cannot see the caller's.
+      i32 base = ev.localCount;
+      i32 outer = ev.frameBase;
+      string outerRet = ev.returnType;
+      ev.frameBase = base;
+      ev.returnType = tyName(cx, fi, returnType);
+      for (i32 i = 0; i < params.len(); i++) {
+        ev.declare(tokText(cx.srcOf(fi), cx.lexOf(fi), params[i].nameTok),
+                   tyName(cx, fi, params[i].type),
+                   i < argc ? argv[i] : noneValue());
+      }
+      pushDemand(ev, name + "()");
+      execStmts(ev, cx, fi, body, base);
+      popDemand(ev);
+      if (ev.status == evReturn()) { out = ev.result; ev.status = evOk(); }
+      ev.localCount = base;
+      ev.frameBase = outer;
+      ev.returnType = outerRet;
+    }
+    default: { }
+  }
+  ev.depth = ev.depth - 1;
+  return out;
+}
+
+// ── Expressions ───────────────────────────────────────────────────────────────
+
+/** The element type of `"u32[]"`. */
+export string arrayElem(string arr) {
+  return arr.len() > 2 && arr.slice(arr.len() - 2, arr.len()) == "[]"
+       ? arr.slice(0, arr.len() - 2) : "";
+}
+
+/** The fields of `owner`, as indices into the flat table, in declaration order. */
+export i32 fieldIndex(Decls cx, string owner, string name) {
+  for (i32 i = 0; i < cx.fieldCount; i++) {
+    if (cx.fieldOwners[i] == owner && cx.fieldNames[i] == name) { return i; }
+  }
+  return 0 - 1;
+}
+
+export i32 fieldSlot(Decls cx, string owner, string name) {
+  i32 slot = 0;
+  for (i32 i = 0; i < cx.fieldCount; i++) {
+    if (cx.fieldOwners[i] != owner) { continue; }
+    if (cx.fieldNames[i] == name) { return slot; }
+    slot = slot + 1;
+  }
+  return 0 - 1;
+}
+
+export i32 fieldCountOf(Decls cx, string owner) {
+  i32 n = 0;
+  for (i32 i = 0; i < cx.fieldCount; i++) {
+    if (cx.fieldOwners[i] == owner) { n = n + 1; }
+  }
+  return n;
+}
+
+/** The type of `owner`'s field number `slot`, in declaration order. */
+export string fieldTypeAt(Decls cx, string owner, i32 slot) {
+  i32 n = 0;
+  for (i32 i = 0; i < cx.fieldCount; i++) {
+    if (cx.fieldOwners[i] != owner) { continue; }
+    if (n == slot) { return cx.fieldTypes[i]; }
+    n = n + 1;
+  }
+  return "";
+}
+
+/** A zero of `t`, for an array slot nobody filled. A reference type has none, and says so. */
+export Value defaultOf(string t) {
+  if (t == "f32") { return f32Value(0.0 as~ f32); }
+  if (t == "f64") { return f64Value(0.0); }
+  if (isIntName(t)) { return numValue(t, 0 as i64); }
+  return nullValue();
+}
+
+export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
+  if (!evFinished(ev.status)) { return noneValue(); }
+  if (!ev.step()) { return noneValue(); }
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+
+  match (e.kind) {
+    // A literal takes the type its slot wants — the same rule the emitter states as "a literal is
+    // polymorphic over a family", and the reason `i64 x = 1` is not an i32 widened.
+    IntLit(tok): {
+      i64 v = parseInt(tokText(src, lx, tok));
+      if (want == "f32") { return f32Value(v as~ f32); }
+      if (want == "f64") { return f64Value(v as~ f64); }
+      string t = isIntName(want) ? want : "i32";
+      return numValue(t, wrapTo(t, v));
+    }
+    FloatLit(tok): {
+      f64 v = floatLit(tokText(src, lx, tok));
+      return want == "f32" ? f32Value(v as~ f32) : f64Value(v);
+    }
+    BoolLit(value): { return boolValue(value); }
+    NullLit: { return nullValue(); }
+
+    // A `string` is an `i8[]` of its UTF-8 bytes, so a literal is an allocation like any other —
+    // and two literals spelling the same text are two objects, which is what `is` will say.
+    StrLit(tok): {
+      u8[] bytes = stringLiteralBytes(src, lx, tok);
+      i32 id = ev.alloc("string", true, bytes.len());
+      if (id < 0) { return noneValue(); }
+      for (i32 i = 0; i < bytes.len(); i++) { ev.heap[id].slots[i] = numValue("i8", wrapTo("i8", bytes[i] as i64)); }
+      return refValue(id);
+    }
+
+    Ident(tok): {
+      string nm = tokText(src, lx, tok);
+      i32 li = ev.localAt(nm, ev.frameBase);
+      if (li >= 0) { return ev.localVals[li]; }
+      i32 ci = cx.constAt(nm, fi);
+      if (ci >= 0) { return demandConst(ev, cx, ci); }
+      // A function named as a value — the same opaque value a lambda is.
+      if (funcDeclAt(cx, nm, fi) >= 0) {
+        i32 fid = ev.alloc(want == "" ? "fn" : want, false, 0);
+        if (fid < 0) { return noneValue(); }
+        return refValue(fid);
+      }
+      ev.unsupported("`" + nm + "`, which is neither a local nor a module constant here");
+      return noneValue();
+    }
+
+    Unary(op, operand): {
+      i32 k = opKind(lx, op);
+      Value v = evalExpr(ev, cx, fi, operand, k == kBang() ? "bool" : want);
+      if (!evFinished(ev.status)) { return noneValue(); }
+      if (k == kBang()) { return boolValue(!truthy(v)); }
+      string t = typeOfValue(v);
+      if (k == kMinus()) {
+        if (v.kind == vF32()) { return f32Value(0.0 as~ f32 - (v.fval as~ f32)); }
+        if (v.kind == vF64()) { return f64Value(0.0 - v.fval); }
+        if (v.kind == vNum()) { return numValue(v.ty, wrapTo(v.ty, 0 as i64 - v.bits)); }
+        ev.unsupported("unary minus on this value");
+        return noneValue();
+      }
+      if (k == kTilde()) { return numValue(t, wrapTo(t, intOf(v) ^ (0 - 1 as i64))); }
+      ev.unsupported("this unary operator");
+      return noneValue();
+    }
+
+    Binary(op, left, right): { return evalBinary(ev, cx, fi, opKind(lx, op), left, right, want); }
+
+    Ternary(cond, then, els): {
+      Value c = evalExpr(ev, cx, fi, cond, "bool");
+      if (!evFinished(ev.status)) { return noneValue(); }
+      return truthy(c) ? evalExpr(ev, cx, fi, then, want) : evalExpr(ev, cx, fi, els, want);
+    }
+
+    Cast(op, operand, target): {
+      string to = tyName(cx, fi, target);
+      Value v = evalExpr(ev, cx, fi, operand, "");
+      if (!evFinished(ev.status)) { return noneValue(); }
+      return castTo(ev, opKind(lx, op), v, to);
+    }
+
+    Call(callee, args, typeArgs): { return evalCall(ev, cx, fi, callee, args); }
+
+    Index(arr, index): {
+      Value a = evalExpr(ev, cx, fi, arr, "");
+      Value i = evalExpr(ev, cx, fi, index, "i32");
+      if (!evFinished(ev.status)) { return noneValue(); }
+      i32 id = refOf(a);
+      if (id < 0) { ev.raise("null array indexed"); return noneValue(); }
+      i64 n = intOf(i);
+      if (n < (0 as i64) || n >= (ev.heap[id].count as i64)) {
+        ev.raise("array index out of bounds");
+        return noneValue();
+      }
+      return ev.heap[id].slots[n as~ i32];
+    }
+
+    Member(obj, nameTok): {
+      // `Tag.Two` — a payload-free variant is a value (spec/next ch13).
+      if (variantArityOf(cx, fi, obj, tokText(src, lx, nameTok)) == 0) {
+        return buildVariant(ev, cx, fi, obj, tokText(src, lx, nameTok), Expr[](), 0);
+      }
+      Value o = evalExpr(ev, cx, fi, obj, "");
+      if (!evFinished(ev.status)) { return noneValue(); }
+      i32 id = refOf(o);
+      if (id < 0) { ev.raise("a field was read through null"); return noneValue(); }
+      string nm = tokText(src, lx, nameTok);
+      i32 slot = fieldSlot(cx, ev.heap[id].type, nm);
+      if (slot < 0) { ev.unsupported("the field `" + nm + "` of `" + ev.heap[id].type + "`"); return noneValue(); }
+      return ev.heap[id].slots[slot];
+    }
+
+    Unwrap(operand): {
+      Value v = evalExpr(ev, cx, fi, operand, "");
+      if (!evFinished(ev.status)) { return noneValue(); }
+      if (isNullValue(v)) { ev.raise("`!` unwrapped a null"); return noneValue(); }
+      return v;
+    }
+
+    ArrNew(elem, size, fill, elements): {
+      string et = tyName(cx, fi, elem);
+      string at = et + "[]";
+      if (elements.len() > 0) {
+        i32 id = ev.alloc(at, true, elements.len());
+        if (id < 0) { return noneValue(); }
+        for (i32 i = 0; i < elements.len(); i++) {
+          Value v = evalExpr(ev, cx, fi, elements[i], et);
+          if (!evFinished(ev.status)) { return noneValue(); }
+          ev.heap[id].slots[i] = v;
+        }
+        return refValue(id);
+      }
+      i64 n = 0 as i64;
+      if (!(size is null)) {
+        Value sv = evalExpr(ev, cx, fi, size!, "i32");
+        if (!evFinished(ev.status)) { return noneValue(); }
+        n = intOf(sv);
+      }
+      if (n < (0 as i64)) { ev.raise("an array cannot have a negative length"); return noneValue(); }
+      Value f = defaultOf(et);
+      if (!(fill is null)) {
+        f = evalExpr(ev, cx, fi, fill!, et);
+        if (!evFinished(ev.status)) { return noneValue(); }
+      }
+      i32 id = ev.alloc(at, true, n as~ i32);
+      if (id < 0) { return noneValue(); }
+      for (i32 i = 0; i < (n as~ i32); i++) { ev.heap[id].slots[i] = f; }
+      return refValue(id);
+    }
+
+    // **A function value is a value**: a static of funcref type holds one, and what the program does
+    // with it is the program's business. Calling one *here* is the part this evaluator does not do.
+    Lambda(params, body, isAsync): {
+      i32 lid = ev.alloc(want == "" ? "fn" : want, false, 0);
+      if (lid < 0) { return noneValue(); }
+      return refValue(lid);
+    }
+
+    // `[a, b, c]` — its element type is the slot's (spec/next ch15), or the first element's.
+    ArrLit(elements): {
+      string at = want.len() > 2 && want.slice(want.len() - 2, want.len()) == "[]" ? want : "";
+      string et = at == "" ? "" : at.slice(0, at.len() - 2);
+      i32 id = ev.alloc(at, true, elements.len());
+      if (id < 0) { return noneValue(); }
+      for (i32 i = 0; i < elements.len(); i++) {
+        Value v = evalExpr(ev, cx, fi, elements[i], et);
+        if (!evFinished(ev.status)) { return noneValue(); }
+        if (at == "" && i == 0) { ev.heap[id].type = typeOfValue(v) + "[]"; et = typeOfValue(v); }
+        ev.heap[id].slots[i] = v;
+      }
+      return refValue(id);
+    }
+
+    Construct(ctype, args, named): {
+      string ty = tyName(cx, fi, ctype);
+      // The parser cannot tell `Point(1, 2)` from `square(8)` — both are a name and arguments —
+      // so it writes `Construct` for each and leaves the question to whoever knows the names. The
+      // *spelling* asks that question; the key answers what a struct's fields are filed under.
+      string spelled = tySpelling(cx, fi, ctype);
+      if (!isStructName(cx, ty) && funcDeclAt(cx, spelled, fi) >= 0) {
+        return callByName(ev, cx, fi, spelled, args);
+      }
+      i32 n = fieldCountOf(cx, ty);
+      i32 id = ev.alloc(ty, false, n);
+      if (id < 0) { return noneValue(); }
+      for (i32 i = 0; i < n; i++) { ev.heap[id].slots[i] = defaultOf(fieldTypeAt(cx, ty, i)); }
+      for (i32 i = 0; i < args.len() && i < n; i++) {
+        Value v = evalExpr(ev, cx, fi, args[i], fieldTypeAt(cx, ty, i));
+        if (!evFinished(ev.status)) { return noneValue(); }
+        ev.heap[id].slots[i] = v;
+      }
+      for (i32 i = 0; i < named.len(); i++) {
+        i32 slot = fieldSlot(cx, ty, tokText(src, lx, named[i].nameTok));
+        if (slot < 0) { continue; }
+        Value v = evalExpr(ev, cx, fi, named[i].value, fieldTypeAt(cx, ty, slot));
+        if (!evFinished(ev.status)) { return noneValue(); }
+        ev.heap[id].slots[slot] = v;
+      }
+      return refValue(id);
+    }
+
+    default: {
+      ev.unsupported(exprKindName(e));
+      return noneValue();
+    }
+  }
+}
+
+/**
+ * `a op b`.
+ *
+ * The operand type comes from whichever side carries one, because a literal carries none until a
+ * slot tells it what to be: in `c & 1` the `1` is whatever `c` is, and in `n < 256` the `256` is
+ * whatever `n` is. Asking the left first and falling back to the right is what the checker does
+ * with the same problem.
+ */
+export Value evalBinary(Ev ev, Decls cx, i32 fi, i32 op, Expr left, Expr right, string want) {
+  // Short-circuit before either side is a value, or the right one runs when it must not.
+  if (op == kAndAnd() || op == kOrOr()) {
+    Value l = evalExpr(ev, cx, fi, left, "bool");
+    if (!evFinished(ev.status)) { return noneValue(); }
+    bool lb = truthy(l);
+    if (op == kAndAnd() && !lb) { return boolValue(false); }
+    if (op == kOrOr() && lb) { return boolValue(true); }
+    Value r = evalExpr(ev, cx, fi, right, "bool");
+    if (!evFinished(ev.status)) { return noneValue(); }
+    return boolValue(truthy(r));
+  }
+
+  bool compares = op == kEq() || op == kNe() || op == kLt() || op == kLe()
+               || op == kGt() || op == kGe();
+  string inner = compares ? "" : want;
+
+  Value a = evalExpr(ev, cx, fi, left, inner);
+  if (!evFinished(ev.status)) { return noneValue(); }
+  if (isStringValue(ev, a) && op == kPlus()) {
+    Value r = evalExpr(ev, cx, fi, right, "string");
+    if (!evFinished(ev.status)) { return noneValue(); }
+    return concatStrings(ev, a, r);
+  }
+  string t = typeOfValue(a);
+  Value b = evalExpr(ev, cx, fi, right, t != "" ? t : inner);
+  if (!evFinished(ev.status)) { return noneValue(); }
+  // The left may have been the bare literal, in which the right is the one that knew.
+  if (t == "" || (t == "i32" && isIntLit(left) && typeOfValue(b) != "")) {
+    string rt = typeOfValue(b);
+    if (rt != "") { a = evalExpr(ev, cx, fi, left, rt); t = rt; }
+    if (!evFinished(ev.status)) { return noneValue(); }
+  }
+  if (t == "") { t = "i32"; }
+
+  if (t == "f32" || t == "f64") { return floatBinary(ev, op, t, f64Of(a), f64Of(b)); }
+
+  i64 x = intOf(a);
+  i64 y = intOf(b);
+
+  if (op == kEq()) { return boolValue(sameValue(a, b)); }
+  if (op == kNe()) { return boolValue(!sameValue(a, b)); }
+  if (op == kLt()) { return boolValue(lessThan(t, x, y)); }
+  if (op == kGt()) { return boolValue(lessThan(t, y, x)); }
+  if (op == kLe()) { return boolValue(!lessThan(t, y, x)); }
+  if (op == kGe()) { return boolValue(!lessThan(t, x, y)); }
+
+  if (op == kPlus())    { return numValue(t, wrapTo(t, x + y)); }
+  if (op == kMinus())   { return numValue(t, wrapTo(t, x - y)); }
+  if (op == kStar())    { return numValue(t, wrapTo(t, x * y)); }
+  if (op == kSlash())   { return numValue(t, wrapTo(t, divide(ev, t, x, y))); }
+  if (op == kPercent()) { return numValue(t, wrapTo(t, remainder(ev, t, x, y))); }
+  if (op == kAnd())     { return numValue(t, wrapTo(t, x & y)); }
+  if (op == kOr())      { return numValue(t, wrapTo(t, x | y)); }
+  if (op == kCaret())   { return numValue(t, wrapTo(t, x ^ y)); }
+  if (op == kShl())     { return numValue(t, wrapTo(t, x << shiftCount(t, y))); }
+  if (op == kShr()) {
+    // Unsigned types are held zero-extended, so an arithmetic shift already fills with zeros —
+    // except u64, which has no room to be zero-extended and needs the logical one by name.
+    if (t == "u64") { return numValue(t, x >>> shiftCount(t, y)); }
+    return numValue(t, wrapTo(t, x >> shiftCount(t, y)));
+  }
+  if (op == kShrU()) { return numValue(t, wrapTo(t, zeroExtend(t, x) >>> shiftCount(t, y))); }
+
+  ev.unsupported("this binary operator");
+  return noneValue();
+}
+
+/** Is this a `string` on the heap? Interpolation is `+`, so concatenation is how it is built. */
+export bool isStringValue(Ev ev, Value v) {
+  i32 id = refOf(v);
+  return id >= 0 && id < ev.heapCount && ev.heap[id].type == "string";
+}
+
+export Value concatStrings(Ev ev, Value a, Value b) {
+  i32 x = refOf(a);
+  i32 y = refOf(b);
+  if (x < 0 || y < 0) { ev.raise("a string was joined with something that is not one"); return noneValue(); }
+  i32 n = ev.heap[x].count + ev.heap[y].count;
+  i32 id = ev.alloc("string", true, n);
+  if (id < 0) { return noneValue(); }
+  for (i32 i = 0; i < ev.heap[x].count; i++) { ev.heap[id].slots[i] = ev.heap[x].slots[i]; }
+  for (i32 i = 0; i < ev.heap[y].count; i++) { ev.heap[id].slots[ev.heap[x].count + i] = ev.heap[y].slots[i]; }
+  return refValue(id);
+}
+
+export bool isIntLit(Expr e) {
+  match (e.kind) {
+    IntLit(tok): { return true; }
+    default:             { return false; }
+  }
+}
+
+/** `==` on two values: numbers by value, references by identity, and a string by its bytes. */
+export bool sameValue(Value a, Value b) {
+  if (isNullValue(a) || isNullValue(b)) { return isNullValue(a) && isNullValue(b); }
+  i32 ra = refOf(a);
+  i32 rb = refOf(b);
+  if (ra >= 0 || rb >= 0) { return ra == rb; }
+  string t = typeOfValue(a);
+  if (t == "f32" || t == "f64") { return f64Of(a) == f64Of(b); }
+  return intOf(a) == intOf(b);
+}
+
+export Value floatBinary(Ev ev, i32 op, string t, f64 x, f64 y) {
+  if (op == kEq()) { return boolValue(x == y); }
+  if (op == kNe()) { return boolValue(x != y); }
+  if (op == kLt()) { return boolValue(x < y); }
+  if (op == kLe()) { return boolValue(x <= y); }
+  if (op == kGt()) { return boolValue(x > y); }
+  if (op == kGe()) { return boolValue(x >= y); }
+  f64 r = 0.0;
+  if (op == kPlus())       { r = x + y; }
+  else if (op == kMinus()) { r = x - y; }
+  else if (op == kStar())  { r = x * y; }
+  else if (op == kSlash()) { r = x / y; }
+  else if (op == kPercent()) {
+    // **Not implemented, rather than approximated.** wac's float `%` is exact and follows the left
+    // operand's sign — `1.0 % 0.1` is `0.09999999999999995`, not a tiny negative — which `x -
+    // trunc(x / y) * y` does not reproduce at every magnitude. A wrong constant is worse than a
+    // refused one. It also cannot be written here: `%` on a float lowers to a call in wac and to a
+    // bare `f64.rem` in wac-L5, which is not a wasm instruction, so this file cannot contain one.
+    ev.unsupported("`%` on a float is not evaluated statically yet");
+    return noneValue();
+  }
+  else { ev.unsupported("this operator on a float"); return noneValue(); }
+  return t == "f32" ? f32Value(r as~ f32) : f64Value(r);
+}
+
+// ── Casts ─────────────────────────────────────────────────────────────────────
+//
+// Four operators, chosen by what the conversion costs. `as` is lossless and is the only one allowed
+// where it applies; `as!` traps unless the value survives the round trip; `as~` takes the nearest
+// value and clamps; `as@` reinterprets the bits. Only the last one can change what a number means.
+
+export Value castTo(Ev ev, i32 op, Value v, string to) {
+  string from = typeOfValue(v);
+  if (from == to) { return v; }
+
+  bool toFloat = to == "f32" || to == "f64";
+  bool fromFloat = from == "f32" || from == "f64";
+
+  if (!toFloat && !isIntName(to)) {
+    // A reference cast: an up- or downcast changes nothing about the value here, and the check that
+    // it is legal belongs to the checker rather than to this.
+    return v;
+  }
+
+  if (fromFloat && !toFloat) {
+    // **`as~` rounds and `as@` truncates**, and the two differ on every value with a fraction. The
+    // emitter writes `f64.nearest` before `trunc_sat` for the first and a bare `trunc_sat` for the
+    // second, so `as~` is round-half-to-even — measured: `2.5 as~ i32` is 2 and `3.5 as~ i32` is 4.
+    // Truncating for both put this one apart from the emitted code on `-3.9`, which is what the
+    // differential is for.
+    f64 x = f64Of(v);
+    f64 whole = op == kAsAt() ? towardZero(x) : nearestEven(x);
+    if (op == kAsBang() && whole != x) { ev.raise("`as!` lost a fraction"); return noneValue(); }
+    i64 lo = minOf(to);
+    i64 hi = maxOf(to);
+    if (isUnsignedName(to)) { lo = 0 as i64; }
+    if (whole < (lo as~ f64)) {
+      if (op == kAsBang()) { ev.raise("`as!` went below the range of " + to); return noneValue(); }
+      return numValue(to, lo);
+    }
+    if (whole > (hi as~ f64)) {
+      if (op == kAsBang()) { ev.raise("`as!` went above the range of " + to); return noneValue(); }
+      return numValue(to, hi);
+    }
+    return numValue(to, wrapTo(to, f64ToI64(whole)));
+  }
+
+  if (toFloat) {
+    f64 x = fromFloat ? f64Of(v) : (intOf(v) as~ f64);
+    if (from == "u64" && !fromFloat && intOf(v) < (0 as i64)) {
+      // Zero-extension has nowhere to go in an i64, so the top half is added back by hand.
+      x = ((intOf(v) >>> 1) as~ f64) * 2.0 + ((intOf(v) & (1 as i64)) as~ f64);
+    }
+    return to == "f32" ? f32Value(x as~ f32) : f64Value(x);
+  }
+
+  // Integer to integer. `as@` keeps the bits and reads them as the new type; the rest keep the
+  // value, and `as!` is the one that complains when the value will not fit.
+  i64 bits = intOf(v);
+  i64 out = wrapTo(to, bits);
+  if (op == kAsBang() && out != bits) { ev.raise("`as!` does not fit in " + to); return noneValue(); }
+  return numValue(to, out);
+}
+
+/** The largest value a type holds. */
+export i64 maxOf(string t) {
+  i32 w = bitsOf(t);
+  if (isUnsignedName(t)) {
+    if (w == 64) { return 0 - 1 as i64; }
+    return ((1 as i64) << (w as i64)) - (1 as i64);
+  }
+  if (w == 64) { return ((1 as i64) << (63 as i64)) - (1 as i64); }
+  return ((1 as i64) << ((w - 1) as i64)) - (1 as i64);
+}
+
+/**
+ * `x` rounded to a whole number, halves to even — what `f64.nearest` does.
+ *
+ * Adding and subtracting 2^52 is the classic way to say it without an instruction for it: every
+ * f64 at that magnitude is a whole number, so the addition rounds the fraction away under IEEE's
+ * default mode, which *is* round-half-to-even. Above 2^52 there is no fraction left to round.
+ */
+export f64 nearestEven(f64 x) {
+  f64 big = 4503599627370496.0;
+  if (x >= big || x <= 0.0 - big) { return x; }
+  if (x >= 0.0) { return (x + big) - big; }
+  return (x - big) + big;
+}
+
+/** `x` with the fraction dropped, toward zero — what a bare `trunc_sat` does, and `as@`. */
+export f64 towardZero(f64 x) {
+  f64 n = nearestEven(x);
+  if (x >= 0.0 && n > x) { return n - 1.0; }
+  if (x < 0.0 && n < x) { return n + 1.0; }
+  return n;
+}
+
+/**
+ * A whole `f64` as an `i64`.
+ *
+ * `as~` would do it in one, but this file is compiled by a rung that cannot, and `as@` from a float
+ * to `i64` the real compiler refuses outright — though `spec/spec/casts.md`'s own matrix lists the
+ * pair. Splitting at 2^31 keeps both halves inside the one narrowing that does work.
+ */
+export i64 f64ToI64(f64 x) {
+  f64 lim = 2147483648.0;
+  if (x < lim && x > 0.0 - lim) { return (x as@ i32) as i64; }
+  f64 hi = towardZero(x / lim);
+  f64 lo = x - hi * lim;
+  return ((hi as@ i32) as i64) * (lim as~ i64) + ((lo as@ i32) as i64);
+}
+
+// ── Calls at an expression ────────────────────────────────────────────────────
+
+/** Evaluate `args` against the parameters of `nm`, then run it. */
+export Value callByName(Ev ev, Decls cx, i32 fi, string nm, Expr[] args) {
+  i32 d = funcDeclAt(cx, nm, fi);
+  if (d < 0) { ev.unsupported("a call to `" + nm + "`"); return noneValue(); }
+  i32 dfi = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+  Value[] argv = Value[].filled(args.len() < 1 ? 1 : args.len(), noneValue());
+  match (cx.decls[d].kind) {
+    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      for (i32 i = 0; i < args.len(); i++) {
+        string pt = i < params.len() ? tyName(cx, dfi, params[i].type) : "";
+        argv[i] = evalExpr(ev, cx, fi, args[i], pt);
+        if (!evFinished(ev.status)) { return noneValue(); }
+      }
+    }
+    default: { }
+  }
+  return callNamed(ev, cx, nm, argv, args.len(), fi);
+}
+
+export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+  match (callee.kind) {
+    Ident(tok): { return callByName(ev, cx, fi, tokText(src, lx, tok), args); }
+    // `xs.len()` is the one method the evaluator answers itself, because an array's length is not a
+    // function anywhere in the program for it to go and run.
+    Member(obj, nameTok): {
+      string nm = tokText(src, lx, nameTok);
+      // `Tag.One(6)` — a variant built through its enum (spec/next ch13): an object holding the payload.
+      i32 arity = variantArityOf(cx, fi, obj, nm);
+      if (arity >= 0) { return buildVariant(ev, cx, fi, obj, nm, args, arity); }
+      Value o = evalExpr(ev, cx, fi, obj, "");
+      if (!evFinished(ev.status)) { return noneValue(); }
+      i32 id = refOf(o);
+      if (nm == "len" && id >= 0) { return numValue("i32", ev.heap[id].count as i64); }
+      if (id < 0) { ev.raise("a method was called through null"); return noneValue(); }
+      ev.unsupported("the method `" + ev.heap[id].type + "." + nm + "`");
+      return noneValue();
+    }
+    default: {
+      ev.unsupported("this call");
+      return noneValue();
+    }
+  }
+}
+
+// ── Statements ────────────────────────────────────────────────────────────────
+
+export void execStmts(Ev ev, Decls cx, i32 fi, Stmt[] body, i32 base) {
+  i32 mark = ev.localCount;
+  for (i32 i = 0; i < body.len(); i++) {
+    execStmt(ev, cx, fi, body[i]);
+    if (ev.status != evOk()) { break; }
+  }
+  // A block's locals go out of scope with it, which is also what keeps a loop body from declaring
+  // the same name a second time on its second turn.
+  ev.localCount = mark;
+}
+
+export void execStmt(Ev ev, Decls cx, i32 fi, Stmt st) {
+  if (ev.status != evOk()) { return; }
+  if (!ev.step()) { return; }
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+
+  match (st.kind) {
+    Var(type, nameTok, init, isConst): {
+      string t = tyName(cx, fi, type);
+      // `T x;` holds `T`'s default until it is assigned (spec/next ch08).
+      Value v = init is null ? defaultOf(t) : evalExpr(ev, cx, fi, init!, t);
+      if (!evFinished(ev.status)) { return; }
+      ev.declare(tokText(src, lx, nameTok), t, v);
+    }
+
+    Assign(target, op, rhs): {
+      string slotType = lvalueType(ev, cx, fi, target);
+      Value v = evalExpr(ev, cx, fi, rhs, slotType);
+      if (!evFinished(ev.status)) { return; }
+      if (opKind(lx, op) != kAssign()) {
+        Value cur = readLvalue(ev, cx, fi, target);
+        if (!evFinished(ev.status)) { return; }
+        v = combine(ev, opKind(lx, op), cur, v, slotType);
+        if (!evFinished(ev.status)) { return; }
+      }
+      writeLvalue(ev, cx, fi, target, v);
+    }
+
+    IncrStmt(target, op): {
+      Value cur = readLvalue(ev, cx, fi, target);
+      if (!evFinished(ev.status)) { return; }
+      string t = typeOfValue(cur);
+      i64 one = 0 - 1 as i64;
+      if (opKind(lx, op) == kInc()) { one = 1 as i64; }
+      writeLvalue(ev, cx, fi, target, numValue(t, wrapTo(t, intOf(cur) + one)));
+    }
+
+    If(cond, then, els): {
+      Value c = evalExpr(ev, cx, fi, cond, "bool");
+      if (!evFinished(ev.status)) { return; }
+      execStmts(ev, cx, fi, truthy(c) ? then : els, ev.frameBase);
+    }
+    // Run at compile time, a `static_if` is an `if`: the branch is decided by the same value.
+    StaticIf(cond, then, els): {
+      Value c = evalExpr(ev, cx, fi, cond, "bool");
+      if (!evFinished(ev.status)) { return; }
+      execStmts(ev, cx, fi, truthy(c) ? then : els, ev.frameBase);
+    }
+    StaticTrap(message): { ev.raise("`static_trap` was reached"); }
+
+    While(cond, body): {
+      while (true) {
+        Value c = evalExpr(ev, cx, fi, cond, "bool");
+        if (!evFinished(ev.status)) { return; }
+        if (!truthy(c)) { return; }
+        execStmts(ev, cx, fi, body, ev.frameBase);
+        if (ev.status == evBreak()) { ev.status = evOk(); return; }
+        if (ev.status == evContinue()) { ev.status = evOk(); }
+        if (ev.status != evOk()) { return; }
+      }
+    }
+
+    DoWhile(body, cond): {
+      while (true) {
+        execStmts(ev, cx, fi, body, ev.frameBase);
+        if (ev.status == evBreak()) { ev.status = evOk(); return; }
+        if (ev.status == evContinue()) { ev.status = evOk(); }
+        if (ev.status != evOk()) { return; }
+        Value c = evalExpr(ev, cx, fi, cond, "bool");
+        if (!evFinished(ev.status)) { return; }
+        if (!truthy(c)) { return; }
+      }
+    }
+
+    For(init, cond, update, body): {
+      // The init's local belongs to the loop and not to the block around it, so the mark is here.
+      i32 mark = ev.localCount;
+      if (!(init is null)) { execStmt(ev, cx, fi, init!); }
+      while (ev.status == evOk()) {
+        if (!(cond is null)) {
+          Value c = evalExpr(ev, cx, fi, cond!, "bool");
+          if (!evFinished(ev.status)) { break; }
+          if (!truthy(c)) { break; }
+        }
+        execStmts(ev, cx, fi, body, ev.frameBase);
+        if (ev.status == evBreak()) { ev.status = evOk(); break; }
+        if (ev.status == evContinue()) { ev.status = evOk(); }
+        if (ev.status != evOk()) { break; }
+        if (!(update is null)) { execStmt(ev, cx, fi, update!); }
+      }
+      ev.localCount = mark;
+    }
+
+    Return(value): {
+      if (!(value is null)) {
+        ev.result = evalExpr(ev, cx, fi, value!, ev.returnType);
+        if (!evFinished(ev.status)) { return; }
+      } else {
+        ev.result = noneValue();
+      }
+      ev.status = evReturn();
+    }
+
+    Break:    { ev.status = evBreak(); }
+    Continue: { ev.status = evContinue(); }
+
+    Trap(value): {
+      string why = "the program trapped while being evaluated";
+      if (!(value is null)) {
+        Value m = evalExpr(ev, cx, fi, value!, "string");
+        if (evFinished(ev.status)) {
+          i32 id = refOf(m);
+          if (id >= 0) { why = "trap: " + stringOf(ev, id); }
+        }
+      }
+      ev.raise(why);
+    }
+
+    Block(body):    { execStmts(ev, cx, fi, body, ev.frameBase); }
+    ExprStmt(expr): { evalExpr(ev, cx, fi, expr, ""); }
+
+    default: { ev.unsupported("this statement"); }
+  }
+}
+
+/** The text of a `string` on the heap, which is an `i8[]` of its UTF-8 bytes. */
+export string stringOf(Ev ev, i32 id) {
+  if (id < 0) { return ""; }
+  u8[] bytes = u8[].filled(ev.heap[id].count, 0);
+  for (i32 i = 0; i < ev.heap[id].count; i++) {
+    bytes[i] = (intOf(ev.heap[id].slots[i]) & (255 as i64)) as~ u8;
+  }
+  return string.fromBytes(bytes);
+}
+
+/** `a op= b` is the operator and the store, with the operator's own rules. */
+export Value combine(Ev ev, i32 op, Value cur, Value rhs, string t) {
+  i64 x = intOf(cur);
+  i64 y = intOf(rhs);
+  string ty = t != "" ? t : typeOfValue(cur);
+  if (op == kPlusEq())    { return numValue(ty, wrapTo(ty, x + y)); }
+  if (op == kMinusEq())   { return numValue(ty, wrapTo(ty, x - y)); }
+  if (op == kStarEq())    { return numValue(ty, wrapTo(ty, x * y)); }
+  if (op == kSlashEq())   { return numValue(ty, wrapTo(ty, divide(ev, ty, x, y))); }
+  if (op == kPercentEq()) { return numValue(ty, wrapTo(ty, remainder(ev, ty, x, y))); }
+  if (op == kAndEq())     { return numValue(ty, wrapTo(ty, x & y)); }
+  if (op == kOrEq())      { return numValue(ty, wrapTo(ty, x | y)); }
+  if (op == kCaretEq())   { return numValue(ty, wrapTo(ty, x ^ y)); }
+  if (op == kShlEq())     { return numValue(ty, wrapTo(ty, x << shiftCount(ty, y))); }
+  if (op == kShrEq()) {
+    if (ty == "u64") { return numValue(ty, x >>> shiftCount(ty, y)); }
+    return numValue(ty, wrapTo(ty, x >> shiftCount(ty, y)));
+  }
+  if (op == kShrUEq()) { return numValue(ty, wrapTo(ty, zeroExtend(ty, x) >>> shiftCount(ty, y))); }
+  ev.unsupported("this compound assignment");
+  return noneValue();
+}
+
+// ── Places ────────────────────────────────────────────────────────────────────
+//
+// A local, a field or an element. Read and write are separate walks rather than one returning a
+// reference, because wac has no reference to a slot and the alternative would be an index plus a
+// discriminator — three values where two walks do.
+
+export string lvalueType(Ev ev, Decls cx, i32 fi, Lvalue lv) {
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+  match (lv.kind) {
+    LIdent(tok): {
+      i32 li = ev.localAt(tokText(src, lx, tok), ev.frameBase);
+      return li >= 0 ? ev.localTypes[li] : "";
+    }
+    LField(base, nameTok): {
+      Value b = readLvalue(ev, cx, fi, base);
+      i32 id = refOf(b);
+      if (id < 0) { return ""; }
+      i32 slot = fieldSlot(cx, ev.heap[id].type, tokText(src, lx, nameTok));
+      return slot < 0 ? "" : fieldTypeAt(cx, ev.heap[id].type, slot);
+    }
+    LIndex(base, index): {
+      Value b = readLvalue(ev, cx, fi, base);
+      i32 id = refOf(b);
+      return id < 0 ? "" : arrayElem(ev.heap[id].type);
+    }
+    LUnwrap(base): { return lvalueType(ev, cx, fi, base); }
+  }
+}
+
+export Value readLvalue(Ev ev, Decls cx, i32 fi, Lvalue lv) {
+  if (!evFinished(ev.status)) { return noneValue(); }
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+  match (lv.kind) {
+    LIdent(tok): {
+      string nm = tokText(src, lx, tok);
+      i32 li = ev.localAt(nm, ev.frameBase);
+      if (li >= 0) { return ev.localVals[li]; }
+      i32 ci = cx.constAt(nm, fi);
+      if (ci >= 0) { return demandConst(ev, cx, ci); }
+      ev.unsupported("`" + nm + "`, which is not a local here");
+      return noneValue();
+    }
+    LField(base, nameTok): {
+      Value b = readLvalue(ev, cx, fi, base);
+      if (!evFinished(ev.status)) { return noneValue(); }
+      i32 id = refOf(b);
+      if (id < 0) { ev.raise("a field was read through null"); return noneValue(); }
+      i32 slot = fieldSlot(cx, ev.heap[id].type, tokText(src, lx, nameTok));
+      if (slot < 0) { ev.unsupported("that field"); return noneValue(); }
+      return ev.heap[id].slots[slot];
+    }
+    LIndex(base, index): {
+      Value b = readLvalue(ev, cx, fi, base);
+      Value i = evalExpr(ev, cx, fi, index, "i32");
+      if (!evFinished(ev.status)) { return noneValue(); }
+      i32 id = refOf(b);
+      if (id < 0) { ev.raise("null array indexed"); return noneValue(); }
+      i64 n = intOf(i);
+      if (n < (0 as i64) || n >= (ev.heap[id].count as i64)) {
+        ev.raise("array index out of bounds");
+        return noneValue();
+      }
+      return ev.heap[id].slots[n as~ i32];
+    }
+    LUnwrap(base): {
+      Value b = readLvalue(ev, cx, fi, base);
+      if (!evFinished(ev.status)) { return noneValue(); }
+      if (isNullValue(b)) { ev.raise("`!` unwrapped a null"); return noneValue(); }
+      return b;
+    }
+  }
+}
+
+export void writeLvalue(Ev ev, Decls cx, i32 fi, Lvalue lv, Value v) {
+  if (!evFinished(ev.status)) { return; }
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+  match (lv.kind) {
+    LIdent(tok): {
+      string nm = tokText(src, lx, tok);
+      i32 li = ev.localAt(nm, ev.frameBase);
+      if (li < 0) { ev.unsupported("an assignment to `" + nm + "`, which is not a local here"); return; }
+      ev.localVals[li] = v;
+    }
+    LField(base, nameTok): {
+      Value b = readLvalue(ev, cx, fi, base);
+      if (!evFinished(ev.status)) { return; }
+      i32 id = refOf(b);
+      if (id < 0) { ev.raise("a field was written through null"); return; }
+      i32 slot = fieldSlot(cx, ev.heap[id].type, tokText(src, lx, nameTok));
+      if (slot < 0) { ev.unsupported("that field"); return; }
+      ev.heap[id].slots[slot] = v;
+    }
+    LIndex(base, index): {
+      Value b = readLvalue(ev, cx, fi, base);
+      Value i = evalExpr(ev, cx, fi, index, "i32");
+      if (!evFinished(ev.status)) { return; }
+      i32 id = refOf(b);
+      if (id < 0) { ev.raise("null array written"); return; }
+      i64 n = intOf(i);
+      if (n < (0 as i64) || n >= (ev.heap[id].count as i64)) {
+        ev.raise("array index out of bounds");
+        return;
+      }
+      ev.heap[id].slots[n as~ i32] = v;
+    }
+    LUnwrap(base): { writeLvalue(ev, cx, fi, base, v); }
+  }
+}
+
+// ── Building one from a parsed program ────────────────────────────────────────
+
+/**
+ * Fill `keys`, `names` and `exported` from the declarations, and point each constant at its own.
+ *
+ * The key is the spelling when the whole program declares it once and `name@<file>` when it does
+ * not — `Env.declare`'s scheme, so a key minted here and one minted there are the same string
+ * wherever both can see the same declarations.
+ */
+export void keyDecls(Decls cx) {
+  for (i32 d = 0; d < cx.decls.len(); d++) {
+    cx.names[d] = declNameOf(cx, d);
+    cx.exported[d] = declExportedOf(cx.decls[d]);
+  }
+  for (i32 d = 0; d < cx.decls.len(); d++) {
+    if (cx.names[d] == "") { cx.keys[d] = ""; continue; }
+    bool twice = false;
+    for (i32 e = 0; e < cx.decls.len(); e++) {
+      if (e != d && cx.names[e] == cx.names[d]) { twice = true; }
+    }
+    cx.keys[d] = twice ? cx.names[d] + "@" + decimalText(cx.declFiles[d]) : cx.names[d];
+  }
+}
+
+/** A declaration's written name, or "" for one that declares no name. */
+export string declNameOf(Decls cx, i32 d) {
+  i32 fi = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+  match (cx.decls[d].kind) {
+    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      return tokText(src, lx, nameTok);
+    }
+    StaticDecl(nameTok, type, init, exported): { return tokText(src, lx, nameTok); }
+    StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      return tokText(src, lx, nameTok);
+    }
+    EnumDecl(nameTok, variants, exported, methods, typeParams): {
+      return tokText(src, lx, nameTok);
+    }
+    default: { return ""; }
+  }
+}
+
+export bool declExportedOf(Decl d) {
+  match (d.kind) {
+    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): { return exported; }
+    StaticDecl(nameTok, type, init, exported): { return exported; }
+    StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): { return exported; }
+    EnumDecl(nameTok, variants, exported, methods, typeParams): { return exported; }
+    default: { return false; }
+  }
+}
+
+/**
+ * A `Decls` over a single parsed file.
+ *
+ * The emitter builds one from its own tables across every file; this is the one-file form, which is
+ * what a test drives and what keeps the evaluator answerable without an emitter at all.
+ */
+export Decls declsOfProgram(u8[] src, Lexed lexed, Decl[] decls) {
+  i32 nf = 0;
+  i32 nc = 0;
+  for (i32 d = 0; d < decls.len(); d++) {
+    match (decls[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        nf = nf + fields.len();
+      }
+      StaticDecl(nameTok, type, init, exported): { nc = nc + 1; }
+      default: { }
+    }
+  }
+
+  i32 nd = decls.len() < 1 ? 1 : decls.len();
+  Decls cx = Decls(decls, i32[].filled(nd, 0), u8[][].defaulted(0), Lexed?[].filled(0, null),
+               src, lexed,
+               string[].filled(nf < 1 ? 1 : nf, ""), string[].filled(nf < 1 ? 1 : nf, ""),
+               string[].filled(nf < 1 ? 1 : nf, ""), 0,
+               string[].filled(nc < 1 ? 1 : nc, ""), string[].filled(nc < 1 ? 1 : nc, ""),
+               Expr?[].filled(nc < 1 ? 1 : nc, null), i32[].filled(nc < 1 ? 1 : nc, 0), 0,
+               string[].filled(nd, ""), string[].filled(nd, ""), bool[].filled(nd, false),
+               i32[].filled(nc < 1 ? 1 : nc, 0),
+               i32[].filled(1, 0), string[].filled(1, ""), i32[].filled(1, 0), string[].filled(1, ""), 0);
+  for (i32 d = 0; d < decls.len(); d++) { cx.declFiles[d] = 0 - 1; }
+  // **Before the tables, because the tables are keyed on what it decides.** A struct's fields are
+  // filed under the struct's identity, not under the spelling one file gave it.
+  keyDecls(cx);
+
+  for (i32 d = 0; d < decls.len(); d++) {
+    match (decls[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        for (i32 i = 0; i < fields.len(); i++) {
+          cx.fieldOwners[cx.fieldCount] = cx.keys[d];
+          cx.fieldNames[cx.fieldCount] = tokText(src, lexed, fields[i].nameTok);
+          cx.fieldTypes[cx.fieldCount] = tyName(cx, 0 - 1, fields[i].type);
+          cx.fieldCount = cx.fieldCount + 1;
+        }
+      }
+      StaticDecl(nameTok, type, init, exported): {
+        cx.constNames[cx.constCount] = cx.keys[d];
+        cx.constTypes[cx.constCount] = tyName(cx, 0 - 1, type);
+        cx.constInits[cx.constCount] = init;
+        cx.constFiles[cx.constCount] = 0 - 1;
+        cx.constDecls[cx.constCount] = d;
+        cx.constCount = cx.constCount + 1;
+      }
+      default: { }
+    }
+  }
+  return cx;
+}
+
+/**
+ * A `Decls` over every file, for the checker.
+ *
+ * `declsOfProgram` sees one, which is what `checkModule` is handed — and a `static_if` whose
+ * condition reads an imported constant then has nothing to evaluate against, so both of its
+ * branches get checked. Correct, because the emitter has every file and picks the right one, but it
+ * makes the dead branch have to type-check, which is the thing the spelling exists to avoid.
+ */
+export Decls declsOfFiles(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs,
+                          u8[] blobSrc, Lexed blobLexed) {
+  i32 total = 0;
+  i32 nf = 0;
+  i32 nc = 0;
+  for (i32 i = 0; i < progs.len(); i++) {
+    if (progs[i] is null) { continue; }
+    Decl[] ds = progs[i]!.decls;
+    total = total + ds.len();
+    for (i32 d = 0; d < ds.len(); d++) {
+      match (ds[d].kind) {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          nf = nf + fields.len();
+        }
+        StaticDecl(nameTok, type, init, exported): { nc = nc + 1; }
+        default: { }
+      }
+    }
+  }
+
+  u8[][] srcs = u8[][].filled(sources.len() < 1 ? 1 : sources.len(), u8[].filled(0, 0));
+  for (i32 i = 0; i < sources.len(); i++) { srcs[i] = sources[i].toBytes(); }
+  Lexed?[] lx = Lexed?[].filled(srcs.len(), null);
+  for (i32 i = 0; i < srcs.len(); i++) {
+    lx[i] = i < lexes.len() && (lexes[i] is not null) ? lexes[i] : null;
+  }
+
+  Decl[] all = Decl[].filled(total < 1 ? 1 : total, Decl(DeclKind.Import(0 - 1, 0 - 1, ImportItem[]()), 0, 0));
+  i32[] files = i32[].filled(total < 1 ? 1 : total, 0);
+  i32 n = 0;
+  for (i32 i = 0; i < progs.len(); i++) {
+    if (progs[i] is null) { continue; }
+    Decl[] ds = progs[i]!.decls;
+    for (i32 d = 0; d < ds.len(); d++) {
+      all[n] = ds[d];
+      files[n] = i;
+      n = n + 1;
+    }
+  }
+
+  i32 nd2 = all.len() < 1 ? 1 : all.len();
+  Decls cx = Decls(all, files, srcs, lx, blobSrc, blobLexed,
+                   string[].filled(nf < 1 ? 1 : nf, ""), string[].filled(nf < 1 ? 1 : nf, ""),
+                   string[].filled(nf < 1 ? 1 : nf, ""), 0,
+                   string[].filled(nc < 1 ? 1 : nc, ""), string[].filled(nc < 1 ? 1 : nc, ""),
+                   Expr?[].filled(nc < 1 ? 1 : nc, null), i32[].filled(nc < 1 ? 1 : nc, 0), 0,
+                   string[].filled(nd2, ""), string[].filled(nd2, ""), bool[].filled(nd2, false),
+                   i32[].filled(nc < 1 ? 1 : nc, 0),
+                   i32[].filled(1, 0), string[].filled(1, ""), i32[].filled(1, 0), string[].filled(1, ""), 0);
+  keyDecls(cx);
+
+  // **The import edges, from the files' own `import` lines.** Without them a name a file spells
+  // differently from the file that declares it resolves to nothing — and there is no duplicate for
+  // an ambiguity guard to notice, so the failure is silence rather than a complaint.
+  i32 ne = 0;
+  for (i32 k = 0; k < n; k++) {
+    match (all[k].kind) {
+      Import(pathTok, prefixTok, items): { ne = ne + items.len(); }
+      default: { }
+    }
+  }
+  cx.impFrom = i32[].filled(ne < 1 ? 1 : ne, 0);
+  cx.impName = string[].filled(ne < 1 ? 1 : ne, "");
+  cx.impTo = i32[].filled(ne < 1 ? 1 : ne, 0);
+  cx.impDecl = string[].filled(ne < 1 ? 1 : ne, "");
+  for (i32 k = 0; k < n; k++) {
+    i32 ifi = files[k];
+    match (all[k].kind) {
+      Import(pathTok, prefixTok, items): {
+        if (prefixTok >= 0) { continue; }
+        string spec = string.fromBytes(stringLiteralBytes(cx.srcOf(ifi), cx.lexOf(ifi), pathTok));
+        string from = ifi >= 0 && ifi < paths.len() ? paths[ifi] : "";
+        string target = resolveFrom(from, spec);
+        i32 to = 0 - 1;
+        for (i32 q = 0; q < paths.len(); q++) {
+          if (paths[q] == target || paths[q] == spec) { to = q; }
+          // A built-in is carried under its name with a leading space (`" core"`), which no file path has.
+          if ((spec == "core" || spec == "std") && paths[q] == " " + spec) { to = q; }
+        }
+        if (to < 0) { continue; }
+        for (i32 it = 0; it < items.len(); it++) {
+          cx.impFrom[cx.impCount] = ifi;
+          cx.impName[cx.impCount] = tokText(cx.srcOf(ifi), cx.lexOf(ifi), items[it].aliasTok);
+          cx.impTo[cx.impCount] = to;
+          cx.impDecl[cx.impCount] = tokText(cx.srcOf(ifi), cx.lexOf(ifi), items[it].nameTok);
+          cx.impCount = cx.impCount + 1;
+        }
+      }
+      default: { }
+    }
+  }
+
+  for (i32 k = 0; k < n; k++) {
+    i32 fi = files[k];
+    match (all[k].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        for (i32 i = 0; i < fields.len(); i++) {
+          cx.fieldOwners[cx.fieldCount] = cx.keys[k];
+          cx.fieldNames[cx.fieldCount] = tokText(cx.srcOf(fi), cx.lexOf(fi), fields[i].nameTok);
+          cx.fieldTypes[cx.fieldCount] = tyName(cx, fi, fields[i].type);
+          cx.fieldCount = cx.fieldCount + 1;
+        }
+      }
+      StaticDecl(nameTok, type, init, exported): {
+        cx.constNames[cx.constCount] = cx.keys[k];
+        cx.constTypes[cx.constCount] = tyName(cx, fi, type);
+        cx.constInits[cx.constCount] = init;
+        cx.constFiles[cx.constCount] = fi;
+        cx.constDecls[cx.constCount] = k;
+        cx.constCount = cx.constCount + 1;
+      }
+      default: { }
+    }
+  }
+  return cx;
+}
+
+/** A value as text, for a diagnostic and for a test to compare against. */
+export string showValue(Ev ev, Value v) {
+  if (v.kind == vNull()) { return "null"; }
+  if (v.kind == vNone()) { return "void"; }
+  if (v.kind == vF32() || v.kind == vF64()) { return showFloat(v.fval); }
+  if (v.kind == vNum()) {
+    if (v.ty == "bool") {
+      if (v.bits != (0 as i64)) { return "true"; }
+      return "false";
+    }
+    return showInt(v.ty, v.bits);
+  }
+  i32 id = v.id;
+  if (id < 0 || id >= ev.heapCount) { return "?"; }
+  if (ev.heap[id].type == "string") { return "\"" + stringOf(ev, id) + "\"#" + decimalText(id); }
+  string out = ev.heap[id].type + "#" + decimalText(id) + "(";
+  for (i32 i = 0; i < ev.heap[id].count; i++) {
+    if (i >= 8) { out = out + ", ..." + decimalText(ev.heap[id].count) + " total"; break; }
+    if (i > 0) { out = out + ", "; }
+    out = out + showValue(ev, ev.heap[id].slots[i]);
+  }
+  return out + ")";
+}
+
+/** An integer as text. Unsigned is held zero-extended, so only `u64` needs anything special. */
+export string showInt(string ty, i64 v) {
+  if (ty == "u64" && v < (0 as i64)) {
+    i64 q = udiv64(v, 10 as i64);
+    return showInt("u64", q) + decimalText((v - q * (10 as i64)) as~ i32);
+  }
+  if (v >= (0 - 2147483648) && v <= 2147483647) { return decimalText(v as~ i32); }
+  i64 q2 = v / (10 as i64);
+  i64 r = v - q2 * (10 as i64);
+  if (r < (0 as i64)) { r = 0 - r; }
+  return showInt(ty, q2) + decimalText(r as~ i32);
+}
+
+export string showFloat(f64 x) {
+  i64 whole = x as~ i64;
+  if ((whole as~ f64) == x) { return showInt("i64", whole) + ".0"; }
+  return "~" + showInt("i64", whole);
+}
+
+/** Every constant in the program, evaluated, as `NAME = value` or `NAME ! why`. */
+export string[] evalAllConsts(Decls cx) {
+  Ev ev = Ev.create();
+  string[] out = string[].filled(cx.constCount, "");
+  for (i32 i = 0; i < cx.constCount; i++) {
+    ev.status = evOk();
+    ev.message = "";
+    Value v = demandConst(ev, cx, i);
+    if (evFinished(ev.status)) {
+      out[i] = cx.constNames[i] + " = " + showValue(ev, v);
+    } else {
+      out[i] = cx.constNames[i] + " ! " + outcomeName(ev.status) + ": " + ev.message;
+    }
+  }
+  return out;
+}
+
+export string outcomeName(i32 status) {
+  if (status == evTrap())        { return "trap"; }
+  if (status == evLimit())       { return "limit"; }
+  if (status == evCycle())       { return "cycle"; }
+  if (status == evUnsupported()) { return "unsupported"; }
+  return "error";
+}
+
+// ── Driving a `static_for` ────────────────────────────────────────────────────
+
+/**
+ * How many turns a `static_for` may be unrolled before this compiler stops.
+ *
+ * A budget rather than a rule: reaching it says the unrolling was stopped, not that the loop does
+ * not end. 4096 copies of a body is already far past what anyone writes on purpose.
+ */
+export i32 staticForCap() { return 4096; }
+
+/**
+ * The values a `static_for`'s variable takes, in order.
+ *
+ * One driver for two callers. The checker walks the body once per value so a `static_if` inside is
+ * decided per turn, and the emitter walks it once per value to write the copies — and the two
+ * agreeing matters more here than anywhere else in the feature, because a branch the emitter writes
+ * and the checker never saw is a branch nobody checked.
+ *
+ * `cap` is the unrolling budget. Reaching it is the resource limit, not a claim about the loop.
+ */
+export i64[] staticForValues(Ev ev, Decls cx, i32 fi, Stmt? init, Expr? cond, Stmt? update, i32 cap) {
+  i64[] out = i64[].filled(cap < 1 ? 1 : cap, 0 as i64);
+  i32 n = 0;
+  i32 mark = ev.localCount;
+  ev.status = evOk();
+  if (!(init is null)) { execStmt(ev, cx, fi, init!); }
+  while (evFinished(ev.status) && n < cap) {
+    if (!(cond is null)) {
+      Value c = evalExpr(ev, cx, fi, cond!, "bool");
+      if (!evFinished(ev.status)) { break; }
+      if (!truthy(c)) { break; }
+    }
+    // The variable's value *now*, which is what this turn's copy of the body is written against.
+    i32 li = ev.localCount - 1;
+    out[n] = li >= mark ? intOf(ev.localVals[li]) : (n as i64);
+    n = n + 1;
+    if (!(update is null)) { execStmt(ev, cx, fi, update!); }
+  }
+  ev.localCount = mark;
+  i64[] exact = i64[].filled(n < 1 ? 1 : n, 0 as i64);
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return n == 0 ? i64[].filled(0, 0 as i64) : exact;
+}
+
+/** The name a `static_for`'s initialiser declares, or `""` where it declares none. */
+export string staticForName(Decls cx, i32 fi, Stmt? init) {
+  if (init is null) { return ""; }
+  match (init!.kind) {
+    Var(type, nameTok, e, isConst): { return tokText(cx.srcOf(fi), cx.lexOf(fi), nameTok); }
+    default: { return ""; }
+  }
+}
+
+/** And the type it gave it. */
+export string staticForType(Decls cx, i32 fi, Stmt? init) {
+  if (init is null) { return "i32"; }
+  match (init!.kind) {
+    Var(type, nameTok, e, isConst): { return tyName(cx, fi, type); }
+    default: { return "i32"; }
+  }
+}
+
+/**
+ * What an expression is, in words, for a diagnostic that names the construct this evaluator cannot
+ * run yet (spec/next ch28: "an error that says so, naming the construct").
+ */
+export string exprKindName(Expr e) {
+  match (e.kind) {
+    Lambda(params, body, isAsync): { return "a lambda"; }
+    Await(operand): { return "an `await`"; }
+    Try(operand): { return "a `try`"; }
+    CoroutineOf(call): { return "a `coroutine`"; }
+    MatchExpr(subject, arms): { return "a `match` expression"; }
+    TupleLit(elements): { return "a tuple"; }
+    SafeMember(obj, nameTok): { return "a `?.`"; }
+    Matches(pat, subject): { return "a `matches` test"; }
+    TypeName(t): { return "a type used as a value"; }
+    default: { return "this kind of expression"; }
+  }
+}
+
+/**
+ * How many payload fields variant `vn` of the enum `obj` names has — or -1 when `obj` is not an
+ * enum's name or `vn` is not one of its variants. A local of that name shadows the enum.
+ */
+export i32 variantArityOf(Decls cx, i32 fi, Expr obj, string vn) {
+  string en = "";
+  match (obj.kind) {
+    Ident(tok): { en = tokText(cx.srcOf(fi), cx.lexOf(fi), tok); }
+    default: { return 0 - 1; }
+  }
+  for (i32 d = 0; d < cx.decls.len(); d++) {
+    match (cx.decls[d].kind) {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        i32 dfi = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+        if (tokText(cx.srcOf(dfi), cx.lexOf(dfi), nameTok) != en) { continue; }
+        for (i32 v = 0; v < variants.len(); v++) {
+          if (tokText(cx.srcOf(dfi), cx.lexOf(dfi), variants[v].nameTok) == vn) { return variants[v].fields.len(); }
+        }
+        return 0 - 1;
+      }
+      default: { }
+    }
+  }
+  return 0 - 1;
+}
+
+/** A variant's value: an object typed `Enum.Variant` holding its payload in order. */
+export Value buildVariant(Ev ev, Decls cx, i32 fi, Expr obj, string vn, Expr[] args, i32 arity) {
+  string en = "";
+  match (obj.kind) {
+    Ident(tok): { en = tokText(cx.srcOf(fi), cx.lexOf(fi), tok); }
+    default: { }
+  }
+  i32 id = ev.alloc(en + "." + vn, false, arity);
+  if (id < 0) { return noneValue(); }
+  for (i32 i = 0; i < args.len() && i < arity; i++) {
+    Value v = evalExpr(ev, cx, fi, args[i], "");
+    if (!evFinished(ev.status)) { return noneValue(); }
+    ev.heap[id].slots[i] = v;
+  }
+  return refValue(id);
+}
+
+// ── `static` in a function ────────────────────────────────────────────────────
+
+/** What binding a block's `static` locals came to: per local, in the order the block writes them. */
+export struct StaticBind {
+  string[] names;
+  i32[] status;
+  string[] why;
+  /** The evaluator's local count before the block — put it back when the block ends. */
+  i32 mark;
+}
+
+/**
+ * Bind every `static` local of `body` into `ev` — spec/next ch27 `§wac-static-local-mpg3rw7`.
+ *
+ * **By dependency, not by position**: a static may read one declared after it in the block, so each
+ * is tried until none moves, and one whose initialiser asked for a name another of them supplies is
+ * tried again once that one has a value. What is still unbound at the end failed on its own account,
+ * or waits on another that never settled — which, among the block's own statics, is a cycle.
+ */
+export StaticBind bindStaticLocals(Ev ev, Decls cx, i32 fi, Stmt[] body) {
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+  i32 n = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      StaticLocal(type, nameTok, init): { n = n + 1; }
+      default: { }
+    }
+  }
+  StaticBind out = StaticBind(string[].filled(n, ""), i32[].filled(n, 0 - 1), string[].filled(n, ""),
+                              ev.localCount);
+  if (n == 0) { return out; }
+  i32[] at = i32[].filled(n, 0);
+  i32 k = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      StaticLocal(type, nameTok, init): {
+        out.names[k] = tokText(src, lx, nameTok);
+        at[k] = i;
+        k = k + 1;
+      }
+      default: { }
+    }
+  }
+  bool moved = true;
+  while (moved) {
+    moved = false;
+    for (i32 j = 0; j < n; j++) {
+      if (out.status[j] >= 0) { continue; }
+      string ty = "";
+      Value v = noneValue();
+      ev.status = evOk();
+      ev.message = "";
+      match (body[at[j]].kind) {
+        StaticLocal(type, nameTok, init): {
+          ty = tyName(cx, fi, type);
+          v = evalExpr(ev, cx, fi, init, ty);
+        }
+        default: { }
+      }
+      if (evFinished(ev.status)) {
+        ev.status = evOk();
+        ev.declare(out.names[j], ty, v);
+        out.status[j] = evOk();
+        moved = true;
+        continue;
+      }
+      // Waiting on a sibling not yet bound is not a failure yet.
+      bool waits = false;
+      for (i32 q = 0; q < n; q++) {
+        if (out.status[q] < 0 && q != j && ev.message.indexOf("`" + out.names[q] + "`") >= 0) { waits = true; }
+      }
+      if (waits) { continue; }
+      out.status[j] = ev.status;
+      out.why[j] = ev.message;
+      moved = true;
+    }
+  }
+  for (i32 j = 0; j < n; j++) {
+    if (out.status[j] >= 0) { continue; }
+    out.status[j] = evCycle();
+    out.why[j] = "`" + out.names[j] + "` and the statics it reads in this block need each other";
+  }
+  ev.status = evOk();
+  ev.message = "";
+  return out;
+}

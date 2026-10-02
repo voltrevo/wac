@@ -1,0 +1,519 @@
+// The static evaluator, asked directly.
+//
+// `dumpConstValues` parses one file and answers what each module constant *is*, with no emitter in
+// the way — so a wrong answer here is the interpreter's own and nothing else's. The wider test is
+// the differential, which runs the same expression in the emitted module and compares; this one is
+// for the cases where saying the expected number out loud is clearer than deriving it twice.
+//
+// Every expected value below was worked out from the wasm semantics the operation lowers to, not
+// from what the evaluator answered. A test written the other way round asserts that the code does
+// what it does.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { dumpConstValues, dumpTypeErrors } from "../../src/api.wac";
+
+/** Every constant the source declares, rendered and joined — the whole answer in one string. */
+string values(string src) {
+  return joined(dumpConstValues(src.toBytes()), " | ");
+}
+
+/** How many diagnostics the checker reports for this source. Three i32s per diagnostic. */
+i32 errorCount(string src) {
+  return dumpTypeErrors(src.toBytes()).len() / 3;
+}
+
+/** The diagnostics as `code@line:col`, for a failure message that says which rule fired. */
+string errorsOfSrc(string src) {
+  i32[] flat = dumpTypeErrors(src.toBytes());
+  string out = "";
+  for (i32 i = 0; i + 2 < flat.len(); i = i + 3) {
+    out = out + (i > 0 ? " " : "") + itoa(flat[i]) + "@" + itoa(flat[i + 1]) + ":" + itoa(flat[i + 2]);
+  }
+  return out == "" ? "none" : out;
+}
+
+/** Does `hay` hold `needle`? `indexOf` answers where, and -1 when nowhere. */
+bool has(string hay, string needle) {
+  return hay.indexOf(needle) >= 0;
+}
+
+export string test_a_constant_is_its_literal() {
+  T t = T.create();
+  t.eqStr(values("static i32 A = 7;"), "A = 7", "an integer literal");
+  t.eqStr(values("static bool B = true;"), "B = true", "a bool literal");
+  return t.report();
+}
+
+export string test_a_constant_may_read_another_in_either_order() {
+  T t = T.create();
+  t.eqStr(values("static i32 DOUBLE = SIZE * 2;\nstatic i32 SIZE = 8;\n"),
+          "DOUBLE = 16 | SIZE = 8",
+          "the reader is written above the one it reads");
+  return t.report();
+}
+
+export string test_a_call_in_an_initialiser_is_evaluated() {
+  T t = T.create();
+  t.eqStr(values("i32 square(i32 x) { return x * x; }\nstatic i32 SIZE = square(8);"),
+          "SIZE = 64", "square(8)");
+  return t.report();
+}
+
+/**
+ * Source order does not impose evaluation order — `05-static-dependencies`. Checking `getAnswer`
+ * needs `ANSWER`'s declared type and nothing more; running it is what asks for the value.
+ */
+export string test_a_function_above_a_constant_may_read_it() {
+  T t = T.create();
+  t.eqStr(values("i32 getAnswer() { return ANSWER; }\n"
+                 + "static i32 ANSWER = 42;\n"
+                 + "static i32 COPY = getAnswer();\n"),
+          "ANSWER = 42 | COPY = 42", "demand, not source order");
+  return t.report();
+}
+
+/** The same shape one link longer is the cycle, reported as the chain that made it. */
+export string test_a_constant_whose_value_needs_itself_is_a_cycle() {
+  T t = T.create();
+  string out = values("i32 getAnswer() { return ANSWER; }\nstatic i32 ANSWER = getAnswer();");
+  t.isTrue(has(out, "cycle"), "named a cycle, got: " + out);
+  t.isTrue(has(out, "`ANSWER` -> getAnswer() -> `ANSWER`"), "printed the chain, got: " + out);
+  return t.report();
+}
+
+/**
+ * A packed type wraps at its own width. `200 + 100` is 300, which does not fit in eight bits, and
+ * the low eight bits of 300 are 44 — the answer the emitted code gives too.
+ */
+export string test_packed_arithmetic_wraps_at_the_packed_width() {
+  T t = T.create();
+  t.eqStr(values("static u8 A = 200;\nstatic u8 SUM = A + 100;"),
+          "A = 200 | SUM = 44", "u8 wraps at eight bits");
+  t.eqStr(values("static i8 A = 100;\nstatic i8 SUM = A + 100;"),
+          "A = 100 | SUM = -56", "i8 wraps into the negatives");
+  return t.report();
+}
+
+/** `>>` fills with the sign bit, `>>>` with zeros, and an unsigned type needs no `>>>`. */
+export string test_shifts_follow_the_type() {
+  T t = T.create();
+  t.eqStr(values("static i32 A = 0 - 16;\nstatic i32 S = A >> 1;"),
+          "A = -16 | S = -8", "arithmetic shift keeps the sign");
+  t.eqStr(values("static i32 A = 0 - 16;\nstatic i32 S = A >>> 1;"),
+          "A = -16 | S = 2147483640", "logical shift fills with zeros");
+  t.eqStr(values("static u32 A = 4294967295;\nstatic u32 S = A >> 28;"),
+          "A = 4294967295 | S = 15", "unsigned shifts logically already");
+  return t.report();
+}
+
+/** A shift count is masked, so shifting an i32 by 32 shifts it by nothing at all. */
+export string test_a_shift_count_is_masked_to_the_width() {
+  T t = T.create();
+  t.eqStr(values("static i32 A = 1;\nstatic i32 S = A << 32;"), "A = 1 | S = 1", "i32 masks by 31");
+  t.eqStr(values("static i64 A = 1;\nstatic i64 S = A << 32;"),
+          "A = 1 | S = 4294967296", "i64 masks by 63");
+  return t.report();
+}
+
+export string test_a_trap_during_evaluation_is_reported_as_one() {
+  T t = T.create();
+  string out = values("i32 zero() { return 0; }\nstatic i32 A = 7 / zero();");
+  t.isTrue(has(out, "trap"), "named a trap, got: " + out);
+  t.isTrue(has(out, "divide by zero"), "said which, got: " + out);
+  return t.report();
+}
+
+export string test_an_explicit_trap_carries_its_message() {
+  T t = T.create();
+  string out = values("i32 no() { trap \"not this one\"; }\nstatic i32 A = no();");
+  t.isTrue(has(out, "not this one"), "carried the message, got: " + out);
+  return t.report();
+}
+
+/**
+ * A limit is not proof of nontermination — `04-static-evaluation`. The compiler may stop; it may
+ * not say the program would not have finished, because it does not know that.
+ */
+export string test_a_runaway_evaluation_stops_without_claiming_nontermination() {
+  T t = T.create();
+  string out = values("i32 forever() { i32 n = 0; while (true) { n = n + 1; } return n; }\n"
+                      + "static i32 A = forever();");
+  t.isTrue(has(out, "limit"), "named the limit, got: " + out);
+  t.isTrue(has(out, "stopped trying"), "said it was the compiler that stopped, got: " + out);
+  t.isFalse(has(out, "does not terminate"), "claimed nontermination");
+  t.isFalse(has(out, "infinite"), "claimed nontermination");
+  return t.report();
+}
+
+/** Local mutation inside a called function is ordinary computation — `04-static-evaluation`. */
+export string test_a_function_may_build_an_array_and_fill_it_in() {
+  T t = T.create();
+  t.eqStr(values("i32[] buildTable() {\n"
+                 + "  i32[] out = i32[].filled(8, 0);\n"
+                 + "  for (i32 i = 0; i < out.len(); i++) { out[i] = i * i; }\n"
+                 + "  return out;\n"
+                 + "}\n"
+                 + "static i32[] TABLE = buildTable();"),
+          "TABLE = i32[]#0(0, 1, 4, 9, 16, 25, 36, 49)", "a table built by a loop");
+  return t.report();
+}
+
+/**
+ * Two calls are two allocations and one name is one — `04-static-evaluation`, and the reason the
+ * heap is indexed rather than compared by value. `A` and `B` are different objects; `C` is `A`.
+ */
+export string test_allocation_identity_survives() {
+  T t = T.create();
+  t.eqStr(values("struct Box { i32 value; }\n"
+                 + "Box build() { return Box(1); }\n"
+                 + "static Box A = build();\n"
+                 + "static Box B = build();\n"
+                 + "static Box C = A;\n"),
+          "A = Box#0(1) | B = Box#1(1) | C = Box#0(1)",
+          "two builds are two objects and an alias is one");
+  return t.report();
+}
+
+export string test_an_index_out_of_bounds_traps() {
+  T t = T.create();
+  string out = values("i32 read() { i32[] xs = i32[].filled(2, 0); return xs[5]; }\nstatic i32 A = read();");
+  t.isTrue(has(out, "out of bounds"), "named the bound, got: " + out);
+  return t.report();
+}
+
+/** A construct the evaluator has not learned is a gap it names, not a claim about the language. */
+export string test_an_unimplemented_construct_says_so() {
+  T t = T.create();
+  string out = values("static i32 A = someUnknownThing;");
+  t.isTrue(has(out, "unsupported"), "named itself as the gap, got: " + out);
+  return t.report();
+}
+
+/**
+ * The the feature is for: `packages/gzip`'s eight stacked CRC-32 tables, 2048 entries built by
+ * nested loops. `issues/system/0355a` measured the build at 3.9 us on *every* checksum, which is
+ * eight times the useful work at 512 bytes, because the language had nowhere to put a computed
+ * table. Here it is a module constant.
+ *
+ * The expected entries are the published CRC-32 table for the reflected polynomial, not what this
+ * evaluator answered — `crc32Bitwise` is the definitional oracle for the rest of them.
+ */
+export string test_the_crc_table_is_a_module_constant() {
+  T t = T.create();
+  string src = "u32[] crcTable8() {\n"
+    + "  u32[] tb = u32[].filled(2048, 0);\n"
+    + "  for (i32 n = 0; n < 256; n++) {\n"
+    + "    u32 c = n as@ u32;\n"
+    + "    for (i32 k = 0; k < 8; k++) {\n"
+    + "      if ((c & 1) != 0) { c = 0xEDB88320 ^ (c >> 1); } else { c = c >> 1; }\n"
+    + "    }\n"
+    + "    tb[n] = c;\n"
+    + "  }\n"
+    + "  for (i32 k = 1; k < 8; k++) {\n"
+    + "    for (i32 n = 0; n < 256; n++) {\n"
+    + "      u32 prev = tb[(k - 1) * 256 + n];\n"
+    + "      tb[k * 256 + n] = (prev >> 8) ^ tb[(prev & 0xFF) as@ i32];\n"
+    + "    }\n"
+    + "  }\n"
+    + "  return tb;\n"
+    + "}\n"
+    + "static u32[] CRC = crcTable8();\n"
+    + "static u32 E0 = CRC[0];\n"
+    + "static u32 E1 = CRC[1];\n"
+    + "static u32 E255 = CRC[255];\n"
+    + "static i32 LEN = CRC.len();\n";
+  string[] vs = dumpConstValues(src.toBytes());
+  t.eqStr(vs[1], "E0 = 0", "table[0]");
+  t.eqStr(vs[2], "E1 = 1996959894", "table[1] is 0x77073096");
+  t.eqStr(vs[3], "E255 = 755167117", "table[255] is 0x2D02EF8D");
+  t.eqStr(vs[4], "LEN = 2048", "eight stacked tables of 256");
+  return t.report();
+}
+
+/**
+ * The checker used to refuse both of these — "a module-level const must be computable at compile
+ * time" — by two syntactic rules: no call anywhere in an initialiser, and no read of a constant
+ * declared later. Static evaluation answers both questions properly, so the rules are gone and
+ * these are ordinary programs.
+ */
+export string test_the_checker_no_longer_refuses_a_call_or_a_forward_read() {
+  T t = T.create();
+  t.eqI32(errorCount("i32 g() { return 7; }\nstatic i32 A = g();\n"), 0,
+          "a call in an initialiser");
+  t.eqI32(errorCount("static i32 A = B + 1;\nstatic i32 B = 2;\n"), 0,
+          "reading a constant declared later");
+  t.eqI32(errorCount("i32 g() { return 3; }\nstatic i32[] T = i32[].filled(g(), 0);\n"), 0,
+          "a computed array length");
+  // And a real type error in an initialiser is still a type error.
+  t.eqI32(errorCount("static i32 A = 3.14;\n"), 1, "a float in an integer's slot");
+  return t.report();
+}
+
+/**
+ * A cycle is refused by the **checker**, not left to the emitter — which is what `spec/cases` means
+ * by `refused`, and what the old source-order rule did before static evaluation replaced it.
+ *
+ * It also has to be refused *there* for a second reason: with nothing rejecting it, the emitter
+ * substitutes a scalar constant by re-emitting its initialiser, and a self-referential one re-enters
+ * itself until the compiler's own stack runs out.
+ */
+export string test_a_cycle_is_a_checker_diagnostic() {
+  T t = T.create();
+  t.eqI32(errorCount("static i32 A = A + 1;\n"), 1, "a constant that reads itself");
+  t.eqI32(errorCount("static i32 A = B;\nstatic i32 B = A;\n"), 2, "two constants defining each other");
+  t.eqI32(errorCount("i32 get() { return A; }\nstatic i32 A = get();\n"), 1, "a cycle through a call");
+  t.eqI32(errorCount("i32 get() { return A; }\nstatic i32 A = 1;\nstatic i32 B = get();\n"), 0,
+          "and the same shape with no cycle in it");
+  return t.report();
+}
+
+/**
+ * `static_if` drops the branch not taken *before* it is checked, which is the whole difference
+ * between it and an ordinary `if` with a constant condition. An `if` folds and eliminates too, and
+ * checks both arms; this one does not, so the dead arm may name what this configuration has not
+ * got.
+ */
+export string test_static_if_does_not_check_the_dead_branch() {
+  T t = T.create();
+  string live = "static bool WIDE = true;\n"
+              + "export i32 f() {\n"
+              + "  static_if (WIDE) { return 1; } else { return nothingIsCalledThis(); }\n"
+              + "}\n";
+  t.eqI32(errorCount(live), 0, "the dead branch names a function that does not exist: " + errorsOfSrc(live));
+
+  string dead = "static bool WIDE = false;\n"
+              + "export i32 f() {\n"
+              + "  static_if (WIDE) { return 1; } else { return nothingIsCalledThis(); }\n"
+              + "}\n";
+  t.isTrue(errorCount(dead) > 0, "and the same name in the live branch is still an error");
+
+  // An ordinary `if` checks both arms, which is the contrast the spelling exists for.
+  string ordinary = "static bool WIDE = true;\n"
+                  + "export i32 f() {\n"
+                  + "  if (WIDE) { return 1; }\n"
+                  + "  return nothingIsCalledThis();\n"
+                  + "}\n";
+  t.isTrue(errorCount(ordinary) > 0, "an ordinary if checks what it may still eliminate");
+  return t.report();
+}
+
+/** The condition is an ordinary expression, so anything the evaluator can compute may decide it. */
+export string test_a_static_if_condition_is_ordinary_wac() {
+  T t = T.create();
+  t.eqI32(errorCount("i32 width() { return 8; }\n"
+                     + "static i32 W = width();\n"
+                     + "export i32 f() { static_if (W > 4) { return 1; } else { return missing(); } }\n"),
+          0, "a condition built from a call: " + errorsOfSrc("i32 width() { return 8; }\n"
+                     + "static i32 W = width();\n"
+                     + "export i32 f() { static_if (W > 4) { return 1; } else { return missing(); } }\n"));
+  return t.report();
+}
+
+/** `static_trap` refuses an instantiation — but only where the build actually reaches it. */
+export string test_static_trap_fires_only_where_it_is_reached() {
+  T t = T.create();
+  t.eqI32(errorCount("static bool OK = true;\n"
+                     + "export i32 f() { static_if (OK) { return 1; } else { static_trap \"no\"; } }\n"),
+          0, "in the branch that is not taken");
+  t.eqI32(errorCount("static bool OK = false;\n"
+                     + "export i32 f() { static_if (OK) { return 1; } else { static_trap \"no\"; } }\n"),
+          1, "in the branch that is");
+  return t.report();
+}
+
+/**
+ * A constant built at module start is written after everything it reads, whichever way round the
+ * file declares them.
+ *
+ * A scalar was already order-free because it is folded. An array is built in the start function,
+ * and that function wrote the globals in declaration order — so the same shape one type up read a
+ * global nobody had written yet, and the module was declined for "a constant whose value is not a
+ * constant expression", naming the reader rather than the order. The evaluator settles a constant
+ * only after everything it asked for, so the order it produces is the one the start function wants.
+ */
+static i32[] AFTER  = tail(BEFORE);
+static i32[] BEFORE = [7, 8, 9];
+
+i32[] tail(i32[] xs) {
+  i32[] out = i32[].filled(xs.len() - 1, 0);
+  for (i32 i = 1; i < xs.len(); i++) { out[i - 1] = xs[i]; }
+  return out;
+}
+
+export string test_a_constant_may_be_built_from_one_declared_below_it() {
+  T t = T.create();
+  t.eqI32(BEFORE.len(), 3, "the one declared second");
+  t.eqI32(AFTER.len(), 2, "the one declared first, built from it");
+  t.eqI32(AFTER[0], 8, "and it read the right values");
+  t.eqI32(AFTER[1], 9, "both of them");
+  return t.report();
+}
+
+/**
+ * `static_for` unrolls, so the body appears once per turn with the variable a constant in each
+ * copy — which is what lets a `static_if` inside be decided per turn.
+ */
+export string test_static_for_unrolls_and_a_static_if_inside_sees_the_turn() {
+  T t = T.create();
+  t.eqI32(errorCount("export i32 f() {\n"
+                     + "  i32 n = 0;\n"
+                     + "  static_for (i32 i = 0; i < 3; i++) { n = n + i; }\n"
+                     + "  return n;\n"
+                     + "}\n"), 0, "an ordinary unrolled loop");
+  // The `static_if` is false on two of the three turns, and the branch it drops on those may name
+  // nothing at all — so a checker that looked once, or looked with the wrong value, would report.
+  t.eqI32(errorCount("export i32 f() {\n"
+                     + "  i32 n = 0;\n"
+                     + "  static_for (i32 i = 0; i < 3; i++) {\n"
+                     + "    static_if (i == 1) { n = n + 100; } else { n = n + i; }\n"
+                     + "  }\n"
+                     + "  return n;\n"
+                     + "}\n"), 0, "a static_if decided per turn");
+  // And a `static_trap` reached on any turn is reached.
+  t.eqI32(errorCount("export i32 f() {\n"
+                     + "  i32 n = 0;\n"
+                     + "  static_for (i32 i = 0; i < 3; i++) {\n"
+                     + "    static_if (i == 2) { static_trap \"not the third\"; } else { n = n + i; }\n"
+                     + "  }\n"
+                     + "  return n;\n"
+                     + "}\n"), 1, "a static_trap on one of the turns");
+  return t.report();
+}
+
+/**
+ * The same thing written as wac rather than as a string, so the unrolling is *run* and not only
+ * checked. Each turn's copy reads the variable as the constant that turn gave it.
+ */
+export string test_an_unrolled_loop_runs() {
+  T t = T.create();
+  i32 n = 0;
+  static_for (i32 i = 0; i < 4; i++) { n = n + i * i; }
+  t.eqI32(n, 14, "0 + 1 + 4 + 9");
+
+  i32 m = 0;
+  static_for (i32 k = 0; k < 4; k++) {
+    static_if (k == 2) { m = m + 100; } else { m = m + k; }
+  }
+  t.eqI32(m, 104, "the third turn took the other branch");
+
+  // No turns is no copies, and the body is not in the program.
+  i32 z = 7;
+  static_for (i32 j = 0; j < 0; j++) { z = z + 1; }
+  t.eqI32(z, 7, "a loop with no turns writes nothing");
+  return t.report();
+}
+
+// ── identity, aliasing and cycles, which `04-static-evaluation` asks for ──────
+
+struct Node { i32 v; Node? next; }
+struct P { i32 x; }
+
+Node ring() {
+  Node a = Node(1, null);
+  Node b = Node(2, null);
+  a.next = b;
+  b.next = a;
+  return a;
+}
+P[] sharedPair() { P p = P(3); return [p, p]; }
+P[] distinctPair() { return [P(3), P(3)]; }
+
+static Node CYCLE = ring();
+static P[] SHARED = sharedPair();
+static P[] DISTINCT = distinctPair();
+
+/**
+ * **A cyclic value needs no special machinery here**, which is worth a test because it was the
+ * hardest part of the design on paper. A constant of reference type is built by the module's start
+ * function, running the same code the program would — so the cycle is made the way any other cycle
+ * is, and its identity is whatever the allocations were.
+ *
+ * It becomes hard only if the value is materialised as a wasm *constant expression*, which cannot
+ * express a back-edge. That is the trade the optimisation would buy and this is what it must keep.
+ */
+export string test_a_cyclic_constant_keeps_its_identity() {
+  T t = T.create();
+  t.eqI32(CYCLE.v, 1, "the head");
+  t.eqI32(CYCLE.next!.v, 2, "one step round");
+  t.eqI32(CYCLE.next!.next!.v, 1, "and back");
+  Node back = CYCLE.next!.next!;
+  t.isTrue(back is CYCLE, "the same object, or it is not a ring");
+  return t.report();
+}
+
+/** Two mentions of one allocation are one object; two allocations are two. */
+export string test_sharing_inside_a_constant_array() {
+  T t = T.create();
+  P a = SHARED[0];
+  P b = SHARED[1];
+  t.isTrue(a is b, "one object put in twice");
+  P c = DISTINCT[0];
+  P d = DISTINCT[1];
+  t.isFalse(c is d, "two objects with equal contents");
+  return t.report();
+}
+
+// ── `static_if` in the positions that are not a free function ────────────────
+
+static bool WIDE = true;
+
+struct Box {
+  i32 v;
+  i32 pick(const this) {
+    static_if (WIDE) { return this.v; } else { return nothingIsCalledThis(); }
+  }
+}
+
+T choose<T>(T a, T b) {
+  static_if (WIDE) { return a; } else { return nothingIsCalledThis(); }
+}
+
+enum Tag { One(i32 v), Two }
+Tag mkTag() { return Tag.One(6); }
+static Tag TAG = mkTag();
+
+i32[] three() { return i32[].filled(3, 1); }
+static i32[] THREE = three();
+
+export string test_static_if_in_a_method_a_generic_and_over_an_array() {
+  T t = T.create();
+  t.eqI32(Box(9).pick(), 9, "inside a method, with a const receiver");
+  t.eqI32(choose(4, 7), 4, "inside a generic");
+  i32 got = match (TAG) { One(v): v, Two: 0 };
+  t.eqI32(got, 6, "a constant of an enum type, built by a call");
+  // The array's *value* is known to the evaluator, so its length decides a branch — no
+  // materialisation needed for that, only for the start-time cost.
+  i32 n = 0;
+  static_if (THREE.len() == 3) { n = 5; } else { n = nothingIsCalledThis(); }
+  t.eqI32(n, 5, "a condition reading a constant array's length");
+  return t.report();
+}
+
+/**
+ * The budgets, each reporting itself rather than the engine reporting for it.
+ *
+ * Every one of these was wrong once. The object ceiling was a fixed 262144-slot heap reserved per
+ * module, which failed a build with nothing to say at all; the depth was raised to 1024 and the
+ * compiler's own stack went first. What the numbers are matters less than that reaching one is
+ * *this compiler stopping*, said in those words — never a claim about the program.
+ */
+export string test_each_budget_names_itself() {
+  T t = T.create();
+  string steps = values("i32 forever() { i32 n = 0; while (true) { n = n + 1; } return n; }\n"
+                        + "static i32 A = forever();");
+  t.isTrue(has(steps, "limit") && has(steps, "steps"), "the step budget: " + steps);
+
+  string deep = values("i32 down(i32 n) { if (n <= 0) { return 0; } return 1 + down(n - 1); }\n"
+                       + "static i32 A = down(1000);");
+  t.isTrue(has(deep, "limit") && has(deep, "deep"), "the depth budget: " + deep);
+  t.isFalse(has(deep, "Maximum call stack"), "and it is ours, not the engine's");
+
+  // Growth, not a reservation: fifty thousand objects is ordinary and must simply work.
+  string many = values("struct B { i32 v; }\n"
+                       + "i32 lots() { i32 t = 0; for (i32 i = 0; i < 50000; i++) { B b = B(i); t = t + b.v; } return t; }\n"
+                       + "static i32 A = lots();");
+  t.eqStr(many, "A = 1249975000", "fifty thousand allocations");
+  return t.report();
+}

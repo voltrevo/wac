@@ -17,7 +17,7 @@
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { kExport, kIdent, kImport, kLbrace, kSemi, kStar, kString } from "./kinds.wac";
-import { stringLiteralBytes } from "./emit.wac";
+import { stringLiteralBytes } from "./strlit.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 
 // **What is no longer here: five forwarders.** `resolveFrom`, `resolveFromIn`, `resolveFromAt` and

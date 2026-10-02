@@ -2231,6 +2231,12 @@ export Stmt parseStatement(P p) {
     p.expect(kSemi());
     return Stmt(StmtKind.Yield(yv), line, col);
   }
+  // **`static_if`, `static_for` and `static_trap`** (spec/next ch31) are words only where a statement
+  // starts, so nothing using one as a name elsewhere stops compiling.
+  if (p.at1(kStatic())) { return parseStaticLocal(p); }
+  if (p.at1(kIdent()) && p.textAt(0) == "static_if") { return parseStaticIf(p); }
+  if (p.at1(kIdent()) && p.textAt(0) == "static_trap") { return parseStaticTrap(p); }
+  if (p.at1(kIdent()) && p.textAt(0) == "static_for") { return parseStaticFor(p); }
   // `schedule f;` — a word only where a statement starts and an expression follows it, the way
   // `virtual` is one only before a method (spec/next ch35).
   if (p.at1(kIdent()) && p.textAt(0) == "schedule"
@@ -2476,6 +2482,73 @@ Stmt parseVarDecl(P p, bool noSemi) {
  * which is what it means; the canonical printer normalises the reference the same way
  * so the two remain comparable.
  */
+/** `static_if (cond) { … }`, with an optional `else` that may be another `static_if`. */
+Stmt parseStaticIf(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  p.advance();
+  p.expect(kLparen());
+  Expr cond = parseExpr(p);
+  p.expect(kRparen());
+  Stmt[] then = parseBlock(p);
+  Stmt[] els = Stmt[]();
+  if (p.at1(kElse())) {
+    p.advance();
+    if (p.at1(kIdent()) && p.textAt(0) == "static_if") {
+      StmtList one = StmtList.create();
+      one.push(parseStaticIf(p));
+      els = one.take();
+    } else {
+      els = parseBlock(p);
+    }
+  }
+  return Stmt(StmtKind.StaticIf(cond, then, els), line, col);
+}
+
+/** `static_for (init; cond; update) { … }` — the same three parts an ordinary `for` takes. */
+Stmt parseStaticFor(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  p.advance();
+  p.expect(kLparen());
+  Stmt? init = null;
+  if (!p.at1(kSemi())) {
+    if (looksLikeVarDecl(p)) { init = parseVarDecl(p, true); }
+    else { init = parseForClause(p); }
+  }
+  p.expect(kSemi());
+  Expr? cond = null;
+  if (!p.at1(kSemi())) { cond = parseExpr(p); }
+  p.expect(kSemi());
+  Stmt? update = null;
+  if (!p.at1(kRparen())) { update = parseForClause(p); }
+  p.expect(kRparen());
+  return Stmt(StmtKind.StaticFor(init, cond, update, parseBlock(p)), line, col);
+}
+
+/** `static T name = e;` inside a function. The initialiser is required: a static is its value. */
+Stmt parseStaticLocal(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  p.advance();
+  Ty t = parseType(p);
+  i32 nameTok = declName(p, perrExpected(), "static name");
+  p.expect(kAssign());
+  Expr init = parseExpr(p);
+  p.expect(kSemi());
+  return Stmt(StmtKind.StaticLocal(t, nameTok, init), line, col);
+}
+
+/** `static_trap "…";` */
+Stmt parseStaticTrap(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  p.advance();
+  Expr msg = parseExpr(p);
+  p.expect(kSemi());
+  return Stmt(StmtKind.StaticTrap(msg), line, col);
+}
+
 Stmt parseIfStmt(P p) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
