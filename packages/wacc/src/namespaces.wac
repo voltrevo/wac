@@ -383,7 +383,24 @@ export string[] lowerNamespaces(string[] paths, string[] sources, Res res) {
 
 /** Whether a source could hold anything this file lowers — a cheap test before any lexing. */
 bool mentionsNamespaces(string s) {
-  return s.indexOf("namespace") >= 0 || s.indexOf("* as") >= 0 || s.indexOf("operators") >= 0;
+  return s.indexOf("namespace") >= 0 || s.indexOf("* as") >= 0 || s.indexOf("operators") >= 0
+      || dottedListItem(s);
+}
+
+/** Whether an `import { … }` or `export { … }` list names a member by path — `html.div`. */
+bool dottedListItem(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i + 1 < b.len(); i++) {
+    if (b[i] != '{') { continue; }
+    // Only a list that follows `import` or `export` — both end in `port`.
+    i32 j = i - 1;
+    while (j >= 0 && b[j] == ' ') { j--; }
+    if (j < 3 || b[j] != 't' || b[j - 1] != 'r' || b[j - 2] != 'o' || b[j - 3] != 'p') { continue; }
+    for (i32 k = i + 1; k < b.len() && b[k] != '}' && b[k] != ';'; k++) {
+      if (b[k] == '.') { return true; }
+    }
+  }
+  return false;
 }
 
 /** The index of the file a specifier in file `f` names, -1 for a missing one, -2 for `core`. */
@@ -693,9 +710,11 @@ i32 rewriteImport(string[] paths, Res res, NsExports[] exports, NsFile src, NsEd
   i32 endTok = t;
   while (endTok < src.count() && src.kind(endTok) != kSemi()) { endTok = endTok + 1; }
   // `import * as X from "s";`
+  // **Only a quoted specifier is lowered.** A bare word — `from core` — is the parser's to refuse
+  // (`§wac-core-unquoted-3nqk7vd`), and lowering the line away would hide it.
   if (src.kind(t + 1) == kStar() && src.kind(t + 2) == kAs()) {
+    if (src.kind(t + 5) != kString()) { return endTok; }
     i32 target = targetOf(paths, res, f, unquote(src.text(t + 5)));
-    if (src.kind(t + 5) != kString()) { target = -2; }
     binds.bind(src.text(t + 3), target, "");
     ed.add(src.start(t), src.end(endTok), blankOf(src.src, src.start(t), src.end(endTok)));
     return endTok;
@@ -703,7 +722,8 @@ i32 rewriteImport(string[] paths, Res res, NsExports[] exports, NsFile src, NsEd
   if (src.kind(t + 1) != kLbrace()) { return endTok; }
   i32 close = src.matching(t + 1);
   i32 fromTok = close + 2;
-  i32 target = src.kind(fromTok) == kString() ? targetOf(paths, res, f, unquote(src.text(fromTok))) : -2;
+  if (src.kind(fromTok) != kString()) { return endTok; }
+  i32 target = targetOf(paths, res, f, unquote(src.text(fromTok)));
   if (target == -1) { return endTok; }
 
   // Items between `{` and `}`: a chain of names, then perhaps `as Y`.

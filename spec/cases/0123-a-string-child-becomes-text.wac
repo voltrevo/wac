@@ -1,0 +1,16 @@
+// expect: answers run = 0
+// why: a child converts through core's toNode, and a string's conversion is a Text node holding it
+// from: spec/next ch23 §wac-markup-child-tonode-vp842rw
+import { Attr, Node } from "core";
+
+export i32 run() {
+  string s = "hi";
+  Node n = <"div">{s}</"div">;
+  return match (n) {
+    Element(tag, attrs, kids): match (kids[0]) {
+      Text(t): t == "hi" ? 0 : 2,
+      default: 3,
+    },
+    default: 1,
+  };
+}

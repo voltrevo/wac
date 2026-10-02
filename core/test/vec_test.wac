@@ -45,29 +45,29 @@ export string test_index_bounds() {
   Vec<i32> v = Vec.create();
   v.push(1); v.push(2);
   // `at` is the non-trapping form, so the boundary is checkable without a subprocess.
-  t.isTrue(v.at(-1).isNone(), "below zero is None");
-  t.isTrue(v.at(0).isSome(), "zero is in range");
-  t.isTrue(v.at(1).isSome(), "the last index is in range");
-  t.isTrue(v.at(2).isNone(), "one past the end is None");
+  t.isTrue(v.at(-1) is null, "below zero is null");
+  t.isTrue(v.at(0) is not null, "zero is in range");
+  t.isTrue(v.at(1) is not null, "the last index is in range");
+  t.isTrue(v.at(2) is null, "one past the end is null");
   // And it is `len`, not `capacity`, that bounds it: the slots above len exist.
   t.isTrue(v.capacity() > v.len(), "there is spare capacity to be wrong about");
-  t.isTrue(v.at(v.capacity() - 1).isNone(), "a slot inside the capacity is still out of range");
+  t.isTrue(v.at(v.capacity() - 1) is null, "a slot inside the capacity is still out of range");
   return t.report();
 }
 
 export string test_pop_and_ends() {
   T t = T.create();
   Vec<i32> v = Vec.create();
-  t.isTrue(v.pop().isNone(), "popping empty is None, not a trap");
-  t.isTrue(v.first().isNone(), "first of empty");
-  t.isTrue(v.last().isNone(), "last of empty");
+  t.isTrue(v.pop() is null, "popping empty is null, not a trap");
+  t.isTrue(v.first() is null, "first of empty");
+  t.isTrue(v.last() is null, "last of empty");
 
   v.push(10); v.push(20); v.push(30);
-  t.eqI32(v.first().orElse(-1), 10, "first");
-  t.eqI32(v.last().orElse(-1), 30, "last");
-  t.eqI32(v.pop().orElse(-1), 30, "pop takes the last");
+  t.eqI32(v.first() ?? -1, 10, "first");
+  t.eqI32(v.last() ?? -1, 30, "last");
+  t.eqI32(v.pop() ?? -1, 30, "pop takes the last");
   t.eqI32(v.len(), 2, "and shortens");
-  t.eqI32(v.last().orElse(-1), 20, "so last moved back");
+  t.eqI32(v.last() ?? -1, 20, "so last moved back");
   return t.report();
 }
 
@@ -91,7 +91,7 @@ export string test_remove_insert_and_swap() {
   t.eqI32(v.get(0), 99, "insert at the front");
   t.eqI32(v.get(1), 3, "shifting the rest up");
   v.insert(v.len(), 77);
-  t.eqI32(v.last().orElse(-1), 77, "insert at len appends");
+  t.eqI32(v.last() ?? -1, 77, "insert at len appends");
   t.eqI32(v.len(), 4, "and lengthens");              // 99 3 2 77
   return t.report();
 }
@@ -119,7 +119,7 @@ export string test_clear_and_reuse() {
   v.clear();
   t.eqI32(v.len(), 0, "cleared");
   t.eqI32(v.capacity(), cap, "keeping the capacity");
-  t.isTrue(v.at(0).isNone(), "and nothing is reachable");
+  t.isTrue(v.at(0) is null, "and nothing is reachable");
   v.push(5);
   t.eqI32(v.get(0), 5, "reusable afterwards");
   t.eqI32(v.len(), 1, "with the right length");

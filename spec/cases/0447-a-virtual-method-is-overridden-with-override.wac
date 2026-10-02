@@ -1,0 +1,5 @@
+// expect: refused
+// why: a subtype method with the name of a parent's virtual method must say `override`
+// from: spec/next ch12 §wac-override-required-fgt5fkj
+struct Base { virtual i32 aim(const this) { return 0; } }
+export struct Kid : Base { i32 aim(const this) { return 1; } }

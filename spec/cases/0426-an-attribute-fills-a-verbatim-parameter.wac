@@ -1,0 +1,29 @@
+// expect: answers run = name 8
+// why: an attribute whose name is a keyword or has a hyphen fills the parameter whose verbatim name is that text
+// from: spec/next ch23 §wac-markup-attr-verbatim-param-yd3farv
+import { Node, Attr } from "core";
+
+Node label(string id, string @"for", Node[] kids) {
+  return Node.Element("label", [Attr("id", id), Attr("for", @"for")], kids);
+}
+
+Node widget(string @"data-size", Node[] kids) {
+  return <"my-widget" data-size={@"data-size"} />;
+}
+
+string attr(Node n, string name) {
+  match (n) {
+    Element(tag, attrs, kids): {
+      for (Attr a in attrs) {
+        if (a.name == name) { return a.value; }
+      }
+    }
+    default: { }
+  }
+  return "";
+}
+
+export string labelFor() { return attr(<label id="who" for="name">Name</label>, "for"); }
+export string widgetSize() { return attr(<widget data-size="8" />, "data-size"); }
+
+export string run() { return labelFor() + " " + widgetSize(); }

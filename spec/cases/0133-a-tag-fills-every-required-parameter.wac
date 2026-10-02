@@ -1,0 +1,11 @@
+// expect: refused
+// why: a parameter no attribute fills must be `kids` or nullable — `count` is neither
+// from: spec/next ch23 §wac-markup-tag-is-function-vv4pvhq
+import { Attr, Node } from "core";
+
+Node card(string title, i32 count, Node[] kids) { return <"p">{title}</"p">; }
+
+export i32 run() {
+  Node n = <card title="x"/>;
+  return 0;
+}

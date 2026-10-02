@@ -1,0 +1,56 @@
+// expect: answers run = 0
+// why: a tag that is a name calls the function of that name — its attributes are the parameters of those names, its children `kids`
+// from: spec/next ch23 §wac-markup-tag-is-function-vv4pvhq
+import { Attr, Node } from "core";
+
+string textOf(Node n) {
+  match (n) {
+    Text(t): { return t; }
+    Fragment(kids): {
+      string out = "";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + textOf(kids[i]); }
+      return out;
+    }
+    Element(tag, attrs, kids): {
+      string out = "";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + textOf(kids[i]); }
+      return out;
+    }
+  }
+}
+
+string tagOf(Node n) {
+  match (n) {
+    Element(tag, attrs, kids): { return tag; }
+    Text(t): { return ""; }
+    Fragment(kids): { return ""; }
+  }
+}
+
+/** Its attributes are parameters, so `count` is an `i32` rather than text. */
+Node card(string title, i32 count, Node[] kids) {
+  // The children it was given go where it puts them, which is the point of taking them.
+  Node body = <"p">{title}</"p">;
+  return <"section" class="card">{body}{kids.len() > 0 ? kids[0] : Node.Text("")}</"section">;
+}
+
+/** A tag function that takes no children, which is ordinary. */
+Node rule(string width) { return <"hr" size={width}/>; }
+
+export i32 run() {
+  // Attributes are parameters: `count` takes a number without going through a string.
+  Node c = <card title="hits" count={3}>and a child</card>;
+  if (tagOf(c) != "section") { return 1; }
+  if (textOf(c) != "hitsand a child") { return 2; }
+
+  // A call nests inside an element like any other expression, and the element keeps its own tag.
+  Node page = <"div"><card title="a" count={1}/><rule width="2"/></"div">;
+  if (tagOf(page) != "div") { return 3; }
+  if (textOf(page) != "a") { return 4; }
+
+  // By name, so in any order.
+  Node swapped = <card count={9} title="z"/>;
+  if (textOf(swapped) != "z") { return 5; }
+
+  return 0;
+}

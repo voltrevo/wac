@@ -22,20 +22,16 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const PROGRAM = [
-  'import { Attr, Node } from "core";',
+  'import { Attr, Node, html.div, html.h1, html.br } from "core";',
   "export Node page(string who) {",
-  '  return <div class="page" id={"top"}><h1>hello {Node.Text(who)}</h1><br/></div>;',
+  '  return <div class="page" id={"top"}><h1>hello {who}</h1><br/></div>;',
   "}",
-  // A component and a fragment, which is the pair that has no counterpart on the JavaScript side:
-  // the host never sees `Pair`, only the `Node` its `render` returned. `design/lang/0005`, `0006`.
-  "struct Pair {",
-  "  string left;",
-  "  string right;",
-  "  Node render(const this, Node[] kids) {",
-  "    return <><b>{Node.Text(this.left)}</b><i>{Node.Text(this.right)}</i></>;",
-  "  }",
+  // A tag function and a fragment, which is the pair that has no counterpart on the JavaScript side:
+  // the host never sees `pairOf`, only the `Node` it returned (spec/next ch23).
+  "Node pairOf(string left, string right) {",
+  '  return <><"b">{left}</"b"><"i">{right}</"i"></>;',
   "}",
-  "export Node pair(string l, string r) { return <Pair left={l} right={r}/>; }",
+  "export Node pair(string l, string r) { return <pairOf left={l} right={r}/>; }",
 ].join("\n");
 
 /** The `Node` a host sees: `tag` is the *variant's* name, and each variant's fields are prefixed. */
@@ -86,8 +82,8 @@ Deno.test("a JSX tree crosses the boundary and a JavaScript renderer walks it", 
     assertEquals(tree.Element_kids.map((k) => k.tag), ["Element", "Element"]);
     assertEquals(tree.Element_kids[0].Element_kids.map((k) => k.tag), ["Text", "Text"]);
 
-    // **A component leaves nothing behind at the boundary.** `Pair` is a wac struct the host has no
-    // name for; what crosses is the tree its `render` returned, which is a fragment of two elements.
+    // **A tag function leaves nothing behind at the boundary.** What crosses is the tree `pairOf`
+    // returned, which is a fragment of two elements.
     const p = mod.pair("l", "r");
     assertEquals(p.tag, "Fragment");
     assertEquals(render(p), "<b>l</b><i>r</i>");

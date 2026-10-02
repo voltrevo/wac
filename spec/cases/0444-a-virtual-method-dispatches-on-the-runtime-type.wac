@@ -1,0 +1,29 @@
+// expect: answers run = 80 770
+// why: a call to a `virtual` method runs the receiver's runtime type's implementation, whatever static type it is made through — a grandchild's override included
+// from: spec/next ch12 §wac-virtual-dispatch-a4xhpib, §wac-override-virtual-8bj3d46
+struct Base {
+  virtual i32 fire(const this) { return 0; }
+}
+
+struct Kid : Base {
+  override i32 fire(const this) { return 40; }
+}
+
+struct GrandKid : Kid {
+  override i32 fire(const this) { return 7; }
+}
+
+export i32 dispatch() {
+  Kid  k = Kid();
+  Base b = k;
+  return k.fire() + b.fire();
+}
+
+export i32 deep() {
+  Base g = GrandKid();
+  Kid k2 = GrandKid();
+  Base plain = Base();
+  return g.fire() * 100 + k2.fire() * 10 + plain.fire();
+}
+
+export string run() { return "\{dispatch()} \{deep()}"; }

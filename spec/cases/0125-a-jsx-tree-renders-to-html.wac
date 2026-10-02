@@ -3,7 +3,7 @@
 // from: design/lang/0004
 import { Attr, Node } from "core";
 
-/** `<p class="a">hi<br/></p>` — every part of the tree reached exactly once. */
+/** `<"p" class="a">hi<"br"/></"p">` — every part of the tree reached exactly once. */
 string render(Node n) {
   match (n) {
     Text(t): { return t; }
@@ -28,10 +28,10 @@ string render(Node n) {
 
 export i32 run() {
   string who = "world";
-  Node page = <div class="page" id={"top"}>
-    <h1>hello {Node.Text(who)}</h1>
-    <br/>
-  </div>;
+  Node page = <"div" class="page" id={"top"}>
+    <"h1">hello {Node.Text(who)}</"h1">
+    <"br"/>
+  </"div">;
   string html = render(page);
   string want = "<div class=\"page\" id=\"top\"><h1>hello world</h1><br/></div>";
   return html == want ? 0 : html.len();

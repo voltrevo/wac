@@ -120,6 +120,9 @@ export CaseFile parseCase(string name, string text) {
     if (!started && startsWith(line, "// expect:")) {
       Expect got = parseExpect(line.slice(10, line.len()));
       if (got.kind == "") { return none(name + ": cannot read expectation " + line); }
+      // **One question a case.** A second `expect` line replaced the first and nothing said so — ten
+      // cases asked two or four things and were checked on their last.
+      if (expect.kind != "") { return none(name + ": more than one expect line — a case asks one thing"); }
       expect = got;
       continue;
     }

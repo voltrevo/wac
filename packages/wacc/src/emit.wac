@@ -23,6 +23,7 @@ import { coreFileNames, coreFileStarts, coreSource, stdSource } from "./coretext
 import { Lowered, lowerProgram } from "./asynclower.wac";
 import { lowerNamespaces } from "./namespaces.wac";
 import { isTupleName, tupleMembers, tupleName } from "./tuples.wac";
+import { pruneCoreMembers } from "./reach.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
@@ -36,7 +37,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
-  kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde, kQuestion, kSymName, kInt,
+  kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde, kQuestion, kSymName, kInt, kNull,
 } from "./kinds.wac";
 
 /**
@@ -304,9 +305,9 @@ void writeValType(B out, Env env, string t) {
   // The whole module, not one function: this runs past the gate, mid-emission, so there is no function
   // left to decline. A byte is still written to keep the buffer well-formed — the bytes are discarded.
   // A nullable primitive is a reference to its box.
-  if (isBoxedPrimName(t)) {
+  if (isBoxedName(t)) {
     out.byte(99);
-    out.i32leb(env.boxType(boxedPrimInner(t)));
+    out.i32leb(env.boxType(boxedInner(t)));
     return;
   }
   if (isTupleName(t)) {
@@ -481,7 +482,11 @@ void registerNamed(Env env, string t) {
   if (isFuncrefType(t)) { env.sigType(t); }
   // A nullable primitive's box, for the same reason an array's type is registered here: the type
   // section is written before the bodies, so a type first named while emitting is too late.
-  if (isBoxedPrimName(t)) { env.boxType(boxedPrimInner(t)); }
+  if (isBoxedName(t)) {
+    // A nested nullable's box holds a reference, whose own type comes first.
+    if (!isWritableValType(boxedInner(t))) { registerNamed(env, boxedInner(t)); }
+    env.boxType(boxedInner(t));
+  }
   // A tuple's struct, and its members' types first.
   if (isTupleName(t)) {
     string[] ms = tupleMembers(t);
@@ -1204,10 +1209,15 @@ bool isBoxEntry(string t) { return t.len() > 4 && t.slice(0, 4) == boxMark(); }
 /** The primitive a box entry boxes. */
 string boxInner(string t) { return t.slice(boxMark().len(), t.len()); }
 
-/** Whether a type name is a nullable primitive — `i32?`, `bool?` — and so a box rather than a number. */
-bool isBoxedPrimName(string t) {
+/**
+ * Whether a type name is a box: a nullable primitive — `i32?`, `bool?` — which is a box rather than a
+ * number, or a nested nullable — `Node??`, `i32??` — whose box holds one layer less, so that a present
+ * `null` and an absent value are different things (spec/next ch10 `§wac-nullable-nested-ak7583p`).
+ */
+bool isBoxedName(string t) {
   if (t.len() < 2) { return false; }
   if (t.slice(t.len() - 1, t.len()) != "?") { return false; }
+  if (t.len() > 2 && t.slice(t.len() - 2, t.len()) == "??") { return true; }
   return isWritableValType(t.slice(0, t.len() - 1));
 }
 
@@ -1239,9 +1249,16 @@ bool isNullLit(Expr e) {
   }
 }
 
-/** The primitive inside a `T?`, or `t` unchanged when it is not one. */
-string boxedPrimInner(string t) {
-  return isBoxedPrimName(t) ? t.slice(0, t.len() - 1) : t;
+/**
+ * What a box holds, or `t` unchanged when it is not one: the primitive inside an `i32?`, and inside a
+ * `T??` the `T?` — itself a box for a primitive `T`, and a nullable reference, spelled bare, for any
+ * other.
+ */
+string boxedInner(string t) {
+  if (!isBoxedName(t)) { return t; }
+  string once = t.slice(0, t.len() - 1);
+  if (!(once.len() > 1 && once.slice(once.len() - 1, once.len()) == "?")) { return once; }
+  return isBoxedName(once) ? once : once.slice(0, once.len() - 1);
 }
 
 /** The `fn[…]` a pair entry is the pair for. */
@@ -1774,12 +1791,13 @@ export struct Env {
     string r = sigReturn(t);
     if (isArrayType(r)) { this.arrayType(r); }
     if (isFuncrefType(r)) { this.sigType(r); }
-    if (isTupleName(r)) { registerNamed(this, r); }
+    // A box, too — `T? pop()` at `T = i32` names `i32?` in a signature nothing else mentions.
+    if (isTupleName(r) || isBoxedName(r)) { registerNamed(this, r); }
     for (i32 i = 0; i < sigParamCount(t); i++) {
       string pt = sigParamAt(t, i);
       if (isArrayType(pt)) { this.arrayType(pt); }
       if (isFuncrefType(pt)) { this.sigType(pt); }
-      if (isTupleName(pt)) { registerNamed(this, pt); }
+      if (isTupleName(pt) || isBoxedName(pt)) { registerNamed(this, pt); }
     }
     return this.arrayCount + this.structCount + mine;
   }
@@ -2611,6 +2629,47 @@ export struct Env {
   Expr?[] fieldInits;
   u8[][] fieldInitSrcs;
   Lexed?[] fieldInitLexeds;
+  /**
+   * Each function parameter's name, parallel to `funcParamTypes` — what a markup tag's attributes
+   * fill (spec/next ch23). Only free functions record them; grown on first use.
+   */
+  string[] funcParamNames;
+  /** `Owner.method` for each method a call dispatches on its receiver's runtime type (spec/next ch12). */
+  string[] virtualMethods;
+
+  void noteVirtualMethod(this, string key) {
+    string[] more = string[].defaulted(this.virtualMethods.len() + 1);
+    for (i32 i = 0; i < this.virtualMethods.len(); i++) { more[i] = this.virtualMethods[i]; }
+    more[this.virtualMethods.len()] = key;
+    this.virtualMethods = more;
+  }
+
+  bool isVirtualMethod(const this, string key) {
+    for (i32 i = 0; i < this.virtualMethods.len(); i++) { if (this.virtualMethods[i] == key) { return true; } }
+    return false;
+  }
+
+  /** The names of the parameters of the function just added with `addFunc`. */
+  void noteParamNames(this, string[] names) {
+    i32 at = this.funcCount - 1;
+    if (at < 0) { return; }
+    if (this.funcParamNames.len() < this.funcParamTypes.len()) {
+      string[] grown = string[].defaulted(this.funcParamTypes.len());
+      for (i32 i = 0; i < this.funcParamNames.len(); i++) { grown[i] = this.funcParamNames[i]; }
+      this.funcParamNames = grown;
+    }
+    for (i32 i = 0; i < names.len() && i < this.funcParamCount[at]; i++) {
+      i32 slot = this.funcParamAt[at] + i;
+      if (slot < this.funcParamNames.len()) { this.funcParamNames[slot] = names[i]; }
+    }
+  }
+
+  /** Parameter `i` of function `at`'s name, or "" where none was recorded. */
+  string paramNameAt(const this, i32 at, i32 i) {
+    if (at < 0 || at >= this.funcCount || i >= this.funcParamCount[at]) { return ""; }
+    i32 slot = this.funcParamAt[at] + i;
+    return slot < this.funcParamNames.len() ? this.funcParamNames[slot] : "";
+  }
 
   void noteMatchBound(this, i32 at) {
     if (this.matchBoundCount >= this.matchBound.len()) {
@@ -2890,7 +2949,7 @@ export struct Env {
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
-               Expr?[](), u8[][](), Lexed?[]());
+               Expr?[](), u8[][](), Lexed?[](), string[](), string[]());
   }
 
   
@@ -3116,7 +3175,7 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
       Var(type, nameTok, init, isConst): {
-        registerNamed(env, typeOfTyName(env, src, lexed, type));
+        registerNamed(env, varTypeOfE(env, src, lexed, type, init));
         if (init is not null) { collectArrayTypesOfExpr(env, src, lexed, init!); }
       }
       // **The expressions too.** This walk looked only at what a `var` *declared*, so a type named
@@ -3199,7 +3258,7 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
       Var(type, nameTok, init, isConst): {
-        env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(env, src, lexed, type));
+        env.addLocal(tokenTextOf(src, lexed, nameTok), varTypeOfE(env, src, lexed, type, init));
       }
       Block(inner): { collectLocals(env, src, lexed, inner); }
       Defer(inner): { collectLocals(env, src, lexed, [inner] as Stmt[]); }
@@ -3213,7 +3272,7 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
         if (!(init is null)) {
           match (init!.kind) {
             Var(type, nameTok, ini, isConst): {
-              env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(env, src, lexed, type));
+              env.addLocal(tokenTextOf(src, lexed, nameTok), varTypeOfE(env, src, lexed, type, ini));
             }
             default: { }
           }
@@ -3500,7 +3559,8 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
     if (sn >= seen.len()) { starts[0] = 1; return false; }
     seen[sn] = path;
     sn = sn + 1;
-    string body = path == " core" ? coreSource() : sourceOf(paths, sources, path);
+    // Core with its namespace members pruned to the ones this program names (`reach.wac`).
+    string body = path == " core" ? pruneCoreMembers(coreSource(), paths, sources) : sourceOf(paths, sources, path);
     // **The one refusal here that can name what is wrong, so it does.** `linkFailure` inferred *"an
     // import of a file that was not supplied"* from the absence of any other sentinel and could name
     // no path — which is the whole of `issues/lang/0157`'s complaint about this diagnostic. The path
@@ -5299,6 +5359,16 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // space and a dot in them. The `e_` family below is what bindgen calls. `issues/lang/0089`.
   i32 structHelpers = 0;
   i32 enumHelpers = 0;
+  // **A nullable number crosses as its box**, which a host cannot open: `$bind$box_<t>_new` and
+  // `_get` for each box this module has, taken once here so the count, the bodies and the exports
+  // name the same list.
+  string[] boxBinds = boxBindTypes(env);
+  i32 boxHelpers = boxBinds.len() * 2;
+  // Their signatures now, while the table is still growing: a type first named by a body is too late.
+  for (i32 bx0 = 0; bx0 < boxBinds.len(); bx0++) {
+    env.sigType("fn[" + boxBinds[bx0] + "?(" + boxBinds[bx0] + ")]");
+    env.sigType("fn[" + boxBinds[bx0] + "(" + boxBinds[bx0] + "?)]");
+  }
   for (i32 si2 = 0; si2 < bindStructCount; si2++) {
     if (env.isEnumName(bindStructs[si2])) {
       enumHelpers = enumHelpers + enumHelperCount(env, bindStructs[si2]);
@@ -5393,7 +5463,8 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   i32 trapHelpers = 1;
   i32 outHelpers = env.outSigCount;
   i32 enumHelpersAt = structHelpersAt + structHelpers;
-  i32 bindStrHelpersAt = enumHelpersAt + enumHelpers;
+  i32 boxHelpersAt = enumHelpersAt + enumHelpers;
+  i32 bindStrHelpersAt = boxHelpersAt + boxHelpers;
   i32 cbHelpersAt = bindStrHelpersAt + bindStrHelpers;
   i32 covHelpersAt = cbHelpersAt + cbHelpers;
   i32 trapHelpersAt = covHelpersAt + covHelpers;
@@ -5427,7 +5498,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   env.boundAt = boundHelpersAt;
   i32 startFunctionAt = boundHelpersAt + boundHelpers;
   i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + arrHelpers + structHelpers +
-                enumHelpers + bindStrHelpers + cbHelpers + covHelpers + trapHelpers + outHelpers +
+                enumHelpers + boxHelpers + bindStrHelpers + cbHelpers + covHelpers + trapHelpers + outHelpers +
                 fmodHelpers + wrapHelpers + boundHelpers;
   funcs.u32leb(count + helpers);
   // Built now for its count, appended at the end of the section: every index it names belongs to a
@@ -5440,7 +5511,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // not — 35 bytes declared, 34 read.
   B forwardExports = B.create();
   i32 forwardExportCount = forwardExportsInto(forwardExports, env);
-  exports.u32leb(exportCount + 2 + arrHelpers + structHelpers + enumHelpers + bindStrHelpers +
+  exports.u32leb(exportCount + 2 + arrHelpers + structHelpers + enumHelpers + boxHelpers + bindStrHelpers +
                  env.cbSigCount + covHelpers + trapHelpers + outHelpers + methodExportCount +
                  forwardExportCount);
   code.u32leb(count + helpers);
@@ -5783,7 +5854,9 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     if (isBoxEntry(sig)) {
       types.byte(95);                       // struct
       types.u32leb(1);
-      types.byte(valType(boxInner(sig)));   // the primitive itself, one byte
+      // The primitive itself, one byte — or, in a nested nullable's box, the reference it holds.
+      string bi = boxInner(sig);
+      if (isWritableValType(bi)) { types.byte(valType(bi)); } else { writeValType(types, env, bi); }
       types.byte(0);                        // immutable
       continue;
     }
@@ -6077,6 +6150,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     if (!env.isEnumName(bindStructs[si6])) { continue; }
     emitEnumHelpers(funcs, code, env, bindStructs[si6]);
   }
+  for (i32 bx = 0; bx < boxBinds.len(); bx++) { emitBoxHelpers(funcs, code, env, boxBinds[bx]); }
   if (needsStrings) { emitStringBindHelpers(funcs, code, env); }
   for (i32 j = 0; j < env.cbSigCount; j++) {
     emitCallbackHelpers(funcs, code, env, j, cbHelpersAt + j * (callbackSlots() + 1));
@@ -6261,6 +6335,11 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         bulkAt = bulkAt + 1;
       }
     }
+  }
+  // In the order `emitBoxHelpers` writes them.
+  for (i32 bx2 = 0; bx2 < boxBinds.len(); bx2++) {
+    exportFunc(exports, fnName, "$bind$box_" + boxBinds[bx2] + "_new", boxHelpersAt + bx2 * 2);
+    exportFunc(exports, fnName, "$bind$box_" + boxBinds[bx2] + "_get", boxHelpersAt + bx2 * 2 + 1);
   }
   // In the order `emitStringBindHelpers` writes them.
   if (needsStrings) {
@@ -6597,6 +6676,13 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       return out + ")]";
     }
     Nullable(inner): {
+      // **A nullable of a nullable is a box** holding the inner one, spelled with every `?` it has —
+      // `Node??`, `i32??` — since a reference's own `?` is dropped from its spelling and would leave
+      // the two layers indistinguishable (spec/next ch10 `§wac-nullable-nested-ak7583p`).
+      match (inner.kind) {
+        Nullable(deeper): { return nestedNullSpelling(env, src, lexed, t); }
+        default: { }
+      }
       match (inner.kind) {
         // A nullable **primitive** has no representation — there is no null `i32` — except that
         // `string` is a primitive by spelling and a reference by nature, so `string?` is a string.
@@ -6644,6 +6730,24 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       }
     }
   }
+}
+
+/** `T??…`'s spelling: the core type's, then one `?` per layer — see the `Nullable` arm above. */
+string nestedNullSpelling(Env env, u8[] src, Lexed lexed, Ty t) {
+  i32 depth = 0;
+  Ty cur = t;
+  for (i32 guard = 0; guard < 16; guard++) {
+    bool more = false;
+    match (cur.kind) {
+      Nullable(inner): { depth = depth + 1; cur = inner; more = true; }
+      default: { }
+    }
+    if (!more) { break; }
+  }
+  string core = typeOfTyName(env, src, lexed, cur);
+  if (core == "") { return ""; }
+  for (i32 i = 0; i < depth; i++) { core = core + "?"; }
+  return core;
 }
 
 /** Statements, in order. */
@@ -6777,8 +6881,8 @@ void emitNull(B fb, Env env, string t) {
   // A nullable primitive's absent value is a null *box* — and unlike a plain `T`, whose default is a
   // defaulted value, a `T?` really does default to null. That distinction is the whole reason
   // `isNullableTy` exists as a flag rather than a spelling.
-  if (isBoxedPrimName(t)) {
-    fb.byte(208); fb.i32leb(env.boxType(boxedPrimInner(t))); return;
+  if (isBoxedName(t)) {
+    fb.byte(208); fb.i32leb(env.boxType(boxedInner(t))); return;
   }
   emitDefault(fb, env, t);
 }
@@ -6950,37 +7054,6 @@ i32 jsxElementVariant(Env env) {
  * The shape is `emitVariantNew`'s — a tag constant, one value per slot, `struct.new` — with the
  * three values built rather than taken from expressions.
  */
-/**
- * `<Card title="x">kid</Card>` — a component, which is `Card { title: "x" }.render([kid])`.
- *
- * Written as the two instructions that desugaring is rather than by building an AST: the attributes
- * are put back in **declaration order** exactly as a named construction is (wasm's `struct.new`
- * takes fields in order and knows nothing about names), the receiver is pushed first because that is
- * what a method is here, and the children are the one argument. `design/lang/0005`.
- */
-void emitJsxComponent(B fb, u8[] src, Lexed lexed, Env env, string comp,
-                      JsxAttr[] attrs, Expr[] kids) {
-  i32 nf = env.fieldCountOf(comp);
-  for (i32 i = 0; i < nf; i++) {
-    bool wrote = false;
-    for (i32 j = 0; j < attrs.len(); j++) {
-      if (env.fieldIndex(comp, tokenTextOf(src, lexed, attrs[j].nameTok)) != i) { continue; }
-      emitExprAt(fb, src, lexed, env, attrs[j].value, env.fieldTypeAt(comp, i));
-      wrote = true;
-    }
-    // An attribute that was not written is null, exactly as an omitted field of a named construction
-    // is — the same rule, because this is one.
-    if (!wrote) { emitNull(fb, env, env.fieldTypeAt(comp, i)); }
-  }
-  fb.byte(251);
-  fb.u32leb(0);   // struct.new — the component, in declaration order
-  fb.u32leb(env.structType(comp));
-  emitJsxKids(fb, src, lexed, env, kids);
-  i32 at = env.methodAt(comp, "render");
-  if (!haveRequired(env, at, comp + ".render")) { return; }
-  fb.byte(16);    // call
-  fb.u32leb(env.funcIndex[at]);
-}
 
 void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
   i32 vi = jsxElementVariant(env);
@@ -7005,16 +7078,14 @@ void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, 
     fb.u32leb(env.structType(fen));
     return;
   }
-  // **A tag that names a struct in scope is a component**, resolved by the same key every other name
-  // goes through — so a `Card` two files declare is the one this file can see. `design/lang/0005`.
-  string comp = nameKeyOf(env, src, lexed, tagTok);
-  if (env.isStructName(comp) && env.methodAt(comp, "render") >= 0) {
-    emitJsxComponent(fb, src, lexed, env, comp, attrs, kids);
+  // **A tag that is a name calls the function of that name** (spec/next ch23
+  // `§wac-markup-tag-is-function-vv4pvhq`); only a string builds an element itself.
+  if (lexed.tokens[tagTok * tokenStride()] != kString()) {
+    emitJsxCall(fb, src, lexed, env, tagTok, attrs, kids);
     return;
   }
   if (vi < 0) {
-    env.declineFor("the JSX tag `" + tokenTextOf(src, lexed, tagTok) + "`, which is neither an "
-                   + "element core declares nor a struct in scope with a `render` method");
+    env.declineFor("core's markup element variant, which this program does not have");
     return;
   }
   string en = env.variantOwners[vi];
@@ -7023,7 +7094,10 @@ void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, 
   fb.i32leb(env.variantTags[vi]);
   for (i32 slot = 1; slot < n; slot++) {
     i32 k = slot - env.variantSlot[vi];
-    if (k == 0) { emitRawString(fb, env, tokenTextOf(src, lexed, tagTok)); continue; }
+    if (k == 0) {
+      emitRawString(fb, env, string.fromBytes(stringLiteralBytes(src, lexed, tagTok)));
+      continue;
+    }
     if (k == 1) { emitJsxAttrs(fb, src, lexed, env, attrs); continue; }
     if (k == 2) { emitJsxKids(fb, src, lexed, env, kids); continue; }
     emitNull(fb, env, env.fieldTypeAt(en, slot));
@@ -7031,6 +7105,66 @@ void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, 
   fb.byte(251);
   fb.u32leb(0);   // struct.new
   fb.u32leb(env.structType(en));
+}
+
+/**
+ * `<t a={x}>…</t>` as the call it is: each parameter of `t` in order, from the attribute of its
+ * name, the children for `kids`, and `null` for an attribute left out — which the checker allowed
+ * only for a nullable parameter.
+ */
+void emitJsxCall(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
+  i32 fi = env.funcAt(nameKeyOf(env, src, lexed, tagTok));
+  if (fi < 0 || env.funcIndex[fi] < 0) {
+    env.declineFor("the markup tag `" + tokenTextOf(src, lexed, tagTok) + "`, which names no function emitted");
+    return;
+  }
+  for (i32 k = 0; k < env.funcParamCount[fi]; k++) {
+    string pn = env.paramNameAt(fi, k);
+    string pt = env.paramTypeAt(fi, k);
+    i32 given = -1;
+    for (i32 i = 0; i < attrs.len(); i++) {
+      if (tokenTextOf(src, lexed, attrs[i].nameTok) == pn) { given = i; }
+    }
+    if (given >= 0) { emitExprAt(fb, src, lexed, env, attrs[given].value, pt); continue; }
+    if (pn == "kids") { emitJsxKids(fb, src, lexed, env, kids); continue; }
+    emitNull(fb, env, pt);
+  }
+  fb.byte(16); fb.u32leb(env.funcIndex[fi]);    // call
+}
+
+/**
+ * A child as a `Node`, through core's `toNode` (spec/next ch23 `§wac-markup-child-tonode-vp842rw`): a
+ * node is itself, text becomes `Node.Text`, and anything else calls its method named by the symbol.
+ */
+void emitToNode(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
+  match (e.kind) {
+    JsxText(startOff, endOff): { emitExprAt(fb, src, lexed, env, e, "Node"); return; }
+    Jsx(tagTok, closeTok, attrs, kids): { emitExprAt(fb, src, lexed, env, e, "Node"); return; }
+    default: { }
+  }
+  string t = typeOfE(src, lexed, env, e);
+  if (t == "string" || textFunctionFor(t) != "" || isLiteral(e)) {
+    i32 vi = jsxTextVariant(env);
+    if (vi < 0) { env.declineFor("core's markup text variant, which this program does not have"); return; }
+    string en = env.variantOwners[vi];
+    i32 n = env.fieldCountOf(en);
+    fb.byte(65); fb.i32leb(env.variantTags[vi]);
+    for (i32 slot = 1; slot < n; slot++) {
+      if (slot - env.variantSlot[vi] == 0) { emitToText(fb, src, lexed, env, e); continue; }
+      emitNull(fb, env, env.fieldTypeAt(en, slot));
+    }
+    fb.byte(251); fb.u32leb(0); fb.u32leb(env.structType(en));   // struct.new
+    return;
+  }
+  if (env.isStructName(t) && !env.isEnumName(t)) {
+    i32 m = env.methodAt(t, "[toNode]");
+    if (m >= 0 && env.funcIndex[m] >= 0) {
+      emitExprAt(fb, src, lexed, env, e, t);
+      fb.byte(16); fb.u32leb(env.funcIndex[m]);    // call
+      return;
+    }
+  }
+  emitExprAt(fb, src, lexed, env, e, "Node");
 }
 
 /** A `string` from text the source did not quote — a tag name, or an attribute's name. */
@@ -7116,10 +7250,10 @@ i32 jsxTextVariant(Env env) {
   return -1;
 }
 
-/** `[…]` — every child is already a `Node`, including a nested element. */
+/** `[…]` — every child as a `Node`, converted where it is not one already. */
 void emitJsxKids(B fb, u8[] src, Lexed lexed, Env env, Expr[] kids) {
   for (i32 i = 0; i < kids.len(); i++) {
-    emitExprAt(fb, src, lexed, env, kids[i], "Node");
+    emitToNode(fb, src, lexed, env, kids[i]);
   }
   fb.byte(251);
   fb.u32leb(8);     // array.new_fixed
@@ -7336,7 +7470,7 @@ i32 declarePatternLocals(u8[] src, Lexed lexed, Env env, Pattern pat, string st)
 
 /** A reference type without its `?` — a struct, an array, a string — or the type itself. */
 string refCore(Env env, string t) {
-  if (t.len() > 1 && t.slice(t.len() - 1, t.len()) == "?" && !isBoxedPrimName(t)) {
+  if (t.len() > 1 && t.slice(t.len() - 1, t.len()) == "?" && !isBoxedName(t)) {
     return t.slice(0, t.len() - 1);
   }
   return t;
@@ -7366,7 +7500,7 @@ string matchesWhyNot(u8[] src, Lexed lexed, Env env, Pattern pat, string st) {
 
 /** Whether `emitTypeTest` has an instruction for "is this `from` a `to`". */
 bool typeTestable(Env env, string from, string to) {
-  if (isBoxedPrimName(from) && boxedPrimInner(from) == to) { return true; }
+  if (isBoxedName(from) && boxedInner(from) == to) { return true; }
   string fc = env.canonType(refCore(env, from));
   string tc = env.canonType(refCore(env, to));
   if (env.variantAt(to) >= 0) { return env.variantOwners[env.variantAt(to)] == fc; }
@@ -7399,7 +7533,7 @@ void emitTypeTest(B fb, Env env, i32 at, string from, string to) {
     fb.byte(11);
     return;
   }
-  if ((isBoxedPrimName(from) && boxedPrimInner(from) == to)
+  if ((isBoxedName(from) && boxedInner(from) == to)
       || (isRefType(env, fc) && (fc == tc || env.isSubtypeOf(fc, tc)))) {
     fb.byte(32); fb.u32leb(at);
     fb.byte(209);                                      // ref.is_null
@@ -7418,7 +7552,7 @@ void emitTypeTest(B fb, Env env, i32 at, string from, string to) {
 /** The value in local `at` as a `to`, once `emitTypeTest` has said it is one. */
 void emitTypeBind(B fb, Env env, i32 at, string from, string to) {
   fb.byte(32); fb.u32leb(at);
-  if (isBoxedPrimName(from) && boxedPrimInner(from) == to) {
+  if (isBoxedName(from) && boxedInner(from) == to) {
     fb.byte(251); fb.u32leb(2);                        // struct.get — the number inside the box
     fb.u32leb(env.boxType(to));
     fb.u32leb(0);
@@ -7459,17 +7593,35 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   // compiler emits could not type a call: every one of them took the default.
   i32 elseAt = -1;
   i32 cases = 0;
+  bool anyNullArm = false;
   for (i32 a = 0; a < arms.len(); a++) {
     if (arms[a].variantTok < 0) { elseAt = a; } else { cases = cases + 1; }
+    if (isNullArmE(lexed, arms[a])) { anyNullArm = true; }
+  }
+  // A subject that may be absent: the tag read once, `-1` for `null` — see `emitMatchExpr`.
+  bool nullSafe = anyNullArm || elseAt >= 0;
+  i32 tagAt = -1;
+  if (nullSafe) {
+    tagAt = env.scratchNamed("match tag " + numText(env.depth) + " " + numText(subject.line) + ":"
+                             + numText(subject.col), "i32");
+    fb.byte(32); fb.u32leb(subj);
+    fb.byte(209);                               // ref.is_null
+    fb.byte(4); fb.byte(127);                   // if (result i32)
+    fb.byte(65); fb.i32leb(-1);
+    fb.byte(5);
+    emitTagOf(fb, env, subj, en);
+    fb.byte(11);
+    fb.byte(33); fb.u32leb(tagAt);
   }
   i32 opened = 0;
   i32 done = 0;
   for (i32 a = 0; a < arms.len(); a++) {
     if (a == elseAt) { continue; }
-    string vn = armVariant(env, src, lexed, arms[a].variantTok, en);
-    emitTagOf(fb, env, subj, en);
+    bool nullCase = isNullArmE(lexed, arms[a]);
+    string vn = nullCase ? "" : armVariant(env, src, lexed, arms[a].variantTok, en);
+    if (nullSafe) { fb.byte(32); fb.u32leb(tagAt); } else { emitTagOf(fb, env, subj, en); }
     fb.byte(65);
-    fb.i32leb(env.variantTags[env.variantAt(vn)]);
+    fb.i32leb(nullCase ? -1 : env.variantTags[env.variantAt(vn)]);
     fb.byte(70);   // i32.eq
     fb.byte(4);
     fb.byte(64);
@@ -7481,7 +7633,7 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     // one worth repeating: a construct that stops being instrumented makes the number go *up*.
     covPoint(fb, env, "case", lexedLine(lexed, arms[a].variantTok),
              lexedCol(lexed, arms[a].variantTok));
-    emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject);
+    if (!nullCase) { emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject); }
     emitBody(fb, src, lexed, env, arms[a].body);
     retireFrom(env, saved);
     done = done + 1;
@@ -7498,6 +7650,24 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   for (i32 i = 0; i < opened; i++) {
     fb.byte(11);
     env.depth = env.depth - 1;
+  }
+}
+
+/** Whether a `match` arm is `null:` (spec/next ch25). */
+bool isNullArmE(Lexed lexed, Arm a) {
+  return a.variantTok >= 0 && lexed.tokens[a.variantTok * tokenStride()] == kNull();
+}
+
+/**
+ * What an expression arm gives: its value at `rt`, or — for an arm that leaves, `continue` or
+ * `return` in place of a value — its statement and then `unreachable`, since the block still owes a
+ * result it will never produce (spec/next ch25 `§wac-match-arm-leaves-y33uzzi`).
+ */
+void emitArmResult(B fb, u8[] src, Lexed lexed, Env env, Arm arm, string rt) {
+  if (!(arm.value is null)) { emitExprAt(fb, src, lexed, env, arm.value!, rt); return; }
+  if (arm.body.len() > 0) {
+    emitBody(fb, src, lexed, env, arm.body);
+    fb.byte(0);                                 // unreachable
   }
 }
 
@@ -7534,6 +7704,11 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     }
   }
   if (rt == "") { rt = want; }
+  // **An arm that gives `null` makes the result the slot's**, which can hold it: `f64?` where the
+  // other arms give `f64`, each of them boxed on the way out.
+  for (i32 a = 0; a < arms.len(); a++) {
+    if (!(arms[a].value is null) && isNullLit(arms[a].value!) && want != "") { rt = want; }
+  }
   env.addLocal(" match", en);
   i32 subj = env.localCount - 1;
   emitExprAt(fb, src, lexed, env, subject, en);
@@ -7544,8 +7719,27 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   // — and where there is no default, the last case does, since the match is exhaustive.
   i32 elseAt = -1;
   i32 cases = 0;
+  bool anyNullArm = false;
   for (i32 a = 0; a < arms.len(); a++) {
     if (arms[a].variantTok < 0) { elseAt = a; } else { cases = cases + 1; }
+    if (isNullArmE(lexed, arms[a])) { anyNullArm = true; }
+  }
+  // **A subject that may be absent is tested by a tag read once**, `-1` for `null`: a `null:` arm is
+  // the case for `-1`, and with only a `default` the absent subject matches no variant and lands
+  // there — no arm emitted twice (spec/next ch25 `§wac-match-nullable-subject-zcnasbp`).
+  bool nullSafe = anyNullArm || elseAt >= 0;
+  i32 tagAt = -1;
+  if (nullSafe) {
+    tagAt = env.scratchNamed("match tag " + numText(env.depth) + " " + numText(subject.line) + ":"
+                             + numText(subject.col), "i32");
+    fb.byte(32); fb.u32leb(subj);
+    fb.byte(209);                               // ref.is_null
+    fb.byte(4); fb.byte(127);                   // if (result i32)
+    fb.byte(65); fb.i32leb(-1);
+    fb.byte(5);
+    emitTagOf(fb, env, subj, en);
+    fb.byte(11);
+    fb.byte(33); fb.u32leb(tagAt);
   }
   i32 opened = 0;
   i32 done = 0;
@@ -7553,11 +7747,12 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     if (a == elseAt) { continue; }
     done = done + 1;
     bool tail = elseAt < 0 && done == cases;
-    string vn = armVariant(env, src, lexed, arms[a].variantTok, en);
+    bool nullCase = isNullArmE(lexed, arms[a]);
+    string vn = nullCase ? "" : armVariant(env, src, lexed, arms[a].variantTok, en);
     if (!tail) {
-      emitTagOf(fb, env, subj, en);
+      if (nullSafe) { fb.byte(32); fb.u32leb(tagAt); } else { emitTagOf(fb, env, subj, en); }
       fb.byte(65);
-      fb.i32leb(env.variantTags[env.variantAt(vn)]);
+      fb.i32leb(nullCase ? -1 : env.variantTags[env.variantAt(vn)]);
       fb.byte(70);
       fb.byte(4);
       writeValType(fb, env, rt);
@@ -7569,15 +7764,15 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     // `emitMatchStmt`, and a `match` used for its value is the commoner of the two in this codebase.
     covPoint(fb, env, "case", lexedLine(lexed, arms[a].variantTok),
              lexedCol(lexed, arms[a].variantTok));
-    emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject);
-    if (!(arms[a].value is null)) { emitExprAt(fb, src, lexed, env, arms[a].value!, rt); }
+    if (!nullCase) { emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject); }
+    emitArmResult(fb, src, lexed, env, arms[a], rt);
     retireFrom(env, saved);
     if (!tail) { fb.byte(5); }
   }
-  if (elseAt >= 0 && !(arms[elseAt].value is null)) {
+  if (elseAt >= 0) {
     covPoint(fb, env, "case", lexedLine(lexed, arms[elseAt].elseTok),
              lexedCol(lexed, arms[elseAt].elseTok));
-    emitExprAt(fb, src, lexed, env, arms[elseAt].value!, rt);
+    emitArmResult(fb, src, lexed, env, arms[elseAt], rt);
   }
   for (i32 i = 0; i < opened; i++) {
     fb.byte(11);
@@ -7738,13 +7933,13 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
 void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
     Var(type, nameTok, init, isConst): {
-      string vt = typeOfTyName(env, src, lexed, type);
+      string vt = varTypeOfE(env, src, lexed, type, init);
       if (init is not null) {
         emitExprAt(fb, src, lexed, env, init!, vt);
       } else if (tyIsNullable(type)) {
         // `T? x;` holds `null` — its default (spec/next ch08 `§wac-default-absence-8mxpz7y`). Asked of
         // the written type, because the name this emitter keeps for a nullable struct drops its `?`.
-        emitNull(fb, env, isBoxedPrimName(vt) ? vt : refCore(env, vt));
+        emitNull(fb, env, isBoxedName(vt) ? vt : refCore(env, vt));
       } else {
         // **`T x;` holds its type's default from the start.** For a type with one that is what a read
         // reaching it unassigned sees; for one without — a number, a `bool`, a struct with a field that
@@ -8544,9 +8739,9 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
   // one into a reference slot. `null` is excluded: it is the absent value, not a value to wrap, and its
   // own arm already emits a null box. An operand that is *already* a `T?` — passing one along — is
   // excluded too, or it would be boxed twice.
-  if (isBoxedPrimName(want) && !isNullLit(e) && !boxesAtBranches(e)
+  if (isBoxedName(want) && !isNullLit(e) && !boxesAtBranches(e)
       && typeOfE(src, lexed, env, e) != want) {
-    string inner = boxedPrimInner(want);
+    string inner = boxedInner(want);
     emitExprAt(fb, src, lexed, env, e, inner);
     fb.byte(251); fb.u32leb(0);            // struct.new
     fb.u32leb(env.boxType(inner));
@@ -8672,6 +8867,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             emitArrayLiteral(fb, src, lexed, env, elements, arraySlotType(lat));
             return;
           }
+        }
+        // `null as T?` is the null of `T?` — which a `T??` slot then holds present (ch10).
+        NullLit: {
+          string nt = typeOfTyName(env, src, lexed, target);
+          emitNull(fb, env, isBoxedName(nt) ? nt : refCore(env, nt));
+          return;
         }
         default: { }
       }
@@ -9340,8 +9541,15 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // width alone, since signedness cannot change any of them. `issues/lang/0069`.
           if (isIntType(ot) && intBuiltinOp(ot, mname) >= 0) {
             emitExpr(fb, src, lexed, env, obj);
+            // A rotation's count is any integer, brought to the receiver's width — modulo it anyway.
+            bool wideRecv = ot == "i64" || ot == "u64";
             for (i32 i = 0; i < args.len(); i++) {
-              emitExprAt(fb, src, lexed, env, args[i], ot);
+              string ct = typeOfE(src, lexed, env, args[i]);
+              if (ct == "") { ct = ot; }
+              emitExprAt(fb, src, lexed, env, args[i], ct);
+              bool wideCount = ct == "i64" || ct == "u64";
+              if (wideRecv && !wideCount) { fb.byte(173); }   // i64.extend_i32_u
+              if (!wideRecv && wideCount) { fb.byte(167); }   // i32.wrap_i64
             }
             fb.byte(intBuiltinOp(ot, mname));
             return;
@@ -9356,6 +9564,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // first parameter, which is the whole of what a method is here.
           i32 at = methodSlotForArgs(env, src, lexed, ot, mname, callTargs, args);
           if (!haveRequired(env, at, ot + "." + mname)) { return; }
+          // **A virtual method dispatches on the runtime type** (spec/next ch12): when a type below the
+          // static one overrides it, the call is a chain of `ref.test`s, most derived first.
+          string[] overs = overridersOf(env, ot, mname, at);
+          if (overs.len() > 0) {
+            emitVirtualCall(fb, src, lexed, env, obj, ot, mname, at, args, overs, e.line, e.col);
+            return;
+          }
           emitExpr(fb, src, lexed, env, obj);
           for (i32 i = 0; i < args.len(); i++) {
             emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(at, i));
@@ -9586,9 +9801,9 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // to a one-field struct (spec/spec/types.md), so the slot wants the number *inside* it — the
       // null check and then the field read. `issues/lang/0171a`.
       string ut = typeOfE(src, lexed, env, operand);
-      if (isBoxedPrimName(ut)) {
+      if (isBoxedName(ut)) {
         fb.byte(251); fb.u32leb(2);            // struct.get
-        fb.u32leb(env.boxType(boxedPrimInner(ut)));
+        fb.u32leb(env.boxType(boxedInner(ut)));
         fb.u32leb(0);
       }
     }
@@ -9847,7 +10062,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       // Unwrapping a boxed primitive yields the primitive; for a nullable reference `T?` and `T` are
       // already one name here, so this changes nothing for those.
       string ut = typeOfE(src, lexed, env, operand);
-      return isBoxedPrimName(ut) ? boxedPrimInner(ut) : ut;
+      return isBoxedName(ut) ? boxedInner(ut) : ut;
     }
     MatchExpr(subject, arms): {
       // **With the arm's names in scope.** An arm whose value is its own binding — `B(x): x`,
@@ -9910,6 +10125,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
 
 /** `t` without one trailing `?`, or `t` unchanged. */
 string oneLayerLess(string t) {
+  if (isBoxedName(t)) { return boxedInner(t); }
   return t.len() > 0 && t.slice(t.len() - 1, t.len()) == "?" ? t.slice(0, t.len() - 1) : t;
 }
 
@@ -9930,7 +10146,7 @@ string safeMemberType(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok) {
 
 /** `t?` as this emitter spells it: a box for a number, the reference itself for anything else. */
 string nullableRep(string t) {
-  if (isBoxedPrimName(t)) { return t; }
+  if (isBoxedName(t)) { return t; }
   // A field written `Addr?` keeps its `?` in the field table; as a value it is the reference.
   if (oneLayerLess(t) != t) { return oneLayerLess(t); }
   return isWritableValType(t) && t != "anyref" && t != "i31ref" ? t + "?" : t;
@@ -9939,7 +10155,10 @@ string nullableRep(string t) {
 /** The type `a ?? b` answers: `a`'s with its absence removed, or `a`'s own where `b` is `null`. */
 string coalesceType(u8[] src, Lexed lexed, Env env, Expr left, Expr right) {
   string lt = typeOfE(src, lexed, env, left);
-  return isNullLit(right) ? lt : oneLayerLess(lt);
+  // `?? null` keeps one absence: a `T??` collapses to `T?`, and a `T?` stays itself (ch10).
+  bool nested = lt.len() > 2 && lt.slice(lt.len() - 2, lt.len()) == "??";
+  if (isNullLit(right)) { return nested ? boxedInner(lt) : lt; }
+  return oneLayerLess(lt);
 }
 
 /**
@@ -9966,9 +10185,9 @@ void emitSafeMember(B fb, u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok)
   fb.byte(251); fb.u32leb(2);             // struct.get
   fb.u32leb(env.structType(base));
   fb.u32leb(env.fieldIndex(base, name));
-  if (isBoxedPrimName(rt) && !isBoxedPrimName(ft)) {
+  if (isBoxedName(rt) && !isBoxedName(ft)) {
     fb.byte(251); fb.u32leb(0);           // struct.new — the box
-    fb.u32leb(env.boxType(boxedPrimInner(rt)));
+    fb.u32leb(env.boxType(boxedInner(rt)));
   }
   fb.byte(11);
 }
@@ -9991,9 +10210,9 @@ void emitCoalesce(B fb, u8[] src, Lexed lexed, Env env, Expr left, Expr right, s
   emitExprAt(fb, src, lexed, env, right, rt);
   fb.byte(5);                             // else
   fb.byte(32); fb.u32leb(held);           // local.get
-  if (isBoxedPrimName(lt) && !isBoxedPrimName(rt)) {
-    fb.byte(251); fb.u32leb(2);           // struct.get — the number out of its box
-    fb.u32leb(env.boxType(boxedPrimInner(lt)));
+  if (isBoxedName(lt) && rt != lt) {
+    fb.byte(251); fb.u32leb(2);           // struct.get — what the box holds
+    fb.u32leb(env.boxType(boxedInner(lt)));
     fb.u32leb(0);
   }
   fb.byte(11);
@@ -10293,6 +10512,98 @@ void emitTupleAssign(B fb, u8[] src, Lexed lexed, Env env, Lvalue[] targets, Exp
       }
       default: { env.declineFor("a tuple assignment to something other than a local"); return; }
     }
+  }
+}
+
+/** Whether a written type is the placeholder `auto` (spec/next ch33). */
+bool isAutoTyE(u8[] src, Lexed lexed, Ty t) {
+  match (t.kind) {
+    Named(tok, typeArgs): { return typeArgs.len() == 0 && tokenTextOf(src, lexed, tok) == "auto"; }
+    default: { return false; }
+  }
+}
+
+/** A local's type: the one written, or for `auto` its initialiser's (`§wac-auto-local-59gczx4`). */
+string varTypeOfE(Env env, u8[] src, Lexed lexed, Ty type, Expr? init) {
+  if (isAutoTyE(src, lexed, type) && !(init is null)) { return typeOfE(src, lexed, env, init!); }
+  return typeOfTyName(env, src, lexed, type);
+}
+
+/**
+ * The types below `ot` that implement `mname` themselves, where `at` — the method the static type
+ * reaches — is virtual: deepest first, so the first `ref.test` that answers yes is the right one.
+ * Empty for a method that is not virtual, or one nothing overrides.
+ */
+string[] overridersOf(Env env, string ot, string mname, i32 at) {
+  if (at < 0 || at >= env.funcCount) { return string[](); }
+  string owner = env.funcRecv[at];
+  if (owner == "" || !env.isVirtualMethod(owner + "." + mname)) { return string[](); }
+  string base = env.canonType(ot);
+  i32 n = 0;
+  string[] found = string[].defaulted(env.structCount);
+  i32[] depth = i32[].filled(env.structCount, 0);
+  for (i32 i = 0; i < env.structCount; i++) {
+    string sn = env.structNames[i];
+    if (sn == base || !env.isSubtypeOf(sn, base)) { continue; }
+    i32 own = env.funcAt(sn + "." + mname);
+    if (own < 0 || env.funcRecv[own] != sn || env.funcIndex[own] < 0) { continue; }
+    i32 d = 0;
+    string cur = sn;
+    for (i32 g = 0; g < 64 && cur != "" && cur != base; g++) { cur = env.parentOf(cur); d++; }
+    found[n] = sn;
+    depth[n] = d;
+    n++;
+  }
+  // Deepest first: a grandchild's override before its parent's.
+  for (i32 i = 1; i < n; i++) {
+    for (i32 j = i; j > 0 && depth[j] > depth[j - 1]; j--) {
+      string t = found[j]; found[j] = found[j - 1]; found[j - 1] = t;
+      i32 dt = depth[j]; depth[j] = depth[j - 1]; depth[j - 1] = dt;
+    }
+  }
+  string[] out = string[].defaulted(n);
+  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  return out;
+}
+
+/**
+ * `recv.m(args)` through a virtual method: the receiver and arguments held once, then for each
+ * overriding type a `ref.test` choosing its implementation, and the static type's last.
+ */
+void emitVirtualCall(B fb, u8[] src, Lexed lexed, Env env, Expr obj, string ot, string mname, i32 at,
+                     Expr[] args, string[] overs, i32 line, i32 col) {
+  string tag = numText(env.depth) + " " + numText(line) + ":" + numText(col);
+  i32 recv = env.scratchNamed("virtual recv " + tag, ot);
+  emitExprAt(fb, src, lexed, env, obj, ot);
+  fb.byte(33); fb.u32leb(recv);
+  i32[] held = i32[].filled(args.len(), 0);
+  for (i32 i = 0; i < args.len(); i++) {
+    string pt = env.paramTypeAt(at, i);
+    held[i] = env.scratchNamed("virtual arg " + numText(i) + " " + tag, pt);
+    emitExprAt(fb, src, lexed, env, args[i], pt);
+    fb.byte(33); fb.u32leb(held[i]);
+  }
+  string ret = env.funcReturns[at];
+  bool none = ret == "void" || ret == "never" || ret == "";
+  for (i32 k = 0; k < overs.len(); k++) {
+    i32 impl = env.funcAt(overs[k] + "." + mname);
+    fb.byte(32); fb.u32leb(recv);
+    fb.byte(251); fb.u32leb(20); fb.i32leb(env.structType(overs[k]));   // ref.test (ref $S)
+    fb.byte(4);
+    if (none) { fb.byte(64); } else { writeValType(fb, env, ret); }
+    env.depth = env.depth + 1;
+    fb.byte(32); fb.u32leb(recv);
+    fb.byte(251); fb.u32leb(23); fb.i32leb(env.structType(overs[k]));   // ref.cast
+    for (i32 i = 0; i < args.len(); i++) { fb.byte(32); fb.u32leb(held[i]); }
+    fb.byte(16); fb.u32leb(env.funcIndex[impl]);
+    fb.byte(5);
+  }
+  fb.byte(32); fb.u32leb(recv);
+  for (i32 i = 0; i < args.len(); i++) { fb.byte(32); fb.u32leb(held[i]); }
+  fb.byte(16); fb.u32leb(env.funcIndex[at]);
+  for (i32 k = 0; k < overs.len(); k++) {
+    fb.byte(11);
+    env.depth = env.depth - 1;
   }
 }
 
@@ -11111,7 +11422,7 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
     // The declared type is the wanted type — the commonest position a lambda is written in, and the
     // only one where the answer is written down beside it.
     Var(type, nameTok, init, isConst): {
-      string vt = typeOfTyName(env, src, lexed, type);
+      string vt = varTypeOfE(env, src, lexed, type, init);
       if (init is not null) { findLambdasExpr(env, src, lexed, init!, vt); }
       // Declared *after* the initialiser is walked, so `i32 x = x;` reads the outer `x` — the same
       // order the checker uses, and the only one that makes shadowing mean anything.
@@ -12774,7 +13085,7 @@ string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms
   string en = env.canonType(typeOfE(src, lexed, env, subject));
   if (!env.isEnumName(en)) { return "a match on something that is not an enum"; }
   for (i32 a = 0; a < arms.len(); a++) {
-    if (arms[a].variantTok < 0) { continue; }
+    if (arms[a].variantTok < 0 || isNullArmE(lexed, arms[a])) { continue; }
     string vn = armVariant(env, src, lexed, arms[a].variantTok, en);
     if (env.enumOf(vn) != en) {
       // Named, both of them: which arm, and which enum it belongs to instead of this one.
@@ -12824,7 +13135,7 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
 string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
     Var(type, nameTok, init, isConst): {
-      string t = typeOfTyName(env, src, lexed, type);
+      string t = varTypeOfE(env, src, lexed, type, init);
       if (t == "") { return "local of an unspelled type"; }
       string r0 = init is null ? "" : unsupportedValueAt(src, lexed, env, init!, t);
       // The name comes into scope **after** its initialiser, which is where it comes into scope in
@@ -13032,7 +13343,7 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
 /** Whether a wac type is a reference, which is the only kind of slot a `null` can fill. */
 bool isRefType(Env env, string t) {
   return isArrayType(t) || t == "string" || env.isStructName(t) || isFuncrefType(t) ||
-         t == "anyref" || t == "i31ref" || isBoxedPrimName(t) || isTupleName(t);
+         t == "anyref" || t == "i31ref" || isBoxedName(t) || isTupleName(t);
 }
 
 /**
@@ -13179,7 +13490,11 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
       string mm2 = unsupportedMatch(src, lexed, env, subject, arms);
       if (mm2 != "") { return mm2; }
       for (i32 a = 0; a < arms.len(); a++) {
-        if (arms[a].value is null) { return "an arm with no value"; }
+        if (arms[a].value is null) {
+          string lb = unsupportedIn(src, lexed, env, arms[a].body);
+          if (lb != "") { return lb; }
+          continue;
+        }
         i32 saved2 = pushArmNames(src, lexed, env, arms[a], subject);
         string v2 = unsupportedValueAt(src, lexed, env, arms[a].value!, want);
         env.localCount = saved2;
@@ -13530,6 +13845,12 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         if (tl != "") { return tl; }
         return unsupportedValueAt(src, lexed, env, right, tq);
       }
+      // `a ?? b`: `b` fills the result's slot, which is what types a `null` there (ch10).
+      if (tk == kQuestion()) {
+        string ql = unsupportedValue(src, lexed, env, left);
+        if (ql != "") { return ql; }
+        return unsupportedValueAt(src, lexed, env, right, coalesceType(src, lexed, env, left, right));
+      }
       string l = unsupportedValue(src, lexed, env, left);
       if (l != "") { return l; }
       string r = unsupportedValue(src, lexed, env, right);
@@ -13560,11 +13881,13 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       string t = typeOfTyName(env, src, lexed, target);
       bool known = isArrayType(t) || env.isStructName(t) || t == "i32" || t == "u32" ||
                    t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool" ||
-                   t == "anyref" || t == "i31ref" || isPackedValue(t);
+                   t == "anyref" || t == "i31ref" || isPackedValue(t) || isBoxedName(t);
       if (!known) { return "cast to an unsupported type"; }
-      // `[a, b] as T[]` is asked about at `T[]`, which is the type it is built at.
+      // `[a, b] as T[]` is asked about at `T[]`, which is the type it is built at — and `null as T?`
+      // is a null of that type (spec/next ch10 `§wac-null-as-typed-ifyaj6m`).
       match (operand.kind) {
         ArrLit(elements): { return unsupportedValueAt(src, lexed, env, operand, t); }
+        NullLit: { return ""; }
         default: { }
       }
       return unsupportedExpr(src, lexed, env, operand);
@@ -13941,7 +14264,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       string mm = unsupportedMatch(src, lexed, env, subject, arms);
       if (mm != "") { return mm; }
       for (i32 a = 0; a < arms.len(); a++) {
-        if (arms[a].value is null) { return "an arm with no value"; }
+        if (arms[a].value is null) {
+          string lb = unsupportedIn(src, lexed, env, arms[a].body);
+          if (lb != "") { return lb; }
+          continue;
+        }
         i32 saved = pushArmNames(src, lexed, env, arms[a], subject);
         string v = unsupportedValue(src, lexed, env, arms[a].value!);
         env.localCount = saved;
@@ -14909,6 +15236,9 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         string fname = env.declare(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, file),
                                    exported);
         env.addFunc(fname, typeOfTyName(env, src, lexed, returnType), pts);
+        string[] pns = string[].defaulted(params.len());
+        for (i32 i = 0; i < params.len(); i++) { pns[i] = tokenTextOf(src, lexed, params[i].nameTok); }
+        env.noteParamNames(pns);
       }
       // A method is a function with the receiver as its first parameter — which is what the call site
       // does too, pushing the object before the arguments. Registered under `Struct.name` so a bare
@@ -14924,6 +15254,9 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           env.addFunc(owner + "." + tokenTextOf(src, lexed, methods[i].nameTok),
                       typeOfTyName(env, src, lexed, methods[i].returnType), mpts);
           env.funcRecv[env.funcCount - 1] = methods[i].hasThis ? owner : "";
+          if (methods[i].isVirtual || methods[i].isOverride) {
+            env.noteVirtualMethod(owner + "." + tokenTextOf(src, lexed, methods[i].nameTok));
+          }
           if (env.funcCount - 1 < env.funcMethodGeneric.len()) {
             env.funcMethodGeneric[env.funcCount - 1] = methods[i].typeParams.len() > 0;
           }
@@ -15713,7 +16046,7 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
     SafeMember(obj, nameTok): {
       collectArrayTypesOfExpr(env, src, lexed, obj);
       string srt = safeMemberType(src, lexed, env, obj, nameTok);
-      if (isBoxedPrimName(srt)) { env.boxType(boxedPrimInner(srt)); }
+      if (isBoxedName(srt)) { env.boxType(boxedInner(srt)); }
     }
     Index(arr, index): {
       collectArrayTypesOfExpr(env, src, lexed, arr);
@@ -16569,8 +16902,10 @@ string bareVariantName(string key) {
 string metaTypeOfTy(Env env, u8[] src, Lexed lexed, Ty t) {
   string base = metaTypeSpelling(env, typeOfTyName(env, src, lexed, t));
   if (base == "") { return base; }
+  // A boxed number and a nested nullable are spelled with their `?` already; only a reference's is
+  // dropped from the spelling, and so restored here.
   match (t.kind) {
-    Nullable(inner): { return base + "?"; }
+    Nullable(inner): { return endsWith(base, "?") ? base : base + "?"; }
     default: { return base; }
   }
 }
@@ -17110,6 +17445,46 @@ void emitArrayAccessors(B funcs, B code, Env env, string at) {
 /**
  * How many helpers an enum needs: the tag, then a constructor and a payload getter per variant.
  */
+/** The primitives this module boxes, in table order — each gets a `new` and a `get` at the boundary. */
+string[] boxBindTypes(Env env) {
+  i32 n = 0;
+  for (i32 i = 0; i < env.sigCount; i++) {
+    string t = env.sigTypes[i];
+    if (isBoxEntry(t) && isWritableValType(boxInner(t)) && boxInner(t) != "anyref" && boxInner(t) != "i31ref") { n++; }
+  }
+  string[] out = string[].defaulted(n);
+  i32 at = 0;
+  for (i32 i = 0; i < env.sigCount && at < n; i++) {
+    string t = env.sigTypes[i];
+    if (isBoxEntry(t) && isWritableValType(boxInner(t)) && boxInner(t) != "anyref" && boxInner(t) != "i31ref") {
+      out[at] = boxInner(t);
+      at++;
+    }
+  }
+  return out;
+}
+
+/** `$bind$box_<t>_new(t) -> t?` and `$bind$box_<t>_get(t?) -> t`, for a host holding a `t?`. */
+void emitBoxHelpers(B funcs, B code, Env env, string prim) {
+  i32 bi = env.boxType(prim);
+  funcs.u32leb(env.sigType("fn[" + prim + "?(" + prim + ")]"));
+  B nb = B.create();
+  nb.u32leb(0);
+  nb.byte(32); nb.u32leb(0);
+  nb.byte(251); nb.u32leb(0); nb.u32leb(bi);                   // struct.new
+  nb.byte(11);
+  code.u32leb(nb.len);
+  code.bytes(nb);
+  funcs.u32leb(env.sigType("fn[" + prim + "(" + prim + "?)]"));
+  B gb = B.create();
+  gb.u32leb(0);
+  gb.byte(32); gb.u32leb(0);
+  gb.byte(251); gb.u32leb(2); gb.u32leb(bi); gb.u32leb(0);     // struct.get
+  gb.byte(11);
+  code.u32leb(gb.len);
+  code.bytes(gb);
+}
+
 i32 enumHelperCount(Env env, string ename) {
   i32 n = 1;
   for (i32 v = 0; v < env.variantCount; v++) {

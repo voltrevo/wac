@@ -1,0 +1,19 @@
+// expect: answers skipsPoints = 13
+// why: an arm of a value-giving match may leave — `continue` here — and gives no value, so it does not take part in the arms' type
+// from: spec/next ch25 §wac-match-arm-leaves-y33uzzi
+enum Shape { Circle(f64 r), Rect(f64 w, f64 h), Point }
+
+i32 total(Shape[] shapes) {
+  i32 n = 0;
+  for (Shape s in shapes) {
+    f64 a = match (s) {
+      Circle(r):  3.0 * r * r,
+      Rect(w, h): w * h,
+      Point:      continue,
+    };
+    n += a as~ i32;
+  }
+  return n;
+}
+
+export i32 skipsPoints() { return total([Shape.Circle(1.0), Shape.Point, Shape.Rect(2.0, 5.0)]); }

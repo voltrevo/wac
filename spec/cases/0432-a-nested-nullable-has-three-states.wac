@@ -1,0 +1,30 @@
+// expect: answers run = 4 111
+// why: `T??` is absent, present holding `null`, or present holding a `T` — and `!` removes one layer at a time
+// from: spec/next ch10 §wac-nullable-nested-ak7583p, §wac-null-as-typed-ifyaj6m
+struct Node { i32 v; }
+
+export i32 threeStates() {
+  Node   n = Node(1);
+  Node?? a = null;
+  Node?? b = null as Node?;
+  Node?? c = n;
+  i32 k = 0;
+  if (a is null) { k += 1; }
+  if (b is not null) { k += 1; }
+  if (b! is null) { k += 1; }
+  if (c!! is n) { k += 1; }
+  return k;
+}
+
+export i32 prims() {
+  i32?? a = null;
+  i32?? b = null as i32?;
+  i32?? c = 5;
+  i32 k = 0;
+  if (a is null) { k += 1; }
+  if (b is not null && b! is null) { k += 10; }
+  if (c!! == 5) { k += 100; }
+  return k;
+}
+
+export string run() { return "\{threeStates()} \{prims()}"; }

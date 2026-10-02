@@ -1,0 +1,8 @@
+// expect: refused
+// why: children are the `kids` parameter, and a function without one cannot take any
+// from: spec/next ch23 §wac-markup-tag-is-function-vv4pvhq
+import { Node } from "core";
+
+Node rule(string width) { return <"hr" size={width}/>; }
+
+export Node f() { return <rule width="2">text</rule>; }

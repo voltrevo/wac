@@ -25,22 +25,22 @@ i32 take(Node n) { return kidsOf(n); }
 export i32 run() {
   i32 x = 2;
   // The classic one: `>` inside `{}` is a comparison, not the end of the tag.
-  Node cmp = <div a={x > 1 ? "y" : "n"}/>;
+  Node cmp = <"div" a={x > 1 ? "y" : "n"}/>;
   match (cmp) {
     Element(tag, attrs, ks): { if (attrs[0].value != "y") { return 1; } }
     Text(t): { return 2; }
     Fragment(ks): { return 3; }
   }
   // An element is an expression, so it nests in one, is an argument, and is a ternary's arm.
-  Node inner = <div>{<b/>}</div>;
+  Node inner = <"div">{<"b"/>}</"div">;
   if (kidsOf(inner) != 1) { return 3; }
-  if (take(<p><i/><i/></p>) != 2) { return 4; }
-  Node chosen = x > 1 ? <a/> : <b/>;
+  if (take(<"p"><"i"/><"i"/></"p">) != 2) { return 4; }
+  Node chosen = x > 1 ? <"a"/> : <"b"/>;
   if (tagOf(chosen) != "a") { return 5; }
   // Deep nesting, and a tag that repeats inside itself.
-  Node deep = <a><b><c><d/></c></b></a>;
+  Node deep = <"a"><"b"><"c"><"d"/></"c"></"b"></"a">;
   if (kidsOf(deep) != 1) { return 6; }
-  Node same = <div><div/></div>;
+  Node same = <"div"><"div"/></"div">;
   if (kidsOf(same) != 1) { return 7; }
   return 0;
 }

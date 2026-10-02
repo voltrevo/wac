@@ -41,7 +41,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
-  kLbrace, kQuestion, kSymName, kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq,
+  kLbrace, kQuestion, kSymName, kString, kNull, kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq,
   kCaretEq, kInc,
 } from "./kinds.wac";
 import {
@@ -322,6 +322,11 @@ export i32 errAbsenceOperand() { return 228; }
 export i32 errForInIterable() { return 229; }
 /** `"\{x}"` where `x` has no conversion to text — spec/next ch23. */
 export i32 errNoTextConversion() { return 230; }
+/**
+ * A subtype method named like a parent method that is not `virtual` — which may be neither
+ * overridden nor shadowed (spec/next ch12 `§wac-nonvirtual-final-7a4kz3t`).
+ */
+export i32 errNotVirtual() { return 231; }
 
 /** What `for (… in e)` binds each time round: `e`'s element type, or `typeNone` when it has none. */
 string forInElemOf(C c, Expr iterable) {
@@ -481,6 +486,17 @@ string unarySymbolOf(i32 k) {
 string incrSymbolOf(i32 k, bool prefix) {
   string verb = k == kInc() ? "Increment" : "Decrement";
   return (prefix ? "pre" : "post") + verb;
+}
+
+/** Whether a `match` arm is `null:`, the arm an absent nullable subject takes (spec/next ch25). */
+bool isNullArm(C c, Arm a) { return a.variantTok >= 0 && tokenKind(c, a.variantTok) == kNull(); }
+
+/** Whether a written type is the placeholder `auto` (spec/next ch33). */
+bool isAutoTy(C c, Ty t) {
+  match (t.kind) {
+    Named(tok, typeArgs): { return typeArgs.len() == 0 && tokenText(c, tok) == "auto"; }
+    default: { return false; }
+  }
 }
 
 /** Whether a type is a struct, whose operators are its methods rather than built in. */
@@ -1290,11 +1306,9 @@ export i32 errJsxTagMismatch() { return 68; }
  */
 export i32 errJsxDuplicateAttr() { return 69; }
 /**
- * A tag naming a struct that is not a component — one with no `Node render(const this, Node[] kids)`.
- *
- * A tag that names a struct in scope *is* a component (`design/lang/0005`), so this is what says the
- * struct cannot serve as one. It names the signature rather than saying "not a component", because
- * the fix is almost always to write that method or to correct its shape.
+ * A tag that cannot be called: it names no function in scope, or one that cannot take the children
+ * written between its tags. A tag that is a name *is* a call (spec/next ch23
+ * `§wac-markup-tag-is-function-vv4pvhq`), so this says which half of the call is missing.
  */
 export i32 errJsxNotComponent() { return 70; }
 /**
@@ -1940,7 +1954,9 @@ bool isReferenceType(C c, string t) {
 export bool nullableIntoNonNull(C c, string want, string got) {
   if (want == "" || got == "") { return false; }
   if (!endsWith(got, "?")) { return false; }
-  if (endsWith(want, "?")) { return false; }
+  // **One absence each, peeled together**: a `T??` into a `T?` is a `T?` into a `T` one layer down —
+  // the `T??` has a state the `T?` cannot hold (spec/next ch10 `§wac-nested-not-collapsed-m6cz4gb`).
+  if (endsWith(want, "?")) { return nullableIntoNonNull(c, withoutNull(want), withoutNull(got)); }
   // **`anyref` is already nullable**, so `anyref? into anyref` takes nothing away and the reference
   // accepts it. The old exact-name test reported it, which is the one cell of this family wacc
   // invented — found by putting `anyref?` in the slot grid.
@@ -2537,6 +2553,25 @@ export struct C {
   /** The symbols in scope, as this file spells them (renames applied) — spec/next ch21. */
   string[] symbols;
   i32 symbolCount;
+  /**
+   * Each function parameter's name, beside `funcParamTypes` — what a markup tag's attributes are
+   * matched against (spec/next ch23 `§wac-markup-tag-is-function-vv4pvhq`). Grown as it fills.
+   */
+  string[] funcParamNames;
+  /** `Owner.method` for each method a subtype may override: declared `virtual`, or overriding one. */
+  string[] virtuals;
+
+  void noteVirtual(this, string key) {
+    string[] more = string[].defaulted(this.virtuals.len() + 1);
+    for (i32 i = 0; i < this.virtuals.len(); i++) { more[i] = this.virtuals[i]; }
+    more[this.virtuals.len()] = key;
+    this.virtuals = more;
+  }
+
+  bool isVirtualMethod(const this, string key) {
+    for (i32 i = 0; i < this.virtuals.len(); i++) { if (this.virtuals[i] == key) { return true; } }
+    return false;
+  }
 
   void declareSymbol(this, string name) {
     if (this.symbolCount >= this.symbols.len()) {
@@ -2632,7 +2667,8 @@ export struct C {
              string[].defaulted(decls), string[].defaulted(decls), 0,
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
-             string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0);
+             string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
+             string[](), string[]());
   }
 
   /**
@@ -2885,7 +2921,7 @@ export struct C {
    * slice will not reach.
    */
   void declareFunc(this, string name, string ret, string[] paramTypes, i32 count,
-                   string[] typeParams) {
+                   string[] typeParams, string[] paramNames) {
     for (i32 i = 0; i < this.funcCount; i++) {
       if (this.funcNames[i] == name) { return; }
     }
@@ -2905,6 +2941,14 @@ export struct C {
     }
     for (i32 i = 0; i < count; i++) {
       this.funcParamTypes[this.funcParamTotal + i] = paramTypes[i];
+    }
+    if (this.funcParamTotal + count > this.funcParamNames.len()) {
+      string[] grown = string[].defaulted(this.funcParamTypes.len());
+      for (i32 i = 0; i < this.funcParamNames.len(); i++) { grown[i] = this.funcParamNames[i]; }
+      this.funcParamNames = grown;
+    }
+    for (i32 i = 0; i < count && i < paramNames.len(); i++) {
+      this.funcParamNames[this.funcParamTotal + i] = paramNames[i];
     }
     this.funcParamTotal = this.funcParamTotal + count;
     this.funcCount = this.funcCount + 1;
@@ -4366,9 +4410,11 @@ export bool acceptsLiteral(string want, i32 lit) {
   }
   if (lit == litInteger()) {
     // The packed types are integer types like any other (spec/next ch08 `§wac-packed-ordinary`), so
-    // a literal takes one and `integerLiteralFits` asks the range.
+    // a literal takes one and `integerLiteralFits` asks the range. **And a float**: an integer
+    // spelling is read as one where a float is expected — `f32 d = 2;` is `2.0` (spec/next ch09
+    // `§wac-float-integer-spelled-ur9ttxq`).
     return want == "i32" || want == "i64" || want == "u32" || want == "u64" || want == "i8" ||
-           want == "u8" || want == "i16" || want == "u16";
+           want == "u8" || want == "i16" || want == "u16" || want == "f32" || want == "f64";
   }
   if (lit == litFloat()) { return want == "f32" || want == "f64"; }
   if (lit == litBool()) { return want == "bool"; }
@@ -4511,7 +4557,12 @@ Ty[] typeNameArgs(Ty qual) {
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
     // **A JSX element is core's `Node`**, whatever it contains. `design/lang/0004`.
-    Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
+    // A tag that is a name is a call, so its value is what the function returns (ch23).
+    Jsx(tagTok, closeTok, attrs, kids): {
+      if (tagTok < 0 || tokenKind(c, tagTok) == kString()) { return "Node"; }
+      i32 jfi = c.funcAt(c.renamed(tokenText(c, tagTok)));
+      return jfi < 0 ? typeNone() : c.funcReturns[jfi];
+    }
     Ident(tok): {
       string idName = tokenText(c, tok);
       string held = c.typeOfName(idName);
@@ -4659,7 +4710,12 @@ export string typeOfExpr(C c, Expr e) {
       if (bk == kQuestion()) {
         string clt = typeOfExpr(c, left);
         if (clt == typeNone() || clt == "") { return typeNone(); }
-        if (isNullLiteralExpr(right)) { return clt; }
+        // `?? null` keeps one absence: a `T?` stays itself, and a `T??` collapses to `T?` — its two
+        // absences merged, said out loud (spec/next ch10 `§wac-nested-not-collapsed-m6cz4gb`).
+        if (isNullLiteralExpr(right)) {
+          string once = withoutNull(clt);
+          return endsWith(once, "?") ? once : clt;
+        }
         string cbase = withoutNull(clt);
         return cbase == "" ? typeNone() : cbase;
       }
@@ -5277,52 +5333,110 @@ string naturalTypeOf(C c, Expr e) {
  * error rather than like a syntax special case — and why the *positions* are the value's, not the
  * element's. `design/lang/0004`.
  */
-/**
- * A component's own rules: it is a struct with a `render`, and its attributes are its fields.
- *
- * The field rules are named construction's — every field written, written once, and no name the
- * struct does not have — because the desugaring *is* a named construction, and two sets of rules for
- * one construct would differ the first time either moved. `errNamedField` is the same code
- * `Card { … }` reports, so the message a reader gets does not depend on which spelling they used.
- */
-void checkJsxComponent(C c, string comp, i32 tagTok, JsxAttr[] attrs) {
-  // `Node render(const this, Node[] kids)` is what makes a struct usable as a tag. Checked by shape
-  // rather than by existence: a `render` taking nothing is a likelier mistake than no `render` at all.
-  i32 mi = c.methodAt(comp, "render");
-  bool ok = mi >= 0 && !c.methodStatics[mi] && c.methodReturns[mi] == "Node"
-    && c.methodParamCount[mi] == 1 && c.methodParamTypes[c.methodParamAt[mi]] == "Node[]";
-  if (!ok) {
-    c.reportTok(errJsxNotComponent(), tagTok,
-                comp + " is not a component: it has no `Node render(const this, Node[] kids)`");
+/** One markup attribute's value against the type it fills — the same question an argument is. */
+void checkJsxAttrValue(C c, JsxAttr a, string want) {
+  if (want == typeNone() || want == "") { return; }
+  if (litFamily(c, a.value) != litNone()) {
+    reportLiteral(c, want, a.value, errFieldMismatch(), a.value.line, a.value.col);
     return;
   }
+  string got = typeOfExpr(c, a.value);
+  // A `T?` is not a `T`, and `assignable` says it is — `nullableIntoNonNull` carries that complaint
+  // separately so the two do not both fire.
+  if (nullableIntoNonNull(c, want, got)) {
+    c.report(errNullableToNonNull(), a.value.line, a.value.col);
+  } else if (got != typeNone() && !assignable(c, want, got)) {
+    c.reportWith(errFieldMismatch(), a.value.line, a.value.col,
+                 tokenText(c, a.nameTok) + " is " + want + ", and this is " + got);
+  }
+}
+
+/**
+ * A tag that is a name: the function of that name in scope, called with each attribute as the
+ * parameter of that name and the children as `kids` (spec/next ch23 `§wac-markup-tag-is-function-vv4pvhq`).
+ * A parameter no attribute fills must be `kids` or nullable — absent then, as `html`'s attributes are.
+ */
+void checkJsxCall(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
+  string fname = tokenText(c, tagTok);
+  i32 fi = c.funcAt(c.renamed(fname));
+  if (fi < 0) {
+    // A name this checker knows of but cannot see into — an import from a file it was not handed —
+    // says nothing, as an unknown says nothing everywhere here.
+    if (!nameExists(c, fname) || c.isStruct(fname) || c.isEnum(fname)) {
+      c.reportTok(errJsxNotComponent(), tagTok, "no function " + fname + " in scope — a tag calls one");
+    }
+    for (i32 i = 0; i < attrs.len(); i++) { checkExpr(c, attrs[i].value); }
+    return;
+  }
+  i32 at = c.funcParamAt[fi];
+  i32 count = c.funcParamCount[fi];
   for (i32 i = 0; i < attrs.len(); i++) {
-    if (!c.hasField(comp, tokenText(c, attrs[i].nameTok))) {
-      c.reportTok(errNamedField(), attrs[i].nameTok,
-                  comp + " has no " + tokenText(c, attrs[i].nameTok));
+    string an = tokenText(c, attrs[i].nameTok);
+    i32 pi = -1;
+    for (i32 k = 0; k < count; k++) {
+      if (at + k < c.funcParamNames.len() && c.funcParamNames[at + k] == an) { pi = k; }
+    }
+    if (pi < 0 || an == "kids") {
+      checkExpr(c, attrs[i].value);
+      c.reportTok(errNamedField(), attrs[i].nameTok, fname + " has no parameter " + an);
+      continue;
+    }
+    string want = c.funcParamTypes[at + pi];
+    c.expected = want;
+    checkExpr(c, attrs[i].value);
+    checkJsxAttrValue(c, attrs[i], want);
+  }
+  bool takesKids = false;
+  for (i32 k = 0; k < count; k++) {
+    string pn = at + k < c.funcParamNames.len() ? c.funcParamNames[at + k] : "";
+    string pt = c.funcParamTypes[at + k];
+    if (pn == "kids") {
+      takesKids = true;
+      if (pt != "Node[]" && pt != typeNone() && pt != "") {
+        c.reportTok(errJsxNotComponent(), tagTok, fname + "'s kids is " + pt + ", and children are a Node[]");
+      }
+      continue;
+    }
+    bool given = false;
+    for (i32 i = 0; i < attrs.len(); i++) { if (tokenText(c, attrs[i].nameTok) == pn) { given = true; } }
+    if (!given && withoutNull(pt) == "" && pt != typeNone() && pt != "") {
+      c.reportTok(errNamedField(), tagTok, fname + " needs " + pn);
     }
   }
-  // Every field, because a named construction builds the whole struct. An optional attribute is a
-  // thing named construction does not have either, and fixing it there fixes it here — so the
-  // message names the field that is missing rather than counting, which is the half a reader needs.
-  string at = templateOf(comp);
-  for (i32 hop = 0; hop <= c.structCount; hop++) {
-    if (at == "") { break; }
-    for (i32 fi = 0; fi < c.fieldCount; fi++) {
-      if (c.fieldOwners[fi] != at) { continue; }
-      // A nullable attribute is optional, by the rule named construction follows — which is the same
-      // rule, because this *is* a named construction. `design/lang/0007`.
-      if (withoutNull(c.fieldTypes[fi]) != "") { continue; }
-      bool set = false;
-      for (i32 i = 0; i < attrs.len(); i++) {
-        if (tokenText(c, attrs[i].nameTok) == c.fieldNames[fi]) { set = true; }
-      }
-      if (!set) {
-        c.reportTok(errNamedField(), tagTok, comp + " needs " + c.fieldNames[fi]);
-      }
-    }
-    at = c.parentOf(at);
+  if (!takesKids && kids.len() > 0) {
+    c.reportTok(errJsxNotComponent(), tagTok, fname + " takes no children: it has no kids parameter");
   }
+}
+
+/**
+ * A `{expr}` child, converted through core's `toNode` (spec/next ch23 `§wac-markup-child-tonode-vp842rw`):
+ * a `Node` is itself, a string, a number or a `bool` becomes text, and anything else needs a method
+ * named by core's symbol answering `Node`.
+ */
+void checkJsxChild(C c, Expr kid) {
+  // A number written as a literal has no type to convert from — no fallback (spec/next ch09).
+  i32 lit = litFamily(c, kid);
+  if (lit == litInteger() || lit == litFloat()) {
+    c.report(errUntypedLiteral(), kid.line, kid.col);
+    return;
+  }
+  if (lit != litNone()) { return; }
+  string got = typeOfExpr(c, kid);
+  if (got == typeNone() || got == "" || got == "string" || got == "bool" || numericShape(got)) {
+    return;
+  }
+  // A `Node` is itself — a variant of one too, `Node.Text(…)`.
+  if (!endsWith(got, "?") && assignable(c, "Node", got)) { return; }
+  if (nullableIntoNonNull(c, "Node", got)) {
+    c.report(errNullableToNonNull(), kid.line, kid.col);
+    return;
+  }
+  if (c.isStruct(templateOf(got))) {
+    string key = c.coreMember("toNode");
+    i32 mi = key == "" ? -1 : c.methodAt(templateOf(got), key);
+    if (mi >= 0 && !c.methodStatics[mi] && c.methodReturns[mi] == "Node") { return; }
+  }
+  c.reportWith(errFieldMismatch(), kid.line, kid.col, got + " has no toNode conversion");
 }
 
 void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
@@ -5331,90 +5445,33 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
   // said here, with the name that was written and the one that was expected.
   if (closeTok >= 0 && tagTok >= 0 && tokenText(c, closeTok) != tokenText(c, tagTok)) {
     c.reportTok(errJsxTagMismatch(), closeTok,
-                "</" + tokenText(c, closeTok) + "> closes <" + tokenText(c, tagTok) + ">");
-  }
-  // A fragment has no name, so nothing here is about its tag: only its children are checked, by the
-  // loop below that every element shares. `design/lang/0006`.
-  // **A tag that names a struct in scope is a component**, and then its attributes are that struct's
-  // fields rather than strings: `<Card count={3}/>` is `Card { count: 3 }.render(…)`, so `count` is
-  // checked against the field's declared type. `design/lang/0005`.
-  string comp = tagTok < 0 ? "" : tokenText(c, tagTok);
-  bool isComponent = c.isStruct(comp) && !c.isGeneric(comp);
-  if (isComponent) {
-    checkJsxComponent(c, comp, tagTok, attrs);
+                "</" + tokenText(c, closeTok) + "> does not close <" + tokenText(c, tagTok) + ">");
   }
   for (i32 i = 0; i < attrs.len(); i++) {
     for (i32 j = 0; j < i; j++) {
       if (tokenText(c, attrs[j].nameTok) == tokenText(c, attrs[i].nameTok)) {
-        c.reportTok(errJsxDuplicateAttr(), attrs[i].nameTok,
-                    tokenText(c, attrs[i].nameTok) + " is already set on this element");
+        c.reportTok(errJsxDuplicateAttr(), attrs[i].nameTok, "an attribute is written once");
       }
     }
-    checkExpr(c, attrs[i].value);
-    // A component's attribute answers to its field's type; an element's is a string. Both are the
-    // ordinary assignability question, asked against a different want.
-    if (isComponent) {
-      string want = c.fieldType(comp, tokenText(c, attrs[i].nameTok));
-      if (want == typeNone() || want == "") { continue; }
-      if (litFamily(c, attrs[i].value) != litNone()) {
-        reportLiteral(c, want, attrs[i].value, errFieldMismatch(),
-                      attrs[i].value.line, attrs[i].value.col);
-        continue;
-      }
-      string got = typeOfExpr(c, attrs[i].value);
-      // **The same complaint the named spelling makes**, because this *is* the named spelling: the
-      // paragraph above says the field rules are a construction's, and `assignable` answers true for
-      // `P?` into `P` by design, so a slot asking only `assignable` takes a nullable in silence.
-      // `Card { p: a }` reported it and `<Card p={a} />` did not — one construct written two ways
-      // giving two answers, which is exactly what that paragraph says must not happen.
-      //
-      // **And nothing else could have caught it**: the reference has no JSX — it answers *expected
-      // expression, found '<'* — so no rung-3 differential covers this family. The test for it is
-      // wacc against itself, in `illtyped_test.wac`.
-      if (nullableIntoNonNull(c, want, got)) {
-        c.report(errNullableToNonNull(), attrs[i].value.line, attrs[i].value.col);
-      } else if (got != typeNone() && !assignable(c, want, got)) {
-        c.reportWith(errFieldMismatch(), attrs[i].value.line, attrs[i].value.col,
-                     tokenText(c, attrs[i].nameTok) + " is " + want + ", and this is " + got);
-      }
-      continue;
-    }
-    // **A literal is asked whether it fits, not what it is.** `{7}` has no type until something
-    // wants one — asking `typeOfExpr` gives nothing and the mismatch goes unreported, which is how
-    // `<div id={7}/>` was accepted. Every other position in this file reaches for `reportLiteral`
-    // first for exactly this reason.
-    if (litFamily(c, attrs[i].value) != litNone()) {
-      reportLiteral(c, "string", attrs[i].value, errFieldMismatch(),
-                    attrs[i].value.line, attrs[i].value.col);
-      continue;
-    }
-    string got = typeOfExpr(c, attrs[i].value);
-    // A `string?` is not a `string`, and `assignable` says it is — see `nullableIntoNonNull`, which
-    // carries that complaint separately so the two do not both fire. Without asking it, the one value
-    // that might not be there was the one an attribute accepted, while an `i32` was refused.
-    if (nullableIntoNonNull(c, "string", got)) {
-      c.report(errNullableToNonNull(), attrs[i].value.line, attrs[i].value.col);
-    } else if (got != typeNone() && !assignable(c, "string", got)) {
-      c.reportWith(errFieldMismatch(), attrs[i].value.line, attrs[i].value.col,
-                   "an attribute is a string, and " + tokenText(c, attrs[i].nameTok) +
-                   " is " + got);
+  }
+  // A name is a function in scope; a string, or no tag at all, builds a node itself.
+  if (tagTok >= 0 && tokenKind(c, tagTok) != kString()) {
+    checkJsxCall(c, tagTok, attrs, kids);
+  } else {
+    // A fragment takes no attributes — the parser has nowhere to put one — and an element's are
+    // strings, its `Attr`s' values.
+    for (i32 i = 0; i < attrs.len(); i++) {
+      c.expected = "string";
+      checkExpr(c, attrs[i].value);
+      checkJsxAttrValue(c, attrs[i], "string");
     }
   }
   for (i32 i = 0; i < kids.len(); i++) {
+    c.expected = typeNone();
     checkExpr(c, kids[i]);
-    if (litFamily(c, kids[i]) != litNone()) {
-      reportLiteral(c, "Node", kids[i], errFieldMismatch(), kids[i].line, kids[i].col);
-      continue;
-    }
-    string got = typeOfExpr(c, kids[i]);
-    // The same for a child, which is a `Node` by spec/spec/jsx.md and was taking a `Node?`.
-    if (nullableIntoNonNull(c, "Node", got)) {
-      c.report(errNullableToNonNull(), kids[i].line, kids[i].col);
-    } else if (got != typeNone() && !assignable(c, "Node", got)) {
-      c.reportWith(errFieldMismatch(), kids[i].line, kids[i].col,
-                   "a child is a Node, and this is " + got);
-    }
+    checkJsxChild(c, kids[i]);
   }
+  c.expected = typeNone();
 }
 
 void checkExpr(C c, Expr e) {
@@ -8168,6 +8225,7 @@ string armBindingType(C c, Expr subject, Arm arm, i32 b) {
   // imported function's return is here — nothing about the binding is knowable.
   // `issues/lang/0096`, `spec/cases/0093`.
   string subjT = typeOfExpr(c, subject);
+  if (withoutNull(subjT) != "") { subjT = withoutNull(subjT); }   // the arms see it non-null (ch25)
   if (subjT == typeNone() || subjT == "") { return typeNone(); }
   string subjCore = withoutNull(subjT);
   if (subjCore == "") { subjCore = subjT; }
@@ -9253,14 +9311,16 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       c.report(errBuiltinArity(), call.line, call.col);
       return;
     }
+    // **A rotation's count is a count**, as a shift's amount is: any integer, taken modulo the width
+    // (spec/next ch22 `§wacc-int-bit-methods` rotates a `u32` by an `i32`).
     for (i32 i = 0; i < args.len(); i++) {
       if (litFamily(c, args[i]) != litNone()) {
         reportLiteral(c, recv, args[i], errBuiltinArg(), args[i].line, args[i].col);
         continue;
       }
       string got = typeOfExpr(c, args[i]);
-      if (got != typeNone() && !assignable(c, recv, got)) {
-        c.reportWith(errBuiltinArg(), args[i].line, args[i].col, expectedFound(recv, got));
+      if (got != typeNone() && !isIntegerType(got)) {
+        c.reportWith(errBuiltinArg(), args[i].line, args[i].col, expectedFound("an integer count", got));
       }
     }
     return;
@@ -9827,10 +9887,13 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // A cast to the type it already is does nothing, whichever of the four was written — the checked
   // and truncating spellings are as redundant as the plain one, which the first version of this
   // assumed the opposite of.
-  if (from == to) {
+  // **Except a numeric literal**, which has no type of its own until something gives it one — and
+  // `1 as i32` is how a literal is given one where nothing else does (spec/next ch09, ch33).
+  if (from == to && !isNumericLiteral(c, operand)) {
     c.reportTok(errRedundantCast(), op, "");
     return;
   }
+  if (from == to) { return; }
 
   bool lossless = losslessCast(from, to);
 
@@ -9969,7 +10032,7 @@ void declareStmt(C c, Stmt s) {
       // immutable one — assigning a new string to the local mutates nothing, which is why
       // `string s = SOME_CONST; s = s + "x";` is ordinary and reported seven times before this said
       // "reference" where it meant "writable".
-      string vt = typeOfTy(c, type);
+      string vt = isAutoTy(c, type) ? (init is null ? typeNone() : typeOfExpr(c, init!)) : typeOfTy(c, type);
       string vcore = withoutNull(vt);
       string vbase = vcore == "" ? vt : vcore;
       bool writable = isArrayName(vbase) || c.isStruct(vbase);
@@ -10404,6 +10467,22 @@ void checkStmt(C c, Stmt s, Ty want) {
     }
     // The same question one position over: a declared type, and something that has to fit it.
     Var(type, nameTok, init, isConst): {
+      // `auto x = e;` — the type is the initialiser's, and nothing else gives it one (spec/next ch33
+      // `§wac-auto-local-59gczx4`): a number written as a literal has none to give.
+      if (isAutoTy(c, type)) {
+        if (init is null) {
+          c.reportWith(errUntypedLiteral(), type.line, type.col, "`auto` takes its type from an initialiser");
+          return;
+        }
+        if (isNumericLiteral(c, init!)) {
+          c.reportWith(errUntypedLiteral(), init!.line, init!.col, "unresolved numeric type — write the type");
+          return;
+        }
+        c.expected = typeNone();
+        checkExpr(c, init!);
+        c.setType(tokenText(c, nameTok), typeOfExpr(c, init!));
+        return;
+      }
       string wantVar = typeOfTy(c, type);
       checkVoidNullable(c, wantVar, type);
       if (wantVar == typeNone()) { return; }
@@ -11544,6 +11623,10 @@ export void declareModule(C c, Program prog, string[] only) {
                                           methods[i].isAsync), mps,
                           methods[i].body, ownParamNames(c, methods[i].typeParams));
           if (methods[i].isPrivate) { c.notePrivate(name, tokenText(c, methods[i].nameTok)); }
+          // An override is virtual in turn, so a grandchild may override it again.
+          if (methods[i].isVirtual || methods[i].isOverride) {
+            c.noteVirtual(name + "." + tokenText(c, methods[i].nameTok));
+          }
           c.activeParamCount = savedActive;
         }
       }
@@ -11575,8 +11658,10 @@ export void declareModule(C c, Program prog, string[] only) {
         // the file keeps.
         string fret = typeOfTy(c, returnType);
         if (isAsync && fret != "") { fret = "Pending<" + fret + ">"; }
+        string[] pnames = string[].defaulted(params.len());
+        for (i32 i = 0; i < params.len(); i++) { pnames[i] = tokenText(c, params[i].nameTok); }
         c.declareFunc(c.renamed(tokenText(c, nameTok)), fret, prims,
-                      params.len(), ftps);
+                      params.len(), ftps, pnames);
       }
       default: { }
     }
@@ -11639,11 +11724,27 @@ string enumOfSubject(C c, string t, bool built) {
 void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   string t = typeOfExpr(c, subject);
   if (t == typeNone() || t == "") { return; }
-  // **A nullable subject has no arm for the null.** Asked before the enum question, because
-  // `Shape?` is not an enum name and the check below would bail out on it and say nothing.
+  // **A nullable subject must cover `null`** — with a `null` arm or a `default` — and every other arm
+  // sees it non-null (spec/next ch25 `§wac-match-nullable-subject-zcnasbp`). Asked before the enum
+  // question, because `Shape?` is not an enum name and the check below would bail out on it.
+  bool nullArm = false;
+  bool anyDefault = false;
+  for (i32 i = 0; i < arms.len(); i++) {
+    if (isNullArm(c, arms[i])) { nullArm = true; }
+    if (arms[i].variantTok < 0) { anyDefault = true; }
+  }
   if (withoutNull(t) != "") {
-    c.report(errMatchNullable(), subject.line, subject.col);
-    return;
+    if (!nullArm && !anyDefault) {
+      c.reportWith(errMatchNullable(), subject.line, subject.col, "match does not cover null");
+      return;
+    }
+    t = withoutNull(t);
+  } else if (nullArm) {
+    for (i32 i = 0; i < arms.len(); i++) {
+      if (isNullArm(c, arms[i])) {
+        c.reportTok(errPatternType(), arms[i].variantTok, t + " is never null");
+      }
+    }
   }
   string owner = enumOfSubject(c, t, isVariantConstruction(c, subject));
   // **A subject that is not an enum at all**, which this returned for silently — so `match (someI32)`
@@ -11692,7 +11793,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   // refused while being perfectly correct. A name no enum anywhere declares is wrong under every
   // reading, and that is the half worth reporting.
   for (i32 i = 0; i < arms.len(); i++) {
-    if (arms[i].variantTok <= 0) { continue; }
+    if (arms[i].variantTok <= 0 || isNullArm(c, arms[i])) { continue; }
     string vn = tokenText(c, arms[i].variantTok);
     bool anywhere = false;
     for (i32 k = 0; k < c.variantCount; k++) {
@@ -11707,7 +11808,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   // `case` keyword, both of which are the reference's contract rather than a guess — binding *no*
   // names is how an arm ignores a payload, and it accepts that in silence.
   for (i32 i = 0; i < arms.len(); i++) {
-    if (arms[i].variantTok <= 0) { continue; }
+    if (arms[i].variantTok <= 0 || isNullArm(c, arms[i])) { continue; }
     i32 bound = arms[i].bindingToks.len();
     if (bound == 0) { continue; }
     i32 fields = c.variantArityIn(owner, tokenText(c, arms[i].variantTok));
@@ -11722,7 +11823,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   string[] seen = string[].defaulted(arms.len());
   i32 seenCount = 0;
   for (i32 i = 0; i < arms.len(); i++) {
-    if (arms[i].variantTok <= 0) { continue; }
+    if (arms[i].variantTok <= 0 || isNullArm(c, arms[i])) { continue; }
     string vn = tokenText(c, arms[i].variantTok);
     bool dup = false;
     for (i32 k = 0; k < seenCount; k++) { if (seen[k] == vn) { dup = true; } }
@@ -11937,11 +12038,22 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
     // one without saying so, and a method that says so with nothing to hide. The first is reported at
     // the return type — where a method's declaration starts, as with a missing return — and the
     // second at the keyword itself, which is the part that is wrong.
-    bool hides = parent != "" && c.methodAt(parent, tokenText(c, methods[mi].nameTok)) >= 0;
+    //
+    // **Only a `virtual` method may be overridden** (spec/next ch12): one that is not can be neither
+    // overridden nor shadowed, and one that is must be overridden with `override`.
+    string mname = tokenText(c, methods[mi].nameTok);
+    i32 hidden = parent == "" ? -1 : c.methodAt(parent, mname);
+    // A parent's static is not inherited (`§wac-nostatic-inh-r3kf8wp`), so it hides nothing.
+    bool hides = hidden >= 0 && !c.methodStatics[hidden];
+    bool virtualParent = hides && c.isVirtualMethod(c.methodOwners[hidden] + "." + mname);
     if (methods[mi].isOverride && !hides) {
-      c.reportTok(errOverrideSpurious(), methods[mi].overrideTok, "");
-    } else if (!methods[mi].isOverride && hides) {
-      c.report(errOverrideMissing(), methods[mi].returnType.line, methods[mi].returnType.col);
+      c.reportTok(errOverrideSpurious(), methods[mi].overrideTok, "nothing to override");
+    } else if (hides && !virtualParent) {
+      c.reportWith(errNotVirtual(), methods[mi].returnType.line, methods[mi].returnType.col,
+                   c.methodOwners[hidden] + "." + mname + " is not virtual");
+    } else if (!methods[mi].isOverride && hides && virtualParent) {
+      c.reportWith(errOverrideMissing(), methods[mi].returnType.line, methods[mi].returnType.col,
+                   c.methodOwners[hidden] + "." + mname + " is virtual, and an implementation here must say override");
     }
     c.clearScope();
     // **The function's own body is the outermost scope**, pushed before `this` and the parameters so

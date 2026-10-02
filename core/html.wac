@@ -1,0 +1,315 @@
+// The HTML tag functions — spec/next ch43 `§wac-html-tag-functions-sb9cij9`.
+//
+// `core.html` holds a function per HTML element, each answering `Node.Element` with its own name, one
+// `Attr` per attribute written and its children as `kids`. A tag is a call (ch23), so `<p class="hi">`
+// is `html.p(class: "hi", kids: [])` once `html.p` is imported, and an attribute left out is `null`
+// here and absent from the element.
+//
+// **Declared under their namespaced names directly** — `@"html.div"` — as `operators.wac` declares its
+// symbols: a dotted export name is a namespace member, and core needs no namespace syntax for it.
+//
+// ch43 leaves the element and attribute set open. Every element here takes the same attributes, the
+// common ones; one written by hand per element would be a list nobody has decided yet, and a
+// uniform one is easy to widen when somebody does.
+//
+// Generated once from two lists; edit the lists in the commit that changes them, not one function.
+
+import { Attr, Node } from "./jsx.wac";
+
+/**
+ * An element named `tag`, with an `Attr` for each attribute given — what every `html` function builds.
+ * A namespace member like them, so a module that names no tag carries none of it (`reach.wac`).
+ */
+Node @"html.element"(string tag, Node[] kids, string?[] values) {
+  string[] names = ["class", "id", "style", "title", "lang", "role", "href", "src", "alt", "type", "name", "value", "for", "placeholder", "rel", "target", "width", "height", "action", "method", "content", "charset", "disabled", "checked"];
+  i32 n = 0;
+  for (i32 i = 0; i < values.len(); i++) { if (!(values[i] is null)) { n++; } }
+  Attr[] attrs = Attr[].filled(n, Attr("", ""));
+  i32 at = 0;
+  for (i32 i = 0; i < values.len(); i++) {
+    if (values[i] is null) { continue; }
+    attrs[at] = Attr(names[i], values[i]!);
+    at++;
+  }
+  return Node.Element(tag, attrs, kids);
+}
+
+export Node @"html.a"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("a", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.abbr"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("abbr", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.article"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("article", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.aside"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("aside", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.b"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("b", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.blockquote"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("blockquote", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.body"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("body", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.br"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("br", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.button"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("button", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.caption"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("caption", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.code"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("code", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.dd"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("dd", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.details"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("details", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.div"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("div", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.dl"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("dl", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.dt"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("dt", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.em"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("em", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.fieldset"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("fieldset", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.figcaption"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("figcaption", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.figure"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("figure", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.footer"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("footer", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.form"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("form", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.h1"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("h1", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.h2"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("h2", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.h3"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("h3", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.h4"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("h4", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.h5"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("h5", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.h6"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("h6", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.head"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("head", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.header"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("header", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.hr"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("hr", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.html"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("html", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.i"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("i", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.iframe"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("iframe", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.img"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("img", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.input"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("input", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.label"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("label", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.legend"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("legend", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.li"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("li", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.link"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("link", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.main"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("main", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.meta"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("meta", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.nav"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("nav", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.ol"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("ol", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.optgroup"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("optgroup", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.option"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("option", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.p"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("p", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.pre"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("pre", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.script"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("script", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.section"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("section", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.select"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("select", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.small"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("small", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.span"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("span", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.strong"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("strong", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.style"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("style", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.sub"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("sub", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.summary"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("summary", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.sup"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("sup", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.table"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("table", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.tbody"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("tbody", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.td"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("td", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.textarea"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("textarea", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.tfoot"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("tfoot", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.th"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("th", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.thead"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("thead", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.title"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("title", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.tr"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("tr", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.u"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("u", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.ul"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("ul", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}
+
+export Node @"html.video"(Node[] kids, string? class, string? id, string? style, string? title, string? lang, string? role, string? href, string? src, string? alt, string? @"type", string? name, string? value, string? @"for", string? placeholder, string? rel, string? target, string? width, string? height, string? action, string? method, string? content, string? charset, string? disabled, string? checked) {
+  return @"html.element"("video", kids, [class, id, style, title, lang, role, href, src, alt, @"type", name, value, @"for", placeholder, rel, target, width, height, action, method, content, charset, disabled, checked]);
+}

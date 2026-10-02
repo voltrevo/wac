@@ -1,7 +1,7 @@
 # 0144 — a call through a parent-typed reference runs the parent's method, and the spec does not say
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** the commit adding `virtual` (spec/next ch12, design/lang/0016 step 6)
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
 - **Kind:** missing feature — or a spec gap, which is the decision
@@ -127,3 +127,12 @@ this issue owns it; where they differ, it is ours and it is ordinary work.
 
 **Still undecided and still this issue's:** whether a call through a parent-typed reference dispatches
 statically or dynamically, and the clause in `structs.md` that should say so.
+
+## Resolution
+
+spec/next decided it (ch12 `§wac-virtual-dispatch-a4xhpib`): a method declared **`virtual`** dispatches on
+the receiver's runtime type, and a subtype replaces it with `override`. A method that is not virtual
+can be neither overridden nor shadowed. So both answers above survive, each under its own spelling:
+`throughParent` answers 40 once `Base.fire` says `virtual`, and a plain method keeps the static
+dispatch it always had — with the subtype's same-named method now refused rather than silently
+ignored. The call is a chain of `ref.test`s at the call site, most derived first.

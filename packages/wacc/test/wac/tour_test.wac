@@ -37,7 +37,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { selfTest, double, strOps, strIndex, staticDispatch } from "../../../../spec/tour.wac";
+import { selfTest, double, strOps, strIndex, virtualDispatch } from "../../../../spec/tour.wac";
 
 /**
  * Every claim the tour makes about itself, under wacc.
@@ -68,7 +68,7 @@ export string test_the_answers_the_tour_writes_beside_its_strings(Core core, Cli
   T t = T.create();
   t.eqStr(strOps(), "world", "spec/tour.wac's strOps() says \"world\" beside it");
   t.eqStr(strIndex(), "😀", "spec/tour.wac's strIndex() says \"😀\" beside it");
-  t.eqStr(staticDispatch(), "shape", "spec/tour.wac's staticDispatch() says \"shape\" beside it");
+  t.eqStr(virtualDispatch(), "circle", "spec/tour.wac's virtualDispatch() says \"circle\" beside it");
 
   // **The canary**, and it is not decoration. `selfTest()` is one boolean: a module whose exports
   // were all wrong in the same direction, or a conjunction that had quietly become `true` by

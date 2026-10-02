@@ -542,14 +542,15 @@ export i32 defaults() {
 export struct Shape {
   f64 x;
   f64 y;
-  string name(const this) { return "shape"; }
+  // `virtual` grants a subtype the override, and a call dispatches on the runtime type.
+  virtual string name(const this) { return "shape"; }
   f64 getX(const this) { return this.x; }
 }
 export struct Rect : Shape {
   f64 w;
   f64 h;
-  // A method colliding with a parent's REQUIRES `override`; using `override`
-  // with nothing to override is equally an error.
+  // A parent's `virtual` method is replaced with `override`; using `override` with nothing
+  // to override is an error, and a parent's method that is not virtual cannot be redeclared.
   override string name(const this) { return "rect"; }
   f64 area(const this) { return this.w * this.h; }
 }
@@ -565,14 +566,13 @@ export f64 subtyping() {
   return s.getX() + r.area();             // parent methods work on subtypes
 }
 
-// CRITICAL: `override` is a source-level check only. WasmGC has no virtual
-// dispatch, so which method body runs is decided by the STATIC type at the call
-// site. Assigning a Circle to a Shape variable and calling name() gives
-// "shape". If you want dynamic behaviour you write the dispatch yourself.
-export string staticDispatch() {
+// A `virtual` method dispatches on the RUNTIME type: assigning a Circle to a Shape
+// variable and calling name() gives "circle". A method that is not virtual runs the
+// static type's body — and a subtype may not redeclare it, so nothing can disagree.
+export string virtualDispatch() {
   Circle c = Circle(0.0, 0.0, 5.0);
   Shape s = c;
-  return s.name();                        // -> "shape", NOT "circle"
+  return s.name();                        // -> "circle"
 }
 export string dynamicDispatch(Shape s) {
   // `is` narrows `s` inside the block, so the cast that used to be written here is not only
@@ -987,7 +987,7 @@ export bool selfTest() {
       && construction() == 2 && structAlias() == 99
       && defaults() == 1
       && subtyping() == 201.0
-      && staticDispatch() == "shape"
+      && virtualDispatch() == "circle"
       && dynamicDispatch(Circle(0.0, 0.0, 5.0)) == "circle"
       && dynamicDispatch(Shape(0.0, 0.0)) == "shape"
       && identity()

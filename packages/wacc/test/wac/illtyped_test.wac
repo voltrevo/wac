@@ -50,7 +50,7 @@ string[] names() {
     // for the match — so the identical program was refused with `?:` and accepted with `match`. Every
     // family, because the arm serves them all. `issues/lang/0243a`.
     "a27 int arms -> string", "a28 int arms -> bool", "a29 string arms -> i32",
-    "a30 bool arms -> i32", "a31 int arms -> f64",
+    "a30 bool arms -> i32",
     // A **bare `null`** unwrapped. `null is null` was here too, refused for having no type
     // (`issues/lang/0249a`); spec/next ch10 gives the literal the type `never?` and the test the answer
     // `true` (`§wac-isnull-kxsqi4g`), so only the unwrap is left — there is nothing present to assert.
@@ -98,7 +98,6 @@ string[] programs() {
     "enum E { A, B }\nexport i32 f(E e) { bool z = match (e) { A: 1, default: 2 }; return z ? 1 : 0; }\n",
     "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { A: \"x\", default: \"y\" }; return n; }\n",
     "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { A: true, default: false }; return n; }\n",
-    "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { A: 1, default: 2 }; return d; }\n",
     "export i32 f() { return null!; }\n",
     "export i32 f(i32 x) { return (x < 2) > 0 ? 1 : 0; }\n",
     "export i32 f(i32 x) { return (x < 2) == 1 ? 1 : 0; }\n",
@@ -335,44 +334,43 @@ export string test_a_match_expression_unifies_its_arms_like_a_ternary() {
 export string test_a_jsx_attribute_and_child_refuse_a_nullable() {
   T t = T.create();
   const string HEAD = "import { Attr, Node } from \"core\";\n";
-  i32 attrNull = dumpTypeErrors((HEAD + "export Node f(string? s) { return <div class={s}></div>; }\n").toBytes()).len() / 3;
-  i32 kidNull = dumpTypeErrors((HEAD + "export Node f(Node? kid) { return <div>{kid}</div>; }\n").toBytes()).len() / 3;
+  i32 attrNull = dumpTypeErrors((HEAD + "export Node f(string? s) { return <\"div\" class={s}></\"div\">; }\n").toBytes()).len() / 3;
+  i32 kidNull = dumpTypeErrors((HEAD + "export Node f(Node? kid) { return <\"div\">{kid}</\"div\">; }\n").toBytes()).len() / 3;
   t.isTrue(attrNull > 0, "a nullable string in an attribute was accepted");
   t.isTrue(kidNull > 0, "a nullable Node as a child was accepted");
-  // The slots do check — an `i32` in either is refused — so the rows above are a gap rather than a
-  // position nothing looks at.
-  i32 attrWrong = dumpTypeErrors((HEAD + "export Node f(i32 n) { return <div class={n}></div>; }\n").toBytes()).len() / 3;
-  i32 kidWrong = dumpTypeErrors((HEAD + "export Node f(i32 kid) { return <div>{kid}</div>; }\n").toBytes()).len() / 3;
+  // The slots do check — an `i32` attribute and a child with no `toNode` are refused — so the rows
+  // above are a gap rather than a position nothing looks at. An `i32` child is not one: a number
+  // converts to text through core's `toNode` (spec/next ch23).
+  i32 attrWrong = dumpTypeErrors((HEAD + "export Node f(i32 n) { return <\"div\" class={n}></\"div\">; }\n").toBytes()).len() / 3;
+  i32 kidWrong = dumpTypeErrors((HEAD + "struct P { i32 x; }\nexport Node f(P kid) { return <\"div\">{kid}</\"div\">; }\n").toBytes()).len() / 3;
   t.isTrue(attrWrong > 0, "an i32 attribute was accepted, so this slot checks nothing");
-  t.isTrue(kidWrong > 0, "an i32 child was accepted, so this slot checks nothing");
+  t.isTrue(kidWrong > 0, "a child with no toNode was accepted, so this slot checks nothing");
   // ...and the ordinary programs stay ordinary.
-  i32 attrOk = dumpTypeErrors((HEAD + "export Node f(string s) { return <div class={s}></div>; }\n").toBytes()).len() / 3;
-  i32 kidOk = dumpTypeErrors((HEAD + "export Node f(Node kid) { return <div>{kid}</div>; }\n").toBytes()).len() / 3;
+  i32 attrOk = dumpTypeErrors((HEAD + "export Node f(string s) { return <\"div\" class={s}></\"div\">; }\n").toBytes()).len() / 3;
+  i32 kidOk = dumpTypeErrors((HEAD + "export Node f(Node kid) { return <\"div\">{kid}</\"div\">; }\n").toBytes()).len() / 3;
   t.eqI32(attrOk, 0, "a string attribute was refused");
   t.eqI32(kidOk, 0, "a Node child was refused");
   return t.report();
 }
 
-export string test_a_component_tag_and_its_construction_agree() {
+export string test_a_tag_and_its_call_agree() {
   T t = T.create();
   const string DECL =
     "import { Attr, Node } from \"core\";\n" +
     "struct P { i32 x; }\n" +
-    "struct Card {\n" +
-    "  P p;\n" +
-    "  Node render(const this, Node[] kids) { return <section class=\"card\"></section>; }\n" +
-    "}\n";
-  // A nullable into the non-null field, both ways round.
-  i32 viaJsx = dumpTypeErrors((DECL + "export Node f(P? a) { return <Card p={a} />; }\n").toBytes()).len() / 3;
-  i32 viaNamed = dumpTypeErrors((DECL + "export Node f(P? a) { return Card { p: a }.render(Node[]()); }\n").toBytes()).len() / 3;
-  t.isTrue(viaNamed > 0, "the named construction stopped reporting a nullable field");
-  t.eqI32(viaJsx, viaNamed, "the tag and the construction disagree about the same program");
-  // The control, both ways: a `P` in that field is an ordinary program and neither spelling may
-  // complain. Without it, a rule that refused every component attribute would satisfy the row above.
-  i32 okJsx = dumpTypeErrors((DECL + "export Node f(P a) { return <Card p={a} />; }\n").toBytes()).len() / 3;
-  i32 okNamed = dumpTypeErrors((DECL + "export Node f(P a) { return Card { p: a }.render(Node[]()); }\n").toBytes()).len() / 3;
-  t.eqI32(okJsx, 0, "a well-typed component tag was refused");
-  t.eqI32(okNamed, 0, "a well-typed named construction was refused");
+    "Node card(P p, Node[] kids) { return <\"section\" class=\"card\"></\"section\">; }\n";
+  // A nullable into the non-null parameter, both ways round: a tag is a call (spec/next ch23), so
+  // one program written two ways must get one answer.
+  i32 viaJsx = dumpTypeErrors((DECL + "export Node f(P? a) { return <card p={a} />; }\n").toBytes()).len() / 3;
+  i32 viaCall = dumpTypeErrors((DECL + "export Node f(P? a) { return card(a, Node[]()); }\n").toBytes()).len() / 3;
+  t.isTrue(viaCall > 0, "the call stopped reporting a nullable argument");
+  t.eqI32(viaJsx, viaCall, "the tag and the call disagree about the same program");
+  // The control, both ways: a `P` is an ordinary program and neither spelling may complain. Without
+  // it, a rule that refused every tag attribute would satisfy the row above.
+  i32 okJsx = dumpTypeErrors((DECL + "export Node f(P a) { return <card p={a} />; }\n").toBytes()).len() / 3;
+  i32 okCall = dumpTypeErrors((DECL + "export Node f(P a) { return card(a, Node[]()); }\n").toBytes()).len() / 3;
+  t.eqI32(okJsx, 0, "a well-typed tag was refused");
+  t.eqI32(okCall, 0, "a well-typed call was refused");
   return t.report();
 }
 

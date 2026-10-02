@@ -449,6 +449,11 @@ export struct Method {
    * reason `typeParams` gives: three `bool`s already sit together here.
    */
   bool isPrivate;
+  /**
+   * `virtual` — a subtype may override it, and a call dispatches on the receiver's runtime type
+   * (spec/next ch12 `§wac-virtual-dispatch-a4xhpib`). Appended last, as every field since `typeParams`.
+   */
+  bool isVirtual;
 }
 
 /**

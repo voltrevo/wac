@@ -160,6 +160,7 @@ export string checkMessage(i32 code) {
   if (code == 228) { return "this operand can never be absent"; }
   if (code == 229) { return "`for … in` walks an array or a Vec"; }
   if (code == 230) { return "this value has no conversion to text"; }
+  if (code == 231) { return "this method has the name of a parent method that is not virtual"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -201,7 +202,7 @@ export string checkMessage(i32 code) {
   if (code == 67) { return "a switch cannot have two defaults"; }
   if (code == 68) { return "this closing tag names a different element"; }
   if (code == 69) { return "this attribute is written twice"; }
-  if (code == 70) { return "this tag names a struct that cannot render"; }
+  if (code == 70) { return "this tag cannot be called"; }
   if (code == 71) { return "which instantiation of this generic enum is not known here"; }
   if (code == 72) { return "match requires an enum value"; }
   if (code == 73) { return "nothing here wants a function, so this lambda has no type"; }
@@ -224,6 +225,7 @@ export string checkMessage(i32 code) {
  */
 export string hintFor(i32 code) {
   if (code == 230) { return "give its type a `[toString]` method, or convert it before interpolating"; }
+  if (code == 231) { return "mark the parent's method `virtual` and this one `override`, or give it another name"; }
   if (code == 229) { return "index it with a counting `for`, or put the elements in an array or a Vec"; }
   if (code == 228) { return "`?.` and `??` are for a value that may be absent — read this one directly"; }
   if (code == 1) { return "use a cast if the conversion is meant: `as!` is checked, `as~` takes the nearest value"; }

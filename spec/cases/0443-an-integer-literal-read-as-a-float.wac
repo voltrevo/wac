@@ -1,0 +1,9 @@
+// expect: answers floatContexts = 6.5
+// why: an integer-spelled literal is read as a float where a float is expected — `f32 d = 2;` is `2.0`
+// from: spec/next ch09 §wac-float-integer-spelled-ur9ttxq
+export f64 floatContexts() {
+  f32 a = 1.5;
+  f64 b = 1.5;
+  f32 d = 2;
+  return a as f64 + b + d as f64 + 1.5;
+}

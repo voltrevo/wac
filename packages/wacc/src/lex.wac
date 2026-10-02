@@ -255,6 +255,13 @@ struct Lexer {
 
 void pushToken(Lexed out, i32 kind, i32 start, i32 len, i32 line, i32 col) {
   i32 at = out.tokenCount * tokenStride();
+  // **Grown when full.** The array is sized one token per byte, and an interpolation writes more:
+  // `"\{a}"` is six bytes and seven tokens before its end-of-file, more with each `\{`.
+  if (at + tokenStride() > out.tokens.len()) {
+    i32[] bigger = i32[].filled(out.tokens.len() * 2 + tokenStride() * 16, 0);
+    bigger.copyFrom(out.tokens, 0, 0, out.tokens.len());
+    out.tokens = bigger;
+  }
   out.tokens[at] = kind;
   out.tokens[at + 1] = start;
   out.tokens[at + 2] = len;
@@ -610,6 +617,9 @@ void lexStringBody(Lexer lx, Lexed out, Modes md, i32 start, i32 startLine, i32 
         if (!interpolated) { pushToken(out, kLparen(), start, 1, startLine, startCol); }
         pushToken(out, kString(), start, lx.pos - start, startLine, startCol);
         pushToken(out, kPlus(), lx.pos - 2, 2, startLine, startCol);
+        // **And the expression is a group of its own**, zero-width: `"\{x is null}"` is
+        // `"" + (x is null) + ""`, where without it `+` binds tighter than `is` and takes `x` away.
+        pushToken(out, kLparen(), lx.pos, 0, startLine, startCol);
         md.push(cInterp(), md.mode, 0);
         md.mode = mNormal();
         return;
@@ -1117,8 +1127,9 @@ bool endsExpression(i32 kind) {
  */
 bool startsTag(Lexer lx, i32 offset) {
   i32 c = lx.peek(offset);
-  // `<@"caption">` — a tag name written verbatim is a name like any other.
-  return c == '/' || c == '>' || isIdentStart(c) || (c == '@' && lx.peek(offset + 1) == '"');
+  // `<@"caption">` — a tag name written verbatim is a name like any other — and `<"my-widget">`, an
+  // element by name (spec/next ch23 `§wac-markup-quoted-tag-3dnrvxj`).
+  return c == '/' || c == '>' || c == '"' || isIdentStart(c) || (c == '@' && lx.peek(offset + 1) == '"');
 }
 
 /**
@@ -1261,6 +1272,15 @@ export Lexed lex(u8[] src) {
       lexNumber(lx, out, startLine, startCol);
     } else if (c == '@' && lx.peek(1) == '"') {
       lexVerbatimName(lx, out, startLine, startCol);
+    } else if (isIdentStart(c) && md.mode == mTag()) {
+      // **Inside a tag a name is written as in HTML**: it runs through hyphens, and no word is a
+      // keyword — `data-size=` and `for=` are attribute names (spec/next ch23
+      // `§wac-markup-attr-verbatim-param-yd3farv`).
+      i32 start = lx.pos;
+      while (!lx.atEnd() && (isIdentPart(lx.peek(0)) || (lx.peek(0) == '-' && isIdentPart(lx.peek(1))))) {
+        lx.advance();
+      }
+      pushToken(out, kIdent(), start, lx.pos - start, startLine, startCol);
     } else if (isIdentStart(c)) {
       i32 start = lx.pos;
       while (!lx.atEnd() && isIdentPart(lx.peek(0))) { lx.advance(); }
@@ -1280,7 +1300,9 @@ export Lexed lex(u8[] src) {
         fail(out, errUnexpectedChar(), startLine, startCol);
       } else if (kind == kRbrace() && md.topKind() == cInterp() && md.topNum() == 0) {
         // **The `}` is the other `+`**, and the literal resumes at it: the next segment's span
-        // starts on this byte, so `}bc"` is one contiguous run of the file.
+        // starts on this byte, so `}bc"` is one contiguous run of the file. The expression's group
+        // closes first, zero-width.
+        pushToken(out, kRparen(), start, 0, startLine, startCol);
         pushToken(out, kPlus(), start, 1, startLine, startCol);
         md.mode = md.topRet();
         md.pop();

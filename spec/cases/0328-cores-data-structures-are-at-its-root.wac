@@ -9,7 +9,8 @@ export i32 f() {
   v.push(5);
   Map<string, i32> m = Map.create(hashString, stringEq);
   m.set("three", 3);
-  Option<i32> got = m.get("three");
+  i32? got = m.get("three");
+  Option<i32> none = Option.None;
   Result<i32, string> r = Result.Ok(v.get(0) + v.get(1));
-  return got.orElse(0) + r.orElse(0);
+  return (got ?? 0) + r.orElse(0) + none.orElse(0);
 }

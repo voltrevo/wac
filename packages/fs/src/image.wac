@@ -299,7 +299,7 @@ void dumpNode(Buf out, Fs fs, i32 node, string indent, string name) {
   if (!n.isDir) { return; }
   string[] names = sortedNames(n);
   for (i32 i = 0; i < names.len(); i++) {
-    dumpNode(out, fs, n.entries.get(names[i]).orElse(-1), indent + "  ", names[i]);
+    dumpNode(out, fs, n.entries.getOr(names[i], -1), indent + "  ", names[i]);
   }
 }
 
@@ -320,7 +320,7 @@ void putNode(Buf out, Fs fs, i32 node) {
   out.pushU32(names.len() as@ u32);
   for (i32 i = 0; i < names.len(); i++) {
     putString(out, names[i]);
-    putNode(out, fs, n.entries.get(names[i]).orElse(-1));
+    putNode(out, fs, n.entries.getOr(names[i], -1));
   }
 }
 

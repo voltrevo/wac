@@ -1,0 +1,37 @@
+// expect: answers run = 0
+// why: an attribute left out fills a nullable parameter with `null`, as core's html functions take every attribute
+// from: spec/next ch23, ch43 §wac-html-tag-functions-sb9cij9
+import { Attr, Node, html.p } from "core";
+
+/** `note` is optional, `title` is not. */
+Node card(string title, string? note, Node[] kids) {
+  return <p class={title}>{note is null ? Node.Text("") : Node.Text(note!)}</p>;
+}
+
+string textOf(Node n) {
+  match (n) {
+    Text(t): { return t; }
+    Fragment(kids): { return ""; }
+    Element(tag, attrs, kids): {
+      string out = "";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + textOf(kids[i]); }
+      return out;
+    }
+  }
+}
+
+i32 attrCount(Node n) {
+  match (n) {
+    Element(tag, attrs, kids): { return attrs.len(); }
+    Text(t): { return -1; }
+    Fragment(kids): { return -1; }
+  }
+}
+
+export i32 run() {
+  if (textOf(<card title="x"/>) != "") { return 1; }
+  if (textOf(<card title="x" note="n"/>) != "n") { return 2; }
+  // `html.p` takes every attribute as nullable, and one left out is absent from the element.
+  if (attrCount(<card title="x"/>) != 1) { return 3; }
+  return 0;
+}

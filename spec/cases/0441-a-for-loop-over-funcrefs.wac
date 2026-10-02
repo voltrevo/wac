@@ -1,0 +1,13 @@
+// expect: answers throughArray = 30
+// why: a loop variable may have any type, a funcref's included — function values go everywhere values go
+// from: spec/next ch20, ch25 §wac-for-in-qkcbmxf
+i32 double(i32 x) { return x * 2; }
+i32 square(i32 x) { return x * x; }
+i32 negate(i32 x) { return -x; }
+
+export i32 throughArray() {
+  i32 total = 0;
+  fn<i32(i32)>[] transforms = [double, square, negate];
+  for (fn<i32(i32)> t in transforms) { total += t(5); }
+  return total;
+}

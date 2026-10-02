@@ -15,8 +15,6 @@
 // `withCapacity` asks for one.
 
 
-import { Option } from "./option.wac";
-
 export struct Vec<T> {
   T[] data;
   // A default, so `Vec<i32> v;` is an empty Vec (spec/next ch38 `§wac-vec-create-8zprdms`) — the
@@ -61,10 +59,10 @@ export struct Vec<T> {
     return this.data[i];
   }
 
-  /** Element `i`, or None rather than a trap. */
-  Option<T> at(const this, i32 i) {
-    if (i < 0 || i >= this.n) { return Option.None; }
-    return Option.Some(this.data[i]);
+  /** Element `i`, or `null` rather than a trap (spec/next ch38 `§wac-vec-at-3dehker`). */
+  T? at(const this, i32 i) {
+    if (i < 0 || i >= this.n) { return null; }
+    return this.data[i];
   }
 
   void set(this, i32 i, T v) {
@@ -85,22 +83,27 @@ export struct Vec<T> {
     this.n++;
   }
 
-  /** The last element, removed. None if empty. */
-  Option<T> pop(this) {
-    if (this.n == 0) { return Option.None; }
+  /**
+   * The last element, removed, or `null` when there is none (spec/next ch38 `§wac-vec-pop-yszir66`).
+   * At `T = U?` that is a `U??`, so an empty `Vec` and a popped `null` stay apart.
+   */
+  T? pop(this) {
+    if (this.n == 0) { return null; }
     this.n--;
     // The slot keeps its reference: there is no value to overwrite it with, so a popped
     // element stays reachable from the backing array until something else is pushed over
     // it. It matters only if T is large and the Vec is long-lived.
-    return Option.Some(this.data[this.n]);
+    return this.data[this.n];
   }
 
-  Option<T> last(const this) {
-    return this.n == 0 ? Option.None : Option.Some(this.data[this.n - 1]);
+  T? last(const this) {
+    if (this.n == 0) { return null; }
+    return this.data[this.n - 1];
   }
 
-  Option<T> first(const this) {
-    return this.n == 0 ? Option.None : Option.Some(this.data[0]);
+  T? first(const this) {
+    if (this.n == 0) { return null; }
+    return this.data[0];
   }
 
   /**

@@ -71,7 +71,7 @@ has been fixed and why.
 | [0156](open/0156-the-specs-parse-messages-match-neither-compiler.md) | the spec quotes `expected ';'` as a parse message, wacc says `unexpected token` with it in the annotation, the reference says a third thing — and the differentials compare positions, not text | diagnostic | wrong answer |
 | [0153](open/0153-a-build-cost-two-emits-and-five-front-ends-and-what-is-left.md) | a build cost two emits and five front ends; what is left after fixing that | performance | no error |
 | [0151](closed/0151-the-reference-refuses-an-identity-test-the-spec-allows.md) | the reference refuses an identity test the spec allows, so a sweep row cannot be closed | bug | compile error |
-| [0144](open/0144-a-call-through-a-parent-typed-reference-runs-the-parents-method.md) | a call through a parent-typed reference runs the parent's method, and the spec does not say | missing feature | wrong answer |
+| [0144](closed/0144-a-call-through-a-parent-typed-reference-runs-the-parents-method.md) | a call through a parent-typed reference runs the parent's method, and the spec does not say | missing feature | wrong answer |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |
 | [0075](open/0075-the-website-undersells-determinism-and-virtual-time.md) | the website undersells determinism and virtual time — **wants an operator decision** | missing feature | not implemented |
 | [0074](open/0074-values-with-no-identity-tuples-or-value-structs.md) | values with no identity: tuples, or value structs. **Widened 2026-09-05 to array elements**, which is a fourth member of its family and not a fourth issue: a WasmGC array of a struct is an array of *references* — `emit.wac` emits `0x63`, the nullable-reference form, for a struct element type — so the same *identity it does not need* costs an allocation per element. `packages/zstd` pays it by packing three fields into an `i32` by hand and `packages/wacc/src/lex.wac` by returning a flat `i32[]` of five lanes with seven accessors, which is 40,000 tokens' worth on a 4,000-line file. The two differ only in whether the fields fit a word, and this issue's **declaration** reaches both where its lowering reaches neither — `value struct` gives registers, a packed word, or parallel lanes from one property | missing feature | not implemented |
@@ -86,7 +86,7 @@ has been fixed and why.
 
 ## Closed
 
-273 issues, 221 closed.
+273 issues, 222 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

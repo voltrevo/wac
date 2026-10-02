@@ -67,7 +67,16 @@ export i32[] dumpParseErrors(u8[] src) {
   return out;
 }
 
-export i32[] dumpErrors(u8[] src) {
+/**
+ * A lone source with its namespaces lowered — what a build parses (spec/next ch03). A file naming
+ * `html.li` or `[operators.add]` does not parse until this has made them verbatim names.
+ */
+u8[] loweredOne(u8[] src) {
+  return loweredSources(onePath(), oneSource(src))[0].toBytes();
+}
+
+export i32[] dumpErrors(u8[] raw) {
+  u8[] src = loweredOne(raw);
   Lexed lexed = lex(src);
   P p = P.create(src, lexed);
   parseProgram(p);
@@ -106,7 +115,8 @@ export string checkCodeMessage(i32 code) {
  * The same shape `dumpErrors` returns for the parser, and for the same reason: our side reports
  * numeric codes and the reference reports English, so the comparison is by code, order and position.
  */
-export i32[] dumpTypeErrors(u8[] src) {
+export i32[] dumpTypeErrors(u8[] raw) {
+  u8[] src = loweredOne(raw);
   Lexed lexed = lex(src);
   P p = P.create(src, lexed);
   Program prog = parseProgram(p);

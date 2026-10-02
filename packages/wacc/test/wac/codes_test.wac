@@ -91,7 +91,10 @@ string[] checkWhat() {
     "a match on something that is not an enum",
     "an arm binding more names than the variant has",
     "an integer literal too wide for a packed type",
-    "a cast between a number and a reference"
+    "a cast between a number and a reference",
+    "an override of nothing",
+    "a parent's virtual method implemented without `override`",
+    "a parent's method that is not virtual, redeclared"
   ];
 }
 string[] checkSrc() {
@@ -104,16 +107,19 @@ string[] checkSrc() {
     "enum E { A, C(i32 p) } export i32 f(E e) { " +
     "return match (e) { A: 0, C(p, q): q }; }",
     "export u8 f() { return 256; }",
-    "export i32 f() { i32 n = 1; string s = n as string; return s.len(); }"
+    "export i32 f() { i32 n = 1; string s = n as string; return s.len(); }",
+    "struct B { i32 v; } struct D : B { override i32 m(const this) { return 1; } }",
+    "struct B { virtual i32 m(const this) { return 0; } } struct D : B { i32 m(const this) { return 1; } }",
+    "struct B { i32 m(const this) { return 0; } } struct D : B { i32 m(const this) { return 1; } }"
   ];
 }
 // errUndefinedName, errConstVariable, errCallArity, errNoSuchField, errMatchNotEnum, errArmBindArity,
-// errFloatRange, errWrongCastOp
+// errFloatRange, errWrongCastOp, errOverrideSpurious, errOverrideMissing, errNotVirtual
 //
 // The packed row was `errPackedPosition` while a packed type could be nothing but an element. spec/next
 // ch08 makes it an integer like any other (`§wac-packed-ordinary-kawnzqm`), so what a packed type can
 // still get wrong is a literal that does not fit it — the range code every integer type shares.
-i32[] checkCode() { return [35, 10, 32, 39, 72, 76, 50, 16] as i32[]; }
+i32[] checkCode() { return [35, 10, 32, 39, 72, 76, 50, 16, 22, 21, 231] as i32[]; }
 
 export string test_each_lexer_diagnostic_carries_the_code_it_is_supposed_to() {
   T t = T.create();

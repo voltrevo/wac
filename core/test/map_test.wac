@@ -28,17 +28,17 @@ export string test_basics() {
   Map<string, i32> m = Map.create(hashString, stringEq);
   t.eqI32(m.len(), 0, "starts empty");
   t.isTrue(m.isEmpty(), "isEmpty");
-  t.isTrue(m.get("nothing").isNone(), "a lookup in an empty map");
+  t.isTrue(m.get("nothing") is null, "a lookup in an empty map");
 
   t.isTrue(!m.set("one", 1), "set returns false for a new key");
   t.isTrue(!m.set("two", 2), "and again");
   t.eqI32(m.len(), 2, "length counts entries");
-  t.eqI32(m.get("one").orElse(-1), 1, "get finds a value");
+  t.eqI32(m.get("one") ?? -1, 1, "get finds a value");
   t.eqI32(m.getOr("two", -1), 2, "getOr too");
   t.eqI32(m.getOr("three", -1), -1, "and gives the default when absent");
   t.isTrue(m.has("one"), "has");
   t.isTrue(!m.has("three"), "and not for an absent key");
-  t.isTrue(m.get("three").isNone(), "get is None when absent");
+  t.isTrue(m.get("three") is null, "get is null when absent");
 
   t.isTrue(m.set("one", 11), "set returns true when overwriting");
   t.eqI32(m.len(), 2, "overwriting does not change the length");
@@ -351,14 +351,14 @@ string differential(fn<i32(i32)> hash, i32 keySpace, i32 steps, u32 seed0) {
     // Every key in the space, every step: with a small space that is cheap and it catches a
     // wrong answer at the operation that caused it.
     for (i32 probe = 0; probe < keySpace; probe++) {
-      Option<i32> got = m.get(probe);
+      i32? got = m.get(probe);
       Option<i32> want = naive.get(probe);
-      if (got.isSome() != want.isSome()) {
+      if ((got is not null) != want.isSome()) {
         t.failNow("presence disagreed at step " + itoaLocal(step) +
                   " for key " + itoaLocal(probe));
         return t.report();
       }
-      if (got.orElse(0) != want.orElse(0)) {
+      if ((got ?? 0) != want.orElse(0)) {
         t.failNow("value disagreed at step " + itoaLocal(step) +
                   " for key " + itoaLocal(probe));
         return t.report();

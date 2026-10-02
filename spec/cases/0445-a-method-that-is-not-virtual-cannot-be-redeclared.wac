@@ -1,0 +1,5 @@
+// expect: refused
+// why: a subtype may not declare a method with the name of a parent method that is not `virtual` — one object answering two ways is what shadowing would allow
+// from: spec/next ch12 §wac-nonvirtual-final-7a4kz3t
+struct Base { i32 fire(const this) { return 0; } }
+export struct Kid : Base { i32 fire(const this) { return 40; } }

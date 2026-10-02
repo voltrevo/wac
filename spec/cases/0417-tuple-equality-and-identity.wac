@@ -1,6 +1,4 @@
-// expect: answers membersEqual = true
-// expect: answers sameObject = false
-// expect: answers nested = true
+// expect: answers run = true false true
 // why: `==` on two tuples compares their members in order with `==`, strings and nested tuples included; `is` compares objects
 // from: spec/next ch14 §wac-tuple-equality-9cjg4r6
 export bool membersEqual() {
@@ -17,3 +15,5 @@ export bool nested() {
   ((i32, string), bool) a = ((1, "x"), true);
   return a == ((1, "x"), true) && a != ((1, "y"), true);
 }
+
+export string run() { return "\{membersEqual()} \{sameObject()} \{nested()}"; }

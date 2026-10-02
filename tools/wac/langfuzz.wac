@@ -242,7 +242,7 @@ export struct Env {
   Map<string, i64> at;
 
   Env create() { return Env(Map.create(hashString, stringEq)); }
-  i64 get(const this, string k) { return this.at.get(k).orElse(0); }
+  i64 get(const this, string k) { return this.at.getOr(k, 0); }
   void set(this, string k, i64 v) { this.at.set(k, v); }
   void remove(this, string k) { this.at.remove(k); }
 }
@@ -971,8 +971,8 @@ export struct Gen {
     this.indent = savedIndent;
     this.depth = this.depth - 1;
     while (this.locals.len() > mark) {
-      Option<Local> gone = this.locals.pop();
-      if (gone.isSome()) { this.env.remove(gone.unwrap().name); }
+      Local? gone = this.locals.pop();
+      if (gone is not null) { this.env.remove(gone!.name); }
     }
   }
 

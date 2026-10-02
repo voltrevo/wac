@@ -1,0 +1,13 @@
+// expect: refused
+// why: a tag that is a name is a call, so it must name a function in scope — a struct is not one
+// from: spec/next ch23 §wac-markup-tag-is-function-vv4pvhq
+import { Attr, Node } from "core";
+
+struct Card {
+  string title;
+}
+
+export i32 run() {
+  Node n = <Card title="x"/>;
+  return 0;
+}

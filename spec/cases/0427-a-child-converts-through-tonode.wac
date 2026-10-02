@@ -1,0 +1,19 @@
+// expect: answers childCount = 4
+// why: a `{expr}` child converts through core's toNode — a string becomes text, a node stays itself, and a struct calls its method
+// from: spec/next ch23 §wac-markup-child-tonode-vp842rw
+import { Node, toNode, html.div } from "core";
+
+struct Label {
+  string text;
+  Node [toNode](const this) { return Node.Text(this.text); }
+}
+
+export i32 childCount() {
+  Label label = Label("hello");
+  Node existing = Node.Text("already a node");
+  Node n = <div>text {label}{"hello"}{existing}</div>;
+  return match (n) {
+    Element(tag, attrs, kids): kids.len(),
+    default: -1,
+  };
+}

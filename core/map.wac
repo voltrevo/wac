@@ -16,8 +16,6 @@
 // not tombstones, so a table that is filled and emptied repeatedly does not degrade.
 
 
-import { Option } from "./option.wac";
-
 /**
  * One slot's contents.
  *
@@ -92,11 +90,11 @@ export struct Map<K, V> {
     return -1;
   }
 
-  /** The value for `k`, or None. */
-  Option<V> get(const this, K k) {
+  /** The value for `k`, or `null` (spec/next ch39 `§wac-map-get-nww5rzz`). */
+  V? get(const this, K k) {
     MapEntry<K, V>? e = this.slots[this.slotFor(k)];
-    if (e is null) { return Option.None; }
-    return Option.Some(e!.val);
+    if (e is null) { return null; }
+    return e!.val;
   }
 
   /** The value for `k`, or `d` — for when absence has an obvious answer. */

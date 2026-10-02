@@ -298,12 +298,11 @@ string[] sources() {
     // did — a child into a nullable parent was refused in all six positions it can be written, and a
     // generic child into its parent was refused outright, both while the reference accepted, emitted
     // and ran them. Those are fixed; these are here so the *answers* stay compared, which acceptance
-    // never showed. `override` through a parent-typed slot is included deliberately: it answers the
-    // parent's method today, `issues/lang/0144` is the open question about whether it should, and this
-    // is what makes a change to that visible rather than silent.
+    // never showed. `override` through a parent-typed slot is included deliberately: a `virtual`
+    // method dispatches on the runtime type (spec/next ch12, closing `issues/lang/0144`).
     "struct S { i32 v; i32 mine(const this) { return this.v; } } struct K : S { i32 w; } export i32 f() { S s = K(3, 4); return s.v; }",
     "struct S { i32 v; i32 mine(const this) { return this.v; } } struct K : S { i32 w; } export i32 f() { S? s = K(3, 4); return s is null ? 0 : s!.v; }",
-    "struct S { i32 v; i32 mine(const this) { return this.v; } } struct KO : S { i32 w; override i32 mine(const this) { return this.w; } } export i32 f() { KO k = KO(3, 4); return k.mine(); } export i32 g() { S s = KO(3, 4); return s.mine(); }",
+    "struct S { i32 v; virtual i32 mine(const this) { return this.v; } } struct KO : S { i32 w; override i32 mine(const this) { return this.w; } } export i32 f() { KO k = KO(3, 4); return k.mine(); } export i32 g() { S s = KO(3, 4); return s.mine(); }",
     "struct S { i32 v; i32 mine(const this) { return this.v; } } struct G<T> : S { T g; } export i32 f() { S s = G<i32>(3, 4); return s.v; } export i32 g() { G<i32> x = G<i32>(3, 4); return x.g; }",
     "struct Bx<T> { T v; T get(const this) { return this.v; } } export i32 f() { Bx<i32> b = Bx<i32>(7); return b.get(); } export i32 g() { Bx<string> b = Bx<string>(\"abc\"); return b.get().len(); }",
     "struct S { i32 v; i32 mine(const this) { return this.v; } } struct K : S { i32 w; } export i32 f() { S[] a = S[].filled(2, S(0)); a[1] = K(3, 4); return a[1].v; }",

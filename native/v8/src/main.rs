@@ -1746,6 +1746,13 @@ fn coerce_arg<'s>(
             "string" | "u8[]" | "i32[]" | "u32[]" | "i64[]" | "u64[]" | "f64[]" => {
                 coerce_arg(scope, text, inner)
             }
+            // **A nullable number is its box**, which only the module can build: the value is read
+            // as the number and handed to `$bind$box_<t>_new`.
+            "i32" | "u32" | "i64" | "u64" | "f32" | "f64" | "bool" | "i8" | "u8" | "i16" | "u16" => {
+                let v = coerce_arg(scope, text, inner)?;
+                call_bind(scope, &format!("$bind$box_{inner}_new"), &[v])
+                    .ok_or_else(|| format!("this module cannot take a `{ty}` argument"))
+            }
             _ => Err(format!(
                 "a present `{ty}` cannot be written on a command line — only `null`, or a value \
                  of a nullable string or array"
@@ -1762,24 +1769,24 @@ fn coerce_arg<'s>(
             "false" | "0" => Ok(v8::Boolean::new(scope, false).into()),
             _ => Err(format!("`{text}` is not a bool — write true, false, 1 or 0")),
         },
-        "i64" => text
-            .parse::<i64>()
-            .map(|n| v8::BigInt::new_from_i64(scope, n).into())
-            .map_err(|_| format!("`{text}` is not an {ty}")),
+        "i64" => wac_int(text)
+            .filter(|n| *n >= i64::MIN as i128 && *n <= u64::MAX as i128)
+            .map(|n| v8::BigInt::new_from_i64(scope, n as i64).into())
+            .ok_or_else(|| format!("`{text}` is not an {ty}")),
         // **A `u64` takes all of its range**: one above `i64`'s maximum is a `u64`, and it crosses as
         // the `i64` with the same bits — which is what the wasm parameter holds.
-        "u64" => text
-            .parse::<u64>()
-            .map(|n| v8::BigInt::new_from_u64(scope, n).into())
-            .map_err(|_| format!("`{text}` is not a {ty}")),
+        "u64" => wac_int(text)
+            .filter(|n| *n >= 0 && *n <= u64::MAX as i128)
+            .map(|n| v8::BigInt::new_from_u64(scope, n as u64).into())
+            .ok_or_else(|| format!("`{text}` is not a {ty}")),
         "f64" | "f32" => text
             .parse::<f64>()
             .map(|n| v8::Number::new(scope, n).into())
             .map_err(|_| format!("`{text}` is not an {ty}")),
-        "i32" | "u32" | "i8" | "u8" | "i16" | "u16" => text
-            .parse::<i64>()
+        "i32" | "u32" | "i8" | "u8" | "i16" | "u16" => wac_int(text)
+            .filter(|n| *n >= i32::MIN as i128 && *n <= u32::MAX as i128)
             .map(|n| v8::Number::new(scope, n as f64).into())
-            .map_err(|_| format!("`{text}` is not an {ty}")),
+            .ok_or_else(|| format!("`{text}` is not an {ty}")),
         "u8[]" => {
             let bytes = parse_list(text)?
                 .iter()
@@ -1899,6 +1906,19 @@ fn print_returned(
             } else {
                 print_returned(scope, v, &ret[..ret.len() - 1])
             }
+        }
+        // **A nullable number prints as what its box holds**, read back through the module's own
+        // `$bind$box_<t>_get` — the box is a wasm struct, which V8 cannot open.
+        "i32?" | "u32?" | "i64?" | "u64?" | "f32?" | "f64?" | "bool?" | "i8?" | "u8?" | "i16?" | "u16?" => {
+            if v.is_null() || v.is_undefined() {
+                println!("null");
+                return Ok(());
+            }
+            let inner = &ret[..ret.len() - 1];
+            let held = v8::Local::new(scope, v);
+            let got = call_bind(scope, &format!("$bind$box_{inner}_get"), &[held])
+                .ok_or_else(|| format!("this module cannot hand back a `{ret}`"))?;
+            print_returned(scope, got, inner)
         }
         _ => {
             println!("{}", v.to_rust_string_lossy(scope));
@@ -4904,6 +4924,37 @@ fn build_names<'s>(
 }
 
 /// A wac `string` from Rust, through the staging buffer.
+/**
+ * An integer argument as wac writes one: decimal or `0x` hex, a sign, `_` between digits. A hex
+ * literal is a bit pattern (spec/next ch09), so `0xFFFFFFFF` is a `u32`'s whole range and an `i32`'s
+ * `-1` alike — the wasm parameter takes the bits either way.
+ */
+fn wac_int(text: &str) -> Option<i128> {
+    let (neg, body) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let clean: String = body.chars().filter(|c| *c != '_').collect();
+    let n = if let Some(hex) = clean.strip_prefix("0x").or_else(|| clean.strip_prefix("0X")) {
+        i128::from_str_radix(hex, 16).ok()?
+    } else {
+        clean.parse::<i128>().ok()?
+    };
+    Some(if neg { -n } else { n })
+}
+
+/** Call one of the module's `$bind$` helpers by name, through the instance this process runs. */
+fn call_bind<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    name: &str,
+    args: &[v8::Local<'s, v8::Value>],
+) -> Option<v8::Local<'s, v8::Value>> {
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let f = get_export(scope, exports, name)?;
+    f.call(scope, exports.into(), args)
+}
+
 fn write_string<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     text: &str,

@@ -1,0 +1,8 @@
+// expect: answers run = 15 15 9223372036854775808
+// why: a rotation's count is a count, as a shift's amount is: any integer, taken modulo the receiver's width
+// from: spec/next ch22 §wacc-int-bit-methods
+export u32 rotateLeft(u32 x, i32 n) { return x.rotateLeft(n); }
+export u32 rotateRight(u32 x, i32 n) { return x.rotateRight(n); }
+export u64 rot64(u64 x, i32 n) { return x.rotateLeft(n); }
+
+export string run() { return "\{rotateLeft(0x00F0, 28)} \{rotateRight(0x00F0, 4)} \{rot64(1, 63)}"; }

@@ -1,5 +1,4 @@
-// expect: answers post = 56
-// expect: answers pre = 66
+// expect: answers run = 56 66
 // why: `a++` calls `postIncrement` and `++a` calls `preIncrement`, each answering what its method returns
 // from: spec/next ch22
 import { operators } from "core";
@@ -10,3 +9,5 @@ struct Counter {
 }
 export i32 post() { Counter a = Counter(5); Counter old = a++; return old.value * 10 + a.value; }
 export i32 pre() { Counter a = Counter(5); Counter now = ++a; return now.value * 10 + a.value; }
+
+export string run() { return "\{post()} \{pre()}"; }

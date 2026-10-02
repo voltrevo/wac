@@ -6,6 +6,6 @@ import { Attr, Node } from "core";
 
 export i32 run() {
   string who = "w";
-  Node n = <div a="x\{who}y"/>;
+  Node n = <"div" a="x\{who}y"/>;
   return 0;
 }

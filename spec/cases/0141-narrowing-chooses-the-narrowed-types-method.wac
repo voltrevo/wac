@@ -4,7 +4,7 @@
 
 struct Shape {
   i32 tag;
-  i32 getTag(const this) { return this.tag; }
+  virtual i32 getTag(const this) { return this.tag; }
 }
 
 struct Circle : Shape {

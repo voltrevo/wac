@@ -157,7 +157,7 @@ string[] expressionSources() {
     " B: 0 }; }",
     "enum E { A(i32 v), B } E h(i32 n) { return E.B; } " +
     "void f(i32 p, f64 q) { bool r = A(v) matches h(" + SUB + "); }",
-    "import { Attr, Node } from core; void f(i32 p, f64 q) { Node n = <div id={itoa(" + SUB +
+    "import { Attr, Node } from \"core\"; void f(i32 p, f64 q) { Node n = <\"div\" id={itoa(" + SUB +
     ")}/>; } string itoa(i32 v) { return \"\"; }",
     "", "", "", "", "", "", "",
     "",                                   // TypeName — a leaf here; see the label list above

@@ -1,0 +1,11 @@
+// expect: refused
+// why: a match on a nullable subject with neither a `null` arm nor a `default` leaves the absent case uncovered
+// from: spec/next ch25 §wac-match-nullable-subject-zcnasbp
+enum Shape { Circle(f64 r), Square(f64 side) }
+
+export f64 f(Shape? s) {
+  return match (s) {
+    Circle(r):  r,
+    Square(sd): sd,
+  };
+}

@@ -1,7 +1,7 @@
 // expect: emits
 // why: some cases are about a program being accepted at all, with no single value to ask for
 struct Shape { i32 tag;
-  i32 area(const this) { return 0; }
+  virtual i32 area(const this) { return 0; }
 }
 struct Square : Shape { i32 side;
   override i32 area(const this) { return this.side * this.side; }

@@ -589,14 +589,14 @@ export struct Shell {
     out.pid = this.pid;
     for (i32 i = 0; i < this.varNames.len(); i++) {
       string name = this.varNames.get(i);
-      Option<string> v = this.vars.get(name);
-      if (v.isSome()) { out.setVar(name, v.unwrap()); }
+      string? v = this.vars.get(name);
+      if (v is not null) { out.setVar(name, v!); }
     }
     // Copied, not shared: a function defined inside a subshell does not exist outside it.
     for (i32 i = 0; i < this.funcNames.len(); i++) {
       string name = this.funcNames.get(i);
-      Option<Command> f = this.funcs.get(name);
-      if (f.isSome()) { out.defineFunc(name, f.unwrap()); }
+      Command? f = this.funcs.get(name);
+      if (f is not null) { out.defineFunc(name, f!); }
     }
     out.params = this.params;
     out.status = this.status;
@@ -704,8 +704,8 @@ export struct Shell {
         return i < this.params.len() ? this.params.get(i) : "";
       }
     }
-    Option<string> v = this.vars.get(name);
-    if (v.isNone()) {
+    string? v = this.vars.get(name);
+    if (v is null) {
       // A variable the shell has not set falls back to the environment, which is what makes
       // `echo $HOME` work without an assignment.
       // Bytes, because an environment value is not text — wac-mono 0065. The shell wants text here and
@@ -715,7 +715,7 @@ export struct Shell {
       u8[]? env = this.cli.env(name).wait();
       return (env is null) ? "" : string.fromBytes(env!);
     }
-    return v.unwrap();
+    return v!;
   }
 }
 
@@ -2259,10 +2259,10 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   Vec<i32> savedExisted = Vec.create();
   for (i32 i = 0; i < cmd.assigns.len(); i++) {
     Assign a = cmd.assigns.get(i);
-    Option<string> before = sh.vars.get(a.name);
+    string? before = sh.vars.get(a.name);
     savedNames.push(a.name);
-    savedValues.push(before.isSome() ? before.unwrap() : "");
-    savedExisted.push(before.isSome() ? 1 : 0);
+    savedValues.push(before ?? "");
+    savedExisted.push((before is not null) ? 1 : 0);
     sh.setVar(a.name, joinAssign(sh, a.value));
   }
 
@@ -2764,8 +2764,8 @@ Output setBuiltin(Shell sh, Vec<string> argv) {
     }
     string out = "";
     for (i32 i = 0; i < sorted.len(); i++) {
-      Option<string> v = sh.vars.get(sorted.get(i));
-      if (v.isSome()) { out = out + sorted.get(i) + "=" + v.unwrap() + "\n"; }
+      string? v = sh.vars.get(sorted.get(i));
+      if (v is not null) { out = out + sorted.get(i) + "=" + v! + "\n"; }
     }
     return Output.ok(out.toBytes());
   }
@@ -2823,10 +2823,10 @@ Output localVar(Shell sh, Vec<string> argv) {
     // Recorded once per call: a second `local x` in the same function must not overwrite what the
     // *first* one saved, or the caller's value is lost.
     if (!declaredLocal(sh, name)) {
-      Option<string> before = sh.vars.get(name);
+      string? before = sh.vars.get(name);
       sh.localNames.push(name);
-      sh.localValues.push(before.isSome() ? before.unwrap() : "");
-      sh.localExisted.push(before.isSome() ? 1 : 0);
+      sh.localValues.push(before ?? "");
+      sh.localExisted.push((before is not null) ? 1 : 0);
     }
     if (eq < 0) { sh.vars.remove(name); }
     else { sh.setVar(name, word.slice(eq + 1, word.len())); }
@@ -3784,7 +3784,7 @@ bool containsSlash(string s) {
  * change the caller's variables — only the positional parameters are its own.
  */
 Output callFunction(Shell sh, Vec<string> argv) {
-  Command body = sh.funcs.get(argv.get(0)).unwrap();
+  Command body = sh.funcs.get(argv.get(0))!;
   Vec<string> saved = sh.params;
   Vec<string> params = Vec.create();
   for (i32 i = 1; i < argv.len(); i++) { params.push(argv.get(i)); }
@@ -4249,8 +4249,8 @@ void expandInto(Shell sh, Word word, Vec<string> argv) {
  * accepted and ignored, and `for w in $x` over `a:b:c` saw one word where bash sees three.
  */
 string ifsOf(Shell sh) {
-  Option<string> v = sh.vars.get("IFS");
-  return v.isSome() ? v.unwrap() : " \t\n";
+  string? v = sh.vars.get("IFS");
+  return v ?? " \t\n";
 }
 
 /** Whether this byte is one of the IFS characters. */

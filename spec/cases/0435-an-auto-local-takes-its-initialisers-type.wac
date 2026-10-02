@@ -1,0 +1,11 @@
+// expect: answers f = 10
+// why: an `auto` local's type is its initialiser's, and nothing else gives it one
+// from: spec/next ch33 §wac-auto-local-59gczx4
+struct P { i32 x; }
+
+export i32 f() {
+  auto p = P(4);
+  auto s = "hey";
+  auto n = 3 as i32;
+  return p.x + s.len() + n;
+}

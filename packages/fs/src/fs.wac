@@ -1081,7 +1081,7 @@ export struct Fs {
   /** A named child of a directory node, or -1. */
   i32 child(const this, i32 dir, string name) {
     if (name == "") { return dir; }
-    return this.nodes.get(dir).entries.get(name).orElse(-1);
+    return this.nodes.get(dir).entries.getOr(name, -1);
   }
 }
 

@@ -357,6 +357,57 @@ export Pruned pruneFor(string[] paths, string[] sources, Res res, string entry) 
 }
 
 /**
+ * Core's text with each **namespace member** nothing names blanked — the `html.*` tag functions and
+ * the `operators.*` symbols, which a program reaches only by writing them (`@"html.div"` once its
+ * namespaces are lowered). Everything else core declares stays: the compiler itself calls some of it
+ * by name, which no reference in the program would show.
+ *
+ * Core is otherwise kept whole, which was free while it was small; seventy tag functions in every
+ * module that imports `Buf` were not.
+ */
+export string pruneCoreMembers(string core, string[] paths, string[] sources) {
+  Unit u = unitOf(" core", core);
+  if (u.fe.errorCount > 0 || u.fe.lexed.errorCount > 0) { return core; }
+  for (i32 d = 0; d < u.names.len(); d++) {
+    string nm = u.names[d];
+    if (nm.indexOf(".") < 0) { u.retained[d] = true; continue; }
+    string spelled = "@\"" + nm + "\"";
+    for (i32 f = 0; f < sources.len(); f++) {
+      // Not core's own text, which a caller may hand in beside the program — it names every member.
+      if (f < paths.len() && builtinKey(paths[f])) { continue; }
+      if (sources[f].indexOf(spelled) >= 0) { u.retained[d] = true; break; }
+    }
+  }
+  // A kept member keeps the members it names — `html.div` names `html.element`.
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (i32 d = 0; d < u.names.len(); d++) {
+      if (!u.retained[d] || u.names[d].indexOf(".") < 0 || u.scanned[d]) { continue; }
+      u.scanned[d] = true;
+      string body = coreSpan(u, d);
+      for (i32 e = 0; e < u.names.len(); e++) {
+        if (u.retained[e] || u.names[e].indexOf(".") < 0) { continue; }
+        if (body.indexOf("@\"" + u.names[e] + "\"") >= 0) { u.retained[e] = true; changed = true; }
+      }
+    }
+  }
+  return blanked(u);
+}
+
+/** The text of declaration `d`, from its first token to its last. */
+string coreSpan(Unit u, i32 d) {
+  i32 stride = tokenStride();
+  i32 from = u.fe.lexed.tokens[u.starts[d] * stride + 1];
+  i32 last = u.ends[d] - 1;
+  i32 to = u.fe.lexed.tokens[last * stride + 1] + u.fe.lexed.tokens[last * stride + 2];
+  if (to <= from) { return ""; }
+  u8[] b = u8[].filled(to - from, 0);
+  b.copyFrom(u.fe.src, from, 0, to - from);
+  return string.fromBytes(b);
+}
+
+/**
  * The file's text with every unretained declaration replaced by spaces.
  *
  * **Spaces in UTF-16 units, newlines kept**, because a column counts UTF-16 code units (`lex.wac`): a

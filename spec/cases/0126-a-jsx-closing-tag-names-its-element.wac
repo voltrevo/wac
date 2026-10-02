@@ -5,6 +5,6 @@
 import { Attr, Node } from "core";
 
 export i32 run() {
-  Node n = <div></span>;
+  Node n = <"div"></"span">;
   return 0;
 }

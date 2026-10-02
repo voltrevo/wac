@@ -316,7 +316,7 @@ string[] CLEAN() {
     // below checks that first. `issues/lang/0144` recorded this as a consequence of its own
     // undecided question about dispatch — it is not one, because the reference has no such limit,
     // and reading it that way is what left it sitting behind a decision for a week.
-    "struct Task { i32 id; i32 fire(const this) { return 0; } }\n"
+    "struct Task { i32 id; virtual i32 fire(const this) { return 0; } }\n"
       + "struct Cont<T> : Task { T v; override i32 fire(const this) { return this.id; } }\n"
       + "export i32 f() { Cont<string> c = Cont<string>(7, \"hi\"); Task t = c; return t.id; }",
     // **A child into a *nullable* parent slot**, which is the same widening one `?` along and was
@@ -660,9 +660,11 @@ string[] LITERALS() { return ["1", "1.5", "\"x\"", "true"]; }
  * new claim. The cell counts still check it: a rule that drifted would not give 12 and 36.
  */
 bool acceptsLiteral(string ty, i32 kind) {
+  // An integer spelling is read as a float where a float is expected (spec/next ch09
+  // `§wac-float-integer-spelled-ur9ttxq`), so it fits the two floats as well as the integers.
   if (kind == 0) {
     return ty == "i32" || ty == "i64" || ty == "u32" || ty == "u64" || ty == "u8" || ty == "u16" ||
-           ty == "i8" || ty == "i16";
+           ty == "i8" || ty == "i16" || ty == "f32" || ty == "f64";
   }
   if (kind == 1) { return ty == "f32" || ty == "f64"; }
   if (kind == 2) { return ty == "string"; }
@@ -698,13 +700,13 @@ export string test_rung3_every_primitive_against_every_literal_kind() {
       at = at + 1;
     }
   }
-  // 48 cells, 12 accepted: an integer literal from the eight integer types — the packed four are
-  // integers like any other (spec/next ch08 `§wac-packed-ordinary-kawnzqm`) — a float from f32/f64, a
-  // boolean from bool, a string from string.
+  // 48 cells, 14 accepted: an integer literal from the eight integer types — the packed four are
+  // integers like any other (spec/next ch08 `§wac-packed-ordinary-kawnzqm`) — and from the two floats
+  // (ch09), a float from f32/f64, a boolean from bool, a string from string.
   //
   // Asserting the shape rather than a bare "some failed": an `acceptsLiteral` that started calling
   // every cell acceptable would otherwise pass this silently.
-  t.eqI32(rejected, 36, "expected 36 rejected cells of 48");
+  t.eqI32(rejected, 34, "expected 34 rejected cells of 48");
   t.eqI32(caught, rejected, "the grid rejects " + itoa(rejected) + " cells and we catch " +
                             itoa(caught) + "; this slice is meant to catch every literal-return " +
                             "mismatch");
@@ -853,7 +855,7 @@ export string test_rung3_a_variables_initialiser_against_its_declared_type() {
     "export void a() { i32 x = null; }",
     "export void c() { i8 x = 128; }",
     "export void d() { i32 x = \"s\"; }",
-    "export void e() { f64 x = 1; }",
+    "export void e() { f32 x = 1.0e40; }",
     "export void f(string s) { i32 x = s; }",
     "export void g(i64 n) { i32 x = n; }"
   ];
@@ -862,6 +864,7 @@ export string test_rung3_a_variables_initialiser_against_its_declared_type() {
     "export void h() { i32 x = 5; }",
     "export void i() { i64 x = 5; }",
     "export void j() { f64 x = 1.5; }",
+    "export void jj() { f64 x = 1; }",
     "export void k() { i32? n = null; }",
     "export void l() { string s = \"x\"; }",
     "export void m(i32 a) { i32 b = a; }",
@@ -2132,7 +2135,7 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     "struct Node { Node next; } export Node? none() { return null; }",
     "struct N { i32 v; N next; } export i32 f(N n) { return n.v; }",
     // `override` that is correct, and a method that hides nothing.
-    "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
+    "struct Shape { i32 x; virtual i32 name(const this) { return 1; } } " +
     "struct R : Shape { i32 w; override i32 name(const this) { return 2; } }",
     "struct Shape { i32 x; } struct R : Shape { i32 w; i32 other(const this) { return 2; } }",
     // Unsigned increments are fine, whatever the reference's message says, and so are packed

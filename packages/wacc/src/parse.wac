@@ -1650,7 +1650,8 @@ Expr parseJsx(P p) {
   // **A fragment is a tag with no name**: `<>…</>`, whose tag token is -1 all the way to the
   // emitter, which builds `Node.Fragment(kids)` instead of an element. It takes no attributes
   // because there is nowhere to write one. `design/lang/0006`.
-  i32 tagTok = p.at1(kGt()) ? -1 : p.expect(kIdent());
+  // A tag is a name in scope — bare or verbatim — or a string, an element by that name (ch23).
+  i32 tagTok = p.at1(kGt()) ? -1 : p.at1(kString()) ? p.advance() : p.expect(kIdent());
 
   JsxAttrList attrs = JsxAttrList.create();
   while (p.at1(kIdent())) {
@@ -1722,7 +1723,7 @@ Expr parseJsx(P p) {
   // rather than its shape, so the checker says `</span> closes <div>` with both positions, where
   // the parser could only say "unexpected". A fragment closes with `</>`, which names nothing and
   // therefore cannot mismatch.
-  i32 closeTok = tagTok < 0 ? -1 : p.expect(kIdent());
+  i32 closeTok = tagTok < 0 ? -1 : p.at1(kString()) ? p.advance() : p.expect(kIdent());
   p.expect(kGt());
   return Expr(ExprKind.Jsx(tagTok, closeTok, attrs.take(), kids.take()), line, col);
 }
@@ -2494,16 +2495,23 @@ i32 forInNameAt(P p) {
   if (p.kindAt(0) == kIdent() && p.textAt(0) == "auto" && p.kindAt(1) == kIdent() && p.textAt(2) == "in") {
     return 1;
   }
-  if (p.kindAt(0) != kIdent() && p.kindAt(0) != kString()) { return -1; }
-  i32 j = 1;
-  i32 afterArgs = afterTypeArgs(p, j);
-  if (afterArgs > 0) { j = afterArgs; }
-  while (true) {
-    if (p.kindAt(j) == kLbrack() && p.kindAt(j + 1) == kRbrack()) { j += 2; }
-    else if (p.kindAt(j) == kQuestion()) { j++; }
-    else { break; }
+  // **Any type, then a name, then `in`**: the scan walks the type at bracket depth — `fn<i32(i32)> t`,
+  // `(i32, i32) p`, `Map<K, V>[] ms` — and a `;` or the clause's own `)` says it was a counted loop.
+  i32 depth = 0;
+  for (i32 j = 0; j < 256; j++) {
+    i32 k = p.kindAt(j);
+    if (k == kEof() || (depth == 0 && k == kSemi())) { return -1; }
+    if (k == kLparen() || k == kLbrack() || k == kLt()) { depth++; }
+    else if (k == kGt()) { depth--; }
+    else if (k == kShr()) { depth = depth - 2; }
+    else if (k == kRparen() || k == kRbrack()) {
+      depth--;
+      if (depth < 0) { return -1; }
+    }
+    if (depth == 0 && j > 0 && k == kIdent() && p.kindAt(j + 1) == kIdent() && p.textAt(j + 1) == "in") {
+      return j;
+    }
   }
-  if (p.kindAt(j) == kIdent() && p.kindAt(j + 1) == kIdent() && p.textAt(j + 1) == "in") { return j; }
   return -1;
 }
 
@@ -2627,6 +2635,13 @@ ArmHead parseArmHead(P p) {
     p.expect(kColon());
     return ArmHead(-1, defaultTok, i32[](), true);
   }
+  // `null:` — the arm a nullable subject takes when it is absent (spec/next ch25
+  // `§wac-match-nullable-subject-zcnasbp`). Its "variant" is the `null` token.
+  if (p.at1(kNull())) {
+    i32 nullTok = p.advance();
+    p.expect(kColon());
+    return ArmHead(nullTok, -1, i32[](), true);
+  }
   if (!p.at1(kIdent())) {
     p.fail(perrExpected());
     p.advance();
@@ -2669,12 +2684,33 @@ Expr parseMatchExpr(P p) {
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
     ArmHead h = parseArmHead(p);
     if (!h.ok) { continue; }
-    arms.push(Arm(h.variantTok, h.defaultTok, h.bindings, Stmt[](), parseExpr(p)));
+    // **An arm may leave instead of giving a value** — `continue`, `break` or `return …` — and is then
+    // a body with no value (spec/next ch25 `§wac-match-arm-leaves-y33uzzi`).
+    Stmt? leaves = parseLeavingArm(p);
+    if (!(leaves is null)) {
+      arms.push(Arm(h.variantTok, h.defaultTok, h.bindings, [leaves!] as Stmt[], null));
+    } else {
+      arms.push(Arm(h.variantTok, h.defaultTok, h.bindings, Stmt[](), parseExpr(p)));
+    }
     // A trailing comma after the last arm is allowed, as in every other list.
     if (!p.eat(kComma())) { break; }
   }
   p.expect(kRbrace());
   return Expr(ExprKind.MatchExpr(subject, arms.take()), line, col);
+}
+
+/** `continue`, `break` or `return [e]` where an arm's value goes, as the statement; null otherwise. */
+Stmt? parseLeavingArm(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  if (p.at1(kContinue())) { p.advance(); return Stmt(StmtKind.Continue, line, col); }
+  if (p.at1(kBreak())) { p.advance(); return Stmt(StmtKind.Break, line, col); }
+  if (p.at1(kReturn())) {
+    p.advance();
+    if (p.at1(kComma()) || p.at1(kRbrace())) { return Stmt(StmtKind.Return(null), line, col); }
+    return Stmt(StmtKind.Return(parseExpr(p)), line, col);
+  }
+  return null;
 }
 
 Stmt parseMatchStmt(P p) {
@@ -2884,6 +2920,9 @@ Decl parseStructDecl(P p, bool exported) {
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
     // `private` comes first: it is about who may name the member, before anything about what it is.
     bool memberPrivate = p.eat(kPrivate());
+    // `virtual` grants a subtype the override (spec/next ch12). Reserved, and told by its spelling.
+    bool memberVirtual = p.at1(kIdent()) && p.textAt(0) == "virtual" && p.kindAt(1) == kIdent();
+    if (memberVirtual) { p.advance(); }
     i32 overrideTok = p.at;
     bool isOverride = p.eat(kOverride());
     if (!isOverride) { overrideTok = -1; }
@@ -2938,7 +2977,8 @@ Decl parseStructDecl(P p, bool exported) {
       }
       p.expect(kRparen());
       methods.push(Method(memberTok, memberType, params.take(), parseBlock(p),
-        isOverride, overrideTok, hasThis, thisConst, mTypeParams, memberAsync, memberPrivate));
+        isOverride, overrideTok, hasThis, thisConst, mTypeParams, memberAsync, memberPrivate,
+        memberVirtual));
     } else {
       p.fail(perrExpected());
       while (!p.at1(kRbrace()) && !p.at1(kSemi()) && !p.at1(kEof())) { p.advance(); }
@@ -3023,7 +3063,7 @@ Decl parseEnumDecl(P p, bool exported) {
     // so one is refused until that ambiguity is decided deliberately.
     if (!hasThis) { p.fail(perrEnumMethodThis()); }
     methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, -1, hasThis, thisConst,
-                        i32[](), false, methodPrivate));
+                        i32[](), false, methodPrivate, false));
   }
 
   p.expect(kRbrace());

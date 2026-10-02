@@ -1,0 +1,11 @@
+// expect: refused
+// why: an attribute's value is checked against its parameter's type, not against string
+// from: spec/next ch23
+import { Attr, Node } from "core";
+
+Node card(i32 count, Node[] kids) { return <"p">{""}</"p">; }
+
+export i32 run() {
+  Node n = <card count="three"/>;
+  return 0;
+}

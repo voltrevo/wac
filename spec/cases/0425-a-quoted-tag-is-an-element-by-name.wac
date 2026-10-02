@@ -1,0 +1,20 @@
+// expect: answers run = my-widget label label caption
+// why: a quoted tag builds an element by that name; a bare or verbatim tag calls the function in scope
+// from: spec/next ch23 §wac-markup-quoted-tag-3dnrvxj, §wac-markup-verbatim-tag-ca3myup
+import { Node } from "core";
+
+string tagOf(Node n) {
+  return match (n) {
+    Element(tag, attrs, kids): tag,
+    default: "",
+  };
+}
+
+Node caption(Node[] kids) { return Node.Element("label", [], kids); }
+
+export string icon()  { return tagOf(<"my-widget" data-size="8" />); }
+export string one()   { return tagOf(<caption>Name</caption>); }
+export string two()   { return tagOf(<@"caption">Name</@"caption">); }
+export string three() { return tagOf(<"caption">Name</"caption">); }
+
+export string run() { return icon() + " " + one() + " " + two() + " " + three(); }
