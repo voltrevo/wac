@@ -1,0 +1,19 @@
+// expect: answers fromSlots = 9
+// spec: §wac-static-if-cphqxuz, §wac-generic-template-check-2wkq7nm
+// why: checked again at `fromSlot<i32>`, `Slot<T>` is `i32` and the `static_if` keeps the first branch —
+//      the computed type has to see the instance's letters, or the kept branch reads as a mismatch
+// from: spec/next ch31, ch19
+typeref slot(typeref t) { return t.isRef() && !t.isNullable() ? t.pushNull() : t; }
+type Slot<T> = type(slot(typeref(T)));
+struct Node { i32 v; }
+T fromSlot<T>(Slot<T> s) {
+  static_if (typeref(Slot<T>) == typeref(T)) {
+    return s;
+  } else {
+    return s!;
+  }
+}
+export i32 fromSlots() {
+  Slot<Node> n = Node(4);
+  return fromSlot<i32>(5) + fromSlot<Node>(n).v;
+}

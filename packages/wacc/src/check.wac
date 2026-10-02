@@ -1193,6 +1193,8 @@ string computedTypeC(C c, Ty t) {
   Ev ev = c.sEv!;
   i32 mark = ev.tpCount;
   for (i32 i = 0; i < c.activeParamCount; i++) { ev.bindType(c.activeParams[i], ""); }
+  // In an instance check its letters are bound, so `Slot<T>` is `Slot<i32>`'s type there (ch19).
+  bindInstanceLetters(c, ev);
   ev.status = evOk();
   ev.message = "";
   string spelled = evTyName(ev, c.sCx!, c.sFile, t);

@@ -1,0 +1,32 @@
+// The source-to-source passes every compile route takes first — `lowerSources` in `src/api.wac`.
+//
+// **They run more than once on one program.** A build prunes the graph, which lowers it, and then emits,
+// which lowers it again; so each pass has to leave a lowered text as it found it. `lowerVariadics` did
+// not: the declaration kept its `...`, and the second pass packed the already-packed call into a tuple of
+// one — `count(1 as i32, "a")` answered 1. Nothing failed but a spec example, two batches later.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { lowerSources } from "../../src/api.wac";
+import { Res } from "../../src/path.wac";
+
+/** `text` lowered once and twice, as one file — the two must be the same. */
+bool idempotent(string text) {
+  string[] once = lowerSources(["main.wac"], [text], Res.empty());
+  string[] twice = lowerSources(["main.wac"], once, Res.empty());
+  return once[0] == twice[0];
+}
+
+export string test_each_lowering_leaves_a_lowered_text_alone() {
+  T t = T.create();
+  t.isTrue(idempotent("i32 count<Ts>(Ts ...items) { return 0; }\nexport i32 f() { return count(1 as i32, \"a\"); }\n"),
+           "a variadic call is packed once");
+  t.isTrue(idempotent("T max<T>(T a, T b) { return a > b ? a : b; }\nexport { max<i32> as maxI32 };\n"),
+           "an exported instance is forwarded once");
+  t.isTrue(idempotent("struct Box { i32 v; }\nBox one() {\n  static Box b = Box(1);\n  return b;\n}\n"),
+           "a function's reference static moves once");
+  t.isTrue(idempotent("enum R<T, E = union> { Ok(T v), Err(E e) }\nR<i32> f() { return R.Err(\"x\"); }\n"),
+           "a default is written once, and its placeholder gathered once");
+  t.isTrue(idempotent("auto seven() { return 7 as i32; }\nexport i32 f() { return seven(); }\n"),
+           "an auto result is written once");
+  return t.report();
+}

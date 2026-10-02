@@ -7,7 +7,7 @@
 
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
 import { kAs, kAssign, kAsync, kComma, kDot, kEnum, kExport, kGt, kIdent, kindName, kLbrace, kLbrack, kLparen,
-         kLt, kRbrace, kRbrack, kRparen, kSemi, kShr, kStruct } from "./kinds.wac";
+         kLt, kQuestion, kRbrace, kRbrack, kRparen, kSemi, kShr, kStatic, kStruct } from "./kinds.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor,
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -1830,7 +1830,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, Res res, string
  * (ch03), then `auto` results written in (ch34). Both are idempotent.
  */
 export string[] lowerSources(string[] paths, string[] sources, Res res) {
-  string[] s1 = lowerPrimFromNumber(lowerTypeDefaults(lowerVariadics(lowerNamespaces(paths, sources, res))));
+  string[] s1 = lowerPrimFromNumber(lowerTypeDefaults(lowerVariadics(lowerStaticLocals(lowerNamespaces(paths, sources, res)))));
   string[] s2 = lowerAutoReturns(paths, lowerResultPlaceholders(paths, lowerExportInstances(s1), res), res);
   return lowerFromNumberLiterals(paths, s2, res);
 }
@@ -1873,7 +1873,7 @@ string[] lowerPrimFromNumber(string[] sources) {
       imports = imports + "\nimport { " + rest.slice(0, rest.indexOf("|")) + " } from \"core\";";
       rest = rest.slice(rest.indexOf("|") + 1, rest.len());
     }
-    out[f] = text + bytesBetween(src, from, src.len()) + imports + "\n";
+    out[f] = imports == "" ? sources[f] : text + bytesBetween(src, from, src.len()) + imports + "\n";
   }
   return out;
 }
@@ -2277,6 +2277,139 @@ string variantFieldsOfLetter(string[] sources, string tmpl, i32 index) {
   return "";
 }
 
+// ---- A function's reference-typed statics — spec/next ch27 ----
+
+/**
+ * `static Box value = Box(1);` in a function is one value however often the function runs
+ * (`§wac-modconst-ref-9jvq2mt`), which for a reference means one object — what a module-level static
+ * already is. So each such static in a non-generic function moves to the top level under a name of its
+ * own, `@"$static_<function>_<name>"`, and the function's uses of it are renamed. A number stays where
+ * it is: its value is written as a literal. A generic's statics are per instantiation and stay too.
+ */
+string[] lowerStaticLocals(string[] sources) {
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 f = 0; f < sources.len(); f++) {
+    out[f] = sources[f].indexOf("static ") >= 0 ? staticLocalsOf(sources[f]) : sources[f];
+  }
+  return out;
+}
+
+string staticLocalsOf(string text) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  i32 st = tokenStride();
+  i32 n = lx.tokenCount;
+  i32[] at = i32[].filled(n + 1, 0);
+  i32[] len = i32[].filled(n + 1, 0);
+  string[] what = string[].filled(n + 1, "");
+  i32 ne = 0;
+  string hoisted = "";
+  i32 t = 1;
+  while (t + 1 < n) {
+    // A function: a name and `(` after a type, its body the brace after the matching `)` — and not a
+    // generic one, whose `<…>` would sit between the name and the `(`.
+    i32 prev = lx.tokens[(t - 1) * st];
+    if (lx.tokens[t * st] != kIdent() || lx.tokens[(t + 1) * st] != kLparen()
+        || (prev != kIdent() && prev != kGt() && prev != kRbrack() && prev != kQuestion())) { t++; continue; }
+    string fname = tokenTextOf(src, lx, t);
+    i32 u = t + 1;
+    i32 depth = 0;
+    while (u < n) {
+      i32 k = lx.tokens[u * st];
+      if (k == kLparen()) { depth++; }
+      if (k == kRparen()) { depth--; if (depth == 0) { break; } }
+      u++;
+    }
+    if (u + 1 >= n || lx.tokens[(u + 1) * st] != kLbrace()) { t = u + 1; continue; }
+    i32 open = u + 1;
+    i32 close = open;
+    depth = 0;
+    while (close < n) {
+      i32 k = lx.tokens[close * st];
+      if (k == kLbrace()) { depth++; }
+      if (k == kRbrace()) { depth--; if (depth == 0) { break; } }
+      close++;
+    }
+    string renames = ";";
+    for (i32 s = open + 1; s < close; s++) {
+      if (lx.tokens[s * st] != kStatic()) { continue; }
+      // `static T name = init;` — the name is the identifier before the `=`.
+      i32 eq = s + 1;
+      while (eq < close && lx.tokens[eq * st] != kAssign() && lx.tokens[eq * st] != kSemi()) { eq++; }
+      if (eq >= close || lx.tokens[eq * st] != kAssign() || eq - 1 <= s + 1) { continue; }
+      i32 nameTok = eq - 1;
+      string ty = trimSpaces(bytesBetween(src, lx.tokens[(s + 1) * st + 1], lx.tokens[nameTok * st + 1]));
+      if (isScalarSpelling(ty)) { continue; }
+      i32 semi = eq;
+      i32 d2 = 0;
+      while (semi < close) {
+        i32 k = lx.tokens[semi * st];
+        if (k == kLparen() || k == kLbrack() || k == kLbrace()) { d2++; }
+        if (k == kRparen() || k == kRbrack() || k == kRbrace()) { d2--; }
+        if (k == kSemi() && d2 == 0) { break; }
+        semi++;
+      }
+      string name = tokenTextOf(src, lx, nameTok);
+      string hidden = "@\"$static_" + fname + "_" + name + "\"";
+      hoisted = hoisted + "\nstatic " + ty + " " + hidden + " = "
+              + bytesBetween(src, lx.tokens[(eq + 1) * st + 1], lx.tokens[semi * st + 1]) + ";";
+      i32 from = lx.tokens[s * st + 1];
+      i32 to = lx.tokens[semi * st + 1] + 1;
+      at[ne] = from; len[ne] = to - from; what[ne] = blankOfApi(src, from, to); ne++;
+      renames = renames + name + "=" + hidden + ";";
+      s = semi;
+    }
+    if (renames != ";") {
+      // Each use in the body, by name — a member after `.` is not one, nor the static's own line.
+      for (i32 s = open + 1; s < close; s++) {
+        if (lx.tokens[s * st] != kIdent() || lx.tokens[(s - 1) * st] == kDot()) { continue; }
+        string nm = tokenTextOf(src, lx, s);
+        i32 hit = renames.indexOf(";" + nm + "=");
+        if (hit < 0 || insideEdit(at, len, ne, lx.tokens[s * st + 1])) { continue; }
+        string tail = renames.slice(hit + nm.len() + 2, renames.len());
+        at[ne] = lx.tokens[s * st + 1]; len[ne] = lx.tokens[s * st + 2]; what[ne] = tail.slice(0, tail.indexOf(";")); ne++;
+      }
+    }
+    t = close + 1;
+  }
+  if (hoisted == "") { return text; }
+  for (i32 i = 1; i < ne; i++) {
+    i32 j = i;
+    while (j > 0 && at[j - 1] > at[j]) {
+      i32 ta = at[j]; at[j] = at[j - 1]; at[j - 1] = ta;
+      i32 tl = len[j]; len[j] = len[j - 1]; len[j - 1] = tl;
+      string tw = what[j]; what[j] = what[j - 1]; what[j - 1] = tw;
+      j--;
+    }
+  }
+  string res = "";
+  i32 pos = 0;
+  for (i32 i = 0; i < ne; i++) {
+    res = res + bytesBetween(src, pos, at[i]) + what[i];
+    pos = at[i] + len[i];
+  }
+  return res + bytesBetween(src, pos, src.len()) + hoisted + "\n";
+}
+
+/** Whether offset `b` falls inside one of the first `n` edits. */
+bool insideEdit(i32[] at, i32[] len, i32 n, i32 b) {
+  for (i32 i = 0; i < n; i++) { if (b >= at[i] && b < at[i] + len[i]) { return true; } }
+  return false;
+}
+
+/** The bytes `from..to` as spaces, newlines kept, so no line moves. */
+string blankOfApi(u8[] src, i32 from, i32 to) {
+  u8[] b = u8[].filled(to - from, 32);
+  for (i32 i = from; i < to; i++) { if (src[i] == 10) { b[i - from] = 10; } }
+  return string.fromBytes(b);
+}
+
+/** Whether a written type is one whose value is a number a literal can carry. */
+bool isScalarSpelling(string t) {
+  return t == "i32" || t == "u32" || t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool"
+      || t == "u8" || t == "i8" || t == "u16" || t == "i16";
+}
+
 // ---- Variadic parameters — spec/next ch14 ----
 
 /**
@@ -2291,6 +2424,8 @@ string[] lowerVariadics(string[] sources) {
   if (!any) { return sources; }
   string names = "|";
   string fixed = "|";
+  // Where each file's markers are, as `file:offset;` — blanked once read, so lowering is idempotent.
+  string markers = ";";
   for (i32 f = 0; f < sources.len(); f++) {
     if (!hasVariadicMarker(sources[f])) { continue; }
     u8[] src = sources[f].toBytes();
@@ -2306,6 +2441,7 @@ string[] lowerVariadics(string[] sources) {
               || lx.tokens[(last - 3) * st] != kDot()) { continue; }
           names = names + tokenTextOf(src, lx, nameTok) + "|";
           fixed = fixed + numText(params.len() - 1) + "|";
+          markers = markers + numText(f) + ":" + numText(lx.tokens[(last - 3) * st + 1]) + ";";
         }
         default: { }
       }
@@ -2313,8 +2449,26 @@ string[] lowerVariadics(string[] sources) {
   }
   if (names == "|") { return sources; }
   string[] out = string[].filled(sources.len(), "");
-  for (i32 f = 0; f < sources.len(); f++) { out[f] = variadicCallsOf(sources[f], names, fixed); }
+  for (i32 f = 0; f < sources.len(); f++) {
+    // The declaration's `...` goes once the calls are packed: what is left is a tuple parameter, and
+    // a second lowering of the same text finds nothing to pack again.
+    string text = sources[f];
+    string key = ";" + numText(f) + ":";
+    string rest = markers;
+    while (rest.indexOf(key) >= 0) {
+      rest = rest.slice(rest.indexOf(key) + key.len(), rest.len());
+      i32 off = decimalOfApi(rest.slice(0, rest.indexOf(";")));
+      text = text.slice(0, off) + "   " + text.slice(off + 3, text.len());
+    }
+    out[f] = variadicCallsOf(text, names, fixed);
+  }
   return out;
+}
+
+i32 decimalOfApi(string s) {
+  i32 n = 0;
+  for (i32 i = 0; i < s.len(); i++) { n = n * 10 + (s.toBytes()[i] as i32 - 48); }
+  return n;
 }
 
 /** Whether `text` has a ` ...name` — a variadic parameter's marker, not prose's ellipsis. */
