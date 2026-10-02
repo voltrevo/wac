@@ -1549,7 +1549,9 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, Res res, string
           // `res.base` is "" for a caller with no filesystem — the one that cannot resolve a `@/`
           // or a mapped specifier at all, and so may judge a relative path and nothing else.
           bool canJudge = relative || res.base != "";
-          if (canJudge && !isBuiltinSpec(spec) && !isBuiltinSubpath(spec) && !supplied) { c.addUnresolved(spec); }
+          // A package the command could not resolve comes with its reason, which is the sentence to print.
+          if (startsWith(target, "(unresolved) ")) { c.addUnresolved(spec + "\t" + target.slice(13, target.len())); }
+          else if (canJudge && !isBuiltinSpec(spec) && !isBuiltinSubpath(spec) && !supplied) { c.addUnresolved(spec); }
         }
         for (i32 i = 0; i < items.len(); i++) {
           if (n >= wantName.len()) { continue; }

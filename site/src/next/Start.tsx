@@ -40,7 +40,7 @@ $ wac run --allow-read src/read.wac    # read ok   (exit 0)`;
 const EX_START_PROJECT = `// wac.json5
 {
   imports: {
-    'dep/': { git: 'https://github.com/voltrevo/wac', ref: 'master' },
+    geometry: { git: 'https://example.invalid/geometry', ref: 'v1' },
   },
 }`;
 

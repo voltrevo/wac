@@ -32,13 +32,13 @@ string SHA() { return "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"; }
 
 string MANIFEST() {
   return "{ imports: {\n"
-       + "  'bits/': { git: 'https://x.invalid/g1', ref: 'main' },\n"
-       + "  'acme': { git: 'https://x.invalid/g2', ref: 'v1', subdir: 'packages/acme' },\n"
+       + "  'bits': { git: 'https://x.invalid/g1', ref: 'main' },\n"
+       + "  'acme': { git: 'https://x.invalid/g2', ref: 'v1', subdir: './packages/acme' },\n"
        + "} }";
 }
 string LOCK() {
   return "{ imports: {\n"
-       + "  'bits/': { git: 'https://x.invalid/g1', ref: 'main', commit: '" + A() + "' },\n"
+       + "  'bits': { git: 'https://x.invalid/g1', ref: 'main', commit: '" + A() + "' },\n"
        + "  'gone': { git: 'https://x.invalid/g3', ref: 'r', commit: '" + B() + "' },\n"
        + "} }";
 }
@@ -77,7 +77,7 @@ export string test_the_lock_writers_agree_with_the_module_underneath() {
   t.eqBytes(re.text, writeLock(l.entries), "rewriteLock is readLock then writeLock");
   t.isTrue(re.text.len() > 0, "and wrote something");
 
-  // `updatedLock` is the same, with the plan applied. `std/` is USE and `acme` is CREATE, so a
+  // `updatedLock` is the same, with the plan applied. `bits` is USE and `acme` is CREATE, so a
   // wrapper that returned its input unchanged would drop `acme` and be caught.
   Manifest m = readManifest(MANIFEST().toBytes());
   Step[] steps = plan(m, l);
@@ -111,8 +111,8 @@ export string test_the_planning_entry_points_agree_with_lock_wac() {
   t.eqBool(planNeedsResolving(MANIFEST().toBytes(), LOCK().toBytes()), needsResolving(direct),
            "planNeedsResolving agrees");
   t.isTrue(planNeedsResolving(MANIFEST().toBytes(), LOCK().toBytes()), "and it is true here");
-  string settled = "{ imports: { 'bits/': { git: 'https://x.invalid/g1', ref: 'main' } } }";
-  string settledLock = "{ imports: { 'bits/': { git: 'https://x.invalid/g1', ref: 'main', commit: '"
+  string settled = "{ imports: { 'bits': { git: 'https://x.invalid/g1', ref: 'main' } } }";
+  string settledLock = "{ imports: { 'bits': { git: 'https://x.invalid/g1', ref: 'main', commit: '"
                      + A() + "' } } }";
   t.isFalse(planNeedsResolving(settled.toBytes(), settledLock.toBytes()),
             "and false when every step is USE");
@@ -139,6 +139,8 @@ export string test_the_resolution_entry_points_agree_with_their_modules() {
   Located via = locateIn(MANIFEST().toBytes(), spec);
   t.eqBool(via.ok, direct.ok, "locateIn agrees about ok");
   t.eqStr(via.path, direct.path, "locateIn returns the path");
+  // The package's *directory* — what `locate` answers since spec/next ch04, the entry module
+  // being that directory's own `exports` and so not something a manifest alone can say.
   t.eqStr(via.path, "packages/acme", "which is not empty, so a constant would fail");
 
   t.eqI32(mappingFor(MANIFEST().toBytes(), spec), matchSpecifier(m, spec).index,

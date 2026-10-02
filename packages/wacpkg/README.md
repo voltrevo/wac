@@ -9,16 +9,16 @@ wac task coverage:wacpkg              # branch coverage
 
 A project is a directory with a `wac.json5` in it. An empty one is valid — a project that imports
 only its own files needs a manifest to *exist*, not to say anything. The field this package reads
-is `imports`, a table from a **mapping name** to the repository its modules come from:
+is `imports`, a table from a **package name** to the repository it comes from (spec/next ch04):
 
 ```json5
 {
   imports: {
-    // A prefix mapping: everything under `bits/` comes from this repository.
-    // Not `std/` or `core/`, which `design/lang/0009` D4 reserves for the built-in trees.
-    'bits/': { git: 'https://example.invalid/bits', ref: 'main' },
-    // An exact mapping, of one subdirectory of a larger repository.
-    'acme':  { git: 'https://example.invalid/monorepo', ref: 'v1', subdir: 'lib/acme' },
+    // A package named whole: `import { … } from "bits"` and nothing below it.
+    // Not `std` or `core`, which `design/lang/0009` D4 reserves for the built-in trees.
+    bits: { git: 'https://example.invalid/bits', ref: 'main' },
+    // One directory of a larger repository, whose own wac.json5 names the entry module.
+    acme: { git: 'https://example.invalid/monorepo', ref: 'v1', subdir: './lib/acme' },
   },
 }
 ```
@@ -26,8 +26,13 @@ is `imports`, a table from a **mapping name** to the repository its modules come
 ```wac
 Manifest m = readManifest(bytes);
 if (!m.ok) { /* m.code says what, m.detail says which */ }
-Match hit = matchSpecifier(m, "std/vec.wac");   // found, index 0, suffix "vec.wac"
+Match hit = matchSpecifier(m, "acme");       // found, index 1
+Located dir = locate(m, hit);                // "lib/acme" — the package's directory
+Located entry = packageEntry(dir.path, "./src/lib.wac");   // what that directory's manifest exports
 ```
+
+A key ending in `/` is refused — there are no prefix mappings — and a path in a manifest (`exports`,
+`subdir`) begins with `./`.
 
 This is `design/lang/0009` D6, D7, D9 and D10. What is not here is everything that needs a
 capability: reading the files, resolving a ref to a commit, and fetching (D11, which

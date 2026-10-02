@@ -21,10 +21,12 @@
 import { Core, Cli, Sys } from "std";
 import { test_each_code_has_the_number_it_has_always_had as manifest_test_each_code_has_the_number_it_has_always_had,
          test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports,
-         test_a_mapping_is_read_whole_including_the_trailing_slash,
-         test_overlapping_names_are_refused_and_neighbouring_ones_are_not,
-         test_a_specifier_matches_at_most_one_mapping,
-         test_the_suffix_is_joined_to_the_subdir_and_checked_after,
+         test_a_mapping_is_read_whole,
+         test_a_key_ending_in_a_slash_is_refused,
+         test_names_that_once_overlapped_are_now_independent,
+         test_a_specifier_matches_only_the_whole_name,
+         test_the_subdir_selects_the_package_directory, test_a_manifest_path_must_begin_with_dot_slash,
+         test_the_entry_is_exports_joined_to_the_package_directory,
          test_each_malformed_shape_gets_its_own_code,
          test_a_url_this_toolchain_cannot_fetch_is_refused_by_name,
          test_a_mapping_of_a_reserved_name_is_refused,
@@ -67,7 +69,7 @@ import { test_each_code_has_the_number_it_has_always_had as refs_test_each_code_
          test_a_lightweight_tag_has_no_peel_and_is_not_treated_as_if_it_did,
          test_an_object_name_resolves_to_itself_advertised_or_not,
          test_what_is_not_there_and_what_is_not_a_corpus } from "./wac/refs_test.wac";
-import { Manifest, readManifest, matchSpecifier } from "../src/manifest.wac";
+import { Manifest, readManifest, matchSpecifier, packageEntry } from "../src/manifest.wac";
 import { MANIFEST_NAME, candidateRoots, dirOf } from "../src/root.wac";
 import { LockText, manifestOf, lockOf, rewriteLock, updatedLock, planFor, planNeedsResolving,
          orphansFor, locateIn, mappingFor, rootsFor, atPath, isAt, manifestName, refToCommit,
@@ -81,7 +83,7 @@ string[] manifests() {
     "{ }",
     "// nothing\n{}",
     "{ name: 'x' }",
-    "{ imports: { 'bits/': { git: 'g', ref: 'main' }, 'acme': { git: 'g', ref: 'v1', subdir: 'packages/acme' } } }",
+    "{ imports: { 'bits': { git: 'g', ref: 'main' }, 'acme': { git: 'g', ref: 'v1', subdir: './packages/acme' } } }",
     "{",
     "[]",
     "1",
@@ -107,8 +109,8 @@ static string D40 = "dddddddddddddddddddddddddddddddddddddddd";
 
 string lockText() {
   return "{ imports: {\n" +
-         "  'bits/': { git: 'g1', ref: 'main', commit: '" + A40 + "' },\n" +
-         "  'sub': { git: 'g2', ref: 'v1', subdir: 'old', commit: '" + B40 + "' },\n" +
+         "  'bits': { git: 'g1', ref: 'main', commit: '" + A40 + "' },\n" +
+         "  'sub': { git: 'g2', ref: 'v1', subdir: './old', commit: '" + B40 + "' },\n" +
          "} }";
 }
 
@@ -117,9 +119,9 @@ i32 manifestExercises() {
   string[] ms = manifests();
   for (i32 i = 0; i < ms.len(); i++) { readManifest(ms[i].toBytes()); seen = seen + 1; }
 
-  // The overlap rule, both orders, plus the pairs it must allow.
-  string[] oa = ["wac/", "foo", "a", "x/", "p", "wac/", "foo", "a/", "ab/"];
-  string[] ob = ["wac/packages/json/", "foo/", "a", "x/y", "p/q/", "wac2/", "foobar", "b/", "a/"];
+  // Keys ending in `/`, refused in either position, and the names that once overlapped and now do not.
+  string[] oa = ["wac/", "foo", "a", "x", "p", "wac", "foo", "a", "ab"];
+  string[] ob = ["wac/packages/json", "foo/", "a", "x/y", "p/q/", "wac2", "foobar", "b", "a/b"];
   for (i32 i = 0; i < oa.len(); i++) {
     readManifest(("{ imports: { " + entryOf(oa[i]) + ", " + entryOf(ob[i]) + " } }").toBytes());
     readManifest(("{ imports: { " + entryOf(ob[i]) + ", " + entryOf(oa[i]) + " } }").toBytes());
@@ -136,11 +138,16 @@ i32 manifestExercises() {
     seen = seen + 1;
   }
 
-  // Matching, including the two shapes that must *not* match.
+  // Matching, including the shapes that must *not* match — every subpath of a name among them.
   Manifest table = readManifest(
-    "{ imports: { 'bits/': { git: 'g', ref: 'r' }, 'acme': { git: 'g', ref: 'r' } } }".toBytes());
-  string[] specs = ["std/vec.wac", "std/a/b.wac", "acme", "std", "bits/", "acme/x", "other"];
+    "{ imports: { 'bits': { git: 'g', ref: 'r' }, 'acme': { git: 'g', ref: 'r' } } }".toBytes());
+  string[] specs = ["bits", "acme", "bits/vec.wac", "bits/", "acme/x", "other", ""];
   for (i32 i = 0; i < specs.len(); i++) { matchSpecifier(table, specs[i]); seen = seen + 1; }
+
+  // A package's entry: `exports` joined to its directory, in and out of it.
+  string[] dirs = ["", "packages/geo", "a/b", "a/b", "a", "a", "a"];
+  string[] exps = ["./src/lib.wac", "./src/lib.wac", "./x/../lib.wac", "../x.wac", "./", "", "/abs.wac"];
+  for (i32 i = 0; i < dirs.len(); i++) { seen = seen + packageEntry(dirs[i], exps[i]).path.len(); }
   return seen;
 }
 
@@ -171,11 +178,11 @@ i32 lockExercises() {
 
   string LOCK = lockText();
   string[] against = [
-    "{ imports: { 'bits/': { git: 'g1', ref: 'main' } } }",
+    "{ imports: { 'bits': { git: 'g1', ref: 'main' } } }",
     "{ imports: { 'fresh': { git: 'g9', ref: 'main' } } }",
-    "{ imports: { 'bits/': { git: 'OTHER', ref: 'main' } } }",
-    "{ imports: { 'bits/': { git: 'g1', ref: 'v2' } } }",
-    "{ imports: { 'sub': { git: 'g2', ref: 'v1', subdir: 'new' } } }",
+    "{ imports: { 'bits': { git: 'OTHER', ref: 'main' } } }",
+    "{ imports: { 'bits': { git: 'g1', ref: 'v2' } } }",
+    "{ imports: { 'sub': { git: 'g2', ref: 'v1', subdir: './new' } } }",
     "{ imports: { 'sub': { git: 'g2', ref: 'v1' } } }",
     "{ imports: { 'kept': { git: 'g', ref: 'r' } } }",
     "{}"
@@ -215,19 +222,18 @@ i32 lockExercises() {
   return seen;
 }
 
-/** D9's confinement and D7's `@/`, from `test/wac/root_test.wac`. */
+/** A package's directory and D7's `@/`, from `test/wac/root_test.wac`. */
 i32 mappingExercises() {
   i32 seen = manifestName().len() + rootsFor("pkg/a.wac", "pkg").len();
   string MAP = "{ imports: {\n" +
-    "  'whole/': { git: 'g', ref: 'r' },\n" +
-    "  'sub/':   { git: 'g', ref: 'r', subdir: 'packages/acme' },\n" +
-    "  'deep/':  { git: 'g', ref: 'r', subdir: 'a/b' },\n" +
-    "  'exact':  { git: 'g', ref: 'r', subdir: 'packages/one' },\n} }";
+    "  'whole': { git: 'g', ref: 'r' },\n" +
+    "  'sub':   { git: 'g', ref: 'r', subdir: './packages/acme' },\n" +
+    "  'deep':  { git: 'g', ref: 'r', subdir: './a/./b' },\n" +
+    "  'exact': { git: 'g', ref: 'r', subdir: './packages/one' },\n} }";
   string[] specs = [
-    "whole/src/a.wac", "whole/a.wac", "sub/src/a.wac", "deep/c.wac", "exact",
-    "deep/../c.wac", "deep/../../x.wac", "sub/../other/a.wac", "whole/a/../b.wac", "sub/./a.wac",
-    "whole/../x.wac", "whole/../../x.wac", "deep/../../../x.wac", "sub/../../../etc/passwd",
-    "other/a.wac", "whole", "./a.wac", "", "exactly"
+    "whole", "sub", "deep", "exact",
+    "whole/src/a.wac", "sub/src/a.wac", "deep/../c.wac", "whole/../x.wac",
+    "other/a.wac", "whol", "./a.wac", "", "exactly"
   ];
   for (i32 i = 0; i < specs.len(); i++) {
     locateIn(MAP.toBytes(), specs[i]);
@@ -257,11 +263,11 @@ i32 mappingExercises() {
 /** The write side, from `test/wac/update_test.wac`. */
 i32 updateExercises() {
   i32 seen = 0;
-  string two = "{ imports: { 'bits/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }";
+  string two = "{ imports: { 'bits': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }";
   updatedLock(two.toBytes(),
-    ("{ imports: { 'bits/': { git: 'g1', ref: 'main', commit: '" + A40 + "' } } }").toBytes(),
+    ("{ imports: { 'bits': { git: 'g1', ref: 'main', commit: '" + A40 + "' } } }").toBytes(),
     [D40, C40]);
-  updatedLock("{ imports: { 'a': { git: 'g', ref: 'v2', subdir: 'lib' } } }".toBytes(),
+  updatedLock("{ imports: { 'a': { git: 'g', ref: 'v2', subdir: './lib' } } }".toBytes(),
     ("{ imports: { 'a': { git: 'g', ref: 'v1', commit: '" + A40 + "' } } }").toBytes(),
     [C40]);
   updatedLock(two.toBytes(), "{}".toBytes(), [C40, ""]);          // a missing commit
@@ -337,10 +343,13 @@ export i32 main(Sys sys) {
   // manifest_test.wac
   seen = seen + manifest_test_each_code_has_the_number_it_has_always_had().len();
   seen = seen + test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports().len();
-  seen = seen + test_a_mapping_is_read_whole_including_the_trailing_slash().len();
-  seen = seen + test_overlapping_names_are_refused_and_neighbouring_ones_are_not().len();
-  seen = seen + test_a_specifier_matches_at_most_one_mapping().len();
-  seen = seen + test_the_suffix_is_joined_to_the_subdir_and_checked_after().len();
+  seen = seen + test_a_mapping_is_read_whole().len();
+  seen = seen + test_a_key_ending_in_a_slash_is_refused().len();
+  seen = seen + test_names_that_once_overlapped_are_now_independent().len();
+  seen = seen + test_a_specifier_matches_only_the_whole_name().len();
+  seen = seen + test_the_subdir_selects_the_package_directory().len();
+  seen = seen + test_a_manifest_path_must_begin_with_dot_slash().len();
+  seen = seen + test_the_entry_is_exports_joined_to_the_package_directory().len();
   seen = seen + test_each_malformed_shape_gets_its_own_code().len();
   seen = seen + test_a_url_this_toolchain_cannot_fetch_is_refused_by_name().len();
   seen = seen + test_a_mapping_of_a_reserved_name_is_refused().len();

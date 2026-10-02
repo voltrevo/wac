@@ -33,19 +33,19 @@ i32 entryNamed(LockEntry[] es, string name) {
 
 export string test_a_mapping_that_did_not_need_resolving_keeps_the_commit_it_had() {
   T t = T.create();
-  // `std/` is USE and `new` is CREATE. WRONG is offered for `std/` — a caller that resolved
+  // `bits` is USE and `new` is CREATE. WRONG is offered for `bits` — a caller that resolved
   // everything because resolving is easier than deciding would pass exactly this.
   LockEntry[] out = updated(
-    "{ imports: { 'bits/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }",
-    "{ imports: { 'bits/': { git: 'g1', ref: 'main', commit: '" + OLD() + "' } } }",
+    "{ imports: { 'bits': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }",
+    "{ imports: { 'bits': { git: 'g1', ref: 'main', commit: '" + OLD() + "' } } }",
     [WRONG(), FRESH()]);
   t.eqI32(out.len(), 2, "both mappings are written");
   if (out.len() != 2) { return t.report(); }
-  i32 std = entryNamed(out, "bits/");
+  i32 bits = entryNamed(out, "bits");
   i32 fresh = entryNamed(out, "new");
-  t.isTrue(std >= 0 && fresh >= 0, "both are named");
-  if (std < 0 || fresh < 0) { return t.report(); }
-  t.eqStr(out[std].commit, OLD(), "std/ did not advance — a branch moving is not a reason");
+  t.isTrue(bits >= 0 && fresh >= 0, "both are named");
+  if (bits < 0 || fresh < 0) { return t.report(); }
+  t.eqStr(out[bits].commit, OLD(), "bits did not advance — a branch moving is not a reason");
   t.eqStr(out[fresh].commit, FRESH(), "new takes what was resolved for it");
   return t.report();
 }
@@ -55,14 +55,14 @@ export string test_a_changed_input_takes_the_new_commit_and_the_new_inputs() {
   // The manifest now says `v2` where the lock recorded `v1`, so the entry is REFRESH: both the
   // commit and the recorded `ref` have to move, or the next run reads it as changed again for ever.
   LockEntry[] out = updated(
-    "{ imports: { 'a': { git: 'g', ref: 'v2', subdir: 'lib' } } }",
+    "{ imports: { 'a': { git: 'g', ref: 'v2', subdir: './lib' } } }",
     "{ imports: { 'a': { git: 'g', ref: 'v1', commit: '" + OLD() + "' } } }",
     [FRESH()]);
   t.eqI32(out.len(), 1, "it is written");
   if (out.len() != 1) { return t.report(); }
   t.eqStr(out[0].commit, FRESH(), "the commit moves");
   t.eqStr(out[0].ref, "v2", "the ref is the manifest's");
-  t.eqStr(out[0].subdir, "lib", "and so is the subdir");
+  t.eqStr(out[0].subdir, "./lib", "and so is the subdir");
   return t.report();
 }
 
@@ -88,12 +88,12 @@ export string test_nothing_to_do_writes_the_same_bytes_it_read() {
   // run leaves no diff. Written unsorted on both sides so the comparison is against the canonical
   // form rather than against the input.
   string manifest = "{ imports: {\n"
-    + "  'b/': { git: 'g2', ref: 'main' },\n"
-    + "  'a':  { git: 'g1', ref: 'v1', subdir: 'lib' },\n"
+    + "  'b':  { git: 'g2', ref: 'main' },\n"
+    + "  'a':  { git: 'g1', ref: 'v1', subdir: './lib' },\n"
     + "} }";
   string lockText = "{ imports: {\n"
-    + "  'a':  { git: 'g1', ref: 'v1', subdir: 'lib', commit: '" + OLD() + "' },\n"
-    + "  'b/': { git: 'g2', ref: 'main', commit: '" + OTHER() + "' },\n"
+    + "  'a':  { git: 'g1', ref: 'v1', subdir: './lib', commit: '" + OLD() + "' },\n"
+    + "  'b':  { git: 'g2', ref: 'main', commit: '" + OTHER() + "' },\n"
     + "} }";
   Lock read = readLock(lockText.toBytes());
   t.isTrue(read.ok, "the lock reads");

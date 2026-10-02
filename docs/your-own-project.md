@@ -316,37 +316,44 @@ search walked the path as typed and so could climb only as far as you had spelle
 
 ## Depending on someone else's code
 
-Dependencies are Git repositories, mapped to a prefix in your manifest:
+A dependency is a **package**: a directory in a Git repository with a `wac.json5` of its own that
+names, in `exports`, the one module importers get. You name it in your manifest:
 
 ```json5
 // wac.json5
 {
   imports: {
-    'dep/': { git: 'https://github.com/voltrevo/wac', ref: 'master' },
+    geometry: { git: 'https://example.invalid/geometry', ref: 'v1' },
   },
 }
 ```
+
+and import it by that name, whole:
+
+```wac
+import { shapes.Circle, shapes.area } from "geometry";
+```
+
+The package selects its entry module, not you: `geometry`'s own manifest says
+`{ exports: "./src/lib.wac" }`, and that module is what `"geometry"` means. There is no way to name
+a file inside it — `"geometry/src/shapes.wac"` matches no key — and a package whose manifest names no
+`exports` cannot be imported at all. Nothing is tried in its place: no `index.wac`, no convention.
+A key is the whole package name, so `"geometry/"` is refused (spec/next ch04).
 
 `ref` is a branch or tag — what to resolve **when you ask**. Then:
 
 ```sh
 $ wac update
-wacfetch: dep/ (https://github.com/voltrevo/wac @ master)
-  master -> 5bc931d7cf3e via refs/heads/master
-  8034066 bytes, 2725 objects -> $WAC_HOME/cache/git/…/5bc931d7cf3e…
+wacfetch: geometry (https://example.invalid/geometry @ v1)
+  v1 -> 5bc931d7cf3e via refs/tags/v1
+  …
 wacfetch: 1 fetched, 0 already locked
-```
-
-and every module in that repository is reachable under the prefix:
-
-```wac
-import { f } from "dep/spec/cases/0001-bare-generic-constructor-from-the-slot.wac";
 ```
 
 `wac update` writes `wac.lock`, which pins the **commit**:
 
 ```json5
-{ "imports": { "dep/": { "git": "…", "ref": "master", "commit": "5bc931d7cf3e…" } } }
+{ "imports": { "geometry": { "git": "…", "ref": "v1", "commit": "5bc931d7cf3e…" } } }
 ```
 
 **Commit the lockfile.** Once a mapping is locked it stays locked even when its branch moves; a
@@ -355,28 +362,28 @@ second `wac update` says *nothing to fetch; 1 mapping(s) already locked* and cha
 **To take a newer commit, remove the lock and fetch again** — delete the mapping's entry from
 `wac.lock`, or the file, and run `wac update`. There is no flag that advances a pinned ref: the
 fetcher takes no options at all, so "locked" means locked until you say otherwise, and moving a pin is
-something you do deliberately and can see in a diff. This paragraph said that rerunning `wac update`
-was how to take a newer commit, which is not true and contradicted the sentence before it — GitHub
-issue 22.
+something you do deliberately and can see in a diff. GitHub issue 22.
 
 **`wac update` is also the only command that reaches the network, and structurally so** — the fetcher
 is a separate payload inside the binary, so there is no code path from `wac build` to a socket. A
-build whose commit is not in the cache is a compile error telling you to run `wac update`, never a
-silent download.
+build that needs a package whose commit is not in the cache is a compile error telling you to run
+`wac update`, never a silent download. A build resolves a package only when something it keeps
+imports from it, so an import nothing reaches costs nothing.
 
-`subdir` maps one directory of a larger repository:
+`subdir` selects the package's directory inside a larger repository — the directory whose own
+`wac.json5` names its `exports`:
 
 ```json5
-'acme': { git: 'https://example.invalid/monorepo', ref: 'v1', subdir: 'lib/acme' },
+acme: { git: 'https://example.invalid/monorepo', ref: 'v1', subdir: './lib/acme' },
 ```
 
-You get that directory and only that directory: code inside it cannot import the rest of the
-repository, by any spelling. That is the point of naming a `subdir` rather than taking the whole
-thing, and it is checked rather than assumed — `issues/lang/0169a`.
+Paths in a manifest — `exports` and `subdir` — begin with `./`. You get that directory and only that
+directory: code inside it cannot import the rest of the repository, by any spelling —
+`issues/lang/0169a`.
 
 ### Names you cannot use
 
-`core`, `core/`, `std` and `std/` are reserved and never appear in a lockfile.
+`core` and `std` are reserved and never appear in a lockfile.
 
 The whole prefix, not just the names that happen to exist — `std/anything.wac` is refused too, and so
 are `core`, `std`, `core/` and `std/` themselves. `stdlib/`, `corelib/` and `mystd/` are ordinary

@@ -5,8 +5,8 @@
 //
 //     {
 //       imports: {
-//         'bits/': { git: 'https://example.invalid/bits', ref: 'main' },
-//         'acme':  { git: 'https://example.invalid/acme', ref: 'v1', subdir: 'packages/acme' },
+//         bits: { git: 'https://example.invalid/bits', ref: 'main' },
+//         acme: { git: 'https://example.invalid/acme', ref: 'v1', subdir: 'packages/acme' },
 //       },
 //     }
 //
@@ -15,10 +15,9 @@
 // Where the bytes came from — and where `wac.json5` was found, which is D7's upward search — is
 // the caller's, because that half needs a capability and this half must stay testable without one.
 //
-// **Why the mapping name keeps its trailing slash.** `acme` and `acme/` are different declarations
-// (D9): the first matches exactly one specifier, the second matches everything under a prefix. A
-// reader that trimmed the slash into a `bool` would be storing the same fact twice, and the two
-// copies are what disagree later. So the name is kept verbatim and `isPrefix` is derived.
+// **A key is a complete package name** (spec/next ch04 `§wac-package-key-exact-rme93fh`): `acme` matches
+// the specifier `acme` and nothing else. There are no prefix mappings, so a key ending in `/` is
+// refused, and a package's modules are reached through the one its own manifest `exports`.
 
 import { JsonValue, JsonObject, JsonMember } from "../../json/src/value.wac";
 import { parseJson5 } from "../../json/src/json.wac";
@@ -32,10 +31,11 @@ export i32 M_NO_GIT()        { return 5; }   // a mapping has no `git`, or it is
 export i32 M_NO_REF()        { return 6; }   // a mapping has no `ref`, or it is not a string
 export i32 M_SUBDIR_KIND()   { return 7; }   // `subdir` is present and is not a string
 export i32 M_EMPTY_NAME()    { return 8; }   // a mapping name is "" or "/"
-export i32 M_OVERLAP()       { return 9; }   // two names where a specifier could match both
+export i32 M_PREFIX_KEY()    { return 9; }   // a mapping name ending in `/`: a package is named whole
 export i32 M_SUBDIR_ESCAPE() { return 10; }  // a `subdir` that leaves its own checkout
 export i32 M_RESERVED_NAME()  { return 11; }  // a mapping of `core`, `std`, or anything under them
 export i32 M_EXPORTS_KIND()   { return 12; }  // `exports` is present and is not one module path
+export i32 M_PATH_FORM()      { return 13; }  // an `exports` or `subdir` that does not begin with `./`
 
 /**
  * What a code means, as a sentence for somebody who has to act on it.
@@ -53,9 +53,10 @@ export string manifestWhy(i32 code) {
   if (code == M_NO_REF())        { return "a mapping has no `ref` string"; }
   if (code == M_SUBDIR_KIND())   { return "`subdir` is not a string"; }
   if (code == M_EMPTY_NAME())    { return "a mapping name is empty"; }
-  if (code == M_OVERLAP())       { return "two mappings could match one specifier"; }
+  if (code == M_PREFIX_KEY())    { return "a mapping name ends in `/`, and a package is named whole — there are no prefix mappings"; }
   if (code == M_SUBDIR_ESCAPE()) { return "a `subdir` leaves its own checkout"; }
   if (code == M_EXPORTS_KIND())  { return "`exports` is not one module path"; }
+  if (code == M_PATH_FORM())     { return "a path in wac.json5 must begin with `./`"; }
   if (code == M_RESERVED_NAME()) {
     return "`core` and `std` are the toolchain's own and cannot be mapped";
   }
@@ -81,11 +82,10 @@ export bool isReservedName(string name) {
 
 /** One entry of the `imports` table. */
 export struct Mapping {
-  string name;      // exactly as written, trailing slash included
+  string name;      // the package name, exactly as written
   string git;
   string ref;
-  string subdir;    // "" when the mapping is the whole repository
-  bool isPrefix = false;    // derived from `name`, never stored separately in the file
+  string subdir;    // the package's directory in the checkout; "" when it is the repository's root
 }
 
 /**
@@ -130,6 +130,9 @@ export Manifest readManifest(u8[] src) {
       default: { return failed(M_EXPORTS_KIND(), "exports"); }
     }
     if (exports == "") { return failed(M_EXPORTS_KIND(), "exports"); }
+    // **Explicitly relative** (spec/next ch04 `§wac-manifest-dot-slash-p59q7q3`), which also keeps an
+    // absolute path from being read as one inside the package.
+    if (!startsWithDotSlash(exports)) { return failed(M_PATH_FORM(), "exports"); }
   }
 
   JsonValue? importsVal = root.getStr("imports");
@@ -146,6 +149,7 @@ export Manifest readManifest(u8[] src) {
     JsonMember m = table.at(i);
     string name = m.keyStr();
     if (name == "" || name == "/") { return failed(M_EMPTY_NAME(), name); }
+    if (endsWithSlash(name)) { return failed(M_PREFIX_KEY(), name); }
     // **`core` and `std` are the toolchain's, and D4 says so** — reserved, never remapped, never in
     // a lockfile. Refused here because it is a fact about the manifest: the person who wrote the
     // mapping is told once, at the line they wrote, rather than once per import that hits it.
@@ -174,14 +178,12 @@ export Manifest readManifest(u8[] src) {
         Str(bytes): { subdir = string.fromBytes(bytes); }
         default: { return failed(M_SUBDIR_KIND(), name); }
       }
+      if (!startsWithDotSlash(subdir)) { return failed(M_PATH_FORM(), name); }
       if (escapes(subdir)) { return failed(M_SUBDIR_ESCAPE(), name); }
     }
 
-    out[i] = Mapping(name, git.value, ref.value, subdir, endsWithSlash(name));
+    out[i] = Mapping(name, git.value, ref.value, subdir);
   }
-
-  string clash = firstOverlap(out);
-  if (clash != "") { return failed(M_OVERLAP(), clash); }
   return Manifest(true, M_OK(), "", out, exports);
 }
 
@@ -201,6 +203,8 @@ Field stringField(JsonObject o, string key) {
   }
 }
 
+bool startsWithDotSlash(string s) { return s.len() >= 2 && s.slice(0, 2) == "./"; }
+
 bool endsWithSlash(string s) {
   return s.len() > 0 && s.slice(s.len() - 1, s.len()) == "/";
 }
@@ -213,7 +217,7 @@ bool endsWithSlash(string s) {
  * tempted to keep. Any `..` component at all is refused; a mapping has no reason for one.
  */
 bool escapes(string s) {
-  if (s.len() > 0 && s.slice(0, 1) == "/") { return true; }
+  // No leading-`/` case: every path reaching here began with `./` or was normalised, which drops one.
   i32 start = 0;
   for (i32 i = 0; i <= s.len(); i++) {
     bool end = i == s.len();
@@ -222,37 +226,6 @@ bool escapes(string s) {
     start = i + 1;
   }
   return false;
-}
-
-/**
- * The first pair of names a specifier could match both of, as `"a" and "b"`, or "".
- *
- * D9 has no longest-prefix rule, so the table is only meaningful if at most one entry can match.
- * Two names overlap when, with one trailing slash removed from each, they are equal or one is a
- * path prefix of the other. That single comparison covers all three shapes the decision names:
- * `foo` beside `foo/` (equal after trimming), `wac/` beside `wac/packages/json/` (prefix), and
- * `wac/` beside `wac2/` (neither, so allowed) — the last being why the `/` is required in the
- * prefix test rather than a bare `startsWith`.
- */
-string firstOverlap(Mapping[] ms) {
-  for (i32 i = 0; i < ms.len(); i++) {
-    for (i32 j = i + 1; j < ms.len(); j++) {
-      string a = trimSlash(ms[i].name);
-      string b = trimSlash(ms[j].name);
-      if (a == b || under(a, b) || under(b, a)) {
-        return "\"" + ms[i].name + "\" and \"" + ms[j].name + "\"";
-      }
-    }
-  }
-  return "";
-}
-
-string trimSlash(string s) { return endsWithSlash(s) ? s.slice(0, s.len() - 1) : s; }
-
-/** Whether `inner` is `outer` followed by a `/` and something. */
-bool under(string outer, string inner) {
-  if (inner.len() <= outer.len() + 1) { return false; }
-  return inner.slice(0, outer.len()) == outer && inner.slice(outer.len(), outer.len() + 1) == "/";
 }
 
 /**
@@ -287,67 +260,48 @@ export string unsupportedTransport(string git) {
   return "`" + s + "://` is not a transport this toolchain has; HTTPS only";
 }
 
-/** Which mapping a specifier uses, and what is left of it after the name. */
+/** Which mapping a specifier names. */
 export struct Match {
   bool found;
   i32 index;        // into the manifest's `imports`
-  string suffix;    // "" for an exact mapping; the part after `name` for a prefix one
 }
 
-/**
- * The mapping `spec` names, if any.
- *
- * At most one can match — `readManifest` refuses a table where two could — so this returns on the
- * first hit rather than ranking. An exact mapping matches only the whole specifier; a prefix
- * mapping matches anything strictly longer that begins with it, so `std/` does not match `std`.
- */
+/** The mapping `spec` names, if any: the one whose name is the whole specifier (spec/next ch04). */
 export Match matchSpecifier(Manifest m, string spec) {
   for (i32 i = 0; i < m.imports.len(); i++) {
-    Mapping map = m.imports[i];
-    if (!map.isPrefix) {
-      if (spec == map.name) { return Match(true, i, ""); }
-      continue;
-    }
-    if (spec.len() > map.name.len() && spec.slice(0, map.name.len()) == map.name) {
-      return Match(true, i, spec.slice(map.name.len(), spec.len()));
-    }
+    if (spec == m.imports[i].name) { return Match(true, i); }
   }
-  return Match(false, -1, "");
+  return Match(false, -1);
 }
 
-/** Where a matched specifier lands inside its repository, or why it does not land anywhere. */
+/** Where a package's directory, or its entry module, is inside its repository — or why nowhere. */
 export struct Located {
   bool ok;
-  i32 code;         // M_OK, or M_SUBDIR_ESCAPE when the suffix climbs out
-  string path;      // repository-relative, normalised, no leading slash
+  i32 code;         // M_OK, or M_SUBDIR_ESCAPE when a path climbs out
+  string path;      // repository-relative, normalised, no leading slash; "" for the root itself
 }
 
 /**
- * The repository-relative path a `Match` names — D9's second half.
- *
- * "For a prefix mapping the unmatched suffix is appended to the mapping's `subdir`, normalised, and
- * rejected if it escapes through `..`." Matching a name is the easy half; this is the half that
- * decides what a mapped import is *allowed to reach*, and getting it wrong is how a package reads
- * a file outside the subtree it was given.
- *
- * **Checked after joining, and only after.** D9 says "appended to the mapping's `subdir`,
- * normalised, and rejected if it escapes", and that order is the substance rather than the
- * phrasing: a `subdir` and a suffix that each look alarming can be harmless together, and two that
- * each look harmless can escape together. `subdir: "a/b"` with a suffix of `../c` is `a/c` and
- * fine; `subdir: "a"` with `../../x` is `../x` and is not. A pre-check on the suffix alone would
- * refuse the first, and — worse for reading this later — would make the real check unreachable,
- * so a fault planted in it would never fail a test.
- *
- * `subdir` itself is already refused at `readManifest` if it contains `..` at all, because it is
- * written by a person once, where a suffix is whatever an import happens to say.
+ * The package directory a `Match` names: the mapping's `subdir`, or the repository's root (spec/next
+ * ch04 `§wac-package-subdir-p3gfzri`). What is imported from it is the module that directory's own
+ * manifest `exports` — `packageEntry` — and never a file the specifier names.
  */
 export Located locate(Manifest m, Match hit) {
   if (!hit.found) { return Located(false, M_OK(), ""); }
-  Mapping map = m.imports[hit.index];
-  string joined = map.subdir == "" ? hit.suffix : map.subdir + "/" + hit.suffix;
-  string path = normalise(joined);
+  string path = normalise(m.imports[hit.index].subdir);
   if (escapes(path)) { return Located(false, M_SUBDIR_ESCAPE(), ""); }
   return Located(true, M_OK(), path);
+}
+
+/**
+ * The entry module of a package whose directory is `dir` and whose manifest says `exports` — spec/next
+ * ch04 `§wac-package-exports-qwtdfg5`. Refused when `exports` leaves the package's directory, since
+ * then the package would be offering a file that is not its own.
+ */
+export Located packageEntry(string dir, string exports) {
+  string inner = normalise(exports);
+  if (inner == "" || escapes(inner)) { return Located(false, M_SUBDIR_ESCAPE(), ""); }
+  return Located(true, M_OK(), dir == "" ? inner : dir + "/" + inner);
 }
 
 /**

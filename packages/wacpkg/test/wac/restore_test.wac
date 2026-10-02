@@ -45,15 +45,15 @@ Exec update(Cli cli, string home, string dir) {
                  ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " update"]);
 }
 
-/** A project mapping `dep/`, with the lock already pinning it. */
+/** A project mapping `dep`, with the lock already pinning it. */
 string fixture(T t, Cli cli, string dir) {
   t.eqStr(madeDir(cli, dir), "", "could not make " + dir);
   t.eqStr(putFile(cli, dir + "/wac.json5",
-                  "{\n  imports: {\n    \"dep/\": { git: \"" + REPO +
-                  "\", ref: \"main\", subdir: \"src\" },\n  },\n}\n"), "", "the manifest");
+                  "{\n  imports: {\n    \"dep\": { git: \"" + REPO +
+                  "\", ref: \"main\", subdir: \"./src\" },\n  },\n}\n"), "", "the manifest");
   t.eqStr(putFile(cli, dir + "/wac.lock",
-                  "{\n  imports: {\n    \"dep/\": {\n      git: \"" + REPO + "\",\n" +
-                  "      ref: \"main\",\n      subdir: \"src\",\n      commit: \"" + COMMIT +
+                  "{\n  imports: {\n    \"dep\": {\n      git: \"" + REPO + "\",\n" +
+                  "      ref: \"main\",\n      subdir: \"./src\",\n      commit: \"" + COMMIT +
                   "\",\n    },\n  },\n}\n"), "", "the lock");
   return dir;
 }

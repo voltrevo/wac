@@ -3425,6 +3425,18 @@ export struct C {
     return n;
   }
 
+  /**
+   * Why `spec` resolves to nothing, when the command that gathered the files said — a package it
+   * could not resolve, deferred until a retained declaration needed it (spec/next ch04) — or "".
+   */
+  string unresolvedWhy(const this, string spec) {
+    for (i32 i = 0; i < this.unresolvedCount; i++) {
+      string u = this.unresolvedSpecs[i];
+      if (u.len() > spec.len() && u.slice(0, spec.len() + 1) == spec + "\t") { return u.slice(spec.len() + 1, u.len()); }
+    }
+    return "";
+  }
+
   /** Record a quoted specifier this file imports that no supplied file answers. */
   void addUnresolved(this, string spec) {
     if (this.unresolvedCount >= this.unresolvedSpecs.len()) { return; }
@@ -13528,7 +13540,10 @@ export void checkModule(C c, Program prog) {
         // **Nothing at that path.** The caller resolved it — see `errMissingImportFile` — and this is
         // the import's own token, so the message can name the file the way
         // `§wac-diag-parse-bad-type-n7qm3xf` names a type nobody declared.
-        if (bare != "" && c.isUnresolved(bare)) {
+        string unresolvedBecause = bare == "" ? "" : c.unresolvedWhy(bare);
+        if (unresolvedBecause != "") {
+          c.reportTok(errMissingImportFile(), pathTok, unresolvedBecause);
+        } else if (bare != "" && c.isUnresolved(bare)) {
           c.reportTok(errMissingImportFile(), pathTok, bare);
         }
         // A specifier's form needs no file to judge, so this is refused whether or not anything uses

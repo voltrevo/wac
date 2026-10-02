@@ -24,7 +24,7 @@ import { Res, normalisePath, relativeTo, resolveFromAt } from "../../wacc/src/pa
 import { coreSource, isBuiltinSpec, stdSource }
   from "../../wacc/src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, dirOf, isProjectSpecifier } from "../../wacpkg/src/root.wac";
-import { Located, Manifest, Match, locate, manifestWhy, matchSpecifier, readManifest }
+import { Located, Manifest, Match, locate, manifestWhy, matchSpecifier, packageEntry, readManifest }
   from "../../wacpkg/src/manifest.wac";
 import { Lock, readLock } from "../../wacpkg/src/lock.wac";
 import { cachePath } from "../../wacpkg/src/cache.wac";
@@ -227,7 +227,7 @@ Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
   Located at = locate(m, hit);
   if (!at.ok) {
     return Mapped(true, false, "", "", "",
-                  spec + " climbs out of the subtree its mapping was given");
+                  spec + "'s `subdir` climbs out of its repository");
   }
   string name = m.imports[hit.index].name;
   string git = m.imports[hit.index].git;
@@ -257,16 +257,37 @@ Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
                   "` from");
   }
   string checkout = cachePath(home, git, commit);
-  string file = checkout + "/" + at.path;
-  if (!fs.stat(file).exists) {
+  string dir = at.path == "" ? checkout : checkout + "/" + at.path;
+  // **The package selects its entry module** (spec/next ch04): its directory's own manifest names it
+  // in `exports`, and nothing else is tried — no `index.wac`, no file the specifier spells.
+  FileResult pm = fs.readFile(dir + "/" + MANIFEST_NAME());
+  if (!pm.ok) {
     // **Says where it looked.** "not in the cache" without the path leaves the reader guessing
     // between a wrong commit, a wrong subdir and a cache that was never filled — three different
     // things to do about it.
     return Mapped(true, false, "", "", "",
-                  spec + " is not in the cache — run `wac update`. Looked for " + file);
+                  fs.stat(checkout).exists
+                    ? "`" + name + "` has no " + MANIFEST_NAME() + " at " + dir + ", so it names no `exports`"
+                    : spec + " is not in the cache — run `wac update`. Looked for " + checkout);
   }
-  string sub = m.imports[hit.index].subdir;
-  return Mapped(true, true, file, checkout, sub == "" ? checkout : checkout + "/" + sub, "");
+  Manifest pkg = readManifest(pm.bytes);
+  if (!pkg.ok) {
+    return Mapped(true, false, "", "", "", dir + "/" + MANIFEST_NAME() + ": " + manifestWhy(pkg.code));
+  }
+  if (pkg.exports == "") {
+    return Mapped(true, false, "", "", "",
+                  "`" + name + "` names no `exports`, so it cannot be imported — no file is tried in its place");
+  }
+  Located entryAt = packageEntry(at.path, pkg.exports);
+  if (!entryAt.ok) {
+    return Mapped(true, false, "", "", "", "`" + name + "`'s `exports` leaves its own directory");
+  }
+  string file = checkout + "/" + entryAt.path;
+  if (!fs.stat(file).exists) {
+    return Mapped(true, false, "", "", "",
+                  "`" + name + "`'s `exports` names " + file + ", which is not there");
+  }
+  return Mapped(true, true, file, checkout, dir, "");
 }
 
 /**
@@ -428,6 +449,20 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
   // imports the other. `issues/lang/0134`.
   paths[0] = normalisePath(entry);
   n = 1;
+  // **The entry's own manifest is checked whether or not an import consults it** (spec/next ch04
+  // `§wac-package-key-exact-rme93fh`): a key ending in `/` is a mistake in the file, not in a use of it.
+  string entryRoot = projectRootAbs(fs, base, paths[0]);
+  if (entryRoot != "") {
+    FileResult emf = fs.readFile(entryRoot == "." ? MANIFEST_NAME() : entryRoot + "/" + MANIFEST_NAME());
+    if (emf.ok) {
+      Manifest em = readManifest(emf.bytes);
+      if (!em.ok) {
+        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "",
+                       entryRoot + "/" + MANIFEST_NAME() + ": " + manifestWhy(em.code) +
+                       (em.detail == "" ? "" : " — " + em.detail));
+      }
+    }
+  }
   i32 at = 0;
   while (at < n) {
     string path = paths[at];
@@ -474,6 +509,19 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
       if (isMappingCandidate(specs[i]) && roots[at] != "") {
         Mapped got = mapSpecifier(fs, cli, roots[at], specs[i]);
         if (got.named) {
+          // **A package is resolved only when a retained declaration needs it** — spec/next ch04
+          // `§wac-package-lazy-j3nmf2p`. A build maps it to a key nothing supplies, as it leaves out a
+          // file it cannot read: an import reachability keeps is then refused by the checker, and one
+          // it drops costs nothing.
+          if (!got.ok && lazy) {
+            if (mapN < mapFrom.len()) {
+              mapFrom[mapN] = path;
+              mapSpec[mapN] = specs[i];
+              mapTo[mapN] = "(unresolved) " + got.error;
+              mapN = mapN + 1;
+            }
+            continue;
+          }
           if (!got.ok) { return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", got.error); }
           // The answer the linker and the checker cannot work out for themselves.
           if (mapN < mapFrom.len()) {

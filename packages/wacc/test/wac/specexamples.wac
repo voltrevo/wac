@@ -19,6 +19,9 @@ import { diagnoseBuildIn, pruneForBuild, diagnoseGraphIn, wireHasErrors, blocked
          importSpecsFor } from "../../src/api.wac";
 import { renderDiagnostics } from "../../src/render.wac";
 import { Res } from "../../src/path.wac";
+import { Manifest, readManifest } from "../../../wacpkg/src/manifest.wac";
+import { cachePath } from "../../../wacpkg/src/cache.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
 import { Pruned } from "../../src/reach.wac";
 import { ProgramGraph, programGraph } from "../../src/program.wac";
 import { stdSource } from "../../src/coretext.wac";
@@ -459,7 +462,8 @@ string meets(Cli cli, string scratch, ExFence fence, ExExpect x, string[] givenP
 bool isProjectFence(string[] paths, string[] sources) {
   bool project = false;
   for (i32 i = 0; i < paths.len(); i++) {
-    if (startsWith(paths[i], "deps/")) { return false; }
+    // A package checkout too: the command reads it from a cache this probe fills (`buildByCommand`).
+    if (startsWith(paths[i], "deps/")) { project = true; }
     if (paths[i] == "wac.json5" || endsWith(paths[i], "/wac.json5")) { project = true; }
     // A `@/` with no manifest anywhere is a question about projects too — the command's to refuse.
     if (sources[i].indexOf("\"@/") >= 0) { project = true; }
@@ -476,12 +480,59 @@ struct ExBuilt {
 
 ExBuilt buildByCommand(Cli cli, string scratch, ExFence fence, string[] paths, string[] sources, i32 id) {
   string dir = scratch + "/p" + itoa(id);
+  string home = dir + "-home";
+  // **A package fence's checkouts go where the command looks for them**: each `<name>/` file into
+  // `$WAC_HOME`'s cache at the repository the project's manifest names for `name`, pinned by a lock
+  // this writes at one made-up commit. What is then resolved — `subdir`, `exports`, no fallback — is
+  // the command's own reading of the manifests, not a second one here.
+  string projectManifest = "";
+  for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == "wac.json5") { projectManifest = sources[i]; } }
+  Manifest m = readManifest(projectManifest.toBytes());
+  string lock = "{ imports: {";
+  for (i32 k = 0; m.ok && k < m.imports.len(); k++) {
+    lock = lock + " \"" + m.imports[k].name + "\": { git: \"" + m.imports[k].git + "\", ref: \""
+         + m.imports[k].ref + "\"" + (m.imports[k].subdir == "" ? "" : ", subdir: \"" + m.imports[k].subdir + "\"")
+         + ", commit: \"" + probeCommit() + "\" },";
+  }
+  lock = lock + " } }\n";
+  bool anyDep = false;
   for (i32 i = 0; i < paths.len(); i++) {
     string full = dir + "/" + paths[i];
+    if (startsWith(paths[i], "deps/")) {
+      anyDep = true;
+      string rest = paths[i].slice(5, paths[i].len());
+      string name = rest.slice(0, rest.indexOf("/"));
+      string git = "";
+      for (i32 k = 0; m.ok && k < m.imports.len(); k++) { if (m.imports[k].name == name) { git = m.imports[k].git; } }
+      if (git == "") { continue; }
+      full = cachePath(home, git, probeCommit()) + "/" + rest.slice(rest.indexOf("/") + 1, rest.len());
+    }
     i32 cut = 0 - 1;
     for (i32 k = 0; k < full.len(); k++) { if (full.slice(k, k + 1) == "/") { cut = k; } }
     if (cut > 0) { cli.mkdir(full.slice(0, cut), true).wait(); }
     cli.writeFile(full, sources[i].toBytes()).wait();
+  }
+  if (anyDep) { cli.writeFile(dir + "/wac.lock", lock.toBytes()).wait(); }
+  // A dependency with imports of its own carries its lock, as a repository does: each such manifest
+  // the fence supplies gets one beside it, at the same made-up commit.
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (!startsWith(paths[i], "deps/") || !endsWith(paths[i], "/wac.json5")) { continue; }
+    Manifest dm = readManifest(sources[i].toBytes());
+    if (!dm.ok || dm.imports.len() == 0) { continue; }
+    string rest = paths[i].slice(5, paths[i].len());
+    string name = rest.slice(0, rest.indexOf("/"));
+    string git = "";
+    for (i32 k = 0; m.ok && k < m.imports.len(); k++) { if (m.imports[k].name == name) { git = m.imports[k].git; } }
+    if (git == "") { continue; }
+    string inner = rest.slice(rest.indexOf("/") + 1, rest.len());
+    string at = cachePath(home, git, probeCommit()) + "/" + inner.slice(0, inner.len() - 9) + "wac.lock";
+    string dlock = "{ imports: {";
+    for (i32 k = 0; k < dm.imports.len(); k++) {
+      dlock = dlock + " \"" + dm.imports[k].name + "\": { git: \"" + dm.imports[k].git + "\", ref: \""
+            + dm.imports[k].ref + "\"" + (dm.imports[k].subdir == "" ? "" : ", subdir: \"" + dm.imports[k].subdir + "\"")
+            + ", commit: \"" + probeCommit() + "\" },";
+    }
+    cli.writeFile(at, (dlock + " } }\n").toBytes()).wait();
   }
   string out = dir + "/out";
   Vec<string> argv = Vec.create();
@@ -489,7 +540,7 @@ ExBuilt buildByCommand(Cli cli, string scratch, ExFence fence, string[] paths, s
   argv.push(dir + "/" + fence.entry);
   argv.push("-o");
   argv.push(out);
-  Exec r = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac", argv.toArray(), u8[]()).wait();
+  Exec r = withEnv(cli, ["WAC_HOME"], [home], cli.cwd().wait() + "/native/v8/target/release/wac", argv.toArray());
   bool ok = r.ran() && r.status == 0;
   return ExBuilt(ok, out + ".wasm", string.fromBytes(r.stderr));
 }
@@ -501,6 +552,9 @@ string meetsByCommand(Cli cli, string scratch, ExFence fence, ExExpect x, string
   if (x.kind == "emits") { return ""; }
   return runAndJudge(cli, x, b.wasm);
 }
+
+/** The commit every probe lock pins: any forty hex digits name a checkout the probe wrote itself. */
+string probeCommit() { return "0123456789abcdef0123456789abcdef01234567"; }
 
 string firstLineOf(string s) {
   i32 nl = s.indexOf("\n");

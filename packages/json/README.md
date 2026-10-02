@@ -126,7 +126,7 @@ unquoted member names, single-quoted strings, trailing commas and ECMAScript's n
 ```json5
 {
   // wac.json5, which is what this is for
-  imports: { 'std/': { git: 'https://example.invalid/std', ref: 'main' } },
+  imports: { geometry: { git: 'https://example.invalid/geometry', ref: 'main' } },
   depth: .5,          // a decimal point with nothing before it
   mask: 0xff,         // hexadecimal
   trailing: [1, 2,],  // a comma before the bracket

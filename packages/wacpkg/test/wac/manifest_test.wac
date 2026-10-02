@@ -1,10 +1,13 @@
-// `wac.json5`, read and checked — `design/lang/0009` D6 and D9.
+// `wac.json5`, read and checked — `design/lang/0009` D6, as spec/next ch04 now has it.
 //
-// The overlap rule is the part worth testing hardest, because it is what makes the rest of the
-// design safe: D9 says a specifier has at most one possible mapping and there is no longest-prefix
-// tie-break, so a table admitting two matches has no defined meaning at all. Every pair the
-// decision names is here, in both orders, and so are the pairs it explicitly allows — a checker
-// that rejected `wac/` beside `wac2/` would satisfy every "must reject" case and be wrong.
+// **A key is a complete package name** (`§wac-package-key-exact-rme93fh`). There were prefix
+// mappings until ch04 — a key `bits/` took every specifier under it, a suffix was joined to the
+// `subdir`, and an overlap rule existed to stop two keys claiming one specifier. All three went
+// together: a key ending in `/` is refused, a specifier matches only the key that *is* it, and what
+// a package offers is the one module its own manifest `exports`. So the cases worth testing hardest
+// moved: that the refusal is of the trailing `/` and not of a `/` anywhere, that matching is
+// equality rather than a prefix test, and that `subdir` and `exports` compose to the entry module
+// without either being able to leave the package.
 //
 // Written in wac rather than as a `.test.ts`: these are pure functions over bytes, so a host adds
 // a bindgen boundary and nothing else. `issues/system/0161`.
@@ -18,10 +21,10 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Manifest, Mapping, Match, Located, readManifest, matchSpecifier, locate,
+import { Manifest, Mapping, Match, Located, readManifest, matchSpecifier, locate, packageEntry,
          unsupportedTransport, M_OK, M_NOT_JSON5, M_NOT_OBJECT, M_IMPORTS_KIND, M_MAPPING_KIND,
-         M_NO_GIT, M_NO_REF, M_SUBDIR_KIND, M_EMPTY_NAME, M_OVERLAP, M_SUBDIR_ESCAPE,
-         M_RESERVED_NAME, M_EXPORTS_KIND, manifestWhy }
+         M_NO_GIT, M_NO_REF, M_SUBDIR_KIND, M_EMPTY_NAME, M_PREFIX_KEY, M_SUBDIR_ESCAPE,
+         M_RESERVED_NAME, M_EXPORTS_KIND, M_PATH_FORM, manifestWhy }
   from "../../src/manifest.wac";
 
 Manifest of(string src) { return readManifest(src.toBytes()); }
@@ -36,7 +39,9 @@ export string test_each_code_has_the_number_it_has_always_had() {
   // Written once, here, against the numbers themselves: same guarantee, nothing to keep in step.
   //
   // The numbers are the contract. They appear in a lockfile-adjacent error path that other tools
-  // read, so renumbering one is a breaking change rather than a tidy-up.
+  // read, so renumbering one is a breaking change rather than a tidy-up. 9 was `M_OVERLAP` until
+  // ch04 removed prefix mappings, and the refusal that replaced it took its number rather than
+  // leaving a hole: the overlap rule and the trailing-`/` rule are the same decision's two eras.
   t.eqI32(M_OK(), 0, "M_OK");
   t.eqI32(M_NOT_JSON5(), 1, "M_NOT_JSON5");
   t.eqI32(M_NOT_OBJECT(), 2, "M_NOT_OBJECT");
@@ -46,7 +51,7 @@ export string test_each_code_has_the_number_it_has_always_had() {
   t.eqI32(M_NO_REF(), 6, "M_NO_REF");
   t.eqI32(M_SUBDIR_KIND(), 7, "M_SUBDIR_KIND");
   t.eqI32(M_EMPTY_NAME(), 8, "M_EMPTY_NAME");
-  t.eqI32(M_OVERLAP(), 9, "M_OVERLAP");
+  t.eqI32(M_PREFIX_KEY(), 9, "M_PREFIX_KEY");
   t.eqI32(M_SUBDIR_ESCAPE(), 10, "M_SUBDIR_ESCAPE");
   t.eqI32(M_RESERVED_NAME(), 11, "M_RESERVED_NAME");
   t.eqI32(M_EXPORTS_KIND(), 12, "M_EXPORTS_KIND");
@@ -86,81 +91,120 @@ export string test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports() {
   return t.report();
 }
 
-export string test_a_mapping_is_read_whole_including_the_trailing_slash() {
+export string test_a_mapping_is_read_whole() {
   T t = T.create();
-  // Not `std/`, which this used before `issues/lang/0167a` reserved it — the prefix example has to
-  // be a name somebody could actually use.
   Manifest m = of("{ imports: {\n"
-                + "  'bits/': { git: 'https://example.invalid/bits', ref: 'main' },\n"
-                + "  'acme': { git: 'https://example.invalid/m', ref: 'v1', subdir: 'lib/acme' },\n"
+                + "  'bits': { git: 'https://example.invalid/bits', ref: 'main' },\n"
+                + "  'acme': { git: 'https://example.invalid/m', ref: 'v1', subdir: './lib/acme' },\n"
                 + "} }");
   t.isTrue(m.ok, "it reads");
   if (!m.ok) { return t.report(); }
   t.eqI32(m.imports.len(), 2, "two mappings");
 
   Mapping bits = m.imports[0];
-  t.eqStr(bits.name, "bits/", "the name keeps its slash");
-  t.isTrue(bits.isPrefix, "and is a prefix mapping");
+  t.eqStr(bits.name, "bits", "the name as written");
+  t.eqStr(bits.git, "https://example.invalid/bits", "its git");
   t.eqStr(bits.ref, "main", "its ref");
   t.eqStr(bits.subdir, "", "no subdir");
 
   Mapping acme = m.imports[1];
-  t.eqStr(acme.name, "acme", "an exact name");
-  t.isFalse(acme.isPrefix, "is not a prefix mapping");
-  t.eqStr(acme.subdir, "lib/acme", "its subdir");
+  t.eqStr(acme.name, "acme", "the second name");
+  t.eqStr(acme.ref, "v1", "its ref");
+  t.eqStr(acme.subdir, "./lib/acme", "its subdir, as written");
   return t.report();
 }
 
 string entryFor(string name) { return "'" + name + "': { git: 'https://x.invalid/g', ref: 'r' }"; }
 Manifest pair(string a, string b) { return of("{ imports: { " + entryFor(a) + ", " + entryFor(b) + " } }"); }
 
-export string test_overlapping_names_are_refused_and_neighbouring_ones_are_not() {
+/**
+ * A key ending in `/` is refused — `§wac-package-key-exact-rme93fh` — and a `/` elsewhere is not.
+ *
+ * The trailing slash was how a prefix mapping was spelled, so it is the one spelling that would mean
+ * something different from what it now says; refusing it tells the person who wrote `bits/` that the
+ * rule changed rather than letting the key match nothing for ever. A `/` *inside* a name is not that:
+ * `acme/json` is one complete name, and a check written as "contains a slash" would take it away.
+ */
+export string test_a_key_ending_in_a_slash_is_refused() {
   T t = T.create();
-  // Every pair D9 names, in **both orders** — the check compares two names and could easily be
-  // right in one direction only.
-  string[] left  = ["wac/", "foo", "a",  "x/",  "p"];
-  string[] right = ["wac/packages/json/", "foo/", "a", "x/y", "p/q/"];
+  string[] bad = ["bits/", "a/b/", "wac/packages/json/"];
+  for (i32 i = 0; i < bad.len(); i++) {
+    Manifest m = of("{ imports: { " + entryFor(bad[i]) + " } }");
+    t.isFalse(m.ok, bad[i] + " is refused");
+    if (!m.ok) {
+      t.eqI32(m.code, M_PREFIX_KEY(), bad[i] + " says why");
+      t.eqStr(m.detail, bad[i], "and the message names it");
+    }
+    // Wherever it appears in the table, not only first.
+    Manifest second = pair("fine", bad[i]);
+    t.isFalse(second.ok, bad[i] + " after a good key is refused too");
+    if (!second.ok) { t.eqI32(second.code, M_PREFIX_KEY(), bad[i] + " second says why"); }
+  }
+  // A `/` that is not the last byte is part of an ordinary name.
+  string[] good = ["acme/json", "a/b", "x"];
+  for (i32 i = 0; i < good.len(); i++) {
+    Manifest m = of("{ imports: { " + entryFor(good[i]) + " } }");
+    t.isTrue(m.ok, good[i] + " is an ordinary name");
+  }
+  return t.report();
+}
+
+/**
+ * Two keys can no longer collide, so the overlap rule went with the prefixes it policed.
+ *
+ * `foo` beside `foo/bar` was refused while `foo/` could mean "everything under foo"; with exact
+ * matching they are two packages that happen to share letters, and each specifier names at most one
+ * of them because it is equal to at most one of them. Both orders, as the overlap test had — the old
+ * check compared two names and a remnant of it could survive in one direction only.
+ */
+export string test_names_that_once_overlapped_are_now_independent() {
+  T t = T.create();
+  string[] left  = ["foo", "x",   "wac",              "p"];
+  string[] right = ["foo/bar", "x/y", "wac/packages/json", "p/q/r"];
   for (i32 i = 0; i < left.len(); i++) {
     Manifest one = pair(left[i], right[i]);
     Manifest two = pair(right[i], left[i]);
-    t.isFalse(one.ok, left[i] + " beside " + right[i] + " is refused");
-    t.isFalse(two.ok, right[i] + " beside " + left[i] + " is refused too");
-    if (!one.ok) { t.isTrue(one.detail.len() > 0, "and the message names them"); }
-  }
-  // The rows it must allow. A checker that refused these would pass every case above and be
-  // wrong, which is why the prefix test requires the `/` rather than a bare startsWith.
-  string[] okA = ["wac/", "foo",    "a/", "ab/"];
-  string[] okB = ["wac2/", "foobar", "b/", "a/"];
-  for (i32 i = 0; i < okA.len(); i++) {
-    t.isTrue(pair(okA[i], okB[i]).ok, okA[i] + " beside " + okB[i] + " is fine");
+    t.isTrue(one.ok, left[i] + " beside " + right[i] + " is fine");
+    t.isTrue(two.ok, right[i] + " beside " + left[i] + " is fine too");
+    if (one.ok) {
+      Match a = matchSpecifier(one, left[i]);
+      Match b = matchSpecifier(one, right[i]);
+      t.isTrue(a.found && a.index == 0, left[i] + " names the first");
+      t.isTrue(b.found && b.index == 1, right[i] + " names the second, not the first");
+    }
   }
   return t.report();
 }
 
 Manifest table() {
   return of("{ imports: {\n"
-          + "  'whole/': { git: 'https://x.invalid/g', ref: 'r' },\n"
-          + "  'sub/':   { git: 'https://x.invalid/g', ref: 'r', subdir: 'lib/acme' },\n"
-          + "  'deep/':  { git: 'https://x.invalid/g', ref: 'r', subdir: 'a/b' },\n"
-          + "  'exact':  { git: 'https://x.invalid/g', ref: 'r', subdir: 'lib/one' },\n"
+          + "  'whole':      { git: 'https://x.invalid/g', ref: 'r' },\n"
+          + "  'sub':        { git: 'https://x.invalid/g', ref: 'r', subdir: './lib/acme' },\n"
+          + "  'deep':       { git: 'https://x.invalid/g', ref: 'r', subdir: './a/b' },\n"
+          + "  'acme/json':  { git: 'https://x.invalid/g', ref: 'r', subdir: './a/./b//c' },\n"
           + "} }");
 }
 
-export string test_a_specifier_matches_at_most_one_mapping() {
+/**
+ * A specifier names a mapping only by being its whole name — `§wac-no-subpath-wqatc72`.
+ *
+ * The misses are the old successes: `whole/src/a.wac` resolved through `whole/` under the prefix
+ * model, and a matcher that kept a `startsWith` anywhere would still answer it. So would one that
+ * stripped a trailing `/` before comparing, which `whole/` is here for.
+ */
+export string test_a_specifier_matches_only_the_whole_name() {
   T t = T.create();
   Manifest m = table();
   t.isTrue(m.ok, "the table reads");
   if (!m.ok) { return t.report(); }
-  string[] hits = ["whole/src/a.wac", "sub/src/a.wac", "exact"];
-  i32[] want = [0, 1, 3];
+  string[] hits = ["whole", "sub", "deep", "acme/json"];
   for (i32 i = 0; i < hits.len(); i++) {
     Match h = matchSpecifier(m, hits[i]);
     t.isTrue(h.found, hits[i] + " matches");
-    if (h.found) { t.eqI32(h.index, want[i], hits[i] + " matches the right one"); }
+    if (h.found) { t.eqI32(h.index, i, hits[i] + " matches the right one"); }
   }
-  // The prefix form matches neither the bare name nor the name with nothing after it: `whole/`
-  // would resolve to the mapping's root with an empty path, which names no module.
-  string[] misses = ["whole", "whole/", "exact/x", "other", "", "./a.wac", "exactly"];
+  string[] misses = ["whole/src/a.wac", "whole/", "sub/x", "acme", "acme/json/lib.wac", "other",
+                     "", "./a.wac", "wholes", "whol", "Whole"];
   for (i32 i = 0; i < misses.len(); i++) {
     Match h = matchSpecifier(m, misses[i]);
     t.isFalse(h.found, "\"" + misses[i] + "\" matches nothing");
@@ -171,35 +215,66 @@ export string test_a_specifier_matches_at_most_one_mapping() {
   return t.report();
 }
 
-export string test_the_suffix_is_joined_to_the_subdir_and_checked_after() {
+/**
+ * `subdir` selects the package's directory, and an absent one is the checkout's root —
+ * `§wac-package-subdir-p3gfzri`. Normalised, because `./a/b` and `a/b` are one directory and the
+ * answer is joined to a cache path that two spellings must not split.
+ */
+export string test_the_subdir_selects_the_package_directory() {
   T t = T.create();
   Manifest m = table();
   if (!m.ok) { t.fail("the table did not read"); return t.report(); }
-
-  string[] specs = [
-                            "whole/src/a.wac", "sub/src/a.wac", "deep/c.wac", "exact",
-                            "deep/../c.wac", "sub/../other/a.wac", "whole/a/../b.wac"
-  ];
-  string[] lands = [
-                            "src/a.wac", "lib/acme/src/a.wac", "a/b/c.wac", "lib/one",
-                            "a/c.wac", "lib/other/a.wac", "b.wac"
-  ];
+  string[] specs = ["whole", "sub", "deep", "acme/json"];
+  string[] dirs  = ["", "lib/acme", "a/b", "a/b/c"];
   for (i32 i = 0; i < specs.len(); i++) {
     Located at = locate(m, matchSpecifier(m, specs[i]));
-    t.isTrue(at.ok, specs[i] + " lands somewhere");
-    if (at.ok) { t.eqStr(at.path, lands[i], specs[i] + " lands where it should"); }
+    t.isTrue(at.ok, specs[i] + " has a directory");
+    if (at.ok) { t.eqStr(at.path, dirs[i], specs[i] + " is the directory its subdir names"); }
   }
-  // `deep/../c.wac` above is *inside* — subdir `a/b` — and this same suffix under a mapping with
-  // no subdir is outside. A check on the suffix alone gets one of the two wrong whichever way it
-  // is written, which is why D9 says joined, then normalised, then checked.
-  string[] out = [
-                          "whole/../x.wac", "whole/../../x.wac", "deep/../../../x.wac",
-                          "sub/../../../etc/passwd"
-  ];
+
+  // A `subdir` that leaves the checkout is refused when the manifest is read, so the person who
+  // wrote it is told at the line they wrote.
+  string[] out = ["./..", "./../x", "./a/../..", "./a/../../b"];
   for (i32 i = 0; i < out.len(); i++) {
-    Located at = locate(m, matchSpecifier(m, out[i]));
-    t.isFalse(at.ok, out[i] + " is outside the checkout");
-    if (!at.ok) { t.eqI32(at.code, M_SUBDIR_ESCAPE(), out[i] + " says why"); }
+    Manifest bad = of("{ imports: { 'a': { git: 'g', ref: 'r', subdir: '" + out[i] + "' } } }");
+    t.isFalse(bad.ok, "subdir " + out[i] + " is refused");
+    if (!bad.ok) { t.eqI32(bad.code, M_SUBDIR_ESCAPE(), "subdir " + out[i] + " says why"); }
+  }
+  // And `locate` checks again rather than trusting that it was handed a manifest `readManifest`
+  // made: a `Manifest` is a struct anybody can build.
+  Mapping[] rows = [Mapping("x", "g", "r", "a/../../x")];
+  Manifest built = Manifest(true, M_OK(), "", rows, "");
+  Located esc = locate(built, matchSpecifier(built, "x"));
+  t.isFalse(esc.ok, "a hand-built subdir that climbs out still locates nowhere");
+  if (!esc.ok) { t.eqI32(esc.code, M_SUBDIR_ESCAPE(), "and says why"); }
+  return t.report();
+}
+
+/**
+ * The entry module is the package directory joined with its own manifest's `exports` —
+ * `§wac-package-exports-qwtdfg5` — and an `exports` that leaves that directory is refused.
+ *
+ * `exports` is relative to the *package's* manifest, not the checkout, so the same `./src/lib.wac`
+ * lands in two places for two directories; and `..` that stays inside is fine while `..` that climbs
+ * past the directory is the package offering a file that is not its own.
+ */
+export string test_the_entry_is_exports_joined_to_the_package_directory() {
+  T t = T.create();
+  string[] dirs = ["", "packages/geo", "a", "a/b", "a/b"];
+  string[] exps = ["./src/lib.wac", "./src/lib.wac", "lib.wac", "./x/../lib.wac", "./x//y.wac"];
+  string[] want = ["src/lib.wac", "packages/geo/src/lib.wac", "a/lib.wac", "a/b/lib.wac",
+                   "a/b/x/y.wac"];
+  for (i32 i = 0; i < dirs.len(); i++) {
+    Located e = packageEntry(dirs[i], exps[i]);
+    t.isTrue(e.ok, exps[i] + " in \"" + dirs[i] + "\" is an entry");
+    if (e.ok) { t.eqStr(e.path, want[i], exps[i] + " in \"" + dirs[i] + "\" lands where it should"); }
+  }
+  // Out of the directory, or naming the directory itself rather than a module in it.
+  string[] bad = ["../lib.wac", "./../x.wac", "src/../../x.wac", "./", ".", ""];
+  for (i32 i = 0; i < bad.len(); i++) {
+    Located e = packageEntry("packages/geo", bad[i]);
+    t.isFalse(e.ok, "exports \"" + bad[i] + "\" is refused");
+    if (!e.ok) { t.eqI32(e.code, M_SUBDIR_ESCAPE(), "exports \"" + bad[i] + "\" says why"); }
   }
   return t.report();
 }
@@ -250,7 +325,7 @@ export string test_a_url_this_toolchain_cannot_fetch_is_refused_by_name() {
 }
 
 /**
- * `core`, `core/`, `std` and `std/` cannot be mapped — `design/lang/0009` D4, `issues/lang/0167a`.
+ * `core` and `std`, and anything under them, cannot be mapped — `design/lang/0009` D4, `issues/lang/0167a`.
  *
  * **Refused here rather than at the import**, because it is a fact about the manifest and this is
  * where the manifest is checked: the person who wrote the mapping gets told once, at the line they
@@ -265,30 +340,36 @@ export string test_a_url_this_toolchain_cannot_fetch_is_refused_by_name() {
 export string test_a_mapping_of_a_reserved_name_is_refused() {
   T t = T.create();
   string[] bad = [
-    "{ imports: { 'std/': { git: 'g', ref: 'r' } } }",
-    "{ imports: { 'core/': { git: 'g', ref: 'r' } } }",
     "{ imports: { 'std': { git: 'g', ref: 'r' } } }",
     "{ imports: { 'core': { git: 'g', ref: 'r' } } }",
     // Anything *under* the reserved prefix is equally not yours to map.
     "{ imports: { 'std/net.wac': { git: 'g', ref: 'r' } } }",
     "{ imports: { 'core/option.wac': { git: 'g', ref: 'r' } } }",
     // And it is refused wherever it appears, not only first.
-    "{ imports: { 'ok/': { git: 'g', ref: 'r' }, 'std/': { git: 'g', ref: 'r' } } }"
+    "{ imports: { 'ok': { git: 'g', ref: 'r' }, 'std': { git: 'g', ref: 'r' } } }"
   ];
   for (i32 i = 0; i < bad.len(); i++) {
     Manifest m = of(bad[i]);
     t.isFalse(m.ok, "accepted a reserved mapping: " + bad[i]);
     if (!m.ok) { t.eqI32(m.code, M_RESERVED_NAME(), "code for: " + bad[i]); }
   }
+  // `std/` and `core/` are refused too. Which code says so is not this test's business — a key
+  // ending in `/` is refused before its name is looked at — only that neither gets through.
+  string[] slashed = ["std/", "core/"];
+  for (i32 i = 0; i < slashed.len(); i++) {
+    t.isFalse(of("{ imports: { '" + slashed[i] + "': { git: 'g', ref: 'r' } } }").ok,
+              "accepted a reserved mapping: " + slashed[i]);
+  }
 
   // **The near misses, which is what stops this being a substring check.** None of these is
   // reserved, and refusing them would take names away from people for no reason.
   string[] good = [
-    "{ imports: { 'stdlib/': { git: 'g', ref: 'r' } } }",
-    "{ imports: { 'corelib/': { git: 'g', ref: 'r' } } }",
-    "{ imports: { 'mystd/': { git: 'g', ref: 'r' } } }",
-    "{ imports: { 'a/core/': { git: 'g', ref: 'r' } } }",
-    "{ imports: { 'Core/': { git: 'g', ref: 'r' } } }"
+    "{ imports: { 'stdlib': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'corelib': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'mystd': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'a/core': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'a/std/b': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'Core': { git: 'g', ref: 'r' } } }"
   ];
   for (i32 i = 0; i < good.len(); i++) {
     Manifest m = of(good[i]);
@@ -317,8 +398,8 @@ export string test_every_manifest_refusal_has_its_own_sentence() {
   T t = T.create();
   i32[] codes = [
                       M_NOT_JSON5(), M_NOT_OBJECT(), M_IMPORTS_KIND(), M_MAPPING_KIND(),
-                      M_NO_GIT(), M_NO_REF(), M_SUBDIR_KIND(), M_EMPTY_NAME(), M_OVERLAP(),
-                      M_SUBDIR_ESCAPE(), M_RESERVED_NAME(), M_EXPORTS_KIND()
+                      M_NO_GIT(), M_NO_REF(), M_SUBDIR_KIND(), M_EMPTY_NAME(), M_PREFIX_KEY(),
+                      M_SUBDIR_ESCAPE(), M_RESERVED_NAME(), M_EXPORTS_KIND(), M_PATH_FORM()
   ];
   string fallback = manifestWhy(-1);
   t.isTrue(fallback.len() > 0, "an unknown code renders to nothing at all");
@@ -350,5 +431,31 @@ export string test_every_manifest_refusal_has_its_own_sentence() {
 
   // `M_OK` is not a refusal and must not have a sentence of its own.
   t.eqStr(manifestWhy(M_OK()), fallback, "M_OK rendered as though it were a complaint");
+  return t.report();
+}
+
+/**
+ * A path in a manifest is explicitly relative — spec/next ch04 `§wac-manifest-dot-slash-p59q7q3`.
+ * `exports` and `subdir` both begin with `./`, which is also what keeps `/abs.wac` from being read as
+ * a file inside the package.
+ */
+export string test_a_manifest_path_must_begin_with_dot_slash() {
+  T t = T.create();
+  string[] bad = [
+    "{ exports: 'src/lib.wac' }",
+    "{ exports: '/abs.wac' }",
+    "{ imports: { geo: { git: 'https://x.invalid/g', ref: 'v1', subdir: 'packages/geometry' } } }"
+  ];
+  for (i32 i = 0; i < bad.len(); i++) {
+    Manifest m = readManifest(bad[i].toBytes());
+    t.isFalse(m.ok, bad[i] + " is refused");
+    if (!m.ok) { t.eqI32(m.code, M_PATH_FORM(), bad[i] + " says a path must begin with ./"); }
+  }
+  // The canary: the same three, written as the spec writes them, read.
+  string[] good = [
+    "{ exports: './src/lib.wac' }",
+    "{ imports: { geo: { git: 'https://x.invalid/g', ref: 'v1', subdir: './packages/geometry' } } }"
+  ];
+  for (i32 i = 0; i < good.len(); i++) { t.isTrue(readManifest(good[i].toBytes()).ok, good[i] + " reads"); }
   return t.report();
 }

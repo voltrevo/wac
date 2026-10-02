@@ -7,8 +7,8 @@
 //
 //     {
 //       imports: {
-//         'bits/': { git: 'https://example.invalid/bits', ref: 'main',
-//                   commit: '3f2a...9c' },
+//         bits: { git: 'https://example.invalid/bits', ref: 'main',
+//                 commit: '3f2a...9c' },
 //       },
 //     }
 //

@@ -26,12 +26,12 @@ Lock lok(string s) { return readLock(s.toBytes()); }
 export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
   T t = T.create();
   Manifest m = man("{ imports: {\n"
-                 + "  'bits/': { git: 'g1', ref: 'main' },\n"
-                 + "  'acme': { git: 'g2', ref: 'v1', subdir: 'packages/acme' },\n"
+                 + "  'bits': { git: 'g1', ref: 'main' },\n"
+                 + "  'acme': { git: 'g2', ref: 'v1', subdir: './packages/acme' },\n"
                  + "} }");
   Lock l = lok("{ imports: {\n"
-             + "  'bits/': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
-             + "  'acme': { git: 'g2', ref: 'v1', subdir: 'packages/acme', commit: '" + B() + "' },\n"
+             + "  'bits': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
+             + "  'acme': { git: 'g2', ref: 'v1', subdir: './packages/acme', commit: '" + B() + "' },\n"
              + "} }");
   t.isTrue(m.ok, "the manifest reads");
   t.isTrue(l.ok, "the lock reads");
@@ -40,7 +40,7 @@ export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
   Step[] steps = plan(m, l);
   t.eqI32(steps.len(), 2, "two steps");
   if (steps.len() != 2) { return t.report(); }
-  string[] names = ["bits/", "acme"];
+  string[] names = ["bits", "acme"];
   string[] commits = [A(), B()];
   for (i32 i = 0; i < 2; i++) {
     t.eqStr(steps[i].name, names[i], "step " + names[i]);
@@ -55,22 +55,22 @@ export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
 export string test_no_entry_is_create_and_a_changed_input_is_refresh_that_says_which() {
   T t = T.create();
   string lockText = "{ imports: {\n"
-                  + "  'bits/': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
-                  + "  'sub': { git: 'g2', ref: 'v1', subdir: 'old', commit: '" + B() + "' },\n"
+                  + "  'bits': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
+                  + "  'sub': { git: 'g2', ref: 'v1', subdir: './old', commit: '" + B() + "' },\n"
                   + "} }";
   Lock l = lok(lockText);
   if (!l.ok) { t.fail("the lock did not read"); return t.report(); }
 
   string[] entries = [
-    "'bits/': { git: 'g1', ref: 'main' }",
+    "'bits': { git: 'g1', ref: 'main' }",
     "'fresh': { git: 'g9', ref: 'main' }",
-    "'bits/': { git: 'OTHER', ref: 'main' }",
-    "'bits/': { git: 'g1', ref: 'v2' }",
-    "'sub': { git: 'g2', ref: 'v1', subdir: 'new' }",
+    "'bits': { git: 'OTHER', ref: 'main' }",
+    "'bits': { git: 'g1', ref: 'v2' }",
+    "'sub': { git: 'g2', ref: 'v1', subdir: './new' }",
     // Dropping a subdir the lock recorded is a change too, in the other direction.
     "'sub': { git: 'g2', ref: 'v1' }"
   ];
-  string[] names   = ["bits/", "fresh", "bits/", "bits/", "sub", "sub"];
+  string[] names   = ["bits", "fresh", "bits", "bits", "sub", "sub"];
   i32[] actions    = [USE(), CREATE(), REFRESH(), REFRESH(), REFRESH(), REFRESH()];
   string[] words   = ["", "", "git", "ref", "subdir", "subdir"];
 
@@ -99,18 +99,18 @@ export string test_two_mappings_on_one_repository_lock_independently() {
   // D10's "even when several mappings name one repository". The cache being allowed to share
   // objects by repository and commit is a different question from which commit each mapping is
   // pinned to, and conflating them would let updating one silently move the other.
-  Manifest m = man("{ imports: { 'one/': { git: 'same', ref: 'main' },"
-                 + " 'two/': { git: 'same', ref: 'stable' } } }");
+  Manifest m = man("{ imports: { 'one': { git: 'same', ref: 'main' },"
+                 + " 'two': { git: 'same', ref: 'stable' } } }");
   Lock l = lok("{ imports: {\n"
-             + "  'one/': { git: 'same', ref: 'main', commit: '" + A() + "' },\n"
-             + "  'two/': { git: 'same', ref: 'stable', commit: '" + B() + "' },\n"
+             + "  'one': { git: 'same', ref: 'main', commit: '" + A() + "' },\n"
+             + "  'two': { git: 'same', ref: 'stable', commit: '" + B() + "' },\n"
              + "} }");
   if (!m.ok || !l.ok) { t.fail("the inputs did not read"); return t.report(); }
   Step[] steps = plan(m, l);
   t.eqI32(steps.len(), 2, "two steps");
   if (steps.len() != 2) { return t.report(); }
-  t.eqStr(steps[0].commit, A(), "one/ keeps its own commit");
-  t.eqStr(steps[1].commit, B(), "two/ keeps its own commit");
+  t.eqStr(steps[0].commit, A(), "one keeps its own commit");
+  t.eqStr(steps[1].commit, B(), "two keeps its own commit");
   return t.report();
 }
 
@@ -136,7 +136,7 @@ export string test_a_lockfile_is_rewritten_to_a_canonical_form() {
     + "  // written by hand, in no order, with a comment\n"
     + "  imports: {\n"
     + "    zeta: { git: 'https://example.invalid/z', ref: 'main', commit: '" + A() + "' },\n"
-    + "    'alpha/': { git: 'https://example.invalid/a', ref: 'v1', subdir: 'packages/a', commit: '" + B() + "' },\n"
+    + "    'alpha': { git: 'https://example.invalid/a', ref: 'v1', subdir: './packages/a', commit: '" + B() + "' },\n"
     + "    mid: { git: 'https://example.invalid/m', ref: 'tag/1.0', commit: '" + SHA() + "' },\n"
     + "  },\n"
     + "}";
@@ -150,10 +150,10 @@ export string test_a_lockfile_is_rewritten_to_a_canonical_form() {
   if (!back.ok) { return t.report(); }
   t.eqI32(back.entries.len(), 3, "all three survive");
   if (back.entries.len() == 3) {
-    t.eqStr(back.entries[0].name, "alpha/", "first");
+    t.eqStr(back.entries[0].name, "alpha", "first");
     t.eqStr(back.entries[1].name, "mid", "second");
     t.eqStr(back.entries[2].name, "zeta", "third");
-    t.eqStr(back.entries[0].subdir, "packages/a", "the subdir survives");
+    t.eqStr(back.entries[0].subdir, "./packages/a", "the subdir survives");
     t.eqStr(back.entries[1].ref, "tag/1.0", "the ref survives");
     t.eqStr(back.entries[2].commit, A(), "the commit survives");
   }
@@ -164,7 +164,7 @@ export string test_a_lockfile_is_rewritten_to_a_canonical_form() {
   string reordered = "{ imports: {\n"
     + "  mid: { git: 'https://example.invalid/m', ref: 'tag/1.0', commit: '" + SHA() + "' },\n"
     + "  zeta: { git: 'https://example.invalid/z', ref: 'main', commit: '" + A() + "' },\n"
-    + "  'alpha/': { git: 'https://example.invalid/a', ref: 'v1', subdir: 'packages/a', commit: '" + B() + "' },\n"
+    + "  'alpha': { git: 'https://example.invalid/a', ref: 'v1', subdir: './packages/a', commit: '" + B() + "' },\n"
     + "} }";
   Lock other = lok(reordered);
   t.isTrue(other.ok, "the reordered lock reads");
@@ -278,20 +278,20 @@ static string SHA_B = "2222222222222222222222222222222222222222";
  */
 export string test_apply_plan_refuses_steps_that_did_not_come_from_plan() {
   T t = T.create();
-  Manifest m = readManifest(("{ imports: { \"a/\": { git: \"https://e.test/a\", ref: \"main\" } } }")
+  Manifest m = readManifest(("{ imports: { \"a\": { git: \"https://e.test/a\", ref: \"main\" } } }")
                             .toBytes());
   t.isTrue(m.ok, "the fixture manifest did not parse");
 
-  // A lock that has never heard of `a/`, and a step claiming `USE` for it anyway.
+  // A lock that has never heard of `a`, and a step claiming `USE` for it anyway.
   Lock empty = Lock.empty();
-  Step[] steps = [Step("a/", USE(), SHA_A, "")];
+  Step[] steps = [Step("a", USE(), SHA_A, "")];
   string[] resolved = [""];
   LockEntry[] out = applyPlan(m, empty, steps, resolved);
   t.eqI32(out.len(), 0, "a USE for a mapping the lock has never seen was applied rather than refused");
 
   // The same step against a lock that *does* have the entry is applied, so the refusal above is
   // about the missing entry rather than about `applyPlan` refusing everything.
-  Lock has = Lock(true, 0, "", [LockEntry("a/", "https://e.test/a", "main", "", SHA_B)]);
+  Lock has = Lock(true, 0, "", [LockEntry("a", "https://e.test/a", "main", "", SHA_B)]);
   LockEntry[] ok = applyPlan(m, has, steps, resolved);
   t.eqI32(ok.len(), 1, "a USE for a mapping the lock has was refused");
   if (ok.len() == 1) {
@@ -317,22 +317,22 @@ export string test_apply_plan_refuses_steps_that_did_not_come_from_plan() {
 export string test_entries_sort_by_name_when_the_names_share_a_prefix() {
   T t = T.create();
   LockEntry[] entries = [
-    LockEntry("alpine/", "https://e.test/alpine", "main", "", SHA_A),
-    LockEntry("alpha/", "https://e.test/alpha", "main", "", SHA_B),
-    LockEntry("alp/", "https://e.test/alp", "main", "", SHA_A),
-    LockEntry("beta/", "https://e.test/beta", "main", "", SHA_B)
+    LockEntry("alpine", "https://e.test/alpine", "main", "", SHA_A),
+    LockEntry("alpha", "https://e.test/alpha", "main", "", SHA_B),
+    LockEntry("alp", "https://e.test/alp", "main", "", SHA_A),
+    LockEntry("beta", "https://e.test/beta", "main", "", SHA_B)
   ];
   string text = string.fromBytes(writeLock(entries));
 
   // Written in order, so the shortest shared prefix comes first and `alpha` before `alpine`.
-  i32 alp = text.indexOf("\"alp/\"");
-  i32 alpha = text.indexOf("\"alpha/\"");
-  i32 alpine = text.indexOf("\"alpine/\"");
-  i32 beta = text.indexOf("\"beta/\"");
+  i32 alp = text.indexOf("\"alp\"");
+  i32 alpha = text.indexOf("\"alpha\"");
+  i32 alpine = text.indexOf("\"alpine\"");
+  i32 beta = text.indexOf("\"beta\"");
   t.isTrue(alp >= 0 && alpha >= 0 && alpine >= 0 && beta >= 0,
            "a name went missing from the lockfile — " + text);
-  t.isTrue(alp < alpha, "`alp/` sorts before `alpha/`, being a prefix of it");
-  t.isTrue(alpha < alpine, "`alpha/` sorts before `alpine/` — they differ at the fourth byte");
-  t.isTrue(alpine < beta, "`alpine/` sorts before `beta/`");
+  t.isTrue(alp < alpha, "`alp` sorts before `alpha`, being a prefix of it");
+  t.isTrue(alpha < alpine, "`alpha` sorts before `alpine` — they differ at the fourth byte");
+  t.isTrue(alpine < beta, "`alpine` sorts before `beta`");
   return t.report();
 }
