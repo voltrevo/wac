@@ -1837,9 +1837,16 @@ fn coerce_arg<'s>(
             write_num_array(scope, &raw, xs.len(), "$bind$arr_f64_from_mem")
                 .ok_or_else(|| "this module cannot take an f64[] argument".to_string())
         }
+        // **Comma-separated, kept exactly**: no trimming and no brackets, because a string element may
+        // begin with a space or be empty — `ab,,cd` is three strings. One holding a comma cannot be
+        // written this way, which is the limit of a command line rather than of the type.
+        "string[]" => {
+            let xs: Vec<String> = if text.is_empty() { Vec::new() } else { text.split(',').map(String::from).collect() };
+            build_names(scope, &xs).ok_or_else(|| "this module cannot take a string[] argument".to_string())
+        }
         other => Err(format!(
             "a `{other}` cannot be written on a command line; `wac run` takes numbers, bools, \
-             strings, and arrays of u8, i32, i64 and f64"
+             strings, and arrays of u8, i32, i64, f64 and string"
         )),
     }
 }

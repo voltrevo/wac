@@ -20,7 +20,7 @@ import { Ty, TyKind, Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program, TupleBinding } from "./ast.wac";
 import { blockValue, escapeValue, isBlockLiteral, tokenStride, unicodeEscapeEnd,
          unicodeEscapeValue, utf8Into, literalBodyStart, literalBodyEnd } from "./lex.wac";
-import { kindName } from "./kinds.wac";
+import { kIs, kindName } from "./kinds.wac";
 
 /** Everything the printer needs: the AST's token table and the source behind it. */
 /**
@@ -96,6 +96,8 @@ export struct Pr {
    * A token index of -1 means the parser recorded an error and had no name to use;
    * it prints as `?`, which is what the reference substitutes in the same situation.
    */
+  bool isIs(const this, i32 t) { return t >= 0 && t < this.tokCount && this.toks[t * tokenStride()] == kIs(); }
+
   void tok(this, i32 t) {
     if (t < 0 || t >= this.tokCount) { this.out.push('?'); return; }
     i32 start = this.toks[t * tokenStride() + 1];
@@ -420,6 +422,8 @@ void printExpr(Pr w, Expr e) {
         for (i32 j = 0; j < arms[i].bindingToks.len(); j++) {
           if (j > 0) { w.sp(); }
           w.tok(arms[i].bindingToks[j]);
+          // `is V` stands in the list as its `is`, with the variant the token after it.
+          if (w.isIs(arms[i].bindingToks[j])) { w.sp(); w.tok(arms[i].bindingToks[j] + 1); }
         }
         w.out.push(')');
         w.sp();
@@ -670,6 +674,8 @@ void printStmt(Pr w, Stmt s) {
         for (i32 j = 0; j < arms[i].bindingToks.len(); j++) {
           if (j > 0) { w.sp(); }
           w.tok(arms[i].bindingToks[j]);
+          // `is V` stands in the list as its `is`, with the variant the token after it.
+          if (w.isIs(arms[i].bindingToks[j])) { w.sp(); w.tok(arms[i].bindingToks[j] + 1); }
         }
         w.out.push(')');
         printStmtList(w, arms[i].body);

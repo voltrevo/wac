@@ -123,6 +123,7 @@ spec/next/2-types/10-nullability.md#12
 spec/next/2-types/10-nullability.md#13
 spec/next/2-types/10-nullability.md#14
 spec/next/2-types/10-nullability.md#15
+spec/next/2-types/11-never-and-uninhabited.md#1
 spec/next/2-types/11-never-and-uninhabited.md#2
 spec/next/2-types/11-never-and-uninhabited.md#3
 spec/next/2-types/11-never-and-uninhabited.md#4
@@ -132,6 +133,7 @@ spec/next/2-types/11-never-and-uninhabited.md#7
 spec/next/2-types/11-never-and-uninhabited.md#8
 spec/next/2-types/11-never-and-uninhabited.md#9
 spec/next/2-types/11-never-and-uninhabited.md#10
+spec/next/2-types/11-never-and-uninhabited.md#11
 spec/next/2-types/12-structs.md#1
 spec/next/2-types/12-structs.md#2
 spec/next/2-types/12-structs.md#3
@@ -140,6 +142,7 @@ spec/next/2-types/12-structs.md#5
 spec/next/2-types/12-structs.md#6
 spec/next/2-types/12-structs.md#7
 spec/next/2-types/12-structs.md#8
+spec/next/2-types/12-structs.md#9
 spec/next/2-types/12-structs.md#10
 spec/next/2-types/12-structs.md#11
 spec/next/2-types/12-structs.md#12
@@ -158,10 +161,12 @@ spec/next/2-types/12-structs.md#24
 spec/next/2-types/13-enums.md#1
 spec/next/2-types/13-enums.md#2
 spec/next/2-types/13-enums.md#3
+spec/next/2-types/13-enums.md#4
 spec/next/2-types/13-enums.md#5
 spec/next/2-types/13-enums.md#6
 spec/next/2-types/13-enums.md#7
 spec/next/2-types/13-enums.md#8
+spec/next/2-types/13-enums.md#9
 spec/next/2-types/13-enums.md#10
 spec/next/2-types/13-enums.md#11
 spec/next/2-types/13-enums.md#12
@@ -185,6 +190,7 @@ spec/next/2-types/14-tuples.md#6
 spec/next/2-types/14-tuples.md#7
 spec/next/2-types/14-tuples.md#8
 spec/next/2-types/14-tuples.md#9
+spec/next/2-types/15-arrays.md#1
 spec/next/2-types/15-arrays.md#2
 spec/next/2-types/15-arrays.md#3
 spec/next/2-types/15-arrays.md#4
@@ -229,6 +235,7 @@ spec/next/2-types/18-unions.md#4
 spec/next/2-types/18-unions.md#5
 spec/next/2-types/19-generics.md#1
 spec/next/2-types/19-generics.md#2
+spec/next/2-types/19-generics.md#3
 spec/next/2-types/19-generics.md#4
 spec/next/2-types/19-generics.md#5
 spec/next/2-types/19-generics.md#6
@@ -303,6 +310,7 @@ spec/next/3-expressions/24-casts.md#9
 spec/next/3-expressions/24-casts.md#10
 spec/next/3-expressions/25-control-flow.md#1
 spec/next/3-expressions/25-control-flow.md#2
+spec/next/3-expressions/25-control-flow.md#3
 spec/next/3-expressions/25-control-flow.md#4
 spec/next/3-expressions/25-control-flow.md#5
 spec/next/3-expressions/25-control-flow.md#6
@@ -314,6 +322,7 @@ spec/next/3-expressions/25-control-flow.md#11
 spec/next/3-expressions/25-control-flow.md#12
 spec/next/3-expressions/25-control-flow.md#13
 spec/next/3-expressions/25-control-flow.md#14
+spec/next/3-expressions/25-control-flow.md#15
 spec/next/3-expressions/25-control-flow.md#16
 spec/next/3-expressions/25-control-flow.md#17
 spec/next/3-expressions/26-errors-and-results.md#1
@@ -322,6 +331,7 @@ spec/next/3-expressions/26-errors-and-results.md#3
 spec/next/3-expressions/26-errors-and-results.md#4
 spec/next/3-expressions/26-errors-and-results.md#5
 spec/next/3-expressions/26-errors-and-results.md#6
+spec/next/3-expressions/26-errors-and-results.md#7
 spec/next/4-static/27-static-declarations.md#2
 spec/next/4-static/27-static-declarations.md#3
 spec/next/4-static/27-static-declarations.md#6

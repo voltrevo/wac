@@ -185,7 +185,7 @@ struct Source {
       this.at = this.at + 1;
       return Read.Data(c);
     }
-    return this.fails ? Read.Failed("the disk gave out") : Read.End();
+    return this.fails ? Read.Failed("the disk gave out") : Read.End;
   }
 }
 

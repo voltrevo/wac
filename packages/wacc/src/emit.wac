@@ -502,6 +502,15 @@ void registerNamed(Env env, string t) {
     for (i32 i = 0; i < ms.len(); i++) { registerNamed(env, ms[i]); }
     env.tupleType(t);
   }
+  // **An instance's array fields**, whose helpers a construction of it may need: `V<i32> v = V([]);`
+  // builds an `i32[]` that nothing else in the body names, and the literal took its type from the
+  // field only while being emitted — after the type section was sized. Arrays only, so a struct that
+  // reaches itself through a field does not recurse here.
+  if (t.indexOf("<") > 0 && env.isStructName(t)) {
+    for (i32 f = 0; f < env.fieldCount; f++) {
+      if (env.fieldOwners[f] == t && isArrayType(env.fieldTypes[f])) { registerNamed(env, env.fieldTypes[f]); }
+    }
+  }
 }
 
 /**
@@ -3210,11 +3219,19 @@ export struct Env {
 
 /** Every array type a body mentions, whether as a local's type or as something it constructs. */
 void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
+  // A block's locals end with it, so a sibling block declaring the same name at another type is not
+  // read through this one's.
+  i32 scopeAt = env.localCount;
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
       Var(type, nameTok, init, isConst): {
-        registerNamed(env, varTypeOfE(env, src, lexed, type, init));
+        string vt = varTypeOfE(env, src, lexed, type, init);
+        registerNamed(env, vt);
         if (init is not null) { collectArrayTypesOfExpr(env, src, lexed, init!); }
+        // **In scope for what follows**, so `auto xs = [n, n]` after `i64 n` names `i64[]` here rather
+        // than nothing — the type section is written before the body, and a type first named while
+        // emitting it declines the module. The caller puts the count back.
+        if (vt != "") { env.addLocal(tokenTextOf(src, lexed, nameTok), vt); }
       }
       // **The expressions too.** This walk looked only at what a `var` *declared*, so a type named
       // by a construction, a cast or an argument was invisible until the moment it was emitted —
@@ -3282,6 +3299,7 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
       default: { }
     }
   }
+  env.localCount = scopeAt;
 }
 
 /**
@@ -7586,6 +7604,41 @@ void emitJsxKids(B fb, u8[] src, Lexed lexed, Env env, Expr[] kids) {
 }
 
 /** The tag of the value on the stack, which is what every arm and every `is` compares. */
+/**
+ * `Err(is NotFound)` — narrow the arm's test, the variant's `i32` already on the stack, by each payload
+ * field an `is` names: true only when that field holds the variant (spec/next ch13
+ * `§enum-payload-is-pattern-mec7vyh`). The field is read only once the variant is known to be this one,
+ * which is the only variant that has it.
+ */
+void emitPayloadIs(B fb, u8[] src, Lexed lexed, Env env, i32 subj, string vn, i32[] bindingToks) {
+  i32 vi = env.variantAt(vn);
+  if (vi < 0) { return; }
+  string en = env.variantOwners[vi];
+  for (i32 b = 0; b < bindingToks.len(); b++) {
+    if (tokenTextOf(src, lexed, bindingToks[b]) != "is") { continue; }
+    string pe = env.canonType(env.fieldTypeAt(en, env.variantSlot[vi] + b));
+    string wn = armVariant(env, src, lexed, bindingToks[b] + 1, pe);
+    i32 wi = env.variantAt(wn);
+    if (wi < 0) {
+      env.declineFor("the payload variant `" + wn + "`, which this emitter could not find");
+      return;
+    }
+    i32 held = env.scratchNamed("payload is " + numText(subj) + " " + numText(b), pe);
+    fb.byte(4); fb.byte(127);                   // if (result i32) — the variant matched
+    fb.byte(32); fb.u32leb(subj);
+    fb.byte(251); fb.u32leb(2);                 // struct.get — the payload field
+    fb.u32leb(env.structType(en));
+    fb.u32leb(env.variantSlot[vi] + b);
+    fb.byte(33); fb.u32leb(held);
+    emitTagOf(fb, env, held, pe);
+    fb.byte(65); fb.i32leb(env.variantTags[wi]);
+    fb.byte(70);                                // i32.eq
+    fb.byte(5);
+    fb.byte(65); fb.i32leb(0);                  // else: not this variant at all
+    fb.byte(11);
+  }
+}
+
 void emitTagOf(B fb, Env env, i32 subj, string en) {
   fb.byte(32);
   fb.u32leb(subj);
@@ -7615,7 +7668,7 @@ void emitArmNames(B fb, u8[] src, Lexed lexed, Env env, i32 subj, string vn, i32
   for (i32 b = 0; b < bindingToks.len(); b++) {
     if (b >= env.variantArity[vi]) { continue; }
     string bn = tokenTextOf(src, lexed, bindingToks[b]);
-    if (bn == "_") { continue; }
+    if (bn == "_" || bn == "is") { continue; }
     env.addLocal(bn, env.fieldTypeAt(en, env.variantSlot[vi] + b));
     i32 at = env.localCount - 1;
     fb.byte(32);
@@ -7948,6 +8001,7 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     fb.byte(65);
     fb.i32leb(nullCase ? -1 : env.variantTags[env.variantAt(vn)]);
     fb.byte(70);   // i32.eq
+    if (!nullCase) { emitPayloadIs(fb, src, lexed, env, subj, vn, arms[a].bindingToks); }
     fb.byte(4);
     fb.byte(64);
     env.depth = env.depth + 1;
@@ -8083,6 +8137,7 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
       fb.byte(65);
       fb.i32leb(nullCase ? -1 : env.variantTags[env.variantAt(vn)]);
       fb.byte(70);
+      if (!nullCase) { emitPayloadIs(fb, src, lexed, env, subj, vn, arms[a].bindingToks); }
       fb.byte(4);
       writeBlockType(fb, env, rt);
       env.depth = env.depth + 1;
@@ -10518,8 +10573,13 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         if (et != "") { return et; }
       }
       string tt = typeOfE(src, lexed, env, then);
+      // **A number on one side and `null` on the other is a nullable number** — `ok ? c.r : null` is an
+      // `f64?` (spec/next ch32), and typing it `f64` put the `null` in a slot that has no absence.
+      if (tt != "" && isNullLit(els) && isPrimitiveNumberType(tt)) { return tt + "?"; }
       if (tt != "") { return tt; }
-      return typeOfE(src, lexed, env, els);
+      string et2 = typeOfE(src, lexed, env, els);
+      if (et2 != "" && isNullLit(then) && isPrimitiveNumberType(et2)) { return et2 + "?"; }
+      return et2;
     }
     Construct(ctype, args, named): {
       match (ctype.kind) {
@@ -13614,7 +13674,7 @@ i32 pushArmNames(u8[] src, Lexed lexed, Env env, Arm arm, Expr subject) {
   for (i32 b = 0; b < arm.bindingToks.len(); b++) {
     if (b >= env.variantArity[vi]) { continue; }
     string bn = tokenTextOf(src, lexed, arm.bindingToks[b]);
-    if (bn == "_") { continue; }
+    if (bn == "_" || bn == "is") { continue; }
     env.addLocal(bn, env.fieldTypeAt(en, env.variantSlot[vi] + b));
   }
   match (subject.kind) {
@@ -14017,8 +14077,9 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
     Ternary(cond, then, els): {
       string tc = unsupportedValue(src, lexed, env, cond);
       if (tc != "") { return tc; }
-      string tw2 = typeOfE(src, lexed, env, then);
-      if (tw2 == "") { tw2 = typeOfE(src, lexed, env, els); }
+      // The ternary's own type, which is the branches' and knows that a number beside `null` is a
+      // nullable one — asking the `then` branch alone sent the `null` into an `f64` slot.
+      string tw2 = typeOfE(src, lexed, env, e);
       if (tw2 == "") { tw2 = want; }
       string t2 = unsupportedValueAt(src, lexed, env, then, tw2);
       if (t2 != "") { return t2; }

@@ -750,17 +750,15 @@ export string test_a_method_may_declare_its_own_type_parameters_and_a_call_says_
   return t.report();
 }
 
-export string test_a_generic_taking_a_funcref_parameter_is_still_declined(Core core, Cli cli) {
-  // **Not part of `issues/lang/0142` and not fixed by it.** `T twice<T>(T v, fn<T(T)> f)` has no
-  // lambda in it at all — the funcref arrives as a parameter. Pinned here so the two are not
-  // confused: a lambda *inside* a generic works now, a funcref *parameter* of one does not.
+export string test_a_generic_taking_a_funcref_parameter_works(Core core, Cli cli) {
+  // **Not part of `issues/lang/0142`.** `T twice<T>(T v, fn<T(T)> f)` has no lambda in it at all —
+  // the funcref arrives as a parameter. It was declined until an instance's types were registered
+  // before its bodies were emitted (2026-10-02), and is pinned here working so it stays that way.
   T t = T.create();
   string src = "T twice<T>(T v, fn<T(T)> f) { return f(f(v)); }\n" +
                "export i32 viaParam() { fn<i32(i32)> inc = (i32 n) => n + 21; return twice(0, inc); }\n";
   Ran r = runEmittedOne(cli, ENTRY, src + "export i32 main() { return viaParam(); }\n",
                         scratchDir(cli), "genfnparam.wasm");
-  t.isFalse(r.ok && !r.trapped && r.status == 42,
-            "a generic with a funcref parameter works now — good news, and this test is what " +
-            "needs updating");
+  t.isTrue(r.ok && !r.trapped && r.status == 42, "a generic with a funcref parameter answers 42");
   return t.report();
 }

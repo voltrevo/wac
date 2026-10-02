@@ -47,7 +47,7 @@ struct Source {
   i32 at;
 
   Read read(this) {
-    if (this.at >= this.chunks.len()) { return Read.End(); }
+    if (this.at >= this.chunks.len()) { return Read.End; }
     u8[] c = this.chunks[this.at];
     this.at = this.at + 1;
     return Read.Data(c);

@@ -2699,7 +2699,13 @@ ArmHead parseArmHead(P p) {
     if (!p.at1(kRparen())) {
       while (true) {
         if (p.at1(kRparen())) { break; }             // trailing comma
-        if (p.at1(kIdent())) { bindings.push(p.advance()); } else { p.fail(perrExpected()); }
+        // `is V` tests that payload field's variant and binds nothing (spec/next ch13
+        // `§enum-payload-is-pattern-mec7vyh`). The `is` token stands in the binding list, and the
+        // variant is the token after it.
+        if (p.at1(kIs())) {
+          bindings.push(p.advance());
+          if (p.at1(kIdent())) { p.advance(); } else { p.fail(perrExpected()); }
+        } else if (p.at1(kIdent())) { bindings.push(p.advance()); } else { p.fail(perrExpected()); }
         if (!p.eat(kComma())) { break; }
       }
     }

@@ -234,7 +234,12 @@ export i32 drv_envFuncs() {
 // Why the *linked* build declined, which `blocked` cannot say: it takes one source and the
 // question is about a file set.
 export i32 drv_declineFiles() {
-  declined = blockedFiles(paths, sources, string.fromBytes(namebuf)).toBytes();
+  string why = blockedFiles(paths, sources, string.fromBytes(namebuf));
+  // **And past the gate**: a module that every function cleared can still fail once emitted — a type
+  // first named while emitting — and the gate's answer for that was "", so the ladder said
+  // "wacc declined x.wac:" and nothing else.
+  if (why == "") { why = emitDeclineFiles(paths, sources, string.fromBytes(namebuf)); }
+  declined = why.toBytes();
   return declined.len();
 }
 

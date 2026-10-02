@@ -812,6 +812,19 @@ struct DAExit {
   DA breaks;
 }
 
+/** Whether struct type `t` — or a parent — declares a `const` field. */
+bool hasConstField(C c, string t) {
+  string at = templateOf(t);
+  for (i32 hop = 0; hop <= c.structCount && at != ""; hop++) {
+    if (!c.isStruct(at)) { return false; }
+    for (i32 i = 0; i < c.fieldCount; i++) {
+      if (c.fieldOwners[i] == at && c.isConstField(at, c.fieldNames[i])) { return true; }
+    }
+    at = c.parentOf(at);
+  }
+  return false;
+}
+
 /** Whether a value of type `t` exists before anything is written: `null`, an empty array, `""`. */
 bool hasDefaultValue(C c, string t, i32 depth) {
   if (t == typeNone() || t == "") { return true; }
@@ -854,7 +867,10 @@ DA daStmt(C c, Stmt s, DA st, DAExit loop) {
         st.remove(name);
         return st;
       }
-      if (hasDefaultValue(c, typeOfTy(c, type), 0)) { st.remove(name); } else { st.add(name); }
+      string vty = typeOfTy(c, type);
+      // **Tracked too when a field is `const`**, defaults or not: such a field is assigned once, before
+      // the first use, and the walk is what knows which writes come before it.
+      if (hasDefaultValue(c, vty, 0) && !hasConstField(c, vty)) { st.remove(name); } else { st.add(name); }
       return st;
     }
     Assign(target, op, rhs): {
@@ -978,9 +994,21 @@ void daAssignTarget(C c, Lvalue target, bool alsoReads, DA st) {
       match (base.kind) {
         LIdent(btok): {
           string bname = tokenText(c, btok);
+          string fname = tokenText(c, nameTok);
+          bool constF = c.isConstField(c.typeOfName(bname), fname);
           if (st.has(bname) && !alsoReads) {
-            st.addPart(bname + "." + tokenText(c, nameTok));
+            if (constF && st.hasPart(bname + "." + fname)) {
+              c.reportWith(errConstField(), target.line, target.col,
+                           "'" + bname + "." + fname + "' is const, and was assigned already");
+              return;
+            }
+            st.addPart(bname + "." + fname);
             return;
+          }
+          // Past the first use a `const` field is written no more — the checker let this through only
+          // because the local was declared to be built field by field (`C.pendingAt`).
+          if (constF && c.pendingAt.indexOf(";" + bname + ";") >= 0) {
+            c.reportWith(errConstField(), target.line, target.col, "'" + bname + "." + fname + "' is const");
           }
           daRead(c, bname, base.line, base.col, st);
         }
@@ -2746,6 +2774,12 @@ export struct C {
    * leaves is asked after its scopes are gone, when `k.stop()` no longer knows what `k` is.
    */
   string neverAt;
+  /**
+   * `;name;` of each struct local declared without an initialiser — the ones whose fields, `const`
+   * ones included, may be assigned one at a time before the local's first use (spec/next ch12). Whether
+   * a `const` one is assigned twice, or after that use, is the definite-assignment walk's to say.
+   */
+  string pendingAt;
   /** What a `yield` in the function being checked yields, or `""` outside a generator (ch36). */
   string yieldType;
 
@@ -2856,7 +2890,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "");
+             string[](), string[](), "", "", "", "");
   }
 
   /**
@@ -6328,9 +6362,11 @@ void checkExpr(C c, Expr e) {
       checkArmVariants(c, subject, arms, e.line, e.col);
       for (i32 i = 0; i < arms.len(); i++) {
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
+          if (tokenText(c, arms[i].bindingToks[b]) == "is") { continue; }
           c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
         }
         checkBindingCollision(c, subject, arms[i]);
+        checkPayloadIs(c, subject, arms[i]);
         // **An arm of an expression match narrows too.** Only the statement form did, so
         // `match (s) { Circle: s.radius, ... }` looked for `radius` on the un-narrowed subject
         // and reported a field that was there all along — the spec's own program for this clause.
@@ -7893,8 +7929,17 @@ void checkWrite(C c, Lvalue lv) {
       }
       string owner = typeOfLvalue(c, base);
       if (owner != typeNone() && c.isConstField(owner, tokenText(c, nameTok))) {
-        c.report(errConstField(), root.line, root.col);
-        return;
+        // **Construction, not a write**, when the base is a struct local still being built field by
+        // field (`§wac-struct-decl-pending-rx5fvj2`); the walk refuses a second write or one after use.
+        bool building = false;
+        match (base.kind) {
+          LIdent(btok): { building = c.pendingAt.indexOf(";" + tokenText(c, btok) + ";") >= 0; }
+          default: { }
+        }
+        if (!building) {
+          c.report(errConstField(), root.line, root.col);
+          return;
+        }
       }
       // Otherwise the path itself may be const: a `const P p` refuses every write through it, field
       // by field, whatever those fields say about themselves.
@@ -9203,6 +9248,15 @@ void checkMember(C c, Expr at, Expr obj, string name) {
         c.report(errNoVariant(), at.line, at.col);
         return;
       }
+      // **A variant with a payload is built by supplying it** (`§enum-construct-payload-required-uc2cir8`):
+      // `Shape.Circle` without its arguments is not a value — and `Step.Waiting` at `W = never`, whose
+      // payload has none, is refused in this spelling as in the other
+      // (`§wac-never-variant-not-constructible-u5dxnv8`).
+      if (c.isEnum(en) && c.typeOfName(en) == typeNone() && c.variantArityIn(en, name) > 0) {
+        c.reportWith(errCallArity(), at.line, at.col,
+                     name + " carries a payload, and constructing it must supply one");
+        return;
+      }
       // **And the struct sibling of that rule**, which was missing: `P.nope`, `P.v` and `P.m` all
       // named something through a *type* rather than a value, so every rule below had nothing to ask
       // and stayed silent — the reference refuses all three. `P.s`, a static, is the one form that is
@@ -9539,6 +9593,12 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // there to exclude, a generic *struct*, `isEnum` already excludes. `issues/lang/0088`.
   if (isStatic && c.isEnum(recv)) {
     i32 wantArgs = c.variantArityIn(recv, name);
+    // **A variant with no payload is a value, not a call** (`§enum-construct-qualified-iuubvew`):
+    // `Shape.Point()` is refused rather than read as `Shape.Point`.
+    if (wantArgs == 0) {
+      c.reportWith(errCallArity(), call.line, call.col, name + " carries no payload");
+      return;
+    }
     // **A payload a `void` argument made may be left out** — `Result<void, E>.Ok()`, ch11's
     // payload-free variant — so the count is either the written one or that less the `void`s.
     i32 voids = 0;
@@ -10435,6 +10495,7 @@ void declareStmt(C c, Stmt s) {
         // as an argument mismatch against its own parameter.
         c.pushScope(arms[i].body);
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
+          if (tokenText(c, arms[i].bindingToks[b]) == "is") { continue; }
           c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
         }
         declareAll(c, arms[i].body);
@@ -10463,6 +10524,7 @@ void declareMatchBindings(C c, Expr e) {
     MatchExpr(subject, arms): {
       for (i32 i = 0; i < arms.len(); i++) {
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
+          if (tokenText(c, arms[i].bindingToks[b]) == "is") { continue; }
           c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
         }
       }
@@ -10834,6 +10896,11 @@ void checkStmt(C c, Stmt s, Ty want) {
         }
         c.expected = typeNone();
         checkExpr(c, init!);
+        // `auto x = greet();` for a `void` `greet` — there is no value to store (`§wac-void-no-values-uieaw93`).
+        if (typeOfExpr(c, init!) == "void") {
+          c.reportWith(errVoidType(), init!.line, init!.col, "void has no values to store");
+          return;
+        }
         c.setType(tokenText(c, nameTok), typeOfExpr(c, init!));
         return;
       }
@@ -10844,6 +10911,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       // definite-assignment walk's question (spec/next ch08).
       if (init is null) {
         c.setType(tokenText(c, nameTok), wantVar);
+        if (c.isStruct(templateOf(wantVar))) { c.pendingAt = c.pendingAt + ";" + tokenText(c, nameTok) + ";"; }
         return;
       }
       Expr initE = init!;
@@ -11231,6 +11299,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         // call returns what the first did.
         string saved = armNarrowing(c, subject, arms[i]);
         checkBindingCollision(c, subject, arms[i]);
+        checkPayloadIs(c, subject, arms[i]);
         // The subject is const for the length of a narrowed arm: assigning to it would leave the
         // narrowing describing a value that is no longer there.
         string subj = subjectName(c, subject);
@@ -11365,10 +11434,33 @@ string subjectName(C c, Expr subject) {
  * of the arm — the payload and the value it came out of — and the language refuses rather than
  * choosing one.
  */
+/** Whether an arm tests a payload's variant with `is V`, and so matches only part of its variant. */
+bool armRefines(C c, Arm arm) {
+  for (i32 b = 0; b < arm.bindingToks.len(); b++) {
+    if (tokenText(c, arm.bindingToks[b]) == "is") { return true; }
+  }
+  return false;
+}
+
+/** `Err(is NotFound)`: the payload must be an enum, and `NotFound` one of its variants. */
+void checkPayloadIs(C c, Expr subject, Arm arm) {
+  for (i32 b = 0; b < arm.bindingToks.len(); b++) {
+    i32 tok = arm.bindingToks[b];
+    if (tokenText(c, tok) != "is") { continue; }
+    string pt = armBindingType(c, subject, arm, b);
+    if (pt == typeNone() || pt == "") { continue; }
+    string pe = templateOf(pt);
+    if (!c.isEnum(pe) || c.variantArityIn(pe, tokenText(c, tok + 1)) < 0) {
+      c.reportTok(errNoVariant(), tok + 1, "");
+    }
+  }
+}
+
 void checkBindingCollision(C c, Expr subject, Arm arm) {
   string nm = subjectName(c, subject);
   for (i32 b = 0; b < arm.bindingToks.len(); b++) {
     string bt = tokenText(c, arm.bindingToks[b]);
+    if (bt == "is") { continue; }
     // **`_` is a deliberate discard and may repeat.** It is the wildcard for a payload field nobody
     // wants a name for, so `Ok(_, _, _, _, _, _)` names nothing six times rather than one thing
     // six times. Treating it as a name made the duplicate rule below report in 19 places across
@@ -12247,6 +12339,9 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   i32 seenCount = 0;
   for (i32 i = 0; i < arms.len(); i++) {
     if (arms[i].variantTok <= 0 || isNullArm(c, arms[i])) { continue; }
+    // An arm that refines its variant with `is V` covers part of it, so a later arm naming the same
+    // variant is the wider one rather than a repeat — and neither is it coverage.
+    if (armRefines(c, arms[i])) { continue; }
     string vn = tokenText(c, arms[i].variantTok);
     bool dup = false;
     for (i32 k = 0; k < seenCount; k++) { if (seen[k] == vn) { dup = true; } }
