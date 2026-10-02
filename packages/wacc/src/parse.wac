@@ -1092,6 +1092,9 @@ export Ty parseType(P p) {
     Expr te = parseExpr(p);
     p.expect(kRparen());
     node = Ty(TyKind.TypeOf(te), line, col);
+  } else if (p.at1(kNull())) {
+    // `null` in a type position is `never?`, the literal's own type (spec/next ch10).
+    node = tyNamed(p.advance(), Ty[](), line, col);
   } else if (p.at1(kIdent()) || p.at1(kVoid())) {
     bool prim = identIsPrim(p, 0);
     i32 t = p.advance();
@@ -2202,7 +2205,8 @@ bool looksLikeVarDecl(P p) {
   // `coroutine f(…);` and `try f();` are expressions, not declarations of `f` (ch36, ch26).
   if (i == 0 && k == kIdent() && (p.textAt(0) == "coroutine" || p.textAt(0) == "try")
       && (p.kindAt(1) == kIdent() || p.kindAt(1) == kThis())) { return false; }
-  if (k != kIdent() && k != kVoid()) { return false; }
+  // `null n = nothing();` — `null` is a type as well as a value (spec/next ch10).
+  if (k != kIdent() && k != kVoid() && k != kNull()) { return false; }
   i32 j = i + 1;
   // A type-argument list first: `Vec<i32> v = …` is a declaration, and without this the statement
   // parsed as the expression `Vec < i32` and failed at the `=`. This is where the classic C++
@@ -3417,7 +3421,8 @@ export Program parseProgram(P p) {
     } else if (k == kStatic() || k == kConst() || moduleVarAhead(p, after)) {
       if (exported) { p.advance(); }
       decls.push(parseStaticDecl(p, exported));
-    } else if (exported || k == kFn() || k == kVoid() || k == kIdent() || k == kAsync() || k == kLparen()) {
+    } else if (exported || k == kFn() || k == kVoid() || k == kIdent() || k == kAsync() || k == kLparen()
+               || (k == kNull() && p.kindAt(after + 1) == kIdent())) {
       // A function: `parseFuncDecl` consumes its own `export`. Entered only when the
       // token could actually begin one — a return type is an `ident` (the primitives
       // are not keywords), or `void`, or `fn`, or `async`, or an `export` whose

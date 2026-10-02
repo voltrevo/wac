@@ -7178,6 +7178,10 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       // resolution would go hunting for a declaration in the file, find none, and answer `""`,
       // which is how `i31ref x = …` came out as a bare `i32`.
       if (raw == "anyref" || raw == "i31ref" || raw == "typeref") { return raw; }
+      // **`null` as a type** (spec/next ch10) holds nothing but `null`, so any nullable reference
+      // carries it; `anyref` is the one every reference converts to. A `never?` passed on into a
+      // narrower slot would want the format's `nullref` instead, and nothing here needs that yet.
+      if (raw == "null" && typeArgs.len() == 0) { return "anyref"; }
       // **`union<A, B>`, normalised as the checker normalises it** (spec/next ch18), with a box
       // registered for each numeric alternative, since that is how one enters the `anyref`.
       if (raw == "union") {

@@ -579,6 +579,91 @@ string incrSymbolOf(i32 k, bool prefix) {
 /** Whether a `match` arm is `null:`, the arm an absent nullable subject takes (spec/next ch25). */
 bool isNullArm(C c, Arm a) { return a.variantTok >= 0 && tokenKind(c, a.variantTok) == kNull(); }
 
+/**
+ * What one `return`'s value contributes to an `auto` result (spec/next ch34): each alternative of a
+ * ternary by itself, `null` as `never?`, and nothing for an unconstrained number or for a call whose
+ * result the path excluded — which reaches here as unknown.
+ */
+void autoContributes(C c, Expr e) {
+  match (e.kind) {
+    Ternary(cond, then, els): { autoContributes(c, then); autoContributes(c, els); return; }
+    default: { }
+  }
+  i32 lit = litFamily(c, e);
+  if (lit == litNull()) { c.autoCollect = c.autoCollect + "null|"; return; }
+  if (lit == litInteger() || lit == litFloat()) { return; }
+  string t = lit == litString() ? "string" : lit == litBool() ? "bool" : typeOfExpr(c, e);
+  if (t == typeNone() || t == "" || t == "auto") { return; }
+  c.autoCollect = c.autoCollect + t + "|";
+}
+
+/**
+ * The widening of an `auto` result's contributions (spec/next ch32, ch34): the bases joined — one
+ * absorbing the other, or their closest common ancestor — at the greatest nullable depth. `""` when
+ * nothing contributed, `!` when the bases share nothing, `!void` for a bare `return;`.
+ */
+export string widenAutoContributions(C c, string list) {
+  string[] parts = splitBar(list);
+  string base = "";
+  i32 depth = 0;
+  bool any = false;
+  for (i32 i = 0; i < parts.len(); i++) {
+    string p = parts[i];
+    if (p == "") { continue; }
+    if (p == "void") { return "!void"; }
+    any = true;
+    if (p == "never") { continue; }
+    if (p == "null") { if (depth < 1) { depth = 1; } continue; }
+    string b = p;
+    i32 d = 0;
+    while (b.len() > 1 && b.slice(b.len() - 1, b.len()) == "?") { b = b.slice(0, b.len() - 1); d++; }
+    if (d > depth) { depth = d; }
+    if (base == "" || base == b) { base = b; continue; }
+    if (assignable(c, base, b)) { continue; }
+    if (assignable(c, b, base)) { base = b; continue; }
+    string anc = c.parentOf(base);
+    string found = "";
+    while (anc != "" && found == "") {
+      if (assignable(c, anc, b)) { found = anc; }
+      anc = c.parentOf(anc);
+    }
+    if (found == "") { return "!"; }
+    base = found;
+  }
+  if (!any) { return ""; }
+  string q = "";
+  for (i32 i = 0; i < depth; i++) { q = q + "?"; }
+  return (base == "" ? "never" : base) + q;
+}
+
+/** Each assumed `auto` result into the function table, once this file's functions are declared (ch34). */
+void applyAutoAssumptions(C c) {
+  string rest = c.autoAssume;
+  while (rest.indexOf("\n") >= 0) {
+    string line = rest.slice(0, rest.indexOf("\n"));
+    rest = rest.slice(rest.indexOf("\n") + 1, rest.len());
+    i32 eq = line.indexOf("=");
+    if (eq < 0) { continue; }
+    string name = line.slice(0, eq);
+    for (i32 i = 0; i < c.funcCount; i++) {
+      if (c.funcNames[i] == name) { c.funcReturns[i] = line.slice(eq + 1, line.len()); }
+    }
+  }
+}
+
+string[] splitBar(string s) {
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "|") { n++; } }
+  string[] out = string[].filled(n, "");
+  i32 k = 0;
+  i32 from = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "|") { out[k] = s.slice(from, i); k++; from = i + 1; }
+  }
+  out[k] = s.slice(from, s.len());
+  return out;
+}
+
 /** Whether a written type is the placeholder `auto` (spec/next ch33). */
 bool isAutoTy(C c, Ty t) {
   match (t.kind) {
@@ -1633,6 +1718,8 @@ export i32 errStaticRuntime() { return 243; }
 export i32 errTypeCycle() { return 244; }
 /** An ordinary local read before its declaration in the same block (spec/next ch27). */
 export i32 errUsedBeforeDeclared() { return 245; }
+/** An `auto` result that could not be inferred: returns sharing no type, or a bare `return;` (ch34). */
+export i32 errAutoUnresolved() { return 246; }
 /** Two declarations of one name at file scope. */
 export i32 errDuplicateName() { return 64; }
 /** Two fields, two methods, or a field and a method of one name in one struct. */
@@ -3029,6 +3116,16 @@ export struct C {
   string yieldType;
   /** How many `type` declarations the evaluator's view holds (spec/next ch30), or -1 before asked. */
   i32 typeDecls;
+  /**
+   * **Collecting an `auto` result** (spec/next ch34): the function whose returns are wanted, or `""`
+   * for an ordinary check, and what they contributed so far — `|`-separated, `null` for the literal
+   * and `void` for a bare `return;`. Read by `lowerAutoReturns`, which writes the answer into the
+   * source so nothing downstream sees `auto` at all.
+   */
+  string autoTarget;
+  string autoCollect;
+  /** The `auto` results this collection assumes, `name=type` lines (empty where the path excludes one). */
+  string autoAssume;
 
   void noteVirtual(this, string key) {
     string[] more = string[].defaulted(this.virtuals.len() + 1);
@@ -3137,7 +3234,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1);
+             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "");
   }
 
   /**
@@ -4193,6 +4290,8 @@ export string typeOfTy(C c, Ty t) {
     TypeOf(e): { return computedTypeC(c, t); }
     Named(tok, typeArgs): {
       if (namesTypeDeclC(c, tokenText(c, tok))) { return computedTypeC(c, t); }
+      // `null` written as a type is the literal's type, `never?` (spec/next ch10).
+      if (typeArgs.len() == 0 && tokenKind(c, tok) == kNull()) { return "never?"; }
       // A bare `union` is what its scope gathered (`declareAll`), found by where it is written.
       if (typeArgs.len() == 0 && tokenText(c, tok) == "union") {
         string key = ";" + countText(t.line) + ":" + countText(t.col) + "=";
@@ -4296,6 +4395,12 @@ export string typeOfTy(C c, Ty t) {
                             "`" + base + "` is a function, and `<...>` after a name is a type "
                             + "argument list — write the call without them, or make `" + base
                             + "` generic");
+          return typeNone();
+        }
+        // **An `auto` result still here is one `lowerAutoReturns` could not infer** — every one it
+        // could was written into the source as its type (spec/next ch34).
+        if (base == "auto") {
+          c.reportTok(errAutoUnresolved(), tok, "");
           return typeNone();
         }
         c.reportTok(errUndefinedType(), tok, "unknown type '" + base + "'");
@@ -11455,6 +11560,14 @@ void checkStmt(C c, Stmt s, Ty want) {
       c.setType(tokenText(c, nameTok), wantVar);
     }
     Return(value): {
+      if (c.autoTarget != "" && c.lambdaReturn == "" && c.activeFunc == c.autoTarget) {
+        if (value is null) { c.autoCollect = c.autoCollect + "void|"; } else { autoContributes(c, value!); }
+      }
+      // An `auto` still here could not be inferred, which `errAutoUnresolved` has said once already.
+      if (c.lambdaReturn == "" && isAutoTy(c, want)) {
+        if (value is not null) { checkExpr(c, value!); }
+        return;
+      }
       // Before the types: whether there should be a value here at all. Both directions are errors and
       // both name the `return` itself rather than what follows it — there is nothing to name in the
       // second case, which is presumably why the reference settled on the statement for both.
@@ -13211,6 +13324,7 @@ export void checkModule(C c, Program prog) {
   }
 
   declareModule(c, prog, string[]());
+  applyAutoAssumptions(c);
 
   // **Every declaration is in, so a name that resolves to nothing now resolves to nothing.** From
   // here a type name this file never brought into scope is an error rather than something unknown,

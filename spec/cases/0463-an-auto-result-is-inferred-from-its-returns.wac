@@ -1,0 +1,34 @@
+// expect: answers total = 128
+// spec: §wac-auto-return-vm59825, §wac-auto-path-exclusion-ffs3tt5
+// why: each `auto` widens its own returns, and a path back to itself contributes nothing
+// from: spec/next ch34
+auto value() { return 1 as i32; }
+auto forwarded() { return value(); }
+
+auto factorial(i32 n) {
+  if (n == 0) { return 1 as i32; }
+  return n * factorial(n - 1);
+}
+
+auto a(bool stop) {
+  if (stop) { return 1 as i32; }
+  return b(stop);
+}
+auto b(bool stop) { return a(stop); }
+
+auto example(i32 n) {
+  if (n == 0) { return 0 as i32; }
+  return n == 1 ? null : example(n - 1);
+}
+
+auto literalAlongside(i64 value, bool cond) {
+  if (cond) { return 2; }
+  return value;
+}
+
+// 1 + 24 + 1, then 100 for the absent `example(3)`, then the `2` that adopted `i64`.
+export i32 total() {
+  i32? e = example(3);
+  i32 absent = e is null ? 100 : 0;
+  return forwarded() + factorial(4) + b(true) + absent + (literalAlongside(5 as i64, true) as! i32);
+}

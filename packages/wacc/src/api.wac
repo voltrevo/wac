@@ -6,7 +6,7 @@
 // the canonical dump the parser's own tests read.
 
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
-import { kAsync, kIdent, kindName } from "./kinds.wac";
+import { kAsync, kIdent, kindName, kLbrace, kLparen, kRbrace } from "./kinds.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor,
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -14,7 +14,8 @@ import { Ev, declsOfFiles, declsOfProgram, evalAllConsts } from "./consteval.wac
 import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
-         warningsOf, widthsOf, errNoSuchExport, errStaleBuiltinEmbedding, isBuiltinSubpath } from "./check.wac";
+         warningsOf, widthsOf, errNoSuchExport, errStaleBuiltinEmbedding, isBuiltinSubpath,
+         widenAutoContributions } from "./check.wac";
 import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, emitLinked, emitLinkedIn, missingImportParts, emitLinkedChecked, emitLinkedCovered,
   emitLinkedCoveredIn,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
@@ -254,7 +255,7 @@ export string names(u8[] src) {
  * files than the entry needs is fine; what is emitted is the closure, not the table.
  */
 export u8[] emitFiles(string[] paths, string[] sources, string entry) {
-  return emitLinked(paths, sources, entry);
+  return emitLinked(paths, lowerSources(paths, sources, Res.empty()), entry);
 }
 
 /**
@@ -265,7 +266,7 @@ export u8[] emitFiles(string[] paths, string[] sources, string entry) {
  * was nothing to emit *with* a `Res`. `issues/system/0229a`.
  */
 export u8[] emitFilesIn(string[] paths, string[] sources, Res res, string entry) {
-  return emitLinkedIn(paths, sources, res, entry);
+  return emitLinkedIn(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /**
@@ -276,7 +277,7 @@ export u8[] emitFilesIn(string[] paths, string[] sources, Res res, string entry)
  * and the flag is the *build's* — whole-module, as the reference has it.
  */
 export u8[] emitFilesChecked(string[] paths, string[] sources, string entry) {
-  return emitLinkedChecked(paths, sources, entry);
+  return emitLinkedChecked(paths, lowerSources(paths, sources, Res.empty()), entry);
 }
 
 /**
@@ -284,7 +285,7 @@ export u8[] emitFilesChecked(string[] paths, string[] sources, string entry) {
  * `__cov_init()`, `__cov_len()`, `__cov_get(i)` and `__cov_hash(upto)`.
  */
 export u8[] emitFilesCovered(string[] paths, string[] sources, string entry) {
-  return emitLinkedCovered(paths, sources, entry);
+  return emitLinkedCovered(paths, lowerSources(paths, sources, Res.empty()), entry);
 }
 
 /**
@@ -296,7 +297,7 @@ export u8[] emitFilesCovered(string[] paths, string[] sources, string entry) {
  * points here did that; the other is `diagnoseGraphIn`. `issues/lang/0157`.
  */
 export u8[] emitFilesCoveredIn(string[] paths, string[] sources, Res res, string entry) {
-  return emitLinkedCoveredIn(paths, sources, res, entry);
+  return emitLinkedCoveredIn(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /**
@@ -307,23 +308,23 @@ export u8[] emitFilesCoveredIn(string[] paths, string[] sources, Res res, string
  */
 export string exportSigsFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return exportSigsLinked(paths, sources, res, entry);
+  return exportSigsLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /** `exportSigsFiles` with the project root each file sits in — `design/lang/0009` D7. */
 export string exportSigsFilesIn(string[] paths, string[] sources, Res res, string entry) {
-    return exportSigsLinked(paths, sources, res, entry);
+    return exportSigsLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /** The structs and enums a host can hold — see `bindTypesLinked` for the shape. */
 export string bindTypesFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return bindTypesLinked(paths, sources, res, entry);
+  return bindTypesLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /** `bindTypesFiles` with the project root each file sits in — `design/lang/0009` D7. */
 export string bindTypesFilesIn(string[] paths, string[] sources, Res res, string entry) {
-    return bindTypesLinked(paths, sources, res, entry);
+    return bindTypesLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /**
@@ -335,7 +336,7 @@ export string bindTypesFilesIn(string[] paths, string[] sources, Res res, string
  */
 export string describeFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return describeLinked(paths, sources, res, entry);
+  return describeLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /**
@@ -344,17 +345,17 @@ export string describeFiles(string[] paths, string[] sources, string entry) {
  */
 export Built buildFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return buildLinked(paths, sources, res, entry);
+  return buildLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /** `buildFiles` with the project root each file sits in — `design/lang/0009` D7. */
 export Built buildFilesIn(string[] paths, string[] sources, Res res, string entry) {
-    return buildLinked(paths, sources, res, entry);
+    return buildLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /** `describeFiles` with the project root each file sits in — `design/lang/0009` D7. */
 export string describeFilesIn(string[] paths, string[] sources, Res res, string entry) {
-  return describeLinked(paths, sources, res, entry);
+  return describeLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /**
@@ -386,8 +387,8 @@ export string describeSeparator() { return describeSep(); }
 export string manifestFiles(u8[] wasm, string[] paths, string[] sources, string entry,
                             string wasmName, i32 grants) {
   Res res = Res.empty();
-  return manifestOf(wasm, bindTypesLinked(paths, sources, res, entry),
-                    exportSigsLinked(paths, sources, res, entry), entry, wasmName, grants);
+  return manifestOf(wasm, bindTypesLinked(paths, lowerSources(paths, sources, res), res, entry),
+                    exportSigsLinked(paths, lowerSources(paths, sources, res), res, entry), entry, wasmName, grants);
 }
 
 /**
@@ -416,8 +417,8 @@ export string manifestWire(u8[] wasm, string wire, string sigs, string entry,
  */
 export string bindgenFiles(u8[] wasm, string[] paths, string[] sources, string entry, string lang) {
   Res res = Res.empty();
-  return bindgenOf(wasm, exportSigsLinked(paths, sources, res, entry),
-                   bindTypesLinked(paths, sources, res, entry), lang, false);
+  return bindgenOf(wasm, exportSigsLinked(paths, lowerSources(paths, sources, res), res, entry),
+                   bindTypesLinked(paths, lowerSources(paths, sources, res), res, entry), lang, false);
 }
 
 /**
@@ -439,14 +440,14 @@ export string bindgenWire(u8[] wasm, string sigs, string wire, string lang) {
 /** What bindgen could not write glue for, one `name(params) -> ret` per line. */
 export string bindgenDeclinedFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return bindgenDeclined(exportSigsLinked(paths, sources, res, entry),
-                         bindTypesLinked(paths, sources, res, entry));
+  return bindgenDeclined(exportSigsLinked(paths, lowerSources(paths, sources, res), res, entry),
+                         bindTypesLinked(paths, lowerSources(paths, sources, res), res, entry));
 }
 
 /** `bindgenDeclinedFiles` with the project root each file sits in — `design/lang/0009` D7. */
 export string bindgenDeclinedFilesIn(string[] paths, string[] sources, Res res, string entry) {
-    return bindgenDeclined(exportSigsLinked(paths, sources, res, entry),
-                         bindTypesLinked(paths, sources, res, entry));
+    return bindgenDeclined(exportSigsLinked(paths, lowerSources(paths, sources, res), res, entry),
+                         bindTypesLinked(paths, lowerSources(paths, sources, res), res, entry));
 }
 
 /**
@@ -467,7 +468,7 @@ export u8[] emitFilesSelfDescribing(string[] paths, string[] sources, string ent
 /** `emitFilesSelfDescribing` with project roots and mappings — what a caller holding manifests passes. */
 export u8[] emitFilesSelfDescribingIn(string[] paths, string[] sources, Res res, string entry,
                                       string wasmName, i32 grants) {
-  Built b = buildLinked(paths, sources, res, entry);
+  Built b = buildLinked(paths, lowerSources(paths, sources, res), res, entry);
   string sep = describeSep();
   i32 first = b.described.indexOf(sep);
   // No separator is a description that did not parse — an empty wire and empty signatures, which
@@ -489,12 +490,12 @@ export u8[] emitFilesSelfDescribingIn(string[] paths, string[] sources, Res res,
  */
 export string covTableFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return covTableLinked(paths, sources, res, entry);
+  return covTableLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /** `covTableFiles` with the project root each file sits in — `design/lang/0009` D7. */
 export string covTableFilesIn(string[] paths, string[] sources, Res res, string entry) {
-    return covTableLinked(paths, sources, res, entry);
+    return covTableLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /**
@@ -509,7 +510,7 @@ export string covTableFilesIn(string[] paths, string[] sources, Res res, string 
  * so a real journal is 13s a side to read and four calls to fold. `issues/system/0274b`.
  */
 export u8[] emitFilesTraced(string[] paths, string[] sources, string entry) {
-  return emitLinkedTraced(paths, sources, entry);
+  return emitLinkedTraced(paths, lowerSources(paths, sources, Res.empty()), entry);
 }
 
 /**
@@ -520,24 +521,24 @@ export u8[] emitFilesTraced(string[] paths, string[] sources, string entry) {
  */
 export u8[] emitFilesTracedSlots(string[] paths, string[] sources, string entry, i32 slots) {
   Res res = Res.empty();
-  return emitLinkedTracedSlots(paths, sources, res, entry, slots);
+  return emitLinkedTracedSlots(paths, lowerSources(paths, sources, res), res, entry, slots);
 }
 
 /** What each *trace* point is, including the `index` ones a counter build does not have. */
 export string traceTableFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return traceTableLinked(paths, sources, res, entry);
+  return traceTableLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /** Why a linked module was not emitted in full, or `""`. */
 export string blockedFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return blockedLinked(paths, sources, res, entry);
+  return blockedLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /** `blockedFiles` with the project root each file sits in — `design/lang/0009` D7. */
 export string blockedFilesIn(string[] paths, string[] sources, Res res, string entry) {
-    return blockedLinked(paths, sources, res, entry);
+    return blockedLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /**
@@ -553,7 +554,7 @@ export string blockedFilesIn(string[] paths, string[] sources, Res res, string e
  */
 export string emitDeclineFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return emitDeclineLinked(paths, sources, res, entry);
+  return emitDeclineLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /**
@@ -565,7 +566,7 @@ export string emitDeclineFiles(string[] paths, string[] sources, string entry) {
  */
 export string lambdaReportFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return lambdaReportLinked(paths, sources, res, entry);
+  return lambdaReportLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 // ── Tokens, for a host that has to place something in a source ──────────────────────────────
@@ -625,7 +626,7 @@ export string resolveSpecifierAt(string fromPath, string spec, string root, stri
 /** The emitted functions of a linked program, in order, so a wasm "function #N" has a name. */
 export string namesFiles(string[] paths, string[] sources, string entry) {
   Res res = Res.empty();
-  return namesLinked(paths, sources, res, entry);
+  return namesLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /**
@@ -749,12 +750,12 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  * here: checking a project retains everything (ch06).
  */
 export Pruned pruneForBuild(string[] paths, string[] sources, Res res, string entry) {
-  return pruneFor(paths, lowerNamespaces(paths, sources, res), res, entry);
+  return pruneFor(paths, lowerSources(paths, sources, res), res, entry);
 }
 
 /** A build's diagnostics: the pruned graph, every remaining declaration checked in full. */
 export string diagnoseBuildIn(string[] paths, string[] sources, Res res, string entry) {
-  Pruned p = pruneFor(paths, lowerNamespaces(paths, sources, res), res, entry);
+  Pruned p = pruneFor(paths, lowerSources(paths, sources, res), res, entry);
   return diagnoseGraphIn(p.paths, p.sources, p.res, entry);
 }
 
@@ -774,7 +775,7 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
  */
 export string diagnoseGraphIn(string[] paths, string[] rawSources, Res res, string entry) {
   // Namespaces are lowered first, so checking a project reads what a build would (spec/next ch03).
-  string[] sources = lowerNamespaces(paths, rawSources, res);
+  string[] sources = lowerSources(paths, rawSources, res);
   string out = "";
   // **Counted once for the whole graph.** Every closure below overlaps almost every other, so
   // letting each one size its own tables parsed a widely-imported file once per importer — 54% of
@@ -1019,7 +1020,7 @@ export string diagnoseFiles(string[] paths, string[] sources, string entry) {
 
 /** `diagnoseFiles` with the project root each file sits in — `design/lang/0009` D7. */
 export string diagnoseFilesIn(string[] paths, string[] rawSources, Res res, string entry) {
-  string[] sources = lowerNamespaces(paths, rawSources, res);
+  string[] sources = lowerSources(paths, rawSources, res);
   Lexed?[] lexes = Lexed?[].defaulted(paths.len() + 1);
   Program?[] progs = Program?[].defaulted(paths.len() + 1);
   i32[] counts = declCountsInto(paths, sources, lexes, progs);
@@ -1125,7 +1126,7 @@ export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry)
  * lowering has made it `[@"operators.add"]`.
  */
 export string[] loweredSources(string[] paths, string[] sources) {
-  return lowerNamespaces(paths, sources, Res.empty());
+  return lowerSources(paths, sources, Res.empty());
 }
 
 /** The checker, run over an import graph, with its tables still in hand for whatever wants them. */
@@ -1409,6 +1410,16 @@ C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
  */
 C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string entry,
                    i32[] counts, Lexed?[] lexes, Program?[] progs) {
+  return checkFilesAutoIn(callerPaths, callerSources, res, entry, counts, lexes, progs, "", "");
+}
+
+/**
+ * `checkFilesWithIn`, collecting one `auto` function's return contributions (spec/next ch34).
+ * `assume` is `name=type` lines, one per `auto` function in the entry, the type empty where this path
+ * excludes it; `target` is the function collected, `""` for an ordinary check.
+ */
+C checkFilesAutoIn(string[] callerPaths, string[] callerSources, Res res, string entry,
+                   i32[] counts, Lexed?[] lexes, Program?[] progs, string assume, string target) {
   // **`core` is a file, and the checker had never read it.** An import from `core` used to declare
   // each name as *unknown*, so a `Node` or a `Read` had no enum behind it — and every rule that asks
   // what an enum holds went quiet: a `match` missing a variant, an arm naming a variant that does
@@ -1798,8 +1809,207 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
     c.sCx = declsOfFiles(paths, sources, alx, apg, esrc, elexed);
     c.sFile = eat;
   }
+  if (target != "") {
+    c.autoAssume = assume;
+    c.autoTarget = target;
+  }
   checkModule(c, eprog);
   return c;
+}
+
+// ---- `auto` results — spec/next ch34 ----
+
+/**
+ * The source-to-source passes every route takes before parsing for real: namespaces flattened
+ * (ch03), then `auto` results written in (ch34). Both are idempotent.
+ */
+export string[] lowerSources(string[] paths, string[] sources, Res res) {
+  return lowerAutoReturns(paths, lowerNamespaces(paths, sources, res), res);
+}
+
+/** Whether a source may declare a function whose result is `auto`; parsing says for certain. */
+bool mentionsAutoReturn(string s) {
+  return startsWith(s, "auto ") || s.indexOf("\nauto ") >= 0 || s.indexOf("export auto ") >= 0;
+}
+
+/** One file's `auto` functions: names, each one's `auto` token, and the `|`-set of names it calls. */
+struct AutoFns {
+  string[] names;
+  i32[] toks;
+  string[] calls;
+}
+
+AutoFns autoFnsOf(u8[] src, Lexed lx, Program prog) {
+  i32 n = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (autoTokOf(src, lx, returnType) >= 0) { n++; }
+      }
+      default: { }
+    }
+  }
+  string[] names = string[].filled(n, "");
+  i32[] toks = i32[].filled(n, 0);
+  i32[] nameToks = i32[].filled(n, 0);
+  i32 k = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        i32 at = autoTokOf(src, lx, returnType);
+        if (at < 0) { continue; }
+        names[k] = tokenTextOf(src, lx, nameTok);
+        toks[k] = at;
+        nameToks[k] = nameTok;
+        k++;
+      }
+      default: { }
+    }
+  }
+  // **What each one calls, by its tokens**: from the name to the brace closing its body, every name
+  // followed by `(`. A dependency named and never reached costs one more traversal, not an answer.
+  string[] calls = string[].filled(n, "|");
+  i32 st = tokenStride();
+  for (i32 f = 0; f < n; f++) {
+    i32 t = nameToks[f];
+    while (t < lx.tokenCount && lx.tokens[t * st] != kLbrace()) { t++; }
+    i32 depth = 0;
+    while (t < lx.tokenCount) {
+      i32 kind = lx.tokens[t * st];
+      if (kind == kLbrace()) { depth++; }
+      if (kind == kRbrace()) { depth--; if (depth == 0) { break; } }
+      if (kind == kIdent() && t + 1 < lx.tokenCount && lx.tokens[(t + 1) * st] == kLparen()) {
+        string callee = tokenTextOf(src, lx, t);
+        for (i32 g = 0; g < n; g++) {
+          if (names[g] == callee && calls[f].indexOf("|" + callee + "|") < 0) {
+            calls[f] = calls[f] + callee + "|";
+          }
+        }
+      }
+      t++;
+    }
+  }
+  return AutoFns(names, toks, calls);
+}
+
+/** The token of a written `auto`, or -1. */
+i32 autoTokOf(u8[] src, Lexed lx, Ty t) {
+  match (t.kind) {
+    Named(tok, typeArgs): {
+      if (typeArgs.len() == 0 && tokenTextOf(src, lx, tok) == "auto") { return tok; }
+      return 0 - 1;
+    }
+    default: { return 0 - 1; }
+  }
+}
+
+/** What one inference over a file needs, and the traversals it has already made. */
+struct AutoRun {
+  string[] paths;
+  string[] sources;
+  Res res;
+  i32 file;
+  AutoFns fns;
+  string[] memoKeys;
+  string[] memoLists;
+  string[] memoWide;
+  i32 memoCount;
+}
+
+/**
+ * Function `k`'s contributions on the dependency path `path` (`|a|b|`), and their widening — spec/next
+ * ch34. Every `auto` it calls is traversed afresh with itself added to the path, and one already on
+ * the path contributes nothing: so the answer depends on the root, never on which was inferred first.
+ * A traversal's contributions reach its caller widened, as the call's type.
+ */
+string autoCollect(AutoRun run, i32 k, string path) {
+  string key = numText(k) + path;
+  for (i32 i = 0; i < run.memoCount; i++) { if (run.memoKeys[i] == key) { return run.memoLists[i]; } }
+  string assume = "";
+  for (i32 g = 0; g < run.fns.names.len(); g++) {
+    string gname = run.fns.names[g];
+    string got = "";
+    if (run.fns.calls[k].indexOf("|" + gname + "|") >= 0 && path.indexOf("|" + gname + "|") < 0) {
+      autoCollect(run, g, path + gname + "|");
+      got = autoWideOf(run, numText(g) + path + gname + "|");
+      if (startsWith(got, "!")) { got = ""; }
+    }
+    assume = assume + gname + "=" + got + "\n";
+  }
+  Lexed?[] lexes = Lexed?[].defaulted(run.paths.len() + 1);
+  Program?[] progs = Program?[].defaulted(run.paths.len() + 1);
+  i32[] counts = declCountsInto(run.paths, run.sources, lexes, progs);
+  C c = checkFilesAutoIn(run.paths, run.sources, run.res, run.paths[run.file], counts, lexes, progs,
+                         assume, run.fns.names[k]);
+  if (run.memoCount >= run.memoKeys.len()) {
+    i32 grown = run.memoKeys.len() * 2 + 8;
+    string[] mk = string[].filled(grown, "");
+    string[] ml = string[].filled(grown, "");
+    string[] mw = string[].filled(grown, "");
+    for (i32 i = 0; i < run.memoCount; i++) {
+      mk[i] = run.memoKeys[i]; ml[i] = run.memoLists[i]; mw[i] = run.memoWide[i];
+    }
+    run.memoKeys = mk; run.memoLists = ml; run.memoWide = mw;
+  }
+  run.memoKeys[run.memoCount] = key;
+  run.memoLists[run.memoCount] = c.autoCollect;
+  run.memoWide[run.memoCount] = widenAutoContributions(c, c.autoCollect);
+  run.memoCount = run.memoCount + 1;
+  return c.autoCollect;
+}
+
+string autoWideOf(AutoRun run, string key) {
+  for (i32 i = 0; i < run.memoCount; i++) { if (run.memoKeys[i] == key) { return run.memoWide[i]; } }
+  return "";
+}
+
+/**
+ * Every `auto` result written into its source as the type inferred — spec/next ch34. One that cannot
+ * be inferred stays `auto`, and the checker says why (`errAutoUnresolved`). An empty collection is
+ * `never`, and `never?` is spelled `null`, which is how the language writes it (ch10).
+ */
+export string[] lowerAutoReturns(string[] paths, string[] sources, Res res) {
+  bool any = false;
+  for (i32 i = 0; i < sources.len(); i++) { if (mentionsAutoReturn(sources[i])) { any = true; } }
+  if (!any) { return sources; }
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 i = 0; i < sources.len(); i++) { out[i] = sources[i]; }
+  for (i32 f = 0; f < paths.len() && f < out.len(); f++) {
+    if (!mentionsAutoReturn(out[f])) { continue; }
+    u8[] src = out[f].toBytes();
+    Lexed lx = lex(src);
+    Program prog = parseProgram(P.create(src, lx));
+    AutoFns fns = autoFnsOf(src, lx, prog);
+    if (fns.names.len() == 0) { continue; }
+    AutoRun run = AutoRun(paths, out, res, f, fns, string[](), string[](), string[](), 0);
+    string[] spelled = string[].filled(fns.names.len(), "");
+    for (i32 k = 0; k < fns.names.len(); k++) {
+      string path = "|" + fns.names[k] + "|";
+      autoCollect(run, k, path);
+      string w = autoWideOf(run, numText(k) + path);
+      if (w == "") { w = "never"; }
+      if (startsWith(w, "never?")) { w = "null" + w.slice(6, w.len()); }
+      spelled[k] = startsWith(w, "!") ? "" : w;
+    }
+    string text = "";
+    i32 from = 0;
+    i32 st = tokenStride();
+    for (i32 k = 0; k < fns.names.len(); k++) {
+      if (spelled[k] == "") { continue; }
+      i32 start = lx.tokens[fns.toks[k] * st + 1];
+      i32 len = lx.tokens[fns.toks[k] * st + 2];
+      text = text + bytesBetween(src, from, start) + spelled[k];
+      from = start + len;
+    }
+    out[f] = text + bytesBetween(src, from, src.len());
+  }
+  return out;
+}
+
+string bytesBetween(u8[] src, i32 from, i32 to) {
+  u8[] b = u8[].filled(to - from, 0);
+  for (i32 i = from; i < to; i++) { b[i - from] = src[i]; }
+  return string.fromBytes(b);
 }
 
 /**

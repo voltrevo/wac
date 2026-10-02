@@ -1,0 +1,11 @@
+// expect: answers viaB = 1
+// spec: §wac-auto-recursion-never-fvt6ex2, §wac-auto-path-exclusion-ffs3tt5
+// why: `forever` has no contribution but itself and is `never`; `a` and `b` each keep the `i32`
+// from: spec/next ch34
+auto forever() { return forever(); }
+auto a(bool stop) {
+  if (stop) { return 1 as i32; }
+  return b(stop);
+}
+auto b(bool stop) { return a(stop); }
+export i32 viaB() { return b(true); }

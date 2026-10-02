@@ -1,0 +1,6 @@
+// expect: refused
+// spec: §wac-auto-empty-never-6k7ndms
+// why: a bare `return;` is an explicit `void`, which `auto` never infers — declare `void` instead
+// from: spec/next ch34
+auto earlyExit() { return; }
+export i32 f() { return 0; }
