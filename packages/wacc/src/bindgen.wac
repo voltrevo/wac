@@ -52,6 +52,10 @@ struct G {
   string[] sRet;
   string[] sParams;
   i32 sCount;
+  // The `N` lines, `\n<type>\t<name>` each: an instantiation the entry exports by name (ch48).
+  string named;
+  // The `X` lines, `<name>\t<form>` each: a generic the entry exports with no instantiation.
+  string generics;
 }
 
 /** Everything that is not a type name, so `arrSuffix` and `classNameOf` can reduce one. */
@@ -134,8 +138,9 @@ string dollared(string s) {
  * The class name for a bind type.
  *
  * A monomorphisation's name is its *type*, `Vec<Setting>`, which is not a name a TypeScript file can
- * declare — so `[]` reads as `Arr` and `?` as `Opt`, and everything else that is not an identifier
- * becomes `$`, which wac's lexer rejects and so cannot collide with a name somebody wrote.
+ * declare — so `[]` reads as `Arr` and `?` as `Opt`, and every other run that is not an identifier
+ * becomes `_`: `Vec<f64>` is `Vec_f64` (spec/next ch48 `§wac-bind-instantiation-name-dwptdfb`). A
+ * struct somebody named `Vec_f64` would collide with it.
  */
 string classNameOf(string name) {
   string out = "";
@@ -146,14 +151,42 @@ string classNameOf(string name) {
     out = out + name.slice(i, i + 1);
     i = i + 1;
   }
-  return dollared(out);
+  return underscored(out);
+}
+
+/**
+ * The class a bind type is under: the name the entry exported it by, `IntVec` for `Vec<i32>`
+ * (spec/next ch48 `§wac-bind-instantiation-name-dwptdfb`), or one spelled from it.
+ */
+string className(G g, string name) {
+  i32 at = g.named.indexOf("\n" + name + "\t");
+  if (at < 0) { return classNameOf(name); }
+  string rest = g.named.slice(at + name.len() + 2, g.named.len());
+  i32 nl = rest.indexOf("\n");
+  return nl < 0 ? rest : rest.slice(0, nl);
+}
+
+/** Every run of non-identifier characters becomes one `_`, and a trailing run is dropped. */
+string underscored(string s) {
+  string out = "";
+  bool pending = false;
+  for (i32 i = 0; i < s.len(); i++) {
+    string ch = s.slice(i, i + 1);
+    if (isIdentChar(ch)) {
+      if (pending) { out = out + "_"; pending = false; }
+      out = out + ch;
+    } else {
+      pending = true;
+    }
+  }
+  return out;
 }
 
 /** The TypeScript type a wac type crosses as. */
 string tsType(G g, string t) {
   if (endsWith(t, "?")) { return tsType(g, t.slice(0, t.len() - 1)) + " | null"; }
   i32 n = typeIndex(g, t);
-  if (n >= 0) { return classNameOf(g.tName[n]); }
+  if (n >= 0) { return className(g, g.tName[n]); }
   i32 c = callbackIndex(g, t);
   i32 o = c < 0 ? outRefIndex(g, t) : -1;
   if (c >= 0 || o >= 0) {
@@ -275,7 +308,7 @@ string fromWasmInner(G g, string t, string expr) {
   if (isBulk(t)) { return "$arrFrom_" + t.slice(0, t.len() - 2) + "(" + expr + ")"; }
   if (isRefArray(g, t)) { return "$arrFrom_" + arrSuffix(t) + "(" + expr + ")"; }
   i32 n = typeIndex(g, t);
-  if (n >= 0) { return "new " + classNameOf(g.tName[n]) + "(" + expr + ")"; }
+  if (n >= 0) { return "new " + className(g, g.tName[n]) + "(" + expr + ")"; }
   if (t == "bool") { return expr + " !== 0"; }
   return g.js ? expr : expr + " as " + tsType(g, t);
 }
@@ -295,7 +328,8 @@ G readWires(string wire, string sigs, bool js) {
           string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), 0,
           string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), 0,
           string[].filled(wl.len(), ""), string[].filled(wl.len(), ""), 0,
-          string[].filled(sl.len(), ""), string[].filled(sl.len(), ""), string[].filled(sl.len(), ""), 0);
+          string[].filled(sl.len(), ""), string[].filled(sl.len(), ""), string[].filled(sl.len(), ""), 0,
+          "", "");
   // **Why none of the six cursors below is bounds-checked**, which is worth stating because every
   // cursor in `emit.wac` is and the difference looks like an omission.
   //
@@ -333,6 +367,10 @@ G readWires(string wire, string sigs, bool js) {
       g.aOf[g.aCount] = field(wl[i], 1);
       g.aName[g.aCount] = field(wl[i], 2);
       g.aCount = g.aCount + 1;
+    } else if (tag == "N") {
+      g.named = g.named + "\n" + field(wl[i], 1) + "\t" + field(wl[i], 2);
+    } else if (tag == "X") {
+      g.generics = g.generics + field(wl[i], 1) + "\t" + field(wl[i], 2) + "\n";
     }
   }
   for (i32 i = 0; i < sl.len(); i++) {
@@ -418,6 +456,53 @@ bool okType(G g, string t0) {
  * position is a wac function going out, which `$bind$callref_*` answers. A funcref nested inside
  * another signature is neither, and stays declined.
  */
+/** A type as wac writes it: the wire's `fn[i32(i32)]` is `fn<i32(i32)>`. */
+string wacSpelling(string t) {
+  string out = "";
+  bool[] fnAt = bool[].filled(t.len() + 1, false);
+  i32 depth = 0;
+  i32 i = 0;
+  while (i < t.len()) {
+    string ch = t.slice(i, i + 1);
+    if (ch == "[" && i + 1 < t.len() && t.slice(i + 1, i + 2) == "]") { out = out + "[]"; i = i + 2; continue; }
+    if (ch == "[") {
+      bool opensFn = i >= 2 && t.slice(i - 2, i) == "fn";
+      fnAt[depth] = opensFn;
+      depth++;
+      out = out + (opensFn ? "<" : "[");
+      i++;
+      continue;
+    }
+    if (ch == "]" && depth > 0) {
+      depth--;
+      out = out + (fnAt[depth] ? ">" : "]");
+      i++;
+      continue;
+    }
+    out = out + ch;
+    i++;
+  }
+  return out;
+}
+
+/** Why export `s` is skipped: the first part of its signature that cannot cross, or "". */
+string skipReason(G g, i32 s) {
+  string ret = g.sRet[s];
+  i32 o = outRefIndex(g, ret);
+  if (!(okType(g, ret) || (o >= 0 && usableSig(g, g.oRet[o], g.oParams[o], false)))) {
+    return g.sName[s] + "() — returns '" + wacSpelling(ret) + "', which cannot cross the boundary";
+  }
+  string[] ps = paramsOf(g.sParams[s]);
+  for (i32 i = 0; i < ps.len(); i++) {
+    i32 c = callbackIndex(g, ps[i]);
+    bool callable = c >= 0 && usableSig(g, g.cRet[c], g.cParams[c], true);
+    if (!okType(g, ps[i]) && !callable) {
+      return g.sName[s] + "() — parameter " + itoa(i + 1) + " '" + wacSpelling(ps[i]) + "' cannot cross the boundary";
+    }
+  }
+  return "";
+}
+
 bool supported(G g, i32 s) {
   string ret = g.sRet[s];
   i32 o = outRefIndex(g, ret);
@@ -790,8 +875,17 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
 
   for (i32 t = 0; t < g.tCount; t++) { classFor(o, g, t); }
 
+  string skipped = "";
   for (i32 s = 0; s < g.sCount; s++) {
-    if (!usable[s]) { continue; }
+    // **A skipped export says so where it would have been** (spec/next ch48
+    // `§wac-bind-skip-h9pd5wn`), and again in `__bindgenSkipped` below, where a caller looks.
+    if (!usable[s]) {
+      string why = skipReason(g, s);
+      line(o, "// skipped: " + why);
+      line(o, "");
+      skipped = skipped + "  \"" + why + "\",\n";
+      continue;
+    }
     string[] ps = paramsOf(g.sParams[s]);
     string args = "";
     string conv = "";
@@ -817,11 +911,34 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
     line(o, "");
   }
 
-  // **The other names.** One `const` per alias, so a host that asks for `Pending$u8ArrOpt` gets the
-  // class that answers to `Pending$u8Arr` — the same class, because here they are the same type.
+  // **A generic the entry exports has no single shape to bind** (spec/next ch48
+  // `§wac-bind-generic-skipped-biz4394`), so it is skipped too, with the form that would bind it.
+  string[] gl = linesOf(g.generics);
+  for (i32 i = 0; i < gl.len(); i++) {
+    if (gl[i] == "") { continue; }
+    string why = field(gl[i], 0) + " — generic; export an instantiation by name, e.g. export { "
+               + field(gl[i], 1) + " }";
+    line(o, "// skipped: " + why);
+    line(o, "");
+    skipped = skipped + "  \"" + why + "\",\n";
+  }
+
+  // **What was left out, as a value**: a skipped export is absent, so `mod.f is not a function` is
+  // the first sign of one — and a module whose every export is skipped exports nothing at all.
+  if (skipped == "") {
+    line(o, "export const __bindgenSkipped" + annRaw(g, "readonly string[]") + " = [];");
+  } else {
+    line(o, "export const __bindgenSkipped" + annRaw(g, "readonly string[]") + " = [");
+    put(o, skipped);
+    line(o, "];");
+  }
+  line(o, "");
+
+  // **The other names.** One `const` per alias, so a host that asks for `Pending_u8ArrOpt` gets the
+  // class that answers to `Pending_u8Arr` — the same class, because here they are the same type.
   for (i32 a = 0; a < g.aCount; a++) {
-    string from = classNameOf(g.aName[a]);
-    string to = classNameOf(g.aOf[a]);
+    string from = className(g, g.aName[a]);
+    string to = className(g, g.aOf[a]);
     if (from == to || typeIndex(g, g.aOf[a]) < 0) { continue; }
     line(o, "/** `" + g.aName[a] + "` is `" + g.aOf[a] + "` here: one wasm type, two spellings. */");
     line(o, "export const " + from + " = " + to + ";");
@@ -871,7 +988,7 @@ string chomped(string s) {
 void classFor(Out o, G g, i32 t) {
   string name = g.tName[t];
   string bind = g.tBind[t];
-  string cls = classNameOf(name);
+  string cls = className(g, name);
   bool isEnum = g.tKind[t] == "E";
   line(o, isEnum
       ? "/** `" + name + "`, held by reference. `tag` says which variant it is. */"
@@ -900,7 +1017,7 @@ void classFor(Out o, G g, i32 t) {
       line(o, "  // `$of` is not generated: a field of this struct is a type the glue cannot carry.");
     }
     // `classNameOf`, not the wac name: an instance's *type* is `Pending<i32>` and its class is
-    // `Pending$i32`, which in code position is what has to be written.
+    // `Pending_i32`, which in code position is what has to be written.
     if (!anySkipped) {
       line(o, "  static $of(" + args + ")" + annRaw(g, cls) + " {");
       line(o, "    return new " + cls + "(($exports.$bind$s_" + bind + "_new" + cf(g) + ")(" + conv + "));");

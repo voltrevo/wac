@@ -90,7 +90,7 @@ function splitTop(text: string, sep: string): string[] {
  * The other names a bind type answers to — `A <identity> <spelling>` lines.
  *
  * wacc collapses `T?` onto `T` in a type's identity, because they are one wasm type; a host written
- * against a compiler that keeps them apart asks for `Pending$u8ArrOpt`. The alias says the two are
+ * against a compiler that keeps them apart asks for `Pending_u8ArrOpt`. The alias says the two are
  * the same class here, which is true, rather than minting a second one [issue 0106].
  */
 export function parseAliases(wire: string): { of: string; name: string }[] {
@@ -99,6 +99,28 @@ export function parseAliases(wire: string): { of: string; name: string }[] {
     if (!line.startsWith("A\t")) continue;
     const cells = line.split("\t");
     out.push({ of: cells[1], name: cells[2] });
+  }
+  return out;
+}
+
+/** The `N` lines: an instantiation the entry exports by name — `Vec<i32>` as `IntVec` (ch48). */
+export function parseNamed(wire: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const line of wire.split("\n")) {
+    if (!line.startsWith("N\t")) continue;
+    const cells = line.split("\t");
+    out.set(cells[1], cells[2]);
+  }
+  return out;
+}
+
+/** The `X` lines: a generic the entry exports with no instantiation, and the form that would bind it. */
+export function parseGenerics(wire: string): { name: string; form: string }[] {
+  const out: { name: string; form: string }[] = [];
+  for (const line of wire.split("\n")) {
+    if (!line.startsWith("X\t")) continue;
+    const cells = line.split("\t");
+    out.push({ name: cells[1], form: cells[2] });
   }
   return out;
 }
@@ -201,6 +223,40 @@ function isRefArray(t: string, named: Set<string>): boolean {
 }
 
 /** Whether this signature is one this generator can write glue for. */
+/** A type as wac writes it: the wire's `fn[i32(i32)]` is `fn<i32(i32)>`. */
+export function wacSpelling(t: string): string {
+  let out = "";
+  const fnAt: boolean[] = [];
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (ch === "[" && t[i + 1] === "]") { out += "[]"; i++; continue; }
+    if (ch === "[") {
+      const fn = i >= 2 && t.slice(i - 2, i) === "fn";
+      fnAt.push(fn);
+      out += fn ? "<" : "[";
+      continue;
+    }
+    if (ch === "]" && fnAt.length > 0) { out += fnAt.pop() ? ">" : "]"; continue; }
+    out += ch;
+  }
+  return out;
+}
+
+/** Why `sig` is skipped: the first part of its signature that cannot cross, or "". */
+export function skipReason(
+  sig: ExportSig, types: BindType[] = [], cbs: Callback[] = [], outs: Callback[] = [],
+): string {
+  if (!supported({ ...sig, params: [] }, types, cbs, outs)) {
+    return `${sig.name}() — returns '${wacSpelling(sig.ret)}', which cannot cross the boundary`;
+  }
+  for (let i = 0; i < sig.params.length; i++) {
+    if (!supported({ ...sig, ret: "void", params: [sig.params[i]] }, types, cbs, outs)) {
+      return `${sig.name}() — parameter ${i + 1} '${wacSpelling(sig.params[i])}' cannot cross the boundary`;
+    }
+  }
+  return "";
+}
+
 export function supported(
   sig: ExportSig, types: BindType[] = [], cbs: Callback[] = [], outs: Callback[] = [],
 ): boolean {
@@ -228,6 +284,8 @@ export function supported(
 
 /** The classes in play, so `tsType` and the conversions can name them. */
 let namedTypes: Map<string, BindType> = new Map();
+/** The names the entry exported instantiations by — see `parseNamed`. */
+let namedClasses: Map<string, string> = new Map();
 /** The callbacks, by their wac spelling, so a parameter knows which dispatcher it belongs to. */
 let callbacks: Map<string, Callback> = new Map();
 /** The funcrefs handed out, so a return knows which `callref` helper calls it. */
@@ -372,15 +430,18 @@ function fromWasm(t: string, expr: string): string {
  * A monomorphisation's name is its *type*, `Vec<Setting>`, which is not a name a TypeScript file can
  * declare — so it is reduced the way the reference reduces one: `[]` reads as `Arr` and `?` as
  * `Opt`, because `Map<u8[],i32>` spelled character by character is not a name anyone would ship, and
- * everything else that is not an identifier becomes `$`, which wac's lexer rejects and so cannot
- * collide with a name somebody wrote.
+ * every other run that is not an identifier becomes `_`: `Vec<f64>` is `Vec_f64` (spec/next ch48
+ * `§wac-bind-instantiation-name-dwptdfb`). A struct somebody named `Vec_f64` would collide with it.
  */
 function classNameOf(t: { name: string }): string {
+  // The name the entry exported it by, `IntVec` for `Vec<i32>` (`§wac-bind-instantiation-name-dwptdfb`).
+  const exported = namedClasses.get(t.name);
+  if (exported !== undefined) return exported;
   return t.name
     .replace(/\[\]/g, "Arr")
     .replace(/\?/g, "Opt")
-    .replace(/[^A-Za-z0-9_]+/g, "$")
-    .replace(/\$+$/, "");
+    .replace(/[^A-Za-z0-9_]+/g, "_")
+    .replace(/_+$/, "");
 }
 
 function classFor(t: BindType): string[] {
@@ -395,7 +456,7 @@ function classFor(t: BindType): string[] {
     const args = t.fields.map(f => `${f.name}${ann(f.type)}`).join(", ");
     const conv = t.fields.map(f => toWasm(f.type, f.name)).join(", ");
     // `classNameOf`, not `t.name`: an instance's *type* is `Pending<i32>` and its class is
-    // `Pending$i32` — the raw name in code position is `new Pending<i32>(…)`, which TypeScript reads
+    // `Pending_i32` — the raw name in code position is `new Pending<i32>(…)`, which TypeScript reads
     // as a generic call on a name nothing declares [issue 0106].
     lines.push(`  static $of(${args})${annRaw(classNameOf(t))} {`);
     lines.push(`    return new ${classNameOf(t)}(($exports.$bind$s_${t.bind}_new${CF})(${conv}));`);
@@ -467,9 +528,15 @@ function classFor(t: BindType): string[] {
 export function generate(
   wasm: Uint8Array, sigs: ExportSig[], types: BindType[] = [], cbs: Callback[] = [],
   outs: Callback[] = [], aliases: { of: string; name: string }[] = [],
-  opts: { coverage?: boolean; lang?: "ts" | "js" } = {},
+  opts: {
+    coverage?: boolean;
+    lang?: "ts" | "js";
+    named?: Map<string, string>;
+    generics?: { name: string; form: string }[];
+  } = {},
 ): string {
   asJs = opts.lang === "js";
+  namedClasses = opts.named ?? new Map();
   CF = asJs ? "" : " as CallableFunction";
   BS = asJs ? "" : " as BufferSource";
   AC = asJs ? "" : " as const";
@@ -666,7 +733,17 @@ export function generate(
 
   for (const t of types) lines.push(...classFor(t));
 
-  for (const sig of usable) {
+  const skipped: string[] = [];
+  for (const sig of sigs) {
+    // **A skipped export says so where it would have been** (spec/next ch48
+    // `§wac-bind-skip-h9pd5wn`), and again in `__bindgenSkipped` below, where a caller looks.
+    if (!usable.includes(sig)) {
+      const why = skipReason(sig, types, cbs, outs);
+      lines.push(`// skipped: ${why}`);
+      lines.push("");
+      skipped.push(why);
+      continue;
+    }
     const args = sig.params.map((t, i) => `a${i}${ann(t)}`).join(", ");
     const conv = sig.params.map((t, i) => toWasm(t, `a${i}`)).join(", ");
     lines.push(`export function ${sig.name}(${args})${ann(sig.ret)} {`);
@@ -681,8 +758,28 @@ export function generate(
     lines.push("");
   }
 
-  // **The other names.** One `const` per alias, so a host that asks for `Pending$u8ArrOpt` gets the
-  // class that answers to `Pending$u8Arr` — the same class, because here they are the same type.
+  // **A generic the entry exports has no single shape to bind** (spec/next ch48
+  // `§wac-bind-generic-skipped-biz4394`), so it is skipped too, with the form that would bind it.
+  for (const gen of opts.generics ?? []) {
+    const why = `${gen.name} — generic; export an instantiation by name, e.g. export { ${gen.form} }`;
+    lines.push(`// skipped: ${why}`);
+    lines.push("");
+    skipped.push(why);
+  }
+
+  // **What was left out, as a value**: a skipped export is absent, so `mod.f is not a function` is
+  // the first sign of one — and a module whose every export is skipped exports nothing at all.
+  if (skipped.length === 0) {
+    lines.push(`export const __bindgenSkipped${annRaw("readonly string[]")} = [];`);
+  } else {
+    lines.push(`export const __bindgenSkipped${annRaw("readonly string[]")} = [`);
+    for (const why of skipped) lines.push(`  "${why}",`);
+    lines.push("];");
+  }
+  lines.push("");
+
+  // **The other names.** One `const` per alias, so a host that asks for `Pending_u8ArrOpt` gets the
+  // class that answers to `Pending_u8Arr` — the same class, because here they are the same type.
   for (const a of aliases) {
     const from = classNameOf({ name: a.name });
     const to = classNameOf({ name: a.of });

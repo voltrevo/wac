@@ -403,7 +403,7 @@ wac build   src/main.wac -o hello     # hello.wasm — one file, nothing beside 
 wac hello.wasm                        # run a built artefact — the manifest says what it needs
 wac app     src/main.wac -o hello     # an executable you can run directly: ./hello
 wac test    src/math_test.wac         # or a directory
-wac bindgen src/main.wac [--js]       # src/main.gen.ts — the glue a JS host calls it through
+wac bindgen src/main.wac [--js]       # src/main.wac.ts — the glue a JS host calls it through
 ```
 
 **`--` means something in one of these and not the other**, which is easy to miss because the two

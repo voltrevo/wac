@@ -2366,7 +2366,7 @@ export struct Env {
    *
    * `T?` and `T` are the same *wasm* type, so `Pending<u8[]?>` and `Pending<u8[]>` are one
    * instantiation to this emitter, which is right for emission and wrong at the boundary: a host
-   * asks for `Pending$u8ArrOpt` by name and there is nothing of that name to answer with. The
+   * asks for `Pending_u8ArrOpt` by name and there is nothing of that name to answer with. The
    * identity stays collapsed — two structs with one layout would be a worse lie — and the metadata
    * carries the alias instead, so the glue can offer both names for the one class [issue 0106].
    */
@@ -4325,7 +4325,7 @@ string bindTypesOf(Front f) {
 
   string[] bindStructs = string[].defaulted(512);
   i32 n = collectBindStructs(env, src, lexed, prog, bindStructs, env.entryDecls);
-  string out = "";
+  string out = bindExportLines(env, src, lexed, prog, bindStructs, n);
   // **The callbacks, in the order the imports are numbered.** `cb0` is this line's `0`, and a host
   // that supplies its dispatchers in another order would answer the wrong callback. The same walk
   // the emitter uses, so the two cannot drift.
@@ -4396,7 +4396,7 @@ string bindTypesOf(Front f) {
     }
       // **The other names this type answers to**, one `A` line each: the identity, then a spelling
     // that collapses onto it. A host written against a compiler that keeps `T?` apart asks for
-    // `Pending$u8ArrOpt`; here that is the same class as `Pending$u8Arr`, and saying so is the
+    // `Pending_u8ArrOpt`; here that is the same class as `Pending_u8Arr`, and saying so is the
     // honest way to answer [issue 0106].
     for (i32 a = 0; a < env.aliasCount; a++) {
       if (env.aliasOf[a] != name) { continue; }
@@ -4444,6 +4444,112 @@ string bindTypesOf(Front f) {
     env.curFile = b1f; src = b1s; lexed = b1l;
   }
   return out;
+}
+
+/**
+ * The entry's names for what it binds (spec/next ch48): an `N` line per instantiation exported by
+ * name — `N\tVec<i32>\tIntVec` — and an `X` line per generic it exports with none, naming the form
+ * that would bind it — `X\tPair\tPair<i32> as IntPair`. Generics only other modules export are
+ * not the host's interface and draw none (`§wac-bind-generic-warns-cg9p295`).
+ */
+string bindExportLines(Env env, u8[] src, Lexed lexed, Program prog, string[] bound, i32 nb) {
+  string named = "";
+  string templates = ";";
+  Decl[] ds = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] s0 = src; Lexed l0 = lexed; i32 f0 = env.curFile;
+  for (i32 d = 0; d < ds.len() && (env.entryDecls < 0 || d < env.entryDecls); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, s0, env.curFile);
+    lexed = lexFor(env.fileLexeds, l0, env.curFile);
+    match (ds[d].kind) {
+      TypeDecl(nameTok, typeParams, alias, body, exported): {
+        if (!exported || typeParams.len() > 0 || (alias is null)) { continue; }
+        string inst = typeOfTyName(env, src, lexed, alias!);
+        bool held = false;
+        for (i32 i = 0; i < nb; i++) { if (bound[i] == inst) { held = true; } }
+        if (!held) { continue; }
+        named = named + "N\t" + metaTypeSpelling(env, inst) + "\t" + tokenTextOf(src, lexed, nameTok) + "\n";
+        templates = templates + templateNameOf(inst) + ";";
+      }
+      default: { }
+    }
+  }
+  string generics = "";
+  for (i32 d = 0; d < ds.len() && (env.entryDecls < 0 || d < env.entryDecls); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, s0, env.curFile);
+    lexed = lexFor(env.fileLexeds, l0, env.curFile);
+    match (ds[d].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (!exported || typeParams.len() == 0) { continue; }
+        string fname = tokenTextOf(src, lexed, nameTok);
+        // `export { max<i32> as maxI32 }` is lowered to a function forwarding to `max<i32>(…)`.
+        string text = string.fromBytes(src);
+        if (text.indexOf("{ return " + fname + "<") >= 0 || text.indexOf("{ " + fname + "<") >= 0) { continue; }
+        generics = withGeneric(generics, genericLine(fname, typeParams.len(), false));
+      }
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        string sname = tokenTextOf(src, lexed, nameTok);
+        if (!exported || typeParams.len() == 0 || templates.indexOf(";" + sname + ";") >= 0) { continue; }
+        generics = withGeneric(generics, genericLine(sname, typeParams.len(), true));
+      }
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        string ename = tokenTextOf(src, lexed, nameTok);
+        if (!exported || typeParams.len() == 0 || templates.indexOf(";" + ename + ";") >= 0) { continue; }
+        generics = withGeneric(generics, genericLine(ename, typeParams.len(), true));
+      }
+      // A list or a re-export names a generic declared elsewhere: `export { Pair };`.
+      ExportList(pathTok, items): {
+        for (i32 i = 0; i < items.len(); i++) {
+          if (items[i].nameTok < 0) { continue; }
+          string iname = tokenTextOf(src, lexed, items[i].nameTok);
+          string shown = items[i].aliasTok >= 0 ? tokenTextOf(src, lexed, items[i].aliasTok) : iname;
+          if (templates.indexOf(";" + iname + ";") >= 0) { continue; }
+          i32 arity = genericArityOf(env, ds, s0, l0, iname);
+          if (arity > 0) { generics = withGeneric(generics, genericLine(shown, arity, startsUpper(iname))); }
+        }
+      }
+      default: { }
+    }
+  }
+  env.curFile = f0;
+  return named + generics;
+}
+
+/** `lines` with `line` added, unless a declaration and a list both exported that generic. */
+string withGeneric(string lines, string line) {
+  return lines.indexOf(line) >= 0 ? lines : lines + line;
+}
+
+/** `X\tPair\tPair<i32> as IntPair` — the export list form that would bind generic `name`. */
+string genericLine(string name, i32 arity, bool isType) {
+  string args = "";
+  for (i32 i = 0; i < arity; i++) { args = args + (i > 0 ? ", " : "") + "i32"; }
+  string alias = isType ? "Int" + name : name + "I32";
+  return "X\t" + name + "\t" + name + "<" + args + "> as " + alias + "\n";
+}
+
+bool startsUpper(string s) { return s.len() > 0 && s.toBytes()[0] >= 65 && s.toBytes()[0] <= 90; }
+
+/** How many type parameters the declaration named `name` takes, anywhere in the program, or 0. */
+i32 genericArityOf(Env env, Decl[] ds, u8[] s0, Lexed l0, string name) {
+  for (i32 d = 0; d < ds.len(); d++) {
+    u8[] src = srcFor(env.fileSrcs, s0, env.declFile(d));
+    Lexed lexed = lexFor(env.fileLexeds, l0, env.declFile(d));
+    match (ds[d].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (tokenTextOf(src, lexed, nameTok) == name) { return typeParams.len(); }
+      }
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (tokenTextOf(src, lexed, nameTok) == name) { return typeParams.len(); }
+      }
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (tokenTextOf(src, lexed, nameTok) == name) { return typeParams.len(); }
+      }
+      default: { }
+    }
+  }
+  return 0;
 }
 
 /** One `M` line per method the module actually emitted for this owner. */
@@ -7590,7 +7696,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
         string inst = raw + "<";
         // **The same arguments as the author wrote them**, kept beside the identity. They differ
         // only where a `?` was erased, and that difference is the one a host can see: it asks for
-        // `Pending$u8ArrOpt`, which this emitter would otherwise have no name for at all.
+        // `Pending_u8ArrOpt`, which this emitter would otherwise have no name for at all.
         string spelled = raw + "<";
         // **A type argument that is still a letter is not a type.** `Box<U> map<U>(…)` names `Box<U>`
         // in its own signature, where `U` is the *method's* parameter and no substitution binds it —
@@ -16418,6 +16524,11 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           if (typeParams.len() > 0) { continue; }
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
         }
+        // **An instantiation exported by name is an instance** even where nothing else names it —
+        // `export { Vec<i32> as IntVec }` binds a class (spec/next ch48), so it has to be built.
+        TypeDecl(tnameTok, ttypeParams, talias, tbody, texported): {
+          if (texported && ttypeParams.len() == 0 && (talias is not null)) { typeOfTyName(env, src, lexed, talias!); }
+        }
         StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() > 0) { continue; }
           string sowner = nameKeyOf(env, src, lexed, nameTok);
@@ -18916,7 +19027,7 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
     }
     // **And its methods' signatures.** `Pending<i32>.of(id, resolve, settled, drop)` takes three
     // funcrefs, and a host calls it to build one — so those need dispatchers exactly as a field's do.
-    // Found from the frame the failure actually named, `_Pending$i32.of`, after fields and returns
+    // Found from the frame the failure actually named, `_Pending_i32.of`, after fields and returns
     // were both covered and an application still would not start [issue 0106].
     n = noteMethodCallbackSigs(env, src, lexed, prog, n, crossing[i]);
   }
@@ -19558,6 +19669,16 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
         n = noteBindStruct(env, out, n,
                            env.keyAt(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, 0 - 1)));
       }
+      // **An instantiation exported by name is a root** (spec/next ch48
+      // `§wac-bind-instantiation-name-dwptdfb`): `export { Vec<i32> as IntVec }` arrives here as
+      // `export type IntVec = Vec<i32>;`, and binds as the class `IntVec`.
+      TypeDecl(nameTok, typeParams, alias, body, exported): {
+        if (!exported || typeParams.len() > 0 || (alias is null)) { continue; }
+        string inst = typeOfTyName(env, src, lexed, alias!);
+        if (isInstance(inst) && (env.isStructName(inst) || env.isEnumName(inst))) {
+          n = noteBindStruct(env, out, n, inst);
+        }
+      }
       default: { }
     }
   }
@@ -19635,7 +19756,7 @@ string baseOfType(string t) {
  *
  * `Core.nowMillis` is `fn[Pending<i64>()]` — nothing in the program names `Pending<i64>` any other
  * way, so a walk that stopped at the funcref left the host with a field it could read and no class
- * to wrap what came out: `cls.Pending$i64.of` was undefined in `packages/platform/host/provider.ts`
+ * to wrap what came out: `cls.Pending_i64.of` was undefined in `packages/platform/host/provider.ts`
  * [issue 0106]. A capability is a struct of funcrefs that answer other structs, so this is the shape
  * the whole platform is made of, and it was reachable by no other route.
  */
@@ -19674,7 +19795,7 @@ i32 noteBindStruct(Env env, string[] out, i32 n, string name) {
   // **A type that crosses and is not written down does not fail here.** It fails in the generated
   // glue, as a class the host asks for and cannot find: `boxsh` filled this table at 64 and lost
   // every `Pending<T>` — what every capability returns — so the shell built, loaded, and printed
-  // nothing at the first `cls.Pending$i64.of(…)` [issue 0106].
+  // nothing at the first `cls.Pending_i64.of(…)` [issue 0106].
   if (n >= out.len()) { env.ranOut("the types that cross the bind boundary"); return n; }
   out[n] = name;
   return n + 1;

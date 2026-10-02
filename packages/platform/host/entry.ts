@@ -40,26 +40,26 @@ export type AppModule = {
   /** Bytes and sender in one answer — `Cli.receiveFrom`, and `design/system/0007`. */
   Datagram: { of(...a: unknown[]): unknown };
   /** The monomorphised `Pending<T>`s — one per capability return type. */
-  Pending$i32: { of(...a: unknown[]): unknown };
-  Pending$i64: { of(...a: unknown[]): unknown };
-  Pending$string: { of(...a: unknown[]): unknown };
-  Pending$stringOpt: { of(...a: unknown[]): unknown };
-  Pending$u8Arr: { of(...a: unknown[]): unknown };
+  Pending_i32: { of(...a: unknown[]): unknown };
+  Pending_i64: { of(...a: unknown[]): unknown };
+  Pending_string: { of(...a: unknown[]): unknown };
+  Pending_stringOpt: { of(...a: unknown[]): unknown };
+  Pending_u8Arr: { of(...a: unknown[]): unknown };
   /** `env` answers bytes-or-nothing: a value is not text, and unset is not empty. wac-mono 0065. */
-  Pending$u8ArrOpt: { of(...a: unknown[]): unknown };
-  Pending$bool: { of(...a: unknown[]): unknown };
-  Pending$stringArrOpt: { of(...a: unknown[]): unknown };
-  Pending$FileResult: { of(...a: unknown[]): unknown };
-  Pending$Stat: { of(...a: unknown[]): unknown };
-  Pending$Socket: { of(...a: unknown[]): unknown };
-  Pending$Datagram: { of(...a: unknown[]): unknown };
-  Pending$Child: { of(...a: unknown[]): unknown };
+  Pending_u8ArrOpt: { of(...a: unknown[]): unknown };
+  Pending_bool: { of(...a: unknown[]): unknown };
+  Pending_stringArrOpt: { of(...a: unknown[]): unknown };
+  Pending_FileResult: { of(...a: unknown[]): unknown };
+  Pending_Stat: { of(...a: unknown[]): unknown };
+  Pending_Socket: { of(...a: unknown[]): unknown };
+  Pending_Datagram: { of(...a: unknown[]): unknown };
+  Pending_Child: { of(...a: unknown[]): unknown };
   Child: { of(...a: unknown[]): unknown };
   Captured: { of(...a: unknown[]): unknown };
-  Pending$Captured: { of(...a: unknown[]): unknown };
+  Pending_Captured: { of(...a: unknown[]): unknown };
   /** `Cli.exec`'s answer — a host program run to completion. `issues/system/0165`. */
   Exec: { of(...a: unknown[]): unknown };
-  Pending$Exec: { of(...a: unknown[]): unknown };
+  Pending_Exec: { of(...a: unknown[]): unknown };
   Read: { Data(...a: unknown[]): unknown; End(): unknown; Failed(...a: unknown[]): unknown };
   /**
    * `Cli.load`'s answer and `Cli.call`'s — `issues/system/0240c`.
@@ -70,8 +70,8 @@ export type AppModule = {
   LoadedModule: { of(...a: unknown[]): unknown };
   CallResult: { of(...a: unknown[]): unknown };
   Change: { of(...a: unknown[]): unknown };
-  Pending$Change: { of(...a: unknown[]): unknown };
-  Pending$Read: { of(...a: unknown[]): unknown };
+  Pending_Change: { of(...a: unknown[]): unknown };
+  Pending_Read: { of(...a: unknown[]): unknown };
   // **Variadic on purpose**: a program is handed the capabilities it named and no others, so a
   // `main(Core)` is called with one argument. `worldFor` builds the list. `issues/lang/0107`.
   main: (...caps: unknown[]) => number;
@@ -82,8 +82,8 @@ export type AppModule = {
   Page?: { of(...a: unknown[]): unknown };
   Event?: { of(...a: unknown[]): unknown };
   Picked?: { of(...a: unknown[]): unknown };
-  Pending$Event?: { of(...a: unknown[]): unknown };
-  Pending$Picked?: { of(...a: unknown[]): unknown };
+  Pending_Event?: { of(...a: unknown[]): unknown };
+  Pending_Picked?: { of(...a: unknown[]): unknown };
   /** The interactive entry point: draw, subscribe, and loop on `nextEvent`. */
   page?: (core: unknown, cli: unknown, page: unknown) => number;
 };

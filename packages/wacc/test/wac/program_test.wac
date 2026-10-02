@@ -220,14 +220,14 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
                         string.fromBytes(js.stdout));
   if (js.status != 0) { return t.report(); }
 
-  Exec ran = cli.exec("deno", ["run", "-A", GLUERUN, dir + "/m.gen.js"], u8[]()).wait();
+  Exec ran = cli.exec("deno", ["run", "-A", GLUERUN, dir + "/m.wac.js"], u8[]()).wait();
   t.isTrue(ran.ran(), "deno ran — " + ran.error);
   t.eqI32(ran.status, 0, "the glue did not answer: " + string.fromBytes(ran.stderr));
 
   // TypeScript by default, which is the other half of the same generator.
   Exec ts = runProgram(cli, program, ["bindgen", dir + "/m.wac"]);
   t.eqI32(ts.status, 0, "bindgen --ts failed: " + string.fromBytes(ts.stderr));
-  FileResult text = cli.readFile(dir + "/m.gen.ts").wait();
+  FileResult text = cli.readFile(dir + "/m.wac.ts").wait();
   t.isTrue(text.ok, "the TypeScript glue was written — " + text.error);
   if (text.ok) {
     string tsGlue = string.fromBytes(text.bytes);
@@ -239,7 +239,7 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
   }
   // The JavaScript glue must carry no type at all — asserted on the text as well as by running it,
   // because a runtime that tolerated the annotation would leave the file wrong for the others.
-  FileResult jsText = cli.readFile(dir + "/m.gen.js").wait();
+  FileResult jsText = cli.readFile(dir + "/m.wac.js").wait();
   t.isTrue(jsText.ok, "the JavaScript glue was written — " + jsText.error);
   if (jsText.ok) {
     t.isTrue(string.fromBytes(jsText.bytes).indexOf(": unknown") < 0,

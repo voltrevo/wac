@@ -67,28 +67,28 @@ export type PlatformClasses = {
   Sched: { create(): unknown };
 };
 
-/** One monomorphised `Pending<T>`. bindgen names them `Pending$FileResult` and so on. */
+/** One monomorphised `Pending<T>`. bindgen names them `Pending_FileResult` and so on. */
 type PendingClass = { of(id: number, resolve: unknown, settled: unknown, drop: unknown): unknown };
 
 /** Every `Pending<T>` the world hands out. */
 export type PendingClasses = {
-  Pending$i32: PendingClass;
-  Pending$i64: PendingClass;
-  Pending$string: PendingClass;
-  Pending$stringOpt: PendingClass;
-  Pending$u8ArrOpt: PendingClass;
-  Pending$u8Arr: PendingClass;
-  Pending$bool: PendingClass;
-  Pending$stringArrOpt: PendingClass;
-  Pending$FileResult: PendingClass;
-  Pending$Stat: PendingClass;
-  Pending$Socket: PendingClass;
-  Pending$Child: PendingClass;
-  Pending$Captured: PendingClass;
-  Pending$Read: PendingClass;
-  Pending$Change: PendingClass;
-  Pending$Datagram: PendingClass;
-  Pending$Exec: PendingClass;
+  Pending_i32: PendingClass;
+  Pending_i64: PendingClass;
+  Pending_string: PendingClass;
+  Pending_stringOpt: PendingClass;
+  Pending_u8ArrOpt: PendingClass;
+  Pending_u8Arr: PendingClass;
+  Pending_bool: PendingClass;
+  Pending_stringArrOpt: PendingClass;
+  Pending_FileResult: PendingClass;
+  Pending_Stat: PendingClass;
+  Pending_Socket: PendingClass;
+  Pending_Child: PendingClass;
+  Pending_Captured: PendingClass;
+  Pending_Read: PendingClass;
+  Pending_Change: PendingClass;
+  Pending_Datagram: PendingClass;
+  Pending_Exec: PendingClass;
 };
 
 /**
@@ -119,8 +119,8 @@ export function coreOf(
   const i64 = (id: number) => readI64le(realCollect(b, unpack(id)));
   const bytes = (id: number) => realCollect(b, unpack(id));
 
-  const asI64 = (t: Ticket) => cls.Pending$i64.of(pack(t), i64, settled, drop);
-  const asBytes = (t: Ticket) => cls.Pending$u8Arr.of(pack(t), bytes, settled, drop);
+  const asI64 = (t: Ticket) => cls.Pending_i64.of(pack(t), i64, settled, drop);
+  const asBytes = (t: Ticket) => cls.Pending_u8Arr.of(pack(t), bytes, settled, drop);
 
   return cls.Core.of(
     /*= nowMillis */
@@ -521,24 +521,24 @@ export function cliOf(
   };
 
   const T = {
-    i32: (t: Ticket) => cls.Pending$i32.of(pack(t), i32, settled, drop),
-    text: (t: Ticket) => cls.Pending$string.of(pack(t), text, settled, drop),
-    outcome: (t: Ticket) => cls.Pending$string.of(pack(t), outcome, settled, drop),
-    maybeText: (t: Ticket) => cls.Pending$stringOpt.of(pack(t), maybeText, settled, drop),
-    maybeBytes: (t: Ticket) => cls.Pending$u8ArrOpt.of(pack(t), maybeBytes, settled, drop),
-    bytes: (t: Ticket) => cls.Pending$u8Arr.of(pack(t), bytes, settled, drop),
-    chunk: (t: Ticket) => cls.Pending$u8Arr.of(pack(t), chunk, settled, drop),
-    ok: (t: Ticket) => cls.Pending$bool.of(pack(t), ok, settled, drop),
-    file: (t: Ticket) => cls.Pending$FileResult.of(pack(t), fileResult, settled, drop),
-    stat: (t: Ticket) => cls.Pending$Stat.of(pack(t), stat, settled, drop),
-    dir: (t: Ticket) => cls.Pending$stringArrOpt.of(pack(t), dirNames, settled, drop),
-    socket: (t: Ticket) => cls.Pending$Socket.of(pack(t), socket, settled, drop),
-    captured: (t: Ticket) => cls.Pending$Captured.of(pack(t), captured, settled, drop),
-    exec: (t: Ticket) => cls.Pending$Exec.of(pack(t), execAnswer, settled, drop),
-    read: (t: Ticket) => cls.Pending$Read.of(pack(t), read, settled, drop),
-    change: (t: Ticket) => cls.Pending$Change.of(pack(t), change, settled, drop),
-    datagram: (t: Ticket) => cls.Pending$Datagram.of(pack(t), datagram, settled, drop),
-    child: (t: Ticket) => cls.Pending$Child.of(pack(t), child, settled, drop),
+    i32: (t: Ticket) => cls.Pending_i32.of(pack(t), i32, settled, drop),
+    text: (t: Ticket) => cls.Pending_string.of(pack(t), text, settled, drop),
+    outcome: (t: Ticket) => cls.Pending_string.of(pack(t), outcome, settled, drop),
+    maybeText: (t: Ticket) => cls.Pending_stringOpt.of(pack(t), maybeText, settled, drop),
+    maybeBytes: (t: Ticket) => cls.Pending_u8ArrOpt.of(pack(t), maybeBytes, settled, drop),
+    bytes: (t: Ticket) => cls.Pending_u8Arr.of(pack(t), bytes, settled, drop),
+    chunk: (t: Ticket) => cls.Pending_u8Arr.of(pack(t), chunk, settled, drop),
+    ok: (t: Ticket) => cls.Pending_bool.of(pack(t), ok, settled, drop),
+    file: (t: Ticket) => cls.Pending_FileResult.of(pack(t), fileResult, settled, drop),
+    stat: (t: Ticket) => cls.Pending_Stat.of(pack(t), stat, settled, drop),
+    dir: (t: Ticket) => cls.Pending_stringArrOpt.of(pack(t), dirNames, settled, drop),
+    socket: (t: Ticket) => cls.Pending_Socket.of(pack(t), socket, settled, drop),
+    captured: (t: Ticket) => cls.Pending_Captured.of(pack(t), captured, settled, drop),
+    exec: (t: Ticket) => cls.Pending_Exec.of(pack(t), execAnswer, settled, drop),
+    read: (t: Ticket) => cls.Pending_Read.of(pack(t), read, settled, drop),
+    change: (t: Ticket) => cls.Pending_Change.of(pack(t), change, settled, drop),
+    datagram: (t: Ticket) => cls.Pending_Datagram.of(pack(t), datagram, settled, drop),
+    child: (t: Ticket) => cls.Pending_Child.of(pack(t), child, settled, drop),
   };
 
   const twoPaths = (from: string, to: string): Uint8Array => {
@@ -960,10 +960,10 @@ export type PageClasses = {
   Page: { of(...a: unknown[]): unknown };
   Event: { of(...a: unknown[]): unknown };
   Picked: { of(...a: unknown[]): unknown };
-  Pending$Event: PendingClass;
-  Pending$Picked: PendingClass;
-  Pending$bool: PendingClass;
-  Pending$string: PendingClass;
+  Pending_Event: PendingClass;
+  Pending_Picked: PendingClass;
+  Pending_bool: PendingClass;
+  Pending_string: PendingClass;
 };
 
 /**
@@ -1056,10 +1056,10 @@ export function pageOf(b: Bridge, cls: PageClasses): unknown {
     return out;
   };
 
-  const asOk = (t: Ticket) => cls.Pending$bool.of(pack(t), ok, settled, drop);
-  const asText = (t: Ticket) => cls.Pending$string.of(pack(t), text, settled, drop);
-  const asEvent = (t: Ticket) => cls.Pending$Event.of(pack(t), event, settled, drop);
-  const asPicked = (t: Ticket) => cls.Pending$Picked.of(pack(t), picked, settled, drop);
+  const asOk = (t: Ticket) => cls.Pending_bool.of(pack(t), ok, settled, drop);
+  const asText = (t: Ticket) => cls.Pending_string.of(pack(t), text, settled, drop);
+  const asEvent = (t: Ticket) => cls.Pending_Event.of(pack(t), event, settled, drop);
+  const asPicked = (t: Ticket) => cls.Pending_Picked.of(pack(t), picked, settled, drop);
 
   return cls.Page.of(
     /*= render */

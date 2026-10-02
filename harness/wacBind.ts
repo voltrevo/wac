@@ -45,7 +45,7 @@ import {
   type WaccRes,
 } from "./waccBuild.ts";
 import {
-  generate as waccGenerate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs,
+  generate as waccGenerate, parseAliases, parseGenerics, parseNamed, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs,
   unsupported,
 } from "../packages/wacc/tools/waccBindgen.ts";
 
@@ -195,7 +195,7 @@ async function waccGlue(
       wasm, sigs, parseBindTypes(wire), parseCallbacks(wire), parseOutRefs(wire), parseAliases(wire),
       // Without this the three counter wrappers are not written and the module has no
       // `__cov_init` to call — the exports exist in the wasm and nothing can reach them.
-      { coverage },
+      { coverage, named: parseNamed(wire), generics: parseGenerics(wire) },
     ),
     // Parsed by `harness/waccBuild.ts`, not here: a counter index means nothing without this table,
     // so a second copy of the parse would put attribution wrong everywhere while every count stayed

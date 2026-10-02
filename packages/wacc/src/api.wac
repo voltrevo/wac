@@ -2647,6 +2647,7 @@ string exportInstancesOf(string text) {
   for (i32 k = 0; k < found; k++) {
     string name = nthLine(names, k);
     string[] targs = splitTopLevelCommas(nthLine(argLists, k));
+    i32 before = extra.len();
     for (i32 d = 0; d < prog.decls.len(); d++) {
       match (prog.decls[d].kind) {
         Func(nameTok, returnType, params, fbody, exported, typeParams, isAsync): {
@@ -2679,8 +2680,27 @@ string exportInstancesOf(string text) {
         default: { }
       }
     }
+    // **Declared in another file**: `export { Vec<i32> as IntVec }` names an imported template, which
+    // is not here to look at — and a name that is not a function here is a type, since an imported
+    // generic function's instance is not forwarded yet. The checker refuses the alias if it is not.
+    if (extra.len() == before && !declaresFunc(prog, bsrc, blx, name)) {
+      extra = extra + "\nexport type " + nthLine(aliases, k) + " = " + name + "<" + nthLine(argLists, k) + ">;";
+    }
   }
   return body + extra + "\n";
+}
+
+/** Whether `prog` declares a function called `name`. */
+bool declaresFunc(Program prog, u8[] src, Lexed lx, string name) {
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      Func(nameTok, returnType, params, fbody, exported, typeParams, isAsync): {
+        if (tokenTextOf(src, lx, nameTok) == name) { return true; }
+      }
+      default: { }
+    }
+  }
+  return false;
 }
 
 /** Line `k` of a `\n`-terminated list. */

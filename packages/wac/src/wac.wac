@@ -3,7 +3,7 @@
 //     wac check   main.wac          # type-check it and its imports; say what is wrong
 //     wac compile main.wac [out]    # write the module, `main.wasm` beside it by default
 //     wac build   main.wac -o stem  # ...and the manifest a native host reads, in the module
-//     wac bindgen main.wac [--js]   # main.gen.ts — the glue a host calls the module through
+//     wac bindgen main.wac [--js]   # main.wac.ts — the glue a host calls the module through
 //     wac run     main.wac [args…]  # compile and run it, with no file in between
 //     wac test    path [path…]      # a file or a directory of `*_test.wac`
 //     wac prog.wasm [args…]         # run a built module, under the grants its manifest declares
@@ -1623,8 +1623,8 @@ export i32 main(Sys sys) {
     return 1;
   }
 
-  // **`bindgen` writes the glue a host calls the module through**, beside the entry — `main.gen.ts`,
-  // or `main.gen.js` with `--js`, since a browser cannot import TypeScript. What it cannot bind is
+  // **`bindgen` writes the glue a host calls the module through**, beside the entry — `main.wac.ts`,
+  // or `main.wac.js` with `--js`, since a browser cannot import TypeScript. What it cannot bind is
   // reported rather than skipped: a caller told `makeP(i32) -> P` was declined can change the
   // signature, and one handed glue missing a function finds out at the call site.
   if (cmd == "bindgen") {
@@ -1642,14 +1642,31 @@ export i32 main(Sys sys) {
     // for. Reported against an external project on 2026-08-25, with "the help text and actual
     // interface should agree" — they agree by the interface catching up, because `compile` already
     // does this and two commands on one usage line should not mean two things.
-    string out = pos.len() > 1 ? pos[1] : stem(entry) + (js ? ".gen.js" : ".gen.ts");
+    // `vecs.wac` binds as `vecs.wac.ts` — the module's own name with the host's extension
+    // (spec/next ch48).
+    string out = pos.len() > 1 ? pos[1] : entry + (js ? ".js" : ".ts");
+    // **A generic the entry exports is said where it will be read** (spec/next ch48
+    // `§wac-bind-generic-warns-cg9p295`): not refused — `export { Pair };` is ordinary code for wac
+    // importers — but not bound either, and a host author finds that out here rather than at a call.
+    string xs = types;
+    while (xs.len() > 0) {
+      i32 nl = xs.indexOf("\n");
+      string ln = nl < 0 ? xs : xs.slice(0, nl);
+      xs = nl < 0 ? "" : xs.slice(nl + 1, xs.len());
+      if (ln.len() < 2 || ln.slice(0, 2) != "X\t") { continue; }
+      string rest = ln.slice(2, ln.len());
+      i32 tab = rest.indexOf("\t");
+      if (tab < 0) { continue; }
+      core.warn("warning: " + rest.slice(0, tab) + " is exported but generic, so it is not in " + out
+                + "\n  = help: export an instantiation by name: export { " + rest.slice(tab + 1, rest.len()) + " };");
+    }
     Change wroteGlue = fs.writeFile(out, glue.toBytes());
     if (!wroteGlue.ok()) {
       core.warn("wacc: cannot write " + out + " — " + wroteGlue.message);
       return 1;
     }
     if (!hasFlag(cli, argc, "--quiet")) {
-      core.log(out + ": " + itoa(glue.len()) + " bytes");
+      core.log(out + ": " + bindSummary(glue));
     }
     return 0;
   }
@@ -2311,4 +2328,21 @@ i32 removeProfileLine(Cli cli, string profile) {
   if (dropped == 0) { return 0; }
   Change wrote = cli.writeFile(profile, kept.toBytes()).wait();
   return wrote.ok() ? dropped : 0;
+}
+
+/** What the glue binds, as a person reads it: `2 classes, 1 function` (spec/next ch48). */
+string bindSummary(string glue) {
+  i32 classes = 0;
+  i32 functions = 0;
+  i32 at = 0;
+  while (at < glue.len()) {
+    i32 nl = glue.slice(at, glue.len()).indexOf("\n");
+    string ln = nl < 0 ? glue.slice(at, glue.len()) : glue.slice(at, at + nl);
+    if (ln.len() > 13 && ln.slice(0, 13) == "export class ") { classes++; }
+    if (ln.len() > 16 && ln.slice(0, 16) == "export function ") { functions++; }
+    if (nl < 0) { break; }
+    at = at + nl + 1;
+  }
+  return itoa(classes) + (classes == 1 ? " class, " : " classes, ")
+       + itoa(functions) + (functions == 1 ? " function" : " functions");
 }

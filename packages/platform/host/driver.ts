@@ -28,7 +28,7 @@ import {
 export type Driven = {
   exports: Record<string, unknown>;
   /**
-   * `Core.of(...)`, `Pending$i64.of(...)` — the shape `entry.ts` expects of a bundle.
+   * `Core.of(...)`, `Pending_i64.of(...)` — the shape `entry.ts` expects of a bundle.
    *
    * **And an enum's variants, which are constructors too**: `Read.Failed(why)` is how a host answers
    * with one. They are indexed here beside `of` and `create` rather than in a table of their own,
@@ -47,14 +47,13 @@ export type Driven = {
   toWasm(type: string, v: unknown): unknown;
 };
 
-/** `Pending<i64>` is `Pending$i64` to a host, which is the name the bundles have always used. */
+/** `Pending<i64>` is `Pending_i64` to a host — bindgen's name for it (spec/next ch48). */
 export function hostName(wac: string): string {
   return wac
     .replace(/\?/g, "Opt")
     .replace(/\[\]/g, "Arr")
-    .replace(/[<>]/g, "$")
-    .replace(/\$+$/g, "")
-    .replace(/[^A-Za-z0-9_$]/g, "$");
+    .replace(/[^A-Za-z0-9_]+/g, "_")
+    .replace(/_+$/g, "");
 }
 
 /** Everything the module exports, by name — the one place a `$bind$` name is looked up. */
@@ -152,7 +151,7 @@ export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
     },
   };
 
-  // The constructors, named as a host names them: `Pending<i64>` is `Pending$i64`.
+  // The constructors, named as a host names them: `Pending<i64>` is `Pending_i64`.
   //
   // **`create` as well as `of`**, because a capability field is not always something a host
   // implements: `Core.sched` is a value the module makes for itself, and a host's whole part in it is

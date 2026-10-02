@@ -21,6 +21,8 @@ import { wacc as driveWacc } from "../bootstrap/js/wacc.js";
 import {
   generate,
   parseAliases,
+  parseGenerics,
+  parseNamed,
   parseBindTypes,
   parseCallbacks,
   parseOutRefs,
@@ -72,7 +74,7 @@ export async function buildWaccAsset(): Promise<string> {
     parseCallbacks(wire),
     parseOutRefs(wire),
     parseAliases(wire),
-    { lang: "js" },
+    { lang: "js", named: parseNamed(wire), generics: parseGenerics(wire) },
   );
 }
 

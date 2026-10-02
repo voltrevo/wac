@@ -155,7 +155,17 @@ Program[] cases() {
          "    Square(q): return q * q;\n" +
          "  }\n" +
          "}\n" +
-         "export u8[] bytes(u8[] b) { return b; }\n")
+         "export u8[] bytes(u8[] b) { return b; }\n"),
+    // spec/next ch48: what is left out is said where it would have been and in `__bindgenSkipped`,
+    // a generic the entry exports is one of those, and an instantiation exported by name is a class
+    // under that name — `Vec<i32>` as `IntVec`, beside one reached only through a signature.
+    Program("a skipped export, a generic one, and instantiations named and reached",
+         "import { Vec } from \"core\";\n" +
+         "export { Vec<i32> as IntVec };\n" +
+         "export Vec<f64> readings() { return Vec<f64>.create(); }\n" +
+         "export struct Pair<T> { T a; T b; }\n" +
+         "export i32 simple() { return 42; }\n" +
+         "export i32 firstOf(fn<i32(i32)>[] fs) { return fs[0](1); }\n")
   ];
 }
 
@@ -237,7 +247,7 @@ export string test_the_two_generators_write_the_same_glue_for_a_linker_keyed_enu
 
     // **Asserted, not merely compared.** Two generators that both dropped the enum would agree, and a
     // keyed name that reaches nothing is sanitised in the sense that matters least.
-    t.isTrue(contains(theirs, "class Node$2"),
+    t.isTrue(contains(theirs, "class Node_2"),
              "the reference generator wrote no class for the keyed enum: " + theirs.slice(0, 300));
     t.eqStr(mine, theirs, "a linker-keyed enum name (" + lang + ") — " + firstDifference(theirs, mine));
   }

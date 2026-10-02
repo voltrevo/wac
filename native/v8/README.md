@@ -322,7 +322,7 @@ compile still says so, on stderr.
 **And it writes the glue a host calls a module through.**
 
 ```
-./target/release/wac bindgen main.wac --js      # main.gen.js
+./target/release/wac bindgen main.wac --js      # main.wac.js
 ```
 
 `packages/wacc/tools/waccBindgen.ts` was the last piece of the toolchain that existed only in

@@ -19,6 +19,8 @@ import { waccApi } from "../../../harness/waccBuild.ts";
 import {
   generate,
   parseAliases,
+  parseGenerics,
+  parseNamed,
   parseBindTypes,
   parseCallbacks,
   parseOutRefs,
@@ -52,7 +54,7 @@ if (mode === "files") {
     parseCallbacks(wire),
     parseOutRefs(wire),
     parseAliases(wire),
-    { lang: lang as "ts" | "js" },
+    { lang: lang as "ts" | "js", named: parseNamed(wire), generics: parseGenerics(wire) },
   );
   await Deno.stdout.write(new TextEncoder().encode(out));
 } else if (mode === "wire") {
@@ -67,7 +69,7 @@ if (mode === "files") {
     parseCallbacks(wire),
     parseOutRefs(wire),
     parseAliases(wire),
-    { lang: lang as "ts" | "js" },
+    { lang: lang as "ts" | "js", named: parseNamed(wire), generics: parseGenerics(wire) },
   );
   await Deno.stdout.write(new TextEncoder().encode(out));
 } else {

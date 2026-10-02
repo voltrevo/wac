@@ -89,8 +89,8 @@ Deno.test("a module driven from its manifest gives the generated glue's answers"
     );
 
     // And the names a host reaches for are the names it has always used.
-    assertEquals(hostName("Pending<i64>"), "Pending$i64");
-    assertEquals(hostName("Pending<u8[]?>"), "Pending$u8ArrOpt");
+    assertEquals(hostName("Pending<i64>"), "Pending_i64");
+    assertEquals(hostName("Pending<u8[]?>"), "Pending_u8ArrOpt");
     assertEquals(hostName("string[]"), "stringArr");
   } finally {
     await Deno.remove(dir, { recursive: true });

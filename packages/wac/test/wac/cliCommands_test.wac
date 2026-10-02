@@ -7,7 +7,8 @@
 // each difference was found by running it rather than by reading the old test.
 //
 //   - `check` on a clean file prints a summary. `wacx` printed nothing.
-//   - `bindgen` writes `<stem>.gen.ts`. `wacx` wrote `<name>.wac.ts`.
+//   - `bindgen` writes `<name>.wac.ts`, as `wacx` did and spec/next ch48 says; it wrote `<stem>.gen.ts`
+//     for a while.
 //   - A usage error is exit 2. `wacx` used 1 for both usage and compile failures.
 //
 // The old wording survived a copy-paste review of the same page twice, which is the argument for
@@ -137,9 +138,9 @@ export string test_compile_writes_a_module_and_bindgen_writes_the_glue_9wkn3pq_5
 
   Ran b = wac(cli, d.path, ["bindgen", "math.wac"]);
   t.eqI32(b.status, 0, "bindgen exits 0 — " + b.out);
-  // `<stem>.gen.ts`, which is not what the reference toolchain wrote.
-  t.isTrue(contains(b.out, "math.gen.ts"), "and prints the path — got \"" + b.out + "\"");
-  FileResult glue = cli.readFile(d.path + "/math.gen.ts").wait();
+  // `math.wac.ts`, and what it bound — spec/next ch48.
+  t.isTrue(contains(b.out, "math.wac.ts: 0 classes, "), "and prints the path and a summary — got \"" + b.out + "\"");
+  FileResult glue = cli.readFile(d.path + "/math.wac.ts").wait();
   t.isTrue(glue.ok, "the glue is there");
   if (glue.ok) {
     t.isTrue(contains(string.fromBytes(glue.bytes), "gcd"),

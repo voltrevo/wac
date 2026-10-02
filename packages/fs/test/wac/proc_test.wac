@@ -19,7 +19,7 @@
 // state is a field rather than a number pulled out of an object literal.
 //
 // `Vec<string>` is constructed here directly. The host-side version had to reach it as
-// `mod["Vec$string"]`, a name bindgen invents for an instantiation, which is the sort of thing that
+// `mod["Vec_string"]`, a name bindgen invents for an instantiation, which is the sort of thing that
 // works until a generic gets a second type argument.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.

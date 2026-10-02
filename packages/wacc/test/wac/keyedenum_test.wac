@@ -6,7 +6,7 @@
 // identifier. Every position the generator writes a type name in goes through `classNameOf`, which
 // sanitises it; two did not, and produced glue that would not parse:
 //
-//     static Element(tag: string, attrs: Attr[], kids: Node$2[]): Node@2 {
+//     static Element(tag: string, attrs: Attr[], kids: Node_2[]): Node@2 {
 //     SyntaxError: Expected '{', got '@'
 //
 // It took `core` gaining an enum with a payload — and `packages/tor` already having a `Node` — for
@@ -78,7 +78,7 @@ export string test_a_keyed_name_is_sanitised_in_every_position_the_glue_writes_i
                         first);
 
   // And the enum is actually in there — a generator that dropped it would also have no `@`.
-  t.isTrue(contains(glue, "class Node$2"),
+  t.isTrue(contains(glue, "class Node_2"),
            "there is a class for the keyed enum; glue begins: " +
            glue.slice(0, glue.len() < 300 ? glue.len() : 300));
   return t.report();
