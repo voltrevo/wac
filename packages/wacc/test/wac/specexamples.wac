@@ -374,6 +374,13 @@ export ExVerdict judgeExample(Cli cli, string scratch, ExFence fence, i32 n) {
     if (x.command != "" && !commandSupported(x.command)) {
       return ExVerdict(fence, "unsupported", "an expectation about `" + x.command + "`");
     }
+    // **`wac check` is run, not modelled** (spec/next ch06): its discovery and its rule that every
+    // import is followed are the command's, so the fence is written out and checked in place.
+    if (startsWith(x.command, "wac check")) {
+      string cwhy = meetsCheck(cli, scratch, fence, x, base.paths, base.sources, n * 100 + e);
+      if (cwhy != "") { return ExVerdict(fence, "missed", cwhy); }
+      continue;
+    }
     string why = project
       ? meetsByCommand(cli, scratch, fence, x, base.paths, base.sources, n * 100 + e)
       : meets(cli, scratch, fence, x, wacPaths, wacSources, res, n * 100 + e);
@@ -401,9 +408,29 @@ export ExVerdict judgeExample(Cli cli, string scratch, ExFence fence, i32 n) {
   return ExVerdict(fence, "met", "");
 }
 
-/** `(wac build)`, `(wac run …)` are builds; `wac check` checks differently and is not modelled yet. */
+/** `(wac build)`, `(wac run …)` and `(wac check …)` — each run as the command it names. */
 bool commandSupported(string c) {
-  return startsWith(c, "wac build") || startsWith(c, "wac run");
+  return startsWith(c, "wac build") || startsWith(c, "wac run") || startsWith(c, "wac check");
+}
+
+/** A `wac check` expectation: the fence written to a directory of its own, the command run from it. */
+string meetsCheck(Cli cli, string scratch, ExFence fence, ExExpect x, string[] paths, string[] sources, i32 id) {
+  string dir = scratch + "/c" + itoa(id);
+  for (i32 i = 0; i < paths.len(); i++) {
+    string full = dir + "/" + paths[i];
+    i32 cut = 0 - 1;
+    for (i32 k = 0; k < full.len(); k++) { if (full.slice(k, k + 1) == "/") { cut = k; } }
+    if (cut > 0) { cli.mkdir(full.slice(0, cut), true).wait(); }
+    cli.writeFile(full, sources[i].toBytes()).wait();
+  }
+  string[] words = wordsOfCmd(x.command);
+  string line = "cd " + dir + " && exec " + cli.cwd().wait() + "/native/v8/target/release/wac check";
+  for (i32 w = 2; w < words.len(); w++) { line = line + " " + words[w]; }
+  Exec r = withEnv(cli, ["WAC_HOME"], [dir + "-home"], "/bin/sh", ["-c", line]);
+  bool ok = r.ran() && r.status == 0;
+  if (x.kind == "refused") { return ok ? "accepted by `" + x.command + "`, and it must be refused" : ""; }
+  if (x.kind == "emits") { return ok ? "" : "refused by `" + x.command + "`: " + trimmed(firstLineOf(string.fromBytes(r.stderr) + string.fromBytes(r.stdout))); }
+  return "an expectation `" + x.kind + "` about `" + x.command + "`, which checks rather than runs";
 }
 
 /** Why `x` does not hold, or "". */
