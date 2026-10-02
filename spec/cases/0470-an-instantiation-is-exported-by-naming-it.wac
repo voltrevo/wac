@@ -1,0 +1,7 @@
+// expect: answers larger = 7
+// spec: §wac-export-instantiation-wuh2wxp
+// why: the export list names an instance, and the name is a function of the program like any other
+// from: spec/next ch02, ch19
+T max<T>(T a, T b) { return a > b ? a : b; }
+export { max<i32> as maxI32, max<f64> as maxF64 };
+export i32 larger() { return maxI32(3, 7) + (maxF64(2.5, 1.5) > 2.0 ? 0 : 100); }

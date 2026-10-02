@@ -34,7 +34,8 @@
 
 import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
-         stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt } from "./consteval.wac";
+         stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt, intOf,
+         vNum } from "./consteval.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { coreExports, isBuiltinSpec } from "./coretext.wac";
@@ -936,6 +937,23 @@ i32 liveBranch(C c, Expr cond) {
   if (!evFinished(ev.status)) { ev.status = evOk(); return 0 - 1; }
   ev.status = evOk();
   return truthy(v) ? 1 : 0;
+}
+
+/**
+ * The member `t.[name]` selects: `name`'s static value, or -1 where it has none (spec/next ch14) —
+ * a runtime local, or a file with no static evaluator.
+ */
+i32 staticTupleIndexC(C c, i32 nameTok) {
+  if ((c.sEv is null) || (c.sCx is null)) { return 0 - 1; }
+  Ev ev = c.sEv!;
+  ev.status = evOk();
+  ev.message = "";
+  Expr sel = Expr(ExprKind.Ident(nameTok), c.toks[nameTok * tokenStride() + 3], c.toks[nameTok * tokenStride() + 4]);
+  Value v = evalExpr(ev, c.sCx!, c.sFile, sel, "i32");
+  if (!evFinished(ev.status) || v.kind != vNum()) { ev.status = evOk(); return 0 - 1; }
+  ev.status = evOk();
+  i64 n = intOf(v);
+  return n < 0 || n > 100000 ? 0 - 1 : n as! i32;
 }
 
 /** What a `static_trap` says, or "" where its operand is not a string this evaluator can build. */
@@ -5244,6 +5262,11 @@ export string typeOfExpr(C c, Expr e) {
         return staticMethodType(c, obj, tokenText(c, nameTok));
       }
       string mem = tokenText(c, nameTok);
+      // `t.[i]` on a tuple selects by the static value of `i` (spec/next ch14).
+      if (isTupleName(owner) && tokenKind(c, nameTok) == kSymName()) {
+        i32 si = staticTupleIndexC(c, nameTok);
+        return si < 0 ? typeNone() : tupleMemberType(owner, countText(si));
+      }
       // A field first: a field and a method may share a name, and the field is what `p.x` means.
       string ft = c.fieldType(owner, mem);
       if (ft != typeNone() && ft != "") { return ft; }
@@ -6988,7 +7011,13 @@ void checkExpr(C c, Expr e) {
       if (isTupleName(tupleOwner)) {
         i32 tk = c.toks[nameTok * tokenStride()];
         if (tk == kSymName()) {
-          c.reportTok(errNoSuchField(), nameTok, "a tuple selector must be known statically");
+          i32 si = staticTupleIndexC(c, nameTok);
+          if (si < 0) {
+            c.reportTok(errNoSuchField(), nameTok, "a tuple selector must be known statically");
+          } else if (si >= tupleMembers(tupleOwner).len()) {
+            c.reportTok(errNoSuchField(), nameTok,
+                        tupleOwner + " has " + countText(tupleMembers(tupleOwner).len()) + " members");
+          }
           return;
         }
         if (tupleMemberType(tupleOwner, tokenText(c, nameTok)) == typeNone()) {
@@ -7006,6 +7035,10 @@ void checkExpr(C c, Expr e) {
     // `Named` type for both and the resolver decides which later. A `case Call` never matches a
     // plain named call, which is why the first version of this reported nothing at all.
     Construct(ctype, args, named): {
+      // The slot this call fills, before its arguments' slots replace it: a generic letter no
+      // argument binds is bound from it (spec/next ch19).
+      string callSlot = want;
+      bool callSlotUnknown = wantUnknown;
       // Each argument is walked with the slot it is going into, which is what lets a generic
       // construction nested in one — `g(Box(1.0))` — infer from the parameter.
       match (ctype.kind) {
@@ -7097,7 +7130,11 @@ void checkExpr(C c, Expr e) {
               }
             }
           }
-          else { checkCallee(c, name, args, named, e); }
+          else {
+            c.expected = callSlot;
+            c.expectedUnknown = callSlotUnknown;
+            checkCallee(c, name, args, named, e);
+          }
         }
         default: { }
       }
@@ -7966,6 +8003,48 @@ bool funcrefCall(C c, Expr e) {
   }
 }
 
+/** Whether every argument whose parameter mentions letter `t` is a number written as one. */
+bool onlyNumbersSay(C c, i32 at, Expr[] args, string t) {
+  for (i32 i = 0; i < args.len() && i < c.funcParamCount[at]; i++) {
+    if (!mentionsTypeParam(c.funcParamTypes[c.funcParamAt[at] + i], t)) { continue; }
+    i32 lit = litFamily(c, args[i]);
+    if (lit != litInteger() && lit != litFloat()) { return false; }
+  }
+  return true;
+}
+
+/**
+ * Whether `e` is a call to a generic function with a letter only numbers say anything about — what an
+ * `auto` initialiser cannot be, since nothing gives those numbers a type (spec/next ch09).
+ */
+bool numbersOnlyGenericCall(C c, Expr e) {
+  match (e.kind) {
+    Construct(ctype, args, named): {
+      match (ctype.kind) {
+        Named(tok, targs): {
+          if (targs.len() > 0) { return false; }
+          i32 at = c.funcAt(tokenText(c, tok));
+          if (at < 0 || !c.funcGenerics[at] || c.funcParamCount[at] != args.len()) { return false; }
+          bool anyNumber = false;
+          for (i32 i = 0; i < args.len(); i++) {
+            i32 lit = litFamily(c, args[i]);
+            if (lit == litInteger() || lit == litFloat()) { anyNumber = true; }
+          }
+          if (!anyNumber) { return false; }
+          for (i32 t = 0; t < c.funcTypeParamCount[at]; t++) {
+            string letter = c.funcTypeParamNames[c.funcTypeParamAt[at] + t];
+            if (!mentionsTypeParam(c.funcReturns[at], letter)) { continue; }
+            if (onlyNumbersSay(c, at, args, letter)) { return true; }
+          }
+          return false;
+        }
+        default: { return false; }
+      }
+    }
+    default: { return false; }
+  }
+}
+
 void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   i32 n = c.funcTypeParamCount[at];
   if (n == 0) { return; }
@@ -8007,11 +8086,12 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     return;
   }
   for (i32 i = 0; i < args.len(); i++) {
-    // **A literal does say what `T` is, here.** `pick(3, 9, true)` infers `i32` from the literals and
-    // the language means it — `spec/tour.wac` says so and `genericCallReturn` passes `typeNone` for
-    // one because *its* question is what the call returns, where a literal must not pin the answer.
-    // Two questions, one argument, and the fourth time this session that "a literal has no type of
-    // its own" has been the wrong half of the rule to reach for.
+    // **A number speaks last** (spec/next ch09 `§wac-literal-constraint-scope-6anwagf`): a literal has
+    // no type of its own, so the typed arguments and then the slot the call fills say what `T` is —
+    // `u8 x = echo(200)` is `echo<u8>` — and only after both does a number's natural type bind it.
+    // A string or a `bool` is the one type it can be, and binds as any typed argument does.
+    i32 argLit = litFamily(c, args[i]);
+    if (argLit == litInteger() || argLit == litFloat()) { continue; }
     // **A call through a funcref says nothing about `T`.** `id(g(1))` for `fn<i32(i32)> g` is a
     // compile error the spec spells out — *"a call through a funcref, whose return type is not read
     // here"* — and this checker could name the type, which is not the same as the language reading
@@ -8020,6 +8100,29 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     if (funcrefCall(c, args[i])) { continue; }
     string got = foundType(c, args[i]);
     bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound, clashed);
+  }
+  // **And from the type expected of the result** (spec/next ch19 `§wac-generic-infer-expected-endugbi`):
+  // `i32 z = zero();` instantiates `zero<i32>`. Only a letter every argument for which is a number,
+  // or which no argument mentions: a typed argument that failed to bind it, a `null` and a call
+  // through a funcref are each still a call that does not say what `T` is (`spec/cases/0051`, 0054,
+  // 0085), and a slot further out must not paper over them.
+  if (c.expected != "" && c.expected != typeNone() && !c.expectedUnknown) {
+    string[] fromWant = string[].filled(n, "");
+    bool[] wantClash = bool[].filled(n, false);
+    bindTypeParams(c, c.funcReturns[at], c.expected, names, fromWant, wantClash);
+    for (i32 t = 0; t < n; t++) {
+      if (bound[t] != "" || wantClash[t] || !onlyNumbersSay(c, at, args, names[t])) { continue; }
+      bound[t] = fromWant[t];
+    }
+  }
+  // Then a number's own type, for a letter nothing else bound — `id(4)` is `id<i32>`.
+  for (i32 i = 0; i < args.len(); i++) {
+    i32 numLit = litFamily(c, args[i]);
+    if (numLit != litInteger() && numLit != litFloat()) { continue; }
+    string[] fromNum = string[].filled(n, "");
+    bool[] numClash = bool[].filled(n, false);
+    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], foundType(c, args[i]), names, fromNum, numClash);
+    for (i32 t = 0; t < n; t++) { if (bound[t] == "" && fromNum[t] != "") { bound[t] = fromNum[t]; } }
   }
   // **A funcref parameter is not judged.** `mapOption<T, U>(Option<T> o, fn<U(T)> f)` binds `U`
   // through the *shape* of a function type, and `bindTypeParams` decomposes arrays, nullables and
@@ -11491,7 +11594,7 @@ void checkStmt(C c, Stmt s, Ty want) {
           c.reportWith(errUntypedLiteral(), type.line, type.col, "`auto` takes its type from an initialiser");
           return;
         }
-        if (isNumericLiteral(c, init!)) {
+        if (isNumericLiteral(c, init!) || numbersOnlyGenericCall(c, init!)) {
           c.reportWith(errUntypedLiteral(), init!.line, init!.col, "unresolved numeric type — write the type");
           return;
         }

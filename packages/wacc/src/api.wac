@@ -6,7 +6,7 @@
 // the canonical dump the parser's own tests read.
 
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
-import { kAsync, kIdent, kindName, kLbrace, kLparen, kRbrace } from "./kinds.wac";
+import { kAs, kAsync, kComma, kExport, kGt, kIdent, kindName, kLbrace, kLparen, kLt, kRbrace, kShr } from "./kinds.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor,
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -31,6 +31,7 @@ import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveV
 import { Frontend, frontendOf } from "./frontend.wac";
 import { Pruned, pruneFor } from "./reach.wac";
 import { lowerNamespaces } from "./namespaces.wac";
+import { trimSpaces } from "./unions.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
@@ -1824,7 +1825,177 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, Res res, string
  * (ch03), then `auto` results written in (ch34). Both are idempotent.
  */
 export string[] lowerSources(string[] paths, string[] sources, Res res) {
-  return lowerAutoReturns(paths, lowerNamespaces(paths, sources, res), res);
+  return lowerAutoReturns(paths, lowerExportInstances(lowerNamespaces(paths, sources, res)), res);
+}
+
+// ---- Instantiations in an export list — spec/next ch02, ch19 ----
+
+/**
+ * `export { max<i32> as maxI32 };` — an instantiation exported under a name the author wrote. Each such
+ * item leaves the list and becomes a function that forwards to the instance, `export i32 maxI32(i32 a,
+ * i32 b) { return max<i32>(a, b); }`, so a host calls a name in the source and the generic stays one
+ * declaration. Lines are kept: the item is blanked, and the functions go at the end of the file.
+ */
+string[] lowerExportInstances(string[] sources) {
+  bool any = false;
+  for (i32 i = 0; i < sources.len(); i++) { if (sources[i].indexOf("export {") >= 0) { any = true; } }
+  if (!any) { return sources; }
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 i = 0; i < sources.len(); i++) {
+    out[i] = sources[i].indexOf("export {") >= 0 ? exportInstancesOf(sources[i]) : sources[i];
+  }
+  return out;
+}
+
+string exportInstancesOf(string text) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  i32 st = tokenStride();
+  i32 n = lx.tokenCount;
+  u8[] blanked = u8[].filled(src.len(), 0);
+  for (i32 i = 0; i < src.len(); i++) { blanked[i] = src[i]; }
+  string names = "";
+  string argLists = "";
+  string aliases = "";
+  i32 found = 0;
+  for (i32 t = 0; t + 1 < n; t++) {
+    if (lx.tokens[t * st] != kExport() || lx.tokens[(t + 1) * st] != kLbrace()) { continue; }
+    i32 u = t + 2;
+    while (u < n && lx.tokens[u * st] == kIdent()) {
+      i32 itemStart = lx.tokens[u * st + 1];
+      i32 nameT = u;
+      u++;
+      if (u >= n || lx.tokens[u * st] != kLt()) {
+        if (u + 1 < n && lx.tokens[u * st] == kAs()) { u += 2; }
+        if (u < n && lx.tokens[u * st] == kComma()) { u++; }
+        continue;
+      }
+      i32 argFrom = lx.tokens[u * st + 1] + 1;
+      i32 depth = 0;
+      i32 argTo = argFrom;
+      while (u < n) {
+        i32 k = lx.tokens[u * st];
+        if (k == kLt()) { depth++; }
+        if (k == kGt()) { depth--; }
+        if (k == kShr()) { depth = depth - 2; }
+        if (depth <= 0 && (k == kGt() || k == kShr())) { argTo = lx.tokens[u * st + 1]; u++; break; }
+        u++;
+      }
+      string alias = tokenTextOf(src, lx, nameT);
+      if (u + 1 < n && lx.tokens[u * st] == kAs()) { alias = tokenTextOf(src, lx, u + 1); u += 2; }
+      if (u < n && lx.tokens[u * st] == kComma()) { u++; }
+      i32 itemEnd = u < n ? lx.tokens[u * st + 1] : src.len();
+      for (i32 b = itemStart; b < itemEnd; b++) { if (blanked[b] != 10) { blanked[b] = 32; } }
+      names = names + tokenTextOf(src, lx, nameT) + "\n";
+      argLists = argLists + bytesBetween(src, argFrom, argTo) + "\n";
+      aliases = aliases + alias + "\n";
+      found++;
+    }
+  }
+  if (found == 0) { return text; }
+  string body = string.fromBytes(blanked);
+  u8[] bsrc = body.toBytes();
+  Lexed blx = lex(bsrc);
+  Program prog = parseProgram(P.create(bsrc, blx));
+  string extra = "";
+  for (i32 k = 0; k < found; k++) {
+    string name = nthLine(names, k);
+    string[] targs = splitTopLevelCommas(nthLine(argLists, k));
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        Func(nameTok, returnType, params, fbody, exported, typeParams, isAsync): {
+          // An `async` instance would be forwarded as a ticket of a ticket; it stays unexported for now.
+          if (tokenTextOf(bsrc, blx, nameTok) != name || typeParams.len() != targs.len() || isAsync) { continue; }
+          string[] from = string[].filled(typeParams.len(), "");
+          for (i32 i = 0; i < typeParams.len(); i++) { from[i] = tokenTextOf(bsrc, blx, typeParams[i]); }
+          string ret = spellTyWith(bsrc, blx, returnType, from, targs);
+          string sig = "";
+          string fwd = "";
+          for (i32 i = 0; i < params.len(); i++) {
+            string pn = tokenTextOf(bsrc, blx, params[i].nameTok);
+            sig = sig + (i > 0 ? ", " : "") + spellTyWith(bsrc, blx, params[i].type, from, targs) + " " + pn;
+            fwd = fwd + (i > 0 ? ", " : "") + pn;
+          }
+          string call = name + "<" + nthLine(argLists, k) + ">(" + fwd + ")";
+          extra = extra + "\nexport " + ret + " " + nthLine(aliases, k) + "(" + sig + ") { "
+                + (ret == "void" ? call + "; }" : "return " + call + "; }");
+        }
+        // **A type's instantiation is the type under a second name** — `IntBox` and `Box<i32>` are one
+        // type — which is what an alias is.
+        StructDecl(snameTok, sparent, sfields, smethods, sexported, sconst, stps): {
+          if (tokenTextOf(bsrc, blx, snameTok) != name || stps.len() != targs.len()) { continue; }
+          extra = extra + "\nexport type " + nthLine(aliases, k) + " = " + name + "<" + nthLine(argLists, k) + ">;";
+        }
+        EnumDecl(enameTok, evariants, eexported, emethods, etps): {
+          if (tokenTextOf(bsrc, blx, enameTok) != name || etps.len() != targs.len()) { continue; }
+          extra = extra + "\nexport type " + nthLine(aliases, k) + " = " + name + "<" + nthLine(argLists, k) + ">;";
+        }
+        default: { }
+      }
+    }
+  }
+  return body + extra + "\n";
+}
+
+/** Line `k` of a `\n`-terminated list. */
+string nthLine(string list, i32 k) {
+  string rest = list;
+  for (i32 i = 0; i < k; i++) { rest = rest.slice(rest.indexOf("\n") + 1, rest.len()); }
+  return rest.slice(0, rest.indexOf("\n"));
+}
+
+/** `i32, Box<i32, string>` as its two type arguments, trimmed. */
+string[] splitTopLevelCommas(string s) {
+  i32 n = 1;
+  i32 depth = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    string ch = s.slice(i, i + 1);
+    if (ch == "<" || ch == "(") { depth++; }
+    if (ch == ">" || ch == ")") { depth--; }
+    if (ch == "," && depth == 0) { n++; }
+  }
+  string[] out = string[].filled(n, "");
+  i32 k = 0;
+  i32 from = 0;
+  depth = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    string ch = s.slice(i, i + 1);
+    if (ch == "<" || ch == "(") { depth++; }
+    if (ch == ">" || ch == ")") { depth--; }
+    if (ch == "," && depth == 0) { out[k] = trimSpaces(s.slice(from, i)); k++; from = i + 1; }
+  }
+  out[k] = trimSpaces(s.slice(from, s.len()));
+  return out;
+}
+
+/** A written type, spelled back with each of `from` replaced by the matching `to`. */
+string spellTyWith(u8[] src, Lexed lx, Ty t, string[] from, string[] to) {
+  match (t.kind) {
+    Prim(tok): { return tok < 0 ? "i32" : tokenTextOf(src, lx, tok); }
+    Named(tok, args): {
+      string nm = tokenTextOf(src, lx, tok);
+      if (args.len() == 0) {
+        for (i32 i = 0; i < from.len(); i++) { if (from[i] == nm) { return to[i]; } }
+        return nm;
+      }
+      string s = nm + "<";
+      for (i32 i = 0; i < args.len(); i++) { s = s + (i > 0 ? ", " : "") + spellTyWith(src, lx, args[i], from, to); }
+      return s + ">";
+    }
+    Arr(elem): { return spellTyWith(src, lx, elem, from, to) + "[]"; }
+    Nullable(inner): { return spellTyWith(src, lx, inner, from, to) + "?"; }
+    Funcref(ret, params): {
+      string s = "fn<" + spellTyWith(src, lx, ret, from, to) + "(";
+      for (i32 i = 0; i < params.len(); i++) { s = s + (i > 0 ? ", " : "") + spellTyWith(src, lx, params[i], from, to); }
+      return s + ")>";
+    }
+    TupleOf(members): {
+      string s = "(";
+      for (i32 i = 0; i < members.len(); i++) { s = s + (i > 0 ? ", " : "") + spellTyWith(src, lx, members[i], from, to); }
+      return s + (members.len() == 1 ? ",)" : ")");
+    }
+    TypeOf(e): { return "type(" + "?" + ")"; }
+  }
 }
 
 /** Whether a source may declare a function whose result is `auto`; parsing says for certain. */

@@ -1,0 +1,9 @@
+// expect: answers staticSelect = 7
+// spec: §wac-tuple-static-index-axfrq5b
+// why: `t.[i]` selects by the static value of `i`, which fixes the member's type when checked
+// from: spec/next ch14
+export i32 staticSelect() {
+  (string, i32) t = ("hello", 7);
+  static i32 i = 1;
+  return t.[i];
+}

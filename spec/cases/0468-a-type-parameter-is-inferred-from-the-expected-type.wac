@@ -1,0 +1,11 @@
+// expect: answers inferred = 200
+// spec: §wac-generic-infer-expected-endugbi, §wac-literal-constraint-scope-6anwagf
+// why: no argument names `T` — `200` has no type of its own — so the declaration says it
+// from: spec/next ch19, ch09
+T zero<T>() { return 0; }
+T echo<T>(T x) { return x; }
+export i32 inferred() {
+  i32 z = zero();
+  u8 small = echo(200);
+  return z + (small as i32);
+}

@@ -19,7 +19,7 @@
 import {
   Decls, Ev, StaticBind, Value, bindStaticLocals, demandConst, evFinished, isIntName, outcomeName, declExportedOf, declNameOf,
   decimalText, evalExpr, evLimit, evUnsupported, numValue, staticForCap, staticForName,
-  staticForType, staticForValues, truthy, wrapTo, vF32, vF64, vNum, evTyName, typeDeclAt,
+  staticForType, staticForValues, truthy, wrapTo, vF32, vF64, vNum, evTyName, typeDeclAt, intOf,
 } from "./consteval.wac";
 import { stringLiteralBytes } from "./strlit.wac";
 import { programGraph } from "./program.wac";
@@ -560,6 +560,33 @@ string emittedSigOf(Env env, u8[] src, Lexed lexed, string ret, Param[] params, 
 
 /** The signature a registered function has, spelled the way a `fn[...]` type is. */
 /** The type a literal is when nothing else says — the default of its family, or `""`. */
+/**
+ * When `e` is a generic call written without type arguments, the slot `want` it fills — read by
+ * `genericCallInstance` for a letter no argument binds (spec/next ch19).
+ */
+void noteCallWant(Env env, Expr e, string want) {
+  env.callWantTok = 0 - 1;
+  if (want == "" || want == "void") { return; }
+  match (e.kind) {
+    Construct(wty, wargs, wnamed): {
+      match (wty.kind) {
+        Named(wtok, wtargs): { if (wtargs.len() == 0) { env.callWantTok = wtok; env.callWant = want; } }
+        default: { }
+      }
+    }
+    default: { }
+  }
+}
+
+/** Whether `e` is a number written as one — the literal that has no type of its own (spec/next ch09). */
+bool isNumericLiteralE(Expr e) {
+  match (e.kind) {
+    IntLit(tok): { return true; }
+    FloatLit(tok): { return true; }
+    default: { return false; }
+  }
+}
+
 string naturalLiteralType(Expr e) {
   match (e.kind) {
     IntLit(tok): { return "i32"; }
@@ -601,7 +628,13 @@ bool matchTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] 
       if (!isArrayType(actual)) { return false; }
       return matchTypeParams(env, src, lexed, elem, elemOf(actual), tps, out);
     }
-    Nullable(inner): { return matchTypeParams(env, src, lexed, inner, actual, tps, out); }
+    // **`T?` against `i32?` binds `T = i32`**, one layer off (spec/next ch19). A reference arrives
+    // with its `?` already dropped, so there is nothing to take off and `T` is the reference.
+    Nullable(inner): {
+      string under = actual.len() > 1 && actual.slice(actual.len() - 1, actual.len()) == "?"
+        ? actual.slice(0, actual.len() - 1) : actual;
+      return matchTypeParams(env, src, lexed, inner, under, tps, out);
+    }
     Funcref(ret, params): {
       if (!isFuncrefType(actual)) { return false; }
       if (sigParamCount(actual) != params.len()) { return false; }
@@ -720,12 +753,37 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
               default: { }
             }
           }
-          if (at == "") { at = naturalLiteralType(args[i]); }
+          // A number is not among them (spec/next ch09): it binds nothing, and the slot the call fills
+          // says what `T` is — `u8 x = echo(200)` is `echo<u8>`.
+          if (at == "" && !isNumericLiteralE(args[i])) { at = naturalLiteralType(args[i]); }
           // **An argument with no type of its own constrains nothing** — a lambda takes its type from
           // the parameter once the other arguments have said what `T` is (`find(xs, (i32 x) => …)`),
           // as the method form below already allows.
           if (at == "") { continue; }
           if (!matchTypeParams(env, cs, cl, params[i].type, at, typeParams, bound)) { return ""; }
+        }
+        // **A letter no argument binds is bound by the declaration the call initialises** (spec/next
+        // ch19): `i32 z = zero();` is `zero<i32>`. The instance walk sees the declaration and records
+        // the answer under the call's token, so emitting the call later finds the same instance.
+        bool open = false;
+        for (i32 i = 0; i < bound.len(); i++) { if (bound[i] == "") { open = true; } }
+        if (open) {
+          string wkey = ";" + numText(env.curFile) + ":" + numText(tok) + "=";
+          if (env.callWantTok == tok && env.callWant != "") {
+            if (!matchTypeParams(env, cs, cl, returnType, env.callWant, typeParams, bound)) { return ""; }
+          } else if (env.wantInsts.indexOf(wkey) >= 0) {
+            string rest = env.wantInsts.slice(env.wantInsts.indexOf(wkey) + wkey.len(), env.wantInsts.len());
+            return rest.slice(0, rest.indexOf(";"));
+          }
+          // Then a number's own type, for a letter nothing else bound — `id(4)` is `id<i32>`. Not
+          // recorded: the same arguments answer the same way every time this call is asked about.
+          string[] fromNum = string[].defaulted(typeParams.len());
+          for (i32 i = 0; i < args.len(); i++) {
+            if (!isNumericLiteralE(args[i])) { continue; }
+            for (i32 j = 0; j < fromNum.len(); j++) { fromNum[j] = ""; }
+            if (!matchTypeParams(env, cs, cl, params[i].type, naturalLiteralType(args[i]), typeParams, fromNum)) { continue; }
+            for (i32 j = 0; j < bound.len(); j++) { if (bound[j] == "" && fromNum[j] != "") { bound[j] = fromNum[j]; } }
+          }
         }
         string inst = raw + "<";
         for (i32 i = 0; i < bound.len(); i++) {
@@ -758,6 +816,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
         // the registration here instead put a generic function's entry ahead of the methods of an
         // instance discovered before it, and every call after that point reached the wrong index.
         env.instantiate(inst, raw);
+        if (open) { env.wantInsts = env.wantInsts + ";" + numText(env.curFile) + ":" + numText(tok) + "=" + inst + ";"; }
         return inst;
       }
       default: { }
@@ -2712,6 +2771,16 @@ export struct Env {
    * opened with `|` once computed, which `bareUnionE` does the first time one is asked about.
    */
   string unionAt;
+  /**
+   * The generic call the instance walk is looking at as a declaration's initialiser, and that
+   * declaration's type — what a letter no argument binds is bound from (spec/next ch19) — then
+   * `;file:tok=instance;` for each call so bound, which every later lookup of that call reads.
+   */
+  i32 callWantTok;
+  string callWant;
+  string wantInsts;
+  /** The return type of the function the instance walk is in, or `""` where it was not given one. */
+  string walkReturn;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -3025,7 +3094,7 @@ export struct Env {
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
-               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "");
+               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "");
   }
 
   
@@ -3265,7 +3334,11 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
       Var(type, nameTok, init, isConst): {
         string vt = varTypeOfE(env, src, lexed, type, init);
         registerNamed(env, vt);
-        if (init is not null) { collectArrayTypesOfExpr(env, src, lexed, init!); }
+        if (init is not null) {
+          noteCallWant(env, init!, vt);
+          collectArrayTypesOfExpr(env, src, lexed, init!);
+          env.callWantTok = 0 - 1;
+        }
         // **In scope for what follows**, so `auto xs = [n, n]` after `i64 n` names `i64[]` here rather
         // than nothing — the type section is written before the body, and a type first named while
         // emitting it declines the module. The caller puts the count back.
@@ -3276,7 +3349,11 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
       // which is one type past the end of a section already written.
       ExprStmt(e2): { collectArrayTypesOfExpr(env, src, lexed, e2); }
       Return(value): {
-        if (!(value is null)) { collectArrayTypesOfExpr(env, src, lexed, value!); }
+        if (!(value is null)) {
+          noteCallWant(env, value!, env.walkReturn);
+          collectArrayTypesOfExpr(env, src, lexed, value!);
+          env.callWantTok = 0 - 1;
+        }
       }
       Assign(target, op, rhs): { collectArrayTypesOfExpr(env, src, lexed, rhs); }
       Destructure(whole, pattern, init): {
@@ -5603,7 +5680,9 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           string pt = typeOfTyName(env, src, lexed, params[i].type);
           registerNamed(env, pt);
         }
+        env.walkReturn = rt;
         collectArrayTypesIn(env, src, lexed, params, body);
+        env.walkReturn = "";
       }
       // A **module-level constant** names a type as surely as a field or a parameter does, and its
       // initialiser can name another. Third time this pre-pass has been found one declaration short:
@@ -8829,7 +8908,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
         LField(base, nameTok): {
           string ot3 = typeOfLv(src, lexed, env, base);
           // `t.0 = v;` — a tuple member is a writable field (spec/next ch14 `§wac-tuple-reference-qvgasjf`).
-          i32 aix = tupleIndexE(src, lexed, nameTok);
+          i32 aix = tupleIndexE(env, src, lexed, nameTok);
           if (aix >= 0 && isTupleName(ot3) && lexed.tokens[op * tokenStride()] == kAssign()) {
             string amt = tupleMembers(ot3)[aix];
             emitLvalue(fb, src, lexed, env, base);
@@ -10560,7 +10639,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     Member(obj, nameTok): {
       // `t.1` — a tuple member is a field of its struct, by position (spec/next ch14).
-      i32 tix = tupleIndexE(src, lexed, nameTok);
+      i32 tix = tupleIndexE(env, src, lexed, nameTok);
       if (tix >= 0) {
         string tot = typeOfE(src, lexed, env, obj);
         if (isTupleName(tot)) {
@@ -10882,7 +10961,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     ArrLit(elements): { return arrLitTypeOf(src, lexed, env, elements); }
     TupleLit(elements): { return tupleLitTypeE(src, lexed, env, elements); }
     Member(obj, nameTok): {
-      i32 tiy = tupleIndexE(src, lexed, nameTok);
+      i32 tiy = tupleIndexE(env, src, lexed, nameTok);
       if (tiy >= 0) {
         string[] tys = tupleMembers(typeOfE(src, lexed, env, obj));
         if (tiy < tys.len()) { return tys[tiy]; }
@@ -11348,7 +11427,20 @@ void emitStructOperator(B fb, u8[] src, Lexed lexed, Env env, i32 m, Expr recv, 
 }
 
 /** A tuple member's position from its integer token — `t.1` — or -1 for a name that is not one. */
-i32 tupleIndexE(u8[] src, Lexed lexed, i32 nameTok) {
+i32 tupleIndexE(Env env, u8[] src, Lexed lexed, i32 nameTok) {
+  // `t.[i]` — the static value of `i` (spec/next ch14), which the checker has already insisted on.
+  if (nameTok >= 0 && lexed.tokens[nameTok * tokenStride()] == kSymName()) {
+    Ev ev = staticEvalOf(env, src, lexed);
+    if (env.staticCx is null) { return 0 - 1; }
+    ev.status = 0;
+    ev.message = "";
+    Expr sel = Expr(ExprKind.Ident(nameTok), lexed.tokens[nameTok * tokenStride() + 3],
+                    lexed.tokens[nameTok * tokenStride() + 4]);
+    Value v = evalExpr(ev, env.staticCx!, env.curFile, sel, "i32");
+    if (!evFinished(ev.status) || v.kind != vNum()) { ev.status = 0; return 0 - 1; }
+    ev.status = 0;
+    return intOf(v) as~ i32;
+  }
   if (nameTok < 0 || lexed.tokens[nameTok * tokenStride()] != kInt()) { return -1; }
   string d = tokenTextOf(src, lexed, nameTok);
   i32 n = 0;
@@ -13916,7 +14008,7 @@ string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
     }
     LField(base, nameTok): {
       string b = typeOfLv(src, lexed, env, base);
-      i32 lix = tupleIndexE(src, lexed, nameTok);
+      i32 lix = tupleIndexE(env, src, lexed, nameTok);
       if (lix >= 0 && isTupleName(b)) {
         string[] lms = tupleMembers(b);
         return lix < lms.len() ? lms[lix] : "";
@@ -13943,7 +14035,7 @@ void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
     }
     LField(base, nameTok): {
       string bt2 = typeOfLv(src, lexed, env, base);
-      i32 eix = tupleIndexE(src, lexed, nameTok);
+      i32 eix = tupleIndexE(env, src, lexed, nameTok);
       if (eix >= 0 && isTupleName(bt2)) {
         emitLvalue(fb, src, lexed, env, base);
         fb.byte(251); fb.u32leb(2); fb.u32leb(env.tupleType(bt2)); fb.u32leb(eix);
@@ -14498,7 +14590,7 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
       string b = unsupportedLvalue(src, lexed, env, base);
       if (b != "") { return b; }
       string lbt = typeOfLv(src, lexed, env, base);
-      if (isTupleName(lbt) && tupleIndexE(src, lexed, nameTok) >= 0) { return ""; }
+      if (isTupleName(lbt) && tupleIndexE(env, src, lexed, nameTok) >= 0) { return ""; }
       return env.isStructName(lbt) ? "" : "field of an unknown type";
     }
   }
@@ -15125,7 +15217,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       return safeMemberType(src, lexed, env, obj, nameTok) == "" ? "a `?.` on something with no such field" : "";
     }
     Member(obj, nameTok): {
-      if (tupleIndexE(src, lexed, nameTok) >= 0 && isTupleName(typeOfE(src, lexed, env, obj))) {
+      if (tupleIndexE(env, src, lexed, nameTok) >= 0 && isTupleName(typeOfE(src, lexed, env, obj))) {
         return unsupportedValue(src, lexed, env, obj);
       }
       // The variant question comes **first**, because the object of `Shape.Point` is a bare name
@@ -16113,7 +16205,9 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             }
             string frt = typeOfTyName(env, src, lexed, returnType);
             registerNamed(env, frt);
+            env.walkReturn = frt;
             collectArrayTypesIn(env, src, lexed, params, body);
+            env.walkReturn = "";
             env.addFunc(inst, frt, fpts);
             env.instBuilt = true;
             // **The instance's own body, walked with its parameters in scope.** A generic function
@@ -16543,7 +16637,9 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
     match (w10d[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
+        env.walkReturn = typeOfTyName(env, src, lexed, returnType);
         collectArrayTypesIn(env, src, lexed, params, body);
+        env.walkReturn = "";
       }
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }

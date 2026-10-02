@@ -48,7 +48,7 @@ export string[] unionMembers(string t) {
   return exact;
 }
 
-string trimSpaces(string s) {
+export string trimSpaces(string s) {
   i32 a = 0;
   i32 z = s.len();
   u8[] b = s.toBytes();
