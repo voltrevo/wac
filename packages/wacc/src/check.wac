@@ -34,7 +34,7 @@
 
 import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
-         stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt, intOf,
+         stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt, unfoldTypeName, intOf,
          vNum } from "./consteval.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
@@ -1197,11 +1197,37 @@ string computedTypeC(C c, Ty t) {
   bindInstanceLetters(c, ev);
   ev.status = evOk();
   ev.message = "";
+  i32 savedGuards = ev.guards;
+  ev.guards = c.tyGuards;
   string spelled = evTyName(ev, c.sCx!, c.sFile, t);
+  ev.guards = savedGuards;
   bool ok = evFinished(ev.status);
   ev.status = evOk();
   ev.tpCount = mark;
   return ok ? withoutEvalKeys(spelled) : typeNone();
+}
+
+/**
+ * What `t` unfolds to when it is a recursive type held by its name — `A` for `type A = union<i32,
+ * Box<A>>`, or `A?` — or "" when it is anything else. The evaluator spells such a type by its name
+ * inside a guarding layer (spec/next ch18 `§wac-union-recursive-guard-e4vnb4j`).
+ */
+string unfoldedC(C c, string t) {
+  bool nullable = isNullableName(t);
+  string base = nullable ? withoutNull(t) : t;
+  if (base.len() == 0 || base.indexOf("<") >= 0 || base.indexOf("[") >= 0 || base.indexOf("?") >= 0) { return ""; }
+  if (c.isStruct(base) || !namesTypeDeclC(c, base)) { return ""; }
+  if ((c.sEv is null) || (c.sCx is null)) { return ""; }
+  Ev ev = c.sEv!;
+  i32 mark = ev.tpCount;
+  ev.status = evOk();
+  string shape = unfoldTypeName(ev, c.sCx!, c.sFile, base);
+  bool ok = evFinished(ev.status);
+  ev.status = evOk();
+  ev.tpCount = mark;
+  if (!ok || shape == "" || shape == base) { return ""; }
+  shape = withoutEvalKeys(shape);
+  return nullable ? shape + "?" : shape;
 }
 
 /**
@@ -2594,6 +2620,11 @@ bool isReferenceName(C c, string t) {
 export bool assignable(C c, string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
+  // A recursive type held by its name is compared by what it unfolds to (spec/next ch18).
+  string wantShape = unfoldedC(c, want);
+  if (wantShape != "") { return assignable(c, wantShape, got); }
+  string gotShape = unfoldedC(c, got);
+  if (gotShape != "") { return assignable(c, want, gotShape); }
   // **Permission** (spec/next ch18 `§wac-union-permission-no-restore-dvm5zbj`): a `const` alternative
   // accepts a mutable value of its type, and a `const` one never becomes mutable.
   bool wantConst = startsWith(want, "const ");
@@ -2610,7 +2641,14 @@ export bool assignable(C c, string want, string got) {
       for (i32 i = 0; i < gs.len(); i++) { if (unionTarget(c, want, gs[i]) == "") { return false; } }
       return true;
     }
-    if (isNullableName(got)) { return false; }
+    if (isNullableName(got)) {
+      // Only a nullable alternative can take it — `U?` in `union<i32, U?>` (spec/next ch18).
+      string[] nms = unionMembers(want);
+      for (i32 i = 0; i < nms.len(); i++) {
+        if (isNullableName(nms[i]) && assignable(c, nms[i], got)) { return true; }
+      }
+      return false;
+    }
     return unionTarget(c, want, got) != "";
   }
   if (isUnionName(got)) { return false; }
@@ -2716,6 +2754,10 @@ export bool nullableIntoNonNull(C c, string want, string got) {
   // accepts it. The old exact-name test reported it, which is the one cell of this family wacc
   // invented — found by putting `anyref?` in the slot grid.
   if (want == "anyref") { return false; }
+  // A union with a nullable alternative holds the absence: `U?` into `union<i32, U?>` (ch18).
+  string wantShape = unfoldedC(c, want);
+  string wantUnion = wantShape != "" ? wantShape : want;
+  if (isUnionName(wantUnion)) { return !assignable(c, wantUnion, got) && assignable(c, want, withoutNull(got)); }
   // **The base has to *fit* the slot, not equal it.** `withoutNull(got) == want` was the whole test,
   // so this family was only ever recognised when the two names matched exactly: `S? into S` reported
   // and `K? into S` said nothing at all, for a `K : S`. The reference gives both the same message —
@@ -3372,6 +3414,11 @@ export struct C {
    * that argument's letter. What each `return` and `try` gives it goes to `autoCollect`.
    */
   string placeholderSpec;
+  /**
+   * How many guarding layers the type being spelled sits inside — a generic's argument, one of a
+   * union's two or more alternatives, a tuple's member — which a recursive type's name needs (ch18).
+   */
+  i32 tyGuards;
 
   void noteVirtual(this, string key) {
     string[] more = string[].defaulted(this.virtuals.len() + 1);
@@ -3480,7 +3527,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "");
+             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0);
   }
 
   /**
@@ -4603,10 +4650,13 @@ export string typeOfTy(C c, Ty t) {
       if (base == "union") {
         if (typeArgs.len() == 0) { return typeNone(); }
         string[] ums = string[].defaulted(typeArgs.len());
+        i32 ug = typeArgs.len() > 1 ? 1 : 0;
+        c.tyGuards = c.tyGuards + ug;
         for (i32 i = 0; i < typeArgs.len(); i++) {
           ums[i] = typeOfTy(c, typeArgs[i]);
-          if (ums[i] == typeNone() || ums[i] == "") { return typeNone(); }
+          if (ums[i] == typeNone() || ums[i] == "") { c.tyGuards = c.tyGuards - ug; return typeNone(); }
         }
+        c.tyGuards = c.tyGuards - ug;
         return normUnion(c, ums);
       }
       // **The three reports below name the token, not the node's position.** They are the same place
@@ -4696,12 +4746,14 @@ export string typeOfTy(C c, Ty t) {
         return base;
       }
       string out = base + "<";
+      c.tyGuards = c.tyGuards + 1;
       for (i32 i = 0; i < typeArgs.len(); i++) {
         string a = typeOfTy(c, typeArgs[i]);
-        if (a == typeNone()) { return typeNone(); }
+        if (a == typeNone()) { c.tyGuards = c.tyGuards - 1; return typeNone(); }
         if (i > 0) { out = out + ", "; }
         out = out + a;
       }
+      c.tyGuards = c.tyGuards - 1;
       return out + ">";
     }
     // `i32[]` and `P?` are names too, built from the name inside. An element or inner type this

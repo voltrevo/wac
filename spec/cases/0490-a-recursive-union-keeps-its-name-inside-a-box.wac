@@ -1,0 +1,17 @@
+// expect: answers deep = 703
+// spec: §wac-union-recursive-guard-e4vnb4j
+// why: inside `Box<…>` the recursive `A` is spelled by its name, so the `Box<A>` written at a
+//      construction is the alternative of `A` — not a `Box` of `A` unfolded once — and a value read
+//      back out of `.value` is an `A` again
+// from: spec/next ch18
+struct Box<T> { T value; }
+type A = union<i32, Box<A>>;
+i32 depth(A a) {
+  if (Box<A> b matches a) { return 1 + depth(b.value); }
+  if (i32 n matches a) { return n * 100; }
+  return 0 - 1;
+}
+export i32 deep() {
+  A nested = Box<A>(Box<A>(Box<A>(7 as i32)));
+  return depth(nested);
+}

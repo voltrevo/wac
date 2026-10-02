@@ -1,0 +1,6 @@
+// expect: refused
+// spec: §wac-union-recursive-guard-e4vnb4j
+// why: `null` adds nothing beside `U?`, so `union<null, U?>` is `U?` — a nullable layer alone
+// from: spec/next ch18
+type U = union<null, U?>;
+export i32 f() { return 0; }

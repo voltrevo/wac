@@ -1,0 +1,12 @@
+// expect: answers held = 11
+// spec: §wac-union-recursive-guard-e4vnb4j
+// why: `U?` is an alternative of `union<i32, U?>`, so a nullable `U` enters the union whole rather
+//      than being refused as a nullable into a non-null slot
+// from: spec/next ch18
+type U = union<i32, U?>;
+export i32 held() {
+  U present = (7 as i32) as U?;
+  U? none = null;
+  U absent = none;
+  return (present is not null ? 10 : 0) + (absent is null ? 1 : 0);
+}

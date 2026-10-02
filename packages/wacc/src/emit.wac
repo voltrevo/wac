@@ -19,7 +19,7 @@
 import {
   Decls, Ev, StaticBind, Value, bindStaticLocals, demandConst, evFinished, isIntName, outcomeName, declExportedOf, declNameOf,
   decimalText, evalExpr, evLimit, evUnsupported, numValue, staticForCap, staticForName,
-  staticForType, staticForValues, truthy, wrapTo, vF32, vF64, vNum, evTyName, typeDeclAt, intOf,
+  staticForType, staticForValues, truthy, wrapTo, vF32, vF64, vNum, evTyName, typeDeclAt, unfoldTypeName, intOf,
 } from "./consteval.wac";
 import { stringLiteralBytes } from "./strlit.wac";
 import { programGraph } from "./program.wac";
@@ -240,7 +240,9 @@ bool isUnresolvedBareName(Env env, string t) {
       return false;
     }
   }
-  return !env.isStructName(t) && !env.isEnumName(t) && !isWritableValType(t);
+  if (env.isStructName(t) || env.isEnumName(t) || isWritableValType(t)) { return false; }
+  // A recursive type held by its name (spec/next ch18) is a type, not a letter.
+  return env.staticCx is null || typeDeclAt(env.staticCx!, t, env.curFile) < 0;
 }
 
 bool isWritableValType(string t) {
@@ -505,6 +507,12 @@ void registerNamed(Env env, string t) {
     // A nested nullable's box holds a reference, whose own type comes first.
     if (!isWritableValType(boxedInner(t))) { registerNamed(env, boxedInner(t)); }
     env.boxType(boxedInner(t));
+  }
+  // A union's boxes, one for each numeric or `const` alternative — a union a computed type spelled
+  // (spec/next ch18) reaches here without passing the loop that registers them for a written one.
+  if (isUnionName(t)) {
+    string[] ums = unionMembers(t);
+    for (i32 i = 0; i < ums.len(); i++) { if (unionBoxes(ums[i])) { env.boxType(ums[i]); } }
   }
   // A tuple's struct, and its members' types first.
   if (isTupleName(t)) {
@@ -2784,6 +2792,8 @@ export struct Env {
   string walkReturn;
   /** `;name;` for each local the function being emitted declared `const` — a `const` source (ch18). */
   string constLocals;
+  /** Guarding layers around the type being spelled — where a recursive type keeps its name (ch18). */
+  i32 tyGuards;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -3097,7 +3107,7 @@ export struct Env {
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
-               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";");
+               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";", 0);
   }
 
   
@@ -5161,6 +5171,13 @@ void emitPermissionDiscard(B fb, Env env, string from, string to) {
   fb.byte(32); fb.u32leb(tmp);
 }
 
+/** Whether union `u` has `m` among its alternatives. */
+bool unionHasMember(string u, string m) {
+  string[] ms = unionMembers(u);
+  for (i32 i = 0; i < ms.len(); i++) { if (ms[i] == m) { return true; } }
+  return false;
+}
+
 /** Whether union `to` holds only `const` access to a type union `from` may hold mutably. */
 bool discardsPermission(string from, string to) {
   string[] fs = unionMembers(from);
@@ -7165,6 +7182,27 @@ export string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
 }
 
 /**
+ * What `t` unfolds to when it is a recursive type held by its name — the evaluator spells one so
+ * inside a guarding layer (spec/next ch18) — as a value's type needs it; otherwise `t` itself.
+ */
+string unfoldedE(Env env, string t) {
+  if (t.len() == 0 || t.indexOf("<") >= 0 || t.indexOf("[") >= 0 || t.indexOf("?") >= 0) { return t; }
+  if (env.isStructName(t) || env.staticCx is null || env.staticEv is null) { return t; }
+  if (typeDeclAt(env.staticCx!, t, env.curFile) < 0) { return t; }
+  Ev ev = env.staticEv!;
+  i32 mark = ev.tpCount;
+  ev.status = 0;
+  string shape = unfoldTypeName(ev, env.staticCx!, env.curFile, t);
+  bool ok = evFinished(ev.status);
+  ev.status = 0;
+  ev.tpCount = mark;
+  if (!ok || shape == "") { return t; }
+  string spelled = emitterSpelling(env, shape);
+  registerNamed(env, spelled);
+  return spelled;
+}
+
+/**
  * A computed type (spec/next ch30) — `type(e)`, or a name a `type` declaration gives — as the
  * spelling the rest of this emitter uses: evaluated with the type parameters of the instance being
  * emitted bound, so `Slot<T>` inside `fromSlot<i32>` is `i32`.
@@ -7175,7 +7213,10 @@ string computedTypeE(Env env, u8[] src, Lexed lexed, Ty t) {
   i32 mark = bindInstanceTypes(env, ev);
   ev.status = 0;
   ev.message = "";
+  i32 savedGuards = ev.guards;
+  ev.guards = env.tyGuards;
   string spelled = evTyName(ev, env.staticCx!, env.curFile, t);
+  ev.guards = savedGuards;
   bool ok = evFinished(ev.status);
   string why = ev.message;
   ev.status = 0;
@@ -7429,17 +7470,20 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       if (raw == "union") {
         if (typeArgs.len() == 0) { return bareUnionE(env, src, lexed, t); }
         string[] ums = string[].defaulted(typeArgs.len());
+        i32 ug = typeArgs.len() > 1 ? 1 : 0;
+        env.tyGuards = env.tyGuards + ug;
         for (i32 i = 0; i < typeArgs.len(); i++) {
           ums[i] = typeOfTyName(env, src, lexed, typeArgs[i]);
-          if (ums[i] == "") { return ""; }
+          if (ums[i] == "") { env.tyGuards = env.tyGuards - ug; return ""; }
           if (unionBoxes(ums[i])) { env.boxType(ums[i]); }
         }
+        env.tyGuards = env.tyGuards - ug;
         return normUnionE(env, ums);
       }
       // A **type parameter** stands for its argument wherever it appears — a field's type, a
       // method's parameter, an array's element, a local inside a body.
       string bound = env.substituted(raw);
-      if (bound != "") { return bound; }
+      if (bound != "") { return env.tyGuards == 0 ? unfoldedE(env, bound) : bound; }
       // Spelled with arguments, a name is an **instantiation**: registered on sight, compiled once.
       if (typeArgs.len() > 0) {
         string inst = raw + "<";
@@ -7453,7 +7497,9 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
         // bindgen names, for a method nothing can call. `issues/lang/0173a`.
         bool unbound = false;
         for (i32 i = 0; i < typeArgs.len(); i++) {
+          env.tyGuards = env.tyGuards + 1;
           string at = typeOfTyName(env, src, lexed, typeArgs[i]);
+          env.tyGuards = env.tyGuards - 1;
           if (at == "") { return ""; }
           if (isUnresolvedBareName(env, at)) { unbound = true; }
           if (i > 0) { inst = inst + ","; spelled = spelled + ","; }
@@ -8429,6 +8475,7 @@ bool typeTestable(Env env, string from, string to) {
   // A `const T` pattern on a union: the object or its `const` box (spec/next ch18).
   if (isUnionName(from) && isConstAlt(to)) { return true; }
   if (isUnionName(from) && env.isStructName(env.canonType(to))) { return true; }
+  if (isUnionName(from) && unionBoxes(to) && unionHasMember(from, to)) { return true; }
   if (isBoxedName(from) && boxedInner(from) == to) { return true; }
   string fc = env.canonType(refCore(env, from));
   string tc = env.canonType(refCore(env, to));
@@ -8450,9 +8497,9 @@ bool typeTestable(Env env, string from, string to) {
  */
 void emitTypeTest(B fb, Env env, i32 at, string from, string to) {
   if (isUnionName(from) && isConstAlt(to)) { emitConstTest(fb, env, at, from, to.slice(6, to.len())); return; }
-  if (isUnionName(from) && env.isStructName(env.canonType(to))) {
+  if (isUnionName(from) && (env.isStructName(env.canonType(to)) || unionBoxes(to))) {
     fb.byte(32); fb.u32leb(at);
-    fb.byte(251); fb.u32leb(20); fb.i32leb(unionHeapType(env, to));         // ref.test the object itself
+    fb.byte(251); fb.u32leb(20); fb.i32leb(unionHeapType(env, to));         // ref.test the object or its box
     return;
   }
   string fc = env.canonType(refCore(env, from));
@@ -8512,9 +8559,9 @@ void emitTypeBind(B fb, Env env, i32 at, string from, string to) {
     emitConstFromUnion(fb, env, from, to.slice(6, to.len()), env.localCount - 1);
     return;
   }
-  if (isUnionName(from) && env.isStructName(env.canonType(to))) {
+  if (isUnionName(from) && (env.isStructName(env.canonType(to)) || unionBoxes(to))) {
     fb.byte(32); fb.u32leb(at);
-    fb.byte(251); fb.u32leb(23); fb.i32leb(unionHeapType(env, to));         // ref.cast (ref null $T)
+    emitFromUnion(fb, env, to);
     return;
   }
   fb.byte(32); fb.u32leb(at);
@@ -10098,6 +10145,11 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
       string from = typeOfE(src, lexed, env, operand);
       string to = typeOfTyName(env, src, lexed, target);
+      // `v as U` into a union is the value entering one of its alternatives (spec/next ch18).
+      if (isUnionName(to) && lexed.tokens[op * tokenStride()] == kAs()) {
+        emitExprAt(fb, src, lexed, env, operand, to);
+        return;
+      }
       // **A literal has no type of its own, so it takes the slot's** — and the slot here is the
       // cast's own target, which made `42 as! i31ref` a conversion from `i31ref` to `i31ref`: no
       // instructions at all, and an `i32` left where a reference belonged. A cast *into* a reference
@@ -15376,7 +15428,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       string t = typeOfTyName(env, src, lexed, target);
       bool known = isArrayType(t) || env.isStructName(t) || t == "i32" || t == "u32" ||
                    t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool" ||
-                   t == "anyref" || t == "i31ref" || isPackedValue(t) || isBoxedName(t);
+                   t == "anyref" || t == "i31ref" || isPackedValue(t) || isBoxedName(t) ||
+                   (isUnionName(t) && lexed.tokens[op * tokenStride()] == kAs());
       if (!known) { return "cast to an unsupported type"; }
       // `[a, b] as T[]` is asked about at `T[]`, which is the type it is built at — and `null as T?`
       // is a null of that type (spec/next ch10 `§wac-null-as-typed-ifyaj6m`).

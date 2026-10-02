@@ -2464,7 +2464,10 @@ export string evTyName(Ev ev, Decls cx, i32 fi, Ty t) {
       string[] args = string[].filled(typeArgs.len(), "");
       // A type's arguments are behind a layer that guards recursion — a struct's field, or one of a
       // union's two or more alternatives — except a union of one, which is its alternative.
-      bool guards = typeArgs.len() > 0 && !(spelled == "union" && typeArgs.len() < 2);
+      // `null` is no alternative of its own beside a nullable one, so `union<null, U?>` is `U?`.
+      i32 alternatives = 0;
+      for (i32 i = 0; i < typeArgs.len(); i++) { if (!isNullTy(src, lx, typeArgs[i])) { alternatives++; } }
+      bool guards = typeArgs.len() > 0 && !(spelled == "union" && alternatives < 2);
       if (guards) { ev.guards = ev.guards + 1; }
       for (i32 i = 0; i < typeArgs.len(); i++) {
         args[i] = evTyName(ev, cx, fi, typeArgs[i]);
@@ -2508,6 +2511,14 @@ export string evTyName(Ev ev, Decls cx, i32 fi, Ty t) {
       ev.unsupported("this kind of type inside a computed type");
       return "";
     }
+  }
+}
+
+/** Whether written type `t` is `null`. */
+bool isNullTy(u8[] src, Lexed lx, Ty t) {
+  match (t.kind) {
+    Named(tok, typeArgs): { return typeArgs.len() == 0 && tokText(src, lx, tok) == "null"; }
+    default: { return false; }
   }
 }
 
@@ -2563,6 +2574,7 @@ export string evalTypeDecl(Ev ev, Decls cx, i32 d, string[] args) {
         ev.bindType(tokText(cx.srcOf(fi), cx.lexOf(fi), typeParams[i]), i < args.len() ? args[i] : "");
       }
       pushDemand(ev, "type " + name);
+      i32 guardsAtEntry = ev.guards;
       if (alias is not null) {
         out = evTyName(ev, cx, fi, alias!);
       } else {
@@ -2587,8 +2599,44 @@ export string evalTypeDecl(Ev ev, Decls cx, i32 d, string[] args) {
       ev.tpCount = tpMark;
       ev.depth = ev.depth - 1;
       if (ev.typeDepth > 0) { ev.typeDepth = ev.typeDepth - 1; }
+      // **A recursive type is spelled by its name inside a guarding layer** (spec/next ch18
+      // `§wac-union-recursive-guard-e4vnb4j`): its expansion holds the name, so `Box<A>` written
+      // anywhere is the `Box<A>` inside `A`, not a `Box` of a one-level unfolding. Only the outermost
+      // use is unfolded, and `unfoldTypeName` unfolds a named one where a reader needs its shape.
+      if (guardsAtEntry > 0 && args.len() == 0 && out != name && mentionsTypeWord(out, name)) { out = name; }
     }
     default: { }
   }
   return out;
+}
+
+/** What the recursive type named `name`, as file `fi` sees it, unfolds to once — or "" for no such type. */
+export string unfoldTypeName(Ev ev, Decls cx, i32 fi, string name) {
+  i32 td = typeDeclAt(cx, name, fi);
+  if (td < 0) { return ""; }
+  i32 savedGuards = ev.guards;
+  ev.guards = 0;
+  string out = evalTypeDecl(ev, cx, td, string[]());
+  ev.guards = savedGuards;
+  return out;
+}
+
+/** Whether type spelling `t` names `word` as a whole type name — `A` in `Box<A>`, not in `Abc`. */
+bool mentionsTypeWord(string t, string word) {
+  i32 at = 0;
+  while (at <= t.len() - word.len()) {
+    i32 k = t.slice(at, t.len()).indexOf(word);
+    if (k < 0) { return false; }
+    i32 s0 = at + k;
+    i32 e0 = s0 + word.len();
+    bool before = s0 == 0 || !isTypeWordByte(t.toBytes()[s0 - 1]);
+    bool after = e0 >= t.len() || !isTypeWordByte(t.toBytes()[e0]);
+    if (before && after) { return true; }
+    at = s0 + 1;
+  }
+  return false;
+}
+
+bool isTypeWordByte(u8 b) {
+  return (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 || b == 64;
 }
