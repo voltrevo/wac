@@ -45,6 +45,7 @@ import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, 
          manifestWire } from "../../wacc/src/api.wac";
 import { Built } from "../../wacc/src/emit.wac";
 import { Pruned } from "../../wacc/src/reach.wac";
+import { ProgramGraph, programGraph } from "../../wacc/src/program.wac";
 import { field, linesOf } from "../../wacc/src/text.wac";
 import { cellAt, cells, hollowWhy, manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
@@ -1374,6 +1375,16 @@ export i32 main(Core core, Cli cli) {
   string[] paths = exactly(src.paths, src.n);
   string[] texts = exactly(src.texts, src.n);
   Res res = resOf(src);
+  // **Building a program gives `main` its contract** — spec/next ch07 — and, for a `main` the hosts
+  // cannot call as written, the adapter they can. `compile` makes a plain module and leaves it alone.
+  if (cmd == "build" || cmd == "run") {
+    ProgramGraph pg = programGraph(paths, texts, entry);
+    if (pg.why != "") {
+      core.warn("wacc: cannot build " + entry + " as a program — " + pg.why);
+      return 1;
+    }
+    texts = pg.sources;
+  }
 
   // **The artefact this build would write, if it has been written before.** `issues/system/0204`:
   // `wac build` compiled from source every time, and the box tests that build an application and run

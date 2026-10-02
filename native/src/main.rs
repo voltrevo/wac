@@ -96,6 +96,7 @@ struct PendingHooks {
 enum Cap {
     /// `Core.askInterrupt` — nothing here owns a keyboard, so it is always "no". See below.
     Interrupted,
+    Exit,
     /// `Cli.load`, `Cli.call`, `Cli.unload` — a loaded module. `issues/system/0240c`.
     Load,
     Call,
@@ -444,6 +445,8 @@ struct Host {
     /// Monotonic zero, so `monotonicNanos` measures from this program's start rather than the epoch.
     started: std::time::Instant,
     exit: i32,
+    /// The status `Core.exit` asked for, set before it unwinds the program to `main`'s call.
+    exit_request: Option<i32>,
 }
 
 impl Host {
@@ -469,6 +472,7 @@ impl Host {
             frames: Vec::new(),
             started: std::time::Instant::now(),
             exit: 0,
+            exit_request: None,
         }
     }
 
@@ -1213,6 +1217,9 @@ fn enter(
     // trapping — after one there is no code left to run — and `$trap$message` hands it back once the trap
     // has unwound. Empty for an engine trap, which writes nothing. `issues/lang/0147`.
     if let Err(e) = main.call(&mut *store, &args, &mut out) {
+        if let Some(code) = store.data_mut().exit_request.take() {
+            return Ok(code);
+        }
         let said = trap_message(&mut *store, &instance).unwrap_or_default();
         if said.is_empty() {
             return Err(e);
@@ -1467,6 +1474,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "recv") => Cap::Recv,
         ("Cli", "send") => Cap::Send,
         ("Core", "askInterrupt") => Cap::Interrupted,
+        ("Core", "exit") => Cap::Exit,
         ("Cli", "closeSocket") => Cap::CloseSocket,
         ("Cli", "closeSend") => Cap::CloseSend,
         ("Cli", "bindDatagram") => Cap::BindDatagram,
@@ -1523,6 +1531,16 @@ fn dispatch(
     let arg = |i: usize| -> Val { params.get(i).cloned().unwrap_or(Val::I32(0)) };
 
     match cap {
+        // **End the program now** (spec/next ch07 `sys.exit`): an error unwinds its frames to the call
+        // of `main`, which reads the request and answers it as the status.
+        Cap::Exit => {
+            let code = match params.get(1) {
+                Some(Val::I32(n)) => *n,
+                _ => 1,
+            };
+            caller.data_mut().exit_request = Some(code);
+            return Err(wasmtime::Error::msg("the program exited"));
+        }
         Cap::Log => {
             let mut bytes = read_string(caller, &params[1])?;
             // The newline `log` adds. Added here rather than at the terminal so that a captured frame

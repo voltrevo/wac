@@ -86,7 +86,7 @@
 // never be converted into this one. See wac's `design/0001`. (That reason was written as "with no
 // closures in the language", which is both out of date and never the reason: two declarations of a
 // shape are two types whatever a funcref can capture.)
-import { Continuation, Queue, Read, Ticket, TicketBase, __wacScheduleTarget, __wacSetScheduleTarget } from "core";
+import { Continuation, Queue, Read as Chunk, Result, Ticket, TicketBase, __wacScheduleTarget, __wacSetScheduleTarget } from "core";
 
 /** A handler slot that does nothing, so a table can be filled before anything is registered. */
 void schedIdle(i32 id) { }
@@ -910,6 +910,12 @@ export struct Core {
   fn<i32()> askInterrupt;
 
   /**
+   * End the program now with this status, abandoning whatever is left — `Sys.exit` (spec/next ch07).
+   * Does not return: the host unwinds the program to the call of its `main`.
+   */
+  fn<void(i32)> exit;
+
+  /**
    * The world\'s scheduler — where a continuation registered with `then` waits its turn.
    *
    * **A program never names this.** It reaches it through `delay`, `drain` and `dropAll` below, which
@@ -988,12 +994,19 @@ export struct Core {
    * on. Answers how many host answers it dispatched, which is what it answered before continuations
    * were queued here. `millis` below zero is no bound.
    */
-  i32 drainWithin(this, i32 millis) {
+  i32 drainWithin(this, i32 millis) { return this.drainUntil(millis, null); }
+
+  /**
+   * `drainWithin`, stopping as soon as `until` has settled — how a program's `async` `main` is run
+   * with its unawaited work alongside (`Sys.__wacSettle`). Null is no such stop.
+   */
+  i32 drainUntil(this, i32 millis, TicketBase? until) {
     bool bounded = millis >= 0;
     i64 deadline = 0 as i64;
     if (bounded) { deadline = this.monotonicNanos().wait() + millisToNanos(millis); }
     i32 ran = 0;
     while (true) {
+      if (until is not null && until!.done) { return ran; }
       Queue<Continuation> later;
       bool moved = false;
       while (true) {
@@ -1072,6 +1085,7 @@ export struct Core {
     fn<void(string)> warn,
     fn<i32(i32[], i32)> waitAny,
     fn<i32()> askInterrupt,
+    fn<void(i32)> exit,
     Sched sched
   ) {
     // **Linked here, once, rather than by every caller.** These four are the only capabilities
@@ -1087,7 +1101,7 @@ export struct Core {
                 () => monotonicNanos().on(sched),
                 (i32 ms) => sleepMillis(ms).on(sched),
                 (i32 n) => randomBytes(n).on(sched),
-                log, warn, waitAny, askInterrupt, sched);
+                log, warn, waitAny, askInterrupt, exit, sched);
   }
 }
 
@@ -2140,7 +2154,7 @@ export struct Cli {
    * `stat(path)`, `recv(handle)`, `connect(host)`. Those are the ones a program has reason
    * to have several of at once.
    */
-  fn<Read()> readChunk;
+  fn<Chunk()> readChunk;
   /**
    * Why the last `write` or `writeErr` answered false: the empty string when the other end simply
    * went away, and the host's message when the write itself failed.
@@ -2206,7 +2220,7 @@ export struct Cli {
   fn<Pending<Socket>(string, i32)> connect;
   fn<Pending<Socket>(string, i32)> listen;
   fn<Pending<Socket>(i32)> accept;
-  fn<Pending<Read>(i32)> recv;
+  fn<Pending<Chunk>(i32)> recv;
   fn<Pending<bool>(i32, u8[])> send;
   fn<void(i32)> closeSocket;
 
@@ -2642,13 +2656,13 @@ export struct Cli {
     fn<Pending<Change>(string, bool)> setExecutable,
     fn<Pending<Change>(string, i32)> chmod,
     fn<Pending<Change>(string)> openInput,
-    fn<Read()> readChunk,
+    fn<Chunk()> readChunk,
     fn<Pending<string>()> outputError,
     fn<Pending<Change>(string)> openOutput,
     fn<Pending<Socket>(string, i32)> connect,
     fn<Pending<Socket>(string, i32)> listen,
     fn<Pending<Socket>(i32)> accept,
-    fn<Pending<Read>(i32)> recv,
+    fn<Pending<Chunk>(i32)> recv,
     fn<Pending<bool>(i32, u8[])> send,
     fn<void(i32)> closeSocket,
     fn<void(i32)> closeSend,
@@ -2695,4 +2709,117 @@ export struct Cli {
       load, call, unload, validated, sched
     );
   }
+}
+
+// ── Sys ─────────────────────────────────────────────────────────────────────────────────────────
+
+/** What a `Sys` may be narrowed to — spec/next ch44. */
+export enum Grant { Read, Write, Listen, Spawn }
+
+/**
+ * The authority a program is handed on its `main` (spec/next ch07, ch44): every effect on the world is
+ * a method reached through one.
+ *
+ * **Built on `Core` and `Cli`**, the two faces the hosts construct, and holding them is how a program
+ * reaches the parts of the host ch44 has not yet given a `Sys` form — directories, processes, the
+ * environment, the terminal, datagrams (its "Open" section). That is also the limit of `run`'s
+ * narrowing: the methods here refuse what `held` lacks, and a callee reaching past them to `cli`
+ * holds what the host granted the program.
+ */
+export struct Sys {
+  Core core;
+  Cli cli;
+  /** What this `Sys` holds, as `GRANT_*` bits. */
+  i32 held;
+
+  /** The `Sys` a program's `main` is handed. Only the program adapter calls it (`wacc/src/program.wac`). */
+  Sys __wacOf(Core core, Cli cli) { return Sys(core, cli, GRANT_ALL()); }
+
+  /** The program's arguments, in order, without its own name. Needs no grant. */
+  string[] args(const this) {
+    i32 n = this.cli.argCount().wait();
+    string[] out = string[].defaulted(n);
+    for (i32 i = 0; i < n; i++) { out[i] = string.fromBytes(this.cli.arg(i).wait()); }
+    return out;
+  }
+
+  /** A line on the program's output. */
+  void log(const this, string line) { this.core.log(line); }
+
+  /** A line on the program's diagnostic output. */
+  void warn(const this, string line) { this.core.warn(line); }
+
+  /** Wall-clock time, in milliseconds since the epoch. */
+  Ticket<i64> nowMillis(const this) { return this.core.nowMillis().ticket(); }
+
+  /** Nanoseconds from an arbitrary origin, never decreasing within a run. */
+  Ticket<i64> monotonicNanos(const this) { return this.core.monotonicNanos().ticket(); }
+
+  /** Settles after at least `ms` milliseconds. */
+  async void sleepMillis(const this, i32 ms) { await this.core.sleepMillis(ms).ticket(); }
+
+  /** `n` random bytes. */
+  Ticket<u8[]> randomBytes(const this, i32 n) { return this.core.randomBytes(n).ticket(); }
+
+  /** A file's bytes. A missing file, a directory or a missing grant is an `Err`. */
+  async Result<u8[], string> readFile(const this, string path) {
+    if ((this.held & GRANT_READ) == 0) { return Result.Err("reading \{path} needs the read grant"); }
+    FileResult f = await this.cli.readFile(path).ticket();
+    if (!f.ok) { return Result.Err(f.error); }
+    return Result.Ok(f.bytes);
+  }
+
+  /** Write `bytes` to a file, replacing it. A missing grant is an `Err`. */
+  async Result<void, string> writeFile(const this, string path, u8[] bytes) {
+    if ((this.held & GRANT_WRITE) == 0) { return Result.Err("writing \{path} needs the write grant"); }
+    Change c = await this.cli.writeFile(path, bytes).ticket();
+    if (!c.ok()) { return Result.Err(c.message); }
+    return Result.Ok();
+  }
+
+  /** Call `f` with a `Sys` holding at most `grants` — and never more than this one holds. */
+  i32 run(const this, fn<i32(Sys)> f, Grant[] grants) {
+    i32 mask = 0;
+    for (Grant g in grants) { mask = mask | grantBit(g); }
+    return f(Sys(this.core, this.cli, mask & this.held));
+  }
+
+  /** End the program now with status `code`, abandoning whatever is left. */
+  never exit(const this, i32 code) {
+    this.core.exit(code);
+    trap;
+  }
+
+  /**
+   * Run the continuations nobody awaited. Work that can never run — a continuation waiting on a ticket
+   * nothing will settle — leaves this waiting too, and a program waiting on nothing that can move is hung.
+   */
+  async void drain(this) {
+    this.core.drain();
+    if (this.core.outstanding() > 0) {
+      Ticket<void> stuck;
+      await stuck;
+    }
+  }
+
+  /**
+   * Run the program until `t` settles, with the work it left unawaited alongside — the program
+   * adapter's wait on an `async` main. False, having said so, when nothing can move it.
+   */
+  bool __wacSettle(this, TicketBase t) {
+    this.core.drainUntil(0 - 1, t);
+    if (!t.done) { this.warn("main cannot finish: nothing that can run will settle what it waits on"); }
+    return t.done;
+  }
+
+  /** `main` answered an `Err`: say why, and exit 1. */
+  i32 __wacFailed(const this, string why) {
+    this.warn(why == "" ? "main answered an error" : "error: " + why);
+    return 1;
+  }
+}
+
+/** The `GRANT_*` bit a `Grant` names. */
+i32 grantBit(Grant g) {
+  return match (g) { Read: GRANT_READ, Write: GRANT_WRITE, Listen: GRANT_NET, Spawn: GRANT_RUN };
 }

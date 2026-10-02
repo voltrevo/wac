@@ -1,0 +1,204 @@
+// A program's entry, as a host starts it — spec/next ch07.
+//
+// To the language `main` is an ordinary name. Building a *program* is what gives it a contract: no
+// parameters or one `Sys`, answering `void`, `never`, `i32` or a `Result` of `void` or `i32`, any of them
+// `async`. The hosts start a program by calling `main(Core, Cli)` and reading an `i32`, so a `main` in any
+// other permitted shape is renamed and the entry gains an adapter in the host's: it makes the `Sys`,
+// settles an `async` answer with the program's unawaited work running alongside, and turns a `Result`
+// into a status.
+//
+// Text in, text out, so every route that builds a program — `wac build`, `wac run`, the spec probe —
+// gets the same entry by calling one function before it compiles.
+
+import { Lexed, lex, tokenStride } from "./lex.wac";
+import { P, parseProgram } from "./parse.wac";
+import { Decl, DeclKind, ImportItem, Param, Program, Ty, TyKind } from "./ast.wac";
+import { tokenTextOf } from "./emit.wac";
+
+export struct ProgramEntry {
+  /** Why this entry cannot be built as a program, or `""`. */
+  string why;
+  /** The entry's source as a build compiles it: unchanged, or renamed with the adapter appended. */
+  string source;
+}
+
+// What `main` answers, once `async` is set aside — numbers, since an enum has no `==`.
+i32 NOTHING() { return 0; }
+i32 NEVER() { return 1; }
+i32 STATUS() { return 2; }
+i32 OK_NOTHING() { return 3; }
+i32 OK_STATUS() { return 4; }
+
+/** `text`, the entry of a program build, checked for `main`'s shape and given the adapter it needs. */
+export ProgramEntry programEntry(string text) {
+  u8[] src = text.toBytes();
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed);
+  Program prog = parseProgram(p);
+  // A file that does not parse is the checker's to report, and one with no `main` is a library: a
+  // named export is what `wac run` calls in it.
+  if (p.errorCount > 0) { return ProgramEntry("", text); }
+  bool haveCore = false;
+  bool haveCli = false;
+  bool haveSys = false;
+  bool haveTicket = false;
+  for (i32 di = 0; di < prog.decls.len(); di++) {
+    match (prog.decls[di].kind) {
+      Import(pathTok, prefixTok, items): {
+        for (i32 ii = 0; ii < items.len(); ii++) {
+          ImportItem it = items[ii];
+          string local = tokenTextOf(src, lexed, it.aliasTok);
+          if (local == "Core") { haveCore = true; }
+          if (local == "Cli") { haveCli = true; }
+          if (local == "Sys") { haveSys = true; }
+          if (local == "Ticket") { haveTicket = true; }
+        }
+      }
+      default: { }
+    }
+  }
+  for (i32 di = 0; di < prog.decls.len(); di++) {
+    match (prog.decls[di].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (!exported || tokenTextOf(src, lexed, nameTok) != "main") { continue; }
+        return shaped(text, src, lexed, nameTok, returnType, params, isAsync,
+                      haveCore, haveCli, haveSys, haveTicket);
+      }
+      default: { }
+    }
+  }
+  return ProgramEntry("", text);
+}
+
+ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnType, Param[] params,
+                    bool isAsync, bool haveCore, bool haveCli, bool haveSys, bool haveTicket) {
+  string[] pts = string[].defaulted(params.len());
+  for (i32 i = 0; i < params.len(); i++) { pts[i] = spell(src, lexed, params[i].type); }
+  bool takesSys = pts.len() == 1 && pts[0] == "Sys";
+  // **The world `main` was handed before `Sys`**, which the repository's programs still take. Accepted
+  // as it is, adapter-free, until they have moved: the hosts call exactly this shape.
+  bool legacy = (pts.len() == 1 && pts[0] == "Core") || (pts.len() == 2 && pts[0] == "Core" && pts[1] == "Cli");
+  if (pts.len() > 0 && !takesSys && !legacy) {
+    return ProgramEntry("a program's `main` takes no parameters or one `Sys`, and this one takes ("
+                        + joined(pts) + ")", text);
+  }
+  string ret = spell(src, lexed, returnType);
+  i32 a = NOTHING();
+  if (ret == "void") { a = NOTHING(); }
+  else if (ret == "never") { a = NEVER(); }
+  else if (ret == "i32") { a = STATUS(); }
+  else if (ret == "Result<void>" || startsWith(ret, "Result<void, ")) { a = OK_NOTHING(); }
+  else if (ret == "Result<i32>" || startsWith(ret, "Result<i32, ")) { a = OK_STATUS(); }
+  else {
+    return ProgramEntry("a program's `main` answers `void`, `never`, `i32`, or a `Result` of `void` or `i32`, "
+                        + "and this one answers `" + ret + "`", text);
+  }
+  // A `main` the hosts can already call is left alone.
+  bool plain = !takesSys && !isAsync && (a == NOTHING() || a == NEVER() || a == STATUS());
+  if (plain || legacy) { return ProgramEntry("", text); }
+
+  // `export` out and `__wacMain` in, so the module's `main` is the adapter's. Blanked rather than cut,
+  // so every position before the name keeps its column.
+  i32 at = tokStart(lexed, nameTok);
+  i32 ex = exportBefore(src, lexed, nameTok);
+  string head = ex >= 0 ? text.slice(0, ex) + "      " + text.slice(ex + 6, at) : text.slice(0, at);
+  string out = head + "__wacMain" + text.slice(at + 4, text.len());
+
+  bool showsErr = ret == "Result<void>" || ret == "Result<i32>" || endsWith(ret, ", string>");
+  string call = "__wacMain(" + (takesSys ? "__wacSys" : "") + ")";
+  string body = "";
+  if (isAsync) {
+    body = body + "  Ticket<" + ret + "> __wacT = " + call + ";\n"
+         + "  if (!__wacSys.__wacSettle(__wacT)) { return 1; }\n";
+    call = "__wacT.value()";
+  }
+  if (a == NOTHING()) { body = body + "  " + call + ";\n  return 0;\n"; }
+  else if (a == NEVER()) { body = body + "  " + call + ";\n"; }
+  else if (a == STATUS()) { body = body + "  return " + call + ";\n"; }
+  else {
+    string ok = a == OK_STATUS() ? "Ok(v): { return v; }" : "Ok(_): { return 0; }";
+    string err = showsErr ? "Err(e): { return __wacSys.__wacFailed(\"\\{e}\"); }"
+                          : "Err(_): { return __wacSys.__wacFailed(\"\"); }";
+    body = body + "  match (" + call + ") {\n    " + ok + "\n    " + err + "\n  }\n";
+  }
+
+  string imports = "";
+  string names = (haveCore ? "" : "Core, ") + (haveCli ? "" : "Cli, ") + (haveSys ? "" : "Sys, ");
+  if (names != "") { imports = imports + "import { " + names.slice(0, names.len() - 2) + " } from \"std\";\n"; }
+  if (isAsync && !haveTicket) { imports = imports + "import { Ticket } from \"core\";\n"; }
+  out = out + "\n\n// wac:program — the entry as a host starts it (packages/wacc/src/program.wac).\n" + imports
+      + "export i32 main(Core __wacCore, Cli __wacCli) {\n"
+      + "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n" + body + "}\n";
+  return ProgramEntry("", out);
+}
+
+/** A type as written, with `, ` between arguments. */
+string spell(u8[] src, Lexed lexed, Ty t) {
+  match (t.kind) {
+    Prim(tok): { return tokenTextOf(src, lexed, tok); }
+    Named(tok, args): {
+      string s = tokenTextOf(src, lexed, tok);
+      if (args.len() == 0) { return s; }
+      string[] ws = string[].defaulted(args.len());
+      for (i32 i = 0; i < args.len(); i++) { ws[i] = spell(src, lexed, args[i]); }
+      return s + "<" + joined(ws) + ">";
+    }
+    Arr(elem): { return spell(src, lexed, elem) + "[]"; }
+    Nullable(inner): { return spell(src, lexed, inner) + "?"; }
+    Funcref(r, ps): {
+      string[] ws = string[].defaulted(ps.len());
+      for (i32 i = 0; i < ps.len(); i++) { ws[i] = spell(src, lexed, ps[i]); }
+      return "fn<" + spell(src, lexed, r) + "(" + joined(ws) + ")>";
+    }
+    TupleOf(ms): {
+      string[] ws = string[].defaulted(ms.len());
+      for (i32 i = 0; i < ms.len(); i++) { ws[i] = spell(src, lexed, ms[i]); }
+      return "(" + joined(ws) + ")";
+    }
+  }
+}
+
+string joined(string[] xs) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i > 0 ? ", " : "") + xs[i]; }
+  return out;
+}
+
+i32 tokStart(Lexed lexed, i32 t) { return lexed.tokens[t * tokenStride() + 1]; }
+
+/** The byte offset of the `export` that begins the declaration whose name is `nameTok`, or -1. */
+i32 exportBefore(u8[] src, Lexed lexed, i32 nameTok) {
+  for (i32 t = nameTok - 1; t >= 0; t--) {
+    string s = tokenTextOf(src, lexed, t);
+    if (s == "export") { return tokStart(lexed, t); }
+    if (s == ";" || s == "}" || s == "{") { return -1; }
+  }
+  return -1;
+}
+
+bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
+
+bool endsWith(string s, string p) { return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p; }
+
+/**
+ * `programEntry` applied to the entry among `sources` — what a program build compiles. `why` is the
+ * refusal, if there is one, and `source` is unused: the sources are in `sources`.
+ */
+export ProgramGraph programGraph(string[] paths, string[] sources, string entry) {
+  string[] out = string[].defaulted(sources.len());
+  string why = "";
+  for (i32 i = 0; i < sources.len(); i++) {
+    out[i] = sources[i];
+    if (i < paths.len() && paths[i] == entry) {
+      ProgramEntry pe = programEntry(sources[i]);
+      out[i] = pe.source;
+      why = pe.why;
+    }
+  }
+  return ProgramGraph(why, out);
+}
+
+export struct ProgramGraph {
+  string why;
+  string[] sources;
+}

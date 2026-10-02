@@ -690,7 +690,10 @@ bool variantUninhabited(C c, string world, string variant, i32 arity) {
 }
 
 /** Whether `e` has type `never`: a call that does not return. */
-bool isNeverExpr(C c, Expr e) { return typeOfExpr(c, e) == "never"; }
+bool isNeverExpr(C c, Expr e) {
+  if (c.neverAt.indexOf(";" + countText(e.line) + ":" + countText(e.col) + ";") >= 0) { return true; }
+  return typeOfExpr(c, e) == "never";
+}
 
 // ── Definite assignment — spec/next ch08 ─────────────────────────────────────────────────────────
 //
@@ -2738,6 +2741,11 @@ export struct C {
    * each body, as `lambdaReturn` is.
    */
   string tryReturn;
+  /**
+   * `;line:col;` of each expression statement checked as `never` — kept because whether a body always
+   * leaves is asked after its scopes are gone, when `k.stop()` no longer knows what `k` is.
+   */
+  string neverAt;
   /** What a `yield` in the function being checked yields, or `""` outside a generator (ch36). */
   string yieldType;
 
@@ -2848,7 +2856,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "");
+             string[](), string[](), "", "", "");
   }
 
   /**
@@ -8402,6 +8410,10 @@ bool constExpr(C c, Expr e) {
           // …unless the method can only be handing back something it built out of copies, which
           // reaches nothing the receiver holds [issue 0060].
           i32 mi = c.methodAt(typeOfExpr(c, obj), tokenText(c, nameTok));
+          // A **funcref field** is not the receiver's method: what it answers is the function's, which
+          // the receiver handed nothing to — `this.core.nowMillis()` in a `const this` method is a
+          // fresh ticket, not a piece of `this`.
+          if (mi < 0 && c.fieldType(templateOf(typeOfExpr(c, obj)), tokenText(c, nameTok)) != "") { return false; }
           if (mi < 0) { return true; }
           return !returnsOnlyFresh(c, c.methodBodyAt(mi));
         }
@@ -10678,6 +10690,7 @@ void checkStmt(C c, Stmt s, Ty want) {
     }
     ExprStmt(expr): {
       checkExpr(c, expr);
+      if (typeOfExpr(c, expr) == "never") { c.neverAt = c.neverAt + ";" + countText(expr.line) + ":" + countText(expr.col) + ";"; }
       // `5;` — a value nothing reads and nothing types (`§wac-literal-no-fallback-9pffhd9`).
       if (isNumericLiteral(c, expr)) { c.report(errUntypedLiteral(), expr.line, expr.col); }
     }

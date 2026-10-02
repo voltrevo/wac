@@ -54,6 +54,7 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 | | `waitAny` | — |
 | | `delay`, `drain`, `drainFor`, `dropAll` | — (work that finishes later — see below) |
 | | `askInterrupt` | — (only a host that owns a keyboard answers yes) |
+| | `exit` | — (ends the program with a status; `Sys.exit`) |
 | `Cli` | `argCount`, `arg`, `env` | — |
 | | `readStdin`, `write`, `writeErr` | — |
 | | `openInput`, `readChunk`, `outputError` | `--allow-read` for a file |

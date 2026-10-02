@@ -359,6 +359,8 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
     // in the *middle* of `Core` shifts every field after it, and a runtime with its own idea of the
     // order would build a `Core` whose `log` is the previous field's function.
     "askInterrupt",
+    // `Sys.exit`'s capability, appended for the same reason.
+    "exit",
     // The scheduler, and the one field here a host does not *implement* — it builds it by calling the
     // module's own `Sched.create` and hands it back, which is how a program is given somewhere for
     // its continuations to wait without any host knowing what a continuation is.

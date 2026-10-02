@@ -60,6 +60,7 @@ Core scriptedClock(Sched sched, i32[] script, i32[] at, i32[] asked, i32[] asked
       return which;
     },
     () => { trap; },
+    (i32 code) => { trap; },
     sched,
   );
 }

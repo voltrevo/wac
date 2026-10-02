@@ -13,7 +13,7 @@
 import { bridgeOf, newBridge } from "./layout.ts";
 import { serveHostCalls } from "./respond.ts";
 import { browserWorld, type BrowserWorldOptions, type Dom } from "./browser.ts";
-import { cliOf, coreOf, type PageClasses, pageOf, worldFor } from "./provider.ts";
+import { cliOf, coreOf, type PageClasses, pageOf, WacExit, worldFor } from "./provider.ts";
 import type { AppModule } from "./entry.ts";
 
 /** `child` is set by `spawnChild`: a spawned program runs `main`, never `page`. */
@@ -69,6 +69,7 @@ export function runAsWorkerBrowser(load: () => Promise<AppModule>): void {
           : app.main(...worldFor(b, app as unknown as Record<string, unknown>));
         scope.postMessage({ ok: true, code });
       } catch (e) {
+        if (e instanceof WacExit) { scope.postMessage({ ok: true, code: e.code }); return; }
         scope.postMessage({
           ok: false,
           error: e instanceof Error ? `${e.message}\n${e.stack ?? ""}` : String(e),

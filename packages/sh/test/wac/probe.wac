@@ -48,12 +48,13 @@ void fakeLog(string s) {}
 void fakeWarn(string s) {}
 /** Nothing here has a keyboard, so nobody has ever asked to interrupt. */
 i32 fakeInterrupt() { return 0; }
+void fakeExit(i32 code) { trap; }
 
 Core fakeCore() {
   // The scheduler is the one thing here that is not faked: it is ordinary wac state, so a real one
   // costs nothing and behaves as the world's does.
   return Core.of(fakeNow, fakeMonotonic, fakeSleep, fakeRandom, fakeLog, fakeWarn,
-                 fakeWaitAny, fakeInterrupt, Sched.create());
+                 fakeWaitAny, fakeInterrupt, fakeExit, Sched.create());
 }
 
 // ── Cli ───────────────────────────────────────────────────────────────────────

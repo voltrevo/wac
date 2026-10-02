@@ -2988,10 +2988,19 @@ export struct Env {
    * reference in every file that imported this one — is unchanged. A second file declaring the same
    * name gets a key nothing else can spell.
    */
-  string declare(this, string name, i32 f, bool exported) {
-    bool taken = false;
+  string declare(this, string name, i32 f, bool exported) { return this.declareKeyed(name, f, exported, false); }
+
+  /**
+   * `declare`, and with `stepAside` set the name never takes the bare key — a variant that some struct
+   * or enum of the program is also called, which the type must keep: `Grant.Read` in std and core's
+   * `Read` are two things, and the hosts ask for core's by its own name.
+   */
+  string declareKeyed(this, string name, i32 f, bool exported, bool stepAside) {
+    bool taken = stepAside;
+    // **The bare key**, not the bare name: a variant that yielded holds `Read@n`, which leaves `Read`
+    // to the type declared after it.
     for (i32 i = 0; i < this.declCount; i++) {
-      if (this.declNames[i] == name) { taken = true; }
+      if (this.declKeys[i] == name) { taken = true; }
     }
     string key = name;
     if (taken) { key = name + "@" + numText(f); }
@@ -15604,6 +15613,25 @@ void scanTokenTypes(Env env, u8[] src, Lexed lexed) {
 // Split so a driver can run **each pass across every file** rather than every pass across one file.
 // Wrapping the old function in a loop over files compiles and produces a compiler that traps.
 
+/** Whether some file of the program declares a struct or an enum called `name`. */
+bool typeNamedAnywhere(Env env, string name) {
+  for (i32 d = 0; d < env.mergedDecls.len(); d++) {
+    i32 fi = d < env.mergedFiles.len() ? env.mergedFiles[d] : 0 - 1;
+    if (fi < 0 || fi >= env.fileSrcs.len()) { continue; }
+    i32 tok = 0 - 1;
+    match (env.mergedDecls[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): { tok = nameTok; }
+      EnumDecl(nameTok, variants, exported, methods, typeParams): { tok = nameTok; }
+      default: { }
+    }
+    if (tok < 0) { continue; }
+    Lexed? lx = fi < env.fileLexeds.len() ? env.fileLexeds[fi] : null;
+    if (lx is null) { continue; }
+    if (tokenTextOf(env.fileSrcs[fi], lx!, tok) == name) { return true; }
+  }
+  return false;
+}
+
 /** Pass 1: structs, their fields and methods. */
 void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
   // Structs first of all: their fields are what a construction and every access are about, and a
@@ -15668,8 +15696,9 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         i32 slot = 1;
         for (i32 v = 0; v < variants.len(); v++) {
           // A variant is reachable exactly when its enum is.
-          string vname = env.declare(tokenTextOf(src, lexed, variants[v].nameTok),
-                                     fileFor(env, lexed, variants[v].nameTok, file), exported);
+          string vtext = tokenTextOf(src, lexed, variants[v].nameTok);
+          string vname = env.declareKeyed(vtext, fileFor(env, lexed, variants[v].nameTok, file), exported,
+                                          typeNamedAnywhere(env, vtext));
           if (env.variantCount >= env.variantNames.len()) { env.ranOut("enum variants"); }
           if (env.variantCount < env.variantNames.len()) {
             env.variantNames[env.variantCount] = vname;

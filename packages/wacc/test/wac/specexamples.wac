@@ -20,6 +20,8 @@ import { diagnoseBuildIn, pruneForBuild, diagnoseGraphIn, wireHasErrors, blocked
 import { renderDiagnostics } from "../../src/render.wac";
 import { Res } from "../../src/path.wac";
 import { Pruned } from "../../src/reach.wac";
+import { ProgramGraph, programGraph } from "../../src/program.wac";
+import { stdSource } from "../../src/coretext.wac";
 
 /** One thing a fence says must happen. */
 export struct ExExpect {
@@ -397,7 +399,28 @@ string meets(Cli cli, string scratch, ExFence fence, ExExpect x, string[] givenP
              i32 id) {
   // **What a build compiles**: the graph reachability retains — spec/next ch05. A build in the
   // command does exactly this, so the probe judges the program the command would build.
-  Pruned pruned = pruneForBuild(givenPaths, givenSources, givenRes, fence.entry);
+  // **Building a program** gives `main` its contract — spec/next ch07 — and its adapter. A case that
+  // runs or names a build is one; `answers` calls an export of a plain module.
+  // **`std` as a build reads it**: `wac` gathers the carried text under the path `std`, so the checker
+  // knows its types — without it `Sys` was unknown here and every rule about it went silent.
+  bool hasStd = false;
+  for (i32 i = 0; i < givenPaths.len(); i++) { if (givenPaths[i] == "std") { hasStd = true; } }
+  if (!hasStd) {
+    Vec<string> gp = Vec.create();
+    Vec<string> gs = Vec.create();
+    for (i32 i = 0; i < givenPaths.len(); i++) { gp.push(givenPaths[i]); gs.push(givenSources[i]); }
+    gp.push("std");
+    gs.push(stdSource());
+    givenPaths = gp.toArray();
+    givenSources = gs.toArray();
+  }
+  string[] programSources = givenSources;
+  if (x.command != "" || x.kind == "exits" || x.kind == "prints") {
+    ProgramGraph pg = programGraph(givenPaths, givenSources, fence.entry);
+    if (pg.why != "") { return x.kind == "refused" ? "" : "refused: " + pg.why; }
+    programSources = pg.sources;
+  }
+  Pruned pruned = pruneForBuild(givenPaths, programSources, givenRes, fence.entry);
   string[] paths = pruned.paths;
   string[] sources = pruned.sources;
   Res res = pruned.res;

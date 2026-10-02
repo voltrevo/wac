@@ -1670,6 +1670,33 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
       if (!typeDeclaredElsewhere(paths, sources, lexes, progs, i, tname)) { continue; }
       c.addRename(tname, tname + "#" + numText(i));
     }
+    // **This file's own aliases, in the importer's spelling.** `import { Read as Chunk } from "core"` in
+    // a file whose signatures say `Chunk` hands the importer core's `Read` — one type under whatever
+    // name the importer gave it, or its own name when it gave none — and declaring the signatures as
+    // written made `Chunk` a second type: `Read r = get();` was a mismatch between two spellings of one
+    // declaration.
+    for (i32 d = 0; d < iprog.decls.len(); d++) {
+      match (iprog.decls[d].kind) {
+        Import(ipathTok, iprefixTok, iitems): {
+          string iq = ipathTok < 0 ? "" : tokenTextOf(isrc, ilexed, ipathTok);
+          string itarget = ipathTok < 0 || iq.len() < 2
+            ? corePath()
+            : keyOf(resolveVia(res, paths, paths[i], iq.slice(1, iq.len() - 1)));
+          for (i32 j = 0; j < iitems.len(); j++) {
+            if (iitems[j].nameTok < 0 || iitems[j].aliasTok < 0) { continue; }
+            string orig = tokenTextOf(isrc, ilexed, iitems[j].nameTok);
+            string alias = tokenTextOf(isrc, ilexed, iitems[j].aliasTok);
+            if (alias == orig || c.renamed(alias) != alias) { continue; }
+            string local = orig;
+            for (i32 k = 0; k < n; k++) {
+              if (wantFrom[k] == itarget && wantName[k] == orig) { local = wantAlias[k]; }
+            }
+            c.addRename(alias, local);
+          }
+        }
+        default: { }
+      }
+    }
     declareModule(c, iprog, reach);
     for (i32 k = only.len(); k < reach.len(); k++) {
       // **A name the entry imported is in scope, wherever it came from.** This list is global across

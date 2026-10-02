@@ -142,6 +142,7 @@ impl Manifest {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Cap {
+    Exit,
     Log,
     Warn,
     ArgCount,
@@ -247,6 +248,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "readDir") => Cap::ReadDir,
         ("Cli", "readStdin") => Cap::ReadStdin,
         ("Core", "askInterrupt") => Cap::AskInterrupt,
+        ("Core", "exit") => Cap::Exit,
         ("Cli", "spawn") => Cap::SpawnOther,
         ("Cli", "spawnSelf") => Cap::Spawn,
         ("Cli", "exitCode") => Cap::ExitCode,
@@ -634,6 +636,9 @@ thread_local! {
     static HOST: RefCell<Option<HostState>> = const { RefCell::new(None) };
     /// When this host started, which is what `monotonicNanos` counts from.
     static START: std::time::Instant = std::time::Instant::now();
+    /// **The status `Core.exit` asked for**, set just before it throws. The throw unwinds the program's
+    /// wasm frames to the call of `main`, which reads this to tell an exit from a trap.
+    static EXIT_REQUEST: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1096,8 +1101,9 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // with a message about the host's bookkeeping rather than about anything the caller did. A
     // named export is called with the arguments it declared and never with a world, so the same
     // "nothing will be handed one" reasoning applies.
+    // A `main` that names no world — nothing, or something other than `Core` first — is handed none.
     let main_declares_nothing = match m.exports.iter().find(|e| e.name == "main") {
-        Some(e) => e.params.is_empty(),
+        Some(e) => e.params.first().map_or(true, |p| p != "Core"),
         None => true,
     };
 
@@ -1272,7 +1278,13 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         });
     }
 
-    let main_sig = match m.exports.iter().find(|e| e.name == "main") {
+    // **A `main` that takes something other than a world is an ordinary export** (spec/next ch07,
+    // `§wac-main-ordinary-pnxd9gt`): the module is a library, not a program, and `wac run m.wasm main wac`
+    // calls it by name like any other.
+    let is_world = |ps: &[String]| {
+        ps.is_empty() || (ps.len() == 1 && ps[0] == "Core") || (ps.len() == 2 && ps[0] == "Core" && ps[1] == "Cli")
+    };
+    let main_sig = match m.exports.iter().find(|e| e.name == "main" && is_world(&e.params)) {
         Some(e) => e,
         // **No `main`: the first argument names an export.** `wac run math.wac gcd 48 18`, which
         // spec/cli/wac.md documents and which was only ever implemented in the reference CLI.
@@ -1354,6 +1366,9 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         (out, why)
     };
     let (called, why) = called;
+    if let Some(code) = EXIT_REQUEST.with(|e| e.take()) {
+        return code;
+    }
     let r = match called {
         Some(v) => v,
         None => {
@@ -2183,6 +2198,13 @@ fn dispatch(
     };
 
     match cap {
+        // **End the program now** (spec/next ch07 `sys.exit`): unwind to `main`'s call, abandoning
+        // whatever is left. A throw rather than `process::exit` because a child is a thread here.
+        Cap::Exit => {
+            let code = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(1);
+            EXIT_REQUEST.with(|e| e.set(Some(code)));
+            throw(scope, "the program exited");
+        }
         Cap::Log | Cap::Warn => {
             let text = read_string(scope, args.get(1));
             // The newline `log` adds, added *before* the routing rather than at the terminal, so that

@@ -14,7 +14,7 @@
 import { type Bridge, bridgeOf, newBridge } from "./layout.ts";
 import { serveHostCalls } from "./respond.ts";
 import { denoWorld } from "./deno.ts";
-import { worldFor } from "./provider.ts";
+import { WacExit, worldFor } from "./provider.ts";
 
 /**
  * The generated module of an application.
@@ -294,6 +294,8 @@ async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
         // Dumped for a failed run too: a mutant that makes a program *crash* is killed by whichever
         // test ran it, and that test is exactly the one the attribution needs to know about.
         if (cov !== undefined) dumpCoverage(app, cov);
+        // `Core.exit`: the program ended itself, abandoning what was left — a status, not a failure.
+        if (err instanceof WacExit) { worker.postMessage({ ok: true, code: err.code }); continue; }
         worker.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });
       }
     }

@@ -36,6 +36,7 @@ import { Core, Cli, Exec, Stat, FileResult } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
+import { newestCarried } from "../../../wactest/src/built.wac";
 
 /** One built launcher and its child bundles, built once and reused. */
 struct Fixture {
@@ -114,6 +115,8 @@ bool built(T t, Cli cli, string shared) {
   if (examples > newest) { newest = examples; }
   Stat builder = cli.stat("packages/platform/build.ts").wait();
   if (builder.exists && builder.modifiedMillis > newest) { newest = builder.modifiedMillis; }
+  i64 carried = newestCarried(cli);
+  if (carried > newest) { newest = carried; }
   if (have.exists && have.modifiedMillis > newest) { return true; }
 
   if (!build(t, cli, "packages/tor/src/network.wac", shared + "/network",

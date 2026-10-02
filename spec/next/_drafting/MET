@@ -69,7 +69,14 @@ spec/next/1-programs/05-reachability.md#11
 spec/next/1-programs/05-reachability.md#12
 spec/next/1-programs/07-programs.md#1
 spec/next/1-programs/07-programs.md#2
+spec/next/1-programs/07-programs.md#3
 spec/next/1-programs/07-programs.md#4
+spec/next/1-programs/07-programs.md#5
+spec/next/1-programs/07-programs.md#6
+spec/next/1-programs/07-programs.md#8
+spec/next/1-programs/07-programs.md#10
+spec/next/1-programs/07-programs.md#11
+spec/next/1-programs/07-programs.md#12
 spec/next/1-programs/07-programs.md#13
 spec/next/1-programs/07-programs.md#14
 spec/next/2-types/08-primitives.md#1
@@ -336,6 +343,7 @@ spec/next/6-concurrency/35-tickets-and-await.md#7
 spec/next/6-concurrency/35-tickets-and-await.md#8
 spec/next/6-concurrency/35-tickets-and-await.md#9
 spec/next/6-concurrency/35-tickets-and-await.md#10
+spec/next/6-concurrency/35-tickets-and-await.md#13
 spec/next/6-concurrency/35-tickets-and-await.md#14
 spec/next/6-concurrency/35-tickets-and-await.md#16
 spec/next/6-concurrency/36-coroutines-and-generators.md#1
@@ -366,6 +374,9 @@ spec/next/7-library/42-buf.md#3
 spec/next/7-library/42-buf.md#4
 spec/next/7-library/43-markup-types.md#1
 spec/next/7-library/43-markup-types.md#2
+spec/next/7-library/44-std.md#1
+spec/next/7-library/44-std.md#2
+spec/next/7-library/44-std.md#3
 spec/next/8-tooling/48-bindgen.md#1
 spec/next/8-tooling/48-bindgen.md#2
 spec/next/8-tooling/48-bindgen.md#3

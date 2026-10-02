@@ -98,6 +98,13 @@ export type PendingClasses = {
  * every call site for a capability no program will overlap, and the world keeps writes to
  * one destination in order anyway, so a caller loses nothing by not being able to wait.
  */
+/** What `Core.exit` throws: the program asked to end now with `code`. Caught where `main` was called. */
+export class WacExit extends Error {
+  constructor(readonly code: number) {
+    super(`the program exited with ${code}`);
+  }
+}
+
 export function coreOf(
   b: Bridge,
   cls: { Core: PlatformClasses["Core"]; Sched: PlatformClasses["Sched"] } & PendingClasses,
@@ -157,6 +164,10 @@ export function coreOf(
     // is exactly where a keydown arrives and where the bridge is serviced — so the parking is what
     // gives the host a chance to have seen the `^C`.
     () => readI32le(hostCall(b, OP.ASK_INTERRUPT, EMPTY)),
+    /*= exit */
+    // Thrown, not acted on: the throw unwinds the program's wasm frames to whoever called `main`, which
+    // catches `WacExit` and reports its status as the program's.
+    (code: number) => { throw new WacExit(code); },
     /*= sched */
     // **Built, not implemented.** The scheduler is wac code and wac state; the host's whole part in
     // it is calling `create` once, so that a program handed a world is handed somewhere for its

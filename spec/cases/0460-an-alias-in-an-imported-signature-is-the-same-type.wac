@@ -1,0 +1,24 @@
+// expect: answers test = 3
+// why: a file's own import alias names the declaration it imported, so its signatures hand the importer that type under the importer's spelling
+// spec: §wac-generic-instantiation-identity-6pnq4wj
+// ---- lib.wac ----
+import { Read as Chunk } from "core";
+
+export struct Source {
+  fn<Chunk()> next;
+}
+
+export Chunk ended() { return Chunk.End; }
+// ---- main.wac ----
+import { Read } from "core";
+import { Source, ended } from "./lib.wac";
+
+i32 score(Read r) {
+  return match (r) { Data(b): 1, End: 2, Failed(why): 0 };
+}
+
+export i32 test() {
+  Source s = Source(() => Read.Data(u8[].filled(1, 7)));
+  Read r = ended();
+  return score(s.next()) + score(r);
+}

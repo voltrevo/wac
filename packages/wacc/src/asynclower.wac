@@ -101,6 +101,12 @@ struct Ctx {
   bool[] inLam;
   /** The state a finished machine sits in, answering `Done` again; set once the states are numbered. */
   i32[] finState;
+  /**
+   * `Step`'s three type arguments for the machine being built, once known — so a step is built as
+   * `Step<W, Y, R>.Done(…)`. Bare `Step` is a name another file of the program may also declare, and
+   * a file the lowering writes into need not have imported core's.
+   */
+  Ty?[] stepWyr;
 }
 
 i32 tTicket(Ctx c)     { return synthTok(c.first, synthTicket()); }
@@ -322,7 +328,12 @@ Stmt sExpr(Ctx c, Expr e) { return Stmt(StmtKind.ExprStmt(e), c.line, c.col); }
 
 /** `Step.v(args)` — a variant of `Step`, typed by the slot it is returned into. */
 Expr eStep(Ctx c, i32 variantTok, Expr[] args) {
-  return eMethod(c, eId(c, tStep(c)), variantTok, args);
+  if (c.stepWyr[0] is null) { return eMethod(c, eId(c, tStep(c)), variantTok, args); }
+  Ty[] a = Ty[].filled(3, cloneTy(c.stepWyr[0]!));
+  a[1] = cloneTy(c.stepWyr[1]!);
+  a[2] = cloneTy(c.stepWyr[2]!);
+  Expr owner = Expr(ExprKind.TypeName(Ty(TyKind.Named(tStep(c), a), c.line, c.col)), c.line, c.col);
+  return eMethod(c, owner, variantTok, args);
 }
 
 /**
@@ -938,6 +949,8 @@ Stmt[] stepBody(Ctx c, Case[] arms) {
  * (`§wac-async-eager-2rf9kdp`).
  */
 Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet, Ty? yieldTy, bool isAsync, bool raw) {
+  Ty[] w3 = wyr(c, fnRet, yieldTy, isAsync);
+  for (i32 i = 0; i < 3; i++) { c.stepWyr[i] = w3[i]; }
   Arms made = buildArms(c, body, plan, fnRet);
   i32 n = 6 + plan.hoist.len() + made.slots;
   Stmt[] out = Stmt[].filled(n, sRet(c, null));
@@ -1938,7 +1951,7 @@ struct Site {
  */
 Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
   Ctx c0 = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
-               i32[].filled(1, at.colBase), bool[].filled(1, false), i32[].filled(1, 0));
+               i32[].filled(1, at.colBase), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3));
   Rz z = Rz(c0, at.params, body, w.prog, at.selfTok, w.next);
   Stmt[] split = splitBody(z, body);
   AsyncPlan plan = planBody(split);
@@ -1951,7 +1964,7 @@ Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
   for (i32 i = 0; i < plan.hoist.len(); i++) { names[i] = synthTextAt(w.src, w.lexed, plan.hoist[i]); }
   for (i32 i = 0; i < extra.len(); i++) { names[plan.hoist.len() + i] = extra[i]; }
   Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, names, w.src, w.lexed, c0.col2, c0.inLam,
-              c0.finState);
+              c0.finState, c0.stepWyr);
   Ty[] gp = genParts(w.src, w.lexed, ret);
   if (gp.len() == 2) { return machineBody(c, split, plan, gp[1], gp[0], at.isAsync, at.raw); }
   return machineBody(c, split, plan, ret, null, true, at.raw);
@@ -1985,7 +1998,7 @@ Stmt[] lowerLambdasIn(Lw w, Stmt[] body, i32 selfTok) {
             Stmt[]? mach = machineOf(w, at, lbody, tick!, pnames);
             if (mach is null) { continue; }
             Ctx c = Ctx(w.first, w.ups, w.args, init!.line, init!.col, pnames, w.src, w.lexed,
-                        i32[].filled(1, init!.col + 9000), bool[].filled(1, false), i32[].filled(1, 0));
+                        i32[].filled(1, init!.col + 9000), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3));
 
             Param[] ps2 = Param[].filled(lps.len(), lps.len() > 0 ? lps[0]
                                                                : Param(0 - 1, type, false));
@@ -2041,7 +2054,7 @@ Method[] loweredMethods(Lw w, Decl at) {
   for (i32 m = 0; m < ms.len(); m++) {
     Method me = ms[m];
     Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
-                i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0));
+                i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3));
     Stmt[] body2 = coRewrite(c, lowerLambdasIn(w, me.body, self));
     if (!isMachineDecl(w.src, w.lexed, me.returnType, me.isAsync)) {
       out[n] = Method(me.nameTok, me.returnType, me.params, body2, me.isOverride, me.overrideTok,
@@ -2113,7 +2126,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         Ctx c = Ctx(first, ups, args, prog.decls[d].line, prog.decls[d].col, string[](), src2, lexed2,
-                    i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0));
+                    i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3));
         // **Lambdas first.** An `async` function's own machine substitutes its hoisted names into
         // everything its body contains, lambdas included — so a lambda lowered beforehand is
         // ordinary code by the time that walk reaches it.

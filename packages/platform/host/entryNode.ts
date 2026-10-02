@@ -24,7 +24,7 @@ export type NodeNet = {
 };
 import { serveHostCalls } from "./respond.ts";
 import { nodeWorld } from "./node.ts";
-import { worldFor } from "./provider.ts";
+import { WacExit, worldFor } from "./provider.ts";
 import type { AppModule, Grants } from "./entry.ts";
 
 /** Node's `worker_threads`, described rather than imported so this checks under Deno. */
@@ -145,6 +145,7 @@ export function runAsWorkerEntryNode(
       port.postMessage({ ok: true, code } as Result);
     } catch (err) {
       if (cov !== undefined && fs !== undefined) dumpCoverageNode(app, cov, fs);
+      if (err instanceof WacExit) { port.postMessage({ ok: true, code: err.code } as Result); return; }
       port.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) } as Result);
     }
   });

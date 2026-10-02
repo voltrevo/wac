@@ -267,7 +267,26 @@ export Sources sourcesOf(Cli cli, string entry) {
  */
 export i64 newestInClosure(Cli cli, string entry) {
   Closure c = closureOf(cli, entry);
-  return c.complete ? c.newest : nowMillis(cli);
+  if (!c.complete) { return nowMillis(cli); }
+  i64 carried = newestCarried(cli);
+  return carried > c.newest ? carried : c.newest;
+}
+
+/**
+ * The newest mtime of what every build carries without importing it.
+ *
+ * `core` and `std` are embedded rather than reached through an import list, so a closure never sees
+ * them, nor the compiler that embeds them, nor the JavaScript host a Deno build bundles. A build made
+ * while `std` named a type wrongly stayed cached after the fix, and a dozen tests failed on it.
+ */
+export i64 newestCarried(Cli cli) {
+  string[] carried = ["core", "std", "packages/wacc/src", "packages/platform/host"];
+  i64 newest = 0 as i64;
+  for (i32 i = 0; i < carried.len(); i++) {
+    i64 m = newestUnder(cli, carried[i]);
+    if (m > newest) { newest = m; }
+  }
+  return newest;
 }
 
 /** A stand-in for "newer than anything", used when the closure cannot be read. */

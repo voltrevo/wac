@@ -1,0 +1,24 @@
+// expect: answers run = 7
+// why: what an async body lowers to names core's Step by identity, so two other files exporting a Step leave it unambiguous
+// spec: §enum-name-identity
+// ---- a.wac ----
+export struct Step { i32 n; }
+// ---- b.wac ----
+export struct Step { i32 m; }
+// ---- later.wac ----
+import { Ticket } from "core";
+
+export async i32 later(Ticket<i32> t) {
+  return await t;
+}
+// ---- main.wac ----
+import { Step } from "./a.wac";
+import { Step as Other } from "./b.wac";
+import { Ticket } from "core";
+import { later } from "./later.wac";
+
+export i32 run() {
+  Ticket<i32> t;
+  t.resolve(4);
+  return later(t).wait()! + Step(1).n + Other(2).m;
+}
