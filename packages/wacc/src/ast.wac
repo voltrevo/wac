@@ -134,6 +134,8 @@ export enum ExprKind {
    */
   /** `operand` is null for a bare `await;` — one step boundary (spec/next ch35). */
   Await(Expr? operand),
+  /** `try e` — `e`'s `Ok` value, or its `Err` returned from the enclosing function (spec/next ch26). */
+  Try(Expr operand),
   Binary(i32 op, Expr left, Expr right),
   /** One of `as`, `as!`, `as~`, `as@` — which is in `op`. */
   Cast(i32 op, Expr operand, Ty target),

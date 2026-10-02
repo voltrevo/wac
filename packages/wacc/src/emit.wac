@@ -4697,6 +4697,54 @@ bool emitNameValue(B fb, u8[] src, Lexed lexed, Env env, string nm) {
   return true;
 }
 
+/**
+ * `try e` — spec/next ch26. `e` goes into a scratch; on `Err` the function leaves with its own
+ * `Result`'s `Err` holding the same payload, through any `defer` regions on the way out; on `Ok` the
+ * payload is the value.
+ */
+void emitTry(B fb, u8[] src, Lexed lexed, Env env, Expr operand) {
+  string rt = env.canonType(typeOfE(src, lexed, env, operand));
+  string ret = env.canonType(env.returnType);
+  i32 ov = env.variantAt(rt + ".Ok");
+  i32 ev = env.variantAt(rt + ".Err");
+  i32 rv = env.variantAt(ret + ".Err");
+  if (ov < 0 || ev < 0 || rv < 0) { env.declineFor("a `try` whose Result this emitter could not find"); return; }
+  i32 s = env.scratchNamed("try " + numText(operand.line) + ":" + numText(operand.col), rt);
+  emitExprAt(fb, src, lexed, env, operand, rt);
+  fb.byte(33); fb.u32leb(s);                           // local.set
+  emitTagOf(fb, env, s, rt);
+  fb.byte(65); fb.i32leb(env.variantTags[ev]);
+  fb.byte(70);                                         // i32.eq
+  fb.byte(4); fb.byte(64);                             // if
+  env.depth = env.depth + 1;
+  fb.byte(65); fb.i32leb(env.variantTags[rv]);
+  i32 n = env.fieldCountOf(ret);
+  for (i32 slot = 1; slot < n; slot++) {
+    string ft = env.fieldTypeAt(ret, slot);
+    if (slot == env.variantSlot[rv]) {
+      fb.byte(32); fb.u32leb(s);
+      fb.byte(251); fb.u32leb(2);                      // struct.get — the error
+      fb.u32leb(env.structType(rt));
+      fb.u32leb(env.variantSlot[ev]);
+    } else if (ft == "void") {
+      fb.byte(65); fb.i32leb(0);
+    } else {
+      emitNull(fb, env, ft);
+    }
+  }
+  fb.byte(251); fb.u32leb(0);                          // struct.new
+  fb.u32leb(env.structType(ret));
+  emitLeave(fb, env, true);
+  fb.byte(11);
+  env.depth = env.depth - 1;
+  // A `void` value is nothing to read.
+  if (env.fieldTypeAt(rt, env.variantSlot[ov]) == "void") { return; }
+  fb.byte(32); fb.u32leb(s);
+  fb.byte(251); fb.u32leb(2);                          // struct.get — the value
+  fb.u32leb(env.structType(rt));
+  fb.u32leb(env.variantSlot[ov]);
+}
+
 /** An `if`'s or a block's result type: none for `void` — an arm that answers nothing leaves nothing. */
 void writeBlockType(B fb, Env env, string t) {
   if (t == "void") { fb.byte(64); return; }
@@ -9050,6 +9098,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // because the match is exhaustive, and it traps rather than emitting a plausible value: a wrong
     // answer for `await` would be a program that runs and lies, which is worse than one that stops.
     Await(operand): { fb.byte(0); }
+    Try(operand): { emitTry(fb, src, lexed, env, operand); }
     Unary(op, operand): {
       i32 k = lexed.tokens[op * tokenStride()];
       i32 um = structOperatorE(env, typeOfE(src, lexed, env, operand), unarySymbolE(k));
@@ -10163,6 +10212,12 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       string itt = typeOfLv(src, lexed, env, peelLv(target));
       i32 im = structOperatorE(env, itt, incrSymbolE(lexed.tokens[op * tokenStride()], prefix));
       return im >= 0 ? env.funcReturns[im] : itt;
+    }
+    // `try e` answers `e`'s `Ok` type, as `e!` does (spec/next ch26).
+    Try(operand): {
+      string tt = typeOfE(src, lexed, env, operand);
+      i32 um = genericBaseOf(tt) == "Result" ? env.methodAt(tt, "unwrap") : 0 - 1;
+      return um >= 0 ? env.funcReturns[um] : "";
     }
     Unwrap(operand): {
       // Unwrapping a boxed primitive yields the primitive; for a nullable reference `T?` and `T` are
@@ -11795,6 +11850,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     // constant rather than a local, and is not captured either.
     Ident(tok): { env.noteRead(tokenTextOf(src, lexed, tok)); }
     Await(operand): { if (operand is not null) { findLambdasExpr(env, src, lexed, operand!, ""); } }
+    Try(operand): { findLambdasExpr(env, src, lexed, operand, ""); }
     Unary(op, operand): { findLambdasExpr(env, src, lexed, operand, want); }
     Binary(op, left, right): {
       findLambdasExpr(env, src, lexed, left, "");
@@ -14004,6 +14060,14 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     // Reached only in a body the async lowering declined, so the reason is the lowering's.
     Await(operand): {
       return env.asyncWhy != "" ? env.asyncWhy : "an `await` in a shape the async lowering does not take";
+    }
+    Try(operand): {
+      string r = unsupportedExpr(src, lexed, env, operand);
+      if (r != "") { return r; }
+      string tt = env.canonType(typeOfE(src, lexed, env, operand));
+      if (env.variantAt(tt + ".Ok") < 0 || env.variantAt(tt + ".Err") < 0) { return "a `try` on something that is not a Result"; }
+      if (env.variantAt(env.canonType(env.returnType) + ".Err") < 0) { return "a `try` in a function that does not answer a Result"; }
+      return "";
     }
     Unary(op, operand): { return unsupportedExpr(src, lexed, env, operand); }
     Binary(op, left, right): {
@@ -16236,6 +16300,7 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
       collectArrayTypesOfExpr(env, src, lexed, index);
     }
     Await(operand): { if (operand is not null) { collectArrayTypesOfExpr(env, src, lexed, operand!); } }
+    Try(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
     Unary(op, operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
     Unwrap(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
     Binary(op, left, right): {
@@ -16272,6 +16337,7 @@ string kindOfExpr(Expr e) {
     TypeName(named): { return "a type used as a value"; }
     Ident(tok): { return "name"; }
     Await(operand): { return "await"; }
+    Try(operand): { return "try"; }
     Unary(op, operand): { return "unary"; }
     Binary(op, left, right): { return "binary"; }
     Cast(op, operand, target): { return "cast"; }

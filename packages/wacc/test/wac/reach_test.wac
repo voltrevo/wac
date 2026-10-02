@@ -96,6 +96,9 @@ string[] expressionLabels() {
     // operand *before* deciding whether it is a ticket — so a fault buried in one is reported even
     // when the await itself is also wrong. `design/lang/0014`.
     "Await",
+    // `try e` — spec/next ch26. The fault is buried in its operand. A `Result` of the file's own, since
+    // this entry point resolves no built-ins; the rule asks for the name.
+    "Try",
     "Binary", "Cast", "Ternary", "Ternary-cond", "Index", "Member",
     // `p?.m` — spec/next ch10. The fault is buried in the object, which is the only sub-expression.
     "SafeMember",
@@ -135,6 +138,8 @@ string[] expressionSources() {
   return [
     "void f(i32 p, f64 q) { i32 r = -" + SUB + "; }",
     "async i32 f(i32 p, f64 q) { return await " + SUB + "; }",
+    "enum Result<T, E> { Ok(T v), Err(E e) } Result<i32, i32> g(i32 x) { return Result.Ok(x); } "
+      + "Result<i32, i32> f(i32 p, f64 q) { i32 r = try g(" + SUB + "); return Result.Ok(r); }",
     "void f(i32 p, f64 q) { i32 r = " + SUB + " + 1; }",
     "void f(i32 p, f64 q) { i64 r = " + SUB + " as i64; }",
     "void f(i32 p, f64 q, bool c) { i32 r = c ? " + SUB + " : 0; }",

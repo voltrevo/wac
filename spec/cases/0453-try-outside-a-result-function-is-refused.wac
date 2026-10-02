@@ -1,0 +1,9 @@
+// expect: refused
+// why: try returns an error from the enclosing function, which has nowhere to put it unless it answers a Result
+// spec: §wac-try-needs-result-nqim9be
+
+import { Result } from "core";
+
+Result<i32, string> digit(string s) { return Result.Ok(1); }
+
+export i32 plain() { return try digit("1"); }

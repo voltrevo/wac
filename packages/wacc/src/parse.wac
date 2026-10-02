@@ -1489,6 +1489,12 @@ Expr parseUnary(P p) {
   // than the receiver, because the postfix chain is parsed whole below; and `await n + 1` is
   // `(await n) + 1`, because this returns before the binary level is reached. That is Rust's and
   // JavaScript's grouping, and the one a reader assumes.
+  // `try e` — a word only where a unary operand starts and an expression follows it, the way
+  // `schedule` is one only at a statement's start (spec/next ch26). `try(x)` stays a call.
+  if (p.at1(kIdent()) && p.textAt(0) == "try" && startsTryOperand(p.kindAt(1))) {
+    p.advance();
+    return Expr(ExprKind.Try(parseUnary(p)), line, col);
+  }
   if (p.at1(kAwait())) {
     p.advance();
     // `await;` — the statement form with nothing to wait on (spec/next ch35).
@@ -2163,6 +2169,12 @@ Stmt[] parseBlock(P p) {
   while (!p.at1(kRbrace()) && !p.at1(kEof())) { out.push(parseStatement(p)); }
   p.expect(kRbrace());
   return out.take();
+}
+
+/** Whether a token can begin the operand of a `try` — and is not what would follow a name `try`. */
+bool startsTryOperand(i32 k) {
+  return k == kIdent() || k == kAwait() || k == kThis() || k == kInt() || k == kString()
+      || k == kTrue() || k == kFalse() || k == kNull() || k == kMinus() || k == kBang();
 }
 
 export Stmt parseStatement(P p) {

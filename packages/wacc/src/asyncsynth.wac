@@ -32,7 +32,8 @@ string[] fixedWords() {
                   "Ticket", "value", "park", "run", "step", "resolve", "settleWith",
                   "__wacState", "__wacT", "__wacM", "__wacMachine",
                   "__wacScheduleTarget", "__wacSetScheduleTarget",
-                  "=", "i32", "bool", "void", "__wacNoStep", "__wacStepFn", "__wacNothing"
+                  "=", "i32", "bool", "void", "__wacNoStep", "__wacStepFn", "__wacNothing",
+                  "Ok", "Err", "Result", "__wacTryV", "__wacTryE"
   ] as string[];
 }
 
@@ -70,8 +71,15 @@ export i32 synthStepFn()   { return 18; }
 /** What an `async void` body settles its ticket with: a local lambda answering nothing. */
 export i32 synthNothing()  { return 19; }
 
+/** `try e` in a machine's body, as the `match` it becomes: the variants, the enum, the bindings. */
+export i32 synthOk()       { return 20; }
+export i32 synthErr()      { return 21; }
+export i32 synthResult()   { return 22; }
+export i32 synthTryV()     { return 23; }
+export i32 synthTryE()     { return 24; }
+
 /** How many words come before the generated suspension slots. */
-export i32 synthFixedCount() { return 20; }
+export i32 synthFixedCount() { return 25; }
 
 /**
  * The ticket slot for await number `k` — what a value-reading `await` suspended on, read back with

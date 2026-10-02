@@ -339,6 +339,11 @@ void printExpr(Pr w, Expr e) {
     Ident(tok): {
       w.open("ident", e.line, e.col); w.sp(); w.tok(tok); w.close();
     }
+    Try(operand): {
+      w.open("try", e.line, e.col);
+      w.sp(); printExpr(w, operand);
+      w.close();
+    }
     Await(operand): {
       w.open("await", e.line, e.col);
       if (operand is not null) { w.sp(); printExpr(w, operand!); }

@@ -327,6 +327,12 @@ export i32 errNoTextConversion() { return 230; }
  * overridden nor shadowed (spec/next ch12 `§wac-nonvirtual-final-7a4kz3t`).
  */
 export i32 errNotVirtual() { return 231; }
+/** `try e` where `e` is not a `Result` — spec/next ch26. */
+export i32 errTryNotResult() { return 233; }
+/** `try` in a function whose answer is not a `Result` — spec/next ch26 `§wac-try-needs-result-nqim9be`. */
+export i32 errTryOutsideResult() { return 234; }
+/** `try e` whose error type does not fit the function's — spec/next ch26 `§wac-try-error-in-set-44qtqmu`. */
+export i32 errTryErrorType() { return 235; }
 /** `schedule f;` where `f` is not a `fn<void(Continuation)>` — spec/next ch35. */
 export i32 errScheduleTarget() { return 232; }
 
@@ -962,6 +968,7 @@ void daExpr(C c, Expr e, DA st) {
     Ident(tok): { daRead(c, tokenText(c, tok), e.line, e.col, st); }
     Unary(op, operand): { daExpr(c, operand, st); }
     Await(operand): { if (operand is not null) { daExpr(c, operand!, st); } }
+    Try(operand): { daExpr(c, operand, st); }
     Binary(op, l, r): { daExpr(c, l, st); daExpr(c, r, st); }
     Cast(op, operand, target): { daExpr(c, operand, st); }
     Ternary(cond, then, els): { daExpr(c, cond, st); daExpr(c, then, st); daExpr(c, els, st); }
@@ -2601,6 +2608,12 @@ export struct C {
   string[] funcParamNames;
   /** `Owner.method` for each method a subtype may override: declared `virtual`, or overriding one. */
   string[] virtuals;
+  /**
+   * What the function being checked answers — its body's type for an `async` one, the slot's for a
+   * lambda — which is what a `try` returns its error into (spec/next ch26). Saved and put back around
+   * each body, as `lambdaReturn` is.
+   */
+  string tryReturn;
 
   void noteVirtual(this, string key) {
     string[] more = string[].defaulted(this.virtuals.len() + 1);
@@ -2709,7 +2722,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[]());
+             string[](), string[](), "");
   }
 
   /**
@@ -4871,6 +4884,13 @@ export string typeOfExpr(C c, Expr e) {
     // `await p` has the type the ticket answers — `design/lang/0014` D3. Unknown when the operand is
     // not a ticket, which keeps this silent while `checkExpr` is the one that says so; a type made up
     // here would report the same fault a second time through whatever slot the value lands in.
+    // `try e` answers `e`'s `Ok` value (ch26).
+    Try(operand): {
+      string rt = typeOfExpr(c, operand);
+      if (genericBase(rt) != "Result") { return typeNone(); }
+      string[] ra = genericArgs(rt);
+      return ra.len() >= 1 ? ra[0] : typeNone();
+    }
     Await(operand): {
       // `await;`, and `await t` on a `TicketBase?`, answer nothing: one step boundary (ch35).
       if (operand is null) { return "void"; }
@@ -6000,6 +6020,29 @@ void checkExpr(C c, Expr e) {
       // `issues/lang/0249a`.
       if (litKindOf(operand) == litNull()) { c.report(errNeedsNullable(), e.line, e.col); }
     }
+    Try(operand): {
+      checkExpr(c, operand);
+      string rt = typeOfExpr(c, operand);
+      if (rt == typeNone() || rt == "") { return; }
+      if (genericBase(rt) != "Result") {
+        c.reportWith(errTryNotResult(), e.line, e.col, "`try` takes a Result, and this is " + rt);
+        return;
+      }
+      // `§wac-try-needs-result-nqim9be`: the error has somewhere to go only in a function answering one.
+      string fr = c.tryReturn;
+      if (fr == typeNone() || fr == "") { return; }
+      if (genericBase(fr) != "Result") {
+        c.reportWith(errTryOutsideResult(), e.line, e.col, "this function answers " + fr);
+        return;
+      }
+      // `§wac-try-error-in-set-44qtqmu`, before unions: the error type has to be the function's.
+      string[] ea = genericArgs(rt);
+      string[] fa = genericArgs(fr);
+      if (ea.len() == 2 && fa.len() == 2 && ea[1] != fa[1] && !assignable(c, fa[1], ea[1])) {
+        c.reportWith(errTryErrorType(), e.line, e.col,
+                     "this fails with " + ea[1] + ", and the function's error type is " + fa[1]);
+      }
+    }
     Await(operand): {
       if (operand is not null) { checkExpr(c, operand!); }
       // **The declaration first.** `await` outside an `async` function is wrong wherever its operand
@@ -6995,6 +7038,8 @@ void checkLambda(C c, string slot, bool wantUnknown, Expr e, Param[] params, Stm
   // one's returns checked against nothing when the inner one finished.
   string outer = c.lambdaReturn;
   c.lambdaReturn = bodyRet;
+  string outerTry = c.tryReturn;
+  c.tryReturn = bodyRet;
   // **A lambda is not the async function it sits in.** `design/lang/0002` settles that its `return`
   // returns from the lambda, so an `await` in here would have to suspend *this* function — and this
   // one is a plain funcref. Cleared for the same reason `lambdaReturn` is replaced rather than left:
@@ -7035,6 +7080,7 @@ void checkLambda(C c, string slot, bool wantUnknown, Expr e, Param[] params, Stm
   }
   c.popScope();
   c.lambdaReturn = outer;
+  c.tryReturn = outerTry;
   c.inAsync = outerAsync;
 }
 
@@ -12169,8 +12215,11 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
     // the one construct that was right. `issues/lang/0301b`.
     bool wasAsyncM = c.inAsync;
     c.inAsync = methods[mi].isAsync;
+    string wasTryM = c.tryReturn;
+    c.tryReturn = typeOfTy(c, methods[mi].returnType);
     checkAll(c, methods[mi].body, methods[mi].returnType);
     checkDefiniteAssignment(c, methods[mi].body);
+    c.tryReturn = wasTryM;
     c.inAsync = wasAsyncM;
     c.popScope();
     // At the **return type**, where the reference puts it. A `Method` carries no position of its own —
@@ -12433,8 +12482,11 @@ export void checkModule(C c, Program prog) {
         // an `async` function, and this is the only place that knows which kind this is.
         bool wasAsync = c.inAsync;
         c.inAsync = isAsync;
+        string wasTry = c.tryReturn;
+        c.tryReturn = typeOfTy(c, returnType);
         checkAll(c, body, returnType);
         checkDefiniteAssignment(c, body);
+        c.tryReturn = wasTry;
         c.inAsync = wasAsync;
         c.popScope();
         // Reported at the declaration rather than at the closing brace, which is where the reference

@@ -59,11 +59,11 @@ import {
   Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
 import { Lexed, tokenStride } from "./lex.wac";
-import { AsyncPlan, awaitInExpr, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
+import { AsyncPlan, awaitInBody, awaitInExpr, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
 import {
   synthSource, synthTokens, synthTok, synthTextAt,
   synthTicket, synthValue, synthPark, synthRun, synthStepName, synthResolve, synthSettleWith,
-  synthNothing, synthState, synthTicketVar, synthMachineVar, synthMachineType, synthTargetGet, synthTargetSet,
+  synthNothing, synthOk, synthErr, synthResult, synthTryV, synthTryE, synthState, synthTicketVar, synthMachineVar, synthMachineType, synthTargetGet, synthTargetSet,
   synthAssign, synthI32, synthBool, synthVoid, synthNoStep, synthStepFn,
   synthSlot, synthAw, synthNum, synthZero, synthOne, synthArg,
 } from "./asyncsynth.wac";
@@ -119,6 +119,11 @@ i32 tVoid(Ctx c)     { return synthTok(c.first, synthVoid()); }
 i32 tNoStep(Ctx c)   { return synthTok(c.first, synthNoStep()); }
 i32 tStepFn(Ctx c)   { return synthTok(c.first, synthStepFn()); }
 i32 tNothing(Ctx c)  { return synthTok(c.first, synthNothing()); }
+i32 tOk(Ctx c)       { return synthTok(c.first, synthOk()); }
+i32 tErr(Ctx c)      { return synthTok(c.first, synthErr()); }
+i32 tResult(Ctx c)   { return synthTok(c.first, synthResult()); }
+i32 tTryV(Ctx c)     { return synthTok(c.first, synthTryV()); }
+i32 tTryE(Ctx c)     { return synthTok(c.first, synthTryE()); }
 
 i32 tUp(Ctx c, i32 k) { return synthTok(c.first, synthSlot(k)); }
 i32 tAw(Ctx c, i32 k) { return synthTok(c.first, synthAw(k)); }
@@ -346,6 +351,18 @@ Expr subExpr(Ctx c, Expr e) {
     Await(operand): {
       if (operand is null) { return e; }
       return Expr(ExprKind.Await(subExpr(c, operand!)), e.line, e.col);
+    }
+    // **In the machine's own body a `try` cannot leave by returning** — that would return from the
+    // step — so it becomes the `match` it means, with the `Err` arm settling the ticket as a `return`
+    // does: `match (e) { Ok(v): v, Err(x): { __wacT.resolve(Result.Err(x)); return true; } }`.
+    // Inside a lambda it is the lambda's, and stays.
+    Try(operand): {
+      if (c.inLam[0]) { return Expr(ExprKind.Try(subExpr(c, operand)), e.line, e.col); }
+      Arm[] arms = Arm[].filled(2, Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
+      arms[0] = Arm(tOk(c), 0 - 1, i32[].filled(1, tTryV(c)), Stmt[](), eId(c, tTryV(c)));
+      Expr err = eMethod(c, eId(c, tResult(c)), tErr(c), Expr[].filled(1, eId(c, tTryE(c))));
+      arms[1] = Arm(tErr(c), 0 - 1, i32[].filled(1, tTryE(c)), Stmt[].filled(1, sFinish(c, err)), null);
+      return Expr(ExprKind.MatchExpr(subExpr(c, operand), arms), e.line, e.col);
     }
     Unary(op, operand): {
       return Expr(ExprKind.Unary(op, subExpr(c, operand)), e.line, e.col);
@@ -1148,6 +1165,7 @@ Expr pullE(Rz z, Expr e, Pulled p) {
     }
     Member(obj, nameTok): { return Expr(ExprKind.Member(pullE(z, obj, p), nameTok), e.line, e.col); }
     Unwrap(operand): { return Expr(ExprKind.Unwrap(pullE(z, operand, p)), e.line, e.col); }
+    Try(operand): { return Expr(ExprKind.Try(pullE(z, operand, p)), e.line, e.col); }
     Index(arr, index): {
       Expr a = pullE(z, arr, p);
       return Expr(ExprKind.Index(a, pullE(z, index, p)), e.line, e.col);
@@ -1157,6 +1175,15 @@ Expr pullE(Rz z, Expr e, Pulled p) {
     Is(left, target, other, negated): {
       if (other is not null) { p.failed = true; return e; }
       return Expr(ExprKind.Is(pullE(z, left, p), target, other, negated), e.line, e.col);
+    }
+    // **A `match`'s subject runs first and always**, so an `await` there can go before the statement —
+    // which is what `try await t` becomes once `try` is lowered. One in an arm runs only sometimes.
+    MatchExpr(subject, arms): {
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (arms[i].value is not null && awaitInExpr(arms[i].value!)) { p.failed = true; return e; }
+        if (awaitInBody(arms[i].body)) { p.failed = true; return e; }
+      }
+      return Expr(ExprKind.MatchExpr(pullE(z, subject, p), arms), e.line, e.col);
     }
     default: { p.failed = true; return e; }
   }

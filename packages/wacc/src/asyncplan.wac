@@ -68,6 +68,7 @@ export i32 planSuspends(AsyncPlan p) { return p.suspendAt.len(); }
 export bool awaitInExpr(Expr e) {
   match (e.kind) {
     Await(operand): { return true; }
+    Try(operand): { return awaitInExpr(operand); }
     MatchExpr(subject, arms): {
       if (awaitInExpr(subject)) { return true; }
       for (i32 i = 0; i < arms.len(); i++) {

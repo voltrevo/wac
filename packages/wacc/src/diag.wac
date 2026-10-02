@@ -163,6 +163,9 @@ export string checkMessage(i32 code) {
   if (code == 230) { return "this value has no conversion to text"; }
   if (code == 231) { return "this method has the name of a parent method that is not virtual"; }
   if (code == 232) { return "a schedule target takes a Continuation and answers nothing"; }
+  if (code == 233) { return "`try` takes a Result"; }
+  if (code == 234) { return "`try` needs a function that returns a Result"; }
+  if (code == 235) { return "the error `try` passes on does not fit the function's error type"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -229,6 +232,9 @@ export string hintFor(i32 code) {
   if (code == 230) { return "give its type a `[toString]` method, or convert it before interpolating"; }
   if (code == 231) { return "mark the parent's method `virtual` and this one `override`, or give it another name"; }
   if (code == 232) { return "pass a `fn<void(Continuation)>` — `schedule pending.push;` for a `Vec<Continuation>`"; }
+  if (code == 233) { return "`try` passes an `Err` on; for a nullable, `!` or `??` is what you want"; }
+  if (code == 234) { return "declare the function to answer `Result<…>`, or take the value apart with `match`"; }
+  if (code == 235) { return "make the function's error type the one this fails with, or `match` the error here"; }
   if (code == 229) { return "index it with a counting `for`, or put the elements in an array or a Vec"; }
   if (code == 228) { return "`?.` and `??` are for a value that may be absent — read this one directly"; }
   if (code == 1) { return "use a cast if the conversion is meant: `as!` is checked, `as~` takes the nearest value"; }

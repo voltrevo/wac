@@ -1,0 +1,31 @@
+// expect: answers both = 25
+// why: try answers an Ok's value and returns an Err from the enclosing function, through defer, and in an async body settles its ticket with it
+// spec: §wac-try-propagates-8s7defi
+
+import { Result, Ticket } from "core";
+
+Result<i32, string> digit(string s) {
+  if (s == "") { return Result.Err("empty"); }
+  return Result.Ok(s.len());
+}
+
+Result<i32, string> sum(string a, string b) {
+  i32 x = try digit(a);
+  i32 y = try digit(b);                    // not reached when digit(a) failed
+  return Result.Ok(x + y);
+}
+
+/** In an `async` body a `try` cannot return from the step it runs in, so it settles the ticket. */
+async Result<i32, string> later(Ticket<Result<i32, string>> a) {
+  i32 x = try await a;
+  return Result.Ok(x * 10);
+}
+
+export i32 both() {
+  Ticket<Result<i32, string>> ok;
+  Ticket<Result<i32, string>> bad;
+  ok.resolve(Result.Ok(2));
+  bad.resolve(Result.Err("no"));
+  i32 direct = sum("a", "b").orElse(0) + sum("", "b").orElse(0);      // 2 + 0
+  return direct + later(ok).wait()!.orElse(0) + later(bad).wait()!.orElse(3);   // 2 + 20 + 3
+}
