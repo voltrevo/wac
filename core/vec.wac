@@ -11,8 +11,8 @@
 // One shape note that is wac rather than taste: growing an array needs a value to fill it
 // with, because `T[].defaulted(n)` requires T to have a default and a struct or enum has none. The
 // value being pushed is always available at exactly the moment growth is needed, so `push`
-// fills with it. That is why there is no `reserve()` without an element and why
-// `withCapacity` asks for one.
+// fills with it. That is why there is no `reserve()` without an element, and why `withCapacity`
+// is a hint for now.
 
 
 export struct Vec<T> {
@@ -20,30 +20,36 @@ export struct Vec<T> {
   // A default, so `Vec<i32> v;` is an empty Vec (spec/next ch38 `§wac-vec-create-8zprdms`) — the
   // array beside it defaults to empty already.
   i32 n = 0;
+  /**
+   * The room `withCapacity` asked for, taken when the first push allocates — an array is filled when
+   * it is made, and there is no element to fill it with until then.
+   */
+  i32 wanted = 0;
 
   /** An empty Vec. Zero capacity, so the first push allocates. */
   Vec<T> create() {
     // The array *literal* form with no elements, not `T[]()`: a sized array needs a default
     // value for T and an enum or a struct has none, whereas a literal with no elements needs
     // nothing. That is what makes an empty `Vec<Option<i32>>` possible at all.
-    return Vec(T[](), 0);
+    return Vec(T[](), 0, 0);
   }
 
   /**
-   * An empty Vec with room for `capacity` elements.
+   * An empty Vec meant to hold about `capacity` elements (spec/next ch38).
    *
-   * `fill` is never read: the slots above `n` are unreachable through `get`, and `push`
-   * overwrites before it increments. It is a parameter because WasmGC arrays are
-   * initialised on creation and wac will not invent a value for a T it knows nothing about.
+   * The slots past the length are never read before they are written, so nothing observable has to
+   * be put there — but a WasmGC array is filled when it is made, and wac will not invent a value for a
+   * `T` it knows nothing about. So the room is remembered and allocated by the first push, which has
+   * the element to fill it with; `capacity()` reports it from the start.
    */
-  Vec<T> withCapacity(i32 capacity, T fill) {
+  Vec<T> withCapacity(i32 capacity) {
     if (capacity < 0) { trap; }
-    return Vec(T[].filled(capacity, fill), 0);
+    return Vec(T[](), 0, capacity);
   }
 
   /** A Vec over an existing array, taking ownership of it — no copy. */
   Vec<T> fromArray(T[] xs) {
-    return Vec(xs, xs.len());
+    return Vec(xs, xs.len(), 0);
   }
 
   i32 len(const this) { return this.n; }
@@ -51,7 +57,7 @@ export struct Vec<T> {
   bool isEmpty(const this) { return this.n == 0; }
 
   /** Allocated room, which is only interesting when measuring growth. */
-  i32 capacity(const this) { return this.data.len(); }
+  i32 capacity(const this) { return this.data.len() > this.wanted ? this.data.len() : this.wanted; }
 
   /** Element `i`. Traps outside `0 <= i < len()`, as an array index does. */
   T get(const this, i32 i) {
@@ -74,7 +80,7 @@ export struct Vec<T> {
     if (this.n == this.data.len()) {
       // Doubling zero is zero, so the floor matters: `create()` starts at zero capacity and
       // without it the store below would go out of bounds. Buf learned the same thing.
-      i32 grown = this.data.len() == 0 ? 4 : this.data.len() * 2;
+      i32 grown = this.data.len() == 0 ? (this.wanted > 4 ? this.wanted : 4) : this.data.len() * 2;
       T[] next = T[].filled(grown, v);
       for (i32 i = 0; i < this.n; i++) { next[i] = this.data[i]; }
       this.data = next;

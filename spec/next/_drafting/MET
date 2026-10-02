@@ -91,6 +91,7 @@ spec/next/2-types/08-primitives.md#9
 spec/next/2-types/08-primitives.md#10
 spec/next/2-types/08-primitives.md#11
 spec/next/2-types/08-primitives.md#12
+spec/next/2-types/08-primitives.md#13
 spec/next/2-types/08-primitives.md#14
 spec/next/2-types/08-primitives.md#15
 spec/next/2-types/08-primitives.md#16
@@ -280,6 +281,7 @@ spec/next/3-expressions/22-operators.md#8
 spec/next/3-expressions/22-operators.md#9
 spec/next/3-expressions/22-operators.md#10
 spec/next/3-expressions/22-operators.md#11
+spec/next/3-expressions/22-operators.md#12
 spec/next/3-expressions/22-operators.md#13
 spec/next/3-expressions/22-operators.md#14
 spec/next/3-expressions/23-interpolation-and-markup.md#1
@@ -367,6 +369,7 @@ spec/next/6-concurrency/36-coroutines-and-generators.md#8
 spec/next/6-concurrency/36-coroutines-and-generators.md#9
 spec/next/6-concurrency/36-coroutines-and-generators.md#10
 spec/next/7-library/37-core.md#1
+spec/next/7-library/38-vec.md#1
 spec/next/7-library/38-vec.md#2
 spec/next/7-library/38-vec.md#3
 spec/next/7-library/38-vec.md#4

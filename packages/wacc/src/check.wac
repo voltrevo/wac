@@ -1273,6 +1273,9 @@ void checkMatches(C c, Expr e, Pattern pat, Expr subject) {
     string tt = typeOfTy(c, pat.type!);
     if (tt == typeNone() || tt == "") { return; }
     bool fits = tt == core || tt == st || descendsFrom(c, tt, core) || descendsFrom(c, core, tt);
+    // **`anyref` is the top of the references** (spec/next ch08), so any reference type may be what
+    // one holds — `i31ref x matches items[0]` included.
+    if (core == "anyref" && !isPrimitiveName(tt) && tt != "bool") { fits = true; }
     if (!fits) {
       c.reportWith(errPatternType(), pat.line, pat.col,
                    "no " + st + " is ever a " + tt);

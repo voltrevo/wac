@@ -1,7 +1,7 @@
 // The traps in Vec, Option and Result.
 //
 // **The one that matters is `at_capacity_not_length`**: an index inside the allocated array but past
-// `len`, in a Vec built with `withCapacity(16, 0)` so the slot holds a perfectly valid `0`. A bounds
+// `len`, in a Vec built with `withCapacity(16)`, whose first push fills the slots with valid values. A bounds
 // check written against the backing array's length instead of the element count returns that filler
 // rather than trapping. Every other case here would trap either way — the index is outside the
 // allocation too — so this is the only one that tells the two checks apart.
@@ -29,7 +29,7 @@ export string test_traps_getting_a_negative_index() { oneElement().get(0 - 1); r
 
 /** Inside the allocation, past the length — the case a capacity-based check would let through. */
 export string test_traps_getting_at_capacity_not_length() {
-  Vec<i32> v = Vec.withCapacity(16, 0);
+  Vec<i32> v = Vec.withCapacity(16);
   v.push(1);
   v.get(5);
   return "";
@@ -52,7 +52,7 @@ export string test_traps_inserting_past_the_end() {
 }
 
 export string test_traps_on_a_negative_capacity() {
-  Vec<i32> v = Vec.withCapacity(0 - 1, 0);
+  Vec<i32> v = Vec.withCapacity(0 - 1);
   v.len();
   return "";
 }

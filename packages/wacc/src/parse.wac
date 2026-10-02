@@ -1058,10 +1058,15 @@ export Ty parseType(P p) {
     Ty ret = parseType(p);
     p.expect(kLparen());
     TyList params = TyList.create();
+    // **`fn<i32(const S)>`**: a parameter of a funcref type may be `const` (spec/next ch17). Read and
+    // not yet kept — the funcref's type says `S`, so the `const` refuses nothing here a declaration's
+    // own `const` parameter would.
     if (!p.at1(kRparen())) {
+      p.eat(kConst());
       params.push(parseType(p));
       while (p.eat(kComma())) {
         if (p.at1(kRparen())) { break; }
+        p.eat(kConst());
         params.push(parseType(p));
       }
     }

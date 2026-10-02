@@ -7881,6 +7881,8 @@ bool typeTestable(Env env, string from, string to) {
   string fc = env.canonType(refCore(env, from));
   string tc = env.canonType(refCore(env, to));
   if (env.variantAt(to) >= 0) { return env.variantOwners[env.variantAt(to)] == fc; }
+  // From `anyref`, the top: an `i31ref`, a struct, an array or a string is a `ref.test` away.
+  if (fc == "anyref" && anyrefTestHeap(env, tc) != 0 - 1000) { return true; }
   if (isRefType(env, fc) && (fc == tc || env.isSubtypeOf(fc, tc))) { return true; }
   if (env.isStructName(tc) && env.isSubtypeOf(tc, fc)) { return true; }
   return from == to;
@@ -7923,7 +7925,25 @@ void emitTypeTest(B fb, Env env, i32 at, string from, string to) {
     fb.i32leb(env.structType(tc));
     return;
   }
+  if (fc == "anyref" && anyrefTestHeap(env, tc) != 0 - 1000) {
+    fb.byte(32); fb.u32leb(at);
+    fb.byte(251); fb.u32leb(20);                       // ref.test — answers no for a null
+    fb.i32leb(anyrefTestHeap(env, tc));
+    return;
+  }
   fb.byte(65); fb.i32leb(1);
+}
+
+/**
+ * The heap type a `ref.test` from `anyref` asks about for wac type `t`: `i31` for an `i31ref`, the
+ * type index of a struct, an array or a string's bytes — or -1000 for one it cannot ask about.
+ */
+i32 anyrefTestHeap(Env env, string t) {
+  if (t == "i31ref") { return 0 - 20; }                // 0x6C, the abstract `i31`
+  if (env.isStructName(t)) { return env.structType(t); }
+  if (t == "string") { return env.arrayType("i8[]"); }
+  if (isArrayType(t)) { return env.arrayType(t); }
+  return 0 - 1000;
 }
 
 /** The value in local `at` as a `to`, once `emitTypeTest` has said it is one. */
@@ -7940,6 +7960,11 @@ void emitTypeBind(B fb, Env env, i32 at, string from, string to) {
   if (env.isStructName(tc) && tc != fc && env.isSubtypeOf(tc, fc)) {
     fb.byte(251); fb.u32leb(23);                       // ref.cast (ref $T)
     fb.i32leb(env.structType(tc));
+    return;
+  }
+  if (fc == "anyref" && tc != "anyref" && anyrefTestHeap(env, tc) != 0 - 1000) {
+    fb.byte(251); fb.u32leb(23);                       // ref.cast, which the test made safe
+    fb.i32leb(anyrefTestHeap(env, tc));
   }
 }
 
@@ -10471,9 +10496,13 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     SafeMember(obj, nameTok): { return safeMemberType(src, lexed, env, obj, nameTok); }
     Binary(op, left, right): {
       i32 k = lexed.tokens[op * tokenStride()];
-      if (k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
-          k == kAndAnd() || k == kOrOr()) {
-        return "bool";
+      if (k == kAndAnd() || k == kOrOr()) { return "bool"; }
+      // A comparison is `bool` **unless a struct operand implements it**, whose method says what it
+      // answers — an `EqualityMask` from `operators.equal` is the spec's own case (ch22
+      // `§wac-operator-result-free-vs7gcer`).
+      if (k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe()) {
+        i32[] cm = operatorMethodE(src, lexed, env, k, left, right);
+        return cm[0] >= 0 ? env.funcReturns[cm[0]] : "bool";
       }
       if (k == kQuestion()) { return coalesceType(src, lexed, env, left, right); }
       // An interpolated literal is a string, whatever it interpolates (spec/next ch23).

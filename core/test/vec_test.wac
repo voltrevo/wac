@@ -205,7 +205,7 @@ export string test_element_types() {
 
 export string test_with_capacity() {
   T t = T.create();
-  Vec<i32> v = Vec.withCapacity(64, 0);
+  Vec<i32> v = Vec.withCapacity(64);
   t.eqI32(v.len(), 0, "starts empty despite the capacity");
   t.eqI32(v.capacity(), 64, "with the capacity asked for");
   for (i32 i = 0; i < 64; i++) { v.push(i); }
