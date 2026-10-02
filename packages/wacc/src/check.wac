@@ -3014,6 +3014,8 @@ export struct C {
   string pendingAt;
   /** `;name;` of each local a block in the walk declares further down — see `daBody`. */
   string pendingDecls;
+  /** `;line:col=type;` for each bare `union` local: what its scope gathered (spec/next ch33). */
+  string unionAt;
   /**
    * The static evaluator (spec/next ch28) and what it reads — set once the declarations are in. A
    * `static_if`'s condition is decided here rather than left to the emitter, because the branch not
@@ -3135,7 +3137,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", "", null, null, 0 - 1, "", 0 - 1);
+             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1);
   }
 
   /**
@@ -4191,6 +4193,14 @@ export string typeOfTy(C c, Ty t) {
     TypeOf(e): { return computedTypeC(c, t); }
     Named(tok, typeArgs): {
       if (namesTypeDeclC(c, tokenText(c, tok))) { return computedTypeC(c, t); }
+      // A bare `union` is what its scope gathered (`declareAll`), found by where it is written.
+      if (typeArgs.len() == 0 && tokenText(c, tok) == "union") {
+        string key = ";" + countText(t.line) + ":" + countText(t.col) + "=";
+        i32 at = c.unionAt.indexOf(key);
+        if (at < 0) { return typeNone(); }
+        string rest = c.unionAt.slice(at + key.len(), c.unionAt.len());
+        return rest.slice(0, rest.indexOf(";"));
+      }
       // A generic instantiation spells itself. `Box<i32>` and `Box<f64>` are different types and the
       // model here is that a type *is* its canonical name, so the name has to carry the arguments —
       // an earlier version returned unknown for all of them, which made every generic invisible.
@@ -6812,7 +6822,12 @@ void checkExpr(C c, Expr e) {
       // conditional answered unknown, which took the return rule with it: the function was declined
       // and `wac build` exited 0. `literalFits` is the question the typing walk above already asks
       // for the same pair, so the two now agree. `issues/lang/0170a`.
-      if (isPlainLiteral(c, els) && !isPlainLiteral(c, then)) {
+      // **An expected union takes each branch by itself** (spec/next ch32), so two branches that share
+      // nothing are two of its alternatives rather than a disagreement — and a bare `union` placeholder
+      // is the same slot, gathered.
+      bool unionSlot = isUnionName(withoutNull(slot) == "" ? slot : withoutNull(slot));
+      if (unionSlot) {
+      } else if (isPlainLiteral(c, els) && !isPlainLiteral(c, then)) {
         string lt = typeOfExpr(c, then);
         if (lt != typeNone() && lt != "" && (concreteShape(lt) || literalNeverFits(c, lt)) &&
             !literalFits(c, lt, els)) {
@@ -6832,7 +6847,8 @@ void checkExpr(C c, Expr e) {
       // `litKindOf` and declined as well. For those four, fixing one guard changed which guard was
       // silent rather than the answer.
       // `issues/lang/0246a`; `issues/lang/0245a` is the same lesson about a rule and its mirror.
-      if (litFamily(c, then) == litNone() && litFamily(c, els) == litNone()) {
+      if (unionSlot) {
+      } else if (litFamily(c, then) == litNone() && litFamily(c, els) == litNone()) {
         string tt = typeOfExpr(c, then);
         string et = typeOfExpr(c, els);
         // **Reference branches take their closest common ancestor**, which spec/spec/control.md
@@ -10429,6 +10445,12 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // does not have one to talk about. All at the operator, like every other wrong-spelling complaint.
   string castFrom = castOperandType(c, operand);
   if (castFrom == typeNone() || castFrom == "" || to == typeNone() || to == "") { return; }
+  // **A literal takes its type from its context, and `as T` is one** (spec/next ch09): `255 as u8` is
+  // the byte 255, not an `i32` narrowed — so plain `as` is right wherever the literal fits the target.
+  if (litKindOf(operand) == litInteger() && tokenKind(c, op) == kAs() && isPrimitiveName(to)
+      && to != "f32" && to != "f64" && integerLiteralFits(c, to, operand, false)) {
+    castFrom = to;
+  }
 
   bool fromRef = isCastRef(c, castFrom);
   bool toRef = isCastRef(c, to);
@@ -10549,7 +10571,8 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // compilers accept today. It is the `cast as` row in sweep.test.ts's miss queue, and it stays
   // there rather than being closed by picking a side.
   if (to == typeNone() || !isValueType(to)) { return; }
-  string from = castOperandType(c, operand);
+  // `castFrom` above, with the literal already taking `as T` as its context.
+  string from = castFrom;
   // Out of an `i31ref` and into an integer, which is the lossless direction — so `as` is the only
   // spelling that carries it, and every other one is a complaint at the operator.
   if (from == "i31ref") {
@@ -10825,7 +10848,85 @@ void declareScoped(C c, Stmt[] body) {
 }
 
 void declareAll(C c, Stmt[] body) {
+  // **A bare `union` local is every value its scope gives it** (spec/next ch33): gathered here, where
+  // the whole block is in view, and fixed for that scope before any statement of it is checked.
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      Var(type, nameTok, init, isConst): {
+        // Once per placeholder: a scope is declared more than once, and a gathered number is reported.
+        string ukey = ";" + countText(type.line) + ":" + countText(type.col) + "=";
+        if (isBareUnionTy(c, type) && c.unionAt.indexOf(ukey) < 0) {
+          c.unionAt = c.unionAt + ukey + gatherUnionC(c, body, tokenText(c, nameTok), init) + ";";
+        }
+      }
+      default: { }
+    }
+  }
   for (i32 i = 0; i < body.len(); i++) { declareStmt(c, body[i]); }
+}
+
+/** Whether a written type is the bare placeholder `union` (spec/next ch33). */
+bool isBareUnionTy(C c, Ty t) {
+  match (t.kind) {
+    Named(tok, typeArgs): { return typeArgs.len() == 0 && tokenText(c, tok) == "union"; }
+    default: { return false; }
+  }
+}
+
+/** The normalised union of what flows into `name` in `body` — its initialiser and every `name = e`. */
+string gatherUnionC(C c, Stmt[] body, string name, Expr? init) {
+  string[] ms = string[].filled(64, "");
+  i32[] n = i32[].filled(1, 0);
+  if (init is not null) { addUnionOrigin(c, init!, ms, n); }
+  gatherUnionStmts(c, body, name, ms, n);
+  if (n[0] == 0) { return typeNone(); }
+  string[] exact = string[].filled(n[0], "");
+  for (i32 i = 0; i < n[0]; i++) { exact[i] = ms[i]; }
+  return normUnion(c, exact);
+}
+
+void addUnionOrigin(C c, Expr e, string[] ms, i32[] n) {
+  match (e.kind) {
+    // Each branch of a conditional is its own origin: the placeholder collects, it does not widen.
+    Ternary(cond, then, els): { addUnionOrigin(c, then, ms, n); addUnionOrigin(c, els, ms, n); return; }
+    default: { }
+  }
+  i32 lit = litFamily(c, e);
+  // **A number written bare has no type to contribute, and the placeholder is no target for it**
+  // (spec/next ch32): `union d = cond ? 5 : "foo";` cannot say which number `5` is.
+  if (lit == litInteger() || lit == litFloat()) {
+    c.reportSpanHinted(errUntypedLiteral(), e.line, e.col, "a bare `union` is no numeric target", 1,
+                       "write the number's type — `5 as i32` — or the union's — `union<i32, string>`");
+    return;
+  }
+  if (lit == litNull()) { return; }
+  string t = lit == litString() ? "string" : lit == litBool() ? "bool" : typeOfExpr(c, e);
+  if (t == typeNone() || t == "" || n[0] >= ms.len()) { return; }
+  ms[n[0]] = t;
+  n[0] = n[0] + 1;
+}
+
+void gatherUnionStmts(C c, Stmt[] body, string name, string[] ms, i32[] n) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      Assign(target, op, rhs): {
+        match (target.kind) {
+          LIdent(tok): { if (tokenText(c, tok) == name && tokenKind(c, op) == kAssign()) { addUnionOrigin(c, rhs, ms, n); } }
+          default: { }
+        }
+      }
+      If(cond, then, els): { gatherUnionStmts(c, then, name, ms, n); gatherUnionStmts(c, els, name, ms, n); }
+      While(cond, inner): { gatherUnionStmts(c, inner, name, ms, n); }
+      DoWhile(inner, cond): { gatherUnionStmts(c, inner, name, ms, n); }
+      For(init, cond, update, inner): { gatherUnionStmts(c, inner, name, ms, n); }
+      ForIn(elemTy, nameTok, iterable, inner): { gatherUnionStmts(c, inner, name, ms, n); }
+      Block(inner): { gatherUnionStmts(c, inner, name, ms, n); }
+      Match(subject, arms): {
+        for (i32 a = 0; a < arms.len(); a++) { gatherUnionStmts(c, arms[a].body, name, ms, n); }
+      }
+      default: { }
+    }
+  }
 }
 
 /**
@@ -13349,6 +13450,21 @@ string methodReturnFor(string written, bool isAsync) {
 string arrLitType(C c, Expr[] elements) {
   string t = typeNone();
   bool sawNull = false;
+  // **Explicit unions first, all of them** (spec/next ch32 `§wac-widen-union-39ruxmm`): their
+  // alternatives combine into one union, and every other element must fit it — which is what makes the
+  // answer independent of the order the elements are written in.
+  for (i32 i = 0; i < elements.len(); i++) {
+    if (litFamily(c, elements[i]) != litNone()) { continue; }
+    string ut = typeOfExpr(c, elements[i]);
+    if (!isUnionName(ut)) { continue; }
+    if (t == typeNone()) { t = ut; continue; }
+    string[] both = unionMembers(t);
+    string[] more = unionMembers(ut);
+    string[] all = string[].filled(both.len() + more.len(), "");
+    for (i32 k = 0; k < both.len(); k++) { all[k] = both[k]; }
+    for (i32 k = 0; k < more.len(); k++) { all[both.len() + k] = more[k]; }
+    t = normUnion(c, all);
+  }
   for (i32 i = 0; i < elements.len(); i++) {
     Expr el = elements[i];
     i32 lit = litFamily(c, el);

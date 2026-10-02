@@ -712,7 +712,19 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
           // parameter is `T`, so what `T` is *is* the question the literal has to answer. Its natural
           // type is the answer — `ident(7)` is `ident<i32>` — which is the one place in this emitter
           // a literal's type comes from the literal.
+          // **In the pre-pass walk a local has no emitter slot yet**, only the type its declaration
+          // wrote — which the walk keeps, so `find(a, …)` still says what `T` is.
+          if (at == "") {
+            match (args[i].kind) {
+              Ident(atok): { at = env.walkTypeOf(tokenTextOf(src, lexed, atok)); }
+              default: { }
+            }
+          }
           if (at == "") { at = naturalLiteralType(args[i]); }
+          // **An argument with no type of its own constrains nothing** — a lambda takes its type from
+          // the parameter once the other arguments have said what `T` is (`find(xs, (i32 x) => …)`),
+          // as the method form below already allows.
+          if (at == "") { continue; }
           if (!matchTypeParams(env, cs, cl, params[i].type, at, typeParams, bound)) { return ""; }
         }
         string inst = raw + "<";
@@ -2695,6 +2707,11 @@ export struct Env {
   i32 captureFloor;
   /** How many `type` declarations the program has (spec/next ch30), or -1 before anyone asked. */
   i32 typeDecls;
+  /**
+   * `;file:line:col=type;` for each bare `union` local — what its scope gathered (spec/next ch33) —
+   * opened with `|` once computed, which `bareUnionE` does the first time one is asked about.
+   */
+  string unionAt;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -3008,7 +3025,7 @@ export struct Env {
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
-               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1);
+               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "");
   }
 
   
@@ -6984,6 +7001,144 @@ i32 staticArmOf(Env env, u8[] src, Lexed lexed, Ty subject, Ty[] types, i32 defa
   return defaultAt;
 }
 
+/**
+ * The closest struct both `a` and `b` are — the shared ancestor two sibling branches widen to — or ""
+ * when they are the same, not both structs, or share none.
+ */
+string commonAncestorE(Env env, string a, string b) {
+  if (a == "" || b == "" || a == b) { return ""; }
+  if (!env.isStructName(a) || !env.isStructName(b)) { return ""; }
+  string at = a;
+  for (i32 hop = 0; hop < 64 && at != ""; hop++) {
+    if (at == b || env.isSubtypeOf(b, at)) { return at == a ? "" : at; }
+    at = env.parentOf(at);
+  }
+  return "";
+}
+
+/**
+ * The type a bare `union` local gathered in its scope (spec/next ch33), found by where its type is
+ * written. Every function's blocks are scanned once, the first time any is asked about.
+ */
+string bareUnionE(Env env, u8[] src, Lexed lexed, Ty t) {
+  if (env.unionAt == "") {
+    env.unionAt = "|";
+    if (env.prog is not null) {
+      Program pg = env.prog!;
+      Decl[] ud = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
+      i32 was = env.curFile;
+      for (i32 d = 0; d < ud.len(); d++) {
+        i32 fi = env.declFile(d);
+        u8[] us = srcFor(env.fileSrcs, src, fi);
+        Lexed ul = lexFor(env.fileLexeds, lexed, fi);
+        env.curFile = fi;
+        match (ud[d].kind) {
+          Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+            if (typeParams.len() == 0) { gatherUnionBlocksE(env, us, ul, fi, body); }
+          }
+          StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+            if (typeParams.len() > 0) { continue; }
+            for (i32 m = 0; m < methods.len(); m++) { gatherUnionBlocksE(env, us, ul, fi, methods[m].body); }
+          }
+          default: { }
+        }
+      }
+      env.curFile = was;
+    }
+  }
+  string key = ";" + numText(env.curFile + 1) + ":" + numText(t.line) + ":" + numText(t.col) + "=";
+  i32 at = env.unionAt.indexOf(key);
+  if (at < 0) { return ""; }
+  string rest = env.unionAt.slice(at + key.len(), env.unionAt.len());
+  string u = rest.slice(0, rest.indexOf(";"));
+  // A number enters a union boxed, and its box is a type the section must already hold.
+  string[] ums = unionMembers(u);
+  for (i32 i = 0; i < ums.len(); i++) { if (unionBoxes(ums[i])) { env.boxType(ums[i]); } }
+  return u;
+}
+
+/** Every block of a body, each bare `union` local's gathered type recorded. */
+void gatherUnionBlocksE(Env env, u8[] src, Lexed lexed, i32 fi, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      Var(type, nameTok, init, isConst): {
+        match (type.kind) {
+          Named(tok, typeArgs): {
+            if (typeArgs.len() == 0 && tokenTextOf(src, lexed, tok) == "union") {
+              string[] ms = string[].filled(64, "");
+              i32[] n = i32[].filled(1, 0);
+              if (init is not null) { addUnionOriginE(env, src, lexed, init!, ms, n); }
+              gatherUnionAssignsE(env, src, lexed, body, tokenTextOf(src, lexed, nameTok), ms, n);
+              if (n[0] > 0) {
+                string[] exact = string[].filled(n[0], "");
+                for (i32 k = 0; k < n[0]; k++) { exact[k] = ms[k]; }
+                env.unionAt = env.unionAt + ";" + numText(fi + 1) + ":" + numText(type.line) + ":"
+                            + numText(type.col) + "=" + normUnionE(env, exact) + ";";
+              }
+            }
+          }
+          default: { }
+        }
+      }
+      If(cond, then, els): { gatherUnionBlocksE(env, src, lexed, fi, then); gatherUnionBlocksE(env, src, lexed, fi, els); }
+      While(cond, inner): { gatherUnionBlocksE(env, src, lexed, fi, inner); }
+      For(init, cond, update, inner): { gatherUnionBlocksE(env, src, lexed, fi, inner); }
+      ForIn(elemTy, nameTok, iterable, inner): { gatherUnionBlocksE(env, src, lexed, fi, inner); }
+      Block(inner): { gatherUnionBlocksE(env, src, lexed, fi, inner); }
+      default: { }
+    }
+  }
+}
+
+void addUnionOriginE(Env env, u8[] src, Lexed lexed, Expr e, string[] ms, i32[] n) {
+  if (numberLiteralType(e) != "" || isNullLit(e) || n[0] >= ms.len()) { return; }
+  match (e.kind) {
+    Ternary(cond, then, els): {
+      addUnionOriginE(env, src, lexed, then, ms, n);
+      addUnionOriginE(env, src, lexed, els, ms, n);
+      return;
+    }
+    default: { }
+  }
+  string t = env.canonType(typeOfE(src, lexed, env, e));
+  if (t == "") { return; }
+  ms[n[0]] = t;
+  n[0] = n[0] + 1;
+}
+
+void gatherUnionAssignsE(Env env, u8[] src, Lexed lexed, Stmt[] body, string name, string[] ms, i32[] n) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      Assign(target, op, rhs): {
+        match (target.kind) {
+          LIdent(tok): {
+            if (tokenTextOf(src, lexed, tok) == name && lexed.tokens[op * tokenStride()] == kAssign()) {
+              addUnionOriginE(env, src, lexed, rhs, ms, n);
+            }
+          }
+          default: { }
+        }
+      }
+      If(cond, then, els): { gatherUnionAssignsE(env, src, lexed, then, name, ms, n); gatherUnionAssignsE(env, src, lexed, els, name, ms, n); }
+      While(cond, inner): { gatherUnionAssignsE(env, src, lexed, inner, name, ms, n); }
+      For(init, cond, update, inner): { gatherUnionAssignsE(env, src, lexed, inner, name, ms, n); }
+      ForIn(elemTy, nameTok, iterable, inner): { gatherUnionAssignsE(env, src, lexed, inner, name, ms, n); }
+      Block(inner): { gatherUnionAssignsE(env, src, lexed, inner, name, ms, n); }
+      Match(subject, arms): {
+        for (i32 a = 0; a < arms.len(); a++) { gatherUnionAssignsE(env, src, lexed, arms[a].body, name, ms, n); }
+      }
+      default: { }
+    }
+  }
+}
+
+/** Whether `t` is one of union `u`'s alternatives. */
+bool unionHolds(Env env, string u, string t) {
+  string[] ms = unionMembers(u);
+  for (i32 i = 0; i < ms.len(); i++) { if (env.canonType(ms[i]) == t) { return true; } }
+  return false;
+}
+
 /** Whether `raw` names a `type` declaration this file can see. */
 bool namesTypeDecl(Env env, u8[] src, Lexed lexed, string raw) {
   if (env.typeDecls == 0) { return false; }
@@ -7026,7 +7181,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       // **`union<A, B>`, normalised as the checker normalises it** (spec/next ch18), with a box
       // registered for each numeric alternative, since that is how one enters the `anyref`.
       if (raw == "union") {
-        if (typeArgs.len() == 0) { return ""; }
+        if (typeArgs.len() == 0) { return bareUnionE(env, src, lexed, t); }
         string[] ums = string[].defaulted(typeArgs.len());
         for (i32 i = 0; i < typeArgs.len(); i++) {
           ums[i] = typeOfTyName(env, src, lexed, typeArgs[i]);
@@ -9458,6 +9613,24 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
   // **Into a union, a value enters its alternative** (spec/next ch18): emitted as that type, and boxed
   // when it is a number. A union already is the `anyref`.
   if (isUnionName(want) && !isNullLit(e)) {
+    // **A conditional's branches enter the union one by one** (spec/next ch32
+    // `§wac-widen-expected-union-cyghd6c`), each its own alternative — not widened together first,
+    // which would give `c ? Rect(…) : Circle(…)` the `Shape` no alternative is.
+    match (e.kind) {
+      Ternary(ucond, uthen, uels): {
+        emitExpr(fb, src, lexed, env, ucond);
+        fb.byte(4);
+        writeBlockType(fb, env, want);
+        env.depth = env.depth + 1;
+        emitExprAt(fb, src, lexed, env, uthen, want);
+        fb.byte(5);
+        emitExprAt(fb, src, lexed, env, uels, want);
+        env.depth = env.depth - 1;
+        fb.byte(11);
+        return;
+      }
+      default: { }
+    }
     string et = typeOfE(src, lexed, env, e);
     if (!isUnionName(et)) {
       string m = unionTargetE(src, lexed, env, want, e);
@@ -10501,6 +10674,17 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         // The same instruction with an **abstract** heap type: `items[0] is i31ref` asks what is in
         // the container, and `i31` is a heap type the format names rather than one this module
         // declares — one byte where a struct takes an index.
+        // **A union holds one of its alternatives**, told apart by `ref.test` — a number by its box
+        // (spec/next ch18).
+        string ulty = env.canonType(typeOfE(src, lexed, env, left));
+        if (isUnionName(ulty) && unionHolds(env, ulty, env.canonType(tt3))) {
+          emitExpr(fb, src, lexed, env, left);
+          fb.byte(251);
+          fb.u32leb(20);   // ref.test (ref $T)
+          fb.i32leb(unionHeapType(env, env.canonType(tt3)));
+          if (negated) { fb.byte(69); }   // i32.eqz
+          return;
+        }
         if (tt3 == "i31ref" && env.isSubtypeOf("i31ref", typeOfE(src, lexed, env, left))) {
           emitExpr(fb, src, lexed, env, left);
           fb.byte(251);
@@ -10894,6 +11078,12 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         if (et != "") { return et; }
       }
       string tt = typeOfE(src, lexed, env, then);
+      // **Two structs take their closest common ancestor** (spec/next ch32): `c ? sq : ci` on a
+      // `Square` and a `Circle` is a `Shape`, and typing it as the first branch put a `Circle` where a
+      // `Square` was promised — a module the engine refuses.
+      string ett = isNullLit(els) ? "" : typeOfE(src, lexed, env, els);
+      string anc = commonAncestorE(env, env.canonType(tt), env.canonType(ett));
+      if (anc != "") { return anc; }
       // **A number on one side and `null` on the other is a nullable number** — `ok ? c.r : null` is an
       // `f64?` (spec/next ch32), and typing it `f64` put the `null` in a slot that has no absence.
       if (tt != "" && isNullLit(els) && isPrimitiveNumberType(tt)) { return tt + "?"; }
@@ -12043,6 +12233,36 @@ i32 pushMethodInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, i32
   return 0;
 }
 
+/**
+ * The parameter types of generic function `raw` at instance `inst` — what a lambda argument is
+ * expected to be — read from the template with the instance's arguments substituted.
+ */
+string[] genericParamTypes(Env env, u8[] src, Lexed lexed, string raw, string inst) {
+  if (env.prog is null) { return string[](); }
+  Program pg = env.prog!;
+  Decl[] gd = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
+  i32 was = env.curFile;
+  for (i32 d = 0; d < gd.len(); d++) {
+    i32 fi = env.declFile(d);
+    u8[] ds = srcFor(env.fileSrcs, src, fi);
+    Lexed dl = lexFor(env.fileLexeds, lexed, fi);
+    match (gd[d].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (typeParams.len() == 0 || tokenTextOf(ds, dl, nameTok) != raw) { continue; }
+        env.curFile = fi;
+        i32 pushed = pushSubstitution(env, ds, dl, typeParams, inst, raw);
+        string[] out = string[].filled(params.len(), "");
+        for (i32 i = 0; i < params.len(); i++) { out[i] = typeOfTyName(env, ds, dl, params[i].type); }
+        if (pushed > 0) { popSubstitution(env, pushed); }
+        env.curFile = was;
+        return out;
+      }
+      default: { }
+    }
+  }
+  return string[]();
+}
+
 i32 pushInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, string inst) {
   for (i32 ii = 0; ii < env.instCount; ii++) {
     if (env.instName[ii] != inst) { continue; }
@@ -12702,10 +12922,17 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       // kept it hidden — nothing passed a lambda to a funcref until a scheduler wanted
       // `register(id, handler)`.
       string localSig = "";
+      string[] genericPW = string[]();
       if (!isStruct && cat < 0) {
         match (ctype.kind) {
           Named(ntok, targs): {
             localSig = env.walkTypeOf(tokenTextOf(src, lexed, ntok));
+            // **A generic function's instance**, whose parameters are in the caller's world — the
+            // lambda handed to `find<T>(T[] xs, fn<bool(T)> p)` is a `fn<bool(i32)>` here.
+            if (!isFuncrefType(localSig)) {
+              string gi = genericCallInstance(env, src, lexed, ntok, args);
+              if (gi != "") { genericPW = genericParamTypes(env, src, lexed, tokenTextOf(src, lexed, ntok), gi); }
+            }
           }
           default: { }
         }
@@ -12714,6 +12941,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       for (i32 i = 0; i < args.len(); i++) {
         string aw = isStruct ? env.fieldTypeAt(cname, i) : (cat < 0 ? "" : env.paramTypeAt(cat, i));
         if (isFuncrefType(localSig)) { aw = sigParamAt(localSig, i); }
+        if (i < genericPW.len()) { aw = genericPW[i]; }
         findLambdasExpr(env, src, lexed, args[i], aw);
       }
       for (i32 i = 0; i < named.len(); i++) {
@@ -15221,6 +15449,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         // the two are unrelated is one the format would refuse to type.
         if (env.isStructName(ty3) && env.isSubtypeOf(env.canonType(ty3), lty)) { return ""; }
         if (ty3 == "i31ref" && env.isSubtypeOf("i31ref", lty)) { return ""; }
+        if (isUnionName(lty) && unionHolds(env, lty, env.canonType(ty3))) { return ""; }
         // Unrelated structs have a constant answer, so this is emittable — see `constantFalseIs`. The
         // gate and the emitter must agree here, which is why the condition is one function and not two
         // copies of a condition.
@@ -16932,7 +17161,14 @@ bool needsStartFunction(Env env, u8[] src, Lexed lexed) {
  * because one run is what makes identity mean anything.
  */
 Ev staticEvalOf(Env env, u8[] src, Lexed lexed) {
-  if (env.staticEv is not null) { return env.staticEv!; }
+  // **The view is a snapshot of the tables, so one taken early goes stale.** `namesTypeDecl` asks
+  // during type registration, before a constant is declared — and a view built then mapped every
+  // later constant to declaration 0, so `static_if (WIDE)` in a method read the file's first import
+  // and answered *neither a local nor a module constant*. Taken again once the tables have grown.
+  if (env.staticEv is not null) {
+    Decls had = env.staticCx!;
+    if (had.constCount == env.constCount && had.impCount == env.importCount) { return env.staticEv!; }
+  }
   Decl[] decls = env.mergedDecls.len() > 0 ? env.mergedDecls
                : (env.prog is null ? Decl[]() : env.prog!.decls);
   i32[] files = env.mergedFiles.len() > 0 ? env.mergedFiles : i32[].filled(decls.len() < 1 ? 1 : decls.len(), 0 - 1);
@@ -19914,6 +20150,12 @@ string arrLitTypeOf(u8[] src, Lexed lexed, Env env, Expr[] elements) {
   string t = "";
   string lit = "";
   bool sawNull = false;
+  // An element that is a union absorbs the others (spec/next ch32), whichever is written first.
+  for (i32 i = 0; i < elements.len(); i++) {
+    if (numberLiteralType(elements[i]) != "" || isNullLit(elements[i])) { continue; }
+    string ut = typeOfE(src, lexed, env, elements[i]);
+    if (isUnionName(ut)) { return ut + "[]"; }
+  }
   for (i32 i = 0; i < elements.len(); i++) {
     Expr el = elements[i];
     if (isNullLit(el)) { sawNull = true; continue; }

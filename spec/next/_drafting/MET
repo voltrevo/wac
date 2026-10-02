@@ -76,6 +76,7 @@ spec/next/1-programs/07-programs.md#3
 spec/next/1-programs/07-programs.md#4
 spec/next/1-programs/07-programs.md#5
 spec/next/1-programs/07-programs.md#6
+spec/next/1-programs/07-programs.md#7
 spec/next/1-programs/07-programs.md#8
 spec/next/1-programs/07-programs.md#10
 spec/next/1-programs/07-programs.md#11
@@ -205,6 +206,7 @@ spec/next/2-types/15-arrays.md#8
 spec/next/2-types/15-arrays.md#9
 spec/next/2-types/15-arrays.md#10
 spec/next/2-types/15-arrays.md#11
+spec/next/2-types/15-arrays.md#12
 spec/next/2-types/15-arrays.md#13
 spec/next/2-types/15-arrays.md#14
 spec/next/2-types/15-arrays.md#15
@@ -368,6 +370,11 @@ spec/next/4-static/31-static-control.md#5
 spec/next/4-static/31-static-control.md#6
 spec/next/4-static/31-static-control.md#9
 spec/next/5-inference/32-widening.md#1
+spec/next/5-inference/32-widening.md#2
+spec/next/5-inference/32-widening.md#3
+spec/next/5-inference/32-widening.md#4
+spec/next/5-inference/33-placeholders.md#1
+spec/next/5-inference/33-placeholders.md#2
 spec/next/6-concurrency/35-tickets-and-await.md#1
 spec/next/6-concurrency/35-tickets-and-await.md#2
 spec/next/6-concurrency/35-tickets-and-await.md#3
