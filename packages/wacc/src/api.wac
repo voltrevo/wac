@@ -2965,8 +2965,9 @@ string bytesBetween(u8[] src, i32 from, i32 to) {
  *
  * ## What "reaches" means, exactly
  *
- * A **bearing type** is `Cli`, `Core`, or any type with a field or method return whose type is
- * bearing — to a fixpoint. That second clause is not theoretical: `packages/fs/src/remote.wac` and
+ * A **bearing type** is `Sys`, a type `std` declares whose methods reach the host — `Cli`, `Core`,
+ * `Listener`, `Socket`, `Child` — or any type with a field, a variant payload or a method return
+ * whose type is bearing, to a fixpoint (spec/next ch49 `§wac-cli-audit-bearing-9km4txr`). That second clause is not theoretical: `packages/fs/src/remote.wac` and
  * `packages/platform/src/stream.wac` both hold a `Cli cli;` field, so a file handed one of those has
  * the whole capability set without ever naming `Cli`.
  *
@@ -3002,7 +3003,8 @@ string bytesBetween(u8[] src, i32 from, i32 to) {
  *
  * ## The output
  *
- * `file\treaches|sealed\tvia` per line, sorted by the caller, then a `#` line with the totals and any
+ * `file\treaches|sealed\tvia\troot` per line — `via` the bearing type the file names, `root` the
+ * host-reaching type that makes it bearing (`Sink` and `Sys`) — sorted by the caller, then a `#` line with the totals and any
  * bound that was hit. **A bound is reported rather than absorbed**: a truncated table that says
  * `sealed` about a file it ran out of room for is the one failure this must not have.
  */
@@ -3016,6 +3018,8 @@ export string capReachFiles(string[] paths, string[] sources) {
   // cannot match a prefix: `Cli` must not be found inside `ClientState`.
   string[] tyHolds = string[].filled(maxTy, "");
   bool[] bearing = bool[].filled(maxTy, false);
+  // The bearing type each one holds — the next link towards the root that makes it bearing.
+  string[] heldVia = string[].filled(maxTy, "");
   i32 tyCount = 0;
   bool overflowed = false;
 
@@ -3065,7 +3069,7 @@ export string capReachFiles(string[] paths, string[] sources) {
         if (tyCount >= maxTy) { overflowed = true; } else {
           tyName[tyCount] = declName;
           tyHolds[tyCount] = holds;
-          bearing[tyCount] = declName == "Cli" || declName == "Core";
+          bearing[tyCount] = isBearingRoot(declName);
           tyCount = tyCount + 1;
         }
       }
@@ -3081,7 +3085,11 @@ export string capReachFiles(string[] paths, string[] sources) {
     grew = false;
     for (i32 t = 0; t < tyCount; t++) {
       if (bearing[t]) { continue; }
-      if (holdsBearing(tyHolds[t], tyName, bearing, tyCount)) { bearing[t] = true; grew = true; }
+      if (holdsBearing(tyHolds[t], tyName, bearing, tyCount)) {
+        bearing[t] = true;
+        heldVia[t] = firstBearing(tyHolds[t], tyName, bearing, tyCount);
+        grew = true;
+      }
     }
   }
 
@@ -3093,7 +3101,7 @@ export string capReachFiles(string[] paths, string[] sources) {
     if (via == "") {
       out = out + paths[i] + "\tsealed\t\n";
     } else {
-      out = out + paths[i] + "\treaches\t" + via + "\n";
+      out = out + paths[i] + "\treaches\t" + via + "\t" + bearingRoot(via, tyName, heldVia, tyCount) + "\n";
       reaches = reaches + 1;
     }
   }
@@ -3153,8 +3161,7 @@ string mentionedIn(u8[] src, Lexed lx, Program prog, i32 d) {
 
 /** Whether any name in a tab-delimited list is a bearing type. */
 bool holdsBearing(string held, string[] tyName, bool[] bearing, i32 tyCount) {
-  if (held.indexOf("Cli") >= 0 && listMentions(held, "Cli")) { return true; }
-  if (held.indexOf("Core") >= 0 && listMentions(held, "Core")) { return true; }
+  if (firstRoot(held) != "") { return true; }
   for (i32 t = 0; t < tyCount; t++) {
     if (!bearing[t]) { continue; }
     if (listMentions(held, tyName[t])) { return true; }
@@ -3164,13 +3171,42 @@ bool holdsBearing(string held, string[] tyName, bool[] bearing, i32 tyCount) {
 
 /** The first bearing type a tab-delimited list names, or "". */
 string firstBearing(string held, string[] tyName, bool[] bearing, i32 tyCount) {
-  if (listMentions(held, "Cli")) { return "Cli"; }
-  if (listMentions(held, "Core")) { return "Core"; }
+  string rooted = firstRoot(held);
+  if (rooted != "") { return rooted; }
   for (i32 t = 0; t < tyCount; t++) {
     if (!bearing[t]) { continue; }
     if (listMentions(held, tyName[t])) { return tyName[t]; }
   }
   return "";
+}
+
+/** The types a host reaches through directly — what every other bearing type holds, in the end. */
+bool isBearingRoot(string name) {
+  return name == "Sys" || name == "Cli" || name == "Core" || name == "Listener" || name == "Socket"
+      || name == "Child";
+}
+
+/** The first root bearing type a tab-delimited list names, `Sys` first, or "". */
+string firstRoot(string held) {
+  if (listMentions(held, "Sys")) { return "Sys"; }
+  if (listMentions(held, "Cli")) { return "Cli"; }
+  if (listMentions(held, "Core")) { return "Core"; }
+  if (listMentions(held, "Listener")) { return "Listener"; }
+  if (listMentions(held, "Socket")) { return "Socket"; }
+  if (listMentions(held, "Child")) { return "Child"; }
+  return "";
+}
+
+/** The root a bearing type reaches the host through: itself for a root, else along what it holds. */
+string bearingRoot(string name, string[] tyName, string[] heldVia, i32 tyCount) {
+  string at = name;
+  for (i32 hop = 0; hop < 64 && at != ""; hop++) {
+    if (isBearingRoot(at)) { return at; }
+    string next = "";
+    for (i32 t = 0; t < tyCount; t++) { if (tyName[t] == at) { next = heldVia[t]; } }
+    at = next;
+  }
+  return at;
 }
 
 /**

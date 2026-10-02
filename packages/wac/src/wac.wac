@@ -1972,9 +1972,9 @@ export i32 main(Sys sys) {
  * its header states the rule and the two things it does not model; this is the report.
  *
  * **Grouped by where the code came from, because that is the unit of trust.** A reader does not
- * choose files, they choose dependencies — `wac update` writes a lock and every file under a mapping
- * arrived together on one decision. So the default output is one line per mapping plus one for the
- * local project, and `--verbose` is the file-by-file table underneath it.
+ * choose files, they choose dependencies — `wac update` writes a lock and every file of a package
+ * arrived together on one decision. So the default output is one line per dependency plus one for
+ * the project, and `--verbose` is the file-by-file table underneath it (spec/next ch49).
  *
  * `design/system/0003` is the destination this is for: an Ethereum-centric distribution is a program
  * holding keys, and *what can this reach* is the question its operator has to be able to answer
@@ -1988,115 +1988,107 @@ i32 auditReport(Core core, const Sources src, string entry, bool verbose) {
   }
   string[] rows = linesOf(table);
 
-  // One line per *mapping*, one for the local project and one for the built-ins — see `mappingRoots`
-  // for why the mapping list is derived rather than read straight off `mapSpec`.
-  string[] prefixes = string[].filled(src.mapN + 1, "");
-  string[] roots = string[].filled(src.mapN + 1, "");
-  i32 maps = mappingRoots(src, prefixes, roots);
-  i32 groups = maps + 2;
-  string[] label = string[].filled(groups, "");
-  i32[] reach = i32[].filled(groups, 0);
-  i32[] total = i32[].filled(groups, 0);
-  string[] example = string[].filled(groups, "");
-  label[0] = "(this project)";
-  for (i32 g = 1; g <= maps; g++) { label[g] = prefixes[g - 1] + "   " + roots[g - 1]; }
-  label[groups - 1] = "(built-in: std/, core/)";
-
+  // **One line per dependency, and the project last** (spec/next ch49): a dependency is the files
+  // under one package's directory — the `confine` the walk recorded for each — named by the import
+  // that brought it in, and the project is `./`. `std` and `core` are the platform the program runs
+  // on, not code anybody chose, and are left out of the count.
+  i32 cap = src.n + 1;
+  i32 lastSlash = 0 - 1;
+  for (i32 k = 0; k < entry.len(); k++) { if (entry.slice(k, k + 1) == "/") { lastSlash = k; } }
+  string entryDir = lastSlash > 0 ? entry.slice(0, lastSlash) : "";
+  string[] gKey = string[].filled(cap, "");
+  string[] gName = string[].filled(cap, "");
+  string[] gList = string[].filled(cap, "");
+  i32[] gFiles = i32[].filled(cap, 0);
+  i32[] gReach = i32[].filled(cap, 0);
+  i32 gN = 0;
+  i32 read = 0;
   i32 reaches = 0;
-  i32 files = 0;
-  string summary = "";
+  string truncated = "";
   for (i32 r = 0; r < rows.len(); r++) {
     if (rows[r] == "") { continue; }
-    if (rows[r].slice(0, 1) == "#") { summary = field(rows[r], 1); continue; }
+    if (rows[r].slice(0, 1) == "#") {
+      if (field(rows[r], 1).indexOf("TRUNCATED") >= 0) { truncated = field(rows[r], 1); }
+      continue;
+    }
     string path = field(rows[r], 0);
+    if (isBuiltinPath(path)) { continue; }
     string status = field(rows[r], 1);
     string via = field(rows[r], 2);
-    i32 g = groupOf(path, roots, maps);
-    total[g] = total[g] + 1;
-    files = files + 1;
+    string rootType = field(rows[r], 3);
+    string dir = confineOf(src, path);
+    i32 g = 0 - 1;
+    for (i32 k = 0; k < gN; k++) { if (gKey[k] == dir) { g = k; } }
+    if (g < 0) {
+      if (gN >= cap) { continue; }
+      g = gN;
+      gKey[g] = dir;
+      gName[g] = dir == "" ? "./" : packageNamed(src, dir);
+      gN = gN + 1;
+    }
+    // A file is named from where its group starts: a dependency's directory, or the entry's own.
+    string from = dir != "" ? dir : entryDir;
+    string shown = from != "" && path.len() > from.len() + 1 && path.slice(0, from.len() + 1) == from + "/"
+      ? path.slice(from.len() + 1, path.len()) : path;
+    gFiles[g] = gFiles[g] + 1;
+    read = read + 1;
+    string why = via == "" ? "" : via + (rootType != "" && rootType != via ? ", via " + rootType : "");
     if (status == "reaches") {
-      reach[g] = reach[g] + 1;
+      gReach[g] = gReach[g] + 1;
       reaches = reaches + 1;
-      if (example[g] == "") { example[g] = via; }
+      gList[g] = gList[g] + (gList[g] == "" ? "" : ", ") + shown + " (" + why + ")";
     }
     if (verbose) {
-      core.log((status == "reaches" ? "  reaches  " : "  sealed   ") + path
-               + (via == "" ? "" : "   via " + via));
+      core.log((status == "reaches" ? "  reaches  " : "  sealed   ") + path + (why == "" ? "" : "   (" + why + ")"));
     }
   }
-
   if (verbose) { core.log(""); }
-  for (i32 g = 0; g < groups; g++) {
-    if (total[g] == 0) { continue; }
-    core.log(itoa(reach[g]) + " of " + itoa(total[g]) + " file(s) reach a capability   " + label[g]
-             + (example[g] == "" ? "   — sealed" : "   first via " + example[g]));
-  }
-  // **The denominator, and it is the point.** `issues/system/0268a` is what an instrument that reports
-  // only its hits costs; this one says what it looked at every time, including when nothing reaches.
-  core.log("");
-  core.log(entry + ": " + summary);
-  if (!verbose) { core.log("  `--verbose` for the file-by-file table"); }
-  return 0;
-}
 
-/**
- * The mapping prefixes a graph used, and the directory each resolved to — one entry per *mapping*.
- *
- * **`mapTo` is per import, not per mapping**, and the difference is the whole of this function. A
- * project importing two files through `dep/` has two entries, both naming a file; grouping on those
- * put every *transitively* pulled file — the dependency's own imports, which nobody wrote a spec for
- * — into the local project's count. Measured on a two-import project: `2 of 5 (this project)` where
- * three of the five were the dependency's.
- *
- * So the root is derived rather than guessed at: the spec `dep/packages/crypto/src/sha256.wac`
- * resolved to `<root>/packages/crypto/src/sha256.wac`, so stripping what follows the prefix leaves
- * exactly `<root>`. No knowledge of the cache layout, which is `packages/wacpkg`'s and not this
- * file's.
- */
-i32 mappingRoots(const Sources src, string[] prefixes, string[] roots) {
-  i32 n = 0;
-  for (i32 m = 0; m < src.mapN; m++) {
-    string spec = src.mapSpec[m];
-    string to = src.mapTo[m];
-    i32 slash = spec.indexOf("/");
-    if (slash < 0 || to == "") { continue; }
-    string prefix = spec.slice(0, slash + 1);
-    string tail = spec.slice(slash + 1, spec.len());
-    if (tail.len() >= to.len()) { continue; }
-    string root = to.slice(0, to.len() - tail.len());
-    bool have = false;
-    for (i32 k = 0; k < n; k++) { if (prefixes[k] == prefix && roots[k] == root) { have = true; } }
-    if (have || n >= prefixes.len()) { continue; }
-    prefixes[n] = prefix;
-    roots[n] = root;
-    n = n + 1;
-  }
-  return n;
-}
-
-/**
- * Which group a path belongs to: 0 local, 1..n a mapping, n+1 the built-ins.
- *
- * Longest root wins, because one mapping's directory can be a prefix of another's.
- */
-i32 groupOf(string path, string[] roots, i32 n) {
-  i32 best = 0;
-  i32 bestLen = 0;
-  for (i32 m = 0; m < n; m++) {
-    string to = roots[m];
-    if (to == "" || to.len() <= bestLen) { continue; }
-    if (path.len() >= to.len() && path.slice(0, to.len()) == to) {
-      best = m + 1;
-      bestLen = to.len();
+  i32 width = 0;
+  for (i32 g = 0; g < gN; g++) { if (gName[g].len() > width) { width = gName[g].len(); } }
+  // The project last, after the dependencies it chose.
+  for (i32 pass = 0; pass < 2; pass++) {
+    for (i32 g = 0; g < gN; g++) {
+      if ((gKey[g] == "") != (pass == 1)) { continue; }
+      string name = gName[g];
+      while (name.len() < width) { name = name + " "; }
+      core.log(name + " (" + itoa(gFiles[g]) + (gFiles[g] == 1 ? " file" : " files") + "): "
+               + (gReach[g] == 0 ? "sealed" : "reaches — " + gList[g]));
     }
   }
-  if (best > 0) { return best; }
-  // **The built-ins are their own line and not the reader's code.** `std/platform.wac` declares `Cli`,
-  // so it always reaches — counting it in "this project" adds a file nobody wrote to a number about
-  // what they did write.
-  if (path == "core" || (path.len() > 4 && path.slice(0, 4) == "std/")
-      || (path.len() > 5 && path.slice(0, 5) == "core/")) { return n + 1; }
+  // **The denominator, and it is the point** (`§wac-cli-audit-denominator-2wq7knx`): every report
+  // says how much it read, including when nothing reaches — and a bound that was hit is said too,
+  // because a table cut short that says `sealed` is the one failure this must not have.
+  core.log(itoa(read) + (read == 1 ? " file" : " files") + " read, " + itoa(reaches) + " reach, "
+           + itoa(read - reaches) + " sealed");
+  if (truncated != "") {
+    core.warn("wac audit: " + truncated);
+    return 1;
+  }
   return 0;
+}
+
+/** Whether `path` is the platform's own code — `std` and `core`, bundled or on disk. */
+bool isBuiltinPath(string path) {
+  return path == "core" || path == "std" || (path.len() > 4 && path.slice(0, 4) == "std/")
+      || (path.len() > 5 && path.slice(0, 5) == "core/");
+}
+
+/** The package directory a file arrived under, or "" for the project's own. */
+string confineOf(const Sources src, string path) {
+  for (i32 i = 0; i < src.n; i++) {
+    if (src.paths[i] == path) { return i < src.confine.len() ? src.confine[i] : ""; }
+  }
+  return "";
+}
+
+/** The name a project imported the package in `dir` by — the import whose module sits there. */
+string packageNamed(const Sources src, string dir) {
+  for (i32 m = 0; m < src.mapN; m++) {
+    string to = src.mapTo[m];
+    if (to.len() > dir.len() && to.slice(0, dir.len() + 1) == dir + "/") { return src.mapSpec[m]; }
+  }
+  return dir;
 }
 
 /**

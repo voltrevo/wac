@@ -1,0 +1,83 @@
+// `wac audit` — spec/next ch49, driven through the command against a project and two packages.
+//
+// The report is grouped by dependency because that is the unit a reader chooses, so the test needs
+// real dependencies: two packages checked out where the command looks for them — `$WAC_HOME`'s cache at
+// the commit a lock pins — rather than files beside the entry, which would all be one group and could
+// not tell a dependency's line from the project's.
+//
+// The shape is the chapter's own: `logger` holds a `Sys` in a struct, so its other file reaches
+// without writing `Sys` (`§wac-cli-audit-bearing-9km4txr`); `geometry` names nothing bearing and is
+// sealed; and the report ends with how many files it read (`§wac-cli-audit-denominator-2wq7knx`).
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
+import { cachePath } from "../../../wacpkg/src/cache.wac";
+import { Core, Cli, Exec } from "std";
+
+string COMMIT() { return "0123456789abcdef0123456789abcdef01234567"; }
+
+void put(Cli cli, string path, string text) {
+  i32 cut = 0 - 1;
+  for (i32 k = 0; k < path.len(); k++) { if (path.slice(k, k + 1) == "/") { cut = k; } }
+  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
+  cli.writeFile(path, text.toBytes()).wait();
+}
+
+/** A package checkout in the cache: its manifest and its files. */
+void checkout(Cli cli, string home, string git, string[] paths, string[] texts) {
+  string at = cachePath(home, git, COMMIT());
+  put(cli, at + "/wac.json5", "{ exports: \"./src/lib.wac\" }\n");
+  for (i32 i = 0; i < paths.len(); i++) { put(cli, at + "/" + paths[i], texts[i]); }
+}
+
+export string test_audit_reports_each_dependency_and_its_bearing_types_6pn3wtq_9km4txr(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/audit-test";
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+
+  string logger = "https://example.com/logger";
+  string geometry = "https://example.com/geometry";
+  put(cli, dir + "/wac.json5",
+      "{ imports: { logger: { git: \"" + logger + "\", ref: \"v1\" }, geometry: { git: \"" + geometry
+      + "\", ref: \"v1\" } } }\n");
+  put(cli, dir + "/wac.lock",
+      "{ imports: { \"logger\": { git: \"" + logger + "\", ref: \"v1\", commit: \"" + COMMIT() + "\" },"
+      + " \"geometry\": { git: \"" + geometry + "\", ref: \"v1\", commit: \"" + COMMIT() + "\" } } }\n");
+  put(cli, dir + "/main.wac",
+      "import { Sys } from \"std\";\n" +
+      "import { Sink, report } from \"logger\";\n" +
+      "import { area } from \"geometry\";\n" +
+      "import { twice } from \"./src/util.wac\";\n" +
+      "async void main(Sys sys) { report(Sink(sys), \"\\{twice(area(2, 3))}\"); }\n");
+  put(cli, dir + "/src/util.wac", "export i32 twice(i32 n) { return n * 2; }\n");
+  checkout(cli, home, logger, ["src/lib.wac", "src/sink.wac", "src/format.wac"], [
+    "export { Sink } from \"./sink.wac\";\nexport { report } from \"./format.wac\";\n",
+    "import { Sys } from \"std\";\n" +
+    "export struct Sink {\n  Sys sys;\n  void write(const this, string line) { this.sys.log(line); }\n}\n",
+    "import { Sink } from \"./sink.wac\";\n" +
+    "export void report(Sink s, string what) { s.write(\"[report] \\{what}\"); }\n",
+  ]);
+  checkout(cli, home, geometry, ["src/lib.wac"], ["export i32 area(i32 w, i32 h) { return w * h; }\n"]);
+
+  Exec r = withEnv(cli, ["WAC_HOME"], [home], binaryPath(cli), ["audit", dir + "/main.wac"]);
+  string out = string.fromBytes(r.stdout);
+  t.eqI32(r.status, 0, "audit exits 0 — " + out + string.fromBytes(r.stderr));
+  // One line per dependency, named by the import that brought it in, with each reaching file and the
+  // type that lets it — the holder first, the host-reaching type it holds after.
+  t.isTrue(contains(out, "logger   (3 files): reaches — "), "the logger line — got:\n" + out);
+  t.isTrue(contains(out, "src/format.wac (Sink, via Sys)"), "names the holder it reaches through — got:\n" + out);
+  t.isTrue(contains(out, "src/sink.wac (Sys)"), "and the file that names `Sys` — got:\n" + out);
+  t.isTrue(contains(out, "geometry (1 file): sealed"), "geometry is sealed — got:\n" + out);
+  // The project last, as `./`, and `std`/`core` in no group: they are the platform, not a dependency.
+  t.isTrue(contains(out, "./       (2 files): reaches — main.wac (Sys)"), "the project's line — got:\n" + out);
+  t.isTrue(!contains(out, "std"), "the built-ins are not reported as a dependency — got:\n" + out);
+  t.isTrue(contains(out, "6 files read, 3 reach, 3 sealed"), "and the denominator — got:\n" + out);
+
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}
