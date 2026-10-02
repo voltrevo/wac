@@ -138,6 +138,7 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
 /** A type as written, with `, ` between arguments. */
 string spell(u8[] src, Lexed lexed, Ty t) {
   match (t.kind) {
+    TypeOf(e): { return "type(…)"; }
     Prim(tok): { return progText(src, lexed, tok); }
     Named(tok, args): {
       string s = progText(src, lexed, tok);

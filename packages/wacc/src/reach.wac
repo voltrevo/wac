@@ -119,6 +119,7 @@ string declaredName(Frontend fe, Decl d) {
     EnumDecl(nameTok, variants, exported, methods, tps): nameTok >= 0 ? textOf(fe, nameTok) : "",
     StaticDecl(nameTok, type, init, exported): nameTok >= 0 ? textOf(fe, nameTok) : "",
     SymbolDecl(nameTok, exported): nameTok >= 0 ? textOf(fe, nameTok) : "",
+    TypeDecl(nameTok, tps, alias, body, exported): nameTok >= 0 ? textOf(fe, nameTok) : "",
     default: ""
   };
 }
@@ -130,6 +131,7 @@ bool declExported(Decl d) {
     EnumDecl(nameTok, variants, exported, methods, tps): exported,
     StaticDecl(nameTok, type, init, exported): exported,
     SymbolDecl(nameTok, exported): exported,
+    TypeDecl(nameTok, tps, alias, body, exported): exported,
     default: false
   };
 }

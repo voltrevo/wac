@@ -50,6 +50,8 @@ export enum TyKind {
   Funcref(Ty ret, Ty[] params),
   /** `(A, B)`, `(A,)` and `()` — spec/next ch14. Identity is the member list. */
   TupleOf(Ty[] members),
+  /** `type(e)` — the type a `typeref` value stands for, `e` evaluated statically (spec/next ch30). */
+  TypeOf(Expr e),
 }
 
 export Ty tyPrim(i32 tok, i32 line, i32 col) {
@@ -191,6 +193,15 @@ export enum ExprKind {
    * Anywhere other than a `Member`'s object this is an error: a type is not a value.
    */
   TypeName(Ty qualifier),
+  /** `typeref(T)` — a value of type `typeref` standing for the type `T` (spec/next ch30). */
+  TypeRefOf(Ty t),
+  /**
+   * `static_match (T) { u32: 4, default: … }` — spec/next ch31. The arm whose type is `T` is chosen at
+   * compile time; `default` is at `defaultAt` (-1 when there is none), its entry in `types` unused.
+   */
+  StaticMatch(Ty subject, Ty[] types, Expr[] values, i32 defaultAt),
+  /** `static_trap "…"` where a value is expected — `never`, an error wherever it is compiled. */
+  StaticTrapE(Expr message),
   /** `++`/`--`; `prefix` distinguishes `++i` from `i++`. */
   Incr(Lvalue target, i32 op, bool prefix),
   /**
@@ -546,6 +557,12 @@ export enum DeclKind {
   StaticDecl(i32 nameTok, Ty type, Expr init, bool exported),
   /** `[export] symbol name;` — a declared identity that can name a member. spec/next ch21. */
   SymbolDecl(i32 nameTok, bool exported),
+  /**
+   * `type Name<…> = T;` or `type Name<…> { … }` — spec/next ch30. A plain alias, or `type(e)` in
+   * `alias`, or a body run statically whose returned `typeref` is the type, with the type parameters
+   * in scope. Exactly one of `alias` and `body` says what the type is: `body` is empty for an alias.
+   */
+  TypeDecl(i32 nameTok, i32[] typeParams, Ty? alias, Stmt[] body, bool exported),
 }
 
 export struct Program {

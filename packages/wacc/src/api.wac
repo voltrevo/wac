@@ -26,7 +26,7 @@ import { coreSource, isBuiltinSpec, stdSource } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsOf } from "./files.wac";
-import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia } from "./path.wac";
+import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia, startsWith } from "./path.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { Pruned, pruneFor } from "./reach.wac";
 import { lowerNamespaces } from "./namespaces.wac";
@@ -1766,7 +1766,9 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
   // is computed, and a `static_if` reading an imported static is decided, only with all of them.
   // Only for an entry that says `static` at all — the view parses every file it reaches, `std`
   // included, and a file with no static has nothing to ask it.
-  if (string.fromBytes(esrc).indexOf("static") >= 0) {
+  string etext = string.fromBytes(esrc);
+  if (etext.indexOf("static") >= 0 || etext.indexOf("typeref") >= 0 || etext.indexOf("type(") >= 0
+      || etext.indexOf("\ntype ") >= 0 || etext.indexOf("export type ") >= 0 || startsWith(etext, "type ")) {
     // **And `std`, which a caller need not supply** — it is carried, and a static reading one of its
     // statics (`CALL_SLOTS / 4`) has nothing to read without it. Only the evaluator's view grows.
     bool hasStd = false;

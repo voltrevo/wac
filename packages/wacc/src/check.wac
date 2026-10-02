@@ -34,7 +34,7 @@
 
 import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
-         stringOf, truthy, StaticBind, bindStaticLocals } from "./consteval.wac";
+         stringOf, truthy, StaticBind, bindStaticLocals, evTyName, typeDeclAt } from "./consteval.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { coreExports, isBuiltinSpec } from "./coretext.wac";
@@ -840,8 +840,14 @@ i32 liveBranch(C c, Expr cond) {
   ev.status = evOk();
   ev.message = "";
   i32 mark = ev.localCount;
+  i32 tpMark = ev.tpCount;
+  for (i32 i = 0; i < c.activeParamCount; i++) { ev.bindType(c.activeParams[i], ""); }
   Value v = evalExpr(ev, c.sCx!, c.sFile, cond, "bool");
+  ev.tpCount = tpMark;
   ev.localCount = mark;
+  // **A condition on a type parameter is decided per instantiation** (spec/next ch31): at the
+  // definition both branches are checked, and that is not a condition this checker failed to compute.
+  if (!evFinished(ev.status) && ev.message.indexOf("a type parameter") >= 0) { ev.status = evOk(); return 0 - 2; }
   if (!evFinished(ev.status)) { ev.status = evOk(); return 0 - 1; }
   ev.status = evOk();
   return truthy(v) ? 1 : 0;
@@ -857,6 +863,52 @@ string staticTrapText(C c, Expr message) {
   if (!evFinished(ev.status)) { ev.status = evOk(); return ""; }
   ev.status = evOk();
   return stringOf(ev, refOf(v));
+}
+
+/** The evaluator's view for this check, built from this file alone when nobody gave it more. */
+void ensureStaticView(C c, Program? prog) {
+  if (c.sCx is not null) { return; }
+  if (prog is null) { return; }
+  c.sEv = Ev.create();
+  c.sCx = declsOfProgram(c.src, Lexed(c.toks, c.toks.len() / tokenStride(), i32[](), 0, 0, true),
+                         prog!.decls);
+}
+
+/** Whether `name` is a `type` declaration this file can see (spec/next ch30). */
+bool namesTypeDeclC(C c, string name) {
+  if (c.typeDecls == 0 || c.sCx is null) { return false; }
+  Decls tcx = c.sCx!;
+  if (c.typeDecls < 0) {
+    i32 n = 0;
+    for (i32 d = 0; d < tcx.decls.len(); d++) {
+      match (tcx.decls[d].kind) {
+        TypeDecl(nameTok, typeParams, alias, body, exported): { n = n + 1; }
+        default: { }
+      }
+    }
+    c.typeDecls = n;
+    if (n == 0) { return false; }
+  }
+  return typeDeclAt(tcx, name, c.sFile) >= 0;
+}
+
+/**
+ * A computed type as this checker spells types — `type(e)`, or a name a `type` declaration gives —
+ * evaluated statically (spec/next ch30). Inside a generic its parameters are opaque, and a type that
+ * depends on one is unknown here, which this checker is silent about: the instantiation decides.
+ */
+string computedTypeC(C c, Ty t) {
+  if ((c.sEv is null) || (c.sCx is null)) { return typeNone(); }
+  Ev ev = c.sEv!;
+  i32 mark = ev.tpCount;
+  for (i32 i = 0; i < c.activeParamCount; i++) { ev.bindType(c.activeParams[i], ""); }
+  ev.status = evOk();
+  ev.message = "";
+  string spelled = evTyName(ev, c.sCx!, c.sFile, t);
+  bool ok = evFinished(ev.status);
+  ev.status = evOk();
+  ev.tpCount = mark;
+  return ok ? spelled : typeNone();
 }
 
 /** Whether struct type `t` — or a parent — declares a `const` field. */
@@ -2872,6 +2924,8 @@ export struct C {
   i32 sFile;
   /** What a `yield` in the function being checked yields, or `""` outside a generator (ch36). */
   string yieldType;
+  /** How many `type` declarations the evaluator's view holds (spec/next ch30), or -1 before asked. */
+  i32 typeDecls;
 
   void noteVirtual(this, string key) {
     string[] more = string[].defaulted(this.virtuals.len() + 1);
@@ -2980,7 +3034,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", null, null, 0 - 1, "");
+             string[](), string[](), "", "", "", null, null, 0 - 1, "", 0 - 1);
   }
 
   /**
@@ -4033,7 +4087,9 @@ bool knownTypeName(C c, string base) {
 export string typeOfTy(C c, Ty t) {
   match (t.kind) {
     Prim(tok): { return tokenText(c, tok); }
+    TypeOf(e): { return computedTypeC(c, t); }
     Named(tok, typeArgs): {
+      if (namesTypeDeclC(c, tokenText(c, tok))) { return computedTypeC(c, t); }
       // A generic instantiation spells itself. `Box<i32>` and `Box<f64>` are different types and the
       // model here is that a type *is* its canonical name, so the name has to carry the arguments —
       // an earlier version returned unknown for all of them, which made every generic invisible.
@@ -4051,7 +4107,7 @@ export string typeOfTy(C c, Ty t) {
       // Spelled as identifiers and declared by nobody, so resolution would hunt for a declaration
       // and find none. They *are* types; what needed fixing was the hierarchy they sit in, which
       // `isReferenceType` answers.
-      if (base == "anyref" || base == "i31ref") { return base; }
+      if (base == "anyref" || base == "i31ref" || base == "typeref") { return base; }
       // **`union<A, B>` is its normalised set of alternatives** (spec/next ch18). A bare `union` is a
       // placeholder (ch33), which is not built yet: unknown, and silent.
       // **`gen<Y, R>` is how a generator's `gen<Y> R` is held** (ch36) — spelled, for `callerReturn`
@@ -4926,6 +4982,17 @@ Ty[] typeNameArgs(Ty qual) {
 
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
+    TypeRefOf(t): { return "typeref"; }
+    // The type of its arms, every one of which is checked here at the definition (spec/next ch31);
+    // a `static_trap` is `never` and says nothing about it.
+    StaticMatch(subject, types, values, defaultAt): {
+      for (i32 i = 0; i < values.len(); i++) {
+        string at = typeOfExpr(c, values[i]);
+        if (at != "never") { return at; }
+      }
+      return "never";
+    }
+    StaticTrapE(message): { return "never"; }
     // **A JSX element is core's `Node`**, whatever it contains. `design/lang/0004`.
     // A tag that is a name is a call, so its value is what the function returns (ch23).
     Jsx(tagTok, closeTok, attrs, kids): {
@@ -5887,6 +5954,14 @@ void checkExpr(C c, Expr e) {
   checkCharLiteral(c, e);
 
   match (e.kind) {
+    // Every arm, at the definition — only the instantiation chooses (spec/next ch31).
+    StaticMatch(subject, types, values, defaultAt): {
+      for (i32 i = 0; i < values.len(); i++) {
+        c.expected = want;
+        c.expectedUnknown = wantUnknown;
+        checkExpr(c, values[i]);
+      }
+    }
     // **Reported here rather than from `typeOfExpr`**, because that function is asked the same
     // question about the same node more than once and a diagnostic from it would arrive as many
     // times as it was asked. `checkExpr` walks each expression once, which is what makes it the
@@ -7558,6 +7633,7 @@ bool startsWithFn(string t) {
 string writtenTy(C c, Ty t) {
   match (t.kind) {
     Prim(tok): { return tokenText(c, tok); }
+    TypeOf(e): { return computedTypeC(c, t); }
     Named(tok, typeArgs): {
       string base = c.canon(c.renamed(tokenText(c, tok)));
       if (typeArgs.len() == 0) { return base; }
@@ -10866,7 +10942,7 @@ void checkStmt(C c, Stmt s, Ty want) {
     StaticIf(cond, then, els): {
       checkExpr(c, cond);
       i32 live = liveBranch(c, cond);
-      if (live < 0) { c.reportWith(errStaticCondition(), cond.line, cond.col, ""); }
+      if (live == 0 - 1) { c.reportWith(errStaticCondition(), cond.line, cond.col, ""); }
       if (live != 0) { checkScoped(c, then, want); }
       if (live != 1) { checkScoped(c, els, want); }
     }
@@ -12837,6 +12913,8 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
 }
 
 export void checkModule(C c, Program prog) {
+  // The evaluator's view, before anything resolves a type: a computed type (spec/next ch30) is one.
+  ensureStaticView(c, prog);
   checkDuplicates(c, prog);
   checkDeclarationRules(c, prog);
   checkImportCollisions(c, prog);

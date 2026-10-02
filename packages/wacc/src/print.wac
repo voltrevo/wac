@@ -240,6 +240,11 @@ i32 charLitValue(u8[] s, i32 start, i32 len) {
 
 void printTy(Pr w, Ty t) {
   match (t.kind) {
+    TypeOf(e): {
+      w.open("type-of", t.line, t.col);
+      w.sp(); printExpr(w, e);
+      w.close();
+    }
     Prim(tok): {
       w.open("prim", t.line, t.col);
       w.sp();
@@ -312,6 +317,26 @@ void printBinding(Pr w, TupleBinding b) {
 
 void printExpr(Pr w, Expr e) {
   match (e.kind) {
+    TypeRefOf(t): {
+      w.open("typeref", e.line, e.col);
+      w.sp(); printTy(w, t);
+      w.close();
+    }
+    StaticMatch(subject, types, values, defaultAt): {
+      w.open("static-match", e.line, e.col);
+      w.sp(); printTy(w, subject);
+      for (i32 i = 0; i < values.len(); i++) {
+        w.sp();
+        if (i == defaultAt) { w.s("default"); } else { printTy(w, types[i]); }
+        w.sp(); printExpr(w, values[i]);
+      }
+      w.close();
+    }
+    StaticTrapE(message): {
+      w.open("static-trap", e.line, e.col);
+      w.sp(); printExpr(w, message);
+      w.close();
+    }
     IntLit(tok): {
       w.open("int", e.line, e.col); w.sp(); w.intTok(tok); w.close();
     }
@@ -796,6 +821,14 @@ void printParams(Pr w, Param[] params) {
 
 void printDecl(Pr w, Decl d) {
   match (d.kind) {
+    TypeDecl(nameTok, typeParams, alias, body, exported): {
+      w.open(exported ? "export-type" : "type", d.line, d.col);
+      w.sp(); w.tok(nameTok);
+      for (i32 i = 0; i < typeParams.len(); i++) { w.sp(); w.tok(typeParams[i]); }
+      if (alias is not null) { w.sp(); printTy(w, alias!); }
+      for (i32 i = 0; i < body.len(); i++) { w.sp(); printStmt(w, body[i]); }
+      w.close();
+    }
     SymbolDecl(nameTok, exported): {
       w.open(exported ? "export-symbol" : "symbol", d.line, d.col);
       w.sp(); w.tok(nameTok);

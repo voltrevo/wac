@@ -1085,6 +1085,13 @@ export Ty parseType(P p) {
     }
     p.expect(kRparen());
     node = tyTuple(members.take(), line, col);
+  } else if (p.at1(kIdent()) && p.textAt(0) == "type" && p.kindAt(1) == kLparen()) {
+    // `type(e)` — the one expression a type position takes (spec/next ch30).
+    p.advance();
+    p.expect(kLparen());
+    Expr te = parseExpr(p);
+    p.expect(kRparen());
+    node = Ty(TyKind.TypeOf(te), line, col);
   } else if (p.at1(kIdent()) || p.at1(kVoid())) {
     bool prim = identIsPrim(p, 0);
     i32 t = p.advance();
@@ -1766,6 +1773,48 @@ Expr parsePrimary(P p) {
 
   // `this` is an identifier expression, as in the reference.
   if (p.at1(kThis()))  { return Expr(ExprKind.Ident(p.advance()), line, col); }
+
+  // `static_match (T) { Type: value, …, default: value }` — spec/next ch31.
+  if (p.at1(kIdent()) && p.textAt(0) == "static_match" && p.kindAt(1) == kLparen()) {
+    p.advance();
+    p.expect(kLparen());
+    Ty subject = parseType(p);
+    p.expect(kRparen());
+    p.expect(kLbrace());
+    TyList tys = TyList.create();
+    ExprList vals = ExprList.create();
+    i32 defaultAt = 0 - 1;
+    i32 arm = 0;
+    while (!p.at1(kRbrace()) && !p.at1(kEof())) {
+      if (p.at1(kDefault())) {
+        p.advance();
+        defaultAt = arm;
+        tys.push(subject);
+      } else {
+        tys.push(parseType(p));
+      }
+      p.expect(kColon());
+      vals.push(parseExpr(p));
+      arm = arm + 1;
+      if (!p.eat(kComma())) { break; }
+    }
+    p.expect(kRbrace());
+    return Expr(ExprKind.StaticMatch(subject, tys.take(), vals.take(), defaultAt), line, col);
+  }
+  // `static_trap "…"` as a value — `never` (spec/next ch31).
+  if (p.at1(kIdent()) && p.textAt(0) == "static_trap" && p.kindAt(1) == kString()) {
+    p.advance();
+    return Expr(ExprKind.StaticTrapE(parsePrimary(p)), line, col);
+  }
+
+  // `typeref(T)` — a type as a value (spec/next ch30). A word only before `(`.
+  if (p.at1(kIdent()) && p.textAt(0) == "typeref" && p.kindAt(1) == kLparen()) {
+    p.advance();
+    p.expect(kLparen());
+    Ty rt = parseType(p);
+    p.expect(kRparen());
+    return Expr(ExprKind.TypeRefOf(rt), line, col);
+  }
 
   // `[a, b, c]` — an array literal. A `[` cannot begin an expression otherwise: an index is postfix.
   if (p.at1(kLbrack())) {
@@ -3337,6 +3386,24 @@ export Program parseProgram(P p) {
     } else if (k == kEnum()) {
       if (exported) { p.advance(); }
       decls.push(parseEnumDecl(p, exported));
+    } else if (k == kIdent() && p.textAt(after) == "type" && p.kindAt(after + 1) == kIdent()
+               && (p.kindAt(after + 2) == kAssign() || p.kindAt(after + 2) == kLt()
+                   || p.kindAt(after + 2) == kLbrace())) {
+      // `type Name = T;`, `type Name<T> = type(e);`, `type Name<T> { … }` — spec/next ch30.
+      if (exported) { p.advance(); }
+      i32 tline = p.lineAt(0);
+      i32 tcol = p.colAt(0);
+      p.advance();
+      i32 typeTok = p.advance();
+      i32[] tps = parseTypeParams(p);
+      if (p.at1(kLbrace())) {
+        decls.push(Decl(DeclKind.TypeDecl(typeTok, tps, null, parseBlock(p), exported), tline, tcol));
+      } else {
+        p.expect(kAssign());
+        Ty aliasTy = parseType(p);
+        p.expect(kSemi());
+        decls.push(Decl(DeclKind.TypeDecl(typeTok, tps, aliasTy, Stmt[](), exported), tline, tcol));
+      }
     } else if (k == kIdent() && p.textAt(after) == "symbol" && p.kindAt(after + 1) == kIdent()
                && p.kindAt(after + 2) == kSemi()) {
       // `symbol describe;` — `symbol` is not a keyword, so the declaration is told by its shape.

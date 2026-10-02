@@ -255,6 +255,7 @@ Stmt sSet(Ctx c, i32 nameTok, Expr v) {
  */
 Ty cloneTy(Ty t) {
   match (t.kind) {
+    TypeOf(e): { return Ty(TyKind.TypeOf(e), t.line, t.col); }
     Prim(tok): { return Ty(TyKind.Prim(tok), t.line, t.col); }
     Named(tok, typeArgs): {
       Ty[] args = Ty[].filled(typeArgs.len(), t);
@@ -375,6 +376,9 @@ Expr[] subExprs(Ctx c, Expr[] es) {
 /** `e` with every hoisted name replaced by its cell. Descends into lambdas: they capture the array. */
 Expr subExpr(Ctx c, Expr e) {
   match (e.kind) {
+    TypeRefOf(t): { return e; }
+    StaticMatch(subject, types, values, defaultAt): { return e; }
+    StaticTrapE(message): { return e; }
     Ident(tok): {
       if (!isHoisted(c, tok)) { return e; }
       return eIx(c, e, eInt(c, 0));

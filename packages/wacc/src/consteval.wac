@@ -26,6 +26,7 @@ import { Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { stringLiteralBytes } from "./strlit.wac";
 import { resolveFrom } from "./path.wac";
+import { tupleMembers, tupleName } from "./tuples.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde,
@@ -112,6 +113,8 @@ export i32 vF64()  { return 2; }
 export i32 vRef()  { return 3; }
 export i32 vNull() { return 4; }
 export i32 vNone() { return 5; }
+/** A `typeref`: its object's `type` is the spelling of the type it stands for (spec/next ch30). */
+export i32 vType() { return 6; }
 
 export Value numValue(string ty, i64 bits) { return Value(vNum(), ty, bits, 0.0, 0 - 1); }
 export Value f32Value(f32 x) { return Value(vF32(), "f32", 0 as i64, x as f64, 0 - 1); }
@@ -191,6 +194,14 @@ export struct Ev {
    */
   i32[] constOrder;
   i32 constOrderCount;
+  /**
+   * The type parameters in force and the types they stand for (spec/next ch30): what `typeref(T)`
+   * answers inside a generic, bound by whoever asks — an instantiation, or a type declaration's own
+   * parameters while its body runs. A name bound to `""` is opaque: a parameter with no instance yet.
+   */
+  string[] tpNames;
+  string[] tpTypes;
+  i32 tpCount;
 
   Ev create() {
     return Ev(evOk(), noneValue(), "", 0, 8000000,
@@ -199,7 +210,24 @@ export struct Ev {
               string[].filled(256, ""), 0,
               0, depthCeiling(), 0, "",
               i32[].filled(1024, 0), Value[].filled(1024, noneValue()), i32[].filled(1024, 0), string[].filled(1024, ""),
-              i32[].filled(1024, 0), 0);
+              i32[].filled(1024, 0), 0,
+              string[].filled(64, ""), string[].filled(64, ""), 0);
+  }
+
+  /** Bind type parameter `name` to the type spelled `ty` until the count is put back. */
+  void bindType(this, string name, string ty) {
+    if (this.tpCount >= this.tpNames.len()) { return; }
+    this.tpNames[this.tpCount] = name;
+    this.tpTypes[this.tpCount] = ty;
+    this.tpCount = this.tpCount + 1;
+  }
+
+  /** The type `name` is bound to, innermost first, or `null` when it is no parameter in force. */
+  string? boundType(const this, string name) {
+    for (i32 i = this.tpCount - 1; i >= 0; i--) {
+      if (this.tpNames[i] == name) { return this.tpTypes[i]; }
+    }
+    return null;
   }
 
   /**
@@ -1005,6 +1033,13 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
       return refValue(lid);
     }
 
+    // `typeref(T)` — a type as a value (spec/next ch30).
+    TypeRefOf(t): {
+      string spelled = evTyName(ev, cx, fi, t);
+      if (!evFinished(ev.status)) { return noneValue(); }
+      return typeValue(ev, spelled);
+    }
+
     // `[a, b, c]` — its element type is the slot's (spec/next ch15), or the first element's.
     ArrLit(elements): {
       string at = want.len() > 2 && want.slice(want.len() - 2, want.len()) == "[]" ? want : "";
@@ -1089,6 +1124,11 @@ export Value evalBinary(Ev ev, Decls cx, i32 fi, i32 op, Expr left, Expr right, 
   }
   string t = typeOfValue(a);
   Value b = evalExpr(ev, cx, fi, right, t != "" ? t : inner);
+  // Two `typeref`s are equal when they stand for the same type (spec/next ch30).
+  if (a.kind == vType() && b.kind == vType() && (op == kEq() || op == kNe())) {
+    bool same = typeOfTyperef(ev, a) == typeOfTyperef(ev, b);
+    return boolValue(op == kEq() ? same : !same);
+  }
   if (!evFinished(ev.status)) { return noneValue(); }
   // The left may have been the bare literal, in which the right is the one that knew.
   if (t == "" || (t == "i32" && isIntLit(left) && typeOfValue(b) != "")) {
@@ -1335,6 +1375,7 @@ export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
       Value o = evalExpr(ev, cx, fi, obj, "");
       if (!evFinished(ev.status)) { return noneValue(); }
       i32 id = refOf(o);
+      if (o.kind == vType()) { return typerefMethod(ev, typeOfTyperef(ev, o), nm); }
       if (nm == "len" && id >= 0) { return numValue("i32", ev.heap[id].count as i64); }
       if (id < 0) { ev.raise("a method was called through null"); return noneValue(); }
       ev.unsupported("the method `" + ev.heap[id].type + "." + nm + "`");
@@ -2144,5 +2185,175 @@ export StaticBind bindStaticLocals(Ev ev, Decls cx, i32 fi, Stmt[] body) {
   }
   ev.status = evOk();
   ev.message = "";
+  return out;
+}
+
+// ── Computed types — spec/next ch30 ─────────────────────────────────────────
+
+/** A `typeref` standing for the type spelled `spelled`. */
+export Value typeValue(Ev ev, string spelled) {
+  i32 id = ev.alloc(spelled, false, 0);
+  if (id < 0) { return noneValue(); }
+  return Value(vType(), "typeref", 0 as i64, 0.0, id);
+}
+
+/** The spelling of the type a `typeref` value stands for, or "" when it is not one. */
+export string typeOfTyperef(Ev ev, Value v) {
+  if (v.kind != vType() || v.id < 0) { return ""; }
+  return ev.heap[v.id].type;
+}
+
+/** Whether a spelling is a type with no reference behind it: a number or a `bool`. */
+export bool isValueTypeName(string t) {
+  return isIntName(t) || t == "f32" || t == "f64" || t == "bool" || t == "void" || t == "never";
+}
+
+/**
+ * `t.isRef()`, `t.pushNull()` and the rest (spec/next ch30 `§wac-typeref-ops-u2h77nf`), on the type
+ * spelled `t`. `pushNull` adds a layer rather than ensuring one, since `?` does not flatten.
+ */
+export Value typerefMethod(Ev ev, string t, string m) {
+  bool nullable = t.len() > 0 && t.slice(t.len() - 1, t.len()) == "?";
+  if (m == "isNullable") { return boolValue(nullable); }
+  if (m == "isRef") { return boolValue(nullable || !isValueTypeName(t)); }
+  if (m == "pushNull") { return typeValue(ev, t + "?"); }
+  if (m == "popNull") {
+    if (!nullable) { ev.raise("`popNull` on " + t + ", which has no nullable layer"); return noneValue(); }
+    return typeValue(ev, t.slice(0, t.len() - 1));
+  }
+  if (m == "members") {
+    string[] ms = tupleMembers(t);
+    i32 id = ev.alloc("typeref[]", true, ms.len());
+    if (id < 0) { return noneValue(); }
+    for (i32 i = 0; i < ms.len(); i++) { ev.heap[id].slots[i] = typeValue(ev, ms[i]); }
+    return refValue(id);
+  }
+  ev.unsupported("the `typeref` operation `" + m + "`");
+  return noneValue();
+}
+
+/**
+ * A written type as the spelling this evaluator holds types in — with the type parameters in force
+ * substituted, `type(e)` evaluated, and a `type` declaration's computation run (spec/next ch30).
+ * A parameter with no instance yet makes the answer unknowable here: unsupported, saying so.
+ */
+export string evTyName(Ev ev, Decls cx, i32 fi, Ty t) {
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+  match (t.kind) {
+    Prim(tok): { return tokText(src, lx, tok); }
+    Named(tok, typeArgs): {
+      string spelled = tokText(src, lx, tok);
+      string? b = ev.boundType(spelled);
+      if (b is not null && typeArgs.len() == 0) {
+        if (b! == "") { ev.unsupported("a type parameter `" + spelled + "` with no instance yet"); return ""; }
+        return b!;
+      }
+      string[] args = string[].filled(typeArgs.len(), "");
+      for (i32 i = 0; i < typeArgs.len(); i++) {
+        args[i] = evTyName(ev, cx, fi, typeArgs[i]);
+        if (!evFinished(ev.status)) { return ""; }
+      }
+      i32 td = typeDeclAt(cx, spelled, fi);
+      if (td >= 0) { return evalTypeDecl(ev, cx, td, args); }
+      string key = cx.keyAt(spelled, fi);
+      string base = key == "" ? spelled : key;
+      if (args.len() == 0) { return base; }
+      string out = base + "<";
+      for (i32 i = 0; i < args.len(); i++) { out = out + (i > 0 ? "," : "") + args[i]; }
+      return out + ">";
+    }
+    Arr(elem): {
+      string e = evTyName(ev, cx, fi, elem);
+      return evFinished(ev.status) ? e + "[]" : "";
+    }
+    Nullable(inner): {
+      string n = evTyName(ev, cx, fi, inner);
+      return evFinished(ev.status) ? n + "?" : "";
+    }
+    TupleOf(members): {
+      string[] ms = string[].filled(members.len(), "");
+      for (i32 i = 0; i < members.len(); i++) {
+        ms[i] = evTyName(ev, cx, fi, members[i]);
+        if (!evFinished(ev.status)) { return ""; }
+      }
+      return tupleName(ms);
+    }
+    TypeOf(e): {
+      Value v = evalExpr(ev, cx, fi, e, "typeref");
+      if (!evFinished(ev.status)) { return ""; }
+      if (v.kind != vType()) { ev.unsupported("`type(…)` of something that is not a `typeref`"); return ""; }
+      return typeOfTyperef(ev, v);
+    }
+    default: {
+      ev.unsupported("this kind of type inside a computed type");
+      return "";
+    }
+  }
+}
+
+/** The declaration index of a `type` declaration named `name` as file `fi` sees it, or -1. */
+export i32 typeDeclAt(Decls cx, string name, i32 fi) {
+  for (i32 d = 0; d < cx.decls.len(); d++) {
+    match (cx.decls[d].kind) {
+      TypeDecl(nameTok, typeParams, alias, body, exported): {
+        i32 dfi = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+        if (tokText(cx.srcOf(dfi), cx.lexOf(dfi), nameTok) != name) { continue; }
+        if (dfi == fi || exported || fi < 0 || dfi < 0) { return d; }
+      }
+      default: { }
+    }
+  }
+  return 0 - 1;
+}
+
+/**
+ * The type `type` declaration `d` stands for at these arguments — an alias resolved, `type(e)`
+ * evaluated, or a body run with the parameters bound, its returned `typeref` the type.
+ */
+export string evalTypeDecl(Ev ev, Decls cx, i32 d, string[] args) {
+  i32 fi = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+  string out = "";
+  match (cx.decls[d].kind) {
+    TypeDecl(nameTok, typeParams, alias, body, exported): {
+      string name = tokText(cx.srcOf(fi), cx.lexOf(fi), nameTok);
+      ev.depth = ev.depth + 1;
+      if (ev.depth > ev.depthLimit) {
+        ev.status = evLimit();
+        ev.message = "computed types nested more than " + decimalText(ev.depthLimit) + " deep";
+        ev.depth = ev.depth - 1;
+        return "";
+      }
+      i32 tpMark = ev.tpCount;
+      for (i32 i = 0; i < typeParams.len(); i++) {
+        ev.bindType(tokText(cx.srcOf(fi), cx.lexOf(fi), typeParams[i]), i < args.len() ? args[i] : "");
+      }
+      pushDemand(ev, "type " + name);
+      if (alias is not null) {
+        out = evTyName(ev, cx, fi, alias!);
+      } else {
+        i32 base = ev.localCount;
+        i32 outer = ev.frameBase;
+        string outerRet = ev.returnType;
+        ev.frameBase = base;
+        ev.returnType = "typeref";
+        execStmts(ev, cx, fi, body, base);
+        if (ev.status == evReturn()) {
+          ev.status = evOk();
+          out = typeOfTyperef(ev, ev.result);
+          if (out == "") { ev.unsupported("a `type` body that returned something other than a `typeref`"); }
+        } else if (ev.status == evOk()) {
+          ev.unsupported("a `type` body that returned nothing");
+        }
+        ev.localCount = base;
+        ev.frameBase = outer;
+        ev.returnType = outerRet;
+      }
+      popDemand(ev);
+      ev.tpCount = tpMark;
+      ev.depth = ev.depth - 1;
+    }
+    default: { }
+  }
   return out;
 }

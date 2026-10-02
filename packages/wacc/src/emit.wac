@@ -19,7 +19,7 @@
 import {
   Decls, Ev, StaticBind, Value, bindStaticLocals, demandConst, evFinished, isIntName, outcomeName, declExportedOf, declNameOf,
   decimalText, evalExpr, evLimit, evUnsupported, numValue, staticForCap, staticForName,
-  staticForType, staticForValues, truthy, wrapTo, vF32, vF64, vNum,
+  staticForType, staticForValues, truthy, wrapTo, vF32, vF64, vNum, evTyName, typeDeclAt,
 } from "./consteval.wac";
 import { stringLiteralBytes } from "./strlit.wac";
 import { programGraph } from "./program.wac";
@@ -276,6 +276,10 @@ void writeValType(B out, Env env, string t) {
   // **A union is an `anyref`** — spec/next ch18's representation: a reference of whichever alternative
   // it holds, numbers boxed, told apart by `ref.test`.
   if (isUnionName(t)) { out.byte(110); return; }
+  // **A `typeref` exists only in static evaluation** (spec/next ch30), so a signature that names one
+  // belongs to a function nothing runs (`canEmit` leaves it out); its slot needs some type to be
+  // registered with, and an `i32` is the cheapest one that holds nothing.
+  if (t == "typeref") { out.byte(127); return; }
   // **The heap type after `0x63` is signed.** A reference type is `0x63` followed by an *s33* — the
   // encoding that lets a negative value mean `func`, `extern`, `eq` and the rest, and a non-negative
   // one mean a type index. Written as an unsigned LEB it is identical for the first sixty-four
@@ -583,6 +587,8 @@ string naturalLiteralType(Expr e) {
 bool matchTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] tps, string[] out) {
   match (t.kind) {
     Prim(tok): { return true; }
+    // A computed type binds nothing: what it is follows from the parameters, not the other way.
+    TypeOf(e): { return true; }
     TupleOf(members): {
       string[] ams = tupleMembers(actual);
       if (!isTupleName(actual) || ams.len() != members.len()) { return false; }
@@ -2687,6 +2693,8 @@ export struct Env {
   string asyncWhy;
   /** While a lambda's body is walked, how many locals are outside it — a lower index is a capture. */
   i32 captureFloor;
+  /** How many `type` declarations the program has (spec/next ch30), or -1 before anyone asked. */
+  i32 typeDecls;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -3000,7 +3008,7 @@ export struct Env {
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
-               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0);
+               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1);
   }
 
   
@@ -6902,19 +6910,119 @@ export string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
   return text;
 }
 
+/**
+ * A computed type (spec/next ch30) — `type(e)`, or a name a `type` declaration gives — as the
+ * spelling the rest of this emitter uses: evaluated with the type parameters of the instance being
+ * emitted bound, so `Slot<T>` inside `fromSlot<i32>` is `i32`.
+ */
+string computedTypeE(Env env, u8[] src, Lexed lexed, Ty t) {
+  Ev ev = staticEvalOf(env, src, lexed);
+  if (env.staticCx is null) { return ""; }
+  i32 mark = bindInstanceTypes(env, ev);
+  ev.status = 0;
+  ev.message = "";
+  string spelled = evTyName(ev, env.staticCx!, env.curFile, t);
+  bool ok = evFinished(ev.status);
+  string why = ev.message;
+  ev.status = 0;
+  ev.tpCount = mark;
+  if (!ok) { env.declineFor("a computed type: " + why); return ""; }
+  return emitterSpelling(env, spelled);
+}
+
+/**
+ * A type as the evaluator spells it, as this emitter does: **a reference's own `?` is dropped**, since
+ * every reference here can be null, while a number's is kept — it is a box — and two layers keep both.
+ */
+string emitterSpelling(Env env, string t) {
+  if (t.len() > 2 && t.slice(t.len() - 2, t.len()) == "[]") {
+    return emitterSpelling(env, t.slice(0, t.len() - 2)) + "[]";
+  }
+  if (isTupleName(t)) {
+    string[] ms = tupleMembers(t);
+    for (i32 i = 0; i < ms.len(); i++) { ms[i] = emitterSpelling(env, ms[i]); }
+    return tupleName(ms);
+  }
+  if (t.len() > 1 && t.slice(t.len() - 1, t.len()) == "?"
+      && !(t.len() > 2 && t.slice(t.len() - 2, t.len()) == "??")) {
+    string base = t.slice(0, t.len() - 1);
+    if (isPrimitiveNumberType(base) || base == "bool") { return t; }
+    return base;
+  }
+  return t;
+}
+
+/**
+ * The type parameters of the instance being emitted, bound in the evaluator so `typeref(T)` inside
+ * `pick<i32>` answers `i32`. Answers the count to put back.
+ */
+i32 bindInstanceTypes(Env env, Ev ev) {
+  i32 mark = ev.tpCount;
+  for (i32 i = 0; i < env.subCount; i++) { ev.bindType(env.subFrom[i], env.subTo[i]); }
+  return mark;
+}
+
+/**
+ * Which branch an ordinary `if` takes when its condition can only be computed statically — it asks a
+ * `typeref` — or -1 for every other condition, which runs as written.
+ */
+i32 foldedCondOf(Env env, u8[] src, Lexed lexed, Expr cond) {
+  if (!staticOnlyWhy(unsupportedExpr(src, lexed, env, cond))) { return 0 - 1; }
+  return liveBranchOf(env, src, lexed, cond);
+}
+
+/**
+ * The arm of a `static_match` this instance takes: the one whose type is the subject's, else
+ * `default`, else -1 (spec/next ch31 `§wac-static-match-ybv9j9x`).
+ */
+i32 staticArmOf(Env env, u8[] src, Lexed lexed, Ty subject, Ty[] types, i32 defaultAt) {
+  string st = typeOfTyName(env, src, lexed, subject);
+  for (i32 i = 0; i < types.len(); i++) {
+    if (i == defaultAt) { continue; }
+    if (typeOfTyName(env, src, lexed, types[i]) == st) { return i; }
+  }
+  return defaultAt;
+}
+
+/** Whether `raw` names a `type` declaration this file can see. */
+bool namesTypeDecl(Env env, u8[] src, Lexed lexed, string raw) {
+  if (env.typeDecls == 0) { return false; }
+  staticEvalOf(env, src, lexed);
+  if (env.staticCx is null) { return false; }
+  if (env.typeDecls < 0) {
+    i32 n = 0;
+    Decls tcx = env.staticCx!;
+    for (i32 d = 0; d < tcx.decls.len(); d++) {
+      match (tcx.decls[d].kind) {
+        TypeDecl(nameTok, typeParams, alias, body, exported): { n = n + 1; }
+        default: { }
+      }
+    }
+    env.typeDecls = n;
+    if (n == 0) { return false; }
+  }
+  return typeDeclAt(env.staticCx!, raw, env.curFile) >= 0;
+}
+
 /** A declared type's name, enough to tell `void` from a value. */
 string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
   match (t.kind) {
     Prim(tok): {
       return tokenTextOf(src, lexed, tok);
     }
+    TypeOf(e): { return computedTypeE(env, src, lexed, t); }
     Named(tok, typeArgs): {
       string raw = tokenTextOf(src, lexed, tok);
+      if (namesTypeDecl(env, src, lexed, raw) && env.substituted(raw) == "") {
+        string ct = computedTypeE(env, src, lexed, t);
+        if (ct != "") { registerNamed(env, ct); }
+        return ct;
+      }
       // **`anyref` and `i31ref` are spelled as identifiers and declared by nobody.** The lexer has
       // no keyword for them, so they arrive here looking like a type name to resolve — and
       // resolution would go hunting for a declaration in the file, find none, and answer `""`,
       // which is how `i31ref x = …` came out as a bare `i32`.
-      if (raw == "anyref" || raw == "i31ref") { return raw; }
+      if (raw == "anyref" || raw == "i31ref" || raw == "typeref") { return raw; }
       // **`union<A, B>`, normalised as the checker normalises it** (spec/next ch18), with a box
       // registered for each numeric alternative, since that is how one enters the `anyref`.
       if (raw == "union") {
@@ -8267,7 +8375,9 @@ i32 bindBlockStatics(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, bool wri
   if (!any) { return 0 - 1; }
   Ev ev = staticEvalOf(env, src, lexed);
   if (env.staticCx is null) { env.declineFor("a `static` in a function, with no evaluator"); return 0 - 1; }
+  i32 tpMark = bindInstanceTypes(env, ev);
   StaticBind sb = bindStaticLocals(ev, env.staticCx!, env.curFile, body);
+  ev.tpCount = tpMark;
   for (i32 j = 0; j < sb.names.len(); j++) {
     if (sb.status[j] != 0) { env.declineFor("the static `" + sb.names[j] + "`: " + sb.why[j]); continue; }
     i32 li = ev.localAt(sb.names[j], 0);
@@ -8457,7 +8567,9 @@ i32 liveBranchOf(Env env, u8[] src, Lexed lexed, Expr cond) {
   ev.status = 0;
   ev.message = "";
   i32 mark = ev.localCount;
+  i32 tpMark = bindInstanceTypes(env, ev);
   Value v = evalExpr(ev, env.staticCx!, env.curFile, cond, "bool");
+  ev.tpCount = tpMark;
   ev.localCount = mark;
   if (!evFinished(ev.status)) { ev.status = 0; return 0 - 1; }
   ev.status = 0;
@@ -8468,7 +8580,9 @@ i32 liveBranchOf(Env env, u8[] src, Lexed lexed, Expr cond) {
 i64[] staticTurnsOf(Env env, u8[] src, Lexed lexed, Stmt? init, Expr? cond, Stmt? update) {
   Ev ev = staticEvalOf(env, src, lexed);
   if (env.staticCx is null) { return i64[](); }
+  i32 tpMark = bindInstanceTypes(env, ev);
   i64[] vals = staticForValues(ev, env.staticCx!, env.curFile, init, cond, update, staticForCap());
+  ev.tpCount = tpMark;
   ev.status = 0;
   if (vals.len() >= staticForCap()) {
     env.declineFor("a `static_for` that did not stop within " + decimalText(staticForCap()) + " turns");
@@ -8727,6 +8841,14 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       emitLeave(fb, env, !(value is null));
     }
     If(cond, then, els): {
+      // **A condition on types folds** (spec/next ch31 `§wac-if-folds-checks-both-795w3wt`): one that
+      // only static evaluation can compute — it asks a `typeref` — is decided for this instance and the
+      // dead branch left out; the checker has already checked both.
+      i32 foldedIf = foldedCondOf(env, src, lexed, cond);
+      if (foldedIf >= 0) {
+        emitBody(fb, src, lexed, env, foldedIf == 1 ? then : els);
+        return;
+      }
       emitExpr(fb, src, lexed, env, cond);
       fb.byte(4);    // if
       fb.byte(64);   // blocktype: nothing
@@ -9388,6 +9510,15 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     return;
   }
   match (e.kind) {
+    // Declined by `unsupportedExpr`: a `typeref` exists only in static evaluation (spec/next ch30, Open).
+    TypeRefOf(t): { fb.byte(0); }
+    // The arm this instance chooses, and nothing of the others (spec/next ch31).
+    StaticMatch(subject, types, values, defaultAt): {
+      i32 armE = staticArmOf(env, src, lexed, subject, types, defaultAt);
+      if (armE < 0) { env.declineFor("a `static_match` with no arm for this type"); fb.byte(0); return; }
+      emitExprAt(fb, src, lexed, env, values[armE], want);
+    }
+    StaticTrapE(message): { env.declineFor("`static_trap` was reached"); fb.byte(0); }
     // **A lambda is its hoisted function's wrapper, with a null env** — `design/lang/0002` tier two.
     // Identical to `emitFuncPair` except for which wrapper: a lambda has no declaration to look up,
     // so it is found by the position key the walk recorded, which is the one thing both walks read
@@ -10750,6 +10881,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       return mt;
     }
+    StaticMatch(subject, types, values, defaultAt): {
+      i32 armT = staticArmOf(env, src, lexed, subject, types, defaultAt);
+      return armT < 0 ? "" : typeOfE(src, lexed, env, values[armT]);
+    }
+    StaticTrapE(message): { return "never"; }
     Ternary(cond, then, els): {
       // A branch that takes its type from the slot — `ok ? [x] : bytes` — says less than the other
       // one, so the other is asked first.
@@ -12321,6 +12457,12 @@ string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
 
 void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
   match (e.kind) {
+    TypeRefOf(t): { }
+    StaticMatch(subject, types, values, defaultAt): {
+      i32 armF = staticArmOf(env, src, lexed, subject, types, defaultAt);
+      if (armF >= 0) { findLambdasExpr(env, src, lexed, values[armF], want); }
+    }
+    StaticTrapE(message): { }
     // **The lambda itself, recorded before its body is walked**, so a lambda inside a lambda is
     // numbered after the one containing it. Any consistent order would do; what matters is that
     // emission uses this one, which it does by reading the table rather than walking again.
@@ -14036,6 +14178,8 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
       return typeOfE(src, lexed, env, e) == "" ? "a statement whose value this slice cannot place" : "";
     }
     If(cond, then, els): {
+      i32 foldedU = foldedCondOf(env, src, lexed, cond);
+      if (foldedU >= 0) { return unsupportedIn(src, lexed, env, foldedU == 1 ? then : els); }
       string c = unsupportedExpr(src, lexed, env, cond);
       if (c != "") { return c; }
       // The guarded block sees the narrowed type, exactly as the emitter will.
@@ -14477,6 +14621,15 @@ bool isLiteral(Expr e) {
 
 string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
   match (e.kind) {
+    // **Whether a `typeref` may exist at run time is not decided** (spec/next ch30, Open), so one that
+    // would is declined by name rather than given a representation the spec has not chosen.
+    TypeRefOf(t): { return "a `typeref` at run time"; }
+    StaticMatch(subject, types, values, defaultAt): {
+      i32 armU = staticArmOf(env, src, lexed, subject, types, defaultAt);
+      if (armU < 0) { return "a `static_match` with no arm for this type"; }
+      return unsupportedExpr(src, lexed, env, values[armU]);
+    }
+    StaticTrapE(message): { return "`static_trap` was reached"; }
     // Emission is not built yet — `design/lang/0002` tier two. Declining by name is the honest
     // answer while the hoisting and the generated struct are being written: a caller told
     // "unsupported" can act on it, and one handed a module that does something else cannot.
@@ -14640,6 +14793,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         return env.constGlobal[ci] >= 0 ? "" : "a constant whose value is not a constant expression";
       }
       if (env.constInits[ci] is null) { return "a constant with no initialiser"; }
+      // **A static that folds is its value**, so what its initialiser would need to run does not matter:
+      // it never runs (spec/next ch28). One with storage is read from its global.
+      if (constSubstitutes(env, src, lexed, ci) || env.constGlobal[ci] >= 0) { return ""; }
       return unsupportedValue(cSrc(env, src, ci), cLex(env, lexed, ci), env, env.constInits[ci]!);
     }
     // Reached only in a body the async lowering declined, so the reason is the lowering's.
@@ -15154,11 +15310,20 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
   // now, so the claim is a test rather than a paragraph.
   string why = unsupportedIn(src, lexed, env, body);
   env.lastWhy = why;
-  if (why != "" && env.blocked == "") { env.blocked = why; }
+  // **A function over `typeref`s is for static evaluation** (spec/next ch30): its body has nothing to
+  // run as at run time, so it is left out rather than refusing the module — and a caller that runs is
+  // declined in its own right, naming it.
+  bool staticOnly = staticOnlyWhy(why);
+  if (why != "" && !staticOnly && env.blocked == "") { env.blocked = why; }
   env.localCount = savedCount;
   env.paramCount = savedParams;
   env.returnType = savedRet;
   return why == "";
+}
+
+/** Whether a function was left out only for computing with `typeref`s, which nothing runs (ch30). */
+bool staticOnlyWhy(string why) {
+  return why.indexOf("a `typeref` at run time") >= 0 || why.indexOf("typeref.") >= 0;
 }
 
 /**
@@ -15301,6 +15466,8 @@ string blockedOf(Front f) {
     src = srcFor(env.fileSrcs, b3s, env.curFile);
     lexed = lexFor(env.fileLexeds, b3l, env.curFile);
     match (b3d[d].kind) {
+      // A type declaration emits nothing: it is the type it computes, wherever that is named.
+      TypeDecl(nameTok, typeParams, alias, body, exported): { }
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         // A generic function is a **template**, and a template emits nothing: `mapOption<T, U>` is
         // not a function until its arguments say which one. Declining the declaration declined every
@@ -16336,7 +16503,7 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
         // takes no slot (this walk's `continue` already assumed it), and a private function in the
         // entry always reaches the module. The net fires on nothing today and catches the same class
         // one declaration wider. `issues/lang/0170a`.
-        if (mine && env.funcIndex[at] < 0) {
+        if (mine && env.funcIndex[at] < 0 && !(staticOnlyWhy(at < env.funcWhy.len() ? env.funcWhy[at] : "") && !exported)) {
           // **And why, when the emitter recorded one.** Every `funcOk[at] = false` already writes
           // `funcWhy[at]` — five sites, all of them — and nothing read it here, so this net named the
           // function and threw away the reason sitting beside it. Two attempts at
@@ -16392,6 +16559,11 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
           string why = env.blocked;
           env.blocked = was;
+          // A function over `typeref`s that nothing runs is left out, not a reason (`canEmit`).
+          if (why == "" && !exported && staticOnlyWhy(env.lastWhy)) {
+            at = at + 1;
+            continue;
+          }
           string msg = why == "" ? (exported ? "an export it declined: " : "a function it declined: ") +
                                    tokenTextOf(src, lexed, nameTok)
                                  : why;
@@ -16848,7 +17020,7 @@ bool emitStaticScalar(B fb, Env env, u8[] src, Lexed lexed, i32 ci, string want)
 }
 
 /** A type whose value fits in one wasm instruction, which is the whole of what is folded so far. */
-bool isStaticScalarType(string t) { return isIntName(t) || t == "f32" || t == "f64"; }
+bool isStaticScalarType(string t) { return isIntName(t) || t == "f32" || t == "f64" || t == "bool"; }
 
 /**
  * Whether `emitStaticScalar` will write this static as a literal at each of its uses — asked by
@@ -17085,6 +17257,9 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
 /** A one-word name for an expression kind, so a decline says *what* rather than merely *that*. */
 string kindOfExpr(Expr e) {
   match (e.kind) {
+    TypeRefOf(t): { return "typeref"; }
+    StaticMatch(subject, types, values, defaultAt): { return "static_match"; }
+    StaticTrapE(message): { return "static_trap"; }
     Lambda(params, body, lamAsync): { return "lambda"; }
     IntLit(tok): { return "int literal"; }
     FloatLit(tok): { return "float literal"; }

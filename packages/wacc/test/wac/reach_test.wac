@@ -135,6 +135,9 @@ string[] expressionLabels() {
     // so there is no sub-expression to bury a fault in, and it is a leaf for this grid's purpose
     // even though it is not one for the checker's. `issues/lang/0088`.
     "TypeName",
+    // `typeref(T)` holds a `Ty` too, and `static_trap "…"` only a string literal — leaves alike
+    // (spec/next ch30, ch31). `static_match` holds values, every one of which is checked.
+    "TypeRefOf", "StaticTrapE", "StaticMatch",
     // **A real cell now.** This was empty while the syntax was in flight — a placeholder that kept
     // the completeness check green and covered nothing. A lambda parses now (`design/lang/0002` tier
     // two), so here is the debt paid: the body is walked, and something wrong inside it is reported.
@@ -184,6 +187,8 @@ string[] expressionSources() {
     ")}/>; } string itoa(i32 v) { return \"\"; }",
     "", "", "", "", "", "", "",
     "",                                   // TypeName — a leaf here; see the label list above
+    "", "",                               // TypeRefOf and StaticTrapE — leaves too
+    "i32 f(i32 p, f64 q) { return static_match (i32) { i32: " + SUB + ", default: 0 }; }",
     "void f(i32 p, f64 q) { fn<i32()> g = () => " + SUB + "; }",
     "void f(i32 p, f64 q) { fn<i32()> g = () => { return " + SUB + "; }; }"
   ];

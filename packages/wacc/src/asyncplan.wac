@@ -67,6 +67,9 @@ export i32 planSuspends(AsyncPlan p) { return p.suspendAt.len(); }
 /** Whether `e` contains an `await` anywhere inside it. */
 export bool awaitInExpr(Expr e) {
   match (e.kind) {
+    TypeRefOf(t): { return false; }
+    StaticMatch(subject, types, values, defaultAt): { return false; }
+    StaticTrapE(message): { return false; }
     Await(operand): { return true; }
     Try(operand): { return awaitInExpr(operand); }
     CoroutineOf(call): { return awaitInExpr(call); }
