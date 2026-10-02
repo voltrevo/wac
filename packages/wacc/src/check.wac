@@ -36,6 +36,7 @@ import { lex, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { coreExports, isBuiltinSpec } from "./coretext.wac";
 import { endsWith, startsWith } from "./path.wac";
+import { flattenUnion, isUnionName, spellUnion, unionMembers } from "./unions.wac";
 import { isTupleName, tupleMembers, tupleName } from "./tuples.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
@@ -1496,6 +1497,38 @@ bool rawCast(string from, string to) {
  * only place its fields are written down. So every lookup that takes an owner has to come back here
  * first, and the type arguments are what it substitutes afterwards.
  */
+/** The normalised union of `ms` — flattened, deduplicated, ancestors absorbing descendants, sorted. */
+string normUnion(C c, string[] ms) {
+  string[] flat = flattenUnion(ms);
+  bool[] gone = bool[].filled(flat.len(), false);
+  for (i32 i = 0; i < flat.len(); i++) {
+    string up = c.parentOf(flat[i]);
+    i32 guard = 0;
+    while (up != "" && guard < 32) {
+      for (i32 j = 0; j < flat.len(); j++) { if (j != i && flat[j] == up) { gone[i] = true; } }
+      up = c.parentOf(up);
+      guard = guard + 1;
+    }
+  }
+  return spellUnion(flat, gone);
+}
+
+/**
+ * The alternative of `u` a value of type `t` enters: the one it is, or else the single one it fits —
+ * `""` when none does or more than one could (spec/next ch18).
+ */
+string unionTarget(C c, string u, string t) {
+  string[] ms = unionMembers(u);
+  for (i32 i = 0; i < ms.len(); i++) { if (ms[i] == t) { return t; } }
+  string found = "";
+  for (i32 i = 0; i < ms.len(); i++) {
+    if (isUnionName(ms[i]) || !assignable(c, ms[i], t)) { continue; }
+    if (found != "") { return ""; }
+    found = ms[i];
+  }
+  return found;
+}
+
 /**
  * Whether `t` is a `Ticket<…>` — what `await` answers the value of (spec/next ch35).
  *
@@ -1907,6 +1940,18 @@ bool isReferenceName(C c, string t) {
 export bool assignable(C c, string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
+  // **Into a union**: a union whose every alternative fits, or a value with exactly one alternative
+  // it enters — the most specific (`§wac-union-insert-specific-mv3jsue`).
+  if (isUnionName(want)) {
+    if (isUnionName(got)) {
+      string[] gs = unionMembers(got);
+      for (i32 i = 0; i < gs.len(); i++) { if (unionTarget(c, want, gs[i]) == "") { return false; } }
+      return true;
+    }
+    if (isNullableName(got)) { return false; }
+    return unionTarget(c, want, got) != "";
+  }
+  if (isUnionName(got)) { return false; }
   // No value of `never` ever arrives, so one may stand where any type is wanted (spec/next ch11).
   if (got == "never") { return true; }
   if (withoutNull(want) == got) { return true; }
@@ -3794,6 +3839,17 @@ export string typeOfTy(C c, Ty t) {
       // and find none. They *are* types; what needed fixing was the hierarchy they sit in, which
       // `isReferenceType` answers.
       if (base == "anyref" || base == "i31ref") { return base; }
+      // **`union<A, B>` is its normalised set of alternatives** (spec/next ch18). A bare `union` is a
+      // placeholder (ch33), which is not built yet: unknown, and silent.
+      if (base == "union") {
+        if (typeArgs.len() == 0) { return typeNone(); }
+        string[] ums = string[].defaulted(typeArgs.len());
+        for (i32 i = 0; i < typeArgs.len(); i++) {
+          ums[i] = typeOfTy(c, typeArgs[i]);
+          if (ums[i] == typeNone() || ums[i] == "") { return typeNone(); }
+        }
+        return normUnion(c, ums);
+      }
       // **The three reports below name the token, not the node's position.** They are the same place
       // — a `Named` type is positioned at its own name — and `reportTok` records the name's *width*
       // as well, which is what puts the caret under `Circle` rather than under its first letter.
@@ -4332,6 +4388,14 @@ bool literalFits(C c, string want, Expr e) {
   if (!acceptsLiteral(want, lit)) { return false; }
   string core = withoutNull(want);
   string base = core == "" ? want : core;
+  // Into a union: the one alternative that takes it (checked above) is the slot it must fit — and a
+  // `null` into `union<…>?` is the outer layer's.
+  if (isUnionName(base) && lit == litNull()) { return true; }
+  if (isUnionName(base)) {
+    string[] ms = unionMembers(base);
+    for (i32 i = 0; i < ms.len(); i++) { if (acceptsLiteral(ms[i], lit)) { return literalFits(c, ms[i], e); } }
+    return false;
+  }
   // **An integer literal has to fit the slot it is going into**, which is a different question from
   // the family one above: `4294967296` is an integer and an `i32` has no room for it. Asked of the
   // types whose bounds are exact here — the 64-bit ones would need the literal's own width to answer
@@ -4461,6 +4525,21 @@ export bool acceptsLiteral(string want, i32 lit) {
   if (isNullableName(want)) {
     if (lit == litNull()) { return true; }
     return acceptsLiteral(withoutNull(want), lit);
+  }
+  // **Into a union, a literal needs exactly one alternative to take it** — a number is refused with
+  // two numeric ones, whatever its range or spelling (`§wac-union-literal-target-vmitw6m`).
+  if (isUnionName(want)) {
+    string[] ms = unionMembers(want);
+    i32 takers = 0;
+    for (i32 i = 0; i < ms.len(); i++) {
+      bool numeric = lit == litInteger() || lit == litFloat();
+      if (numeric && acceptsLiteral(ms[i], litFloat())) { takers = takers + 1; continue; }
+      if (numeric && acceptsLiteral(ms[i], litInteger())) { takers = takers + 1; continue; }
+      if (!numeric && acceptsLiteral(ms[i], lit)) { takers = takers + 1; }
+    }
+    if (takers != 1) { return false; }
+    for (i32 i = 0; i < ms.len(); i++) { if (acceptsLiteral(ms[i], lit)) { return true; } }
+    return false;
   }
   if (lit == litInteger()) {
     // The packed types are integer types like any other (spec/next ch08 `§wac-packed-ordinary`), so
@@ -4971,7 +5050,10 @@ export string typeOfExpr(C c, Expr e) {
         // `1` is an `f64`, which is why a literal cannot be asked what it is here — reading one as
         // `i32` refused a program the spec runs.
         if (litFamily(c, arms[i].value!) != litNone()) { continue; }
+        // With the subject narrowed, as the arm is checked: `string: cell` is a string.
+        string narrowedFrom = armNarrowing(c, subject, arms[i]);
         string at = typeOfExpr(c, arms[i].value!);
+        restoreNarrowing(c, subject, narrowedFrom);
         if (at == typeNone() || at == "") { return typeNone(); }
         // The same unification a ternary's branches get — `unifyArms`, shared rather than restated.
         // This required the arms to be *equal*, so a nullable arm or a subtype pair answered unknown,
@@ -11170,12 +11252,57 @@ string armNarrowing(C c, Expr subject, Arm arm) {
       string was = c.typeOfName(nm);
       if (was == typeNone()) { return ""; }
       string variant = tokenText(c, arm.variantTok);
+      // **A union's arm names an alternative**, and in it the subject is that type (spec/next ch18
+      // `§wac-union-match-type-rj837up`).
+      string ubase = isNullableName(was) ? withoutNull(was) : was;
+      if (isUnionName(ubase)) {
+        string member = unionArmMember(c, ubase, variant);
+        if (member == "") { return ""; }
+        c.setType(nm, member);
+        return was;
+      }
       if (!c.isStruct(variant)) { return ""; }
       c.setType(nm, variant);
       return was;
     }
     default: { return ""; }
   }
+}
+
+/**
+ * A `match` on a union: each arm names an alternative, once, and together they cover every one or
+ * there is a `default` (spec/next ch18 `§wac-union-match-type-rj837up`).
+ */
+void checkUnionArms(C c, string u, Arm[] arms, i32 mline, i32 mcol) {
+  string[] ms = unionMembers(u);
+  bool[] seen = bool[].filled(ms.len(), false);
+  bool anyDefault = false;
+  for (i32 i = 0; i < arms.len(); i++) {
+    if (arms[i].variantTok < 0) { anyDefault = true; continue; }
+    if (isNullArm(c, arms[i])) { continue; }
+    string member = unionArmMember(c, u, tokenText(c, arms[i].variantTok));
+    if (member == "") {
+      c.reportTok(errPatternType(), arms[i].variantTok, tokenText(c, arms[i].variantTok) + " is not an alternative of " + u);
+      continue;
+    }
+    for (i32 k = 0; k < ms.len(); k++) {
+      if (ms[k] != member) { continue; }
+      if (seen[k]) { c.reportTok(errDuplicateCase(), arms[i].variantTok - 1, ""); }
+      seen[k] = true;
+    }
+  }
+  if (anyDefault) { return; }
+  string missing = "";
+  for (i32 k = 0; k < ms.len(); k++) { if (!seen[k]) { missing = missing + (missing == "" ? "" : ", ") + ms[k]; } }
+  if (missing != "") { c.reportWith(errMatchInexhaustive(), mline, mcol, "missing " + missing); }
+}
+
+/** The alternative of union `u` that an arm naming `written` is about, or `""`. */
+string unionArmMember(C c, string u, string written) {
+  string named = c.canon(c.renamed(written));
+  string[] ms = unionMembers(u);
+  for (i32 i = 0; i < ms.len(); i++) { if (ms[i] == named || ms[i] == written) { return ms[i]; } }
+  return "";
 }
 
 void restoreNarrowing(C c, Expr subject, string was) {
@@ -11881,6 +12008,10 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
         c.reportTok(errPatternType(), arms[i].variantTok, t + " is never null");
       }
     }
+  }
+  if (isUnionName(t)) {
+    checkUnionArms(c, t, arms, mline, mcol);
+    return;
   }
   string owner = enumOfSubject(c, t, isVariantConstruction(c, subject));
   // **A subject that is not an enum at all**, which this returned for silently — so `match (someI32)`

@@ -1,0 +1,8 @@
+// expect: refused
+// why: a numeric literal does not choose between numeric alternatives by its range or spelling
+// spec: §wac-union-literal-target-vmitw6m
+
+export i32 ambiguous() {
+  union<u8, u64> a = 300;
+  return 0;
+}

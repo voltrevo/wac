@@ -1,0 +1,32 @@
+// expect: answers why3 = 7103
+// why: try accepts an error that is one of the function's error union's alternatives, and a number enters it boxed
+// spec: §wac-try-error-in-set-44qtqmu
+
+import { Result } from "core";
+
+enum NotFound { Missing }
+
+Result<i32, NotFound> read(bool ok) {
+  if (ok) { return Result.Ok(1); }
+  return Result.Err(NotFound.Missing);
+}
+
+Result<i32, i32> code(bool ok) {
+  if (ok) { return Result.Ok(2); }
+  return Result.Err(7);
+}
+
+Result<i32, union<NotFound, i32>> load(bool a, bool b) {
+  i32 x = try read(a);                     // NotFound is in the set
+  i32 y = try code(b);                     // and so is i32
+  return Result.Ok(x + y);
+}
+
+i32 why(bool a, bool b) {
+  return match (load(a, b)) {
+    Ok(v):  v,
+    Err(e): match (e) { NotFound: 100, i32: e * 1000 },
+  };
+}
+
+export i32 why3() { return why(true, true) + why(false, true) + why(true, false); }

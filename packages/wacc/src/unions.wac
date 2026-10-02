@@ -1,0 +1,125 @@
+// Union types as spellings — spec/next ch18.
+//
+// A union *is* its normalised set of alternatives, and the checker and the emitter each spell types
+// as strings, so both have to arrive at one string for one union or the same type becomes two. These
+// are the pieces both use: `union<A, B>` with nested unions flattened, duplicates removed, an
+// alternative dropped when another is its ancestor (`§wac-union-normalise-9awgxvb`), and the rest in
+// a fixed order, since order does not make a different type.
+//
+// Ancestry is the caller's, between `flattenUnion` and `spellUnion`: the checker and the emitter keep
+// their struct tables apart, and this file compiles on wac-L5, which has no funcrefs to hand one in.
+
+/** Whether `t` spells a union — `union<…>`. */
+export bool isUnionName(string t) {
+  return t.len() > 7 && t.slice(0, 6) == "union<" && t.slice(t.len() - 1, t.len()) == ">";
+}
+
+/** The alternatives of a union spelling, split at its top-level commas. Empty for anything else. */
+export string[] unionMembers(string t) {
+  if (!isUnionName(t)) { return string[](); }
+  string inner = t.slice(6, t.len() - 1);
+  string[] out = string[].defaulted(8);
+  i32 n = 0;
+  i32 depth = 0;
+  i32 from = 0;
+  u8[] b = inner.toBytes();
+  for (i32 i = 0; i <= b.len(); i++) {
+    bool end = i == b.len();
+    if (!end) {
+      u8 ch = b[i];
+      if (ch == '<' || ch == '(' || ch == '[') { depth = depth + 1; }
+      if (ch == '>' || ch == ')' || ch == ']') { depth = depth - 1; }
+      if (ch != ',' || depth != 0) { continue; }
+    }
+    string part = trimSpaces(inner.slice(from, i));
+    if (part != "") {
+      if (n >= out.len()) {
+        string[] more = string[].defaulted(out.len() * 2);
+        for (i32 k = 0; k < n; k++) { more[k] = out[k]; }
+        out = more;
+      }
+      out[n] = part;
+      n = n + 1;
+    }
+    from = i + 1;
+  }
+  string[] exact = string[].defaulted(n);
+  for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
+  return exact;
+}
+
+string trimSpaces(string s) {
+  i32 a = 0;
+  i32 z = s.len();
+  u8[] b = s.toBytes();
+  while (a < z && b[a] == ' ') { a = a + 1; }
+  while (z > a && b[z - 1] == ' ') { z = z - 1; }
+  return s.slice(a, z);
+}
+
+/** `ms` with nested unions flattened and duplicates removed — the first half of normalising. */
+export string[] flattenUnion(string[] ms) {
+  string[] flat = string[].defaulted(ms.len() * 4 + 4);
+  i32 n = 0;
+  for (i32 i = 0; i < ms.len(); i++) {
+    string[] inner = unionMembers(ms[i]);
+    if (!isUnionName(ms[i])) {
+      inner = string[].defaulted(1);
+      inner[0] = ms[i];
+    }
+    for (i32 k = 0; k < inner.len(); k++) {
+      bool dup = false;
+      for (i32 j = 0; j < n; j++) { if (flat[j] == inner[k]) { dup = true; } }
+      if (dup) { continue; }
+      if (n >= flat.len()) {
+        string[] more = string[].defaulted(flat.len() * 2);
+        for (i32 j = 0; j < n; j++) { more[j] = flat[j]; }
+        flat = more;
+      }
+      flat[n] = inner[k];
+      n = n + 1;
+    }
+  }
+  string[] out = string[].defaulted(n);
+  for (i32 i = 0; i < n; i++) { out[i] = flat[i]; }
+  return out;
+}
+
+/**
+ * The spelling of a union of `ms`, those with `gone[i]` set left out — the second half, once the
+ * caller has dropped each alternative that has an ancestor among the others. Sorted, so
+ * `union<f64, string>` and `union<string, f64>` are one type.
+ */
+export string spellUnion(string[] ms, bool[] gone) {
+  string[] kept = string[].defaulted(ms.len());
+  i32 m = 0;
+  for (i32 i = 0; i < ms.len(); i++) {
+    if (i < gone.len() && gone[i]) { continue; }
+    i32 at = m;
+    while (at > 0 && after(kept[at - 1], ms[i])) {
+      kept[at] = kept[at - 1];
+      at = at - 1;
+    }
+    kept[at] = ms[i];
+    m = m + 1;
+  }
+  string out = "union<";
+  for (i32 i = 0; i < m; i++) { out = out + (i > 0 ? ", " : "") + kept[i]; }
+  return out + ">";
+}
+
+/** Whether `a` sorts after `b`, byte by byte. */
+bool after(string a, string b) {
+  u8[] x = a.toBytes();
+  u8[] y = b.toBytes();
+  for (i32 i = 0; i < x.len() && i < y.len(); i++) {
+    if (x[i] != y[i]) { return x[i] > y[i]; }
+  }
+  return x.len() > y.len();
+}
+
+/** Whether `t` is one of the primitive types a union holds boxed. */
+export bool unionBoxes(string t) {
+  return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "f32" || t == "f64"
+      || t == "bool" || t == "u8" || t == "i8" || t == "u16" || t == "i16";
+}

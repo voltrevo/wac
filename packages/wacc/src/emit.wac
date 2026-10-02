@@ -23,6 +23,7 @@ import { coreFileNames, coreFileStarts, coreSource, stdSource } from "./coretext
 import { Lowered, lowerProgram } from "./asynclower.wac";
 import { lowerNamespaces } from "./namespaces.wac";
 import { isTupleName, tupleMembers, tupleName } from "./tuples.wac";
+import { flattenUnion, isUnionName, spellUnion, unionBoxes, unionMembers } from "./unions.wac";
 import { pruneCoreMembers } from "./reach.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -166,6 +167,7 @@ export struct B {
  * wasm type has already thrown away.
  */
 i32 valType(string t) {
+  if (isUnionName(t)) { return 110; }
   // **`anyref` is the top of the reference hierarchy and `i31ref` a 31-bit integer inside a
   // reference** — no allocation, which is how an unboxed number and a heap object share a container.
   // Both are one byte, like the numeric types and unlike every other reference here, because neither
@@ -264,6 +266,9 @@ string elemOf(string t) {
  */
 
 void writeValType(B out, Env env, string t) {
+  // **A union is an `anyref`** — spec/next ch18's representation: a reference of whichever alternative
+  // it holds, numbers boxed, told apart by `ref.test`.
+  if (isUnionName(t)) { out.byte(110); return; }
   // **The heap type after `0x63` is signed.** A reference type is `0x63` followed by an *s33* — the
   // encoding that lets a negative value mean `func`, `extern`, `eq` and the rest, and a non-negative
   // one mean a type index. Written as an unsigned LEB it is identical for the first sixty-four
@@ -4726,6 +4731,9 @@ void emitTry(B fb, u8[] src, Lexed lexed, Env env, Expr operand) {
       fb.byte(251); fb.u32leb(2);                      // struct.get — the error
       fb.u32leb(env.structType(rt));
       fb.u32leb(env.variantSlot[ev]);
+      // Into a union of errors, a number enters boxed (spec/next ch18).
+      string et = env.fieldTypeAt(rt, env.variantSlot[ev]);
+      if (isUnionName(ft) && unionBoxes(et)) { fb.byte(251); fb.u32leb(0); fb.u32leb(env.boxType(et)); }
     } else if (ft == "void") {
       fb.byte(65); fb.i32leb(0);
     } else {
@@ -4743,6 +4751,161 @@ void emitTry(B fb, u8[] src, Lexed lexed, Env env, Expr operand) {
   fb.byte(251); fb.u32leb(2);                          // struct.get — the value
   fb.u32leb(env.structType(rt));
   fb.u32leb(env.variantSlot[ov]);
+}
+
+/** What a `match` on a union answers: the arms' types unified, as an enum `match`'s are. */
+string unionMatchType(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms, string want) {
+  string rt = "";
+  for (i32 a = 0; a < arms.len(); a++) {
+    if (arms[a].value is null) { continue; }
+    i32 saved = pushArmNames(src, lexed, env, arms[a], subject);
+    string at = typeOfE(src, lexed, env, arms[a].value!);
+    env.localCount = saved;
+    if (at == "") { continue; }
+    if (rt == "") { rt = at; }
+    else if (rt != at) {
+      string shared = commonStructAncestor(env, rt, at);
+      if (shared != "") { rt = shared; }
+    }
+  }
+  return rt == "" ? want : rt;
+}
+
+/** The alternative of union `u` an arm naming `written` is about, or `""`. */
+string unionArmMemberE(Env env, string u, string written, u8[] src, Lexed lexed, i32 tok) {
+  string[] ms = unionMembers(u);
+  for (i32 i = 0; i < ms.len(); i++) { if (ms[i] == written) { return ms[i]; } }
+  string key = env.keyAt(written, fileFor(env, lexed, tok, 0 - 1));
+  for (i32 i = 0; i < ms.len(); i++) { if (ms[i] == key || env.canonType(ms[i]) == env.canonType(key)) { return ms[i]; } }
+  return "";
+}
+
+/**
+ * `match` on a union — spec/next ch18. The subject goes into a scratch `anyref`; each arm but the last
+ * asks `ref.test` of its alternative's representation, and in the arm the subject's name is that
+ * alternative, cast and unboxed. A `default` arm is the one left over.
+ */
+void emitUnionMatch(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms, string u, string rt,
+                    bool valued) {
+  env.addLocal(" umatch", u);
+  i32 subj = env.localCount - 1;
+  emitExprAt(fb, src, lexed, env, subject, u);
+  fb.byte(33); fb.u32leb(subj);
+  // The default last, wherever it is written.
+  i32 n = arms.len();
+  i32[] order = i32[].filled(n, 0);
+  i32 k = 0;
+  for (i32 a = 0; a < n; a++) { if (arms[a].variantTok >= 0) { order[k] = a; k = k + 1; } }
+  for (i32 a = 0; a < n; a++) { if (arms[a].variantTok < 0) { order[k] = a; k = k + 1; } }
+  i32 opened = 0;
+  for (i32 o = 0; o < n; o++) {
+    Arm arm = arms[order[o]];
+    bool tail = o == n - 1;
+    string m = arm.variantTok < 0 ? "" : unionArmMemberE(env, u, tokenTextOf(src, lexed, arm.variantTok), src, lexed, arm.variantTok);
+    if (!tail) {
+      if (m == "") { env.declineFor("a union arm that names no alternative"); return; }
+      fb.byte(32); fb.u32leb(subj);
+      fb.byte(251); fb.u32leb(20); fb.i32leb(unionHeapType(env, m));   // ref.test
+      fb.byte(4);
+      if (valued) { writeBlockType(fb, env, rt); } else { fb.byte(64); }
+      env.depth = env.depth + 1;
+      opened = opened + 1;
+    }
+    i32 saved = env.localCount;
+    if (m != "") {
+      match (subject.kind) {
+        Ident(tok): {
+          env.addLocal(tokenTextOf(src, lexed, tok), m);
+          i32 sh = env.localCount - 1;
+          fb.byte(32); fb.u32leb(subj);
+          emitFromUnion(fb, env, m);
+          fb.byte(33); fb.u32leb(sh);
+        }
+        default: { }
+      }
+    }
+    if (valued) { emitArmResult(fb, src, lexed, env, arm, rt); } else { emitBody(fb, src, lexed, env, arm.body); }
+    retireFrom(env, saved);
+    if (!tail) { fb.byte(5); }   // else
+  }
+  for (i32 i = 0; i < opened; i++) {
+    fb.byte(11);
+    env.depth = env.depth - 1;
+  }
+}
+
+/** A struct's parent's key, or `""`. */
+string parentOfE(Env env, string name) {
+  for (i32 i = 0; i < env.structCount; i++) {
+    if (env.structNames[i] == name) { return env.structParents[i]; }
+  }
+  return "";
+}
+
+/** The normalised union of `ms`, as `normUnion` in the checker spells it. */
+string normUnionE(Env env, string[] ms) {
+  string[] flat = flattenUnion(ms);
+  bool[] gone = bool[].filled(flat.len(), false);
+  for (i32 i = 0; i < flat.len(); i++) {
+    string up = parentOfE(env, flat[i]);
+    i32 guard = 0;
+    while (up != "" && guard < 32) {
+      for (i32 j = 0; j < flat.len(); j++) { if (j != i && flat[j] == up) { gone[i] = true; } }
+      up = parentOfE(env, up);
+      guard = guard + 1;
+    }
+  }
+  return spellUnion(flat, gone);
+}
+
+/** Whether `t` is `anc` or descends from it. */
+bool isOrDescends(Env env, string t, string anc) {
+  string at = t;
+  i32 guard = 0;
+  while (at != "" && guard < 32) {
+    if (at == anc) { return true; }
+    at = parentOfE(env, at);
+    guard = guard + 1;
+  }
+  return false;
+}
+
+/**
+ * The alternative of `u` a value of `e` enters: its own type, the one ancestor of it there is, or —
+ * for a numeric literal — the one numeric alternative. `""` when there is none.
+ */
+string unionTargetE(u8[] src, Lexed lexed, Env env, string u, Expr e) {
+  string t = typeOfE(src, lexed, env, e);
+  string[] ms = unionMembers(u);
+  for (i32 i = 0; i < ms.len(); i++) { if (ms[i] == t) { return t; } }
+  match (e.kind) {
+    IntLit(tok): { return numericMember(ms); }
+    FloatLit(tok): { return numericMember(ms); }
+    default: { }
+  }
+  for (i32 i = 0; i < ms.len(); i++) { if (isOrDescends(env, t, ms[i])) { return ms[i]; } }
+  return "";
+}
+
+string numericMember(string[] ms) {
+  for (i32 i = 0; i < ms.len(); i++) { if (unionBoxes(ms[i]) && ms[i] != "bool") { return ms[i]; } }
+  return "";
+}
+
+/** The reference type an alternative is held as inside a union, as a heap type index for `ref.test`. */
+i32 unionHeapType(Env env, string m) {
+  if (unionBoxes(m)) { return env.boxType(m); }
+  if (m == "string") { return env.arrayType("i8[]"); }
+  if (isArrayType(m)) { return env.arrayType(m); }
+  return env.structType(env.canonType(m));
+}
+
+/** `anyref` on the stack, as alternative `m`: cast, and unboxed when it is a number. */
+void emitFromUnion(B fb, Env env, string m) {
+  fb.byte(251); fb.u32leb(23); fb.i32leb(unionHeapType(env, m));   // ref.cast (ref null $m)
+  if (unionBoxes(m)) {
+    fb.byte(251); fb.u32leb(2); fb.u32leb(env.boxType(m)); fb.u32leb(0);   // struct.get
+  }
 }
 
 /** An `if`'s or a block's result type: none for `void` — an arm that answers nothing leaves nothing. */
@@ -6668,6 +6831,18 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       // resolution would go hunting for a declaration in the file, find none, and answer `""`,
       // which is how `i31ref x = …` came out as a bare `i32`.
       if (raw == "anyref" || raw == "i31ref") { return raw; }
+      // **`union<A, B>`, normalised as the checker normalises it** (spec/next ch18), with a box
+      // registered for each numeric alternative, since that is how one enters the `anyref`.
+      if (raw == "union") {
+        if (typeArgs.len() == 0) { return ""; }
+        string[] ums = string[].defaulted(typeArgs.len());
+        for (i32 i = 0; i < typeArgs.len(); i++) {
+          ums[i] = typeOfTyName(env, src, lexed, typeArgs[i]);
+          if (ums[i] == "") { return ""; }
+          if (unionBoxes(ums[i])) { env.boxType(ums[i]); }
+        }
+        return normUnionE(env, ums);
+      }
       // A **type parameter** stands for its argument wherever it appears — a field's type, a
       // method's parameter, an array's element, a local inside a body.
       string bound = env.substituted(raw);
@@ -6953,6 +7128,7 @@ i32 enumSlot(Env env, string ty, string field) {
  * a slot nobody wrote into means `emitDefault`.
  */
 void emitNull(B fb, Env env, string t) {
+  if (isUnionName(t)) { fb.byte(208); fb.byte(110); return; }
   // The two the format names rather than the module declares: `ref.null` takes a heap type, and
   // theirs is a single byte where a struct's is an index.
   if (t == "anyref") { fb.byte(208); fb.byte(110); return; }
@@ -7702,6 +7878,7 @@ void retireFrom(Env env, i32 from) {
  */
 void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms) {
   string en = env.canonType(typeOfE(src, lexed, env, subject));
+  if (isUnionName(en)) { emitUnionMatch(fb, src, lexed, env, subject, arms, en, "void", false); return; }
   if (!env.isEnumName(en)) { return; }
   env.addLocal(" match", en);
   i32 subj = env.localCount - 1;
@@ -7801,6 +7978,10 @@ void emitArmResult(B fb, u8[] src, Lexed lexed, Env env, Arm arm, string rt) {
  */
 void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms, string want) {
   string en = env.canonType(typeOfE(src, lexed, env, subject));
+  if (isUnionName(en) && arms.len() > 0) {
+    emitUnionMatch(fb, src, lexed, env, subject, arms, en, unionMatchType(src, lexed, env, subject, arms, want), true);
+    return;
+  }
   if (!env.isEnumName(en) || arms.len() == 0) { return; }
   // **Every arm, not the first one.** This took the type of the first arm that had a value and used it
   // as the block's result, so a `match` whose arms are a subtype pair emitted the `else` arm's `Base`
@@ -8849,6 +9030,18 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
  * the wanted type is passed down every arm rather than special-cased at the few places one is likely.
  */
 void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
+  // **Into a union, a value enters its alternative** (spec/next ch18): emitted as that type, and boxed
+  // when it is a number. A union already is the `anyref`.
+  if (isUnionName(want) && !isNullLit(e)) {
+    string et = typeOfE(src, lexed, env, e);
+    if (!isUnionName(et)) {
+      string m = unionTargetE(src, lexed, env, want, e);
+      if (m == "") { env.declineFor("a value that enters no alternative of " + want); return; }
+      emitExprAt(fb, src, lexed, env, e, m);
+      if (unionBoxes(m)) { fb.byte(251); fb.u32leb(0); fb.u32leb(env.boxType(m)); }   // struct.new
+      return;
+    }
+  }
   // **A call that does not return, where a value is wanted** — `return spin();` in an `i32` function.
   // The call leaves nothing; `unreachable` after it makes the stack any type the slot asks for.
   if (want != "" && want != "void" && want != "never" && isCallExpr(e)
@@ -13288,6 +13481,15 @@ string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms
   string sv = unsupportedValue(src, lexed, env, subject);
   if (sv != "") { return sv; }
   string en = env.canonType(typeOfE(src, lexed, env, subject));
+  if (isUnionName(en)) {
+    for (i32 a = 0; a < arms.len(); a++) {
+      if (arms[a].variantTok < 0) { continue; }
+      if (unionArmMemberE(env, en, tokenTextOf(src, lexed, arms[a].variantTok), src, lexed, arms[a].variantTok) == "") {
+        return "the arm " + tokenTextOf(src, lexed, arms[a].variantTok) + " names no alternative of " + en;
+      }
+    }
+    return "";
+  }
   if (!env.isEnumName(en)) { return "a match on something that is not an enum"; }
   for (i32 a = 0; a < arms.len(); a++) {
     if (arms[a].variantTok < 0 || isNullArmE(lexed, arms[a])) { continue; }
@@ -13312,6 +13514,15 @@ string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms
 i32 pushArmNames(u8[] src, Lexed lexed, Env env, Arm arm, Expr subject) {
   i32 saved = env.localCount;
   if (arm.variantTok < 0) { return saved; }
+  string ut = env.canonType(typeOfE(src, lexed, env, subject));
+  if (isUnionName(ut)) {
+    string m = unionArmMemberE(env, ut, tokenTextOf(src, lexed, arm.variantTok), src, lexed, arm.variantTok);
+    match (subject.kind) {
+      Ident(tok): { if (m != "") { env.addLocal(tokenTextOf(src, lexed, tok), m); } }
+      default: { }
+    }
+    return saved;
+  }
   string vn = armVariant(env, src, lexed, arm.variantTok,
                          env.canonType(typeOfE(src, lexed, env, subject)));
   i32 vi = env.variantAt(vn);

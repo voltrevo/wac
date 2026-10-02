@@ -1,0 +1,40 @@
+// expect: answers both = 173
+// why: a member value is a union value as it is, entering its most specific alternative, and a match takes it apart by type
+// spec: §wac-union-member-is-value-86cfwkp
+
+/**
+ * `union<…>` is an `anyref` holding whichever alternative it is, numbers boxed, and `match` tells them
+ * apart with `ref.test`. `Rect` enters `union<Shape, string>` as a `Shape`, and `union<Rect, Shape>`
+ * is `union<Shape>` once normalised.
+ */
+struct Shape { i32 x; }
+struct Rect : Shape { i32 w; }
+
+union<f64, string, bool> cell(i32 which) {
+  if (which == 0) { return true; }
+  if (which == 1) { return 2.5; }
+  return "abc";
+}
+
+i32 score(union<f64, string, bool> c) {
+  return match (c) {
+    f64:    1,
+    string: c.len() * 10,
+    bool:   c ? 100 : 0,
+  };
+}
+
+i32 width(union<Rect, Shape> s) { return match (s) { Shape: s.x, }; }
+
+export i32 both() {
+  union<Shape, string> a = Rect(1000, 2);
+  i32 ax = match (a) { Shape: a.x, string: 0, };
+  union<i32, string> v = 41;
+  i32 out = 0;
+  match (v) {
+    i32:    { out = v + 1; }
+    string: { out = 0 - 1; }
+  }
+  // 100 + 1 + 30 for the three cells, the Rect's x read back both ways (1000 - 1000), and 42.
+  return score(cell(0)) + score(cell(1)) + score(cell(2)) + ax - width(Rect(1000, 0)) + out;
+}
