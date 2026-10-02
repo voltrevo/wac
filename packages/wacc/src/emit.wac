@@ -22,6 +22,7 @@ import { blockValue, escapeValue, isBlockLiteral, isStringEscape, lex, Lexed, to
 import { coreFileNames, coreFileStarts, coreSource, stdSource } from "./coretext.wac";
 import { Lowered, lowerProgram } from "./asynclower.wac";
 import { lowerNamespaces } from "./namespaces.wac";
+import { isTupleName, tupleMembers, tupleName } from "./tuples.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
@@ -29,13 +30,13 @@ import { endsWith, Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } 
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind,
   Method, NamedArg,
-  Param, Pattern, Program, Stmt, StmtKind, Ty, TyKind, lvalueExpr,
+  Param, Pattern, Program, Stmt, StmtKind, Ty, TyKind, lvalueExpr, TupleBinding,
 } from "./ast.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
-  kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde, kQuestion, kSymName,
+  kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde, kQuestion, kSymName, kInt,
 } from "./kinds.wac";
 
 /**
@@ -308,6 +309,11 @@ void writeValType(B out, Env env, string t) {
     out.i32leb(env.boxType(boxedPrimInner(t)));
     return;
   }
+  if (isTupleName(t)) {
+    out.byte(99);
+    out.i32leb(env.tupleType(t));
+    return;
+  }
   // **A template's own parameter used to be written as an `i32` here, and is refused now.** It reached
   // this function from the signature-table entry of a generic *method* nobody calls —
   // `Box<U> map<U>(…)` declared and never called — where `U` is the method's own letter and no
@@ -476,6 +482,12 @@ void registerNamed(Env env, string t) {
   // A nullable primitive's box, for the same reason an array's type is registered here: the type
   // section is written before the bodies, so a type first named while emitting is too late.
   if (isBoxedPrimName(t)) { env.boxType(boxedPrimInner(t)); }
+  // A tuple's struct, and its members' types first.
+  if (isTupleName(t)) {
+    string[] ms = tupleMembers(t);
+    for (i32 i = 0; i < ms.len(); i++) { registerNamed(env, ms[i]); }
+    env.tupleType(t);
+  }
 }
 
 /**
@@ -542,6 +554,14 @@ string naturalLiteralType(Expr e) {
 bool matchTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] tps, string[] out) {
   match (t.kind) {
     Prim(tok): { return true; }
+    TupleOf(members): {
+      string[] ams = tupleMembers(actual);
+      if (!isTupleName(actual) || ams.len() != members.len()) { return false; }
+      for (i32 i = 0; i < members.len(); i++) {
+        if (!matchTypeParams(env, src, lexed, members[i], ams[i], tps, out)) { return false; }
+      }
+      return true;
+    }
     Arr(elem): {
       if (!isArrayType(actual)) { return false; }
       return matchTypeParams(env, src, lexed, elem, elemOf(actual), tps, out);
@@ -1172,6 +1192,12 @@ bool isPairEntry(string t) { return t.len() > 5 && t.slice(0, 5) == pairMark(); 
  */
 string boxMark() { return "box:"; }
 
+/** A tuple's struct shares the signature table behind this mark, as a box does — spec/next ch14. */
+string tupleMark() { return "tuple:"; }
+
+/** Whether a signature-table entry is a tuple's struct. */
+bool isTupleEntry(string t) { return t.len() > 6 && t.slice(0, 6) == tupleMark(); }
+
 /** Whether a signature-table entry is a nullable primitive's box. */
 bool isBoxEntry(string t) { return t.len() > 4 && t.slice(0, 4) == boxMark(); }
 
@@ -1221,7 +1247,28 @@ string boxedPrimInner(string t) {
 /** The `fn[…]` a pair entry is the pair for. */
 string pairInner(string t) { return t.slice(pairMark().len(), t.len()); }
 
+/**
+ * Where a signature's parameter list opens when its return is a tuple — `fn[(i32, i32)(u32)]` — or -1
+ * for any other return. Every other return is spelled without a `(` at depth zero, which is what the
+ * scanners below rely on; a tuple is the one that starts with one (spec/next ch14).
+ */
+i32 sigTupleReturnEnd(string t) {
+  if (t.len() < 5 || t[3] != "(") { return -1; }
+  i32 depth = 0;
+  for (i32 i = 3; i < t.len(); i++) {
+    string c = t[i];
+    if (c == "(" || c == "[" || c == "<") { depth = depth + 1; }
+    if (c == ")" || c == "]" || c == ">") {
+      depth = depth - 1;
+      if (depth == 0) { return i + 1 < t.len() && t[i + 1] == "(" ? i + 1 : -1; }
+    }
+  }
+  return -1;
+}
+
 string sigReturn(string t) {
+  i32 tupleEnd = sigTupleReturnEnd(t);
+  if (tupleEnd > 0) { return t.slice(3, tupleEnd); }
   i32 depth = 0;
   for (i32 i = 3; i < t.len(); i++) {
     string c = t[i];
@@ -1243,7 +1290,8 @@ i32 sigParamCount(string t) {
   i32 start = -1;
   i32 n = 0;
   bool any = false;
-  for (i32 i = 3; i < t.len(); i++) {
+  i32 tupleEnd = sigTupleReturnEnd(t);
+  for (i32 i = tupleEnd > 0 ? tupleEnd : 3; i < t.len(); i++) {
     string c = t[i];
     // **`<` nests too.** An instantiation is spelled `Result<i32,string>`, so a signature that
     // mentions one has a comma *inside* a parameter — and a scanner that counts only brackets and
@@ -1273,7 +1321,8 @@ string sigParamAt(string t, i32 want) {
   i32 depth = 0;
   i32 from = -1;
   i32 n = 0;
-  for (i32 i = 3; i < t.len(); i++) {
+  i32 tupleEnd = sigTupleReturnEnd(t);
+  for (i32 i = tupleEnd > 0 ? tupleEnd : 3; i < t.len(); i++) {
     string c = t[i];
     // **`<` nests too.** An instantiation is spelled `Result<i32,string>`, so a signature that
     // mentions one has a comma *inside* a parameter — and a scanner that counts only brackets and
@@ -1721,13 +1770,16 @@ export struct Env {
     this.sigTypes[this.sigCount] = t;
     this.sigCount = this.sigCount + 1;
     i32 mine = this.sigCount - 1;
+    if (isTupleEntry(t)) { return this.arrayCount + this.structCount + mine; }
     string r = sigReturn(t);
     if (isArrayType(r)) { this.arrayType(r); }
     if (isFuncrefType(r)) { this.sigType(r); }
+    if (isTupleName(r)) { registerNamed(this, r); }
     for (i32 i = 0; i < sigParamCount(t); i++) {
       string pt = sigParamAt(t, i);
       if (isArrayType(pt)) { this.arrayType(pt); }
       if (isFuncrefType(pt)) { this.sigType(pt); }
+      if (isTupleName(pt)) { registerNamed(this, pt); }
     }
     return this.arrayCount + this.structCount + mine;
   }
@@ -1746,6 +1798,11 @@ export struct Env {
    */
   i32 boxType(this, string prim) {
     return this.sigType(boxMark() + prim);
+  }
+
+  /** The struct type a tuple is: one mutable field per member, in order. */
+  i32 tupleType(this, string t) {
+    return this.sigType(tupleMark() + t);
   }
 
   i32 pairType(this, string t) {
@@ -3070,6 +3127,16 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
         if (!(value is null)) { collectArrayTypesOfExpr(env, src, lexed, value!); }
       }
       Assign(target, op, rhs): { collectArrayTypesOfExpr(env, src, lexed, rhs); }
+      Destructure(whole, pattern, init): {
+        string cdt = destructuredTypeE(src, lexed, env, whole, pattern, init);
+        if (cdt != "") { registerNamed(env, cdt); }
+        collectArrayTypesOfExpr(env, src, lexed, init);
+      }
+      TupleAssign(targets, rhs): {
+        string crt = typeOfE(src, lexed, env, rhs);
+        if (crt != "") { registerNamed(env, crt); }
+        collectArrayTypesOfExpr(env, src, lexed, rhs);
+      }
       Block(inner): { collectArrayTypes(env, src, lexed, inner); }
       Defer(inner): { collectArrayTypes(env, src, lexed, [inner] as Stmt[]); }
       If(cond, then, els): {
@@ -4276,6 +4343,8 @@ string exportSigsOf(Front f) {
   i32 at = 0;
   Decl[] b2d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
   u8[] b2s = src; Lexed b2l = lexed; i32 b2f = env.curFile;
+  // Which declaration each function slot is, so a forwarded export can be described below.
+  i32[] slotDecl = i32[].filled(env.funcIndex.len(), -1);
   for (i32 d = 0; d < b2d.len(); d++) {
     env.curFile = env.declFile(d);
     src = srcFor(env.fileSrcs, b2s, env.curFile);
@@ -4284,16 +4353,11 @@ string exportSigsOf(Front f) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() > 0) { continue; }
         bool ok = env.funcIndex[at] >= 0;
+        if (at < slotDecl.len()) { slotDecl[at] = d; }
         at = at + 1;
         if (!ok || !exported) { continue; }
         if (entryDecls >= 0 && d >= entryDecls) { continue; }
-        string line = tokenTextOf(src, lexed, nameTok) + "\t" +
-                      metaTypeOfTy(env, src, lexed, returnType) + "\t";
-        for (i32 i = 0; i < params.len(); i++) {
-          if (i > 0) { line = line + ","; }
-          line = line + metaTypeOfTy(env, src, lexed, params[i].type);
-        }
-        out = out + line + "\n";
+        out = out + exportSigLine(env, src, lexed, tokenTextOf(src, lexed, nameTok), returnType, params);
       }
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
@@ -4306,8 +4370,38 @@ string exportSigsOf(Front f) {
       default: { }
     }
   }
+  // **The entry's re-exports are its exports too** (spec/next ch02 `§wac-reexport-names-khyrww8`):
+  // `forwardExportsInto` puts them in the module, and a host finds an export through this list, so
+  // one missing here is a function the module has and nothing can call.
+  for (i32 e = 0; e < env.importCount; e++) {
+    if (env.importFrom[e] != 0) { continue; }
+    string nm = env.importNames[e];
+    if (nm.len() < 2 || nm.slice(0, 1) != forwardMark()) { continue; }
+    i32 fa = env.funcAt(env.keyAt(nm, 0));
+    if (fa < 0 || fa >= slotDecl.len() || slotDecl[fa] < 0 || env.funcIndex[fa] < 0) { continue; }
+    i32 fd = slotDecl[fa];
+    env.curFile = env.declFile(fd);
+    src = srcFor(env.fileSrcs, b2s, env.curFile);
+    lexed = lexFor(env.fileLexeds, b2l, env.curFile);
+    match (b2d[fd].kind) {
+      Func(fnameTok, freturnType, fparams, fbody, fexported, ftypeParams, fisAsync): {
+        out = out + exportSigLine(env, src, lexed, nm.slice(1, nm.len()), freturnType, fparams);
+      }
+      default: { }
+    }
+  }
   env.curFile = b2f; src = b2s; lexed = b2l;
   return out;
+}
+
+/** One export's line of the signatures wire: its name, its return's meta type, its parameters'. */
+string exportSigLine(Env env, u8[] src, Lexed lexed, string name, Ty returnType, Param[] params) {
+  string line = name + "\t" + metaTypeOfTy(env, src, lexed, returnType) + "\t";
+  for (i32 i = 0; i < params.len(); i++) {
+    if (i > 0) { line = line + ","; }
+    line = line + metaTypeOfTy(env, src, lexed, params[i].type);
+  }
+  return line + "\n";
 }
 
 /** `--checked`: the same module with trapping arithmetic. */
@@ -5673,6 +5767,19 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     // Two fields, both mutable-free: the env-taking funcref, then the env itself as `anyref`.
     // **A box, not a function.** One immutable field holding the primitive — a nullable primitive is
     // a reference to this, so `null` is the absent value and `!` reads field 0.
+    if (isTupleEntry(sig)) {
+      // **A tuple, not a function**: a struct of its members, each writable (spec/next ch14
+      // `§wac-tuple-reference-qvgasjf`).
+      string[] tms = tupleMembers(sig.slice(tupleMark().len(), sig.len()));
+      types.byte(95);                       // struct
+      types.u32leb(tms.len());
+      for (i32 ti = 0; ti < tms.len(); ti++) {
+        // A packed member is held at its full width, as a local is: `struct.get` then needs no sign.
+        writeValType(types, env, tms[ti]);
+        types.byte(1);                      // mutable
+      }
+      continue;
+    }
     if (isBoxEntry(sig)) {
       types.byte(95);                       // struct
       types.u32leb(1);
@@ -6457,6 +6564,15 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
     // `fn[i32(i32, u8[])]` — spelled canonically, since the string *is* the identity: two spellings
     // of one signature have to reach the same type index or a value of one cannot be called as the
     // other.
+    // The checker's spelling, so a tuple names one type in both (spec/next ch14).
+    TupleOf(members): {
+      string[] ms = string[].defaulted(members.len());
+      for (i32 i = 0; i < members.len(); i++) {
+        ms[i] = typeOfTyName(env, src, lexed, members[i]);
+        if (ms[i] == "") { return ""; }
+      }
+      return tupleName(ms);
+    }
     Funcref(ret, params): {
       string r = typeOfTyName(env, src, lexed, ret);
       if (r == "") { return ""; }
@@ -7666,6 +7782,15 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       match (target.kind) {
         LField(base, nameTok): {
           string ot3 = typeOfLv(src, lexed, env, base);
+          // `t.0 = v;` — a tuple member is a writable field (spec/next ch14 `§wac-tuple-reference-qvgasjf`).
+          i32 aix = tupleIndexE(src, lexed, nameTok);
+          if (aix >= 0 && isTupleName(ot3) && lexed.tokens[op * tokenStride()] == kAssign()) {
+            string amt = tupleMembers(ot3)[aix];
+            emitLvalue(fb, src, lexed, env, base);
+            emitExprAt(fb, src, lexed, env, rhs, amt);
+            fb.byte(251); fb.u32leb(5); fb.u32leb(env.tupleType(ot3)); fb.u32leb(aix);   // struct.set
+            return;
+          }
           if (!env.isStructName(ot3)) { return; }
           string fname = tokenTextOf(src, lexed, nameTok);
           i32 slot = env.enumOf(ot3) != "" || env.isEnumName(ot3)
@@ -7969,6 +8094,8 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       env.depth = env.depth - 1;
       env.breakAt = savedS;
     }
+    Destructure(whole, pattern, init): { emitDestructure(fb, src, lexed, env, whole, pattern, init, s.line, s.col); }
+    TupleAssign(targets, rhs): { emitTupleAssign(fb, src, lexed, env, targets, rhs, s.line, s.col); }
     IncrStmt(rawTarget, op): {
       Lvalue target = peelLv(rawTarget);
       i32 ism = structOperatorE(env, typeOfLv(src, lexed, env, target),
@@ -8400,6 +8527,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitArrayLiteral(fb, src, lexed, env, elements, at);
       return;
     }
+    // A tuple literal is built at the slot's type too, which is what types its literals.
+    TupleLit(elements): {
+      bool fits = isTupleName(want) && tupleMembers(want).len() == elements.len();
+      emitTupleLiteral(fb, src, lexed, env, elements,
+                       fits ? want : tupleLitTypeE(src, lexed, env, elements));
+      return;
+    }
     default: { }
   }
   // **A number going into a `T?` slot is boxed.** spec/spec/types.md: `i32?` is a reference to a
@@ -8726,6 +8860,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         if (k == kGe()) { fb.byte(78); }
         return;
       }
+      if (isTupleName(ot0) && (k == kEq() || k == kNe())) {
+        string ttag = numText(env.depth) + " " + numText(e.line) + ":" + numText(e.col);
+        i32 la = env.scratchNamed("tuple eq a " + ttag, ot0);
+        i32 lb = env.scratchNamed("tuple eq b " + ttag, ot0);
+        emitExprAt(fb, src, lexed, env, left, ot0);
+        fb.byte(33); fb.u32leb(la);
+        emitExprAt(fb, src, lexed, env, right, ot0);
+        fb.byte(33); fb.u32leb(lb);
+        emitTupleEqualsLocals(fb, env, ot0, la, lb, ttag);
+        if (k == kNe()) { fb.byte(69); }
+        return;
+      }
       if (ot0 == "string" && (k == kEq() || k == kNe())) {
         i32 eq = env.funcAt(" str_eq");
         if (!haveRequired(env, eq, " str_eq")) { return; }
@@ -8899,6 +9045,9 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
      */
     ArrLit(elements): {
       emitArrayLiteral(fb, src, lexed, env, elements, arrLitTypeOf(src, lexed, env, elements));
+    }
+    TupleLit(elements): {
+      emitTupleLiteral(fb, src, lexed, env, elements, tupleLitTypeE(src, lexed, env, elements));
     }
     ArrNew(elem, size, fill, elements): {
       string et = typeOfTyName(env, src, lexed, elem);
@@ -9240,6 +9389,16 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
     }
     Member(obj, nameTok): {
+      // `t.1` — a tuple member is a field of its struct, by position (spec/next ch14).
+      i32 tix = tupleIndexE(src, lexed, nameTok);
+      if (tix >= 0) {
+        string tot = typeOfE(src, lexed, env, obj);
+        if (isTupleName(tot)) {
+          emitExprAt(fb, src, lexed, env, obj, tot);
+          fb.byte(251); fb.u32leb(2); fb.u32leb(env.tupleType(tot)); fb.u32leb(tix);   // struct.get
+          return;
+        }
+      }
       // A payload-less variant is a **value and not a call** — `Shape.Point`, with no parentheses —
       // so the construction has to be recognised here as well as under `Call`.
       string vnew2 = variantOfMemberAt(src, lexed, env, obj, nameTok, want);
@@ -9530,7 +9689,13 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     Cast(op, operand, target): { return typeOfTyName(env, src, lexed, target); }
     ArrNew(elem, size, fill, elements): { return typeOfTyName(env, src, lexed, elem) + "[]"; }
     ArrLit(elements): { return arrLitTypeOf(src, lexed, env, elements); }
+    TupleLit(elements): { return tupleLitTypeE(src, lexed, env, elements); }
     Member(obj, nameTok): {
+      i32 tiy = tupleIndexE(src, lexed, nameTok);
+      if (tiy >= 0) {
+        string[] tys = tupleMembers(typeOfE(src, lexed, env, obj));
+        if (tiy < tys.len()) { return tys[tiy]; }
+      }
       // A variant construction's type is the **variant**, not the enum: `Shape.Circle(2.0)` is a
       // `Circle`, which is what makes `s.radius` resolve to one slot in the arm that narrowed it.
       string vn3 = variantOfMember(src, lexed, env, obj, nameTok);
@@ -9955,6 +10120,180 @@ void emitStructOperator(B fb, u8[] src, Lexed lexed, Env env, i32 m, Expr recv, 
   fb.byte(16); fb.u32leb(env.funcIndex[m]);     // call
   string r = env.funcReturns[m];
   if (drop && r != "void" && r != "never" && r != "") { fb.byte(26); }   // drop
+}
+
+/** A tuple member's position from its integer token — `t.1` — or -1 for a name that is not one. */
+i32 tupleIndexE(u8[] src, Lexed lexed, i32 nameTok) {
+  if (nameTok < 0 || lexed.tokens[nameTok * tokenStride()] != kInt()) { return -1; }
+  string d = tokenTextOf(src, lexed, nameTok);
+  i32 n = 0;
+  for (i32 i = 0; i < d.len(); i++) { n = n * 10 + (d.toBytes()[i] as i32 - 48); }
+  return n;
+}
+
+/** The type of a tuple literal from its members, or "" when one of them has none of its own. */
+string tupleLitTypeE(u8[] src, Lexed lexed, Env env, Expr[] elements) {
+  string[] ms = string[].defaulted(elements.len());
+  for (i32 i = 0; i < elements.len(); i++) {
+    ms[i] = typeOfE(src, lexed, env, elements[i]);
+    if (ms[i] == "") { return ""; }
+  }
+  return tupleName(ms);
+}
+
+/** `(a, b)` at type `tt`: each member at its own type, then `struct.new` (spec/next ch14). */
+void emitTupleLiteral(B fb, u8[] src, Lexed lexed, Env env, Expr[] elements, string tt) {
+  string[] ms = tupleMembers(tt);
+  if (!isTupleName(tt) || ms.len() != elements.len()) {
+    env.declineFor("a tuple literal whose type this emitter could not work out");
+    return;
+  }
+  for (i32 i = 0; i < elements.len(); i++) { emitExprAt(fb, src, lexed, env, elements[i], ms[i]); }
+  fb.byte(251); fb.u32leb(0); fb.u32leb(env.tupleType(tt));   // struct.new
+}
+
+/**
+ * `a == b` on two tuples of type `tt`, held in locals `la` and `lb`: every member compared with its
+ * own `==`, in order, and the answers and-ed (spec/next ch14 `§wac-tuple-equality-9cjg4r6`).
+ */
+void emitTupleEqualsLocals(B fb, Env env, string tt, i32 la, i32 lb, string tag) {
+  string[] ms = tupleMembers(tt);
+  i32 ti = env.tupleType(tt);
+  fb.byte(65); fb.i32leb(1);                    // i32.const 1 — the empty tuple is equal to itself
+  for (i32 i = 0; i < ms.len(); i++) {
+    string mt = ms[i];
+    if (isTupleName(mt)) {
+      i32 ia = env.scratchNamed("tuple eq a " + tag + "." + numText(i), mt);
+      i32 ib = env.scratchNamed("tuple eq b " + tag + "." + numText(i), mt);
+      fb.byte(32); fb.u32leb(la); fb.byte(251); fb.u32leb(2); fb.u32leb(ti); fb.u32leb(i);
+      fb.byte(33); fb.u32leb(ia);
+      fb.byte(32); fb.u32leb(lb); fb.byte(251); fb.u32leb(2); fb.u32leb(ti); fb.u32leb(i);
+      fb.byte(33); fb.u32leb(ib);
+      emitTupleEqualsLocals(fb, env, mt, ia, ib, tag + "." + numText(i));
+    } else {
+      fb.byte(32); fb.u32leb(la); fb.byte(251); fb.u32leb(2); fb.u32leb(ti); fb.u32leb(i);
+      fb.byte(32); fb.u32leb(lb); fb.byte(251); fb.u32leb(2); fb.u32leb(ti); fb.u32leb(i);
+      if (mt == "string") {
+        i32 eq = env.funcAt(" str_eq");
+        if (!haveRequired(env, eq, " str_eq")) { return; }
+        fb.byte(16); fb.u32leb(env.funcIndex[eq]);
+      } else if (isWritableValType(mt) && mt != "anyref" && mt != "i31ref") {
+        emitBinary(fb, env, kEq(), mt);
+      } else {
+        env.declineFor("`==` on a tuple with a " + mt + " member");
+        return;
+      }
+    }
+    fb.byte(113);                               // i32.and
+  }
+}
+
+/** The tuple type a fully typed pattern spells, or "" when a name in it has no written type. */
+string bindingTypeE(u8[] src, Lexed lexed, Env env, TupleBinding b) {
+  if (b.nameTok >= 0) { return b.type is null ? "" : typeOfTyName(env, src, lexed, b.type!); }
+  string[] ms = string[].defaulted(b.kids.len());
+  for (i32 i = 0; i < b.kids.len(); i++) {
+    ms[i] = bindingTypeE(src, lexed, env, b.kids[i]);
+    if (ms[i] == "") { return ""; }
+  }
+  return tupleName(ms);
+}
+
+/** What a destructuring declaration takes apart: the written type, else the pattern's, else `init`'s. */
+string destructuredTypeE(u8[] src, Lexed lexed, Env env, Ty? whole, TupleBinding pattern, Expr init) {
+  if (!(whole is null)) { return typeOfTyName(env, src, lexed, whole!); }
+  string pt = bindingTypeE(src, lexed, env, pattern);
+  return pt != "" ? pt : typeOfE(src, lexed, env, init);
+}
+
+/**
+ * `(T a, U b) = e;` — `e` held once, then each name declared and given its member; a nested group is
+ * its member held and taken apart the same way (spec/next ch14 `§wac-tuple-destructure-gn8i48y`).
+ */
+void emitDestructure(B fb, u8[] src, Lexed lexed, Env env, Ty? whole, TupleBinding pattern, Expr init,
+                     i32 line, i32 col) {
+  string tt = destructuredTypeE(src, lexed, env, whole, pattern, init);
+  if (!isTupleName(tt)) { env.declineFor("a destructuring declaration of a value that is not a tuple"); return; }
+  string tag = numText(env.depth) + " " + numText(line) + ":" + numText(col);
+  i32 held = env.scratchNamed("destructure " + tag, tt);
+  emitExprAt(fb, src, lexed, env, init, tt);
+  fb.byte(33); fb.u32leb(held);
+  emitBindingFrom(fb, src, lexed, env, pattern, tt, held, tag);
+}
+
+void emitBindingFrom(B fb, u8[] src, Lexed lexed, Env env, TupleBinding b, string t, i32 holder, string tag) {
+  string[] ms = tupleMembers(t);
+  i32 ti = env.tupleType(t);
+  for (i32 i = 0; i < b.kids.len() && i < ms.len(); i++) {
+    TupleBinding kid = b.kids[i];
+    fb.byte(32); fb.u32leb(holder);
+    fb.byte(251); fb.u32leb(2); fb.u32leb(ti); fb.u32leb(i);   // struct.get
+    if (kid.nameTok < 0) {
+      i32 inner = env.scratchNamed("destructure " + tag + "." + numText(i), ms[i]);
+      fb.byte(33); fb.u32leb(inner);
+      emitBindingFrom(fb, src, lexed, env, kid, ms[i], inner, tag + "." + numText(i));
+      continue;
+    }
+    string lt = kid.type is null ? ms[i] : typeOfTyName(env, src, lexed, kid.type!);
+    env.addLocal(tokenTextOf(src, lexed, kid.nameTok), lt);
+    fb.byte(33); fb.u32leb(env.localCount - 1);
+  }
+}
+
+/** Every name a pattern declares, as locals of the types they will have. */
+void addBindingLocals(u8[] src, Lexed lexed, Env env, TupleBinding b, string t) {
+  if (b.nameTok >= 0) {
+    env.addLocal(tokenTextOf(src, lexed, b.nameTok), b.type is null ? t : typeOfTyName(env, src, lexed, b.type!));
+    return;
+  }
+  string[] ms = tupleMembers(t);
+  for (i32 i = 0; i < b.kids.len(); i++) { addBindingLocals(src, lexed, env, b.kids[i], i < ms.len() ? ms[i] : ""); }
+}
+
+/** Every name a pattern declares, with its type, for a walk that tracks locals. */
+void declareBindingE(u8[] src, Lexed lexed, Env env, TupleBinding b, string t, i32 line, i32 col) {
+  if (b.nameTok >= 0) {
+    env.walkDeclareAt(tokenTextOf(src, lexed, b.nameTok),
+                      b.type is null ? t : typeOfTyName(env, src, lexed, b.type!), line, col);
+    return;
+  }
+  string[] ms = tupleMembers(t);
+  for (i32 i = 0; i < b.kids.len(); i++) {
+    declareBindingE(src, lexed, env, b.kids[i], i < ms.len() ? ms[i] : "", line, col);
+  }
+}
+
+/** The tuple type `(a, b) = e;` assigns: its targets' types in order, or "" when one is unknown. */
+string tupleAssignTypeE(u8[] src, Lexed lexed, Env env, Lvalue[] targets) {
+  string[] ms = string[].defaulted(targets.len());
+  for (i32 i = 0; i < targets.len(); i++) {
+    ms[i] = typeOfLv(src, lexed, env, peelLv(targets[i]));
+    if (ms[i] == "") { return ""; }
+  }
+  return tupleName(ms);
+}
+
+/** `(a, b) = e;` — `e` held once, then each member stored to its local in order (`§wac-tuple-assign-vmhww2b`). */
+void emitTupleAssign(B fb, u8[] src, Lexed lexed, Env env, Lvalue[] targets, Expr rhs, i32 line, i32 col) {
+  string tt = tupleAssignTypeE(src, lexed, env, targets);
+  if (!isTupleName(tt)) { env.declineFor("a tuple assignment to a target of no type this emitter knows"); return; }
+  string tag = numText(env.depth) + " " + numText(line) + ":" + numText(col);
+  i32 held = env.scratchNamed("tuple assign " + tag, tt);
+  emitExprAt(fb, src, lexed, env, rhs, tt);
+  fb.byte(33); fb.u32leb(held);
+  i32 ti = env.tupleType(tt);
+  for (i32 i = 0; i < targets.len(); i++) {
+    match (peelLv(targets[i]).kind) {
+      LIdent(tok): {
+        i32 at = env.localAt(tokenTextOf(src, lexed, tok));
+        if (at < 0) { env.declineFor("a tuple assignment to a name that is not a local"); return; }
+        fb.byte(32); fb.u32leb(held);
+        fb.byte(251); fb.u32leb(2); fb.u32leb(ti); fb.u32leb(i);   // struct.get
+        fb.byte(33); fb.u32leb(at);
+      }
+      default: { env.declineFor("a tuple assignment to something other than a local"); return; }
+    }
+  }
 }
 
 /** Whether a file interpolates anything — whether it has a `+` the lexer wrote for `\{`. */
@@ -10805,6 +11144,15 @@ LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
       findLambdasExpr(env, src, lexed, rhs, tw);
     }
     IncrStmt(target, op): { findLambdasLv(env, src, lexed, target, ret); }
+    Destructure(whole, pattern, init): {
+      string dt = destructuredTypeE(src, lexed, env, whole, pattern, init);
+      findLambdasExpr(env, src, lexed, init, dt);
+      declareBindingE(src, lexed, env, pattern, dt, s.line, s.col);
+    }
+    TupleAssign(targets, rhs): {
+      for (i32 i = 0; i < targets.len(); i++) { findLambdasLv(env, src, lexed, targets[i], ret); }
+      findLambdasExpr(env, src, lexed, rhs, "");
+    }
     If(cond, then, els): {
       findLambdasExpr(env, src, lexed, cond, "bool");
       findLambdas(env, src, lexed, then, ret);
@@ -11207,6 +11555,12 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       }
     }
     Incr(target, op, prefix): { findLambdasLv(env, src, lexed, target, ""); }
+    TupleLit(elements): {
+      string[] lms = tupleMembers(want);
+      for (i32 i = 0; i < elements.len(); i++) {
+        findLambdasExpr(env, src, lexed, elements[i], i < lms.len() ? lms[i] : "");
+      }
+    }
     ArrLit(elements): {
       string lat = arraySlotType(want);
       if (lat == "") { lat = arrLitTypeOf(src, lexed, env, elements); }
@@ -12163,6 +12517,11 @@ string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
     }
     LField(base, nameTok): {
       string b = typeOfLv(src, lexed, env, base);
+      i32 lix = tupleIndexE(src, lexed, nameTok);
+      if (lix >= 0 && isTupleName(b)) {
+        string[] lms = tupleMembers(b);
+        return lix < lms.len() ? lms[lix] : "";
+      }
       return env.isStructName(b) ? env.fieldType(b, tokenTextOf(src, lexed, nameTok)) : "";
     }
   }
@@ -12185,6 +12544,12 @@ void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
     }
     LField(base, nameTok): {
       string bt2 = typeOfLv(src, lexed, env, base);
+      i32 eix = tupleIndexE(src, lexed, nameTok);
+      if (eix >= 0 && isTupleName(bt2)) {
+        emitLvalue(fb, src, lexed, env, base);
+        fb.byte(251); fb.u32leb(2); fb.u32leb(env.tupleType(bt2)); fb.u32leb(eix);
+        return;
+      }
       if (!env.isStructName(bt2)) { return; }
       emitLvalue(fb, src, lexed, env, base);
       fb.byte(251);
@@ -12509,6 +12874,25 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
       return unsupportedValueAt(src, lexed, env, rhs, tt2);
     }
     IncrStmt(target, op): { return unsupportedLvalue(src, lexed, env, target); }
+    Destructure(whole, pattern, init): {
+      string dut = destructuredTypeE(src, lexed, env, whole, pattern, init);
+      if (!isTupleName(dut)) { return "a destructuring declaration of a value whose tuple type is unknown"; }
+      string dv = unsupportedValueAt(src, lexed, env, init, dut);
+      if (dv != "") { return dv; }
+      addBindingLocals(src, lexed, env, pattern, dut);
+      return "";
+    }
+    TupleAssign(targets, rhs): {
+      for (i32 i = 0; i < targets.len(); i++) {
+        match (peelLv(targets[i]).kind) {
+          LIdent(tok): { }
+          default: { return "a tuple assignment to something other than a local"; }
+        }
+      }
+      string tat = tupleAssignTypeE(src, lexed, env, targets);
+      if (tat == "") { return "a tuple assignment to a target of unknown type"; }
+      return unsupportedValueAt(src, lexed, env, rhs, tat);
+    }
     Return(value): {
       if (value is null) { return ""; }
       string rv = unsupportedValueAt(src, lexed, env, value!, env.returnType);
@@ -12627,7 +13011,9 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
     LField(base, nameTok): {
       string b = unsupportedLvalue(src, lexed, env, base);
       if (b != "") { return b; }
-      return env.isStructName(typeOfLv(src, lexed, env, base)) ? "" : "field of an unknown type";
+      string lbt = typeOfLv(src, lexed, env, base);
+      if (isTupleName(lbt) && tupleIndexE(src, lexed, nameTok) >= 0) { return ""; }
+      return env.isStructName(lbt) ? "" : "field of an unknown type";
     }
   }
 }
@@ -12646,7 +13032,7 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
 /** Whether a wac type is a reference, which is the only kind of slot a `null` can fill. */
 bool isRefType(Env env, string t) {
   return isArrayType(t) || t == "string" || env.isStructName(t) || isFuncrefType(t) ||
-         t == "anyref" || t == "i31ref" || isBoxedPrimName(t);
+         t == "anyref" || t == "i31ref" || isBoxedPrimName(t) || isTupleName(t);
 }
 
 /**
@@ -12717,6 +13103,15 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
     TypeName(tn): { return unsupportedValue(src, lexed, env, e); }
     // An array literal's elements are asked about at the slot's element type, which is what gives
     // `[null, x]` and `[Vec.create()]` the type they would have nowhere else.
+    TupleLit(elements): {
+      string[] sms = tupleMembers(want);
+      if (!isTupleName(want) || sms.len() != elements.len()) { return unsupportedValue(src, lexed, env, e); }
+      for (i32 i = 0; i < elements.len(); i++) {
+        string tel = unsupportedValueAt(src, lexed, env, elements[i], sms[i]);
+        if (tel != "") { return tel; }
+      }
+      return "";
+    }
     ArrLit(elements): {
       string sat = arraySlotType(want);
       if (sat == "") { return unsupportedValue(src, lexed, env, e); }
@@ -13095,6 +13490,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       string nm = tokenTextOf(src, lexed, tok);
       if (env.localAt(nm) >= 0) { return ""; }
       i32 ci = env.constAt(nm);
+      // **Through the import that names it**, as emitting does: `import { LIMIT as L }` reads `L`.
+      if (ci < 0) { ci = env.constAt(nameKeyOf(env, src, lexed, tok)); }
       // A **function's name as a value** is a reference to it, which is only emittable if the
       // function is: a reference to something this emitter skipped would be a `ref.func` naming an
       // index that is not there.
@@ -13125,6 +13522,14 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     Await(operand): { return "`await`, which the emitter does not lower yet — `design/lang/0014` step 4"; }
     Unary(op, operand): { return unsupportedExpr(src, lexed, env, operand); }
     Binary(op, left, right): {
+      // Two tuples compared: each side at the one tuple type, which is what types a literal member.
+      i32 tk = lexed.tokens[op * tokenStride()];
+      string tq = operandType(src, lexed, env, left, right);
+      if (isTupleName(tq) && (tk == kEq() || tk == kNe())) {
+        string tl = unsupportedValueAt(src, lexed, env, left, tq);
+        if (tl != "") { return tl; }
+        return unsupportedValueAt(src, lexed, env, right, tq);
+      }
       string l = unsupportedValue(src, lexed, env, left);
       if (l != "") { return l; }
       string r = unsupportedValue(src, lexed, env, right);
@@ -13139,6 +13544,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (operatorMethodE(src, lexed, env, bk, left, right)[0] >= 0) { return ""; }
       // `a ?? b` takes any type that can be absent, references included (spec/next ch10).
       if (bk == kQuestion()) { return ""; }
+      if (isTupleName(ot2) && (bk == kEq() || bk == kNe())) { return ""; }
       // String equality has a helper now; everything else on a reference still does not.
       if (ot2 == "string" &&
           (bk == kEq() || bk == kNe() || bk == kPlus() ||
@@ -13188,6 +13594,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       return safeMemberType(src, lexed, env, obj, nameTok) == "" ? "a `?.` on something with no such field" : "";
     }
     Member(obj, nameTok): {
+      if (tupleIndexE(src, lexed, nameTok) >= 0 && isTupleName(typeOfE(src, lexed, env, obj))) {
+        return unsupportedValue(src, lexed, env, obj);
+      }
       // The variant question comes **first**, because the object of `Shape.Point` is a bare name
       // that is not a local and every other path here would decline it as one.
       if (variantOfMember(src, lexed, env, obj, nameTok) != "") { return ""; }
@@ -13207,6 +13616,15 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         return sl < 0 ? "a payload that is not on this variant" : "";
       }
       return env.isStructName(ot3) ? "" : "member of an unknown type";
+    }
+    TupleLit(elements): {
+      string tt3 = tupleLitTypeE(src, lexed, env, elements);
+      if (tt3 == "") { return "a tuple literal with a member of no type of its own, outside a tuple slot"; }
+      for (i32 i = 0; i < elements.len(); i++) {
+        string tl = unsupportedValue(src, lexed, env, elements[i]);
+        if (tl != "") { return tl; }
+      }
+      return "";
     }
     ArrLit(elements): {
       string at3 = arrLitTypeOf(src, lexed, env, elements);
@@ -13488,7 +13906,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         string ir2 = unsupportedValue(src, lexed, env, other!);
         if (ir2 != "") { return ir2; }
         string it2 = typeOfE(src, lexed, env, left);
-        return isArrayType(it2) || env.isStructName(it2) ? "" : "an identity test on a value";
+        return isArrayType(it2) || env.isStructName(it2) || isTupleName(it2) ? "" : "an identity test on a value";
       }
       if (target is null) { return "is null"; }
       string ty3 = typeOfTyName(env, src, lexed, target!);
@@ -15096,6 +15514,7 @@ bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       return true;
     }
+    TupleLit(elements): { return false; }
     ArrNew(elem, size, fill, elements): {
       if (typeOfTyName(env, src, lexed, elem) == "") { return false; }
       for (i32 i = 0; i < elements.len(); i++) {
@@ -15219,6 +15638,11 @@ void assignGlobals(Env env, u8[] src, Lexed lexed) {
 /** Every array type an expression constructs, which a constant's initialiser can do at module level. */
 void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
   match (e.kind) {
+    TupleLit(elements): {
+      string tlt = tupleLitTypeE(src, lexed, env, elements);
+      if (tlt != "") { registerNamed(env, tlt); }
+      for (i32 i = 0; i < elements.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, elements[i]); }
+    }
     ArrLit(elements): {
       string lt = arrLitTypeOf(src, lexed, env, elements);
       if (lt != "") { registerNamed(env, lt); }
@@ -15343,6 +15767,7 @@ string kindOfExpr(Expr e) {
     Construct(ctype, args, named): { return "construct"; }
     ArrNew(elem, size, fill, elements): { return "array"; }
     ArrLit(elements): { return "array"; }
+    TupleLit(elements): { return "tuple"; }
     Unwrap(operand): { return "unwrap"; }
     Is(left, target, other, negated): { return "is"; }
     Matches(pat, subject): { return "matches"; }

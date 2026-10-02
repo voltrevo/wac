@@ -15,7 +15,7 @@
 // Statements and declarations are next; `parseExprEntry` is the tested entry point
 // until then.
 
-import { Ty, TyKind, tyPrim, tyNamed, tyArr, tyNullable, tyFuncref,
+import { Ty, TyKind, tyPrim, tyNamed, tyArr, tyNullable, tyFuncref, tyTuple, TupleBinding,
   Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Stmt, StmtKind, Case, Arm, JsxAttr, Pattern,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program, jsxTrim } from "./ast.wac";
@@ -1069,6 +1069,17 @@ export Ty parseType(P p) {
     // `>>` closes this and an enclosing list at once — `Vec<fn<i32()>>` — so take one `>` worth.
     if (p.at1(kShr()) || p.at1(kShrU())) { splitGt(p); } else { p.expect(kGt()); }
     node = tyFuncref(ret, params.take(), line, col);
+  } else if (p.at1(kLparen())) {
+    // `(A, B)`, `(A,)`, `()` — a tuple type (spec/next ch14). A trailing comma means something only
+    // at length one, so it is eaten wherever it is.
+    p.advance();
+    TyList members = TyList.create();
+    while (!p.at1(kRparen()) && !p.at1(kEof())) {
+      members.push(parseType(p));
+      if (!p.eat(kComma())) { break; }
+    }
+    p.expect(kRparen());
+    node = tyTuple(members.take(), line, col);
   } else if (p.at1(kIdent()) || p.at1(kVoid())) {
     bool prim = identIsPrim(p, 0);
     i32 t = p.advance();
@@ -1509,6 +1520,13 @@ Expr parsePostfix(P p) {
       i32 nameTok = -1;
       // `x.[s]` — the member a symbol names (ch21). Otherwise exactly the `.name` below.
       nameTok = p.symbolMemberName();
+      // `t.0` and `t.[0]` — a tuple member by position (ch14): the name is the integer token.
+      if (nameTok < 0 && p.at1(kInt())) { nameTok = p.advance(); }
+      if (nameTok < 0 && p.at1(kLbrack()) && p.kindAt(1) == kInt() && p.kindAt(2) == kRbrack()) {
+        p.advance();
+        nameTok = p.advance();
+        p.advance();
+      }
       if (nameTok < 0) { nameTok = declName(p, perrFieldName(), "field name"); }
       // **A method may be called with its own type arguments** — `v.fold<i64>(0, f)`. The same rule
       // as everywhere default: if what follows the name parses as a type argument list, it is one.
@@ -1753,11 +1771,24 @@ Expr parsePrimary(P p) {
 
   // Grouping. The reference returns the inner expression unwrapped, so the
   // parentheses leave no trace in the tree.
+  // `(a, b)`, `(a,)` and `()` are tuples (spec/next ch14 `§wac-tuple-zero-one-fhcjtvh`): a comma is
+  // what makes one, so `(a)` stays grouping.
   if (p.at1(kLparen())) {
     p.advance();
+    if (p.eat(kRparen())) { return Expr(ExprKind.TupleLit(Expr[]()), line, col); }
     Expr e = parseExpr(p);
+    if (!p.at1(kComma())) {
+      p.expect(kRparen());
+      return e;
+    }
+    ExprList items = ExprList.create();
+    items.push(e);
+    while (p.eat(kComma())) {
+      if (p.at1(kRparen())) { break; }
+      items.push(parseExpr(p));
+    }
     p.expect(kRparen());
-    return e;
+    return Expr(ExprKind.TupleLit(items.take()), line, col);
   }
 
   // `fn<R(P)>[]()` and `fn<R(P)>[].filled(n, f)` — an array of funcrefs. `parseType` reads the `[]` as
@@ -1886,8 +1917,14 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
   if (p.at1(kDot())) {
     p.advance();
     i32 methodTok = p.symbolMemberName();       // `Foo.[make]()`, `p.[size]` (ch21)
+    if (methodTok < 0 && p.at1(kLbrack()) && p.kindAt(1) == kInt() && p.kindAt(2) == kRbrack()) {
+      p.advance();                              // `t.[0]` — a tuple member (ch14)
+      methodTok = p.advance();
+      p.advance();
+    }
     if (methodTok < 0) {
-      if (p.at1(kIdent())) { methodTok = p.advance(); } else { p.fail(perrMethodName()); }
+      // `t.0` — a tuple member by position (ch14).
+      if (p.at1(kIdent()) || p.at1(kInt())) { methodTok = p.advance(); } else { p.fail(perrMethodName()); }
     }
     // **Carrying the type arguments, which this used to drop.** With none written the base stays an
     // `Ident`, so every existing `Type.method(…)` parses exactly as before; with some, it becomes a
@@ -2051,6 +2088,7 @@ export Lvalue parseLvalue(P p) {
     if (p.at1(kDot())) {
       p.advance();
       i32 fieldTok = p.symbolMemberName();       // `p.[metadata] = 7;` (ch21)
+      if (fieldTok < 0 && p.at1(kInt())) { fieldTok = p.advance(); }   // `t.0 = 5;` (ch14)
       if (fieldTok < 0) { fieldTok = declName(p, perrFieldName(), "field name"); }
       lv = Lvalue(LvalueKind.LField(lv, fieldTok), pLine, pCol);
     } else if (p.at1(kLbrack())) {
@@ -2162,6 +2200,13 @@ export Stmt parseStatement(P p) {
     return Stmt(StmtKind.Defer(parseStatement(p)), line, col);
   }
 
+  // `const (i32, i32) t = …;` — a const local of a tuple type.
+  if (p.at1(kConst()) && p.kindAt(1) == kLparen()) { return parseVarDecl(p, false); }
+  if (p.at1(kLparen()) || (p.at1(kIdent()) && p.textAt(0) == "auto" && p.kindAt(1) == kLparen())) {
+    Stmt? ts = parseTupleStatement(p, line, col);
+    if (!(ts is null)) { return ts!; }
+  }
+
   if (looksLikeVarDecl(p)) { return parseVarDecl(p, false); }
 
   // An assignment, a bare increment, or an expression statement. Which it is only
@@ -2193,6 +2238,169 @@ export Stmt parseStatement(P p) {
   Expr e = parseExpr(p);
   p.expect(kSemi());
   return Stmt(StmtKind.ExprStmt(e), line, col);
+}
+
+/** The offset of the `)` that closes the `(` at offset `open`, or -1 when the file ends first. */
+i32 closingParenAt(P p, i32 open) {
+  i32 depth = 0;
+  for (i32 j = open; p.kindAt(j) != kEof(); j++) {
+    if (p.kindAt(j) == kLparen()) { depth = depth + 1; }
+    if (p.kindAt(j) == kRparen()) {
+      depth = depth - 1;
+      if (depth == 0) { return j; }
+    }
+  }
+  return -1;
+}
+
+/**
+ * A statement that starts with a tuple — spec/next ch14 — or null when what starts with `(` is an
+ * expression after all. Nothing is consumed before the answer is known: the shapes are told apart by
+ * what follows the closing `)`.
+ *
+ *     (i32, i32) t = e;          a declaration whose type is a tuple
+ *     (u32, u32) (q, r) = e;     the tuple's type, then the names
+ *     (u32 q, u32 r) = e;        each name with its type, nesting allowed
+ *     auto (q, r) = e;           every type from `e`
+ *     (a, b) = e;                existing locals, assigned
+ */
+Stmt? parseTupleStatement(P p, i32 line, i32 col) {
+  bool isAuto = p.at1(kIdent());
+  i32 open = isAuto ? 1 : 0;
+  i32 close = closingParenAt(p, open);
+  if (close < 0) { return null; }
+  i32 after = close + 1;
+  if (isAuto) {
+    if (p.kindAt(after) != kAssign()) { return null; }
+    p.advance();
+    TupleBinding apat = parseBindingGroup(p);
+    p.expect(kAssign());
+    Expr ainit = parseExpr(p);
+    p.expect(kSemi());
+    return Stmt(StmtKind.Destructure(null, apat, ainit), line, col);
+  }
+  i32 j = after;
+  for (i32 guard = 0; guard < 16; guard++) {
+    if (p.kindAt(j) == kLbrack() && p.kindAt(j + 1) == kRbrack()) { j = j + 2; }
+    else if (p.kindAt(j) == kQuestion()) { j = j + 1; }
+    else { break; }
+  }
+  if (p.kindAt(j) == kIdent() && (p.kindAt(j + 1) == kAssign() || p.kindAt(j + 1) == kSemi())) {
+    return parseVarDecl(p, false);
+  }
+  // `(T, U) (q, r) = e` — a second group and then `=`. `(Counter.inc)(c);` is a call.
+  i32 namesClose = p.kindAt(after) == kLparen() ? closingParenAt(p, after) : -1;
+  if (namesClose > 0 && p.kindAt(namesClose + 1) == kAssign()) {
+    Ty whole = parseType(p);
+    TupleBinding tpat = parseBindingGroup(p);
+    p.expect(kAssign());
+    Expr tinit = parseExpr(p);
+    p.expect(kSemi());
+    return Stmt(StmtKind.Destructure(whole, tpat, tinit), line, col);
+  }
+  if (p.kindAt(after) != kAssign()) { return null; }
+  // One name per position, commas between: locals that already exist. A primitive is an identifier
+  // too, so `(u32 q, u32 r)` — two tokens a position — is a declaration, not this.
+  bool bare = true;
+  for (i32 k = open + 1; k < close; k++) {
+    bool nameSlot = (k - open) % 2 == 1;
+    if (nameSlot && p.kindAt(k) != kIdent()) { bare = false; }
+    if (!nameSlot && p.kindAt(k) != kComma()) { bare = false; }
+  }
+  if (bare && close > open + 1) {
+    p.advance();
+    LvalueList targets = LvalueList.create();
+    while (!p.at1(kRparen()) && !p.at1(kEof())) {
+      targets.push(parseLvalue(p));
+      if (!p.eat(kComma())) { break; }
+    }
+    p.expect(kRparen());
+    p.expect(kAssign());
+    Expr rhs = parseExpr(p);
+    p.expect(kSemi());
+    return Stmt(StmtKind.TupleAssign(targets.take(), rhs), line, col);
+  }
+  TupleBinding pat = parseBindingGroup(p);
+  p.expect(kAssign());
+  Expr init = parseExpr(p);
+  p.expect(kSemi());
+  return Stmt(StmtKind.Destructure(null, pat, init), line, col);
+}
+
+/** `( … )` of a destructuring pattern: each position a nested group, `auto x`, a bare `x`, or `T x`. */
+TupleBinding parseBindingGroup(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  p.expect(kLparen());
+  BindingList kids = BindingList.create();
+  while (!p.at1(kRparen()) && !p.at1(kEof())) {
+    i32 kLine = p.lineAt(0);
+    i32 kCol = p.colAt(0);
+    if (p.at1(kLparen())) {
+      kids.push(parseBindingGroup(p));
+    } else if (p.at1(kIdent()) && (p.kindAt(1) == kComma() || p.kindAt(1) == kRparen())) {
+      kids.push(TupleBinding(null, p.advance(), TupleBinding[](), kLine, kCol));
+    } else if (p.at1(kIdent()) && p.textAt(0) == "auto" && p.kindAt(1) == kIdent()) {
+      p.advance();
+      kids.push(TupleBinding(null, p.advance(), TupleBinding[](), kLine, kCol));
+    } else {
+      Ty t = parseType(p);
+      i32 nameTok = -1;
+      nameTok = declName(p, perrExpected(), "variable name");
+      kids.push(TupleBinding(t, nameTok, TupleBinding[](), kLine, kCol));
+    }
+    if (!p.eat(kComma())) { break; }
+  }
+  p.expect(kRparen());
+  return TupleBinding(null, -1, kids.take(), line, col);
+}
+
+/** A growable list of pattern positions. */
+struct BindingList {
+  TupleBinding[] items;
+  i32 n;
+
+  BindingList create() { return BindingList(TupleBinding[](), 0); }
+
+  void push(this, TupleBinding b) {
+    if (this.n >= this.items.len()) {
+      TupleBinding[] bigger = TupleBinding[].filled(this.n * 2 + 4, b);
+      for (i32 i = 0; i < this.n; i++) { bigger[i] = this.items[i]; }
+      this.items = bigger;
+    }
+    this.items[this.n] = b;
+    this.n = this.n + 1;
+  }
+
+  TupleBinding[] take(this) {
+    TupleBinding[] out = TupleBinding[].filled(this.n, TupleBinding(null, -1, TupleBinding[](), 0, 0));
+    for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
+    return out;
+  }
+}
+
+/** A growable list of assignment targets. */
+struct LvalueList {
+  Lvalue[] items;
+  i32 n;
+
+  LvalueList create() { return LvalueList(Lvalue[](), 0); }
+
+  void push(this, Lvalue v) {
+    if (this.n >= this.items.len()) {
+      Lvalue[] bigger = Lvalue[].filled(this.n * 2 + 4, v);
+      for (i32 i = 0; i < this.n; i++) { bigger[i] = this.items[i]; }
+      this.items = bigger;
+    }
+    this.items[this.n] = v;
+    this.n = this.n + 1;
+  }
+
+  Lvalue[] take(this) {
+    Lvalue[] out = Lvalue[].filled(this.n, Lvalue(LvalueKind.LIdent(-1), 0, 0));
+    for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
+    return out;
+  }
 }
 
 Stmt parseVarDecl(P p, bool noSemi) {
@@ -2948,7 +3156,7 @@ export Program parseProgram(P p) {
     } else if (k == kStatic() || k == kConst() || moduleVarAhead(p, after)) {
       if (exported) { p.advance(); }
       decls.push(parseStaticDecl(p, exported));
-    } else if (exported || k == kFn() || k == kVoid() || k == kIdent() || k == kAsync()) {
+    } else if (exported || k == kFn() || k == kVoid() || k == kIdent() || k == kAsync() || k == kLparen()) {
       // A function: `parseFuncDecl` consumes its own `export`. Entered only when the
       // token could actually begin one — a return type is an `ident` (the primitives
       // are not keywords), or `void`, or `fn`, or `async`, or an `export` whose

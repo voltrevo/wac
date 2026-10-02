@@ -17,6 +17,7 @@ spec/next/1-programs/01-names-and-identity.md#17
 spec/next/1-programs/01-names-and-identity.md#18
 spec/next/1-programs/01-names-and-identity.md#19
 spec/next/1-programs/01-names-and-identity.md#20
+spec/next/1-programs/01-names-and-identity.md#21
 spec/next/1-programs/01-names-and-identity.md#22
 spec/next/1-programs/02-modules-and-imports.md#2
 spec/next/1-programs/02-modules-and-imports.md#3
@@ -24,11 +25,15 @@ spec/next/1-programs/02-modules-and-imports.md#4
 spec/next/1-programs/02-modules-and-imports.md#5
 spec/next/1-programs/02-modules-and-imports.md#6
 spec/next/1-programs/02-modules-and-imports.md#7
+spec/next/1-programs/02-modules-and-imports.md#8
+spec/next/1-programs/02-modules-and-imports.md#9
 spec/next/1-programs/02-modules-and-imports.md#10
 spec/next/1-programs/02-modules-and-imports.md#11
 spec/next/1-programs/02-modules-and-imports.md#12
 spec/next/1-programs/02-modules-and-imports.md#13
+spec/next/1-programs/02-modules-and-imports.md#14
 spec/next/1-programs/02-modules-and-imports.md#15
+spec/next/1-programs/02-modules-and-imports.md#16
 spec/next/1-programs/02-modules-and-imports.md#18
 spec/next/1-programs/02-modules-and-imports.md#20
 spec/next/1-programs/02-modules-and-imports.md#23
@@ -44,9 +49,11 @@ spec/next/1-programs/03-namespaces.md#3
 spec/next/1-programs/03-namespaces.md#4
 spec/next/1-programs/03-namespaces.md#5
 spec/next/1-programs/03-namespaces.md#6
+spec/next/1-programs/03-namespaces.md#7
 spec/next/1-programs/03-namespaces.md#8
 spec/next/1-programs/03-namespaces.md#9
 spec/next/1-programs/04-packages.md#5
+spec/next/1-programs/04-packages.md#6
 spec/next/1-programs/05-reachability.md#1
 spec/next/1-programs/05-reachability.md#2
 spec/next/1-programs/05-reachability.md#3
@@ -64,6 +71,8 @@ spec/next/1-programs/07-programs.md#4
 spec/next/2-types/08-primitives.md#1
 spec/next/2-types/08-primitives.md#2
 spec/next/2-types/08-primitives.md#3
+spec/next/2-types/08-primitives.md#4
+spec/next/2-types/08-primitives.md#5
 spec/next/2-types/08-primitives.md#6
 spec/next/2-types/08-primitives.md#7
 spec/next/2-types/08-primitives.md#8
@@ -81,6 +90,7 @@ spec/next/2-types/09-numeric-literals.md#2
 spec/next/2-types/09-numeric-literals.md#3
 spec/next/2-types/09-numeric-literals.md#4
 spec/next/2-types/09-numeric-literals.md#5
+spec/next/2-types/09-numeric-literals.md#6
 spec/next/2-types/09-numeric-literals.md#7
 spec/next/2-types/09-numeric-literals.md#9
 spec/next/2-types/09-numeric-literals.md#10
@@ -150,6 +160,13 @@ spec/next/2-types/13-enums.md#22
 spec/next/2-types/13-enums.md#23
 spec/next/2-types/13-enums.md#24
 spec/next/2-types/13-enums.md#25
+spec/next/2-types/14-tuples.md#1
+spec/next/2-types/14-tuples.md#2
+spec/next/2-types/14-tuples.md#3
+spec/next/2-types/14-tuples.md#6
+spec/next/2-types/14-tuples.md#7
+spec/next/2-types/14-tuples.md#8
+spec/next/2-types/14-tuples.md#9
 spec/next/2-types/15-arrays.md#2
 spec/next/2-types/15-arrays.md#3
 spec/next/2-types/15-arrays.md#4
@@ -211,7 +228,6 @@ spec/next/2-types/20-functions-and-funcrefs.md#4
 spec/next/2-types/20-functions-and-funcrefs.md#5
 spec/next/2-types/20-functions-and-funcrefs.md#7
 spec/next/2-types/20-functions-and-funcrefs.md#8
-spec/next/2-types/20-functions-and-funcrefs.md#9
 spec/next/2-types/20-functions-and-funcrefs.md#10
 spec/next/2-types/20-functions-and-funcrefs.md#11
 spec/next/2-types/20-functions-and-funcrefs.md#12
@@ -239,7 +255,9 @@ spec/next/3-expressions/23-interpolation-and-markup.md#14
 spec/next/3-expressions/24-casts.md#1
 spec/next/3-expressions/24-casts.md#2
 spec/next/3-expressions/24-casts.md#3
+spec/next/3-expressions/24-casts.md#4
 spec/next/3-expressions/24-casts.md#5
+spec/next/3-expressions/24-casts.md#6
 spec/next/3-expressions/24-casts.md#7
 spec/next/3-expressions/24-casts.md#8
 spec/next/3-expressions/24-casts.md#9

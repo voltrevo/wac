@@ -835,6 +835,14 @@ void lexNumber(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
 
   while (!lx.atEnd() && (isDigit(lx.peek(0)) || lx.peek(0) == '_')) { lx.advance(); }
 
+  // **After a `.`, digits are a tuple member's position** — `t.0.1` is two selections, not `t.` and
+  // the float `0.1` (spec/next ch14 `§wac-tuple-members-mef8e82`).
+  i32 before = out.tokenCount > 0 ? out.tokens[(out.tokenCount - 1) * tokenStride()] : -1;
+  if (before == kDot() || before == kQuestionDot()) {
+    pushToken(out, kInt(), start, lx.pos - start, startLine, startCol);
+    return;
+  }
+
   // A decimal point, an exponent, or both — either marks the literal a float. The reference stopped
   // requiring the point in wac issue 0018, and the differential test compares token for token, so
   // this has to move with it.

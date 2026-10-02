@@ -130,6 +130,12 @@ export bool awaitInExpr(Expr e) {
       }
       return false;
     }
+    TupleLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (awaitInExpr(elements[i])) { return true; }
+      }
+      return false;
+    }
     ArrNew(elem, size, fill, elements): {
       if ((size is not null) && awaitInExpr(size!)) { return true; }
       if ((fill is not null) && awaitInExpr(fill!)) { return true; }
@@ -165,6 +171,11 @@ export bool awaitInStmt(Stmt s) {
     }
     While(cond, body): { return awaitInExpr(cond) || awaitInBody(body); }
     ForIn(elemTy, nameTok, iterable, body): { return awaitInExpr(iterable) || awaitInBody(body); }
+    Destructure(whole, pattern, init): { return awaitInExpr(init); }
+    TupleAssign(targets, rhs): {
+      for (i32 i = 0; i < targets.len(); i++) { if (awaitInLvalue(targets[i])) { return true; } }
+      return awaitInExpr(rhs);
+    }
     For(init, cond, update, body): {
       if ((init is not null) && awaitInStmt(init!)) { return true; }
       if ((cond is not null) && awaitInExpr(cond!)) { return true; }

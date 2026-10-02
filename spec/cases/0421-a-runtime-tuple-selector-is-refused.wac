@@ -1,0 +1,8 @@
+// expect: refused
+// why: a member's type depends on its position, so `t.[e]` needs a position known when the program is checked
+// from: spec/next ch14 §wac-tuple-static-index-axfrq5b
+export i32 f() {
+  (string, i32) t = ("hello", 7);
+  i32 runtimeIndex = 1;
+  return t.[runtimeIndex];
+}

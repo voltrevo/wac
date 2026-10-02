@@ -1,0 +1,6 @@
+// expect: answers totalOfMade = 3
+// why: two tuple types are the same type exactly when they have the same members in the same order — written in two places, one type
+// from: spec/next ch14 §wac-tuple-structural-wq9swfa
+(i32, i32) make() { return (1, 2); }
+i32 total((i32, i32) t) { return t.0 + t.1; }
+export i32 totalOfMade() { return total(make()); }

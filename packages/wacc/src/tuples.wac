@@ -1,0 +1,74 @@
+// Tuple types by name — spec/next ch14.
+//
+// A tuple type is spelled with its members in parentheses: `(A, B)`, `(A,)` for one and `()` for none.
+// One spelling per type is what makes the tuple structural (`§wac-tuple-structural-wq9swfa`): two
+// tuple types written in two places are one type exactly when they spell the same. The checker and
+// the emitter both name types by string, so both read tuples through these.
+
+import { endsWith } from "./path.wac";
+
+/** Whether a type is a tuple, `(A, B)` — spelled with its parentheses outermost (spec/next ch14). */
+export bool isTupleName(string t) {
+  return t.len() >= 2 && t.toBytes()[0] == 40 && endsWith(t, ")") && tupleCloses(t);
+}
+
+/** Whether the `(` a type starts with is the one its last `)` closes — `(a) -> b` is not a tuple. */
+bool tupleCloses(string t) {
+  u8[] a = t.toBytes();
+  i32 depth = 0;
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] == 40 || a[i] == 60) { depth = depth + 1; }
+    if (a[i] == 41 || (a[i] == 62 && !isArrow(a, i))) {
+      depth = depth - 1;
+      if (depth == 0 && i != a.len() - 1) { return false; }
+    }
+  }
+  return depth == 0;
+}
+
+/** A tuple's member types, in order — empty for `()` and for a type that is not a tuple. */
+export string[] tupleMembers(string t) {
+  if (!isTupleName(t) || t == "()") { return string[](); }
+  u8[] a = t.toBytes();
+  i32 last = a.len() - 1;
+  // `(A,)` ends at its comma; anything else ends with its last member.
+  bool trailing = a[last - 1] == 44;
+  i32 n = trailing ? 0 : 1;
+  i32 depth = 0;
+  for (i32 i = 1; i < last; i++) {
+    if (a[i] == 40 || a[i] == 60) { depth = depth + 1; }
+    else if (a[i] == 41 || (a[i] == 62 && !isArrow(a, i))) { depth = depth - 1; }
+    else if (a[i] == 44 && depth == 0) { n = n + 1; }
+  }
+  string[] out = string[].defaulted(n);
+  i32 at = 0;
+  i32 from = 1;
+  depth = 0;
+  for (i32 i = 1; i <= last; i++) {
+    bool cut = i == last && !trailing;
+    if (i < last) {
+      if (a[i] == 40 || a[i] == 60) { depth = depth + 1; }
+      else if (a[i] == 41 || (a[i] == 62 && !isArrow(a, i))) { depth = depth - 1; }
+      else if (a[i] == 44 && depth == 0) { cut = true; }
+    }
+    if (cut && at < n) {
+      out[at] = t.slice(from, i);
+      at = at + 1;
+      from = i + 1;
+      while (from < last && a[from] == 32) { from = from + 1; }
+    }
+  }
+  return out;
+}
+
+/** The spelling of the tuple of these members: `()`, `(A,)` or `(A, B)` — one spelling per type. */
+export string tupleName(string[] members) {
+  if (members.len() == 0) { return "()"; }
+  if (members.len() == 1) { return "(" + members[0] + ",)"; }
+  string out = "(";
+  for (i32 i = 0; i < members.len(); i++) { out = out + (i > 0 ? ", " : "") + members[i]; }
+  return out + ")";
+}
+
+/** Whether the `>` at `i` is the end of a funcref's `->`, which closes nothing. */
+bool isArrow(u8[] a, i32 i) { return i > 0 && a[i - 1] == 45; }

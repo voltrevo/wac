@@ -48,6 +48,8 @@ export enum TyKind {
   Arr(Ty elem),
   Nullable(Ty inner),
   Funcref(Ty ret, Ty[] params),
+  /** `(A, B)`, `(A,)` and `()` — spec/next ch14. Identity is the member list. */
+  TupleOf(Ty[] members),
 }
 
 export Ty tyPrim(i32 tok, i32 line, i32 col) {
@@ -61,6 +63,9 @@ export Ty tyArr(Ty elem, i32 line, i32 col) {
 }
 export Ty tyNullable(Ty inner, i32 line, i32 col) {
   return Ty(TyKind.Nullable(inner), line, col);
+}
+export Ty tyTuple(Ty[] members, i32 line, i32 col) {
+  return Ty(TyKind.TupleOf(members), line, col);
 }
 export Ty tyFuncref(Ty ret, Ty[] params, i32 line, i32 col) {
   return Ty(TyKind.Funcref(ret, params), line, col);
@@ -198,6 +203,11 @@ export enum ExprKind {
    */
   ArrLit(Expr[] elements),
   /**
+   * `(a, b)`, `(a,)` and `()` — a tuple, spec/next ch14. `(a)` is grouping and never arrives here.
+   * A member is read as `Member(t, tok)` where `tok` is an integer token: `t.0`.
+   */
+  TupleLit(Expr[] elements),
+  /**
    * `(i32 a) => a + 1` and `() => { … }` — `design/lang/0002` tier two.
    *
    * **One form, because the parser desugars the other.** The note defines `() => e` as
@@ -315,6 +325,18 @@ export struct Arm {
   Expr? value;
 }
 
+/**
+ * One position of a destructuring pattern: a name with its type (null for `auto` or none written), or
+ * a nested group, which has `nameTok` -1 and its positions in `kids`.
+ */
+export struct TupleBinding {
+  Ty? type;
+  i32 nameTok;
+  TupleBinding[] kids;
+  i32 line;
+  i32 col;
+}
+
 export enum StmtKind {
   /**
    * `isConst` folds what the pool needed two tags for. `init` is null for `T x;`, which is unassigned
@@ -333,6 +355,14 @@ export enum StmtKind {
    * `e` is an array or a `Vec` (a generator, when there are generators).
    */
   ForIn(Ty? type, i32 nameTok, Expr iterable, Stmt[] body),
+  /**
+   * `(T a, U b) = e;` and its spellings — one local per member of the tuple `e`, nesting allowed
+   * (spec/next ch14 `§wac-tuple-destructure-gn8i48y`). `type` is the whole tuple's, written before the
+   * names (`(u32, u32) (q, r) = e`), null when each name carries its own or `auto` does.
+   */
+  Destructure(Ty? type, TupleBinding pattern, Expr init),
+  /** `(a, b) = e;` — the members of `e` assigned to existing locals, in order (`§wac-tuple-assign-vmhww2b`). */
+  TupleAssign(Lvalue[] targets, Expr rhs),
   DoWhile(Stmt[] body, Expr cond),
   Switch(Expr subject, Case[] cases),
   Return(Expr? value),

@@ -17,7 +17,7 @@
 
 import { Ty, TyKind, Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Stmt, StmtKind, Case, Arm,
-  Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
+  Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program, TupleBinding } from "./ast.wac";
 import { blockValue, escapeValue, isBlockLiteral, tokenStride, unicodeEscapeEnd,
          unicodeEscapeValue, utf8Into, literalBodyStart, literalBodyEnd } from "./lex.wac";
 import { kindName } from "./kinds.wac";
@@ -283,7 +283,27 @@ void printTy(Pr w, Ty t) {
       }
       w.s("))");
     }
+    TupleOf(members): {
+      w.open("tuple", t.line, t.col);
+      for (i32 i = 0; i < members.len(); i++) { w.sp(); printTy(w, members[i]); }
+      w.close();
+    }
   }
+}
+
+/** One position of a destructuring pattern: a name with its type or `-`, or a nested group. */
+void printBinding(Pr w, TupleBinding b) {
+  if (b.nameTok < 0) {
+    w.open("group", b.line, b.col);
+    for (i32 i = 0; i < b.kids.len(); i++) { w.sp(); printBinding(w, b.kids[i]); }
+    w.close();
+    return;
+  }
+  w.open("bind", b.line, b.col);
+  w.sp();
+  if (b.type is null) { w.s("-"); } else { printTy(w, b.type!); }
+  w.sp(); w.tok(b.nameTok);
+  w.close();
 }
 
 // ── Expressions ───────────────────────────────────────────────────────────────
@@ -484,6 +504,11 @@ void printExpr(Pr w, Expr e) {
       printExprList(w, elements);
       w.close();
     }
+    TupleLit(elements): {
+      w.open("tuplelit", e.line, e.col);
+      printExprList(w, elements);
+      w.close();
+    }
     ArrNew(elem, size, fill, elements): {
       w.open("arrnew", e.line, e.col);
       w.sp(); printTy(w, elem);
@@ -570,6 +595,20 @@ void printStmt(Pr w, Stmt s) {
       w.open("while", s.line, s.col);
       w.sp(); printExpr(w, cond);
       printStmtList(w, body);
+      w.close();
+    }
+    Destructure(whole, pattern, init): {
+      w.open("destructure", s.line, s.col);
+      w.sp();
+      if (whole is null) { w.s("-"); } else { printTy(w, whole!); }
+      w.sp(); printBinding(w, pattern);
+      w.sp(); printExpr(w, init);
+      w.close();
+    }
+    TupleAssign(targets, rhs): {
+      w.open("tuple-assign", s.line, s.col);
+      for (i32 i = 0; i < targets.len(); i++) { w.sp(); printLvalue(w, targets[i]); }
+      w.sp(); printExpr(w, rhs);
       w.close();
     }
     ForIn(elemTy, nameTok, iterable, body): {

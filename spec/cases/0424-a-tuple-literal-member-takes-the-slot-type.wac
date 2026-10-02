@@ -1,0 +1,4 @@
+// expect: answers wide = 5000000000
+// why: a numeric literal in a tuple takes its type from the member it fills, as one in an array takes the element's
+// from: spec/next ch14 §wac-tuple-members-mef8e82
+export i64 wide() { (i32, i64) t = (1, 5000000000); return t.1; }

@@ -1,0 +1,4 @@
+// expect: refused
+// why: a tuple of two has members 0 and 1, and nothing at 2
+// from: spec/next ch14 §wac-tuple-members-mef8e82
+export i32 f() { (i32, i32) t = (1, 2); return t.2; }

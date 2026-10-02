@@ -247,6 +247,11 @@ Ty cloneTy(Ty t) {
       for (i32 i = 0; i < params.len(); i++) { ps[i] = cloneTy(params[i]); }
       return Ty(TyKind.Funcref(cloneTy(ret), ps), t.line, t.col);
     }
+    TupleOf(members): {
+      Ty[] ms = Ty[].filled(members.len(), t);
+      for (i32 i = 0; i < members.len(); i++) { ms[i] = cloneTy(members[i]); }
+      return Ty(TyKind.TupleOf(ms), t.line, t.col);
+    }
   }
 }
 
@@ -379,6 +384,7 @@ Expr subExpr(Ctx c, Expr e) {
       return Expr(ExprKind.Incr(subLv(c, target), op, prefix), e.line, e.col);
     }
     ArrLit(elements): { return Expr(ExprKind.ArrLit(subExprs(c, elements)), e.line, e.col); }
+    TupleLit(elements): { return Expr(ExprKind.TupleLit(subExprs(c, elements)), e.line, e.col); }
     ArrNew(elem, size, fill, elements): {
       Expr? sz = (size is null) ? null : subExpr(c, size!);
       Expr? fl = (fill is null) ? null : subExpr(c, fill!);
@@ -480,6 +486,14 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
     }
     While(cond, body): {
       return Stmt(StmtKind.While(subExpr(c, cond), subBody(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
+    }
+    Destructure(whole, pattern, init): {
+      return Stmt(StmtKind.Destructure(whole, pattern, subExpr(c, init)), s.line, s.col);
+    }
+    TupleAssign(targets, rhs): {
+      Lvalue[] ts = Lvalue[].filled(targets.len(), Lvalue(LvalueKind.LIdent(-1), s.line, s.col));
+      for (i32 i = 0; i < targets.len(); i++) { ts[i] = subLv(c, targets[i]); }
+      return Stmt(StmtKind.TupleAssign(ts, subExpr(c, rhs)), s.line, s.col);
     }
     ForIn(elemTy, nameTok, iterable, body): {
       return Stmt(StmtKind.ForIn(elemTy, nameTok, subExpr(c, iterable),

@@ -36,6 +36,7 @@ import { lex, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { coreExports, isBuiltinSpec } from "./coretext.wac";
 import { endsWith } from "./path.wac";
+import { isTupleName, tupleMembers, tupleName } from "./tuples.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
@@ -45,7 +46,7 @@ import {
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
-  Pattern, Stmt, StmtKind, Ty, TyKind, tyPrim,
+  Pattern, Stmt, StmtKind, Ty, TyKind, tyPrim, TupleBinding,
 } from "./ast.wac";
 
 /** A returned value whose type cannot be the declared one. */
@@ -757,6 +758,16 @@ DA daStmt(C c, Stmt s, DA st, DAExit loop) {
       daAssignTarget(c, target, tokenKind(c, op) != kAssign(), st);
       return st;
     }
+    Destructure(whole, pattern, init): {
+      daExpr(c, init, st);
+      daBindingAssigned(c, pattern, st);
+      return st;
+    }
+    TupleAssign(targets, rhs): {
+      daExpr(c, rhs, st);
+      for (i32 i = 0; i < targets.len(); i++) { daAssignTarget(c, targets[i], false, st); }
+      return st;
+    }
     IncrStmt(target, op): {
       daAssignTarget(c, target, true, st);
       return st;
@@ -939,6 +950,7 @@ void daExpr(C c, Expr e, DA st) {
       for (i32 i = 0; i < named.len(); i++) { daExpr(c, named[i].value, st); }
     }
     ArrLit(elements): { for (i32 i = 0; i < elements.len(); i++) { daExpr(c, elements[i], st); } }
+    TupleLit(elements): { for (i32 i = 0; i < elements.len(); i++) { daExpr(c, elements[i], st); } }
     ArrNew(elem, size, fill, elements): {
       if (size is not null) { daExpr(c, size!, st); }
       if (fill is not null) { daExpr(c, fill!, st); }
@@ -1473,6 +1485,23 @@ bool isPendingType(string t) {
   return true;
 }
 
+/**
+ * `t.N` where `t` is a tuple: the member's type, `typeNone` past the end, and "" when this is not a
+ * positional member of a tuple at all — the caller then asks about fields.
+ */
+string tupleMemberType(string owner, string name) {
+  if (!isTupleName(owner) || name.len() == 0) { return ""; }
+  u8[] d = name.toBytes();
+  i32 index = 0;
+  for (i32 i = 0; i < d.len(); i++) {
+    if (d[i] < 48 || d[i] > 57) { return ""; }
+    index = index * 10 + (d[i] as i32 - 48);
+    if (index > 100000) { return typeNone(); }
+  }
+  string[] ms = tupleMembers(owner);
+  return index < ms.len() ? ms[index] : typeNone();
+}
+
 string genericBase(string t) {
   if (!endsWith(t, ">")) { return ""; }
   u8[] a = t.toBytes();
@@ -1500,9 +1529,10 @@ string[] genericArgs(string t) {
   i32 end = a.len() - 1;
   i32 n = 1;
   i32 depth = 0;
+  // Parentheses count as depth too: a tuple or funcref argument has commas of its own.
   for (i32 i = start; i < end; i++) {
-    if (a[i] == 60) { depth = depth + 1; }
-    else if (a[i] == 62) { depth = depth - 1; }
+    if (a[i] == 60 || a[i] == 40) { depth = depth + 1; }
+    else if (a[i] == 62 || a[i] == 41) { depth = depth - 1; }
     else if (a[i] == 44 && depth == 0) { n = n + 1; }
   }
   string[] out = string[].defaulted(n);
@@ -1512,8 +1542,8 @@ string[] genericArgs(string t) {
   for (i32 i = start; i <= end; i++) {
     bool cut = i == end;
     if (i < end) {
-      if (a[i] == 60) { depth = depth + 1; }
-      else if (a[i] == 62) { depth = depth - 1; }
+      if (a[i] == 60 || a[i] == 40) { depth = depth + 1; }
+      else if (a[i] == 62 || a[i] == 41) { depth = depth - 1; }
       else if (a[i] == 44 && depth == 0) { cut = true; }
     }
     if (!cut) { continue; }
@@ -3041,6 +3071,8 @@ export struct C {
    * the type would have said "no such field" about a field two lines above it.
    */
   bool hasField(this, string owner, string name) {
+    string tm = tupleMemberType(owner, name);
+    if (tm != "") { return tm != typeNone(); }
     string at = templateOf(owner);
     for (i32 hop = 0; hop <= this.structCount; hop++) {
       if (at == "") { return false; }
@@ -3133,6 +3165,9 @@ export struct C {
   }
 
   string fieldType(this, string owner, string name) {
+    // A tuple's members are its positions (spec/next ch14).
+    string tm = tupleMemberType(owner, name);
+    if (tm != "") { return tm; }
     // The table is keyed by template — `Box`, never `Box<i32>` — so an instantiation resolves to its
     // template to find the field and substitutes on the way back out.
     string at = templateOf(owner);
@@ -3775,6 +3810,14 @@ export string typeOfTy(C c, Ty t) {
       string rt = typeOfTy(c, ret);
       if (rt == typeNone()) { return typeNone(); }
       return out + ") -> " + rt;
+    }
+    TupleOf(members): {
+      string[] ms = string[].defaulted(members.len());
+      for (i32 i = 0; i < members.len(); i++) {
+        ms[i] = typeOfTy(c, members[i]);
+        if (ms[i] == typeNone()) { return typeNone(); }
+      }
+      return tupleName(ms);
     }
   }
 }
@@ -4905,6 +4948,19 @@ export string typeOfExpr(C c, Expr e) {
     // literal not walked yet is unknown rather than guessed: the comparisons that ask before the walk
     // would otherwise refuse it against its own slot, and the walk checks every element against it.
     ArrLit(elements): { return c.arrLitSlot(e.line, e.col); }
+    // Each member's own type; unknown when one is a numeric literal, which takes its type from the slot
+    // the tuple fills — `checkExpr` gives it one (spec/next ch14).
+    TupleLit(elements): {
+      string[] ms = string[].defaulted(elements.len());
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (isNumericLiteral(c, elements[i])) { return typeNone(); }
+        string mt = typeOfExpr(c, elements[i]);
+        if (mt == typeNone() || mt == "") { mt = naturalTypeOf(c, elements[i]); }
+        if (mt == typeNone() || mt == "" || mt == "null") { return typeNone(); }
+        ms[i] = mt;
+      }
+      return tupleName(ms);
+    }
     /**
      * `x++` and `++x` are the type of what they increment — `spec/tour.wac`: *"`++`/`--` ARE
      * expressions, prefix and postfix, on i32/i64 lvalues. As in C, `i32 old = x++;`"*.
@@ -5671,6 +5727,11 @@ void checkExpr(C c, Expr e) {
     Jsx(tagTok, closeTok, attrs, kids): { checkJsx(c, tagTok, closeTok, attrs, kids); }
     Ident(tok): {
       string idn = tokenText(c, tok);
+      // `_` binds nothing, so there is nothing to read (`§wac-underscore-unreadable-jqvkb32`).
+      if (idn == "_") {
+        c.reportWith(errUndefinedName(), e.line, e.col, "`_` cannot be read");
+        return;
+      }
       if (!nameExists(c, idn)) {
         c.reportWith(errUndefinedName(), e.line, e.col, "no " + idn + " in scope");
         return;
@@ -5973,6 +6034,23 @@ void checkExpr(C c, Expr e) {
     // `[a, b, c]`. The element type is the slot's when the slot is an array, and the elements' own
     // otherwise; a literal with neither — `[]` alone, or only numbers — is refused, since nothing says
     // which of the numeric types its elements are.
+    TupleLit(elements): {
+      // **The slot gives each member its type**, as an array's does its elements: `(i32, i32) t =
+      // (1, 2);` has nothing else to type the literals from (spec/next ch14).
+      string tslot = isNullableName(want) ? withoutNull(want) : want;
+      string[] tms = tupleMembers(tslot);
+      if (isTupleName(tslot) && tms.len() != elements.len()) {
+        for (i32 i = 0; i < elements.len(); i++) { c.expected = typeNone(); checkExpr(c, elements[i]); }
+        c.reportWith(errInitTypeMismatch(), e.line, e.col,
+                     expectedFound(tslot, "a tuple of " + countText(elements.len())));
+        return;
+      }
+      for (i32 i = 0; i < elements.len(); i++) {
+        c.expected = i < tms.len() ? tms[i] : typeNone();
+        checkExpr(c, elements[i]);
+      }
+      for (i32 i = 0; i < tms.len(); i++) { checkElement(c, tms[i], elements[i]); }
+    }
     ArrLit(elements): {
       string slot = isNullableName(want) ? withoutNull(want) : want;
       string et = typeNone();
@@ -6105,6 +6183,22 @@ void checkExpr(C c, Expr e) {
     SafeMember(obj, nameTok): { checkSafeMember(c, obj, nameTok); }
     Member(obj, nameTok): {
       checkReceiver(c, obj);
+      // A tuple's members are selected by position, and the position must be known statically —
+      // `t.1` or `t.[1]` (spec/next ch14 `§wac-tuple-static-index-axfrq5b`).
+      string tupleOwner = typeOfExpr(c, obj);
+      if (isTupleName(tupleOwner)) {
+        i32 tk = c.toks[nameTok * tokenStride()];
+        if (tk == kSymName()) {
+          c.reportTok(errNoSuchField(), nameTok, "a tuple selector must be known statically");
+          return;
+        }
+        if (tupleMemberType(tupleOwner, tokenText(c, nameTok)) == typeNone()) {
+          c.reportTok(errNoSuchField(), nameTok,
+                      tupleOwner + " has " + countText(tupleMembers(tupleOwner).len()) + " members");
+          return;
+        }
+        if (tupleMemberType(tupleOwner, tokenText(c, nameTok)) != "") { return; }
+      }
       if (!checkSymbolName(c, nameTok)) { return; }
       checkMember(c, e, obj, tokenText(c, nameTok));
     }
@@ -6981,6 +7075,11 @@ string writtenTy(C c, Ty t) {
       }
       return out + ") -> " + writtenTy(c, ret);
     }
+    TupleOf(members): {
+      string[] ms = string[].defaulted(members.len());
+      for (i32 i = 0; i < members.len(); i++) { ms[i] = writtenTy(c, members[i]); }
+      return tupleName(ms);
+    }
   }
 }
 
@@ -7394,6 +7493,13 @@ void checkWrite(C c, Lvalue lv) {
           c.report(errThroughNullable(), lv.line, lv.col);
           return;
         }
+        // A tuple member by position; past the end there is nothing to write. Whether the path is
+        // const is asked below, as for a field.
+        string tupleMember = isTupleName(ownerT) ? tupleMemberType(ownerT, tokenText(c, nameTok)) : "";
+        if (isTupleName(ownerT) && (tupleMember == typeNone() || tupleMember == "")) {
+          c.report(errNoSuchField(), lv.line, lv.col);
+          return;
+        }
         string ownerTmpl = templateOf(ownerT);
         // Writing a private field outside its body is naming it there — and the way a local is
         // built field by field from outside, which therefore cannot set one (spec/next ch12).
@@ -7675,6 +7781,12 @@ bool readsUnsettledConst(C c, Program prog, Expr e, string[] settled, i32 settle
       }
       return false;
     }
+    TupleLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (readsUnsettledConst(c, prog, elements[i], settled, settledCount)) { return true; }
+      }
+      return false;
+    }
     default: { return false; }
   }
 }
@@ -7739,6 +7851,12 @@ bool callsAFunction(C c, Expr e) {
       }
       return false;
     }
+    TupleLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (callsAFunction(c, elements[i])) { return true; }
+      }
+      return false;
+    }
     ArrNew(elem, size, fill, elements): {
       if (!(size is null)) {
         if (callsAFunction(c, size!)) { return true; }
@@ -7787,6 +7905,12 @@ bool mutableRefName(C c, string t) {
 bool freshValue(C c, Expr e) {
   match (e.kind) {
     ArrLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (!freshValue(c, elements[i])) { return false; }
+      }
+      return true;
+    }
+    TupleLit(elements): {
       for (i32 i = 0; i < elements.len(); i++) {
         if (!freshValue(c, elements[i])) { return false; }
       }
@@ -9746,6 +9870,9 @@ void checkParams(C c, Param[] params) {
     if (pt == "void") { c.report(errVoidType(), params[i].type.line, params[i].type.col); }
     checkVoidNullable(c, pt, params[i].type);
     string a = tokenText(c, params[i].nameTok);
+    // `_` names nothing, so it may be bound any number of times (spec/next ch01
+    // `§wac-underscore-repeats-3bce8w9`).
+    if (a == "_") { continue; }
     for (i32 j = 0; j < i; j++) {
       if (tokenText(c, params[j].nameTok) == a) {
         c.report(errDuplicateParam(), params[i].type.line, params[i].type.col);
@@ -9756,6 +9883,80 @@ void checkParams(C c, Param[] params) {
 }
 
 /** Every name a statement declares, however deeply nested. */
+/** Whether every name in a pattern has its type written — then the pattern alone is the tuple's type. */
+bool bindingTyped(TupleBinding b) {
+  if (b.nameTok >= 0) { return !(b.type is null); }
+  for (i32 i = 0; i < b.kids.len(); i++) { if (!bindingTyped(b.kids[i])) { return false; } }
+  return true;
+}
+
+/** The tuple type a fully typed pattern spells: `((i32 a, i32 b), i32 c)` is `((i32, i32), i32)`. */
+string bindingType(C c, TupleBinding b) {
+  if (b.nameTok >= 0) { return b.type is null ? typeNone() : typeOfTy(c, b.type!); }
+  string[] ms = string[].defaulted(b.kids.len());
+  for (i32 i = 0; i < b.kids.len(); i++) {
+    ms[i] = bindingType(c, b.kids[i]);
+    if (ms[i] == typeNone()) { return typeNone(); }
+  }
+  return tupleName(ms);
+}
+
+/**
+ * The type a destructuring declaration takes apart: the one written before the names, else the one
+ * the names spell, else the initialiser's.
+ */
+string destructuredType(C c, Ty? whole, TupleBinding pattern, Expr init) {
+  if (!(whole is null)) { return typeOfTy(c, whole!); }
+  if (bindingTyped(pattern)) { return bindingType(c, pattern); }
+  return typeOfExpr(c, init);
+}
+
+/** Declares each name of a pattern at the member type in its position of `t`. */
+void declareBinding(C c, TupleBinding b, string t) {
+  if (b.nameTok >= 0) {
+    c.declare(tokenText(c, b.nameTok), b.type is null ? t : typeOfTy(c, b.type!));
+    return;
+  }
+  string[] ms = tupleMembers(t);
+  for (i32 i = 0; i < b.kids.len(); i++) {
+    declareBinding(c, b.kids[i], i < ms.len() ? ms[i] : typeNone());
+  }
+}
+
+/** Marks every name of a pattern assigned. */
+void daBindingAssigned(C c, TupleBinding b, DA st) {
+  if (b.nameTok >= 0) { st.remove(tokenText(c, b.nameTok)); return; }
+  for (i32 i = 0; i < b.kids.len(); i++) { daBindingAssigned(c, b.kids[i], st); }
+}
+
+/**
+ * A pattern against the type in its position: a group needs a tuple of as many members, and a written
+ * type must hold the member it receives (spec/next ch14 `§wac-tuple-destructure-gn8i48y`).
+ */
+void checkBinding(C c, TupleBinding b, string t) {
+  if (t == typeNone() || t == "") { return; }
+  if (b.nameTok >= 0) {
+    if (b.type is null) { return; }
+    string declared = typeOfTy(c, b.type!);
+    if (declared != typeNone() && !assignable(c, declared, t)) {
+      c.reportWith(errInitTypeMismatch(), b.line, b.col, expectedFound(declared, t));
+    }
+    c.setType(tokenText(c, b.nameTok), declared);
+    return;
+  }
+  if (!isTupleName(t)) {
+    c.reportWith(errInitTypeMismatch(), b.line, b.col, t + " is not a tuple, so it cannot be taken apart");
+    return;
+  }
+  string[] ms = tupleMembers(t);
+  if (ms.len() != b.kids.len()) {
+    c.reportWith(errInitTypeMismatch(), b.line, b.col,
+                 countText(b.kids.len()) + " names for a tuple of " + countText(ms.len()) + " members");
+    return;
+  }
+  for (i32 i = 0; i < ms.len(); i++) { checkBinding(c, b.kids[i], ms[i]); }
+}
+
 void declareStmt(C c, Stmt s) {
   match (s.kind) {
     Var(type, nameTok, init, isConst): {
@@ -9792,6 +9993,7 @@ void declareStmt(C c, Stmt s) {
       // always done this; the expression form was simply never walked.
       if (init is not null) { declareMatchBindings(c, init!); }
     }
+    Destructure(whole, pattern, init): { declareBinding(c, pattern, destructuredType(c, whole, pattern, init)); }
     Block(body): { declareScoped(c, body); }
     // A deferred statement is a scope of its own: what it declares lives only while it runs.
     Defer(body): { declareScoped(c, [body] as Stmt[]); }
@@ -10034,6 +10236,38 @@ void checkStmt(C c, Stmt s, Ty want) {
      */
     // `n++` writes as much as `n = n + 1` does.
     IncrStmt(target, op): { checkIncr(c, target, op, false, s.line, s.col); }
+    Destructure(whole, pattern, init): {
+      string dt = destructuredType(c, whole, pattern, init);
+      c.expected = dt;
+      checkExpr(c, init);
+      string got = typeOfExpr(c, init);
+      if (dt != typeNone() && got != typeNone() && got != "" && !assignable(c, dt, got)) {
+        c.reportWith(errInitTypeMismatch(), init.line, init.col, expectedFound(dt, got));
+        return;
+      }
+      checkBinding(c, pattern, dt != typeNone() ? dt : got);
+    }
+    TupleAssign(targets, rhs): {
+      for (i32 i = 0; i < targets.len(); i++) { checkWrite(c, targets[i]); checkLvalueExprs(c, targets[i]); }
+      string[] tts = string[].defaulted(targets.len());
+      bool known = true;
+      for (i32 i = 0; i < targets.len(); i++) {
+        tts[i] = typeOfLvalue(c, targets[i]);
+        if (tts[i] == typeNone() || tts[i] == "") { known = false; }
+      }
+      string tt = known ? tupleName(tts) : typeNone();
+      c.expected = tt;
+      checkExpr(c, rhs);
+      string rt = typeOfExpr(c, rhs);
+      if (rt == typeNone() || rt == "") { return; }
+      if (!isTupleName(rt) || tupleMembers(rt).len() != targets.len()) {
+        c.reportWith(errInitTypeMismatch(), rhs.line, rhs.col, expectedFound(tt == typeNone() ? "a tuple" : tt, rt));
+        return;
+      }
+      if (known && !assignable(c, tt, rt)) {
+        c.reportWith(errInitTypeMismatch(), rhs.line, rhs.col, expectedFound(tt, rt));
+      }
+    }
     // A bare expression — `p.set(1);` — was walked nowhere. Every expression rule reached only
     // expressions that were part of something default: a return, an initialiser, a condition. A
     // statement that is just a call is the commonest shape in the language and had no rule applied

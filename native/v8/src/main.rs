@@ -1762,10 +1762,16 @@ fn coerce_arg<'s>(
             "false" | "0" => Ok(v8::Boolean::new(scope, false).into()),
             _ => Err(format!("`{text}` is not a bool — write true, false, 1 or 0")),
         },
-        "i64" | "u64" => text
+        "i64" => text
             .parse::<i64>()
             .map(|n| v8::BigInt::new_from_i64(scope, n).into())
             .map_err(|_| format!("`{text}` is not an {ty}")),
+        // **A `u64` takes all of its range**: one above `i64`'s maximum is a `u64`, and it crosses as
+        // the `i64` with the same bits — which is what the wasm parameter holds.
+        "u64" => text
+            .parse::<u64>()
+            .map(|n| v8::BigInt::new_from_u64(scope, n).into())
+            .map_err(|_| format!("`{text}` is not a {ty}")),
         "f64" | "f32" => text
             .parse::<f64>()
             .map(|n| v8::Number::new(scope, n).into())
@@ -1849,6 +1855,26 @@ fn print_returned(
             println!("{}", read_string(scope, v));
             Ok(())
         }
+        // **An unsigned answer prints unsigned.** A `u32` crosses as a wasm `i32`, which V8 reads as
+        // signed, so `0xFFFFFFFF` printed as `-1`; a `u64` crosses as an `i64` BigInt the same way.
+        "u32" => {
+            println!("{}", v.int32_value(scope).unwrap_or(0) as u32);
+            Ok(())
+        }
+        "u64" => {
+            match v.to_big_int(scope) {
+                Some(b) => println!("{}", b.u64_value().0),
+                None => println!("{}", v.to_rust_string_lossy(scope)),
+            }
+            Ok(())
+        }
+        // **An `f32` prints as an `f32`**: the shortest digits that read back as the same `f32`, placed
+        // as JavaScript places a number's — which is how an `f64` answer already prints. It crosses
+        // widened to an `f64`, so V8 alone spells `3.14f` as 3.140000104904175.
+        "f32" => {
+            println!("{}", f32_text(v.number_value(scope).unwrap_or(0.0) as f32));
+            Ok(())
+        }
         "u8[]" => {
             let bytes = read_bytes(scope, v);
             println!(
@@ -1879,6 +1905,38 @@ fn print_returned(
             Ok(())
         }
     }
+}
+
+/** An `f32`'s shortest round-trip digits, with the point placed as `Number::toString` places it. */
+fn f32_text(x: f32) -> String {
+    if x.is_nan() {
+        return "NaN".to_string();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    if x == 0.0 {
+        return "0".to_string();
+    }
+    let sign = if x < 0.0 { "-" } else { "" };
+    // `{:e}` is the shortest representation that round-trips, in scientific form: `3.14e0`.
+    let sci = format!("{:e}", x.abs());
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let k = digits.len() as i32;
+    let n = exp.parse::<i32>().unwrap_or(0) + 1;
+    let body = if k <= n && n <= 21 {
+        format!("{}{}", digits, "0".repeat((n - k) as usize))
+    } else if 0 < n && n <= 21 {
+        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    } else if -6 < n && n <= 0 {
+        format!("0.{}{}", "0".repeat((-n) as usize), digits)
+    } else {
+        let e = n - 1;
+        let mant = if k > 1 { format!("{}.{}", &digits[..1], &digits[1..]) } else { digits.clone() };
+        format!("{}e{}{}", mant, if e < 0 { "-" } else { "+" }, e.abs())
+    };
+    format!("{}{}", sign, body)
 }
 
 fn get_export<'s>(

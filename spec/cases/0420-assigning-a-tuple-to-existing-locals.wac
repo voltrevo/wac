@@ -1,0 +1,10 @@
+// expect: answers swapped = 21
+// why: `(a, b) = e` with no types assigns the members of `e` to locals that already exist, in order
+// from: spec/next ch14 §wac-tuple-assign-vmhww2b
+(u32, u32) swap(u32 a, u32 b) { return (b, a); }
+export i32 swapped() {
+  u32 a = 1;
+  u32 b = 2;
+  (a, b) = swap(a, b);
+  return (a * 10 + b) as! i32;
+}

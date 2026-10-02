@@ -1,0 +1,11 @@
+// expect: answers spellings = 3221
+// why: the names may carry their types, follow the tuple's type, or take theirs from `auto` — four spellings of one declaration
+// from: spec/next ch14 §wac-tuple-destructure-gn8i48y
+(u32, u32) divmod(u32 n, u32 d) { return (n / d, n % d); }
+export i32 spellings() {
+  (u32 q, u32 r) = divmod(17, 5);
+  (u32, u32) (q2, r2) = divmod(9, 4);
+  auto (q3, r3) = divmod(7, 2);
+  (auto q4, auto r4) = divmod(5, 4);
+  return (q * 1000 + r * 100 + q2 * 10 + r3 + q4 - r4) as! i32;
+}

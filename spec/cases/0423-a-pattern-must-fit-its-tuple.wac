@@ -1,0 +1,4 @@
+// expect: refused
+// why: a destructuring pattern names one local per member — three names cannot take a tuple of two apart
+// from: spec/next ch14 §wac-tuple-destructure-gn8i48y
+export i32 f() { (i32 a, i32 b, i32 c) = (1, 2); return a; }

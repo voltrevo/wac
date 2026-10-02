@@ -1,0 +1,13 @@
+// expect: answers quotient = 3
+// expect: answers nestedSum = 3
+// why: `(T a, U b) = e` declares one local per member of the tuple `e`, and the pattern may nest
+// from: spec/next ch14 §wac-tuple-destructure-gn8i48y
+(u32, u32) divmod(u32 n, u32 d) { return (n / d, n % d); }
+export i32 quotient() {
+  (u32 q, u32 r) = divmod(17, 5);
+  return q as! i32;
+}
+export i32 nestedSum() {
+  ((i32 a, i32 b), i32 c) = ((1, 2), 0);
+  return a + b + c;
+}

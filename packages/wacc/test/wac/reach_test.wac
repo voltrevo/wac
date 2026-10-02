@@ -56,7 +56,9 @@ string[] statementLabels() {
     "Var", "Assign", "IncrStmt", "If", "If-else", "While", "For", "For-init", "DoWhile", "Switch",
     "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt", "Defer",
     // `for (T x in e)` — spec/next ch25. The body holds the fault.
-    "ForIn"
+    "ForIn",
+    // Tuples — spec/next ch14. Neither holds a body; the walk has to go on past them.
+    "Destructure", "TupleAssign"
   ];
 }
 
@@ -78,7 +80,9 @@ string[] statementSources() {
     "void f() { { " + BAD + " } }",
     "void g(i32 n) { } void f() { g(1); " + BAD + " }",
     "void f() { defer { " + BAD + " } }",
-    "void f(i32[] xs) { for (i32 x in xs) { " + BAD + " } }"
+    "void f(i32[] xs) { for (i32 x in xs) { " + BAD + " } }",
+    "void f() { (i32 a, i32 b) = (1, 2); " + BAD + " }",
+    "void f(i32 a, i32 b) { (a, b) = (1, 2); " + BAD + " }"
   ];
 }
 
@@ -98,7 +102,7 @@ string[] expressionLabels() {
     // `return x++;` was not. The grid had a Return-value cell and it passed, because the fault it
     // buries is always the same `(p + q)` — what it never varied is *which kind of expression holds
     // the fault*, which is the dimension the missing arm lived in.
-    "Incr", "Unwrap", "Is", "ArrNew", "ArrNew-size", "ArrLit", "MatchExpr", "Matches",
+    "Incr", "Unwrap", "Is", "ArrNew", "ArrNew-size", "ArrLit", "TupleLit", "MatchExpr", "Matches",
     // A JSX element holds expressions in two places — an attribute's value and a child — and a walk
     // that descends into one and not the other would be invisible to every other cell here.
     "Jsx",
@@ -148,6 +152,7 @@ string[] expressionSources() {
     "void f(i32 p, f64 q) { i32[] a = i32[].filled(2, " + SUB + "); }",
     "void f(i32 p, f64 q) { i32[] a = i32[].filled(" + SUB + ", 0); }",
     "void f(i32 p, f64 q) { i32[] a = [" + SUB + ", 1]; }",
+    "void f(i32 p, f64 q) { (i32, i32) t = (" + SUB + ", 1); }",
     "enum E { A, B } void f(i32 p, f64 q, E e) { i32 r = match (e) { A: " + SUB +
     " B: 0 }; }",
     "enum E { A(i32 v), B } E h(i32 n) { return E.B; } " +
