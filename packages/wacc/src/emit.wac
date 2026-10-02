@@ -21,6 +21,7 @@ import { blockValue, escapeValue, isBlockLiteral, isStringEscape, lex, Lexed, to
          unicodeEscapeEnd, unicodeEscapeValue, utf8Into } from "./lex.wac";
 import { coreFileNames, coreFileStarts, coreSource, stdSource } from "./coretext.wac";
 import { Lowered, lowerProgram } from "./asynclower.wac";
+import { lowerNamespaces } from "./namespaces.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
@@ -28,7 +29,7 @@ import { endsWith, Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } 
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind,
   Method, NamedArg,
-  Param, Pattern, Program, Stmt, StmtKind, Ty, TyKind,
+  Param, Pattern, Program, Stmt, StmtKind, Ty, TyKind, lvalueExpr,
 } from "./ast.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
@@ -3374,6 +3375,9 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
   // checker stayed clean and the **engine** rejected the module, telling the user it was a compiler
   // bug with no source line. `issues/lang/0163`.
   if (twoKeysForOneFile(paths) != "") { return false; }
+  // **Namespaces first** (spec/next ch03): every emit route passes through here, so lowering once
+  // here is lowering for all of them. A file set already lowered comes back unchanged.
+  sources = lowerNamespaces(paths, sources, res);
   // **Sized for the largest program here, which is `packages/box` at 168 files and climbing.** These
   // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
   // was not supplied"* — the same `return ""` a genuinely missing file takes, so the message named
@@ -3654,6 +3658,15 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
   return sn > 0;
 }
 
+/**
+ * `declCountOf` for the entry of a file set, counted in the text a build parses — with its namespaces
+ * lowered. The raw text of a file with a `namespace` block does not parse, and counting it gave the
+ * entry no declarations, so its module exported nothing.
+ */
+i32 entryDeclCount(string[] paths, string[] sources, Res res, string entry) {
+  return declCountOf(entry, sourceOf(paths, lowerNamespaces(paths, sources, res), entry));
+}
+
 /** How many declarations the entry file contributes, which is how far the exports reach. */
 i32 declCountOf(string path, string source) {
   return frontendOf(path, source.toBytes()).prog.decls.len();
@@ -3742,7 +3755,7 @@ export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, Res res, str
   Env env = Env.create();
   env.trace = true;
   env.traceSlots = slots;
-  return emitModuleOfInto(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)), starts,
+  return emitModuleOfInto(u8[](), entryDeclCount(paths, sources, res, entry), starts,
                           edges, names, filePaths, false, true, env, srcs, lexeds, progs);
 }
 
@@ -3758,7 +3771,7 @@ export string covTableLinked(string[] paths, string[] sources, Res res, string e
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return ""; }
   Env env = Env.create();
-  return covTableOf(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  return covTableOf(u8[](), entryDeclCount(paths, sources, res, entry), starts, edges,
                     names, filePaths, false, srcs, lexeds, progs);
 }
 
@@ -3773,7 +3786,7 @@ export string traceTableLinked(string[] paths, string[] sources, Res res, string
   Program?[] progs = Program?[].defaulted(1024);
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return ""; }
-  return covTableOf(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  return covTableOf(u8[](), entryDeclCount(paths, sources, res, entry), starts, edges,
                     names, filePaths, true, srcs, lexeds, progs);
 }
 
@@ -3851,7 +3864,7 @@ Front? frontOf(string[] paths, string[] sources, Res res, string entry) {
   Program?[] progs = Program?[].defaulted(1024);
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return null; }
-  return frontOfRawIn(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)),
+  return frontOfRawIn(u8[](), entryDeclCount(paths, sources, res, entry),
                       starts, edges, names, filePaths, false, false, Env.create(),
                       srcs, lexeds, progs);
 }
@@ -4327,7 +4340,7 @@ u8[] emitLinkedWith2(string[] paths, string[] sources, Res res, string entry, bo
   Program?[] progs = Program?[].defaulted(1024);
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return bareModule(); }
-  return emitModuleOfWith(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  return emitModuleOfWith(u8[](), entryDeclCount(paths, sources, res, entry), starts, edges,
                           names, filePaths, checked, covered, traced, srcs, lexeds, progs);
 }
 
@@ -4354,7 +4367,7 @@ export string emitDeclineLinked(string[] paths, string[] sources, Res res, strin
   if (!linkFiles(paths, sources, res, entry, starts, edges, names, filePaths,
                  srcs, lexeds, progs)) { return "the graph did not link"; }
   Env env = Env.create();
-  emitModuleOfInto(u8[](), declCountOf(entry, sourceOf(paths, sources, entry)), starts, edges,
+  emitModuleOfInto(u8[](), entryDeclCount(paths, sources, res, entry), starts, edges,
                    names, filePaths, false, false, env, srcs, lexeds, progs);
   if (env.fullWhy != "") { return env.fullWhy; }
   // **Ambiguity is a decline this could not say.** `emitModuleOfFront` bares out on
@@ -7643,6 +7656,13 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     }
     Assign(rawTarget, op, rhs): {
       Lvalue target = peelLv(rawTarget);
+      // `a op= b` on a struct calls its `opAssign` on the object in place (spec/next ch22).
+      i32 asm = structOperatorE(env, typeOfLv(src, lexed, env, target),
+                                assignSymbolE(lexed.tokens[op * tokenStride()]));
+      if (asm >= 0) {
+        emitStructOperator(fb, src, lexed, env, asm, lvalueExpr(target), rhs, true);
+        return;
+      }
       match (target.kind) {
         LField(base, nameTok): {
           string ot3 = typeOfLv(src, lexed, env, base);
@@ -7951,6 +7971,12 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     }
     IncrStmt(rawTarget, op): {
       Lvalue target = peelLv(rawTarget);
+      i32 ism = structOperatorE(env, typeOfLv(src, lexed, env, target),
+                                incrSymbolE(lexed.tokens[op * tokenStride()], false));
+      if (ism >= 0) {
+        emitStructOperator(fb, src, lexed, env, ism, lvalueExpr(target), null, true);
+        return;
+      }
       // `i++` is the commonest `for` update in the language and had **no arm here at all**, so the
       // update emitted nothing and the loop never advanced. It did not fail: it validated and span,
       // and the test hung rather than reporting — which is the failure mode this rung's oracle was
@@ -8262,6 +8288,12 @@ void emitCompound(B fb, Env env, i32 k, string t) {
  */
 void emitIncrExpr(B fb, u8[] src, Lexed lexed, Env env, Lvalue rawTarget, i32 op, bool prefix) {
   Lvalue target = peelLv(rawTarget);
+  i32 sm = structOperatorE(env, typeOfLv(src, lexed, env, target),
+                           incrSymbolE(lexed.tokens[op * tokenStride()], prefix));
+  if (sm >= 0) {
+    emitStructOperator(fb, src, lexed, env, sm, lvalueExpr(target), null, false);
+    return;
+  }
   i32 kind = lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus();
   match (target.kind) {
     // Peeled above, so this cannot arrive — but the language wants every variant named.
@@ -8589,6 +8621,11 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     Await(operand): { fb.byte(0); }
     Unary(op, operand): {
       i32 k = lexed.tokens[op * tokenStride()];
+      i32 um = structOperatorE(env, typeOfE(src, lexed, env, operand), unarySymbolE(k));
+      if (um >= 0) {
+        emitStructOperator(fb, src, lexed, env, um, operand, null, false);
+        return;
+      }
       if (k == kBang()) {
         emitExpr(fb, src, lexed, env, operand);
         fb.byte(69);   // i32.eqz
@@ -8623,6 +8660,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // `a ?? b` — the one binary operator whose op token is a `?`. spec/next ch10.
       if (k == kQuestion()) {
         emitCoalesce(fb, src, lexed, env, left, right, want);
+        return;
+      }
+      // **An operator on a struct is a call to its method** — spec/next ch22.
+      i32[] om = operatorMethodE(src, lexed, env, k, left, right);
+      if (om[0] >= 0) {
+        emitOperatorCall(fb, src, lexed, env, om, left, right);
         return;
       }
       if (k == kAndAnd() || k == kOrOr()) {
@@ -9563,8 +9606,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     Unary(op, operand): {
       i32 k = lexed.tokens[op * tokenStride()];
+      string uot = typeOfE(src, lexed, env, operand);
+      i32 um = structOperatorE(env, uot, unarySymbolE(k));
+      if (um >= 0) { return env.funcReturns[um]; }
       if (k == kBang()) { return "bool"; }
-      return typeOfE(src, lexed, env, operand);
+      return uot;
     }
     SafeMember(obj, nameTok): { return safeMemberType(src, lexed, env, obj, nameTok); }
     Binary(op, left, right): {
@@ -9576,8 +9622,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       if (k == kQuestion()) { return coalesceType(src, lexed, env, left, right); }
       // An interpolated literal is a string, whatever it interpolates (spec/next ch23).
       if (k == kPlus() && isInterpPlus(src, lexed, op)) { return "string"; }
+      // Each operand typed once — see `operatorMethodOfE`.
       string lt = typeOfE(src, lexed, env, left);
       string rt = typeOfE(src, lexed, env, right);
+      i32[] omt = operatorMethodOfE(env, k, lt, rt);
+      if (omt[0] >= 0) { return env.funcReturns[omt[0]]; }
       // **A shift's amount is not an operand**, so it does not have to match: the reference states it
       // — *"It is never the thing being widened and has no lossy case — wasm masks it to the operand
       // width regardless"* — and records that this was once two short lists that disagreed, so
@@ -9624,7 +9673,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     Is(left, target, other, negated): { return "bool"; }
     Matches(pat, subject): { return "bool"; }
-    Incr(target, op, prefix): { return typeOfLv(src, lexed, env, peelLv(target)); }
+    Incr(target, op, prefix): {
+      string itt = typeOfLv(src, lexed, env, peelLv(target));
+      i32 im = structOperatorE(env, itt, incrSymbolE(lexed.tokens[op * tokenStride()], prefix));
+      return im >= 0 ? env.funcReturns[im] : itt;
+    }
     Unwrap(operand): {
       // Unwrapping a boxed primitive yields the primitive; for a nullable reference `T?` and `T` are
       // already one name here, so this changes nothing for those.
@@ -9779,6 +9832,129 @@ void emitCoalesce(B fb, u8[] src, Lexed lexed, Env env, Expr left, Expr right, s
     fb.u32leb(0);
   }
   fb.byte(11);
+}
+
+/** The core symbol a binary operator dispatches through, or "" for one that does not. ch22. */
+string operatorSymbolE(i32 k) {
+  if (k == kPlus()) { return "add"; }
+  if (k == kMinus()) { return "subtract"; }
+  if (k == kStar()) { return "multiply"; }
+  if (k == kSlash()) { return "divide"; }
+  if (k == kPercent()) { return "remainder"; }
+  if (k == kEq()) { return "equal"; }
+  if (k == kNe()) { return "notEqual"; }
+  if (k == kLt()) { return "lessThan"; }
+  if (k == kLe()) { return "lessThanOrEqual"; }
+  if (k == kGt()) { return "greaterThan"; }
+  if (k == kGe()) { return "greaterThanOrEqual"; }
+  if (k == kAnd()) { return "bitwiseAnd"; }
+  if (k == kOr()) { return "bitwiseOr"; }
+  if (k == kCaret()) { return "bitwiseXor"; }
+  if (k == kShl()) { return "shiftLeft"; }
+  if (k == kShr()) { return "shiftRight"; }
+  if (k == kShrU()) { return "unsignedShiftRight"; }
+  return "";
+}
+
+/**
+ * The method an operator calls — `[method, 1 if the right operand is the receiver]` — or `[-1, 0]`.
+ * The member is named by core's symbol in its declared spelling, `[operators.add]`, which is how this
+ * emitter keys every symbol-named member.
+ */
+i32[] operatorMethodE(u8[] src, Lexed lexed, Env env, i32 k, Expr left, Expr right) {
+  if (operatorSymbolE(k) == "") { return i32[].filled(2, -1); }
+  return operatorMethodOfE(env, k, typeOfE(src, lexed, env, left), typeOfE(src, lexed, env, right));
+}
+
+/**
+ * `operatorMethodE` for operands already typed. A caller that types them itself uses this one:
+ * typing each operand twice per level is exponential in a chain of `+`, which is a tree as deep as
+ * it is long.
+ */
+i32[] operatorMethodOfE(Env env, i32 k, string lt, string rt) {
+  i32[] out = i32[].filled(2, -1);
+  string sym = operatorSymbolE(k);
+  if (sym == "") { return out; }
+  if (env.isStructName(lt) && !env.isEnumName(lt)) {
+    out[0] = env.methodAt(lt, "[operators." + sym + "]");
+    out[1] = 0;
+    return out;
+  }
+  if (env.isStructName(rt) && !env.isEnumName(rt)) {
+    out[0] = env.methodAt(rt, "[operators." + sym + "FromLeft]");
+    out[1] = 1;
+  }
+  return out;
+}
+
+/**
+ * `a op b` as the call it means. The operands are evaluated left to right whichever is the receiver:
+ * a reverse call holds the left one in a local while the right is pushed in front of it.
+ */
+void emitOperatorCall(B fb, u8[] src, Lexed lexed, Env env, i32[] om, Expr left, Expr right) {
+  i32 m = om[0];
+  if (env.funcIndex[m] < 0) { env.declineFor("an operator method that was not emitted"); return; }
+  string argT = env.paramTypeAt(m, 0);
+  if (om[1] == 0) {
+    emitExprAt(fb, src, lexed, env, left, typeOfE(src, lexed, env, left));
+    emitExprAt(fb, src, lexed, env, right, argT);
+  } else {
+    i32 held = env.scratchNamed("operator lhs " + numText(env.depth), argT);
+    emitExprAt(fb, src, lexed, env, left, argT);
+    fb.byte(33); fb.u32leb(held);                 // local.set — the left, first
+    emitExprAt(fb, src, lexed, env, right, typeOfE(src, lexed, env, right));
+    fb.byte(32); fb.u32leb(held);                 // local.get
+  }
+  fb.byte(16); fb.u32leb(env.funcIndex[m]);     // call
+}
+
+/** The symbol `a op= b` calls on a struct target, or "". ch22. */
+string assignSymbolE(i32 k) {
+  if (k == kPlusEq()) { return "addAssign"; }
+  if (k == kMinusEq()) { return "subtractAssign"; }
+  if (k == kStarEq()) { return "multiplyAssign"; }
+  if (k == kSlashEq()) { return "divideAssign"; }
+  if (k == kPercentEq()) { return "remainderAssign"; }
+  if (k == kAndEq()) { return "bitwiseAndAssign"; }
+  if (k == kOrEq()) { return "bitwiseOrAssign"; }
+  if (k == kCaretEq()) { return "bitwiseXorAssign"; }
+  if (k == kShlEq()) { return "shiftLeftAssign"; }
+  if (k == kShrEq()) { return "shiftRightAssign"; }
+  if (k == kShrUEq()) { return "unsignedShiftRightAssign"; }
+  return "";
+}
+
+/** The symbol a prefix operator calls on a struct, or "". ch22. */
+string unarySymbolE(i32 k) {
+  if (k == kMinus()) { return "negate"; }
+  if (k == kBang()) { return "not"; }
+  if (k == kTilde()) { return "bitwiseNot"; }
+  return "";
+}
+
+/** The symbol `++`/`--` calls on a struct, prefix and postfix being distinct. ch22. */
+string incrSymbolE(i32 k, bool prefix) {
+  string verb = k == kInc() ? "Increment" : "Decrement";
+  return (prefix ? "pre" : "post") + verb;
+}
+
+/** A struct's method for an operator symbol, or -1 — also for a type that is not a struct. */
+i32 structOperatorE(Env env, string t, string sym) {
+  if (sym == "" || !env.isStructName(t) || env.isEnumName(t)) { return -1; }
+  return env.methodAt(t, "[operators." + sym + "]");
+}
+
+/**
+ * `recv.[sym](arg)` for an operator method `m` — `arg` absent for one that takes nothing. The
+ * receiver is evaluated once, before the argument; a result nobody reads is dropped when `drop`.
+ */
+void emitStructOperator(B fb, u8[] src, Lexed lexed, Env env, i32 m, Expr recv, Expr? arg, bool drop) {
+  if (env.funcIndex[m] < 0) { env.declineFor("an operator method that was not emitted"); return; }
+  emitExprAt(fb, src, lexed, env, recv, typeOfE(src, lexed, env, recv));
+  if (!(arg is null)) { emitExprAt(fb, src, lexed, env, arg!, env.paramTypeAt(m, 0)); }
+  fb.byte(16); fb.u32leb(env.funcIndex[m]);     // call
+  string r = env.funcReturns[m];
+  if (drop && r != "void" && r != "never" && r != "") { fb.byte(26); }   // drop
 }
 
 /** Whether a file interpolates anything — whether it has a `+` the lexer wrote for `\{`. */
@@ -12320,6 +12496,9 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
       if (ka != kAssign() && tt2 == "string" && ka != kPlusEq()) {
         return "a compound assignment to a string that is not +=";
       }
+      if (ka != kAssign() && structOperatorE(env, tt2, assignSymbolE(ka)) >= 0) {
+        return unsupportedValueAt(src, lexed, env, rhs, env.paramTypeAt(structOperatorE(env, tt2, assignSymbolE(ka)), 0));
+      }
       if (ka != kAssign() && tt2 != "string" &&
           (isArrayType(tt2) || env.isStructName(tt2))) {
         return "a compound assignment to a reference";
@@ -12956,6 +13135,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // not instructions, and this slice has none, so it says so.
       string ot2 = operandType(src, lexed, env, left, right);
       i32 bk = lexed.tokens[op * tokenStride()];
+      // An operator a struct implements is a method call, which the walks above already approved.
+      if (operatorMethodE(src, lexed, env, bk, left, right)[0] >= 0) { return ""; }
       // `a ?? b` takes any type that can be absent, references included (spec/next ch10).
       if (bk == kQuestion()) { return ""; }
       // String equality has a helper now; everything else on a reference still does not.
@@ -13272,6 +13453,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     Incr(target, op, prefix): {
       string it = typeOfLv(src, lexed, env, peelLv(target));
+      if (structOperatorE(env, it, incrSymbolE(lexed.tokens[op * tokenStride()], prefix)) >= 0) {
+        return unsupportedLvalue(src, lexed, env, target);
+      }
       if (it != "i32" && it != "i64" && it != "u8" && it != "u32" && it != "u64" && it != "i8" &&
           it != "i16" && it != "u16") {
         return "increment of " + (it == "" ? "an unknown type" : it);

@@ -1,0 +1,739 @@
+// Namespaces — spec/next ch03, lowered away before anything else reads the source.
+//
+// A namespace groups names and is not a runtime object, so nothing past this file needs to know one
+// exists. Every member is a declaration with a **qualified name**, written as a verbatim name —
+// `@"shapes.Circle"` is a name whose spelling is `shapes.Circle`, which no ordinary identifier can be
+// (ch01 `§wac-verbatim-name-jzwznre`) — and every use of one is rewritten to that name:
+//
+//   - **Inline**: `namespace shapes { export struct Circle … }` loses its wrapper, and each member is
+//     renamed `@"shapes.Circle"`; a bare reference to a sibling inside the block follows it. A member
+//     is exported from the module only when it and every namespace around it are.
+//   - **Module-backed**: `export * as shapes from "./shapes.wac"` is a line nothing needs once the
+//     importers below reach `shapes.wac` themselves.
+//   - **Uses**: `shapes.Circle`, `lib.shapes.area`, `[operators.add]` — a chain whose head is a
+//     namespace in scope — become one verbatim name, and an import of exactly that member from the
+//     module that declares it is added at the end of the file. `import { shapes }`,
+//     `import * as lib` and `import { shapes.area as a }` are rewritten to the imports they mean.
+//
+// After the first pass, "a namespace" is just *a dotted name*: a module exporting `@"operators.add"`
+// has a namespace `operators`. That is what lets core declare its operator symbols directly in that
+// spelling — the embedded copy of core is never lowered — and be read exactly like a lowered module.
+//
+// Lines are kept, so a diagnostic names the line it always did; a column after a qualified name moves
+// by the three characters `@""` adds. Lazy loading falls out (ch05 `§wac-reach-namespace-lazy`): a
+// module reached only through a namespace re-export is imported directly, and the re-exporting file
+// is not needed at all.
+
+import { lex, Lexed, tokenStride } from "./lex.wac";
+import {
+  kAs, kComma, kConst, kDot, kEnum, kEof, kExport, kIdent, kImport, kLbrace, kLbrack, kLparen,
+  kLt, kGt, kRbrace, kRbrack, kRparen, kSemi, kShr, kStar, kStatic, kString, kStruct,
+} from "./kinds.wac";
+import { Res, resolveVia } from "./path.wac";
+import { coreExports } from "./coretext.wac";
+
+/** A growable list of strings. */
+struct NsStrs {
+  string[] items;
+  i32 n;
+
+  NsStrs create() { return NsStrs(string[].defaulted(8), 0); }
+
+  void push(this, string s) {
+    if (this.n >= this.items.len()) {
+      string[] more = string[].defaulted(this.items.len() * 2 + 8);
+      for (i32 i = 0; i < this.n; i++) { more[i] = this.items[i]; }
+      this.items = more;
+    }
+    this.items[this.n] = s;
+    this.n = this.n + 1;
+  }
+
+  bool has(const this, string s) {
+    for (i32 i = 0; i < this.n; i++) { if (this.items[i] == s) { return true; } }
+    return false;
+  }
+}
+
+/** Text edits to one source: replace `[start, end)` with `text`. Never overlapping. */
+struct NsEdits {
+  i32[] starts;
+  i32[] ends;
+  string[] texts;
+  i32 n;
+
+  NsEdits create() { return NsEdits(i32[].filled(16, 0), i32[].filled(16, 0), string[].defaulted(16), 0); }
+
+  void add(this, i32 start, i32 end, string text) {
+    if (this.n >= this.starts.len()) {
+      i32 cap = this.starts.len() * 2;
+      i32[] s2 = i32[].filled(cap, 0);
+      i32[] e2 = i32[].filled(cap, 0);
+      string[] t2 = string[].defaulted(cap);
+      for (i32 i = 0; i < this.n; i++) { s2[i] = this.starts[i]; e2[i] = this.ends[i]; t2[i] = this.texts[i]; }
+      this.starts = s2;
+      this.ends = e2;
+      this.texts = t2;
+    }
+    this.starts[this.n] = start;
+    this.ends[this.n] = end;
+    this.texts[this.n] = text;
+    this.n = this.n + 1;
+  }
+
+  /** Whether some edit already covers `[start, end)`. */
+  bool covers(const this, i32 start, i32 end) {
+    for (i32 i = 0; i < this.n; i++) {
+      if (start < this.ends[i] && end > this.starts[i]) { return true; }
+    }
+    return false;
+  }
+
+  /** The source with every edit applied, in source order. */
+  string apply(const this, u8[] src, string tail) {
+    i32[] order = i32[].filled(this.n, 0);
+    for (i32 i = 0; i < this.n; i++) { order[i] = i; }
+    for (i32 i = 1; i < this.n; i++) {
+      i32 v = order[i];
+      i32 j = i - 1;
+      while (j >= 0 && this.starts[order[j]] > this.starts[v]) { order[j + 1] = order[j]; j = j - 1; }
+      order[j + 1] = v;
+    }
+    string out = "";
+    i32 at = 0;
+    for (i32 k = 0; k < this.n; k++) {
+      i32 e = order[k];
+      if (this.starts[e] < at) { continue; }
+      out = out + bytesText(src, at, this.starts[e]) + this.texts[e];
+      at = this.ends[e];
+    }
+    return out + bytesText(src, at, src.len()) + tail;
+  }
+}
+
+string bytesText(u8[] src, i32 from, i32 to) {
+  if (to <= from) { return ""; }
+  u8[] b = u8[].filled(to - from, 0);
+  b.copyFrom(src, from, 0, to - from);
+  return string.fromBytes(b);
+}
+
+/** Spaces as wide as `[from, to)`, newlines kept — so a blanked span moves nothing after it. */
+string blankOf(u8[] src, i32 from, i32 to) {
+  i32 size = 0;
+  for (i32 i = from; i < to; i++) {
+    if (src[i] == '\n') { size = size + 1; continue; }
+    if (src[i] >= 0x80 && src[i] < 0xC0) { continue; }
+    size = size + (src[i] >= 0xF0 ? 2 : 1);
+  }
+  u8[] out = u8[].filled(size, ' ');
+  i32 at = 0;
+  for (i32 i = from; i < to; i++) {
+    if (src[i] == '\n') { out[at] = '\n'; at = at + 1; continue; }
+    if (src[i] >= 0x80 && src[i] < 0xC0) { continue; }
+    at = at + (src[i] >= 0xF0 ? 2 : 1);
+  }
+  return string.fromBytes(out);
+}
+
+/** One source, lexed, with the questions a token walk asks. */
+struct NsFile {
+  u8[] src;
+  Lexed lx;
+
+  NsFile of(string text) {
+    u8[] b = text.toBytes();
+    return NsFile(b, lex(b));
+  }
+
+  i32 count(const this) { return this.lx.tokenCount; }
+  i32 kind(const this, i32 t) {
+    if (t < 0 || t >= this.lx.tokenCount) { return kEof(); }
+    return this.lx.tokens[t * tokenStride()];
+  }
+  i32 start(const this, i32 t) { return this.lx.tokens[t * tokenStride() + 1]; }
+  i32 end(const this, i32 t) { return this.start(t) + this.lx.tokens[t * tokenStride() + 2]; }
+  /** Whether token `t` was written verbatim, `@"…"` — its span is the text between the quotes. */
+  bool verbatim(const this, i32 t) {
+    i32 at = this.start(t);
+    return this.kind(t) == kIdent() && at >= 2 && this.src[at - 1] == '"' && this.src[at - 2] == '@';
+  }
+  /** Where token `t` starts and ends in the source, a verbatim name's `@"` and `"` included. */
+  i32 outerStart(const this, i32 t) { return this.verbatim(t) ? this.start(t) - 2 : this.start(t); }
+  i32 outerEnd(const this, i32 t) { return this.verbatim(t) ? this.end(t) + 1 : this.end(t); }
+  string text(const this, i32 t) {
+    if (t < 0 || t >= this.lx.tokenCount) { return ""; }
+    return bytesText(this.src, this.start(t), this.end(t));
+  }
+  bool word(const this, i32 t, string w) { return this.kind(t) == kIdent() && this.text(t) == w; }
+
+  /** The token after the bracket that `open` opens — braces, parentheses or brackets. */
+  i32 matching(const this, i32 open) {
+    i32 depth = 0;
+    for (i32 t = open; t < this.count(); t++) {
+      i32 k = this.kind(t);
+      if (k == kLbrace() || k == kLparen() || k == kLbrack()) { depth = depth + 1; }
+      if (k == kRbrace() || k == kRparen() || k == kRbrack()) {
+        depth = depth - 1;
+        if (depth == 0) { return t; }
+      }
+    }
+    return this.count() - 1;
+  }
+
+  /** The token that ends a declaration starting at `t`: its closing `}` or its `;`. */
+  i32 declEnd(const this, i32 t) {
+    for (i32 i = t; i < this.count(); i++) {
+      i32 k = this.kind(i);
+      if (k == kSemi()) { return i; }
+      if (k == kLbrace()) {
+        i32 close = this.matching(i);
+        // `static fn<…> f = () => { … };` — a brace inside an initialiser is not the end.
+        if (this.kind(close + 1) == kSemi()) { return close + 1; }
+        return close;
+      }
+      if (k == kLparen() || k == kLbrack()) { i = this.matching(i); }
+    }
+    return this.count() - 1;
+  }
+
+  /** The name token of the declaration starting at `t` (after any `export`), or -1. */
+  i32 declName(const this, i32 t) {
+    i32 i = t;
+    if (this.kind(i) == kExport()) { i = i + 1; }
+    if (this.kind(i) == kConst() && this.kind(i + 1) == kStruct()) { return i + 2; }
+    if (this.kind(i) == kStruct() || this.kind(i) == kEnum()) { return i + 1; }
+    if (this.word(i, "symbol") && this.kind(i + 1) == kIdent()) { return i + 1; }
+    if (this.kind(i) == kStatic() || this.kind(i) == kConst()) {
+      for (i32 j = i; j < this.count(); j++) {
+        if (this.kind(j) == kSemi()) { return -1; }
+        if (this.text(j) == "=" ) { return j - 1; }
+      }
+      return -1;
+    }
+    // A function: the name is the identifier before its `(`, or before its own `<…>`.
+    i32 angle = 0;
+    for (i32 j = i; j < this.count(); j++) {
+      i32 k = this.kind(j);
+      if (k == kLt()) { angle = angle + 1; }
+      if (k == kGt()) { angle = angle - 1; }
+      if (k == kShr()) { angle = angle - 2; }
+      if (k == kSemi() || k == kLbrace()) { return -1; }
+      if (k == kLparen() && angle <= 0) {
+        i32 n = j - 1;
+        if (this.kind(n) == kGt() || this.kind(n) == kShr()) {
+          i32 d = 0;
+          while (n > i) {
+            if (this.kind(n) == kGt()) { d = d + 1; }
+            if (this.kind(n) == kShr()) { d = d + 2; }
+            if (this.kind(n) == kLt()) { d = d - 1; }
+            n = n - 1;
+            if (d <= 0) { break; }
+          }
+        }
+        return this.kind(n) == kIdent() ? n : -1;
+      }
+    }
+    return -1;
+  }
+}
+
+/** What the first pass learned about one file's inline namespaces. */
+struct NsLocal {
+  /** Each member's qualified name, and whether only its own block may name it. */
+  NsStrs members;
+  NsStrs blockPrivate;
+  /** The byte range of the block each block-private member belongs to, as "start end". */
+  NsStrs ranges;
+  /** Every namespace the file declares, qualified: "shapes", "shapes.inner". */
+  NsStrs spaces;
+}
+
+/**
+ * The first pass: one file's inline namespaces flattened into verbatim-named declarations.
+ * Answers the new text; `info` gets what it declared.
+ */
+string flattenInline(string text, NsLocal info) {
+  NsFile f = NsFile.of(text);
+  NsEdits ed = NsEdits.create();
+  i32 depth = 0;
+  for (i32 t = 0; t < f.count(); t++) {
+    i32 k = f.kind(t);
+    if (depth == 0) {
+      i32 head = t;
+      bool exported = false;
+      if (k == kExport() && f.word(t + 1, "namespace")) { exported = true; head = t + 1; }
+      if (f.word(head, "namespace") && f.kind(head + 1) == kIdent() && f.kind(head + 2) == kLbrace()) {
+        i32 close = flattenBlock(f, ed, info, t, head, f.text(head + 1), exported);
+        t = close;
+        continue;
+      }
+    }
+    if (k == kLbrace() || k == kLparen() || k == kLbrack()) { depth = depth + 1; }
+    if (k == kRbrace() || k == kRparen() || k == kRbrack()) { depth = depth - 1; }
+  }
+  if (ed.n == 0) { return text; }
+  return ed.apply(f.src, "");
+}
+
+/** One `namespace name { … }` block, at tokens `first` (its `export` or `namespace`) to its `}`. */
+i32 flattenBlock(NsFile f, NsEdits ed, NsLocal info, i32 first, i32 head, string prefix, bool exported) {
+  i32 open = head + 2;
+  i32 close = f.matching(open);
+  info.spaces.push(prefix);
+  ed.add(f.start(first), f.end(open), blankOf(f.src, f.start(first), f.end(open)));
+  ed.add(f.start(close), f.end(close), " ");
+  string range = itoaNs(f.start(open)) + " " + itoaNs(f.end(close));
+
+  // The members' names first, so a reference to a later sibling is recognised too.
+  NsStrs names = NsStrs.create();
+  i32[] nameToks = i32[].filled(f.count(), -1);
+  i32 nn = 0;
+  for (i32 t = open + 1; t < close; t++) {
+    bool memberExported = f.kind(t) == kExport();
+    i32 h = memberExported ? t + 1 : t;
+    if (f.word(h, "namespace") && f.kind(h + 1) == kIdent() && f.kind(h + 2) == kLbrace()) {
+      t = flattenBlock(f, ed, info, t, h, prefix + "." + f.text(h + 1), exported && memberExported);
+      continue;
+    }
+    i32 nameTok = f.declName(t);
+    i32 end = f.declEnd(t);
+    if (nameTok >= 0) {
+      string qualified = prefix + "." + f.text(nameTok);
+      names.push(f.text(nameTok));
+      nameToks[nn] = nameTok;
+      nn = nn + 1;
+      ed.add(f.outerStart(nameTok), f.outerEnd(nameTok), "@\"" + qualified + "\"");
+      info.members.push(qualified);
+      if (!memberExported) {
+        info.blockPrivate.push(qualified);
+        info.ranges.push(range);
+      }
+      // Exported from the module only when every namespace around it is too.
+      if (memberExported && !exported) { ed.add(f.start(t), f.end(t), blankOf(f.src, f.start(t), f.end(t))); }
+    }
+    t = end;
+  }
+  // A sibling named bare inside the block is the member.
+  for (i32 t = open + 1; t < close; t++) {
+    if (f.kind(t) != kIdent() || f.kind(t - 1) == kDot()) { continue; }
+    if (!names.has(f.text(t))) { continue; }
+    if (ed.covers(f.outerStart(t), f.outerEnd(t))) { continue; }
+    ed.add(f.outerStart(t), f.outerEnd(t), "@\"" + prefix + "." + f.text(t) + "\"");
+  }
+  return close;
+}
+
+string itoaNs(i32 n) {
+  if (n == 0) { return "0"; }
+  string out = "";
+  i32 v = n;
+  while (v > 0) {
+    out = string.fromCodepoint(48 + v % 10) + out;
+    v = v / 10;
+  }
+  return out;
+}
+
+/** What one module exports, read from its flattened text. */
+struct NsExports {
+  /** Names exported by declarations — a dotted one is a namespace member. */
+  NsStrs names;
+  /** `export * as X from "s"`: each `X`, and the key `s` resolves to. */
+  NsStrs starNames;
+  NsStrs starTargets;
+}
+
+/**
+ * The second pass, over the whole graph: every namespace use rewritten to the verbatim name of the
+ * member it reaches, and the imports that reach it.
+ */
+export string[] lowerNamespaces(string[] paths, string[] sources, Res res) {
+  i32 n = paths.len();
+  bool any = false;
+  for (i32 i = 0; i < n; i++) {
+    if (i < sources.len() && mentionsNamespaces(sources[i])) { any = true; }
+  }
+  if (!any) { return sources; }
+
+  string[] flat = string[].filled(n, "");
+  NsLocal[] locals = NsLocal[].filled(n, NsLocal(NsStrs.create(), NsStrs.create(), NsStrs.create(), NsStrs.create()));
+  for (i32 i = 0; i < n; i++) {
+    locals[i] = NsLocal(NsStrs.create(), NsStrs.create(), NsStrs.create(), NsStrs.create());
+    flat[i] = i < sources.len() ? flattenInline(sources[i], locals[i]) : "";
+  }
+  NsExports[] exports = NsExports[].filled(n, NsExports(NsStrs.create(), NsStrs.create(), NsStrs.create()));
+  for (i32 i = 0; i < n; i++) { exports[i] = exportsOfFlat(paths, flat, res, i); }
+
+  string[] out = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { out[i] = rewriteUses(paths, flat, res, exports, locals, i); }
+  return out;
+}
+
+/** Whether a source could hold anything this file lowers — a cheap test before any lexing. */
+bool mentionsNamespaces(string s) {
+  return s.indexOf("namespace") >= 0 || s.indexOf("* as") >= 0 || s.indexOf("operators") >= 0;
+}
+
+/** The index of the file a specifier in file `f` names, -1 for a missing one, -2 for `core`. */
+i32 targetOf(string[] paths, Res res, i32 f, string spec) {
+  if (spec == "core") { return -2; }
+  string key = resolveVia(res, paths, paths[f], spec);
+  if (key == "core" || key == " core") { return -2; }
+  for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == key) { return i; } }
+  return -1;
+}
+
+/** The unquoted text of a string token. */
+string unquote(string q) { return q.len() >= 2 ? q.slice(1, q.len() - 1) : q; }
+
+NsExports exportsOfFlat(string[] paths, string[] flat, Res res, i32 f) {
+  NsExports ex = NsExports(NsStrs.create(), NsStrs.create(), NsStrs.create());
+  NsFile src = NsFile.of(flat[f]);
+  i32 depth = 0;
+  for (i32 t = 0; t < src.count(); t++) {
+    i32 k = src.kind(t);
+    if (depth == 0 && k == kExport()) {
+      if (src.kind(t + 1) == kStar() && src.kind(t + 2) == kAs() && src.word(t + 4, "from")) {
+        ex.starNames.push(src.text(t + 3));
+        ex.starTargets.push(itoaNs(targetOf(paths, res, f, unquote(src.text(t + 5))) + 2));
+        t = t + 5;
+        continue;
+      }
+      i32 nameTok = src.declName(t);
+      if (nameTok >= 0) { ex.names.push(src.text(nameTok)); }
+    }
+    if (k == kLbrace() || k == kLparen() || k == kLbrack()) { depth = depth + 1; }
+    if (k == kRbrace() || k == kRparen() || k == kRbrack()) { depth = depth - 1; }
+  }
+  return ex;
+}
+
+/** Whether module `m` (or core, -2) exports a declaration called `name`. */
+bool exportsDecl(NsExports[] exports, i32 m, string name) {
+  if (m == -2) {
+    string[] ce = coreExports();
+    for (i32 i = 0; i < ce.len(); i++) { if (ce[i] == name) { return true; } }
+    return false;
+  }
+  if (m < 0) { return false; }
+  return exports[m].names.has(name);
+}
+
+/** Whether `prefix` names a namespace of module `m`: some export is `prefix.something`. */
+bool isNamespaceOf(NsExports[] exports, i32 m, string prefix) {
+  string p = prefix + ".";
+  if (m == -2) {
+    string[] ce = coreExports();
+    for (i32 i = 0; i < ce.len(); i++) { if (ce[i].len() > p.len() && ce[i].slice(0, p.len()) == p) { return true; } }
+    return false;
+  }
+  if (m < 0) { return false; }
+  for (i32 i = 0; i < exports[m].names.n; i++) {
+    string e = exports[m].names.items[i];
+    if (e.len() > p.len() && e.slice(0, p.len()) == p) { return true; }
+  }
+  return false;
+}
+
+/** The module `export * as name` in `m` re-exports, as `index + 2` text; "" when there is none. */
+string starTarget(NsExports[] exports, i32 m, string name) {
+  if (m < 0) { return ""; }
+  for (i32 i = 0; i < exports[m].starNames.n; i++) {
+    if (exports[m].starNames.items[i] == name) { return exports[m].starTargets.items[i]; }
+  }
+  return "";
+}
+
+/** A view resolved as far as it goes: a module and a prefix within it, or a declaration. */
+struct NsHit {
+  i32 module;
+  string name;
+  /** True when `name` is a declaration of `module`; false when it is a namespace prefix. */
+  bool decl;
+  bool ok;
+}
+
+/** Member `m` of the view (module, prefix). */
+NsHit stepInto(NsExports[] exports, i32 module, string prefix, string m) {
+  string name = prefix == "" ? m : prefix + "." + m;
+  if (exportsDecl(exports, module, name)) { return NsHit(module, name, true, true); }
+  if (isNamespaceOf(exports, module, name)) { return NsHit(module, name, false, true); }
+  if (prefix == "") {
+    string st = starTarget(exports, module, m);
+    if (st != "") { return NsHit(atoiNs(st) - 2, "", false, true); }
+  }
+  return NsHit(module, name, false, false);
+}
+
+i32 atoiNs(string s) {
+  i32 v = 0;
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { v = v * 10 + (b[i] as i32 - 48); }
+  return v;
+}
+
+/** A namespace binding in a file: a name, and the view (module, prefix) it stands for. */
+struct NsBindings {
+  NsStrs names;
+  i32[] modules;
+  NsStrs prefixes;
+
+  void bind(this, string name, i32 module, string prefix) {
+    this.names.push(name);
+    if (this.names.n > this.modules.len()) {
+      i32[] more = i32[].filled(this.modules.len() * 2 + 8, 0);
+      for (i32 i = 0; i < this.names.n - 1; i++) { more[i] = this.modules[i]; }
+      this.modules = more;
+    }
+    this.modules[this.names.n - 1] = module;
+    this.prefixes.push(prefix);
+  }
+
+  i32 find(const this, string name) {
+    for (i32 i = 0; i < this.names.n; i++) { if (this.names.items[i] == name) { return i; } }
+    return -1;
+  }
+}
+
+/** The relative specifier from file `from` to file `to` — both keys in one coordinate system. */
+string relativeSpec(string from, string to) {
+  string[] a = splitSlash(from);
+  string[] b = splitSlash(to);
+  i32 common = 0;
+  while (common < a.len() - 1 && common < b.len() - 1 && a[common] == b[common]) { common = common + 1; }
+  string out = "";
+  for (i32 i = common; i < a.len() - 1; i++) { out = out + "../"; }
+  if (out == "") { out = "./"; }
+  for (i32 i = common; i < b.len(); i++) { out = out + b[i] + (i < b.len() - 1 ? "/" : ""); }
+  return out;
+}
+
+string[] splitSlash(string s) {
+  NsStrs parts = NsStrs.create();
+  i32 from = 0;
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '/') { continue; }
+    parts.push(bytesText(b, from, i));
+    from = i + 1;
+  }
+  string[] out = string[].filled(parts.n, "");
+  for (i32 i = 0; i < parts.n; i++) { out[i] = parts.items[i]; }
+  return out;
+}
+
+/** The imports a rewrite needs, grouped by the module they come from. */
+struct NsWanted {
+  i32[] modules;
+  NsStrs items;
+  i32 n;
+
+  void want(this, i32 module, string item) {
+    for (i32 i = 0; i < this.n; i++) {
+      if (this.modules[i] == module && this.items.items[i] == item) { return; }
+    }
+    if (this.n >= this.modules.len()) {
+      i32[] more = i32[].filled(this.modules.len() * 2 + 8, 0);
+      for (i32 i = 0; i < this.n; i++) { more[i] = this.modules[i]; }
+      this.modules = more;
+    }
+    this.modules[this.n] = module;
+    this.items.push(item);
+    this.n = this.n + 1;
+  }
+}
+
+/** The item spelling that imports declaration `name` under `local`. */
+string importItem(string name, string local) {
+  string n = verbatimIfNeeded(name);
+  if (name == local) { return n; }
+  return n + " as " + verbatimIfNeeded(local);
+}
+
+string verbatimIfNeeded(string name) { return name.indexOf(".") >= 0 ? "@\"" + name + "\"" : name; }
+
+string rewriteUses(string[] paths, string[] flat, Res res, NsExports[] exports, NsLocal[] locals, i32 f) {
+  NsFile src = NsFile.of(flat[f]);
+  NsEdits ed = NsEdits.create();
+  NsBindings binds = NsBindings(NsStrs.create(), i32[].filled(8, 0), NsStrs.create());
+  NsWanted wanted = NsWanted(i32[].filled(8, 0), NsStrs.create(), 0);
+
+  // The file's own inline namespaces are bindings in it, top-level ones by their own name.
+  for (i32 i = 0; i < locals[f].spaces.n; i++) {
+    string sp = locals[f].spaces.items[i];
+    if (sp.indexOf(".") < 0) { binds.bind(sp, f, sp); }
+  }
+
+  // Imports and re-export lines, at the top level.
+  i32 depth = 0;
+  for (i32 t = 0; t < src.count(); t++) {
+    i32 k = src.kind(t);
+    if (depth == 0 && k == kExport() && src.kind(t + 1) == kStar() && src.kind(t + 2) == kAs()) {
+      // `export * as X from "s";` — importers reach `s` directly, so the line goes.
+      i32 endTok = t + 5;
+      if (src.kind(endTok + 1) == kSemi()) { endTok = endTok + 1; }
+      ed.add(src.start(t), src.end(endTok), blankOf(src.src, src.start(t), src.end(endTok)));
+      t = endTok;
+      continue;
+    }
+    if (depth == 0 && k == kImport()) {
+      t = rewriteImport(paths, res, exports, src, ed, binds, wanted, f, t);
+      continue;
+    }
+    if (k == kLbrace() || k == kLparen() || k == kLbrack()) { depth = depth + 1; }
+    if (k == kRbrace() || k == kRparen() || k == kRbrack()) { depth = depth - 1; }
+  }
+  if (binds.names.n == 0 && ed.n == 0) { return flat[f]; }
+
+  // Every chain whose head is a binding: `shapes.Circle`, `lib.shapes.area`, `operators.add`.
+  for (i32 t = 0; t < src.count(); t++) {
+    if (src.kind(t) != kIdent() || src.kind(t - 1) == kDot()) { continue; }
+    i32 b = binds.find(src.text(t));
+    if (b < 0 || src.kind(t + 1) != kDot() || src.kind(t + 2) != kIdent()) { continue; }
+    if (ed.covers(src.outerStart(t), src.outerEnd(t))) { continue; }
+    i32 module = binds.modules[b];
+    string prefix = binds.prefixes.items[b];
+    string chain = src.text(t);
+    i32 last = t;
+    bool done = false;
+    NsHit hit = NsHit(module, prefix, false, true);
+    while (src.kind(last + 1) == kDot() && src.kind(last + 2) == kIdent()) {
+      hit = module == f && prefix != "" ? localStep(locals[f], exports, f, prefix, src.text(last + 2), src.start(t))
+                                        : stepInto(exports, module, prefix, src.text(last + 2));
+      if (!hit.ok) { break; }
+      chain = chain + "." + src.text(last + 2);
+      last = last + 2;
+      if (hit.decl) { done = true; break; }
+      module = hit.module;
+      prefix = hit.name;
+    }
+    if (!done) { continue; }
+    ed.add(src.outerStart(t), src.outerEnd(last), "@\"" + chain + "\"");
+    if (hit.module != f || hit.name != chain) { wanted.want(hit.module, importItem(hit.name, chain)); }
+    t = last;
+  }
+
+  // The imports the rewrites need, on a line of their own at the end: no earlier line moves.
+  string tail = "";
+  for (i32 i = 0; i < wanted.n; i++) {
+    i32 m = wanted.modules[i];
+    bool first = true;
+    for (i32 j = 0; j < i; j++) { if (wanted.modules[j] == m) { first = false; } }
+    if (!first) { continue; }
+    string items = "";
+    for (i32 j = i; j < wanted.n; j++) {
+      if (wanted.modules[j] != m) { continue; }
+      items = items + (items == "" ? "" : ", ") + wanted.items.items[j];
+    }
+    string spec = m == -2 ? "core" : relativeSpec(paths[f], paths[m]);
+    tail = tail + "\nimport { " + items + " } from \"" + spec + "\";";
+  }
+  return ed.apply(src.src, tail);
+}
+
+/**
+ * A member of one of the file's own inline namespaces, named from `at`: exported members from
+ * anywhere in the module, block-private ones only from inside their block
+ * (`§wac-namespace-member-private-q5zj9wx`).
+ */
+NsHit localStep(NsLocal local, NsExports[] exports, i32 f, string prefix, string m, i32 at) {
+  string name = prefix + "." + m;
+  if (local.members.has(name)) {
+    for (i32 i = 0; i < local.blockPrivate.n; i++) {
+      if (local.blockPrivate.items[i] != name) { continue; }
+      string[] r = splitSpace(local.ranges.items[i]);
+      if (at < atoiNs(r[0]) || at >= atoiNs(r[1])) { return NsHit(f, name, true, false); }
+    }
+    return NsHit(f, name, true, true);
+  }
+  if (local.spaces.has(name)) { return NsHit(f, name, false, true); }
+  return NsHit(f, name, false, false);
+}
+
+string[] splitSpace(string s) {
+  i32 sp = s.indexOf(" ");
+  string[] out = string[].filled(2, "");
+  out[0] = s.slice(0, sp);
+  out[1] = s.slice(sp + 1, s.len());
+  return out;
+}
+
+/**
+ * One `import …;` statement at token `t`, rewritten where it names a namespace; answers the token it
+ * ends on. `import * as X` binds X; an item naming a namespace binds it and leaves the list; an item
+ * `X.m` becomes an import of the member from the module that declares it.
+ */
+i32 rewriteImport(string[] paths, Res res, NsExports[] exports, NsFile src, NsEdits ed, NsBindings binds,
+                  NsWanted wanted, i32 f, i32 t) {
+  i32 endTok = t;
+  while (endTok < src.count() && src.kind(endTok) != kSemi()) { endTok = endTok + 1; }
+  // `import * as X from "s";`
+  if (src.kind(t + 1) == kStar() && src.kind(t + 2) == kAs()) {
+    i32 target = targetOf(paths, res, f, unquote(src.text(t + 5)));
+    if (src.kind(t + 5) != kString()) { target = -2; }
+    binds.bind(src.text(t + 3), target, "");
+    ed.add(src.start(t), src.end(endTok), blankOf(src.src, src.start(t), src.end(endTok)));
+    return endTok;
+  }
+  if (src.kind(t + 1) != kLbrace()) { return endTok; }
+  i32 close = src.matching(t + 1);
+  i32 fromTok = close + 2;
+  i32 target = src.kind(fromTok) == kString() ? targetOf(paths, res, f, unquote(src.text(fromTok))) : -2;
+  if (target == -1) { return endTok; }
+
+  // Items between `{` and `}`: a chain of names, then perhaps `as Y`.
+  i32 kept = 0;
+  i32 removed = 0;
+  i32 i = t + 2;
+  while (i < close) {
+    i32 itemStart = i;
+    string first = src.text(i);
+    string chain = first;
+    i32 j = i;
+    while (src.kind(j + 1) == kDot() && src.kind(j + 2) == kIdent()) { chain = chain + "." + src.text(j + 2); j = j + 2; }
+    string local = src.text(j);
+    if (src.kind(j + 1) == kAs()) { local = src.text(j + 2); j = j + 2; }
+    i32 itemEnd = j;
+    i32 next = j + 1;
+    if (src.kind(next) == kComma()) { next = next + 1; }
+
+    // Resolve the chain in the target module.
+    i32 module = target;
+    string prefix = "";
+    NsHit hit = NsHit(module, "", false, true);
+    i32 a = itemStart;
+    bool resolved = true;
+    while (a <= itemEnd && src.kind(a) == kIdent()) {
+      hit = stepInto(exports, module, prefix, src.text(a));
+      if (!hit.ok) { resolved = false; break; }
+      if (hit.decl) { break; }
+      module = hit.module;
+      prefix = hit.name;
+      if (src.kind(a + 1) != kDot()) { break; }
+      a = a + 2;
+    }
+    bool chainItem = chain.indexOf(".") >= 0;
+    if (resolved && !hit.decl) {
+      // A namespace: bound in this file, and gone from the list.
+      binds.bind(local, hit.module, hit.name);
+      ed.add(src.outerStart(itemStart), src.outerStart(next < close ? next : close),
+             blankOf(src.src, src.outerStart(itemStart), src.outerStart(next < close ? next : close)));
+      removed = removed + 1;
+    } else if (resolved && hit.decl && chainItem) {
+      // `X.m [as y]` — the member itself, from the module that declares it.
+      ed.add(src.outerStart(itemStart), src.outerStart(next < close ? next : close),
+             blankOf(src.src, src.outerStart(itemStart), src.outerStart(next < close ? next : close)));
+      wanted.want(hit.module, importItem(hit.name, local));
+      removed = removed + 1;
+    } else {
+      kept = kept + 1;
+    }
+    i = next;
+  }
+  // A list left empty is not an import: the statement goes.
+  if (kept == 0 && removed > 0) {
+    ed.add(src.start(t), src.end(endTok), blankOf(src.src, src.start(t), src.end(endTok)));
+  }
+  return endTok;
+}

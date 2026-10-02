@@ -150,6 +150,29 @@ export struct P {
              string[].defaulted(16), i32[].filled(16, 0), 0);
   }
 
+  /**
+   * **An alias carries the declared spelling**, so the emitter — which resolves names by spelling —
+   * finds the member the declaring file named. The position stays the usage's; the checker reads the
+   * alias back from the identifier there, since an alias is what tells two symbols of one spelling
+   * apart.
+   *
+   * Done once the file is parsed, not as each name is made: an import may come after the member that
+   * uses it, and the namespace lowering puts the imports it writes on the file's last line.
+   */
+  void resolveSymbolAliases(this) {
+    i32 stride = tokenStride();
+    for (i32 at = this.lx.tokenCount; at < this.lx.tokenCount + this.lx.synthCount; at++) {
+      if (this.lx.tokens[at * stride] != kSymName()) { continue; }
+      string spelled = this.textOf(at);
+      for (i32 i = 0; i < this.renameCount; i++) {
+        if (this.renameFrom[i] != spelled) { continue; }
+        this.lx.tokens[at * stride + 1] = this.lx.tokens[this.renameName[i] * stride + 1];
+        this.lx.tokens[at * stride + 2] = this.lx.tokens[this.renameName[i] * stride + 2];
+        break;
+      }
+    }
+  }
+
   /** Records `name as alias` from an import, growing the table as needed. */
   void noteRename(this, i32 nameTok, i32 aliasTok) {
     if (nameTok < 0 || aliasTok < 0 || nameTok == aliasTok) { return; }
@@ -197,16 +220,6 @@ export struct P {
     }
     for (i32 f = 0; f < stride; f++) { this.lx.tokens[at * stride + f] = this.lx.tokens[t * stride + f]; }
     this.lx.tokens[at * stride] = kSymName();
-    // **An alias carries the declared spelling**, so the emitter — which resolves names by spelling —
-    // finds the member the declaring file named. The position stays the usage's; the checker reads the
-    // alias back from the identifier there, since an alias is what tells two symbols of one spelling
-    // apart.
-    string spelled = this.textOf(t);
-    for (i32 i = 0; i < this.renameCount; i++) {
-      if (this.renameFrom[i] != spelled) { continue; }
-      this.lx.tokens[at * stride + 1] = this.lx.tokens[this.renameName[i] * stride + 1];
-      this.lx.tokens[at * stride + 2] = this.lx.tokens[this.renameName[i] * stride + 2];
-    }
     this.lx.synthCount = this.lx.synthCount + 1;
     return at;
   }
@@ -2958,5 +2971,6 @@ export Program parseProgram(P p) {
       p.advance();
     }
   }
+  p.resolveSymbolAliases();
   return Program(decls.take());
 }

@@ -32,7 +32,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { trimmed } from "../../../wactest/src/strings.wac";
 import { blockedFiles, dumpErrors, dumpTypeErrorsFiles,
-         emitFilesSelfDescribing } from "../../src/api.wac";
+         emitFilesSelfDescribing, loweredSources } from "../../src/api.wac";
 import { CaseFile, loadCases } from "./cases.wac";
 import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
@@ -90,8 +90,10 @@ export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
     }
 
     bool refused = false;
-    for (i32 f = 0; f < c.sources.len(); f++) {
-      if (dumpErrors(c.sources[f].toBytes()).len() > 0) { refused = true; }
+    // Parsed as a build parses them: with their namespaces lowered.
+    string[] lowered = loweredSources(c.paths, c.sources);
+    for (i32 f = 0; f < lowered.len(); f++) {
+      if (dumpErrors(lowered[f].toBytes()).len() > 0) { refused = true; }
     }
     if (!refused && dumpTypeErrorsFiles(c.paths, c.sources, c.entry).len() > 0) { refused = true; }
 

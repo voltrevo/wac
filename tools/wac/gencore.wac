@@ -33,7 +33,7 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
 string[] coreTree() {
   return [
     "core/read.wac", "core/jsx.wac", "core/option.wac", "core/result.wac", "core/hash.wac",
-    "core/map.wac", "core/vec.wac", "core/buf.wac", "core/text.wac"
+    "core/map.wac", "core/vec.wac", "core/buf.wac", "core/text.wac", "core/operators.wac"
   ];
 }
 
@@ -162,7 +162,10 @@ string[] exportsOf(string text) {
     i32 start = end;
     while (start > 7 && b[start - 1] != 32 && b[start - 1] != 62) { start = start - 1; }
     if (start < end) {
-      found[n] = ls[i].slice(start, end);
+      string name = ls[i].slice(start, end);
+      // A verbatim name, `@"operators.add"`, exports its text (spec/next ch01).
+      if (name.len() > 3 && name.slice(0, 2) == "@\"") { name = name.slice(2, name.len() - 1); }
+      found[n] = name;
       n = n + 1;
     }
   }

@@ -4,7 +4,8 @@
 // bytes, or the end, or why it stopped — and the three cases are different answers rather than an
 // empty buffer standing in for all of them.
 
-import { Cli, Core, Read, Socket } from "std";
+import { Read } from "core";
+import { Cli, Core, Socket } from "std";
 
 export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() < 2) {

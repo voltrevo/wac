@@ -1,0 +1,8 @@
+// expect: answers f = 7
+// why: the members of a namespace block name each other by their bare names
+// from: spec/next ch03 §wac-namespace-member-private-q5zj9wx
+namespace helpers {
+  i32 base() { return 3; }
+  export i32 good() { return base() + 4; }
+}
+export i32 f() { return helpers.good(); }

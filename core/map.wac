@@ -16,6 +16,8 @@
 // not tombstones, so a table that is filled and emptied repeatedly does not degrade.
 
 
+import { Option } from "./option.wac";
+
 /**
  * One slot's contents.
  *

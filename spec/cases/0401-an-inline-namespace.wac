@@ -1,0 +1,14 @@
+// expect: answers f = 7
+// why: `namespace name { … }` declares a namespace inline, and `export` marks the members visible through it
+// from: spec/next ch03 §wac-namespace-inline-8r8emsb
+// ---- lib.wac ----
+export namespace shapes {
+  export struct Circle { i32 r; }
+  export i32 area(Circle c) { return 3 * c.r * c.r; }
+}
+// ---- main.wac ----
+import { shapes } from "./lib.wac";
+export i32 f() {
+  shapes.Circle c = shapes.Circle(1);
+  return shapes.area(c) + 4;
+}

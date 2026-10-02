@@ -40,7 +40,8 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
-  kLbrace, kQuestion, kSymName,
+  kLbrace, kQuestion, kSymName, kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq,
+  kCaretEq, kInc,
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
@@ -372,6 +373,142 @@ void checkToText(C c, Expr e) {
     if (mi >= 0 && !c.methodStatics[mi] && c.methodReturns[mi] == "string") { return; }
   }
   c.reportWith(errNoTextConversion(), e.line, e.col, t + " has no toString conversion");
+}
+
+/** The one argument an operator method takes, checked as any argument is. */
+void checkOperatorArg(C c, i32 mi, Expr arg) {
+  if (c.methodParamCount[mi] != 1) { return; }
+  string want = c.methodParamTypes[c.methodParamAt[mi]];
+  if (litKindOf(arg) != litNone()) {
+    reportLiteral(c, want, arg, errArgumentMismatch(), arg.line, arg.col);
+    return;
+  }
+  string got = typeOfExpr(c, arg);
+  if (got != typeNone() && got != "" && want != typeNone() && !assignable(c, want, got)) {
+    c.reportWith(errArgumentMismatch(), arg.line, arg.col, expectedFound(want, got));
+  }
+}
+
+/** The core symbol a binary operator dispatches through, or "" for one that does not. ch22. */
+string operatorSymbolOf(i32 k) {
+  if (k == kPlus()) { return "add"; }
+  if (k == kMinus()) { return "subtract"; }
+  if (k == kStar()) { return "multiply"; }
+  if (k == kSlash()) { return "divide"; }
+  if (k == kPercent()) { return "remainder"; }
+  if (k == kEq()) { return "equal"; }
+  if (k == kNe()) { return "notEqual"; }
+  if (k == kLt()) { return "lessThan"; }
+  if (k == kLe()) { return "lessThanOrEqual"; }
+  if (k == kGt()) { return "greaterThan"; }
+  if (k == kGe()) { return "greaterThanOrEqual"; }
+  if (k == kAnd()) { return "bitwiseAnd"; }
+  if (k == kOr()) { return "bitwiseOr"; }
+  if (k == kCaret()) { return "bitwiseXor"; }
+  if (k == kShl()) { return "shiftLeft"; }
+  if (k == kShr()) { return "shiftRight"; }
+  if (k == kShrU()) { return "unsignedShiftRight"; }
+  return "";
+}
+
+/**
+ * The method a binary operator calls, as `(method index, receiver is the right operand)`, or -1.
+ *
+ * spec/next ch22: a left operand whose type is a struct selects the implementation — its method named
+ * by the operator's symbol (`§wac-operator-dispatch-left-txsqbyi`). A built-in left with a struct on
+ * the right calls the right's reverse, `opFromLeft`, so `2.0 * v` is `v.[multiplyFromLeft](2.0)`.
+ */
+i32[] operatorMethod(C c, i32 k, Expr left, Expr right) {
+  if (operatorSymbolOf(k) == "") { return i32[].filled(2, -1); }
+  return operatorMethodOf(c, k, typeOfExpr(c, left), typeOfExpr(c, right));
+}
+
+/**
+ * `operatorMethod` for operands already typed. **A caller that types the operands itself must use
+ * this one**: asking `operatorMethod` and then typing them again types each operand twice per level,
+ * and a chain of `+` is a tree as deep as it is long — `coreSource()`'s 1,360 terms took forever.
+ */
+i32[] operatorMethodOf(C c, i32 k, string lt, string rt) {
+  i32[] none = i32[].filled(2, -1);
+  string sym = operatorSymbolOf(k);
+  if (sym == "") { return none; }
+  if (lt != typeNone() && lt != "" && c.isStruct(templateOf(lt))) {
+    string key = c.coreMember("operators." + sym);
+    i32 mi = key == "" ? -1 : c.methodAt(templateOf(lt), key);
+    i32[] got = i32[].filled(2, 0);
+    got[0] = mi;
+    return got;
+  }
+  if (rt != typeNone() && rt != "" && c.isStruct(templateOf(rt)) && (lt == typeNone() || !c.isStruct(templateOf(lt)))) {
+    string rkey = c.coreMember("operators." + sym + "FromLeft");
+    i32 rmi = rkey == "" ? -1 : c.methodAt(templateOf(rt), rkey);
+    if (rmi >= 0) {
+      i32[] got = i32[].filled(2, 0);
+      got[0] = rmi;
+      got[1] = 1;
+      return got;
+    }
+  }
+  return none;
+}
+
+/** The symbol a compound assignment calls on a struct target — `addAssign` for `+=` — or "". ch22. */
+string assignSymbolOf(i32 k) {
+  if (k == kPlusEq()) { return "addAssign"; }
+  if (k == kMinusEq()) { return "subtractAssign"; }
+  if (k == kStarEq()) { return "multiplyAssign"; }
+  if (k == kSlashEq()) { return "divideAssign"; }
+  if (k == kPercentEq()) { return "remainderAssign"; }
+  if (k == kAndEq()) { return "bitwiseAndAssign"; }
+  if (k == kOrEq()) { return "bitwiseOrAssign"; }
+  if (k == kCaretEq()) { return "bitwiseXorAssign"; }
+  if (k == kShlEq()) { return "shiftLeftAssign"; }
+  if (k == kShrEq()) { return "shiftRightAssign"; }
+  if (k == kShrUEq()) { return "unsignedShiftRightAssign"; }
+  return "";
+}
+
+/** The symbol a prefix operator calls on a struct operand, or "". ch22. */
+string unarySymbolOf(i32 k) {
+  if (k == kMinus()) { return "negate"; }
+  if (k == kBang()) { return "not"; }
+  if (k == kTilde()) { return "bitwiseNot"; }
+  return "";
+}
+
+/** The symbol `++`/`--` calls on a struct: prefix and postfix are distinct operations (ch22). */
+string incrSymbolOf(i32 k, bool prefix) {
+  string verb = k == kInc() ? "Increment" : "Decrement";
+  return (prefix ? "pre" : "post") + verb;
+}
+
+/** Whether a type is a struct, whose operators are its methods rather than built in. */
+bool isStructOperand(C c, string t) {
+  return t != typeNone() && t != "" && c.isStruct(templateOf(t));
+}
+
+/** A struct type's method named by core's `operators.<sym>`, or -1. */
+i32 structOperator(C c, string t, string sym) {
+  if (sym == "" || !isStructOperand(c, t)) { return -1; }
+  string key = c.coreMember("operators." + sym);
+  return key == "" ? -1 : c.methodAt(templateOf(t), key);
+}
+
+/**
+ * An operator on a struct with no operand besides the receiver — `-a`, `!a`, `~a`, `a++` — checked:
+ * the method exists and takes nothing. Reports at the operator; answers whether it is usable.
+ */
+bool checkNullaryOperator(C c, string t, string sym, i32 opTok) {
+  i32 mi = structOperator(c, t, sym);
+  if (mi < 0) {
+    c.reportTok(errOperandKind(), opTok, t + " has no implementation of operators." + sym);
+    return false;
+  }
+  if (c.methodParamCount[mi] != 0) {
+    c.reportTok(errOperandKind(), opTok, "the implementation of operators." + sym + " on " + t + " takes no argument");
+    return false;
+  }
+  return true;
 }
 
 /** Whether an expression is the literal `null`. */
@@ -2342,6 +2479,31 @@ export struct C {
   bool[] fieldInits;
   /** How this file spells core's `toString`, or "" when it does not import it — spec/next ch23. */
   string coreToString;
+  /** How this file spells each core symbol it imports: `operators.add` → `operators.add` or `plus`. */
+  string[] coreSymNames;
+  string[] coreSymLocal;
+  i32 coreSymCount;
+
+  void noteCoreSym(this, string name, string local) {
+    if (this.coreSymCount >= this.coreSymNames.len()) {
+      string[] a = string[].defaulted(this.coreSymNames.len() * 2 + 8);
+      string[] b = string[].defaulted(this.coreSymNames.len() * 2 + 8);
+      for (i32 i = 0; i < this.coreSymCount; i++) { a[i] = this.coreSymNames[i]; b[i] = this.coreSymLocal[i]; }
+      this.coreSymNames = a;
+      this.coreSymLocal = b;
+    }
+    this.coreSymNames[this.coreSymCount] = name;
+    this.coreSymLocal[this.coreSymCount] = local;
+    this.coreSymCount = this.coreSymCount + 1;
+  }
+
+  /** The member name core's symbol `name` gives a method in this file, or "" if it is not in scope. */
+  string coreMember(const this, string name) {
+    for (i32 i = 0; i < this.coreSymCount; i++) {
+      if (this.coreSymNames[i] == name) { return "[" + this.canon(this.coreSymLocal[i]) + "]"; }
+    }
+    return "";
+  }
   /** The symbols in scope, as this file spells them (renames applied) — spec/next ch21. */
   string[] symbols;
   i32 symbolCount;
@@ -2440,7 +2602,7 @@ export struct C {
              string[].defaulted(decls), string[].defaulted(decls), 0,
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
-             string[](), 0, "", bool[].filled(decls, false), "", string[](), 0);
+             string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0);
   }
 
   /**
@@ -4440,6 +4602,16 @@ export string typeOfExpr(C c, Expr e) {
     Binary(op, left, right): {
       i32 bk = tokenKind(c, op);
       if (bk == kPlus() && isInterpPlusTok(c, op)) { return "string"; }
+      // **Each operand typed once**, here, and reused below — see `operatorMethodOf`.
+      bool typed = operatorSymbolOf(bk) != "";
+      string olt = typed ? typeOfExpr(c, left) : typeNone();
+      string ort = typed ? typeOfExpr(c, right) : typeNone();
+      if (typed) {
+        i32[] om = operatorMethodOf(c, bk, olt, ort);
+        if (om[0] >= 0) {
+          return substituteType(c, om[1] == 1 ? ort : olt, c.methodReturns[om[0]]);
+        }
+      }
       // `a ?? b` — `a`'s type with its absence removed, or kept where `b` is `null` (spec/next ch10).
       if (bk == kQuestion()) {
         string clt = typeOfExpr(c, left);
@@ -4460,8 +4632,8 @@ export string typeOfExpr(C c, Expr e) {
         // every differing pair that *is* legal goes through another node — `is` for identity, which
         // is not a `Binary` at all. Measured: `u8` against `i32`, `i32` against `i64`, `f32` against
         // `f64` and a struct against its parent are all refused already.
-        string cl = typeOfExpr(c, left);
-        string cr = typeOfExpr(c, right);
+        string cl = typed ? olt : typeOfExpr(c, left);
+        string cr = typed ? ort : typeOfExpr(c, right);
         if (cl != typeNone() && cr != typeNone() && cl != cr) { return typeNone(); }
         return "bool";
       }
@@ -4479,9 +4651,9 @@ export string typeOfExpr(C c, Expr e) {
       bool lLit = lk == litInteger() || lk == litFloat();
       bool rLit = rk == litInteger() || rk == litFloat();
       string bl = lLit ? typeNone()
-                : lk == litString() ? "string" : lk == litBool() ? "bool" : typeOfExpr(c, left);
+                : lk == litString() ? "string" : lk == litBool() ? "bool" : typed ? olt : typeOfExpr(c, left);
       string br = rLit ? typeNone()
-                : rk == litString() ? "string" : rk == litBool() ? "bool" : typeOfExpr(c, right);
+                : rk == litString() ? "string" : rk == litBool() ? "bool" : typed ? ort : typeOfExpr(c, right);
       // **Two literals of different families answer nothing**, because the operand rule has already
       // reported at the operator: `1 + "a"` is one fault. Giving the string side a type here — which
       // is what the four lines above started doing — made the *initialiser* complain a second time,
@@ -4562,8 +4734,12 @@ export string typeOfExpr(C c, Expr e) {
     }
     Unary(op, operand): {
       i32 uk = tokenKind(c, op);
-      if (uk == kBang()) { return "bool"; }
       string ut3 = typeOfExpr(c, operand);
+      if (isStructOperand(c, ut3)) {
+        i32 umi = structOperator(c, ut3, unarySymbolOf(uk));
+        return umi < 0 ? typeNone() : substituteType(c, ut3, c.methodReturns[umi]);
+      }
+      if (uk == kBang()) { return "bool"; }
       // **A rejected operand leaves the expression with no type**, rather than with the operand's.
       // Unknown is silence here, which is what stops a slot rule reporting a second time for the one
       // fault the operand rule already named. `issues/lang/0238a`.
@@ -4744,6 +4920,10 @@ export string typeOfExpr(C c, Expr e) {
      */
     Incr(target, op, prefix): {
       string it = typeOfLvalue(c, target);
+      if (isStructOperand(c, it)) {
+        i32 imi = structOperator(c, it, incrSymbolOf(tokenKind(c, op), prefix));
+        return imi < 0 ? typeNone() : substituteType(c, it, c.methodReturns[imi]);
+      }
       // **A packed element widens to `i32` here too**, exactly as reading one does in `case Index`
       // above — `a[0]++` *is* a read, and `spec/cases/0108` says what it reads: *"postfix `++`
       // answers what the element held, and a packed element holds what a store-and-read leaves — 255,
@@ -5219,6 +5399,24 @@ void checkExpr(C c, Expr e) {
         checkToText(c, right);
         return;
       }
+      // **An operator on a struct is a method call** (spec/next ch22): the left operand's method named
+      // by the operator's symbol, or a struct on the right's reverse. A struct with no such method is
+      // refused here rather than by the arithmetic rules below, which would say the wrong thing.
+      string olt = typeOfExpr(c, left);
+      if (operatorSymbolOf(k) != "" && olt != typeNone() && olt != "" && c.isStruct(templateOf(olt))) {
+        i32[] om = operatorMethod(c, k, left, right);
+        if (om[0] < 0) {
+          c.reportTok(errOperandKind(), op, olt + " has no implementation of operators." + operatorSymbolOf(k));
+          return;
+        }
+        checkOperatorArg(c, om[0], right);
+        return;
+      }
+      i32[] rm = operatorMethod(c, k, left, right);
+      if (rm[0] >= 0 && rm[1] == 1) {
+        checkOperatorArg(c, rm[0], left);
+        return;
+      }
       // **Two literals compared have no type to be compared at** — `1 + 2 == 3` is `true` as an `i32`
       // and something else as an `i8` — and there is no fallback to pick one (spec/next ch09).
       if ((k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe())
@@ -5658,6 +5856,12 @@ void checkExpr(C c, Expr e) {
       // `!` wants a boolean; `-` wants a number; `~` wants an integer. Three different demands on the
       // one node, all reported at the operator, and all of them silent on an unknown operand.
       i32 uk = tokenKind(c, op);
+      // A struct operand calls its own method (spec/next ch22) and the rules below are not its rules.
+      string sut = typeOfExpr(c, operand);
+      if (isStructOperand(c, sut)) {
+        checkNullaryOperator(c, sut, unarySymbolOf(uk), op);
+        return;
+      }
       // **A literal's own family, not the slot's.** `-"s"` is the whole of the mistake and there is
       // nothing else for the literal to take a type from — the same argument that made a comparison
       // fill it in. Asking `typeOfExpr` answered unknown and stayed silent on every one of them.
@@ -5679,7 +5883,7 @@ void checkExpr(C c, Expr e) {
     }
     // The expression form of `++`. `IncrStmt` had it as a statement, and `return x++` is neither —
     // the same shape reached through a different node, which is the third time that has happened.
-    Incr(target, op, prefix): { checkIncr(c, target, e.line, e.col); }
+    Incr(target, op, prefix): { checkIncr(c, target, op, prefix, e.line, e.col); }
     // A `match` used for its value. Its arms hold expressions rather than statements, so nothing that
     // walked the statement form reached them — found by the grid, not by a rule looking wrong.
     MatchExpr(subject, arms): {
@@ -6161,10 +6365,15 @@ void checkExpr(C c, Expr e) {
  * refused, floats included; that half used to be spelled as the two float names, so a struct or a
  * string incremented quietly.
  */
-void checkIncr(C c, Lvalue target, i32 line, i32 col) {
+void checkIncr(C c, Lvalue target, i32 op, bool prefix, i32 line, i32 col) {
   checkWrite(c, target);
   checkLvalueExprs(c, target);
   string t = typeOfLvalue(c, target);
+  // On a struct, `a++` is a call to its own method (spec/next ch22), not the integer rule.
+  if (isStructOperand(c, t)) {
+    checkNullaryOperator(c, t, incrSymbolOf(tokenKind(c, op), prefix), op);
+    return;
+  }
   // **Everything that is not an integer**, which this listed as the two floats. A `bool`, a string,
   // a struct, an enum, an array, a funcref and an `anyref` were all incrementable — seven of the
   // thirteen types a grid tries. Unsigned integers *are* fine despite the wording of the reference's
@@ -9824,7 +10033,7 @@ void checkStmt(C c, Stmt s, Ty want) {
      * would report the literal cases that rule deliberately skips.
      */
     // `n++` writes as much as `n = n + 1` does.
-    IncrStmt(target, op): { checkIncr(c, target, s.line, s.col); }
+    IncrStmt(target, op): { checkIncr(c, target, op, false, s.line, s.col); }
     // A bare expression — `p.set(1);` — was walked nowhere. Every expression rule reached only
     // expressions that were part of something default: a return, an initialiser, a condition. A
     // statement that is just a call is the commonest shape in the language and had no rule applied
@@ -9835,6 +10044,26 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (isNumericLiteral(c, expr)) { c.report(errUntypedLiteral(), expr.line, expr.col); }
     }
     Assign(target, op, rhs): {
+      // **`a op= b` on a struct is its own operation**: the target's `opAssign` method, called on the
+      // object in place — never `a = a op b` (spec/next ch22 `§wac-operator-compound-own-u7m6y7c`).
+      string act = typeOfLvalue(c, target);
+      if (tokenKind(c, op) != kAssign() && isStructOperand(c, act)) {
+        checkWrite(c, target);
+        checkLvalueExprs(c, target);
+        string asym = assignSymbolOf(tokenKind(c, op));
+        i32 ami = structOperator(c, act, asym);
+        if (ami < 0 || c.methodParamCount[ami] != 1) {
+          c.expected = typeNone();
+          checkExpr(c, rhs);
+          c.reportTok(errOperandKind(), op, ami < 0 ? act + " has no implementation of operators." + asym
+                                                    : "the implementation of operators." + asym + " on " + act + " takes one argument");
+          return;
+        }
+        c.expected = c.methodParamTypes[c.methodParamAt[ami]];
+        checkExpr(c, rhs);
+        checkOperatorArg(c, ami, rhs);
+        return;
+      }
       c.expected = typeOfLvalue(c, target);
       checkExpr(c, rhs);
       // The same rule as an element of a literal, at the other way of writing one. `b[0] = 'é'`

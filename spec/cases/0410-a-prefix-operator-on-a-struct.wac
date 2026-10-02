@@ -1,0 +1,12 @@
+// expect: answers negated = -5
+// expect: answers isZero = true
+// why: `-a` and `!a` on a struct call its `negate` and `not` methods; `not` is reserved, so the member is named verbatim
+// from: spec/next ch22, appendix A §wac-keywords-reserved-w9tpxmx
+import { operators } from "core";
+struct Counter {
+  i32 value;
+  Counter [operators.negate](const this) { return Counter(-this.value); }
+  bool [operators.@"not"](const this) { return this.value == 0; }
+}
+export i32 negated() { Counter n = -Counter(5); return n.value; }
+export bool isZero() { return !Counter(0); }

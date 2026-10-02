@@ -28,6 +28,7 @@ import { importSpecs, importSpecsOf } from "./files.wac";
 import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia } from "./path.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { Pruned, pruneFor } from "./reach.wac";
+import { lowerNamespaces } from "./namespaces.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
@@ -143,14 +144,24 @@ export string dumpFirstTypeHint(u8[] src) {
 export u8[] emit(u8[] src) {
   // **An interpolation converts through core** (spec/next ch23), and core is linked by the
   // many-file route — so a lone file that interpolates takes it, as a file set of one.
-  if (interpolates(src)) { return emitFiles(onePath(), oneSource(src), "main.wac"); }
+  if (needsLinking(src)) { return emitFiles(onePath(), oneSource(src), "main.wac"); }
   return emitModule(src);
 }
 
 /** Why a module was not emitted in full — the feature that stopped it, or `""`. */
 export string blocked(u8[] src) {
-  if (interpolates(src)) { return blockedFiles(onePath(), oneSource(src), "main.wac"); }
+  if (needsLinking(src)) { return blockedFiles(onePath(), oneSource(src), "main.wac"); }
   return emitBlocked(src);
+}
+
+/**
+ * Whether a lone file has to take the many-file route: an interpolation converts through core, and a
+ * namespace is lowered there (spec/next ch03) — the one-file emitter does neither.
+ */
+bool needsLinking(u8[] src) {
+  if (interpolates(src)) { return true; }
+  string text = string.fromBytes(src);
+  return loweredSources(onePath(), string[].filled(1, text))[0] != text;
 }
 
 /** Whether a source holds an interpolated literal — a `\{` the lexer turns into a `+`. */
@@ -675,12 +686,12 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  * here: checking a project retains everything (ch06).
  */
 export Pruned pruneForBuild(string[] paths, string[] sources, Res res, string entry) {
-  return pruneFor(paths, sources, res, entry);
+  return pruneFor(paths, lowerNamespaces(paths, sources, res), res, entry);
 }
 
 /** A build's diagnostics: the pruned graph, every remaining declaration checked in full. */
 export string diagnoseBuildIn(string[] paths, string[] sources, Res res, string entry) {
-  Pruned p = pruneFor(paths, sources, res, entry);
+  Pruned p = pruneFor(paths, lowerNamespaces(paths, sources, res), res, entry);
   return diagnoseGraphIn(p.paths, p.sources, p.res, entry);
 }
 
@@ -698,7 +709,9 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
  * a copy, it had also missed `issues/lang/0133`, so it walked the graph from the text. One body now.
  * `issues/lang/0175a`.
  */
-export string diagnoseGraphIn(string[] paths, string[] sources, Res res, string entry) {
+export string diagnoseGraphIn(string[] paths, string[] rawSources, Res res, string entry) {
+  // Namespaces are lowered first, so checking a project reads what a build would (spec/next ch03).
+  string[] sources = lowerNamespaces(paths, rawSources, res);
   string out = "";
   // **Counted once for the whole graph.** Every closure below overlaps almost every other, so
   // letting each one size its own tables parsed a widely-imported file once per importer — 54% of
@@ -942,7 +955,8 @@ export string diagnoseFiles(string[] paths, string[] sources, string entry) {
 }
 
 /** `diagnoseFiles` with the project root each file sits in — `design/lang/0009` D7. */
-export string diagnoseFilesIn(string[] paths, string[] sources, Res res, string entry) {
+export string diagnoseFilesIn(string[] paths, string[] rawSources, Res res, string entry) {
+  string[] sources = lowerNamespaces(paths, rawSources, res);
   Lexed?[] lexes = Lexed?[].defaulted(paths.len() + 1);
   Program?[] progs = Program?[].defaulted(paths.len() + 1);
   i32[] counts = declCountsInto(paths, sources, lexes, progs);
@@ -1039,7 +1053,16 @@ string diagnoseFilesWithIn(string[] paths, string[] sources, Res res, string ent
 }
 
 export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry) {
-  return errorsOf(checkFiles(paths, sources, entry));
+  return errorsOf(checkFiles(paths, loweredSources(paths, sources), entry));
+}
+
+/**
+ * A file set with its namespaces lowered — the text a build parses (spec/next ch03). A caller that
+ * parses files one at a time must parse these: `[operators.add]` is not a member name until the
+ * lowering has made it `[@"operators.add"]`.
+ */
+export string[] loweredSources(string[] paths, string[] sources) {
+  return lowerNamespaces(paths, sources, Res.empty());
 }
 
 /** The checker, run over an import graph, with its tables still in hand for whatever wants them. */
@@ -1561,7 +1584,10 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
     // whatever alias it was imported (spec/next ch23 `§wac-conversion-symbol-identity-4ga8txc`).
     if (isBuiltinSpec(paths[i]) || paths[i] == corePath()) {
       for (i32 k = 0; k < n; k++) {
-        if (wantFrom[k] == paths[i] && wantName[k] == "toString") { c.coreToString = c.renamed("toString"); }
+        if (wantFrom[k] != paths[i]) { continue; }
+        if (wantName[k] == "toString") { c.coreToString = c.renamed("toString"); }
+        // And every core symbol, which is how an operator finds the method its symbol names (ch22).
+        c.noteCoreSym(wantName[k], c.renamed(wantName[k]));
       }
     }
     // **Closed over what the wanted names reach**, so a type that arrives only through somebody

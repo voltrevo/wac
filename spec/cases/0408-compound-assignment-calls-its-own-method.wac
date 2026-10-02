@@ -1,0 +1,14 @@
+// expect: answers mutatedInPlace = 3
+// why: `a += b` on a struct calls `a.[addAssign](b)` on the object itself — it does not rebind `a`, so an alias sees the change
+// from: spec/next ch22 §wac-operator-compound-own-u7m6y7c
+import { operators } from "core";
+struct Counter {
+  i32 value;
+  void [operators.addAssign](this, i32 amount) { this.value += amount; }
+}
+export i32 mutatedInPlace() {
+  Counter a = Counter(1);
+  Counter alias = a;
+  a += 2;
+  return a is alias ? alias.value : -1;
+}

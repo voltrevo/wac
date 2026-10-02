@@ -1,0 +1,17 @@
+// expect: answers f = 17
+// why: `import { ns.member }` binds the member, `as` renames it, and `import * as name` binds a module as a namespace — all the same declarations
+// from: spec/next ch03 §wac-namespace-import-member-gfyf3qj, §wac-namespace-import-all-inza3ff
+// ---- shapes.wac ----
+export struct Circle { i32 r; }
+export i32 area(Circle c) { return 3 * c.r * c.r; }
+// ---- lib.wac ----
+export * as shapes from "./shapes.wac";
+// ---- main.wac ----
+import { shapes.Circle } from "./lib.wac";
+import { shapes.area as circleArea } from "./lib.wac";
+import * as lib from "./lib.wac";
+export i32 f() {
+  Circle c = Circle(2);
+  lib.shapes.Circle d = c;
+  return circleArea(d) + lib.shapes.area(Circle(0)) + 5;
+}

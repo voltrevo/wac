@@ -1,0 +1,9 @@
+// expect: refused
+// why: there are no derived overloads — implementing `equal` does not supply `notEqual`
+// from: spec/next ch22 §wac-operator-independent-4ssj2cv
+import { operators } from "core";
+struct Pair {
+  i32 x;
+  bool [operators.equal](const this, const Pair rhs) { return this.x == rhs.x; }
+}
+export bool f() { return Pair(1) != Pair(2); }

@@ -237,6 +237,20 @@ export enum LvalueKind {
   LUnwrap(Lvalue base),
 }
 
+/**
+ * An assignment target read as the expression that names the same place — the receiver an operator
+ * method on a struct is called on, which `a += b` evaluates once and never rebinds (spec/next ch22
+ * `§wac-operator-compound-own-u7m6y7c`).
+ */
+export Expr lvalueExpr(Lvalue lv) {
+  match (lv.kind) {
+    LIdent(tok): { return Expr(ExprKind.Ident(tok), lv.line, lv.col); }
+    LField(base, nameTok): { return Expr(ExprKind.Member(lvalueExpr(base), nameTok), lv.line, lv.col); }
+    LIndex(base, index): { return Expr(ExprKind.Index(lvalueExpr(base), index), lv.line, lv.col); }
+    LUnwrap(base): { return Expr(ExprKind.Unwrap(lvalueExpr(base)), lv.line, lv.col); }
+  }
+}
+
 // ── Statements ────────────────────────────────────────────────────────────────
 
 export struct Stmt {

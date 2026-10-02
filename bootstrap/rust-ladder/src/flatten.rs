@@ -139,6 +139,23 @@ fn gather(entry: &Path, seen: &mut HashSet<PathBuf>, out: &mut Vec<Mod>) -> Resu
     Ok(())
 }
 
+/// The specifier of every line that starts `export` or `import * as` and ends in `from "…"`.
+fn other_froms(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let l = line.trim_start();
+        if !(l.starts_with("export") || l.starts_with("import *")) {
+            continue;
+        }
+        let Some(at) = l.find(" from \"") else { continue };
+        let rest = &l[at + 7..];
+        if let Some(end) = rest.find('"') {
+            out.push(rest[..end].to_string());
+        }
+    }
+    out
+}
+
 /// Every `import { ... } from "..."` in a file, as `(names, specifier)`.
 ///
 /// **The list may span lines**, and files.wac's does — so this walks the text rather than the
@@ -488,6 +505,16 @@ fn gather_paths(
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     for (_, spec) in imports(&text) {
+        if let Some(next) = resolve(&dir, &spec) {
+            if next.is_file() {
+                gather_paths(&next, seen, out, paths)?;
+            }
+        }
+    }
+    // A program's file set also follows `export { … } from`, `export * as X from` and
+    // `import * as X from` (spec/next ch02, ch03) — forms the compiler's own source never uses, so
+    // `imports` above, which flattens that source, does not look for them.
+    for spec in other_froms(&text) {
         if let Some(next) = resolve(&dir, &spec) {
             if next.is_file() {
                 gather_paths(&next, seen, out, paths)?;

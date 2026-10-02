@@ -1,0 +1,10 @@
+// expect: answers f = 6
+// why: a binary operator whose left operand's type is not built in calls that type's method named by the operator's symbol
+// from: spec/next ch22 §wac-operator-dispatch-left-txsqbyi
+import { operators } from "core";
+struct Vec2 {
+  i32 x;
+  i32 y;
+  Vec2 [operators.add](const this, const Vec2 rhs) { return Vec2(this.x + rhs.x, this.y + rhs.y); }
+}
+export i32 f() { Vec2 c = Vec2(1, 2) + Vec2(3, 4); return c.y; }

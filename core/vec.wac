@@ -15,6 +15,8 @@
 // `withCapacity` asks for one.
 
 
+import { Option } from "./option.wac";
+
 export struct Vec<T> {
   T[] data;
   // A default, so `Vec<i32> v;` is an empty Vec (spec/next ch38 `§wac-vec-create-8zprdms`) — the

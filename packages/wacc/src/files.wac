@@ -5,17 +5,18 @@
 // graph, and until now that somebody was TypeScript (`harness/wacFiles.ts`). This is the same walk
 // in wac, so that a wac program can be the compiler's command line — design/lang/0003 step 4.
 //
-// **It parses rather than scanning the text.** A regex over the source finds import specifiers
-// inside comments and string literals too, so a file that merely *describes* an import in a doc
-// comment sends the walker off to read a file that does not exist. The parser has already decided
-// what is an import and what is prose, and it hands back the path's token.
+// **It walks the lexer's tokens rather than scanning the text.** A regex over the source finds import
+// specifiers inside comments and string literals too, so a file that merely *describes* an import in
+// a doc comment sends the walker off to read a file that does not exist. The lexer has already
+// decided what is code and what is prose. Not the parser: namespace forms — `import { a.b }`,
+// `import * as m`, `export * as m` — are lowered away before anything parses, so a raw file holding
+// one does not parse, and its imports still have to be found.
 //
 // Reading the files is deliberately *not* here: this half needs no capability and so can be tested
 // with no host, and the half that needs one is the program's.
 
-import { lex, Lexed } from "./lex.wac";
-import { P, parseProgram } from "./parse.wac";
-import { Program } from "./ast.wac";
+import { lex, Lexed, tokenStride } from "./lex.wac";
+import { kExport, kIdent, kImport, kLbrace, kSemi, kStar, kString } from "./kinds.wac";
 import { stringLiteralBytes } from "./emit.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 
@@ -43,36 +44,49 @@ export string[] importSpecs(u8[] src) {
 export string[] importSpecsOf(string path, u8[] src) {
   Frontend fe = frontendOf(path, src);
   Lexed lexed = fe.lexed;
-  Program prog = fe.prog;
   src = fe.src;
   i32 n = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
-      Import(pathTok, prefixTok, items): { if (pathTok >= 0) { n = n + 1; } }
-      // A re-export reads its module as an import does.
-      ExportList(pathTok, items): { if (pathTok >= 0) { n = n + 1; } }
-      default: { }
-    }
+  for (i32 t = 0; t < lexed.tokenCount; t++) {
+    if (fromStringAfter(src, lexed, t) >= 0) { n = n + 1; }
   }
   string[] out = string[].filled(n, "");
   i32 at = 0;
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
-      Import(pathTok, prefixTok, items): {
-        if (pathTok < 0) { continue; }
-        if (at >= out.len()) { continue; }
-        out[at] = string.fromBytes(stringLiteralBytes(src, lexed, pathTok));
-        at = at + 1;
-      }
-      ExportList(pathTok, items): {
-        if (pathTok < 0) { continue; }
-        if (at >= out.len()) { continue; }
-        out[at] = string.fromBytes(stringLiteralBytes(src, lexed, pathTok));
-        at = at + 1;
-      }
-      default: { }
-    }
+  for (i32 t = 0; t < lexed.tokenCount && at < n; t++) {
+    i32 str = fromStringAfter(src, lexed, t);
+    if (str < 0) { continue; }
+    out[at] = string.fromBytes(stringLiteralBytes(src, lexed, str));
+    at = at + 1;
   }
   return out;
+}
+
+/**
+ * The specifier token of the statement starting at `t`, or -1: an `import`, or an `export` followed
+ * by `{` or `*`, whose `from` is followed by a string before its `;`. Every form reads a module that
+ * way — `import { a.b as c }`, `import * as m` and `export * as m` included (spec/next ch02, ch03) —
+ * and namespaces are lowered away before anything parses them, so this asks the tokens.
+ */
+i32 fromStringAfter(u8[] src, Lexed lexed, i32 t) {
+  i32 stride = tokenStride();
+  i32 k = lexed.tokens[t * stride];
+  bool reexport = k == kExport() && t + 1 < lexed.tokenCount
+    && (lexed.tokens[(t + 1) * stride] == kLbrace() || lexed.tokens[(t + 1) * stride] == kStar());
+  if (k != kImport() && !reexport) { return -1; }
+  for (i32 j = t + 1; j + 1 < lexed.tokenCount; j++) {
+    i32 kj = lexed.tokens[j * stride];
+    if (kj == kSemi()) { return -1; }
+    if (kj == kIdent() && isFromWord(src, lexed, j) && lexed.tokens[(j + 1) * stride] == kString()) {
+      return j + 1;
+    }
+  }
+  return -1;
+}
+
+/** Whether token `j` is the word `from` — contextual, so an identifier matched by its text. */
+bool isFromWord(u8[] src, Lexed lexed, i32 j) {
+  i32 stride = tokenStride();
+  i32 fs = lexed.tokens[j * stride + 1];
+  return lexed.tokens[j * stride + 2] == 4 && src[fs] == 'f' && src[fs + 1] == 'r' && src[fs + 2] == 'o'
+      && src[fs + 3] == 'm';
 }
 

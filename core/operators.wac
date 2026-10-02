@@ -1,0 +1,62 @@
+// The operator symbols — spec/next ch22. `a + b` on a type that is not built in calls `a.[operators.add](b)`.
+//
+// Core exports them as the namespace `operators` (ch37), and declares each member under the name a
+// namespace member has once lowered: a verbatim name with a dot in it (`src/namespaces.wac` says
+// why). So `import { operators } from "core"`, `import { operators.add } from "core"` and
+// `[operators.add]` all reach the declarations below, and nothing here needs namespace syntax —
+// which matters, because the compiler carries this text and never lowers it.
+
+export symbol @"operators.add";
+export symbol @"operators.subtract";
+export symbol @"operators.multiply";
+export symbol @"operators.divide";
+export symbol @"operators.remainder";
+export symbol @"operators.negate";
+export symbol @"operators.equal";
+export symbol @"operators.notEqual";
+export symbol @"operators.lessThan";
+export symbol @"operators.lessThanOrEqual";
+export symbol @"operators.greaterThan";
+export symbol @"operators.greaterThanOrEqual";
+export symbol @"operators.not";
+export symbol @"operators.bitwiseNot";
+export symbol @"operators.bitwiseAnd";
+export symbol @"operators.bitwiseOr";
+export symbol @"operators.bitwiseXor";
+export symbol @"operators.shiftLeft";
+export symbol @"operators.shiftRight";
+export symbol @"operators.unsignedShiftRight";
+export symbol @"operators.addAssign";
+export symbol @"operators.subtractAssign";
+export symbol @"operators.multiplyAssign";
+export symbol @"operators.divideAssign";
+export symbol @"operators.remainderAssign";
+export symbol @"operators.bitwiseAndAssign";
+export symbol @"operators.bitwiseOrAssign";
+export symbol @"operators.bitwiseXorAssign";
+export symbol @"operators.shiftLeftAssign";
+export symbol @"operators.shiftRightAssign";
+export symbol @"operators.unsignedShiftRightAssign";
+export symbol @"operators.preIncrement";
+export symbol @"operators.postIncrement";
+export symbol @"operators.preDecrement";
+export symbol @"operators.postDecrement";
+
+// The reverses: `2.0 * v` on a `v` that is not a number calls `v.[operators.multiplyFromLeft](2.0)`.
+export symbol @"operators.addFromLeft";
+export symbol @"operators.subtractFromLeft";
+export symbol @"operators.multiplyFromLeft";
+export symbol @"operators.divideFromLeft";
+export symbol @"operators.remainderFromLeft";
+export symbol @"operators.equalFromLeft";
+export symbol @"operators.notEqualFromLeft";
+export symbol @"operators.lessThanFromLeft";
+export symbol @"operators.lessThanOrEqualFromLeft";
+export symbol @"operators.greaterThanFromLeft";
+export symbol @"operators.greaterThanOrEqualFromLeft";
+export symbol @"operators.bitwiseAndFromLeft";
+export symbol @"operators.bitwiseOrFromLeft";
+export symbol @"operators.bitwiseXorFromLeft";
+export symbol @"operators.shiftLeftFromLeft";
+export symbol @"operators.shiftRightFromLeft";
+export symbol @"operators.unsignedShiftRightFromLeft";
