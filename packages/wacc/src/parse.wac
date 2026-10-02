@@ -1489,6 +1489,11 @@ Expr parseUnary(P p) {
   // than the receiver, because the postfix chain is parsed whole below; and `await n + 1` is
   // `(await n) + 1`, because this returns before the binary level is reached. That is Rust's and
   // JavaScript's grouping, and the one a reader assumes.
+  // `coroutine f(…)` — a word only before a name or `this` (spec/next ch36).
+  if (p.at1(kIdent()) && p.textAt(0) == "coroutine" && (p.kindAt(1) == kIdent() || p.kindAt(1) == kThis())) {
+    p.advance();
+    return Expr(ExprKind.CoroutineOf(parseUnary(p)), line, col);
+  }
   // `try e` — a word only where a unary operand starts and an expression follows it, the way
   // `schedule` is one only at a statement's start (spec/next ch26). `try(x)` stays a call.
   if (p.at1(kIdent()) && p.textAt(0) == "try" && startsTryOperand(p.kindAt(1))) {
@@ -2140,6 +2145,9 @@ bool looksLikeVarDecl(P p) {
   i32 k = p.kindAt(i);
   if (k == kEof()) { return false; }
   if (k == kFn()) { return true; }
+  // `coroutine f(…);` and `try f();` are expressions, not declarations of `f` (ch36, ch26).
+  if (i == 0 && k == kIdent() && (p.textAt(0) == "coroutine" || p.textAt(0) == "try")
+      && (p.kindAt(1) == kIdent() || p.kindAt(1) == kThis())) { return false; }
   if (k != kIdent() && k != kVoid()) { return false; }
   i32 j = i + 1;
   // A type-argument list first: `Vec<i32> v = …` is a declaration, and without this the statement
@@ -2209,6 +2217,15 @@ export Stmt parseStatement(P p) {
     return Stmt(StmtKind.Trap(msg), line, col);
   }
   if (p.at1(kLbrace()))   { return Stmt(StmtKind.Block(parseBlock(p)), line, col); }
+  // `yield v;` and `yield;` — a word only where a statement starts (spec/next ch36).
+  if (p.at1(kIdent()) && p.textAt(0) == "yield" && (p.kindAt(1) == kSemi() || startsTryOperand(p.kindAt(1))
+                                                     || p.kindAt(1) == kLparen())) {
+    p.advance();
+    if (p.at1(kSemi())) { p.advance(); return Stmt(StmtKind.Yield(null), line, col); }
+    Expr yv = parseExpr(p);
+    p.expect(kSemi());
+    return Stmt(StmtKind.Yield(yv), line, col);
+  }
   // `schedule f;` — a word only where a statement starts and an expression follows it, the way
   // `virtual` is one only before a method (spec/next ch35).
   if (p.at1(kIdent()) && p.textAt(0) == "schedule"
@@ -2542,6 +2559,11 @@ Stmt parseForStmt(P p) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
   p.advance();
+  // `for await (T x in g)` — spec/next ch36. Held as a `for … in` over `await g`, which is what it
+  // does each time round; the iterable itself is never a ticket.
+  i32 awaitLine = p.lineAt(0);
+  i32 awaitCol = p.colAt(0);
+  bool awaiting = p.eat(kAwait());
   p.expect(kLparen());
 
   // `for (T x in e)` — spec/next ch25.
@@ -2552,6 +2574,7 @@ Stmt parseForStmt(P p) {
     i32 nameTok = p.advance();
     p.advance();                       // `in`
     Expr iterable = parseExpr(p);
+    if (awaiting) { iterable = Expr(ExprKind.Await(iterable), awaitLine, awaitCol); }
     p.expect(kRparen());
     return Stmt(StmtKind.ForIn(elemType, nameTok, iterable, parseBlock(p)), line, col);
   }
@@ -2960,7 +2983,7 @@ Decl parseStructDecl(P p, bool exported) {
     // rather than about the feature. `issues/lang/0301b`.
     bool memberAsync = p.eat(kAsync());
 
-    Ty memberType = parseType(p);
+    Ty memberType = parseReturnType(p);
     i32 memberTok = -1;
     // `i32 [metadata];` and `string [describe](const this)` — a member named by a symbol (ch21).
     memberTok = p.symbolMemberName();
@@ -3057,7 +3080,8 @@ Decl parseEnumDecl(P p, bool exported) {
       p.fail(perrEnumOverride());
       p.advance();
     }
-    Ty returnType = parseType(p);
+    bool enumAsync = p.eat(kAsync());
+    Ty returnType = parseReturnType(p);
     i32 mTok = p.symbolMemberName();             // `string [toString](const this)` (ch21)
     if (mTok < 0) {
       if (p.at1(kIdent())) { mTok = p.advance(); } else { p.fail(perrMethodName()); }
@@ -3086,7 +3110,7 @@ Decl parseEnumDecl(P p, bool exported) {
     // so one is refused until that ambiguity is decided deliberately.
     if (!hasThis) { p.fail(perrEnumMethodThis()); }
     methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, -1, hasThis, thisConst,
-                        i32[](), false, methodPrivate, false));
+                        i32[](), enumAsync, methodPrivate, false));
   }
 
   p.expect(kRbrace());
@@ -3102,8 +3126,10 @@ Decl parseEnumDecl(P p, bool exported) {
  * anything else is a variant. `override`, `void` and `fn` can only begin a method.
  */
 bool looksLikeEnumMethod(P p) {
-  if (p.at1(kPrivate()) || p.at1(kOverride()) || p.at1(kVoid()) || p.at1(kFn())) { return true; }
+  if (p.at1(kPrivate()) || p.at1(kOverride()) || p.at1(kVoid()) || p.at1(kFn()) || p.at1(kAsync())) { return true; }
   if (!p.at1(kIdent())) { return false; }
+  // `gen<i32> void values(…)` — a generator method (ch36).
+  if (p.textAt(0) == "gen" && p.kindAt(1) == kLt()) { return true; }
   i32 j = 1;
   // The type's own suffixes: `i32[] name(…)`, `Node? name(…)`.
   while (true) {
@@ -3114,6 +3140,27 @@ bool looksLikeEnumMethod(P p) {
   return p.kindAt(j) == kIdent() && p.kindAt(j + 1) == kLparen();
 }
 
+/**
+ * A function's or a method's return type — and for a generator, `gen<Y> R`, held as the type
+ * `gen<Y, R>` so a declaration keeps its shape: the checker reads it as the `Generator<Y, R>` a caller
+ * gets, an `R` the body returns and a `Y` it yields (spec/next ch36). `gen` is a word only here,
+ * before a type that is not itself the declaration's name.
+ */
+Ty parseReturnType(P p) {
+  Ty t = parseType(p);
+  match (t.kind) {
+    Named(tok, typeArgs): {
+      if (typeArgs.len() != 1 || p.textOf(tok) != "gen") { return t; }
+      if (p.at1(kIdent()) && p.kindAt(1) == kLparen()) { return t; }
+      Ty r = parseType(p);
+      Ty[] both = Ty[].filled(2, r);
+      both[0] = typeArgs[0];
+      return Ty(TyKind.Named(tok, both), t.line, t.col);
+    }
+    default: { return t; }
+  }
+}
+
 Decl parseFuncDecl(P p) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
@@ -3122,7 +3169,7 @@ Decl parseFuncDecl(P p) {
   // between the visibility and the thing. `design/lang/0014` D3: the type written is what the *body*
   // answers, and the caller receives a `Pending<T>` of it.
   bool isAsync = p.eat(kAsync());
-  Ty ret = parseType(p);
+  Ty ret = parseReturnType(p);
   i32 nameTok = -1;
   nameTok = declName(p, perrExpected(), "function name");
   i32[] typeParams = parseTypeParams(p);

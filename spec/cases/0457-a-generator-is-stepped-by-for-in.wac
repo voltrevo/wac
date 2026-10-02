@@ -1,0 +1,38 @@
+// expect: answers both = 12
+// why: a generator runs nothing when called, a for-in steps it, and a generator method can walk its own recursion
+// spec: §wac-generator-mbr4wfh
+
+enum Tree {
+  Leaf(i32 value),
+  Node(Tree left, Tree right)
+
+  gen<i32> void values(const this) {
+    match (this) {
+      Leaf(v): {
+        yield v;
+      }
+      Node(l, r): {
+        for (i32 v in l.values()) { yield v; }
+        for (i32 v in r.values()) { yield v; }
+      }
+    }
+  }
+}
+i32 sum(Tree t) {
+  i32 total = 0;
+  for (i32 v in t.values()) { total += v; }
+  return total;
+}
+i32 sumOfTree() {
+  return sum(Tree.Node(Tree.Leaf(1), Tree.Node(Tree.Leaf(2), Tree.Leaf(3))));
+}
+
+gen<i32> void upTo(i32 n) {
+  for (i32 i = 1; i <= n; i++) { yield i; }
+}
+
+export i32 both() {
+  i32 total = 0;
+  for (i32 v in upTo(3)) { total += v; }
+  return total + sumOfTree();
+}

@@ -420,7 +420,7 @@ bool wantsTickets(string[] paths, string[] sources) {
     if (sources[f].indexOf("std") < 0 && sources[f].indexOf("async") < 0
         && sources[f].indexOf("schedule") < 0 && sources[f].indexOf("Ticket") < 0
         && sources[f].indexOf("Continuation") < 0 && sources[f].indexOf("Queue") < 0
-        && sources[f].indexOf("__wac") < 0) { continue; }
+        && sources[f].indexOf("__wac") < 0 && sources[f].indexOf("gen") < 0 && sources[f].indexOf("yield") < 0) { continue; }
     u8[] b = sources[f].toBytes();
     Lexed lx = lex(b);
     for (i32 t = 0; t < lx.tokenCount; t++) {
@@ -434,7 +434,7 @@ bool wantsTickets(string[] paths, string[] sources) {
       string nm = string.fromBytes(w);
       // `"std"` — std is carried rather than listed, and it is built on tickets.
       if (k == kString()) { if (nm == "\"std\"") { return true; } continue; }
-      if (nm == "schedule" || isTicketFamily(nm)) { return true; }
+      if (nm == "schedule" || nm == "yield" || nm == "coroutine" || nm == "gen" || isTicketFamily(nm)) { return true; }
     }
   }
   return false;

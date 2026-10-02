@@ -6,7 +6,7 @@
 // the canonical dump the parser's own tests read.
 
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
-import { kAsync, kindName } from "./kinds.wac";
+import { kAsync, kIdent, kindName } from "./kinds.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor,
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -180,7 +180,17 @@ bool needsLinking(u8[] src) {
 bool saysAsync(u8[] src) {
   Lexed lx = lex(src);
   for (i32 t = 0; t < lx.tokenCount; t++) {
-    if (lx.tokens[t * tokenStride()] == kAsync()) { return true; }
+    i32 k = lx.tokens[t * tokenStride()];
+    if (k == kAsync()) { return true; }
+    // A generator — `gen<…>`, `yield`, `coroutine` — is a machine too (spec/next ch36).
+    if (k != kIdent()) { continue; }
+    i32 from = lx.tokens[t * tokenStride() + 1];
+    i32 len = lx.tokens[t * tokenStride() + 2];
+    if (len != 3 && len != 5 && len != 9) { continue; }
+    u8[] w = u8[].filled(len, 0);
+    w.copyFrom(src, from, 0, len);
+    string word = string.fromBytes(w);
+    if (word == "yield" || word == "coroutine" || word == "gen") { return true; }
   }
   return false;
 }

@@ -166,6 +166,8 @@ export string checkMessage(i32 code) {
   if (code == 233) { return "`try` takes a Result"; }
   if (code == 234) { return "`try` needs a function that returns a Result"; }
   if (code == 235) { return "the error `try` passes on does not fit the function's error type"; }
+  if (code == 236) { return "this `yield` has no generator to yield from, or yields the wrong thing"; }
+  if (code == 237) { return "an async generator is iterated with `for await`, and only it"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
@@ -235,6 +237,8 @@ export string hintFor(i32 code) {
   if (code == 233) { return "`try` passes an `Err` on; for a nullable, `!` or `??` is what you want"; }
   if (code == 234) { return "declare the function to answer `Result<…>`, or take the value apart with `match`"; }
   if (code == 235) { return "make the function's error type the one this fails with, or `match` the error here"; }
+  if (code == 236) { return "declare the function `gen<Y> R`, or `async gen<Y> R` to wait as well"; }
+  if (code == 237) { return "write `for await (…)` in an `async` function, or step it by hand"; }
   if (code == 229) { return "index it with a counting `for`, or put the elements in an array or a Vec"; }
   if (code == 228) { return "`?.` and `??` are for a value that may be absent — read this one directly"; }
   if (code == 1) { return "use a cast if the conversion is meant: `as!` is checked, `as~` takes the nearest value"; }

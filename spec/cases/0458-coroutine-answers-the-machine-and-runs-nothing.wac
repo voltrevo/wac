@@ -1,0 +1,51 @@
+// expect: answers all = true
+// why: coroutine f() builds the machine without running it, each step runs to the next suspension, every await is a step, and an async generator both yields and waits
+// spec: §wac-coroutine-runs-nothing-zumpwje
+
+import { Coroutine, Ticket, TicketBase } from "core";
+
+struct Slot {
+  i32 n;
+  async void tick(this) {
+    this.n += 1;
+    await;
+    this.n += 10;
+  }
+}
+
+async i32 doubled(Ticket<i32> t) { return (await t) * 2; }
+
+async gen<i32> void counter(Ticket<i32> t) {
+  yield 1;
+  yield await t;
+}
+
+async i32 total(Ticket<i32> t) {
+  i32 n = 0;
+  for await (i32 x in counter(t)) { n += x; }
+  return n;
+}
+
+export bool all() {
+  Slot s = Slot(0);
+  Coroutine<TicketBase, never, void> c = coroutine s.tick();
+  bool before = s.n == 0;
+  c.step();
+  bool middle = s.n == 1;
+  c.step();
+  bool stepped = before && middle && s.n == 11;
+
+  Ticket<i32> t;
+  t.resolve(21);
+  Coroutine<TicketBase, never, i32> d = coroutine doubled(t);
+  d.step();                                // Waiting, though t is settled
+  bool settled = match (d.step()) { Done(v): v == 42, default: false };
+
+  Coroutine<TicketBase, i32, void> g = coroutine counter(t);
+  bool a = match (g.step()) { Yielded(v): v == 1, default: false };
+  bool b = match (g.step()) { Waiting(w): true, default: false };
+  bool e = match (g.step()) { Yielded(v): v == 21, default: false };
+  bool f = match (g.step()) { Done: true, default: false };
+
+  return stepped && settled && a && b && e && f && total(t).wait()! == 22;
+}

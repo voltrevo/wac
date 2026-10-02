@@ -339,6 +339,11 @@ void printExpr(Pr w, Expr e) {
     Ident(tok): {
       w.open("ident", e.line, e.col); w.sp(); w.tok(tok); w.close();
     }
+    CoroutineOf(call): {
+      w.open("coroutine", e.line, e.col);
+      w.sp(); printExpr(w, call);
+      w.close();
+    }
     Try(operand): {
       w.open("try", e.line, e.col);
       w.sp(); printExpr(w, operand);
@@ -695,6 +700,11 @@ void printStmt(Pr w, Stmt s) {
     Block(body): {
       w.open("block", s.line, s.col);
       printStmtList(w, body);
+      w.close();
+    }
+    Yield(value): {
+      w.open("yield", s.line, s.col);
+      if (value is not null) { w.sp(); printExpr(w, value!); }
       w.close();
     }
     Schedule(target): {

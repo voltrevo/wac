@@ -68,6 +68,7 @@ spec/next/1-programs/05-reachability.md#10
 spec/next/1-programs/05-reachability.md#11
 spec/next/1-programs/05-reachability.md#12
 spec/next/1-programs/07-programs.md#1
+spec/next/1-programs/07-programs.md#2
 spec/next/1-programs/07-programs.md#4
 spec/next/1-programs/07-programs.md#13
 spec/next/1-programs/07-programs.md#14
@@ -123,6 +124,7 @@ spec/next/2-types/11-never-and-uninhabited.md#6
 spec/next/2-types/11-never-and-uninhabited.md#7
 spec/next/2-types/11-never-and-uninhabited.md#8
 spec/next/2-types/11-never-and-uninhabited.md#9
+spec/next/2-types/11-never-and-uninhabited.md#10
 spec/next/2-types/12-structs.md#1
 spec/next/2-types/12-structs.md#2
 spec/next/2-types/12-structs.md#3
@@ -216,6 +218,7 @@ spec/next/2-types/17-const.md#8
 spec/next/2-types/18-unions.md#1
 spec/next/2-types/18-unions.md#2
 spec/next/2-types/18-unions.md#3
+spec/next/2-types/18-unions.md#4
 spec/next/2-types/18-unions.md#5
 spec/next/2-types/19-generics.md#1
 spec/next/2-types/19-generics.md#2
@@ -332,7 +335,19 @@ spec/next/6-concurrency/35-tickets-and-await.md#6
 spec/next/6-concurrency/35-tickets-and-await.md#7
 spec/next/6-concurrency/35-tickets-and-await.md#8
 spec/next/6-concurrency/35-tickets-and-await.md#9
+spec/next/6-concurrency/35-tickets-and-await.md#10
 spec/next/6-concurrency/35-tickets-and-await.md#14
+spec/next/6-concurrency/35-tickets-and-await.md#16
+spec/next/6-concurrency/36-coroutines-and-generators.md#1
+spec/next/6-concurrency/36-coroutines-and-generators.md#2
+spec/next/6-concurrency/36-coroutines-and-generators.md#3
+spec/next/6-concurrency/36-coroutines-and-generators.md#4
+spec/next/6-concurrency/36-coroutines-and-generators.md#5
+spec/next/6-concurrency/36-coroutines-and-generators.md#6
+spec/next/6-concurrency/36-coroutines-and-generators.md#7
+spec/next/6-concurrency/36-coroutines-and-generators.md#8
+spec/next/6-concurrency/36-coroutines-and-generators.md#9
+spec/next/6-concurrency/36-coroutines-and-generators.md#10
 spec/next/7-library/37-core.md#1
 spec/next/7-library/38-vec.md#2
 spec/next/7-library/38-vec.md#3

@@ -57,6 +57,8 @@ string[] statementLabels() {
     "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt", "Defer",
     // `schedule f;` — spec/next ch35. It holds only its target, so the walk has to go on past it.
     "Schedule",
+    // `yield v;` — spec/next ch36. The fault is in the value.
+    "Yield",
     // `for (T x in e)` — spec/next ch25. The body holds the fault.
     "ForIn",
     // Tuples — spec/next ch14. Neither holds a body; the walk has to go on past them.
@@ -83,6 +85,7 @@ string[] statementSources() {
     "void g(i32 n) { } void f() { g(1); " + BAD + " }",
     "void f() { defer { " + BAD + " } }",
     "struct Continuation { } struct Q { void push(this, Continuation c) { } } void f(Q q) { schedule q.push; " + BAD + " }",
+    "gen<i32> void f(i32 p, f64 q) { yield " + SUB + "; }",
     "void f(i32[] xs) { for (i32 x in xs) { " + BAD + " } }",
     "void f() { (i32 a, i32 b) = (1, 2); " + BAD + " }",
     "void f(i32 a, i32 b) { (a, b) = (1, 2); " + BAD + " }"
@@ -99,6 +102,8 @@ string[] expressionLabels() {
     // `try e` — spec/next ch26. The fault is buried in its operand. A `Result` of the file's own, since
     // this entry point resolves no built-ins; the rule asks for the name.
     "Try",
+    // `coroutine f(…)` — spec/next ch36. The fault is buried in an argument.
+    "CoroutineOf",
     "Binary", "Cast", "Ternary", "Ternary-cond", "Index", "Member",
     // `p?.m` — spec/next ch10. The fault is buried in the object, which is the only sub-expression.
     "SafeMember",
@@ -140,6 +145,7 @@ string[] expressionSources() {
     "async i32 f(i32 p, f64 q) { return await " + SUB + "; }",
     "enum Result<T, E> { Ok(T v), Err(E e) } Result<i32, i32> g(i32 x) { return Result.Ok(x); } "
       + "Result<i32, i32> f(i32 p, f64 q) { i32 r = try g(" + SUB + "); return Result.Ok(r); }",
+    "async void g(i32 x) { await; } void f(i32 p, f64 q) { coroutine g(" + SUB + "); }",
     "void f(i32 p, f64 q) { i32 r = " + SUB + " + 1; }",
     "void f(i32 p, f64 q) { i64 r = " + SUB + " as i64; }",
     "void f(i32 p, f64 q, bool c) { i32 r = c ? " + SUB + " : 0; }",

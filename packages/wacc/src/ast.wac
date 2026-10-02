@@ -136,6 +136,8 @@ export enum ExprKind {
   Await(Expr? operand),
   /** `try e` — `e`'s `Ok` value, or its `Err` returned from the enclosing function (spec/next ch26). */
   Try(Expr operand),
+  /** `coroutine f(…)` — the call's machine, with nothing of it run (spec/next ch36). */
+  CoroutineOf(Expr call),
   Binary(i32 op, Expr left, Expr right),
   /** One of `as`, `as!`, `as~`, `as@` — which is in `op`. */
   Cast(i32 op, Expr operand, Ty target),
@@ -380,6 +382,8 @@ export enum StmtKind {
   Defer(Stmt body),
   /** `schedule f;` — `f` is the schedule target to the end of the enclosing block. spec/next ch35. */
   Schedule(Expr target),
+  /** `yield v;`, or `yield;` in a generator yielding `void` — spec/next ch36. */
+  Yield(Expr? value),
 }
 
 // ── Declarations ──────────────────────────────────────────────────────────────

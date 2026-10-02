@@ -64,12 +64,12 @@ import {
   synthSource, synthTokens, synthTok, synthTextAt,
   synthTicket, synthValue, synthStep, synthWaiting, synthYielded, synthDone, synthCoroutine,
   synthTicketBase, synthNever, synthState, synthRes, synthMachine, synthStartName, synthOrReady,
-  synthTargetSet,
+  synthTargetSet, synthTargetGet, synthNextName, synthCurrentName, synthStepCall, synthIsDoneName, synthYieldedName,
   synthAssign, synthI32, synthBool, synthVoid, synthStepFn,
   synthOk, synthErr, synthResult, synthTryV, synthTryE, synthGenerator, synthAsyncGenerator,
   synthSlot, synthAw, synthNum, synthZero, synthOne, synthArg,
 } from "./asyncsynth.wac";
-import { kAndAnd, kAwait, kOrOr, kQuestion } from "./kinds.wac";
+import { kAndAnd, kAwait, kFor, kIdent, kLparen, kOrOr, kQuestion } from "./kinds.wac";
 
 /** Everything the rewrite needs that is not the statement in front of it. */
 struct Ctx {
@@ -130,6 +130,12 @@ i32 tTryV(Ctx c)       { return synthTok(c.first, synthTryV()); }
 i32 tTryE(Ctx c)       { return synthTok(c.first, synthTryE()); }
 i32 tGenerator(Ctx c)  { return synthTok(c.first, synthGenerator()); }
 i32 tAsyncGenerator(Ctx c) { return synthTok(c.first, synthAsyncGenerator()); }
+i32 tNextName(Ctx c)   { return synthTok(c.first, synthNextName()); }
+i32 tTargetGet(Ctx c)  { return synthTok(c.first, synthTargetGet()); }
+i32 tCurrentName(Ctx c) { return synthTok(c.first, synthCurrentName()); }
+i32 tStepCall(Ctx c)   { return synthTok(c.first, synthStepCall()); }
+i32 tIsDoneName(Ctx c) { return synthTok(c.first, synthIsDoneName()); }
+i32 tYieldedName(Ctx c) { return synthTok(c.first, synthYieldedName()); }
 
 i32 tUp(Ctx c, i32 k) { return synthTok(c.first, synthSlot(k)); }
 i32 tAw(Ctx c, i32 k) { return synthTok(c.first, synthAw(k)); }
@@ -370,6 +376,7 @@ Expr subExpr(Ctx c, Expr e) {
     // step — so it becomes the `match` it means, with the `Err` arm settling the ticket as a `return`
     // does: `match (e) { Ok(v): v, Err(x): { __wacT.resolve(Result.Err(x)); return true; } }`.
     // Inside a lambda it is the lambda's, and stays.
+    CoroutineOf(call): { return coroutineCall(c, subExpr(c, call), e); }
     Try(operand): {
       if (c.inLam[0]) { return Expr(ExprKind.Try(subExpr(c, operand)), e.line, e.col); }
       Arm[] arms = Arm[].filled(2, Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
@@ -567,6 +574,10 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
     Block(body): { return sBlock(c, subBody(c, body, inLambda, brkTo, contTo)); }
     ExprStmt(expr): { return sExpr(c, subExpr(c, expr)); }
     Schedule(target): { return Stmt(StmtKind.Schedule(subExpr(c, target)), s.line, s.col); }
+    Yield(value): {
+      if (value is null) { return s; }
+      return Stmt(StmtKind.Yield(subExpr(c, value!)), s.line, s.col);
+    }
     // Only ever inside a lambda: `planBody` declines a machine whose own body holds one.
     Defer(body): {
       return Stmt(StmtKind.Defer(subStmt(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
@@ -777,6 +788,38 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
     ExprStmt(expr): {
       return lowerSuspend(b, subExpr(c, innerAwait(c, expr)), null, next);
     }
+    // **A `match` whose arms suspend** — a head state that matches and jumps to each arm's states,
+    // copying the arm's bindings (the leading locals `splitMatch` wrote) on the way.
+    Match(subject, arms): {
+      Arm[] heads = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0] : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
+      for (i32 a = 0; a < arms.len(); a++) {
+        i32 copies = 0;
+        for (i32 k = 0; k < arms[a].bindingToks.len(); k++) {
+          if (synthTextAt(c.src, c.lexed, arms[a].bindingToks[k]) != "_") { copies = copies + 1; }
+        }
+        Stmt[] rest = Stmt[].filled(arms[a].body.len() - copies, sRet(c, null));
+        for (i32 i = copies; i < arms[a].body.len(); i++) { rest[i - copies] = arms[a].body[i]; }
+        i32 entry = lowerSeq(b, rest, next);
+        Stmt[] hb = Stmt[].filled(copies + 2, sRet(c, null));
+        for (i32 i = 0; i < copies; i++) { hb[i] = subStmt(c, arms[a].body[i], false, 0 - 1, 0 - 1); }
+        Stmt[] go = gotoS(c, entry);
+        hb[copies] = go[0];
+        hb[copies + 1] = go[1];
+        heads[a] = Arm(arms[a].variantTok, arms[a].elseTok, arms[a].bindingToks, hb, null);
+      }
+      i32 head = lowAlloc(b);
+      lowPut(b, head, Stmt[].filled(1, Stmt(StmtKind.Match(subExpr(c, subject), heads), c.line, c.col)));
+      return head;
+    }
+    // `yield v;` — `__wacState[0] = next; return Step.Yielded(v);` (ch36).
+    Yield(value): {
+      i32 ys = lowAlloc(b);
+      Stmt[] yb = Stmt[].filled(2, sRet(c, null));
+      yb[0] = sCellSet(c, tState(c), eInt(c, next));
+      yb[1] = sRet(c, eStep(c, tYielded(c), (value is null) ? Expr[]() : Expr[].filled(1, subExpr(c, value!))));
+      lowPut(b, ys, yb);
+      return ys;
+    }
     Block(body): { return lowerSeq(b, body, next); }
     If(cond, then, els): {
       i32 tEntry = lowerSeq(b, then, next);
@@ -894,7 +937,7 @@ Stmt[] stepBody(Ctx c, Case[] arms) {
  * function, its coroutine run at once to its first suspension and wrapped in a ticket
  * (`§wac-async-eager-2rf9kdp`).
  */
-Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
+Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet, Ty? yieldTy, bool isAsync, bool raw) {
   Arms made = buildArms(c, body, plan, fnRet);
   i32 n = 6 + plan.hoist.len() + made.slots;
   Stmt[] out = Stmt[].filled(n, sRet(c, null));
@@ -911,32 +954,228 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
     at = at + 1;
   }
 
-  // `fn<Step<TicketBase, never, R>()> __wacStepFn = () => { while (true) { switch … } };`
-  Ty[] targs = Ty[].filled(3, cloneTy(fnRet));
-  targs[0] = Ty(TyKind.Named(tTicketBase(c), Ty[]()), c.line, c.col);
-  targs[1] = lowPrimTy(c, tNever(c));
-  targs[2] = cloneTy(fnRet);
-  Ty stepTy = Ty(TyKind.Named(tStep(c), targs), c.line, c.col);
+  // `fn<Step<W, Y, R>()> __wacStepFn = () => { while (true) { switch … } };` — `W` is `TicketBase` for
+  // something that can wait and `never` for a generator; `Y` is `never` for an `async` function.
+  Ty stepTy = Ty(TyKind.Named(tStep(c), wyr(c, fnRet, yieldTy, isAsync)), c.line, c.col);
   Expr step = eLambda(c, Param[](), stepBody(c, made.cases));
   out[at] = Stmt(StmtKind.Var(lowFnTy(c, stepTy, Ty[]()), tStepFn(c), step, false), c.line, freshCol(c));
   at = at + 1;
 
   out[at] = sCellSet(c, tState(c), eInt(c, made.entry)); at = at + 1;
 
-  // `return __wacMachine<R>.start(Coroutine<TicketBase, never, R>(__wacStepFn));`
-  Ty[] cargs = Ty[].filled(3, cloneTy(fnRet));
-  cargs[0] = Ty(TyKind.Named(tTicketBase(c), Ty[]()), c.line, c.col);
-  cargs[1] = lowPrimTy(c, tNever(c));
-  cargs[2] = cloneTy(fnRet);
-  Expr co = Expr(ExprKind.Construct(Ty(TyKind.Named(tCoroutine(c), cargs), c.line, c.col),
-                                    Expr[].filled(1, eId(c, tStepFn(c))), NamedArg[]()), c.line, c.col);
-  Ty mty = Ty(TyKind.Named(tMachine(c), Ty[].filled(1, cloneTy(fnRet))), c.line, c.col);
-  Expr owner = Expr(ExprKind.TypeName(mty), c.line, c.col);
-  out[at] = sRet(c, eMethod(c, owner, tStartName(c), Expr[].filled(1, co))); at = at + 1;
+  // `Coroutine<W, Y, R>(__wacStepFn)`, and what a call hands back made from it: for an `async` function
+  // `__wacMachine<R>.start(…)`, its first steps run at once; a generator's `Generator<Y, R>(…)` and an
+  // async generator's `AsyncGenerator<Y, R>(…)` run nothing yet.
+  Expr[] coArgs = Expr[].filled(2, eId(c, tStepFn(c)));
+  coArgs[1] = eCallFn(c, tTargetGet(c), Expr[]());
+  Expr co = Expr(ExprKind.Construct(Ty(TyKind.Named(tCoroutine(c), wyr(c, fnRet, yieldTy, isAsync)), c.line, c.col),
+                                    coArgs, NamedArg[]()), c.line, c.col);
+  out[at] = sRet(c, raw ? co : wrapMachine(c, co, fnRet, yieldTy, isAsync)); at = at + 1;
 
   Stmt[] trimmed = Stmt[].filled(at, sRet(c, null));
   for (i32 i = 0; i < at; i++) { trimmed[i] = out[i]; }
   return trimmed;
+}
+
+/**
+ * `coroutine f(…)` — the call of `f`'s coroutine form, `__wacCo_f(…)`, which builds the machine and
+ * runs none of it (spec/next ch36). Left as written when no such form is spelled in this file, and the
+ * emitter names the refusal.
+ */
+Expr coroutineCall(Ctx c, Expr call, Expr whole) {
+  match (call.kind) {
+    Construct(ctype, args, named): {
+      match (ctype.kind) {
+        Named(tok, typeArgs): {
+          i32 co = coTokFor(c, "__wacCo_" + synthTextAt(c.src, c.lexed, tok));
+          if (co < 0) { return Expr(ExprKind.CoroutineOf(call), whole.line, whole.col); }
+          return Expr(ExprKind.Construct(Ty(TyKind.Named(co, typeArgs), ctype.line, ctype.col), args, named),
+                      call.line, call.col);
+        }
+        default: { }
+      }
+    }
+    Call(callee, args, typeArgs): {
+      match (callee.kind) {
+        Member(obj, nameTok): {
+          i32 co = coTokFor(c, "__wacCo_" + synthTextAt(c.src, c.lexed, nameTok));
+          if (co < 0) { return Expr(ExprKind.CoroutineOf(call), whole.line, whole.col); }
+          return Expr(ExprKind.Call(Expr(ExprKind.Member(obj, co), callee.line, callee.col), args, typeArgs),
+                      call.line, call.col);
+        }
+        default: { }
+      }
+    }
+    default: { }
+  }
+  return Expr(ExprKind.CoroutineOf(call), whole.line, whole.col);
+}
+
+/** The appended token spelling `want` — `__wacCo_f`, or `this` — or -1; searched after the source. */
+i32 coTokFor(Ctx c, string want) {
+  for (i32 t = c.first; t < c.lexed.tokenCount; t++) {
+    if (synthTextAt(c.src, c.lexed, t) == want) { return t; }
+  }
+  return 0 - 1;
+}
+
+/** `W, Y, R` for a machine: what it can wait on, what it yields, what it returns. */
+Ty[] wyr(Ctx c, Ty fnRet, Ty? yieldTy, bool isAsync) {
+  Ty[] a = Ty[].filled(3, cloneTy(fnRet));
+  a[0] = isAsync ? Ty(TyKind.Named(tTicketBase(c), Ty[]()), c.line, c.col) : lowPrimTy(c, tNever(c));
+  a[1] = (yieldTy is null) ? lowPrimTy(c, tNever(c)) : cloneTy(yieldTy!);
+  return a;
+}
+
+/** What a call of a machine function hands back, built from its coroutine `co`. */
+Expr wrapMachine(Ctx c, Expr co, Ty fnRet, Ty? yieldTy, bool isAsync) {
+  if (yieldTy is null) {
+    Ty mty = Ty(TyKind.Named(tMachine(c), Ty[].filled(1, cloneTy(fnRet))), c.line, c.col);
+    Expr owner = Expr(ExprKind.TypeName(mty), c.line, c.col);
+    return eMethod(c, owner, tStartName(c), Expr[].filled(1, co));
+  }
+  Ty[] yr = Ty[].filled(2, cloneTy(fnRet));
+  yr[0] = cloneTy(yieldTy!);
+  if (isAsync) {
+    return Expr(ExprKind.Construct(Ty(TyKind.Named(tAsyncGenerator(c), yr), c.line, c.col),
+                                   Expr[].filled(1, co), NamedArg[]()), c.line, c.col);
+  }
+  Expr[] gargs = Expr[].filled(2, co);
+  gargs[1] = eNull(c);
+  return Expr(ExprKind.Construct(Ty(TyKind.Named(tGenerator(c), yr), c.line, c.col), gargs, NamedArg[]()),
+              c.line, c.col);
+}
+
+/** What a call of a machine function declared to answer `ret` gets: `Ticket<R>`, `Generator<Y, R>`… */
+Ty machineCallerTy(Ctx c, Ty ret, bool isAsync) {
+  Ty[] gp = genParts(c.src, c.lexed, ret);
+  if (gp.len() != 2) { return lowTicketTy(c, cloneTy(ret)); }
+  Ty[] yr = Ty[].filled(2, cloneTy(gp[1]));
+  yr[0] = cloneTy(gp[0]);
+  return Ty(TyKind.Named(isAsync ? tAsyncGenerator(c) : tGenerator(c), yr), c.line, c.col);
+}
+
+/** `Coroutine<W, Y, R>` — what a machine function's coroutine form answers (ch36). */
+Ty coroutineTy(Ctx c, Ty ret, bool isAsync) {
+  Ty[] gp = genParts(c.src, c.lexed, ret);
+  if (gp.len() == 2) { return Ty(TyKind.Named(tCoroutine(c), wyr(c, gp[1], gp[0], isAsync)), c.line, c.col); }
+  return Ty(TyKind.Named(tCoroutine(c), wyr(c, ret, null, true)), c.line, c.col);
+}
+
+/**
+ * The body of a machine function once its machine lives in its coroutine form `co`: hand back what a
+ * call gets, made from `co(args)` — `return __wacMachine<R>.start(__wacCo_f(a, b));` and the like.
+ * `self` is the receiver's spelling for a method, or -1.
+ */
+Stmt[] coWrapperBody(Ctx c, i32 coTok, Param[] params, Ty ret, bool isAsync, i32 self) {
+  Expr[] args = Expr[].filled(params.len(), eNull(c));
+  for (i32 i = 0; i < params.len(); i++) { args[i] = eId(c, params[i].nameTok); }
+  Expr call = self >= 0
+      ? eMethod(c, eId(c, self), coTok, args)
+      : Expr(ExprKind.Construct(Ty(TyKind.Named(coTok, Ty[]()), c.line, c.col), args, NamedArg[]()), c.line, c.col);
+  Ty[] gp = genParts(c.src, c.lexed, ret);
+  Expr made = gp.len() == 2 ? wrapMachine(c, call, gp[1], gp[0], isAsync) : wrapMachine(c, call, ret, null, true);
+  return Stmt[].filled(1, sRet(c, made));
+}
+
+/** The source and tokens with `words` appended behind a comment, as `synthSource` does. */
+struct Tail {
+  u8[] src;
+  Lexed lexed;
+}
+
+Tail appendWords(u8[] src, Lexed lexed, string marker, string[] words) {
+  string tail = "\n" + marker;
+  for (i32 i = 0; i < words.len(); i++) { tail = tail + (i > 0 ? " " : "") + words[i]; }
+  u8[] add = (tail + "\n").toBytes();
+  u8[] out = u8[].filled(src.len() + add.len(), 0);
+  for (i32 i = 0; i < src.len(); i++) { out[i] = src[i]; }
+  for (i32 i = 0; i < add.len(); i++) { out[src.len() + i] = add[i]; }
+  i32 stride = tokenStride();
+  i32 have = lexed.tokenCount + lexed.synthCount;
+  i32[] toks = i32[].filled((have + words.len()) * stride, 0);
+  for (i32 i = 0; i < have * stride; i++) { toks[i] = lexed.tokens[i]; }
+  i32 at = src.len() + 1 + marker.toBytes().len();
+  for (i32 i = 0; i < words.len(); i++) {
+    i32 o = (have + i) * stride;
+    toks[o] = kIdent();
+    toks[o + 1] = at;
+    toks[o + 2] = words[i].toBytes().len();
+    toks[o + 3] = 1;
+    toks[o + 4] = 1;
+    at = at + words[i].toBytes().len() + 1;
+  }
+  return Tail(out, Lexed(toks, have + words.len(), lexed.errors, lexed.errorCount, 0, lexed.parsed));
+}
+
+/**
+ * The words a file's coroutine forms need: `__wacCo_<name>` for each machine function it declares,
+ * and for each name a `coroutine` call in it reaches — declared here or not — plus `this`, which a
+ * method's wrapper calls its form on.
+ */
+string[] coWords(Program prog, u8[] src, Lexed lexed) {
+  string[] out = string[].defaulted(prog.decls.len() + lexed.tokenCount / 8 + 2);
+  i32 n = 0;
+  out[n] = "this";
+  n = n + 1;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    Method[] ms = methodsOf(prog.decls[d]);
+    for (i32 m = 0; m < ms.len(); m++) {
+      if (!isMachineDecl(src, lexed, ms[m].returnType, ms[m].isAsync)) { continue; }
+      n = addWord(out, n, "__wacCo_" + synthTextAt(src, lexed, ms[m].nameTok));
+    }
+    match (prog.decls[d].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (isMachineDecl(src, lexed, returnType, isAsync)) { n = addWord(out, n, "__wacCo_" + synthTextAt(src, lexed, nameTok)); }
+      }
+      default: { }
+    }
+  }
+  // `coroutine a.b.f(` — the last name before the first `(`.
+  for (i32 t = 0; t < lexed.tokenCount; t++) {
+    if (lexed.tokens[t * tokenStride()] != kIdent() || synthTextAt(src, lexed, t) != "coroutine") { continue; }
+    i32 last = 0 - 1;
+    i32 u = t + 1;
+    while (u < lexed.tokenCount && lexed.tokens[u * tokenStride()] != kLparen()) {
+      if (lexed.tokens[u * tokenStride()] == kIdent()) { last = u; }
+      u = u + 1;
+    }
+    if (last >= 0) { n = addWord(out, n, "__wacCo_" + synthTextAt(src, lexed, last)); }
+  }
+  string[] exact = string[].defaulted(n);
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+i32 addWord(string[] out, i32 n, string w) {
+  for (i32 i = 0; i < n; i++) { if (out[i] == w) { return n; } }
+  if (n >= out.len()) { return n; }
+  out[n] = w;
+  return n + 1;
+}
+
+/** Whether a file has a `coroutine` call, which needs rewriting even with no machine of its own. */
+bool saysCoroutine(u8[] src, Lexed lexed) {
+  for (i32 t = 0; t < lexed.tokenCount; t++) {
+    if (lexed.tokens[t * tokenStride()] == kIdent() && synthTextAt(src, lexed, t) == "coroutine") { return true; }
+  }
+  return false;
+}
+
+/** `[Y, R]` of a generator's return type, held as `gen<Y, R>` — empty for anything else. */
+Ty[] genParts(u8[] src, Lexed lexed, Ty t) {
+  match (t.kind) {
+    Named(tok, typeArgs): {
+      if (typeArgs.len() == 2 && synthTextAt(src, lexed, tok) == "gen") { return typeArgs; }
+      return Ty[]();
+    }
+    default: { return Ty[](); }
+  }
+}
+
+/** Whether a declaration is a machine: `async`, or a generator. */
+bool isMachineDecl(u8[] src, Lexed lexed, Ty ret, bool isAsync) {
+  return isAsync || genParts(src, lexed, ret).len() == 2;
 }
 
 // ── What an awaited ticket answers, from what the file writes ─────────────────
@@ -987,9 +1226,43 @@ Ty? localTyIn(Rz z, Stmt[] body, string nm) {
         if (got is null) { got = localTyIn(z, b, nm); }
       }
       Block(b): { got = localTyIn(z, b, nm); }
+      // **A `match` arm's bindings** have its variant's payload types, when the subject is an enum
+      // this file declares.
+      Match(subject, arms): {
+        for (i32 a = 0; a < arms.len() && got is null; a++) {
+          for (i32 k = 0; k < arms[a].bindingToks.len(); k++) {
+            if (rzText(z, arms[a].bindingToks[k]) != nm) { continue; }
+            Ty? st = tyOfE(z, subject);
+            if (st is not null && arms[a].variantTok >= 0) { got = payloadTy(z, st!, rzText(z, arms[a].variantTok), k); }
+          }
+          if (got is null) { got = localTyIn(z, arms[a].body, nm); }
+        }
+      }
       default: { }
     }
     if (got is not null) { return got; }
+  }
+  return null;
+}
+
+/** Field `k` of variant `v` of the same-file, non-generic enum `t`, or null. */
+Ty? payloadTy(Rz z, Ty t, string v, i32 k) {
+  string owner = "";
+  match (t.kind) {
+    Named(tok, typeArgs): { if (typeArgs.len() == 0) { owner = rzText(z, tok); } }
+    default: { }
+  }
+  if (owner == "") { return null; }
+  for (i32 d = 0; d < z.prog.decls.len(); d++) {
+    match (z.prog.decls[d].kind) {
+      EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): {
+        if (eTypeParams.len() > 0 || rzText(z, eName) != owner) { continue; }
+        for (i32 i = 0; i < eVariants.len(); i++) {
+          if (rzText(z, eVariants[i].nameTok) == v && k < eVariants[i].fields.len()) { return eVariants[i].fields[k].type; }
+        }
+      }
+      default: { }
+    }
   }
   return null;
 }
@@ -1004,8 +1277,11 @@ Ty? nameTy(Rz z, string nm) {
   return localTyIn(z, z.body, nm);
 }
 
-/** `ret` as a caller sees it: a `Ticket` of it when the declaration is `async`. */
-Ty callerTy(Rz z, Ty ret, bool isAsync) { return isAsync ? lowTicketTy(z.c, ret) : ret; }
+/** `ret` as a caller sees it: a `Ticket` of it for `async`, a `Generator` for `gen<Y> R`. */
+Ty callerTy(Rz z, Ty ret, bool isAsync) {
+  if (genParts(z.c.src, z.c.lexed, ret).len() == 2) { return machineCallerTy(z.c, ret, isAsync); }
+  return isAsync ? lowTicketTy(z.c, ret) : ret;
+}
 
 /** A same-file, non-generic function's return as its caller sees it. */
 Ty? funcRetTy(Rz z, string nm) {
@@ -1030,6 +1306,14 @@ Ty? memberTy(Rz z, Ty recv, string m, bool call) {
   if (owner == "") { return null; }
   for (i32 d = 0; d < z.prog.decls.len(); d++) {
     match (z.prog.decls[d].kind) {
+      EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): {
+        if (!call || eTypeParams.len() > 0 || rzText(z, eName) != owner) { continue; }
+        for (i32 i = 0; i < eMethods.len(); i++) {
+          if (rzText(z, eMethods[i].nameTok) == m && eMethods[i].typeParams.len() == 0) {
+            return callerTy(z, eMethods[i].returnType, eMethods[i].isAsync);
+          }
+        }
+      }
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0 || rzText(z, nameTok) != owner) { continue; }
         if (call) {
@@ -1227,6 +1511,10 @@ Stmt[] splitStmt(Rz z, Stmt s) {
       if (isAwaitL(expr)) { return Stmt[].filled(1, s); }
       made = Stmt(StmtKind.ExprStmt(pullE(z, expr, p)), s.line, s.col);
     }
+    Yield(value): {
+      if (value is null) { return Stmt[].filled(1, s); }
+      made = Stmt(StmtKind.Yield(pullE(z, value!, p)), s.line, s.col);
+    }
     Assign(target, op, rhs): {
       if (isAwaitL(rhs)) {
         Pulled q = Pulled(Stmt[](), 0, false);
@@ -1246,6 +1534,8 @@ Stmt[] splitStmt(Rz z, Stmt s) {
       return Stmt[].filled(1, Stmt(StmtKind.For(init, cond, update, splitBody(z, b)), s.line, s.col));
     }
     Block(b): { return Stmt[].filled(1, Stmt(StmtKind.Block(splitBody(z, b)), s.line, s.col)); }
+    ForIn(elemTy, nameTok, iterable, b): { return splitForIn(z, s, elemTy, nameTok, iterable, b); }
+    Match(subject, arms): { return Stmt[].filled(1, splitMatch(z, s, subject, arms)); }
     default: { return Stmt[].filled(1, s); }
   }
   if (p.failed) { return Stmt[].filled(1, s); }
@@ -1253,6 +1543,100 @@ Stmt[] splitStmt(Rz z, Stmt s) {
   for (i32 i = 0; i < p.n; i++) { out[i] = p.pre[i]; }
   out[p.n] = made;
   return out;
+}
+
+/**
+ * A `for … in` whose body suspends, or a `for await`, as a `while` the flattening can take (ch36) —
+ * over a generator `Generator<Y, R> g = it; while (g.__wacNext()) { T x = g.__wacCurrent(); … }`, and
+ * over an async one `AsyncGenerator<Y, R> g = it; while (true) { Step<never, Y, R> s = await g.step();
+ * if (s.__wacIsDone()) { break; } T x = s.__wacYieldedOf(); … }`. Left as written when the iterable's
+ * type is not one this file writes, or it is not a generator, and the plan declines it by name.
+ */
+Stmt[] splitForIn(Rz z, Stmt s, Ty? elemTy, i32 nameTok, Expr iterable, Stmt[] body) {
+  Ctx c = z.c;
+  Expr it = iterable;
+  bool awaiting = false;
+  match (iterable.kind) {
+    Await(op): { if (op is not null) { it = op!; awaiting = true; } }
+    default: { }
+  }
+  Ty? t = tyOfE(z, it);
+  if (t is null) { return Stmt[].filled(1, s); }
+  string tname = "";
+  Ty[] targs = Ty[]();
+  match (t!.kind) {
+    Named(tok, typeArgs): { tname = rzText(z, tok); targs = typeArgs; }
+    default: { }
+  }
+  if (targs.len() != 2) { return Stmt[].filled(1, s); }
+  if (!(tname == "Generator" && !awaiting) && !(tname == "AsyncGenerator" && awaiting)) { return Stmt[].filled(1, s); }
+  Ty elem = (elemTy is null) ? targs[0] : elemTy!;
+  i32 k = z.next[0];
+  z.next[0] = z.next[0] + 2;
+  i32 g = tAw(c, k);
+  Stmt[] inner = splitBody(z, body);
+  Stmt[] out = Stmt[].filled(2, sRet(c, null));
+  out[0] = Stmt(StmtKind.Var(cloneTy(t!), g, it, false), s.line, freshCol(c));
+  if (!awaiting) {
+    Stmt[] wb = Stmt[].filled(inner.len() + 1, sRet(c, null));
+    wb[0] = Stmt(StmtKind.Var(cloneTy(elem), nameTok, eMethod(c, eId(c, g), tCurrentName(c), Expr[]()), false),
+                 s.line, freshCol(c));
+    for (i32 i = 0; i < inner.len(); i++) { wb[i + 1] = inner[i]; }
+    out[1] = Stmt(StmtKind.While(eMethod(c, eId(c, g), tNextName(c), Expr[]()), wb), s.line, s.col);
+    return out;
+  }
+  i32 st = tAw(c, k + 1);
+  Ty[] wyrT = Ty[].filled(3, cloneTy(targs[1]));
+  wyrT[0] = lowPrimTy(c, tNever(c));
+  wyrT[1] = cloneTy(targs[0]);
+  Ty stepT = Ty(TyKind.Named(tStep(c), wyrT), c.line, c.col);
+  Stmt[] wb = Stmt[].filled(inner.len() + 3, sRet(c, null));
+  wb[0] = Stmt(StmtKind.Var(stepT, st, Expr(ExprKind.Await(eMethod(c, eId(c, g), tStepCall(c), Expr[]())), s.line, s.col),
+                            false), s.line, freshCol(c));
+  wb[1] = Stmt(StmtKind.If(eMethod(c, eId(c, st), tIsDoneName(c), Expr[]()),
+                           Stmt[].filled(1, Stmt(StmtKind.Break, s.line, s.col)), Stmt[]()), s.line, s.col);
+  wb[2] = Stmt(StmtKind.Var(cloneTy(elem), nameTok, eMethod(c, eId(c, st), tYieldedName(c), Expr[]()), false),
+               s.line, freshCol(c));
+  for (i32 i = 0; i < inner.len(); i++) { wb[i + 3] = inner[i]; }
+  out[1] = Stmt(StmtKind.While(eBool(c, true), wb), s.line, s.col);
+  return out;
+}
+
+/**
+ * A `match` statement whose arms suspend, made ready to flatten: each arm's bindings become fresh
+ * names, copied at the arm's head into locals of the bindings' own names — `A(x): { … }` is
+ * `A(__wacAwK): { T x = __wacAwK; … }` — so they are hoisted like any local, and `lowerOne` keeps the
+ * copies in the state that dispatches. Left as written when a binding's type is not one this file
+ * writes, and the plan declines it.
+ */
+Stmt splitMatch(Rz z, Stmt s, Expr subject, Arm[] arms) {
+  Ctx c = z.c;
+  Ty? st = tyOfE(z, subject);
+  Arm[] out = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0] : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
+  for (i32 a = 0; a < arms.len(); a++) {
+    Arm arm = arms[a];
+    i32 nb = arm.bindingToks.len();
+    i32[] fresh = i32[].filled(nb, 0);
+    Stmt[] body = splitBody(z, arm.body);
+    Stmt[] full = Stmt[].filled(nb + body.len(), sRet(c, null));
+    i32 kept = 0;
+    for (i32 k = 0; k < nb; k++) {
+      string bn = rzText(z, arm.bindingToks[k]);
+      if (bn == "_") { fresh[k] = arm.bindingToks[k]; continue; }
+      Ty? bt = (st is null || arm.variantTok < 0) ? null : payloadTy(z, st!, rzText(z, arm.variantTok), k);
+      if (bt is null) { return s; }
+      i32 f = tAw(c, z.next[0]);
+      z.next[0] = z.next[0] + 1;
+      fresh[k] = f;
+      full[kept] = Stmt(StmtKind.Var(cloneTy(bt!), arm.bindingToks[k], eId(c, f), false), s.line, freshCol(c));
+      kept = kept + 1;
+    }
+    Stmt[] trimmed = Stmt[].filled(kept + body.len(), sRet(c, null));
+    for (i32 i = 0; i < kept; i++) { trimmed[i] = full[i]; }
+    for (i32 i = 0; i < body.len(); i++) { trimmed[kept + i] = body[i]; }
+    out[a] = Arm(arm.variantTok, arm.elseTok, fresh, trimmed, arm.value);
+  }
+  return Stmt(StmtKind.Match(subject, out), s.line, s.col);
 }
 
 /** `body` with every statement split around its nested awaits. */
@@ -1275,7 +1659,10 @@ Stmt[] splitBody(Rz z, Stmt[] body) {
 i32 awaitTokens(Lexed lexed) {
   i32 n = 0;
   for (i32 i = 0; i < lexed.tokenCount; i++) {
-    if (lexed.tokens[i * tokenStride()] == kAwait()) { n = n + 1; }
+    i32 k = lexed.tokens[i * tokenStride()];
+    if (k == kAwait()) { n = n + 1; }
+    // A `for … in` a machine rewrites takes two temporaries of the same family (`splitForIn`).
+    if (k == kFor()) { n = n + 2; }
   }
   return n;
 }
@@ -1453,13 +1840,13 @@ i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     Method[] ms = methodsOf(prog.decls[d]);
     for (i32 m = 0; m < ms.len(); m++) {
-      if (!ms[m].isAsync) { continue; }
+      if (!isMachineDecl(src, lexed, ms[m].returnType, ms[m].isAsync)) { continue; }
       i32 wantM = statesNeeded(ms[m].body);
       if (wantM > most) { most = wantM; }
     }
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        if (isAsync) {
+        if (isMachineDecl(src, lexed, returnType, isAsync)) {
           i32 want = statesNeeded(body);
           if (want > most) { most = want; }
         }
@@ -1482,15 +1869,15 @@ i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
 }
 
 /** Whether anything here is worth extending the source for. */
-bool anyLowerable(Program prog) {
+bool anyLowerable(Program prog, u8[] src, Lexed lexed) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     Method[] ms = methodsOf(prog.decls[d]);
     for (i32 m = 0; m < ms.len(); m++) {
-      if (ms[m].isAsync) { return true; }
+      if (isMachineDecl(src, lexed, ms[m].returnType, ms[m].isAsync)) { return true; }
     }
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        if (isAsync) { return true; }
+        if (isMachineDecl(src, lexed, returnType, isAsync)) { return true; }
       }
       default: { }
     }
@@ -1539,6 +1926,9 @@ struct Site {
   i32 col;
   /** The first column handed to the lambdas it synthesises — the emitter keys a lambda by position. */
   i32 colBase;
+  bool isAsync;
+  /** Build the coroutine form, answering the machine itself rather than what a call hands back. */
+  bool raw;
 }
 
 /**
@@ -1562,7 +1952,9 @@ Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
   for (i32 i = 0; i < extra.len(); i++) { names[plan.hoist.len() + i] = extra[i]; }
   Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, names, w.src, w.lexed, c0.col2, c0.inLam,
               c0.finState);
-  return machineBody(c, split, plan, ret);
+  Ty[] gp = genParts(w.src, w.lexed, ret);
+  if (gp.len() == 2) { return machineBody(c, split, plan, gp[1], gp[0], at.isAsync, at.raw); }
+  return machineBody(c, split, plan, ret, null, true, at.raw);
 }
 
 /**
@@ -1589,7 +1981,7 @@ Stmt[] lowerLambdasIn(Lw w, Stmt[] body, i32 selfTok) {
             string[] pnames = string[].filled(lps.len(), "");
             for (i32 j = 0; j < lps.len(); j++) { pnames[j] = synthTextAt(w.src, w.lexed, lps[j].nameTok); }
             // A column of its own: the emitter keys a lambda by position, and this builds several.
-            Site at = Site(lps, selfTok, init!.line, init!.col, init!.col + 5000);
+            Site at = Site(lps, selfTok, init!.line, init!.col, init!.col + 5000, true, false);
             Stmt[]? mach = machineOf(w, at, lbody, tick!, pnames);
             if (mach is null) { continue; }
             Ctx c = Ctx(w.first, w.ups, w.args, init!.line, init!.col, pnames, w.src, w.lexed,
@@ -1625,6 +2017,9 @@ i32 selfOf(Decl at) {
     StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
       return sTypeParams.len() == 0 ? sName : 0 - 1;
     }
+    EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): {
+      return eTypeParams.len() == 0 ? eName : 0 - 1;
+    }
     default: { return 0 - 1; }
   }
 }
@@ -1640,25 +2035,42 @@ i32 selfOf(Decl at) {
 Method[] loweredMethods(Lw w, Decl at) {
   Method[] ms = methodsOf(at);
   i32 self = selfOf(at);
-  Method[] out = Method[].filled(ms.len(), ms[0]);
+  // A machine method becomes two: its coroutine form, and the method calling it.
+  Method[] out = Method[].filled(ms.len() * 2, ms[0]);
+  i32 n = 0;
   for (i32 m = 0; m < ms.len(); m++) {
     Method me = ms[m];
-    Stmt[] body2 = lowerLambdasIn(w, me.body, self);
-    if (!me.isAsync) {
-      out[m] = Method(me.nameTok, me.returnType, me.params, body2, me.isOverride, me.overrideTok,
-                      me.hasThis, me.thisConst, me.typeParams, false, me.isPrivate, me.isVirtual);
-      continue;
-    }
-    Stmt[]? machine = machineOf(w, Site(me.params, self, at.line, at.col, at.col + 1000 + 100 * m),
-                                body2, me.returnType, string[]());
-    if (machine is null) { out[m] = me; continue; }
     Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
                 i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0));
-    out[m] = Method(me.nameTok, lowTicketTy(c, cloneTy(me.returnType)), me.params, machine!,
-                    me.isOverride, me.overrideTok, me.hasThis, me.thisConst, me.typeParams, false,
-                    me.isPrivate, me.isVirtual);
+    Stmt[] body2 = coRewrite(c, lowerLambdasIn(w, me.body, self));
+    if (!isMachineDecl(w.src, w.lexed, me.returnType, me.isAsync)) {
+      out[n] = Method(me.nameTok, me.returnType, me.params, body2, me.isOverride, me.overrideTok,
+                      me.hasThis, me.thisConst, me.typeParams, false, me.isPrivate, me.isVirtual);
+      n = n + 1;
+      continue;
+    }
+    Stmt[]? machine = machineOf(w, Site(me.params, self, at.line, at.col, at.col + 1000 + 100 * m, me.isAsync, true),
+                                body2, me.returnType, string[]());
+    i32 coTok = coTokFor(c, "__wacCo_" + synthTextAt(w.src, w.lexed, me.nameTok));
+    i32 thisTok = coTokFor(c, "this");
+    if (machine is null || coTok < 0 || thisTok < 0 || !me.hasThis) { out[n] = me; n = n + 1; continue; }
+    out[n] = Method(coTok, coroutineTy(c, me.returnType, me.isAsync), me.params, machine!,
+                    false, 0 - 1, me.hasThis, me.thisConst, me.typeParams, false, me.isPrivate, false);
+    out[n + 1] = Method(me.nameTok, machineCallerTy(c, me.returnType, me.isAsync), me.params,
+                        coWrapperBody(c, coTok, me.params, me.returnType, me.isAsync, thisTok),
+                        me.isOverride, me.overrideTok, me.hasThis, me.thisConst, me.typeParams, false,
+                        me.isPrivate, me.isVirtual);
+    n = n + 2;
   }
-  return out;
+  Method[] exact = Method[].filled(n, ms[0]);
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/** `coroutine f(…)` anywhere in `body` rewritten to its coroutine form's call — and nothing else. */
+Stmt[] coRewrite(Ctx c, Stmt[] body) {
+  if (coTokFor(c, "this") < 0) { return body; }
+  return subBody(c, body, true, 0 - 1, 0 - 1);
 }
 
 /**
@@ -1672,53 +2084,70 @@ Method[] loweredMethods(Lw w, Decl at) {
  * tokens, which bound both the slots any one machine needs and the temporaries the whole file does.
  */
 export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
-  if (!anyLowerable(prog) && !anyLambdaLowerable(prog, src, lexed)) {
+  if (!anyLowerable(prog, src, lexed) && !anyLambdaLowerable(prog, src, lexed) && !saysCoroutine(src, lexed)) {
     return Lowered(prog, src, lexed, false, "");
   }
   i32 ups = awaitTokens(lexed);
   i32 states = numsNeeded(prog, src, lexed) + 4 * ups;
   i32 args = argsNeeded(prog, src, lexed);
 
-  u8[] src2 = synthSource(src, ups, states, args);
+  u8[] srcA = synthSource(src, ups, states, args);
   i32 first = lexed.tokenCount;
-  Lexed lexed2 = synthTokens(lexed, src2, ups, states, args, 1, 1);
+  Lexed lexedA = synthTokens(lexed, srcA, ups, states, args, 1, 1);
+  // **The coroutine forms' names**, behind a second comment (ch36).
+  Tail tl = appendWords(srcA, lexedA, "// wac:co-synth ", coWords(prog, src, lexed));
+  u8[] src2 = tl.src;
+  Lexed lexed2 = tl.lexed;
   Lw w = Lw(first, ups, args, src2, lexed2, prog, i32[].filled(1, 0), string[].filled(1, ""));
 
-  Decl[] out = Decl[].filled(prog.decls.len(), prog.decls[0]);
+  // A machine function becomes two: the function calling its coroutine form, where it was, and the
+  // form itself after every declaration the file wrote — whose count is how the emitter tells the
+  // entry's own declarations, and so its exports, from the rest.
+  Decl[] out = Decl[].filled(prog.decls.len() * 2, prog.decls[0]);
+  Decl[] forms = Decl[].filled(prog.decls.len(), prog.decls[0]);
+  i32 nf = 0;
+  i32 n = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
-    out[d] = prog.decls[d];
+    out[n] = prog.decls[d];
+    n = n + 1;
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        Ctx c = Ctx(first, ups, args, prog.decls[d].line, prog.decls[d].col, string[](), src2, lexed2,
+                    i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0));
         // **Lambdas first.** An `async` function's own machine substitutes its hoisted names into
         // everything its body contains, lambdas included — so a lambda lowered beforehand is
         // ordinary code by the time that walk reaches it.
-        Stmt[] body2 = lowerLambdasIn(w, body, 0 - 1);
-        if (!isAsync) {
-          out[d] = Decl(DeclKind.Func(nameTok, returnType, params, body2, exported, typeParams,
-                                      false),
-                        prog.decls[d].line, prog.decls[d].col);
+        Stmt[] body2 = coRewrite(c, lowerLambdasIn(w, body, 0 - 1));
+        if (!isMachineDecl(src2, lexed2, returnType, isAsync)) {
+          out[n - 1] = Decl(DeclKind.Func(nameTok, returnType, params, body2, exported, typeParams,
+                                          false),
+                            prog.decls[d].line, prog.decls[d].col);
           continue;
         }
-        Site at = Site(params, 0 - 1, prog.decls[d].line, prog.decls[d].col, prog.decls[d].col + 1000);
+        Site at = Site(params, 0 - 1, prog.decls[d].line, prog.decls[d].col, prog.decls[d].col + 1000, isAsync, true);
         Stmt[]? machine = machineOf(w, at, body2, returnType, string[]());
-        if (machine is null) { continue; }
-        Ctx c = Ctx(first, ups, args, 1, 1, string[](), src2, lexed2, i32[].filled(1, 0),
-                    bool[].filled(1, false), i32[].filled(1, 0));
-        out[d] = Decl(DeclKind.Func(nameTok, lowTicketTy(c, cloneTy(returnType)), params, machine!,
-                                    exported, typeParams, false),
-                      prog.decls[d].line, prog.decls[d].col);
+        i32 coTok = coTokFor(c, "__wacCo_" + synthTextAt(src2, lexed2, nameTok));
+        if (machine is null || coTok < 0) { continue; }
+        forms[nf] = Decl(DeclKind.Func(coTok, coroutineTy(c, returnType, isAsync), params, machine!,
+                                       exported, typeParams, false),
+                         prog.decls[d].line, prog.decls[d].col);
+        nf = nf + 1;
+        out[n - 1] = Decl(DeclKind.Func(nameTok, machineCallerTy(c, returnType, isAsync), params,
+                                        coWrapperBody(c, coTok, params, returnType, isAsync, 0 - 1),
+                                        exported, typeParams, false),
+                          prog.decls[d].line, prog.decls[d].col);
       }
       // **A method is a `Func` in all but name**, and `this` is an ordinary parameter, so the machine
       // that already survives a suspension over parameters needs nothing new for a receiver.
       StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
         if (sMethods.len() == 0) { continue; }
-        out[d] = Decl(DeclKind.StructDecl(sName, sParent, sFields, loweredMethods(w, prog.decls[d]),
+        out[n - 1] = Decl(DeclKind.StructDecl(sName, sParent, sFields, loweredMethods(w, prog.decls[d]),
                                           sExported, sConst, sTypeParams),
                       prog.decls[d].line, prog.decls[d].col);
       }
       EnumDecl(eName, eVariants, eExported, eMethods, eTypeParams): {
         if (eMethods.len() == 0) { continue; }
-        out[d] = Decl(DeclKind.EnumDecl(eName, eVariants, eExported, loweredMethods(w, prog.decls[d]),
+        out[n - 1] = Decl(DeclKind.EnumDecl(eName, eVariants, eExported, loweredMethods(w, prog.decls[d]),
                                         eTypeParams),
                       prog.decls[d].line, prog.decls[d].col);
       }
@@ -1726,5 +2155,8 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
     }
   }
 
-  return Lowered(Program(out), src2, lexed2, true, w.why[0]);
+  Decl[] exact = Decl[].filled(n + nf, prog.decls[0]);
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  for (i32 i = 0; i < nf; i++) { exact[n + i] = forms[i]; }
+  return Lowered(Program(exact), src2, lexed2, true, w.why[0]);
 }

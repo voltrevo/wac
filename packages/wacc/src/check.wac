@@ -336,6 +336,69 @@ export i32 errTryOutsideResult() { return 234; }
 export i32 errTryErrorType() { return 235; }
 /** `schedule f;` where `f` is not a `fn<void(Continuation)>` — spec/next ch35. */
 export i32 errScheduleTarget() { return 232; }
+/** `yield` outside a generator, or of a value it does not yield — spec/next ch36. */
+export i32 errYield() { return 236; }
+/** A plain `for … in` over an async generator, or `for await` over anything else — spec/next ch36. */
+export i32 errForAwait() { return 237; }
+
+/**
+ * A function's return type as written, read for a generator: `gen<Y, R>` (how `gen<Y> R` is held)
+ * answers its `R` — what the body returns — and anything else is itself.
+ */
+Ty bodyReturnTy(C c, Ty t) {
+  match (t.kind) {
+    Named(tok, typeArgs): { return typeArgs.len() == 2 && tokenText(c, tok) == "gen" ? typeArgs[1] : t; }
+    default: { return t; }
+  }
+}
+
+/** Whether a type spelling is the `gen<Y, R>` a generator's declaration is held as. */
+bool isGenSpelling(string t) { return t.len() > 5 && t.slice(0, 4) == "gen<"; }
+
+/**
+ * What a call of a function declared to answer `written` hands back: a `Ticket` of it for `async`,
+ * a `Generator<Y, R>` — or an `AsyncGenerator<Y, R>` — for a generator (ch35, ch36).
+ */
+string callerReturn(string written, bool isAsync) {
+  if (written == "" || written == typeNone()) { return written; }
+  if (isGenSpelling(written)) { return (isAsync ? "AsyncGenerator<" : "Generator<") + written.slice(4, written.len()); }
+  return isAsync ? "Ticket<" + written + ">" : written;
+}
+
+/** The `Y` a generator's `gen<Y, R>` yields, or `""` for anything that is not one. */
+string yieldOf(string written) {
+  if (!isGenSpelling(written)) { return ""; }
+  string[] a = genericArgs(written);
+  return a.len() == 2 ? a[0] : "";
+}
+
+/** The `Coroutine<W, Y, R>` behind what a machine call answers, or unknown. */
+string coroutineTypeOf(string t) {
+  string[] a = genericArgs(t);
+  string b = genericBase(t);
+  if (b == "Ticket" && a.len() == 1) { return "Coroutine<TicketBase, never, " + a[0] + ">"; }
+  if (b == "Generator" && a.len() == 2) { return "Coroutine<never, " + a[0] + ", " + a[1] + ">"; }
+  if (b == "AsyncGenerator" && a.len() == 2) { return "Coroutine<TicketBase, " + a[0] + ", " + a[1] + ">"; }
+  return typeNone();
+}
+
+/** `yield` — only in a generator, and of what it yields (`§wac-yield-await-placement-sjuvqc6`). */
+void checkYield(C c, Stmt s, Expr? value) {
+  if (c.yieldType == "") {
+    c.reportWith(errYield(), s.line, s.col, c.inAsync ? "yield in an async function — declare it async gen"
+                                                      : "yield outside a generator");
+    return;
+  }
+  if (value is null) {
+    if (c.yieldType != "void") { c.reportWith(errYield(), s.line, s.col, "this generator yields " + c.yieldType); }
+    return;
+  }
+  if (litKindOf(value!) != litNone()) { reportLiteral(c, c.yieldType, value!, errYield(), value!.line, value!.col); return; }
+  string got = typeOfExpr(c, value!);
+  if (got != typeNone() && got != "" && !assignable(c, c.yieldType, got)) {
+    c.reportWith(errYield(), value!.line, value!.col, expectedFound(c.yieldType, got));
+  }
+}
 
 /** Whether `t` is what a `schedule` statement takes: one `Continuation` in, nothing out. */
 bool isScheduleTarget(string t) {
@@ -352,6 +415,12 @@ string forInElemOf(C c, Expr iterable) {
   if (templateOf(it) == "Vec") {
     string[] args = genericArgs(it);
     return args.len() == 1 ? args[0] : typeNone();
+  }
+  // A generator's yields (ch36) — and an async generator's, under `for await`, which is held as an
+  // `await` around the iterable.
+  if (templateOf(it) == "Generator") {
+    string[] gargs = genericArgs(it);
+    return gargs.len() == 2 ? gargs[0] : typeNone();
   }
   return typeNone();
 }
@@ -890,6 +959,7 @@ DA daStmt(C c, Stmt s, DA st, DAExit loop) {
     // Run on the way out, so whatever it reads is read there; it assigns nothing the rest can see.
     Defer(inner): { daStmt(c, inner, st.copy(), loop); return st; }
     Schedule(target): { daExpr(c, target, st); return st; }
+    Yield(value): { if (value is not null) { daExpr(c, value!, st); } return st; }
   }
 }
 
@@ -970,6 +1040,7 @@ void daExpr(C c, Expr e, DA st) {
     Unary(op, operand): { daExpr(c, operand, st); }
     Await(operand): { if (operand is not null) { daExpr(c, operand!, st); } }
     Try(operand): { daExpr(c, operand, st); }
+    CoroutineOf(call): { daExpr(c, call, st); }
     Binary(op, l, r): { daExpr(c, l, st); daExpr(c, r, st); }
     Cast(op, operand, target): { daExpr(c, operand, st); }
     Ternary(cond, then, els): { daExpr(c, cond, st); daExpr(c, then, st); daExpr(c, els, st); }
@@ -1497,6 +1568,14 @@ bool rawCast(string from, string to) {
  * only place its fields are written down. So every lookup that takes an owner has to come back here
  * first, and the type arguments are what it substitutes afterwards.
  */
+/** A written type's spelling when it is a primitive — enough to ask whether it is `void`. */
+string typeOfTyQuiet(C c, Ty t) {
+  match (t.kind) {
+    Prim(tok): { return tokenText(c, tok); }
+    default: { return ""; }
+  }
+}
+
 /** The normalised union of `ms` — flattened, deduplicated, ancestors absorbing descendants, sorted. */
 string normUnion(C c, string[] ms) {
   string[] flat = flattenUnion(ms);
@@ -2659,6 +2738,8 @@ export struct C {
    * each body, as `lambdaReturn` is.
    */
   string tryReturn;
+  /** What a `yield` in the function being checked yields, or `""` outside a generator (ch36). */
+  string yieldType;
 
   void noteVirtual(this, string key) {
     string[] more = string[].defaulted(this.virtuals.len() + 1);
@@ -2767,7 +2848,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "");
+             string[](), string[](), "", "");
   }
 
   /**
@@ -3841,6 +3922,14 @@ export string typeOfTy(C c, Ty t) {
       if (base == "anyref" || base == "i31ref") { return base; }
       // **`union<A, B>` is its normalised set of alternatives** (spec/next ch18). A bare `union` is a
       // placeholder (ch33), which is not built yet: unknown, and silent.
+      // **`gen<Y, R>` is how a generator's `gen<Y> R` is held** (ch36) — spelled, for `callerReturn`
+      // and `yieldOf` to read.
+      if (base == "gen" && typeArgs.len() == 2) {
+        string gy = typeOfTy(c, typeArgs[0]);
+        string gr = typeOfTy(c, typeArgs[1]);
+        if (gy == typeNone() || gr == typeNone()) { return typeNone(); }
+        return "gen<" + gy + ", " + gr + ">";
+      }
       if (base == "union") {
         if (typeArgs.len() == 0) { return typeNone(); }
         string[] ums = string[].defaulted(typeArgs.len());
@@ -3868,6 +3957,22 @@ export string typeOfTy(C c, Ty t) {
         if (sat >= 0 && c.structParamCount[sat] != typeArgs.len()) {
           c.reportTok(errUndefinedType(), tok, "");
           return typeNone();
+        }
+        // **A container of `void` is refused** (`§wac-void-typearg-2mkx9db`): `void` erases a parameter
+        // it stands in for, and nothing can be stored in an array of a type that has no values.
+        if (sat >= 0) {
+          for (i32 i = 0; i < typeArgs.len(); i++) {
+            if (typeOfTyQuiet(c, typeArgs[i]) != "void") { continue; }
+            string pn = c.structParamNames[c.structParamAt[sat] + i];
+            for (i32 f = 0; f < c.fieldCount; f++) {
+              if (c.fieldOwners[f] != base) { continue; }
+              if (mentionsTypeParam(c.fieldTypes[f], pn + "[]")) {
+                c.reportTokHinted(errVoidType(), tok, base + "<void> — nothing can hold a value of a type that has none",
+                                  "a container of void holds nothing; count, or hold a type that has values");
+                return typeNone();
+              }
+            }
+          }
         }
       }
       if (c.scopeTypes && !knownTypeName(c, base)) {
@@ -4963,6 +5068,10 @@ export string typeOfExpr(C c, Expr e) {
     // `await p` has the type the ticket answers — `design/lang/0014` D3. Unknown when the operand is
     // not a ticket, which keeps this silent while `checkExpr` is the one that says so; a type made up
     // here would report the same fault a second time through whatever slot the value lands in.
+    // `coroutine f(…)` answers the call's machine (ch36): a `Ticket<R>` call's is a
+    // `Coroutine<TicketBase, never, R>`, a `Generator<Y, R>`'s a `Coroutine<never, Y, R>`, and an
+    // `AsyncGenerator<Y, R>`'s a `Coroutine<TicketBase, Y, R>`.
+    CoroutineOf(call): { return coroutineTypeOf(typeOfExpr(c, call)); }
     // `try e` answers `e`'s `Ok` value (ch26).
     Try(operand): {
       string rt = typeOfExpr(c, operand);
@@ -6102,6 +6211,13 @@ void checkExpr(C c, Expr e) {
       // `issues/lang/0249a`.
       if (litKindOf(operand) == litNull()) { c.report(errNeedsNullable(), e.line, e.col); }
     }
+    CoroutineOf(call): {
+      checkExpr(c, call);
+      string ct = typeOfExpr(c, call);
+      if (ct != typeNone() && ct != "" && coroutineTypeOf(ct) == typeNone()) {
+        c.reportWith(errYield(), e.line, e.col, "`coroutine` takes a call of a generator or an async function, and this answers " + ct);
+      }
+    }
     Try(operand): {
       checkExpr(c, operand);
       string rt = typeOfExpr(c, operand);
@@ -7122,6 +7238,8 @@ void checkLambda(C c, string slot, bool wantUnknown, Expr e, Param[] params, Stm
   c.lambdaReturn = bodyRet;
   string outerTry = c.tryReturn;
   c.tryReturn = bodyRet;
+  string outerYield = c.yieldType;
+  c.yieldType = "";
   // **A lambda is not the async function it sits in.** `design/lang/0002` settles that its `return`
   // returns from the lambda, so an `await` in here would have to suspend *this* function — and this
   // one is a plain funcref. Cleared for the same reason `lambdaReturn` is replaced rather than left:
@@ -7163,6 +7281,7 @@ void checkLambda(C c, string slot, bool wantUnknown, Expr e, Param[] params, Stm
   c.popScope();
   c.lambdaReturn = outer;
   c.tryReturn = outerTry;
+  c.yieldType = outerYield;
   c.inAsync = outerAsync;
 }
 
@@ -10546,6 +10665,10 @@ void checkStmt(C c, Stmt s, Ty want) {
     // expressions that were part of something default: a return, an initialiser, a condition. A
     // statement that is just a call is the commonest shape in the language and had no rule applied
     // to it at all, which is how the const-receiver check looked broken when it was merely unreached.
+    Yield(value): {
+      if (value is not null) { checkExpr(c, value!); }
+      checkYield(c, s, value);
+    }
     Schedule(target): {
       checkExpr(c, target);
       string tt = typeOfExpr(c, target);
@@ -10968,7 +11091,16 @@ void checkStmt(C c, Stmt s, Ty want) {
       c.popScope();
       c.popScope();
     }
-    ForIn(elemTy, nameTok, iterable, body): {
+    ForIn(elemTy, nameTok, forIterable, body): {
+      // **`for await (T x in g)`** — held as an `await` around `g`; `g` is an async generator, only
+      // in an `async` function (`§wac-for-await-hkzruba`, `§wac-for-await-required-4bxqy83`).
+      Expr iterable = forIterable;
+      bool forAwait = false;
+      match (forIterable.kind) {
+        Await(aop): { if (aop is not null) { iterable = aop!; forAwait = true; } }
+        default: { }
+      }
+      if (forAwait && !c.inAsync) { c.report(errAwaitOutsideAsync(), forIterable.line, forIterable.col); }
       // **A written element type is the iterable's slot**, so `for (i32 x in [1, 2, 3])` has an
       // array type to give its literal, as `i32[] xs = [1, 2, 3];` does.
       string savedExpected = c.expected;
@@ -10977,10 +11109,21 @@ void checkStmt(C c, Stmt s, Ty want) {
       c.expected = savedExpected;
       string et = forInElemOf(c, iterable);
       string it = typeOfExpr(c, iterable);
+      bool asyncGen = templateOf(it) == "AsyncGenerator";
+      if (asyncGen && !forAwait) {
+        c.reportWith(errForAwait(), iterable.line, iterable.col, "iterating an async generator needs for await");
+        string[] ab = genericArgs(it);
+        et = ab.len() == 2 ? ab[0] : typeNone();
+      } else if (forAwait && !asyncGen && it != typeNone() && it != "") {
+        c.reportWith(errForAwait(), iterable.line, iterable.col, "for await iterates an async generator, and this is " + it);
+      } else if (asyncGen) {
+        string[] aa = genericArgs(it);
+        et = aa.len() == 2 ? aa[0] : typeNone();
+      }
       if (et == typeNone() && it != typeNone() && it != "") {
         c.reportWith(errForInIterable(), iterable.line, iterable.col, it + " is not an array or a Vec");
       }
-      string vt = forInVarType(c, elemTy, iterable);
+      string vt = elemTy is null ? et : typeOfTy(c, elemTy!);
       if (!(elemTy is null) && et != typeNone() && vt != typeNone() && !assignable(c, vt, et)) {
         c.reportWith(errInitTypeMismatch(), elemTy!.line, elemTy!.col, expectedFound(vt, et));
       }
@@ -11920,7 +12063,7 @@ export void declareModule(C c, Program prog, string[] only) {
         // can name and every slot would then disagree with. Left alone, by the same rule the rest of
         // the file keeps.
         string fret = typeOfTy(c, returnType);
-        if (isAsync && fret != "") { fret = "Ticket<" + fret + ">"; }
+        fret = callerReturn(fret, isAsync);
         string[] pnames = string[].defaulted(params.len());
         for (i32 i = 0; i < params.len(); i++) { pnames[i] = tokenText(c, params[i].nameTok); }
         c.declareFunc(c.renamed(tokenText(c, nameTok)), fret, prims,
@@ -12347,17 +12490,20 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
     bool wasAsyncM = c.inAsync;
     c.inAsync = methods[mi].isAsync;
     string wasTryM = c.tryReturn;
-    c.tryReturn = typeOfTy(c, methods[mi].returnType);
-    checkAll(c, methods[mi].body, methods[mi].returnType);
+    string wasYieldM = c.yieldType;
+    c.tryReturn = typeOfTy(c, bodyReturnTy(c, methods[mi].returnType));
+    c.yieldType = yieldOf(typeOfTy(c, methods[mi].returnType));
+    checkAll(c, methods[mi].body, bodyReturnTy(c, methods[mi].returnType));
     checkDefiniteAssignment(c, methods[mi].body);
     c.tryReturn = wasTryM;
+    c.yieldType = wasYieldM;
     c.inAsync = wasAsyncM;
     c.popScope();
     // At the **return type**, where the reference puts it. A `Method` carries no position of its own —
     // unlike a `Decl`, which is why the top-level version reports at the declaration — and the return
     // type is the first thing a method has that does.
-    if (returnsAValue(typeOfTy(c, methods[mi].returnType)) && !alwaysLeaves(c, methods[mi].body)) {
-      c.report(typeOfTy(c, methods[mi].returnType) == "never" ? errNeverReturns() : errMissingReturn(),
+    if (returnsAValue(typeOfTy(c, bodyReturnTy(c, methods[mi].returnType))) && !alwaysLeaves(c, methods[mi].body)) {
+      c.report(typeOfTy(c, bodyReturnTy(c, methods[mi].returnType)) == "never" ? errNeverReturns() : errMissingReturn(),
                methods[mi].returnType.line, methods[mi].returnType.col);
     }
     c.activeParamCount = savedActive;
@@ -12614,10 +12760,13 @@ export void checkModule(C c, Program prog) {
         bool wasAsync = c.inAsync;
         c.inAsync = isAsync;
         string wasTry = c.tryReturn;
-        c.tryReturn = typeOfTy(c, returnType);
-        checkAll(c, body, returnType);
+        string wasYield = c.yieldType;
+        c.tryReturn = typeOfTy(c, bodyReturnTy(c, returnType));
+        c.yieldType = yieldOf(typeOfTy(c, returnType));
+        checkAll(c, body, bodyReturnTy(c, returnType));
         checkDefiniteAssignment(c, body);
         c.tryReturn = wasTry;
+        c.yieldType = wasYield;
         c.inAsync = wasAsync;
         c.popScope();
         // Reported at the declaration rather than at the closing brace, which is where the reference
@@ -12625,8 +12774,8 @@ export void checkModule(C c, Program prog) {
         //
         // The type parameters stay in scope for this last question: it reads the return type again,
         // and `T max<T>(T a, T b)` clearing them first made `T` a name nobody had declared.
-        if (returnsAValue(typeOfTy(c, returnType)) && !alwaysLeaves(c, body)) {
-          c.report(typeOfTy(c, returnType) == "never" ? errNeverReturns() : errMissingReturn(),
+        if (returnsAValue(typeOfTy(c, bodyReturnTy(c, returnType))) && !alwaysLeaves(c, body)) {
+          c.report(typeOfTy(c, bodyReturnTy(c, returnType)) == "never" ? errNeverReturns() : errMissingReturn(),
                    prog.decls[d].line, prog.decls[d].col);
         }
         c.activeParamCount = 0;
@@ -12646,7 +12795,7 @@ export void checkModule(C c, Program prog) {
  * Both method-declaring sites go through here so the two cannot drift. `issues/lang/0301b`.
  */
 string methodReturnFor(string written, bool isAsync) {
-  return isAsync && written != "" ? "Ticket<" + written + ">" : written;
+  return callerReturn(written, isAsync);
 }
 
 /**

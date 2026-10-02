@@ -69,6 +69,7 @@ export bool awaitInExpr(Expr e) {
   match (e.kind) {
     Await(operand): { return true; }
     Try(operand): { return awaitInExpr(operand); }
+    CoroutineOf(call): { return awaitInExpr(call); }
     MatchExpr(subject, arms): {
       if (awaitInExpr(subject)) { return true; }
       for (i32 i = 0; i < arms.len(); i++) {
@@ -207,6 +208,8 @@ export bool awaitInStmt(Stmt s) {
     Block(body): { return awaitInBody(body); }
     ExprStmt(expr): { return awaitInExpr(expr); }
     Schedule(target): { return awaitInExpr(target); }
+    // A `yield` is a suspension as an `await` is — of a generator's machine (ch36).
+    Yield(value): { return true; }
   }
 }
 
@@ -347,6 +350,19 @@ void walkPlan(Stmt[] body, Walked w) {
         walkPlan(body2, w);
       }
       Block(body2): { walkPlan(body2, w); }
+      // A `match` statement's arms, which the lowering flattens once `splitMatch` has given their
+      // bindings names it can hoist; the subject is evaluated in the state that dispatches.
+      Match(subject, arms): {
+        if (awaitInExpr(subject)) { w.why = "an `await` in a `match` subject"; }
+        for (i32 a = 0; a < arms.len(); a++) { walkPlan(arms[a].body, w); }
+      }
+      // `yield v;` — a generator's suspension (ch36). Its value is evaluated first, so an `await` in
+      // it is one more the lowering has already hoisted, or one it could not read.
+      Yield(value): {
+        if (value is not null && awaitInExpr(value!)) {
+          w.why = "an `await` nested inside a larger expression, on a ticket whose type this file does not write — bind it first: `T v = await e;`";
+        }
+      }
       // `await e;` and `await;` — a suspension whose answer nothing reads, so it needs no slot type.
       ExprStmt(expr): {
         if (isAwait(expr)) {

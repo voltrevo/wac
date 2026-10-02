@@ -32,7 +32,9 @@ string[] fixedWords() {
                   "Ticket", "value", "Step", "Waiting", "Yielded", "Done", "Coroutine", "TicketBase",
                   "never", "__wacState", "__wacRes", "__wacMachine", "__wacOrReady",
                   "__wacSetScheduleTarget", "=", "i32", "bool", "void", "__wacStepFn",
-                  "Ok", "Err", "Result", "__wacTryV", "__wacTryE", "Generator", "AsyncGenerator", "start"
+                  "Ok", "Err", "Result", "__wacTryV", "__wacTryE", "Generator", "AsyncGenerator", "start",
+                  "__wacNext", "__wacCurrent", "step", "__wacIsDone", "__wacYieldedOf",
+                  "__wacScheduleTarget"
   ] as string[];
 }
 
@@ -74,9 +76,17 @@ export i32 synthTryE()       { return 23; }
 export i32 synthGenerator()  { return 24; }
 export i32 synthAsyncGenerator() { return 25; }
 export i32 synthStartName()  { return 26; }
+/** What `for … in` over a generator steps it with, and `for await` an async one (ch36). */
+export i32 synthNextName()   { return 27; }
+export i32 synthCurrentName() { return 28; }
+export i32 synthStepCall()   { return 29; }
+export i32 synthIsDoneName() { return 30; }
+export i32 synthYieldedName() { return 31; }
+/** core's read of the schedule target, which a coroutine starts out running under. */
+export i32 synthTargetGet()  { return 32; }
 
 /** How many words come before the generated suspension slots. */
-export i32 synthFixedCount() { return 27; }
+export i32 synthFixedCount() { return 33; }
 
 /**
  * The ticket slot for await number `k` — what a value-reading `await` suspended on, read back with

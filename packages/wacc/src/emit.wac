@@ -35,7 +35,7 @@ import {
   Param, Pattern, Program, Stmt, StmtKind, Ty, TyKind, lvalueExpr, TupleBinding,
 } from "./ast.wac";
 import {
-  kAsync, kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
+  kAsync, kIdent, kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
   kShlEq, kShrEq, kShrUEq, kString, kAs, kAsAt, kAsBang, kAsTilde, kQuestion, kSymName, kInt, kNull,
@@ -3655,7 +3655,7 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
     // an `i32` — so a file with one needs core linked whether or not it imports anything from it.
     // **And so does an `async` body**, whose lowering builds core's `Ticket` and `__wacMachine`
     // (spec/next ch35) — `spec/cases/0319` is what that cost while the ticket type lived in `std`.
-    if (hasInterpolation(b, lexed) || hasAsync(lexed)) {
+    if (hasInterpolation(b, lexed) || hasAsync(b, lexed)) {
       if (qn >= queue.len()) { starts[0] = 2; return false; }
       queue[qn] = " core";
       queueSpec[qn] = "core";
@@ -4683,6 +4683,8 @@ string cellStructName(string ty) {
  */
 bool emitNameValue(B fb, u8[] src, Lexed lexed, Env env, string nm) {
   i32 capIx = env.captureAt(env.emittingLambda, nm);
+  // A captured `void` is a cell holding a placeholder, and reading it is reading nothing.
+  if (capIx >= 0 && env.capTypes[env.emittingLambda * capsPerLambda() + capIx] == "void") { return true; }
   if (capIx >= 0) {
     fb.byte(32); fb.u32leb(0);                    // local.get 0 — the capture struct
     fb.byte(251); fb.u32leb(2);                   // struct.get — the cell
@@ -8566,6 +8568,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     // `emitBody` takes a `defer` with the rest of its block, so one reaching here alone has nothing
     // after it and runs on the spot.
     Defer(deferred): { emitBody(fb, src, lexed, env, [deferred] as Stmt[]); }
+    Yield(value): { env.declineFor("a `yield` the lowering did not take"); }
     // Reached only for a `schedule` that is its own block — an `if`'s body written without braces —
     // which is in force for no statement at all, so only its target's evaluation remains.
     Schedule(target): {
@@ -8824,6 +8827,7 @@ string forInIterableType(u8[] src, Lexed lexed, Env env, Ty? elemTy, Expr iterab
 /** Whether `for … in` can walk a value of type `t`: an array, or a type with `len()` and `get(i)`. */
 bool forInWalkable(Env env, string t) {
   if (isArrayType(t)) { return true; }
+  if (env.methodAt(t, "__wacNext") >= 0) { return true; }
   i32 len = env.methodAt(t, "len");
   i32 get = env.methodAt(t, "get");
   return len >= 0 && get >= 0;
@@ -8841,6 +8845,48 @@ void emitForIn(B fb, u8[] src, Lexed lexed, Env env, Ty? elemTy, i32 nameTok, Ex
   string it = forInIterableType(src, lexed, env, elemTy, iterable);
   string et = forInElemType(src, lexed, env, elemTy, iterable);
   string tag = numText(env.depth) + " " + numText(line) + ":" + numText(col);
+  // **A generator is stepped** until `Done`, through core's `__wacNext` and `__wacCurrent` (ch36).
+  i32 nextFn = isArrayType(it) ? 0 - 1 : env.methodAt(it, "__wacNext");
+  if (nextFn >= 0) {
+    i32 curFn = env.methodAt(it, "__wacCurrent");
+    if (curFn < 0 || env.funcIndex[nextFn] < 0 || env.funcIndex[curFn] < 0) {
+      env.declineFor("a generator whose stepping this emitter could not find");
+      return;
+    }
+    i32 gen = env.scratchNamed("forin gen " + tag, it);
+    emitExprAt(fb, src, lexed, env, iterable, it);
+    fb.byte(33); fb.u32leb(gen);
+    env.addLocal(tokenTextOf(src, lexed, nameTok), et);
+    i32 gx = env.localCount - 1;
+    i32 savedGB = env.breakAt;
+    i32 savedGC = env.continueAt;
+    fb.byte(2); fb.byte(64);                    // block — what `break` leaves
+    env.depth = env.depth + 1;
+    env.breakAt = env.depth;
+    fb.byte(3); fb.byte(64);                    // loop
+    env.depth = env.depth + 1;
+    fb.byte(32); fb.u32leb(gen);
+    fb.byte(16); fb.u32leb(env.funcIndex[nextFn]);   // call __wacNext
+    fb.byte(69);                                // i32.eqz
+    fb.byte(13); fb.u32leb(1);                  // br_if out
+    fb.byte(32); fb.u32leb(gen);
+    fb.byte(16); fb.u32leb(env.funcIndex[curFn]);    // call __wacCurrent
+    if (et == "void") { } else { fb.byte(33); fb.u32leb(gx); }
+    fb.byte(2); fb.byte(64);                    // the body's block — where `continue` goes
+    env.depth = env.depth + 1;
+    env.continueAt = env.depth;
+    covPoint(fb, env, "loop", line, col);
+    emitBody(fb, src, lexed, env, inner);
+    fb.byte(11);
+    env.depth = env.depth - 1;
+    fb.byte(12); fb.u32leb(0);                  // br loop
+    fb.byte(11);
+    fb.byte(11);
+    env.depth = env.depth - 2;
+    env.breakAt = savedGB;
+    env.continueAt = savedGC;
+    return;
+  }
   i32 held = env.scratchNamed("forin arr " + tag, it);
   i32 at = env.scratchNamed("forin at " + tag, "i32");
   i32 len = env.scratchNamed("forin len " + tag, "i32");
@@ -9300,6 +9346,8 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // answer for `await` would be a program that runs and lies, which is worse than one that stops.
     Await(operand): { fb.byte(0); }
     Try(operand): { emitTry(fb, src, lexed, env, operand); }
+    // Rewritten by the async lowering into a call of the function's coroutine form.
+    CoroutineOf(call): { env.declineFor("a `coroutine` call the lowering did not rewrite"); }
     Unary(op, operand): {
       i32 k = lexed.tokens[op * tokenStride()];
       i32 um = structOperatorE(env, typeOfE(src, lexed, env, operand), unarySymbolE(k));
@@ -10981,10 +11029,18 @@ bool hasInterpolation(u8[] src, Lexed lexed) {
   return false;
 }
 
-/** Whether a file says `async` anywhere — which its lowering turns into uses of core's tickets. */
-bool hasAsync(Lexed lexed) {
+/**
+ * Whether a file has a machine in it — `async`, or a generator's `gen<…>`, `yield` or `coroutine` —
+ * which its lowering turns into uses of core's tickets and coroutines.
+ */
+bool hasAsync(u8[] src, Lexed lexed) {
   for (i32 t = 0; t < lexed.tokenCount; t++) {
-    if (lexed.tokens[t * tokenStride()] == kAsync()) { return true; }
+    i32 k = lexed.tokens[t * tokenStride()];
+    if (k == kAsync()) { return true; }
+    if (k != kIdent()) { continue; }
+    string w = tokenTextOf(src, lexed, t);
+    if (w == "yield" || w == "coroutine") { return true; }
+    if (w == "gen" && t + 1 < lexed.tokenCount && lexed.tokens[(t + 1) * tokenStride()] == kLt()) { return true; }
   }
   return false;
 }
@@ -11887,6 +11943,7 @@ LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
     Defer(dbody): { findLambdas(env, src, lexed, [dbody] as Stmt[], ret); }
     ExprStmt(expr): { findLambdasExpr(env, src, lexed, expr, ""); }
     Schedule(target): { findLambdasExpr(env, src, lexed, target, env.schedType); }
+    Yield(value): { if (value is not null) { findLambdasExpr(env, src, lexed, value!, ""); } }
   }
 }
 
@@ -12052,6 +12109,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     Ident(tok): { env.noteRead(tokenTextOf(src, lexed, tok)); }
     Await(operand): { if (operand is not null) { findLambdasExpr(env, src, lexed, operand!, ""); } }
     Try(operand): { findLambdasExpr(env, src, lexed, operand, ""); }
+    CoroutineOf(call): { findLambdasExpr(env, src, lexed, call, ""); }
     Unary(op, operand): { findLambdasExpr(env, src, lexed, operand, want); }
     Binary(op, left, right): {
       findLambdasExpr(env, src, lexed, left, "");
@@ -13651,6 +13709,8 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
       }
       return "";
     }
+    // Lowered with the generator it is in; one left here was in a body the lowering declined.
+    Yield(value): { return env.asyncWhy != "" ? env.asyncWhy : "a `yield` outside a generator the lowering took"; }
     Schedule(target): {
       if (env.schedGlobal < 0) { return "a schedule statement in a program without core's schedule target"; }
       return unsupportedExpr(src, lexed, env, target);
@@ -14163,9 +14223,6 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         string inner = unsupportedIn(src, lexed, env, body);
         env.localCount = lsaved;
         env.captureFloor = floorWas;
-        // Except one verdict: a capture of a parameter a `void` argument erased has nothing to put in
-        // the cell, so the enclosing function is as uncallable as one reading it directly.
-        if (inner == "a read of a parameter of type void") { return inner; }
       }
       if (li >= 0 && env.lambdaSigs[li] != "") {
         //
@@ -14239,12 +14296,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
-      // **A parameter a `void` argument erased has no slot** — the signature drops it — so a body
-      // that reads it cannot be emitted. `Ticket<void>.resolve(T v)` is the one there is, and nothing
-      // can call it: there is no `void` to pass.
+      // A parameter a `void` argument erased has no slot, and reading it emits nothing; captured, its
+      // cell holds a placeholder — `Ticket<void>.resolve(T v)` captures one.
       i32 li = env.localAt(nm);
-      // Read in place it is nothing; *captured* by a lambda, there is nothing to put in the cell.
-      if (li >= 0 && li < env.captureFloor && env.localTypes[li] == "void") { return "a read of a parameter of type void"; }
       if (li >= 0) { return ""; }
       i32 ci = env.constAt(nm);
       // **Through the import that names it**, as emitting does: `import { LIMIT as L }` reads `L`.
@@ -14280,6 +14334,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     Await(operand): {
       return env.asyncWhy != "" ? env.asyncWhy : "an `await` in a shape the async lowering does not take";
     }
+    CoroutineOf(call): { return "a `coroutine` call of something that is not a generator or async function"; }
     Try(operand): {
       string r = unsupportedExpr(src, lexed, env, operand);
       if (r != "") { return r; }
@@ -14787,11 +14842,7 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
   // now, so the claim is a test rather than a paragraph.
   string why = unsupportedIn(src, lexed, env, body);
   env.lastWhy = why;
-  // **Uncallable is not a defect.** A body that reads a parameter a `void` argument erased cannot be
-  // called — there is no `void` to pass — so leaving it out loses nothing; whatever does reference it
-  // declines in its own right, with its own reason.
-  bool uncallable = why == "a read of a parameter of type void";
-  if (why != "" && !uncallable && env.blocked == "") { env.blocked = why; }
+  if (why != "" && env.blocked == "") { env.blocked = why; }
   env.localCount = savedCount;
   env.paramCount = savedParams;
   env.returnType = savedRet;
@@ -16523,6 +16574,7 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
     }
     Await(operand): { if (operand is not null) { collectArrayTypesOfExpr(env, src, lexed, operand!); } }
     Try(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
+    CoroutineOf(call): { collectArrayTypesOfExpr(env, src, lexed, call); }
     Unary(op, operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
     Unwrap(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
     Binary(op, left, right): {
@@ -16560,6 +16612,7 @@ string kindOfExpr(Expr e) {
     Ident(tok): { return "name"; }
     Await(operand): { return "await"; }
     Try(operand): { return "try"; }
+    CoroutineOf(call): { return "coroutine"; }
     Unary(op, operand): { return "unary"; }
     Binary(op, left, right): { return "binary"; }
     Cast(op, operand, target): { return "cast"; }
