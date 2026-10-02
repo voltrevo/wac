@@ -165,8 +165,8 @@ export struct Point {
 
   Point of(i32 x, i32 y) { return Point(x, y); }
   i32 distanceSq(const this, Point other) {
-    i32 dx = x - other.x;
-    i32 dy = y - other.y;
+    i32 dx = this.x - other.x;
+    i32 dy = this.y - other.y;
     return dx * dx + dy * dy;
   }
 }

@@ -27,7 +27,7 @@ import { Sys } from "std";
 
 export struct Sink {
   Sys sys;                                     // a Sink holds the whole capability
-  void write(const this, string line) { sys.log(line); }
+  void write(const this, string line) { this.sys.log(line); }
 }
 
 // ---- logger/src/format.wac ----

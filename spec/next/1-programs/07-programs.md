@@ -186,6 +186,7 @@ forms settle first and then answer the same way.
 ```wac
 // expect: exits 1
 import { Sys } from "std";
+import { Result } from "core";
 
 export Result<i32> main(Sys sys) {
   return Result.Err("no input");

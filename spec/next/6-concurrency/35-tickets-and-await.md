@@ -347,9 +347,9 @@ export i32 continuationResumes() {
   Ticket<i32> input;
   Ticket<i32> r = doubled(input);
 
-  bool waitsOnInput = pending[0].t is input;   // true
+  bool waitsOnInput = pending.get(0).t is input;   // true
   input.resolve(10);
-  pending[0].call();
+  pending.get(0).call();
 
   return waitsOnInput ? r.value() : 0;
 }
@@ -370,7 +370,7 @@ export void callsTooEarly() {
 
   Ticket<i32> t;
   doubled(t);
-  pending[0].call();                       // traps: t has not settled
+  pending.get(0).call();                   // traps: t has not settled
 }
 ```
 

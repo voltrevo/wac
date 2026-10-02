@@ -36,6 +36,7 @@ spec/next/1-programs/02-modules-and-imports.md#13
 spec/next/1-programs/02-modules-and-imports.md#14
 spec/next/1-programs/02-modules-and-imports.md#15
 spec/next/1-programs/02-modules-and-imports.md#16
+spec/next/1-programs/02-modules-and-imports.md#17
 spec/next/1-programs/02-modules-and-imports.md#18
 spec/next/1-programs/02-modules-and-imports.md#19
 spec/next/1-programs/02-modules-and-imports.md#20
@@ -94,6 +95,7 @@ spec/next/1-programs/07-programs.md#5
 spec/next/1-programs/07-programs.md#6
 spec/next/1-programs/07-programs.md#7
 spec/next/1-programs/07-programs.md#8
+spec/next/1-programs/07-programs.md#9
 spec/next/1-programs/07-programs.md#10
 spec/next/1-programs/07-programs.md#11
 spec/next/1-programs/07-programs.md#12
@@ -419,6 +421,8 @@ spec/next/6-concurrency/35-tickets-and-await.md#7
 spec/next/6-concurrency/35-tickets-and-await.md#8
 spec/next/6-concurrency/35-tickets-and-await.md#9
 spec/next/6-concurrency/35-tickets-and-await.md#10
+spec/next/6-concurrency/35-tickets-and-await.md#11
+spec/next/6-concurrency/35-tickets-and-await.md#12
 spec/next/6-concurrency/35-tickets-and-await.md#13
 spec/next/6-concurrency/35-tickets-and-await.md#14
 spec/next/6-concurrency/35-tickets-and-await.md#16
@@ -460,6 +464,7 @@ spec/next/8-tooling/48-bindgen.md#2
 spec/next/8-tooling/48-bindgen.md#3
 spec/next/8-tooling/48-bindgen.md#4
 spec/next/8-tooling/48-bindgen.md#5
+spec/next/8-tooling/48-bindgen.md#6
 spec/next/8-tooling/48-bindgen.md#7
 spec/next/8-tooling/48-bindgen.md#8
 spec/next/8-tooling/48-bindgen.md#9

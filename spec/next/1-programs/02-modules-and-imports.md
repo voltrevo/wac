@@ -366,7 +366,7 @@ T max<T>(T a, T b) { return a > b ? a : b; }
 
 struct Box<T> {
   T value;
-  T get(const this) { return value; }
+  T get(const this) { return this.value; }
 }
 
 export { max<i32> as maxI32, Box<i32> as IntBox };
