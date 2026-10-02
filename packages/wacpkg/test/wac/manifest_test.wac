@@ -24,7 +24,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Manifest, Mapping, Match, Located, readManifest, matchSpecifier, locate, packageEntry,
          unsupportedTransport, M_OK, M_NOT_JSON5, M_NOT_OBJECT, M_IMPORTS_KIND, M_MAPPING_KIND,
          M_NO_GIT, M_NO_REF, M_SUBDIR_KIND, M_EMPTY_NAME, M_PREFIX_KEY, M_SUBDIR_ESCAPE,
-         M_RESERVED_NAME, M_EXPORTS_KIND, M_PATH_FORM, manifestWhy }
+         M_RESERVED_NAME, M_EXPORTS_KIND, M_PATH_FORM, M_CHECK_KIND, manifestWhy }
   from "../../src/manifest.wac";
 
 Manifest of(string src) { return readManifest(src.toBytes()); }
@@ -243,7 +243,7 @@ export string test_the_subdir_selects_the_package_directory() {
   // And `locate` checks again rather than trusting that it was handed a manifest `readManifest`
   // made: a `Manifest` is a struct anybody can build.
   Mapping[] rows = [Mapping("x", "g", "r", "a/../../x")];
-  Manifest built = Manifest(true, M_OK(), "", rows, "");
+  Manifest built = Manifest(true, M_OK(), "", rows, "", string[]());
   Located esc = locate(built, matchSpecifier(built, "x"));
   t.isFalse(esc.ok, "a hand-built subdir that climbs out still locates nowhere");
   if (!esc.ok) { t.eqI32(esc.code, M_SUBDIR_ESCAPE(), "and says why"); }
@@ -399,7 +399,7 @@ export string test_every_manifest_refusal_has_its_own_sentence() {
   i32[] codes = [
                       M_NOT_JSON5(), M_NOT_OBJECT(), M_IMPORTS_KIND(), M_MAPPING_KIND(),
                       M_NO_GIT(), M_NO_REF(), M_SUBDIR_KIND(), M_EMPTY_NAME(), M_PREFIX_KEY(),
-                      M_SUBDIR_ESCAPE(), M_RESERVED_NAME(), M_EXPORTS_KIND(), M_PATH_FORM()
+                      M_SUBDIR_ESCAPE(), M_RESERVED_NAME(), M_EXPORTS_KIND(), M_PATH_FORM(), M_CHECK_KIND()
   ];
   string fallback = manifestWhy(-1);
   t.isTrue(fallback.len() > 0, "an unknown code renders to nothing at all");
@@ -457,5 +457,22 @@ export string test_a_manifest_path_must_begin_with_dot_slash() {
     "{ imports: { geo: { git: 'https://x.invalid/g', ref: 'v1', subdir: './packages/geometry' } } }"
   ];
   for (i32 i = 0; i < good.len(); i++) { t.isTrue(readManifest(good[i].toBytes()).ok, good[i] + " reads"); }
+  return t.report();
+}
+
+export string test_check_exclude_is_a_list_of_dot_slash_patterns_2ixx2cu_yfwkbsg() {
+  // spec/next ch06: `check.exclude` names files `wac check` does not discover, each relative to the
+  // project and written with its `./`.
+  T t = T.create();
+  Manifest ok = readManifest("{ check: { exclude: [\"./fixtures/**\", \"./gen/*.wac\"] } }".toBytes());
+  t.isTrue(ok.ok, "two patterns read — code " + ok.detail);
+  t.eqI32(ok.checkExclude.len(), 2, "both kept");
+  if (ok.checkExclude.len() == 2) { t.eqStr(ok.checkExclude[1], "./gen/*.wac", "as written"); }
+  Manifest bare = readManifest("{ check: { exclude: [\"fixtures/**\"] } }".toBytes());
+  t.isTrue(!bare.ok && bare.code == M_PATH_FORM(), "a pattern without `./` is refused");
+  Manifest kind = readManifest("{ check: { exclude: \"./x\" } }".toBytes());
+  t.isTrue(!kind.ok && kind.code == M_CHECK_KIND(), "one string is not a list");
+  Manifest none = readManifest("{}".toBytes());
+  t.isTrue(none.ok && none.checkExclude.len() == 0, "and none is none");
   return t.report();
 }

@@ -35,7 +35,8 @@ export i32 M_PREFIX_KEY()    { return 9; }   // a mapping name ending in `/`: a 
 export i32 M_SUBDIR_ESCAPE() { return 10; }  // a `subdir` that leaves its own checkout
 export i32 M_RESERVED_NAME()  { return 11; }  // a mapping of `core`, `std`, or anything under them
 export i32 M_EXPORTS_KIND()   { return 12; }  // `exports` is present and is not one module path
-export i32 M_PATH_FORM()      { return 13; }  // an `exports` or `subdir` that does not begin with `./`
+export i32 M_PATH_FORM()      { return 13; }  // an `exports`, `subdir` or `check.exclude` not beginning with `./`
+export i32 M_CHECK_KIND()     { return 14; }  // `check` is not an object, or its `exclude` not a list of strings
 
 /**
  * What a code means, as a sentence for somebody who has to act on it.
@@ -57,6 +58,7 @@ export string manifestWhy(i32 code) {
   if (code == M_SUBDIR_ESCAPE()) { return "a `subdir` leaves its own checkout"; }
   if (code == M_EXPORTS_KIND())  { return "`exports` is not one module path"; }
   if (code == M_PATH_FORM())     { return "a path in wac.json5 must begin with `./`"; }
+  if (code == M_CHECK_KIND())    { return "`check` is an object whose `exclude` is a list of `./` patterns"; }
   if (code == M_RESERVED_NAME()) {
     return "`core` and `std` are the toolchain's own and cannot be mapped";
   }
@@ -106,9 +108,14 @@ export struct Manifest {
    * written, relative to the manifest's directory; `""` when the manifest names none.
    */
   string exports;
+  /**
+   * `check.exclude` — patterns of files `wac check` does not discover in this project (spec/next ch06
+   * `§wac-check-exclude-2ixx2cu`), each written with its `./`.
+   */
+  string[] checkExclude;
 }
 
-Manifest failed(i32 code, string detail) { return Manifest(false, code, detail, Mapping[](), ""); }
+Manifest failed(i32 code, string detail) { return Manifest(false, code, detail, Mapping[](), "", string[]()); }
 
 /** The manifest in `src`, checked. An empty document — or one with no `imports` — is valid. */
 export Manifest readManifest(u8[] src) {
@@ -135,8 +142,36 @@ export Manifest readManifest(u8[] src) {
     if (!startsWithDotSlash(exports)) { return failed(M_PATH_FORM(), "exports"); }
   }
 
+  // **What `wac check` leaves undiscovered** — every pattern explicitly relative
+  // (`§wac-check-exclude-dot-slash-yfwkbsg`), for the reason `exports` is.
+  string[] exclude = string[]();
+  JsonValue? checkVal = root.getStr("check");
+  if (checkVal is not null) {
+    match (checkVal!) {
+      Object(co): {
+        JsonValue? ex = co.getStr("exclude");
+        if (ex is not null) {
+          match (ex!) {
+            Array(items): {
+              exclude = string[].filled(items.len(), "");
+              for (i32 i = 0; i < items.len(); i++) {
+                match (items.get(i)) {
+                  Str(bytes): { exclude[i] = string.fromBytes(bytes); }
+                  default: { return failed(M_CHECK_KIND(), "check.exclude"); }
+                }
+                if (!startsWithDotSlash(exclude[i])) { return failed(M_PATH_FORM(), "check.exclude"); }
+              }
+            }
+            default: { return failed(M_CHECK_KIND(), "check.exclude"); }
+          }
+        }
+      }
+      default: { return failed(M_CHECK_KIND(), "check"); }
+    }
+  }
+
   JsonValue? importsVal = root.getStr("imports");
-  if (importsVal is null) { return Manifest(true, M_OK(), "", Mapping[](), exports); }
+  if (importsVal is null) { return Manifest(true, M_OK(), "", Mapping[](), exports, exclude); }
 
   JsonObject table = JsonObject.create();
   match (importsVal!) {
@@ -184,7 +219,7 @@ export Manifest readManifest(u8[] src) {
 
     out[i] = Mapping(name, git.value, ref.value, subdir);
   }
-  return Manifest(true, M_OK(), "", out, exports);
+  return Manifest(true, M_OK(), "", out, exports, exclude);
 }
 
 /** A member that has to be a string. A struct rather than an out-parameter: a `string` is a value

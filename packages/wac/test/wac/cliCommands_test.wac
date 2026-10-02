@@ -176,7 +176,8 @@ export string test_usage_and_unknown_commands_3nkq8wj(Core core, Cli cli) {
   Ran help = wac(cli, d.path, ["--help"]);
   t.eqI32(help.status, 0, "--help is not an error");
 
-  Ran noEntry = wac(cli, d.path, ["check"]);
+  // `compile` rather than `check`: `wac check` alone checks the project it is run in (spec/next ch06).
+  Ran noEntry = wac(cli, d.path, ["compile"]);
   t.eqI32(noEntry.status, 2, "a command with no entry is a usage error");
 
   Ran unknown = wac(cli, d.path, ["frobnicate", "math.wac"]);

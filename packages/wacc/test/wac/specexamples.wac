@@ -428,7 +428,16 @@ string meetsCheck(Cli cli, string scratch, ExFence fence, ExExpect x, string[] p
   for (i32 w = 2; w < words.len(); w++) { line = line + " " + words[w]; }
   Exec r = withEnv(cli, ["WAC_HOME"], [dir + "-home"], "/bin/sh", ["-c", line]);
   bool ok = r.ran() && r.status == 0;
-  if (x.kind == "refused") { return ok ? "accepted by `" + x.command + "`, and it must be refused" : ""; }
+  // **Refused means diagnosed** — status 1. A usage error is 2, and `wac check` with no path answered
+  // one, so every `(wac check): refused` was met by a command that never looked at the fence.
+  if (x.kind == "refused") {
+    if (ok) { return "accepted by `" + x.command + "`, and it must be refused"; }
+    if (r.status != 1) {
+      return "`" + x.command + "` exited " + itoa(r.status) + " rather than diagnosing: "
+           + trimmed(firstLineOf(string.fromBytes(r.stderr) + string.fromBytes(r.stdout)));
+    }
+    return "";
+  }
   if (x.kind == "emits") { return ok ? "" : "refused by `" + x.command + "`: " + trimmed(firstLineOf(string.fromBytes(r.stderr) + string.fromBytes(r.stdout))); }
   return "an expectation `" + x.kind + "` about `" + x.command + "`, which checks rather than runs";
 }

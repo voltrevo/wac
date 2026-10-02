@@ -1179,7 +1179,8 @@ export i32 main(Sys sys) {
     core.warn(unknownCommand(cmd));
     return 2;
   }
-  if (argc < 2) {
+  // `wac check` alone checks the project it is run in (spec/next ch06) — it needs no path.
+  if (argc < 2 && cmd != "check") {
     core.warn(usageFor(cmd));
     return 2;
   }
@@ -1204,11 +1205,11 @@ export i32 main(Sys sys) {
     core.warn(unknownCommand(cmd));
     return 2;
   }
-  if (pos.len() < 1) {
+  if (pos.len() < 1 && cmd != "check") {
     core.warn(usageFor(cmd));
     return 2;
   }
-  string entry = normalisePath(pos[0]);
+  string entry = pos.len() > 0 ? normalisePath(pos[0]) : "";
 
   // **A second path is refused rather than dropped.** `wac test a_test.wac b_test.wac` ran only the
   // first and reported `2 passed` over it, and `wac check ok.wac broken.wac` printed "no
@@ -1223,7 +1224,7 @@ export i32 main(Sys sys) {
   // large directory into lists of twelve and hands each list to one run. Refusing the list made the
   // old silent wrong answer loud, which was worth doing, but the answer it should give is every path.
   // `testTargets` is where the list becomes a walk.
-  if ((cmd == "check" || cmd == "build" || cmd == "audit") && pos.len() > 1) {
+  if ((cmd == "build" || cmd == "audit") && pos.len() > 1) {
     core.warn("wac " + cmd + ": takes one path, given " + itoa(pos.len()) + " — `" + pos[0]
               + "` and `" + pos[1] + "`. Run it once per path, or name a directory.");
     return 2;
@@ -1243,6 +1244,12 @@ export i32 main(Sys sys) {
   cli = narrowed(cli, forCommand(cmd));
 
   Fs fs = Fs.onHost(cli, 0);
+
+  if (cmd == "check") {
+    string[] given = string[].filled(pos.len(), "");
+    for (i32 i = 0; i < pos.len(); i++) { given[i] = normalisePath(pos[i]); }
+    return checkCommand(core, cli, fs, given);
+  }
 
   // **A directory becomes one generated entry, before anything is compiled.** `wac test <dir>` walks
   // for `*_test.wac` and writes an aggregate that imports every one of them and re-exports its tests;
@@ -1533,11 +1540,7 @@ export i32 main(Sys sys) {
   string wire = diagnoseGraphIn(paths, texts, res, entry);
   string diags = renderDiagnostics(wire, paths, texts);
   if (diags != "") { core.warn(diags); }
-  // **`check` always says what it read** (spec/next ch45 `§wac-cli-check-4mkq8wp`) — after errors
-  // and warnings as much as after nothing, since the count is the part that cannot otherwise be seen.
-  if (cmd == "check") { core.log(entry + ": " + itoa(src.n) + " file(s), " + diagnosticCount(wire)); }
   if (wireHasErrors(wire)) { return 1; }
-  if (cmd == "check") { return 0; }
 
   // **`audit` stops here for the same reason `check` does**: it is a question about the source, and
   // emitting a module to answer it would be a minute of work for a table that does not depend on one.
@@ -2382,4 +2385,127 @@ string diagnosticCount(string wire) {
   if (warnings == 0) { return itoa(errors) + " error(s)"; }
   if (errors == 0) { return itoa(warnings) + " warning(s)"; }
   return itoa(errors) + " error(s), " + itoa(warnings) + " warning(s)";
+}
+
+/**
+ * `wac check [files…]` — spec/next ch06. With files, each is a root and everything they import is
+ * checked in full (`§wac-check-files-2ncb9c8`); with none, every `.wac` file under the project's
+ * `wac.json5` is a root, less what its `check.exclude` names (`§wac-check-project-x9xt4fg`,
+ * `§wac-check-exclude-2ixx2cu`). One graph, merged from every root, checked once — and, like every
+ * command, it ends by saying how much it read.
+ */
+i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
+  // **It always says what it read** (spec/next ch45 `§wac-cli-check-4mkq8wp`) — after errors and
+  // warnings as much as after nothing, since the count is the part that cannot otherwise be seen.
+  string[] roots = given;
+  string label = given.len() == 1 ? given[0] : (given.len() > 1 ? given[0] + " and " + itoa(given.len() - 1) + " more" : "");
+  if (given.len() == 0) {
+    // **The project this is run in**: the nearest `wac.json5` at or above the working directory.
+    string dir = ".";
+    bool found = false;
+    for (i32 up = 0; up < 32 && !found; up++) {
+      if (fs.stat(dir + "/" + MANIFEST_NAME()).exists) { found = true; } else { dir = dir == "." ? ".." : dir + "/.."; }
+    }
+    // **No manifest anywhere above: the working directory is the project.** The README's own example
+    // runs `wac check` over a lone file with no `wac.json5`, and expects it checked; refusing for want
+    // of one would answer a question about source with a usage error.
+    if (!found) { dir = "."; }
+    FileResult mf = cli.readFile(dir + "/" + MANIFEST_NAME()).wait();
+    Manifest m = readManifest(found && mf.ok ? mf.bytes : "{}".toBytes());
+    if (!m.ok) {
+      core.warn("wac check: " + dir + "/" + MANIFEST_NAME() + " — " + manifestWhy(m.code)
+                + (m.detail == "" ? "" : " (" + m.detail + ")"));
+      return 1;
+    }
+    Vec<string> found2 = Vec.create();
+    discoverWac(cli, dir, "", m.checkExclude, found2);
+    roots = found2.toArray();
+    label = dir;
+    if (roots.len() == 0) {
+      core.log(label + ": 0 file(s), no diagnostics");
+      return 0;
+    }
+  }
+  // **One graph from every root**, each file once: two roots that share an import share its check.
+  Vec<string> ps = Vec.create();
+  Vec<string> ts = Vec.create();
+  Sources first = gather(fs, cli, normalisePath(roots[0]), false);
+  for (i32 r = 0; r < roots.len(); r++) {
+    Sources s = r == 0 ? first : gather(fs, cli, normalisePath(roots[r]), false);
+    if (s.missing != "" || s.why != "") {
+      core.warn(s.why != "" ? "wacc: " + s.why : "wacc: cannot read " + s.missing);
+      return 1;
+    }
+    for (i32 i = 0; i < s.n; i++) {
+      bool have = false;
+      for (i32 k = 0; k < ps.len(); k++) { if (ps.get(k) == s.paths[i]) { have = true; } }
+      if (!have) { ps.push(s.paths[i]); ts.push(s.texts[i]); }
+    }
+  }
+  string[] paths = ps.toArray();
+  string[] texts = ts.toArray();
+  Res res = resOf(first);
+  string wire = diagnoseGraphIn(paths, texts, res, normalisePath(roots[0]));
+  string diags = renderDiagnostics(wire, paths, texts);
+  if (diags != "") { core.warn(diags); }
+  core.log(label + ": " + itoa(paths.len()) + " file(s), " + diagnosticCount(wire));
+  return wireHasErrors(wire) ? 1 : 0;
+}
+
+/**
+ * Every `.wac` file under `dir` — the project's own: not inside a `.`-directory, `node_modules` or
+ * `target`, nor inside a nested project (a directory with its own `wac.json5`), nor matching an
+ * exclusion. `rel` is the path below the project directory, which is what an exclusion is matched
+ * against.
+ */
+void discoverWac(Cli cli, string dir, string rel, string[] exclude, Vec<string> out) {
+  string here = rel == "" ? dir : dir + "/" + rel;
+  string[]? names = cli.readDir(here).wait();
+  if (names is null) { return; }
+  string[] sorted = names!;
+  for (i32 i = 1; i < sorted.len(); i++) {
+    string v = sorted[i];
+    i32 j = i - 1;
+    while (j >= 0 && sorted[j] > v) { sorted[j + 1] = sorted[j]; j = j - 1; }
+    sorted[j + 1] = v;
+  }
+  for (i32 i = 0; i < sorted.len(); i++) {
+    string name = sorted[i];
+    if (name == "" || name.slice(0, 1) == "." || name == "node_modules" || name == "target") { continue; }
+    string sub = rel == "" ? name : rel + "/" + name;
+    string full = dir + "/" + sub;
+    Stat st = cli.stat(full).wait();
+    if (st.isDir) {
+      if (cli.stat(full + "/" + MANIFEST_NAME()).wait().exists) { continue; }
+      discoverWac(cli, dir, sub, exclude, out);
+      continue;
+    }
+    if (name.len() < 5 || name.slice(name.len() - 4, name.len()) != ".wac") { continue; }
+    bool skip = false;
+    for (i32 e = 0; e < exclude.len(); e++) { if (globMatches(exclude[e].slice(2, exclude[e].len()), sub)) { skip = true; } }
+    if (!skip) { out.push(dir == "." ? sub : full); }
+  }
+}
+
+/** A `check.exclude` pattern against a project-relative path: `**` spans directories, `*` does not. */
+bool globMatches(string pat, string path) {
+  if (pat == "") { return path == ""; }
+  if (pat.len() >= 2 && pat.slice(0, 2) == "**") {
+    string rest = pat.slice(2, pat.len());
+    if (rest.len() > 0 && rest.slice(0, 1) == "/") { rest = rest.slice(1, rest.len()); }
+    for (i32 i = 0; i <= path.len(); i++) {
+      if (globMatches(rest, path.slice(i, path.len()))) { return true; }
+    }
+    return false;
+  }
+  if (pat.slice(0, 1) == "*") {
+    string rest = pat.slice(1, pat.len());
+    for (i32 i = 0; i <= path.len(); i++) {
+      if (globMatches(rest, path.slice(i, path.len()))) { return true; }
+      if (i < path.len() && path.slice(i, i + 1) == "/") { return false; }
+    }
+    return false;
+  }
+  if (path.len() == 0 || pat.slice(0, 1) != path.slice(0, 1)) { return false; }
+  return globMatches(pat.slice(1, pat.len()), path.slice(1, path.len()));
 }
