@@ -165,7 +165,22 @@ Program[] cases() {
          "export Vec<f64> readings() { return Vec<f64>.create(); }\n" +
          "export struct Pair<T> { T a; T b; }\n" +
          "export i32 simple() { return 42; }\n" +
-         "export i32 firstOf(fn<i32(i32)>[] fs) { return fs[0](1); }\n")
+         "export i32 firstOf(fn<i32(i32)>[] fs) { return fs[0](1); }\n"),
+    // spec/next ch48: a private field has no accessor and keeps `of` from being generated, a private
+    // method is not bound, a `const` field has no setter, a declared `of` is the one bound, every
+    // class has `toObject()`, and an enum with a variant named `tag` is skipped.
+    Program("private and const members, a declared `of`, and a variant that would hide `tag`",
+         "export struct Account {\n" +
+         "  private i32 balance;\n" +
+         "  const string owner;\n" +
+         "  Account open(string who) { return Account(0, who); }\n" +
+         "  i32 shown(const this) { return this.balance; }\n" +
+         "  private void bump(this) { this.balance += 1; }\n" +
+         "}\n" +
+         "export struct Point { i32 x; i32 y; Point of(i32 x) { return Point(x, x); } }\n" +
+         "export enum Shape { Dot, Circle(f64 r) }\n" +
+         "export enum Marker { tag, Other }\n" +
+         "export i32 count(Account a) { return a.shown(); }\n")
   ];
 }
 

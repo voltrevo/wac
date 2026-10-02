@@ -245,8 +245,8 @@ Deno.test("bindgen: a struct and an enum cross as classes holding the reference"
       if (String(got) !== String(want)) wrong.push(`${what}: ${got}, wanted ${want}`);
     };
 
-    const p = g.Point.$of(3, 4);
-    eq("Point.$of(3,4).sum()", p.sum(), 7);
+    const p = g.Point.of(3, 4);
+    eq("Point.of(3,4).sum()", p.sum(), 7);
     eq("p.x", p.x, 3);
     p.y = 10;                                    // a setter writes through the reference
     eq("p.sum() after p.y = 10", p.sum(), 13);

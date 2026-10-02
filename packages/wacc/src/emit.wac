@@ -38,7 +38,7 @@ import { Frontend, frontendOf } from "./frontend.wac";
 import { endsWith, Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind,
-  Method, NamedArg,
+  Field, Method, NamedArg,
   Param, Pattern, Program, Stmt, StmtKind, Ty, TyKind, lvalueExpr, TupleBinding,
 } from "./ast.wac";
 import {
@@ -4421,22 +4421,26 @@ string bindTypesOf(Front f) {
             if (tpl == "" || tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
             i32 pushed = pushSubstitution(env, src, lexed, typeParams, name, tpl);
             out = out + methodLines(env, src, lexed, bind, name, methods);
+            out = out + memberFlagLines(src, lexed, bind, fields, methods);
             popSubstitution(env, pushed);
             continue;
           }
           if (nameKeyOf(env, src, lexed, nameTok) != name) { continue; }
           out = out + methodLines(env, src, lexed, bind, name, methods);
+          out = out + memberFlagLines(src, lexed, bind, fields, methods);
         }
         EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() > 0) {
             if (tpl == "" || tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
             i32 epushed = pushSubstitution(env, src, lexed, typeParams, name, tpl);
             out = out + methodLines(env, src, lexed, bind, name, methods);
+            out = out + memberFlagLines(src, lexed, bind, Field[](), methods);
             popSubstitution(env, epushed);
             continue;
           }
           if (nameKeyOf(env, src, lexed, nameTok) != name) { continue; }
           out = out + methodLines(env, src, lexed, bind, name, methods);
+          out = out + memberFlagLines(src, lexed, bind, Field[](), methods);
         }
         default: { }
       }
@@ -4550,6 +4554,24 @@ i32 genericArityOf(Env env, Decl[] ds, u8[] s0, Lexed l0, string name) {
     }
   }
   return 0;
+}
+
+/**
+ * One `F` line per member that is `private` or `const` — `F\tAccount\tbalance\tprivate` — which
+ * bindgen reads: a private member is not bound, a `const` field has no setter (spec/next ch48
+ * `§wac-bind-private-7kpcy8t`). A manifest has no use for them and skips the tag.
+ */
+string memberFlagLines(u8[] src, Lexed lexed, string bind, Field[] fields, Method[] methods) {
+  string out = "";
+  for (i32 i = 0; i < fields.len(); i++) {
+    string fl = fields[i].isPrivate ? (fields[i].isConst ? "private,const" : "private")
+              : (fields[i].isConst ? "const" : "");
+    if (fl != "") { out = out + "F\t" + bind + "\t" + tokenTextOf(src, lexed, fields[i].nameTok) + "\t" + fl + "\n"; }
+  }
+  for (i32 m = 0; m < methods.len(); m++) {
+    if (methods[m].isPrivate) { out = out + "F\t" + bind + "\t" + tokenTextOf(src, lexed, methods[m].nameTok) + "\tprivate\n"; }
+  }
+  return out;
 }
 
 /** One `M` line per method the module actually emitted for this owner. */

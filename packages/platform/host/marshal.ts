@@ -187,8 +187,8 @@ function give(b: Bound, make: string, data: Uint8Array): unknown {
  * A value going the other way: the JavaScript a host produced, as something wasm can take.
  *
  * **A reference may arrive wrapped.** The generated glue returns a class instance holding the raw
- * reference in `$ref`, and unwraps it on the way out — `(v) => v === null ? null : v.$ref`. A driver
- * gets handed whichever the host chose to build, so this accepts both: a `$ref` if there is one, and
+ * reference in `ref`, and unwraps it on the way out — `(v) => v === null ? null : v.ref`. A driver
+ * gets handed whichever the host chose to build, so this accepts both: a `ref` if there is one, and
  * the value itself otherwise. Getting that wrong hands wasm a JavaScript object, which traps at a
  * distance from the cause.
  */
@@ -202,7 +202,7 @@ export function toWasm(b: Bound, shape: Shape, v: unknown): unknown {
       return give(b, "$bind$str_from_mem", new TextEncoder().encode(String(v)));
     case "ref":
       if (v === null || v === undefined) return null;
-      return typeof v === "object" && "$ref" in (v as object) ? (v as { $ref: unknown }).$ref : v;
+      return typeof v === "object" && "ref" in (v as object) ? (v as { ref: unknown }).ref : v;
     case "array": {
       if (v === null || v === undefined) return null;
       const items = v as ArrayLike<unknown>;

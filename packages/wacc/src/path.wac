@@ -238,6 +238,14 @@ export struct Res {
     return Res(roots, string[].filled(0, ""), string[].filled(0, ""), string[].filled(0, ""), "");
   }
 
+  /**
+   * All five, for a host: bindgen generates a field-wise `of` only for a struct that declares none
+   * (spec/next ch48), and this one's `of` takes the roots alone.
+   */
+  Res whole(string[] roots, string[] mapFrom, string[] mapSpec, string[] mapTo, string base) {
+    return Res(roots, mapFrom, mapSpec, mapTo, base);
+  }
+
   /** The project `path` sits in, or "" — keyed by position against the graph's `paths`. */
   string rootAt(const this, string[] paths, string path) {
     for (i32 i = 0; i < paths.len() && i < this.roots.len(); i++) {

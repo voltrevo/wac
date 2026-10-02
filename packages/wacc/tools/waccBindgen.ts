@@ -114,6 +114,17 @@ export function parseNamed(wire: string): Map<string, string> {
   return out;
 }
 
+/** The `F` lines: a member that is `private` or `const`, keyed `bind\tmember` (spec/next ch48). */
+export function parseFlags(wire: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const line of wire.split("\n")) {
+    if (!line.startsWith("F\t")) continue;
+    const cells = line.split("\t");
+    out.set(`${cells[1]}\t${cells[2]}`, cells[3]);
+  }
+  return out;
+}
+
 /** The `X` lines: a generic the entry exports with no instantiation, and the form that would bind it. */
 export function parseGenerics(wire: string): { name: string; form: string }[] {
   const out: { name: string; form: string }[] = [];
@@ -195,6 +206,9 @@ export function usableSig(c: Callback, outs: Callback[] = []): boolean {
   const handedOut = new Set(outs.map(o => o.wac));
   return c.params.every(t => !t.startsWith("fn[") || handedOut.has(t));
 }
+
+/** What a generated class already answers to, which a variant of the same name would hide. */
+const RESERVED = new Set(["tag", "ref", "toObject"]);
 
 const SCALARS = new Set(["i32", "u32", "i64", "u64", "f32", "f64", "bool", "void"]);
 /** The arrays that cross through the staging buffer, which is where `_to_mem`/`_from_mem` exist. */
@@ -284,6 +298,8 @@ export function supported(
 
 /** The classes in play, so `tsType` and the conversions can name them. */
 let namedTypes: Map<string, BindType> = new Map();
+/** `bind\tmember` → `private`, `const` or both — see `parseFlags`. */
+let memberFlags: Map<string, string> = new Map();
 /** The names the entry exported instantiations by — see `parseNamed`. */
 let namedClasses: Map<string, string> = new Map();
 /** The callbacks, by their wac spelling, so a parameter knows which dispatcher it belongs to. */
@@ -377,7 +393,7 @@ function toWasmInner(t: string, expr: string): string {
   if (t === "string") return `$strTo(${expr})`;
   if (BULK.has(t)) return `$arrTo_${t.slice(0, -2)}(${expr})`;
   if (isRefArray(t, new Set(namedTypes.keys()))) return `$arrTo_${arrSuffix(t)}(${expr})`;
-  if (namedTypes.has(t)) return `${expr}.$ref`;
+  if (namedTypes.has(t)) return `${expr}.ref`;
   return expr;
 }
 
@@ -444,6 +460,11 @@ function classNameOf(t: { name: string }): string {
     .replace(/_+$/, "");
 }
 
+/** Whether member `name` of `t` carries `flag` — `private` or `const` — by the wire's `F` lines. */
+function memberHas(t: BindType, name: string, flag: string): boolean {
+  return (memberFlags.get(`${t.bind}\t${name}`) ?? "").split(",").includes(flag);
+}
+
 function classFor(t: BindType): string[] {
   const lines: string[] = [];
   const doc = t.kind === "enum"
@@ -451,24 +472,45 @@ function classFor(t: BindType): string[] {
     : `/** \`${t.name}\`, held by reference. Fields and methods call into the module. */`;
   lines.push(doc);
   lines.push(`export class ${classNameOf(t)} {`);
-  lines.push(`  constructor(${asJs ? "$ref" : "readonly $ref: unknown"}) {${asJs ? " this.$ref = $ref; " : ""}}`);
+  lines.push(`  constructor(${asJs ? "ref" : "readonly ref: unknown"}) {${asJs ? " this.ref = ref; " : ""}}`);
   if (t.kind === "struct") {
     const args = t.fields.map(f => `${f.name}${ann(f.type)}`).join(", ");
     const conv = t.fields.map(f => toWasm(f.type, f.name)).join(", ");
+    // **`of` builds one from its fields** — unless the struct declares its own `of`, which binds
+    // below as written, or has a private field, which only its own static methods may set
+    // (spec/next ch48 `§wac-bind-private-7kpcy8t`).
+    const ownOf = t.methods.some(m => m.name === "of" && !m.hasThis);
+    const anyPrivate = t.fields.some(f => memberHas(t, f.name, "private"));
+    if (anyPrivate) {
+      lines.push("  // `of` is not generated: a field of this struct is private, so it is built through its own methods.");
+    }
     // `classNameOf`, not `t.name`: an instance's *type* is `Pending<i32>` and its class is
     // `Pending_i32` — the raw name in code position is `new Pending<i32>(…)`, which TypeScript reads
     // as a generic call on a name nothing declares [issue 0106].
-    lines.push(`  static $of(${args})${annRaw(classNameOf(t))} {`);
-    lines.push(`    return new ${classNameOf(t)}(($exports.$bind$s_${t.bind}_new${CF})(${conv}));`);
-    lines.push("  }");
-    for (const f of t.fields) {
-      lines.push(`  get ${f.name}()${ann(f.type)} {`);
-      lines.push(`    return ${fromWasm(f.type, `($exports.$bind$s_${t.bind}_get_${f.name}${CF})(this.$ref)`)};`);
-      lines.push("  }");
-      lines.push(`  set ${f.name}(v${ann(f.type)}) {`);
-      lines.push(`    ($exports.$bind$s_${t.bind}_set_${f.name}${CF})(this.$ref, ${toWasm(f.type, "v")});`);
+    if (!ownOf && !anyPrivate) {
+      lines.push(`  static of(${args})${annRaw(classNameOf(t))} {`);
+      lines.push(`    return new ${classNameOf(t)}(($exports.$bind$s_${t.bind}_new${CF})(${conv}));`);
       lines.push("  }");
     }
+    const shown: { name: string; type: string }[] = [];
+    for (const f of t.fields) {
+      // A private field has no accessor and is not in `toObject()`; a `const` one has no setter.
+      if (memberHas(t, f.name, "private")) continue;
+      shown.push(f);
+      lines.push(`  get ${f.name}()${ann(f.type)} {`);
+      lines.push(`    return ${fromWasm(f.type, `($exports.$bind$s_${t.bind}_get_${f.name}${CF})(this.ref)`)};`);
+      lines.push("  }");
+      if (memberHas(t, f.name, "const")) continue;
+      lines.push(`  set ${f.name}(v${ann(f.type)}) {`);
+      lines.push(`    ($exports.$bind$s_${t.bind}_set_${f.name}${CF})(this.ref, ${toWasm(f.type, "v")});`);
+      lines.push("  }");
+    }
+    // **A plain-data snapshot, one level deep**: a struct-typed field stays its wrapper, so a value
+    // that reaches itself does not recurse (spec/next ch48).
+    const shape = shown.map(f => `${f.name}: ${tsType(f.type)}`).join("; ");
+    lines.push(`  toObject()${annRaw(shape === "" ? "{}" : `{ ${shape} }`)} {`);
+    lines.push(`    return { ${shown.map(f => `${f.name}: this.${f.name}`).join(", ")} };`);
+    lines.push("  }");
   } else {
     for (const v of t.variants) {
       const args = v.payload.map(f => `${f.name}${ann(f.type)}`).join(", ");
@@ -488,7 +530,7 @@ function classFor(t: BindType): string[] {
     const union = t.variants.map(v => `"${v.name}"`).join(" | ");
     const list = t.variants.map(v => `"${v.name}"`).join(", ");
     lines.push(`  get tag()${annRaw(union)} {`);
-    lines.push(`    const t = ($exports.$bind$e_${t.bind}_tag${CF})(this.$ref)${annRaw("number").replace(": ", " as ")};`);
+    lines.push(`    const t = ($exports.$bind$e_${t.bind}_tag${CF})(this.ref)${annRaw("number").replace(": ", " as ")};`);
     lines.push(`    return ([${list}]${AC})[t];`);
     lines.push("  }");
     for (const v of t.variants) {
@@ -498,16 +540,32 @@ function classFor(t: BindType): string[] {
         // method of that name hands back the function object instead — which compares unequal to
         // everything and reads as a wrong answer rather than a missing feature [issue 0102].
         lines.push(`  get ${v.name}_${f.name}()${ann(f.type)} {`);
-        lines.push(`    return ${fromWasm(f.type, `($exports.$bind$e_${t.bind}_${v.name}_get_${f.name}${CF})(this.$ref)`)};`);
+        // **Throws unless this is that variant** — the protection `match` gives (spec/next ch48
+        // `§wac-bind-enum-3nqk7vm`), as an exception rather than a wrong answer.
+        lines.push(`    if (this.tag !== "${v.name}") throw new TypeError("not a ${v.name}: " + this.tag);`);
+        lines.push(`    return ${fromWasm(f.type, `($exports.$bind$e_${t.bind}_${v.name}_get_${f.name}${CF})(this.ref)`)};`);
         lines.push("  }");
       }
     }
+    // A discriminated union a caller can `switch` on.
+    const cases = t.variants.map(v => `{ tag: "${v.name}"${v.payload.map(f => `; ${f.name}: ${tsType(f.type)}`).join("")} }`);
+    lines.push(`  toObject()${annRaw(cases.join(" | "))} {`);
+    lines.push("    switch (this.tag) {");
+    for (const v of t.variants) {
+      const fields = v.payload.map(f => `, ${f.name}: this.${v.name}_${f.name}`).join("");
+      lines.push(`      case "${v.name}": return { tag: "${v.name}"${fields} };`);
+    }
+    lines.push("    }");
+    lines.push(`    throw new TypeError("no variant " + this.tag);`);
+    lines.push("  }");
   }
   for (const m of t.methods) {
+    // A private method is not bound (`§wac-bind-private-7kpcy8t`).
+    if (memberHas(t, m.name, "private")) continue;
     const args = m.params.map((p, i) => `a${i}${ann(p)}`).join(", ");
     const conv = m.params.map((p, i) => toWasm(p, `a${i}`)).join(", ");
     const helper = m.hasThis ? `$bind$m_${t.bind}_${m.name}` : `$bind$sm_${t.bind}_${m.name}`;
-    const call = `($exports.${helper}${CF})(${m.hasThis ? ["this.$ref", conv].filter(Boolean).join(", ") : conv})`;
+    const call = `($exports.${helper}${CF})(${m.hasThis ? ["this.ref", conv].filter(Boolean).join(", ") : conv})`;
     const sig = m.hasThis ? `${m.name}(${args})` : `static ${m.name}(${args})`;
     lines.push(`  ${sig}${ann(m.ret)} {`);
     lines.push(m.ret === "void" ? `    ${call};` : `    return ${fromWasm(m.ret, call)};`);
@@ -533,10 +591,17 @@ export function generate(
     lang?: "ts" | "js";
     named?: Map<string, string>;
     generics?: { name: string; form: string }[];
+    flags?: Map<string, string>;
   } = {},
 ): string {
   asJs = opts.lang === "js";
   namedClasses = opts.named ?? new Map();
+  memberFlags = opts.flags ?? new Map();
+  // **An enum with a variant named `tag`, `ref` or `toObject` is skipped** rather than renamed: a
+  // renamed variant would no longer be the name in the source (spec/next ch48).
+  const skipped: string[] = [];
+  const colliding = types.filter(t => t.kind === "enum" && t.variants.some(v => RESERVED.has(v.name)));
+  types = types.filter(t => !colliding.includes(t));
   CF = asJs ? "" : " as CallableFunction";
   BS = asJs ? "" : " as BufferSource";
   AC = asJs ? "" : " as const";
@@ -731,9 +796,15 @@ export function generate(
     lines.push("");
   }
 
+  for (const t of colliding) {
+    const v = t.variants.find(v => RESERVED.has(v.name))!;
+    const why = `${t.name} — variant '${v.name}' would hide the class's own '${v.name}'`;
+    lines.push(`// skipped: ${why}`);
+    lines.push("");
+    skipped.push(why);
+  }
   for (const t of types) lines.push(...classFor(t));
 
-  const skipped: string[] = [];
   for (const sig of sigs) {
     // **A skipped export says so where it would have been** (spec/next ch48
     // `§wac-bind-skip-h9pd5wn`), and again in `__bindgenSkipped` below, where a caller looks.

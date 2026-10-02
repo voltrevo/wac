@@ -100,8 +100,8 @@ export type WaccApi = {
   Res: {
     empty: () => WaccRes;
     of: (roots: string[]) => WaccRes;
-    /** All five fields — mappings and the base included. `$`-prefixed because it is the constructor. */
-    $of: (
+    /** All five fields — mappings and the base included. */
+    whole: (
       roots: string[],
       mapFrom: string[],
       mapSpec: string[],
@@ -127,8 +127,8 @@ export type WaccApi = {
   covTableFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
 };
 
-/** wacc's `Res`, held by reference on the wac side — opaque here, built by `Res.$of`. */
-export type WaccRes = { readonly $ref?: unknown };
+/** wacc's `Res`, held by reference on the wac side — opaque here, built by `Res.whole`. */
+export type WaccRes = { readonly ref?: unknown };
 
 /**
  * The resolution context as wacc wants it, from what `wacFilesWithRoots` found.
@@ -146,7 +146,7 @@ export function waccRes(
   base: string,
 ): WaccRes {
   if (roots.size === 0) return api.Res.empty();
-  return api.Res.$of(paths.map((p) => roots.get(p) ?? ""), [], [], [], base);
+  return api.Res.whole(paths.map((p) => roots.get(p) ?? ""), [], [], [], base);
 }
 
 let cached: WaccApi | null = null;

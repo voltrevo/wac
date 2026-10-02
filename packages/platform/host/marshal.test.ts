@@ -261,7 +261,7 @@ Deno.test("and back again: what goes in comes out, for every shape that converts
     // A reference passes through in both directions, wrapped or not.
     const raw = { opaque: true };
     assertEquals(toWasm(b, shapeOf("Stat"), raw) === raw, true, "a bare reference was altered");
-    assertEquals(toWasm(b, shapeOf("Stat"), { $ref: raw }) === raw, true, "a wrapped one was not unwrapped");
+    assertEquals(toWasm(b, shapeOf("Stat"), { ref: raw }) === raw, true, "a wrapped one was not unwrapped");
     assertEquals(toWasm(b, shapeOf("Stat?"), null), null, "null is null");
   }
 });
