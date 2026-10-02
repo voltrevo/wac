@@ -26,7 +26,7 @@
 // generator needs a second runtime is a file a fresh checkout cannot regenerate.
 
 import { Core, Cli, FileResult, Sys } from "std";
-import { joined, splitKeepingEmpty } from "../../packages/wactest/src/strings.wac";
+import { joined, splitKeepingEmpty, trimmed } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 /** Every file of `core`, in the order the module carries them. */
@@ -34,7 +34,7 @@ string[] coreTree() {
   return [
     "core/read.wac", "core/jsx.wac", "core/option.wac", "core/result.wac", "core/hash.wac",
     "core/map.wac", "core/vec.wac", "core/buf.wac", "core/text.wac", "core/operators.wac", "core/html.wac",
-    "core/ticket.wac"
+    "core/ticket.wac", "core/number.wac"
   ];
 }
 
@@ -285,6 +285,61 @@ string quotedList(string[] paths) {
 
 string blk(string[] ls) { return joined(ls, "\n"); }
 
+/**
+ * `Name|count|d0;d1;…` for each `struct` or `enum` header in `text` with a default type argument — the
+ * same table `lowerTypeDefaults` reads off a program's own files. A header is one line in core and std.
+ */
+string[] typeDefaultsTable(string text) {
+  string[] ls = splitKeepingEmpty(text);
+  string[] out = string[].filled(ls.len(), "");
+  i32 n = 0;
+  for (i32 i = 0; i < ls.len(); i++) {
+    string l = ls[i];
+    i32 k = l.indexOf("enum ");
+    i32 kw = 5;
+    if (k < 0) { k = l.indexOf("struct "); kw = 7; }
+    string lead = k > 0 ? trimmed(l.slice(0, k)) : "";
+    if (k < 0 || (lead != "" && lead != "export" && lead != "export const")) { continue; }
+    string rest = l.slice(k + kw, l.len());
+    i32 lt = rest.indexOf("<");
+    i32 gt = rest.indexOf(">");
+    if (lt < 0 || gt < lt || rest.slice(lt, gt).indexOf("=") < 0) { continue; }
+    string name = trimmed(rest.slice(0, lt));
+    string[] params = splitOnComma(rest.slice(lt + 1, gt));
+    string defaults = "";
+    for (i32 p = 0; p < params.len(); p++) {
+      i32 eq = params[p].indexOf("=");
+      defaults = defaults + (p > 0 ? ";" : "") + (eq < 0 ? "" : trimmed(params[p].slice(eq + 1, params[p].len())));
+    }
+    out[n] = name + "|" + itoa(params.len()) + "|" + defaults;
+    n++;
+  }
+  string[] exact = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+string[] splitOnComma(string s) {
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == ",") { n++; } }
+  string[] out = string[].filled(n, "");
+  i32 k = 0;
+  i32 from = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == ",") { out[k] = s.slice(from, i); k++; from = i + 1; }
+  }
+  out[k] = s.slice(from, s.len());
+  return out;
+}
+
+/** The table as a wac expression: each line quoted and ended with a newline. */
+string typeDefaultsWac(string[] rows) {
+  if (rows.len() == 0) { return "\"\""; }
+  string out = "";
+  for (i32 i = 0; i < rows.len(); i++) { out = out + (i == 0 ? "" : " + ") + quoted(rows[i]) + " + \"\\n\""; }
+  return out;
+}
+
 /** The whole of `packages/wacc/src/coretext.wac`. */
 string waccFile(Tree tree) {
   // **Every input, not only the root.** The banner once named two of `core`'s files and omitted the rest
@@ -327,6 +382,14 @@ string waccFile(Tree tree) {
     " */",
     "export string[] coreExports() {",
     "  return [" + quotedList(exportsOf(core)) + "] as string[];",
+    "}",
+    "",
+    "/**",
+    " * The default type arguments `core` and `std` declare, as `Name|count|d0;d1;…` lines — read here, once,",
+    " * so `lowerTypeDefaults` need not lex the whole of both on every compile (spec/next ch19).",
+    " */",
+    "export string builtinTypeDefaults() {",
+    "  return " + typeDefaultsWac(typeDefaultsTable(core + "\n" + tree.stdText())) + ";",
     "}",
     "",
     "/**",

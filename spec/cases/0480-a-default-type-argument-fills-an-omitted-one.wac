@@ -1,0 +1,12 @@
+// expect: answers parsed = 1
+// spec: §wac-generic-default-arg-p6xzn68
+// why: `Result<i32>` omits `E`, which defaults to a fresh placeholder gathered from what `parse` returns
+// from: spec/next ch19
+import { Result } from "core";
+Result<i32> parse(string s) {
+  if (s == "") { return Result.Err("empty"); }
+  return Result.Ok(1);
+}
+export i32 parsed() {
+  return match (parse("x")) { Ok(v): v, Err(e): 0 } + match (parse("")) { Ok(v): v, Err(e): 0 };
+}

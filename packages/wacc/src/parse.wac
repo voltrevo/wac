@@ -953,6 +953,9 @@ i32[] parseTypeParams(P p) {
       // parameter name" and names no keyword; this names it, in the same place, consuming nothing.
       if (p.at1(kIdent())) {
         params.push(p.advance());
+        // `E = union` — a default, used where a use omits the argument (spec/next ch19). Read and left
+        // here: `lowerTypeDefaults` writes it into every such use before anything is parsed for real.
+        if (p.at1(kAssign())) { p.advance(); parseType(p); }
       } else if (atKeyword(p)) {
         p.failWith(perrKeywordName(),
                    "'" + p.textAt(0) + "' is a keyword and cannot be used as a type parameter name");

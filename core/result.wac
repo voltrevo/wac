@@ -11,7 +11,7 @@
 
 import { Option } from "./option.wac";
 
-export enum Result<T, E> {
+export enum Result<T, E = union> {
   Ok(T v), Err(E e)
 
   bool isOk(const this) {

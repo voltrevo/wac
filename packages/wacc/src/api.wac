@@ -6,8 +6,8 @@
 // the canonical dump the parser's own tests read.
 
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
-import { kAs, kAsync, kComma, kDot, kExport, kGt, kIdent, kindName, kLbrace, kLbrack, kLparen, kLt, kRbrace,
-         kRbrack, kRparen, kShr } from "./kinds.wac";
+import { kAs, kAssign, kAsync, kComma, kDot, kEnum, kExport, kGt, kIdent, kindName, kLbrace, kLbrack, kLparen,
+         kLt, kRbrace, kRbrack, kRparen, kSemi, kShr, kStruct } from "./kinds.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor,
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -24,7 +24,7 @@ import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, 
          describeLinked, describeSep, buildLinked, Built,
          sourceOf, tokenTextOf, resolveImport, numText,
          emitDeclineLinked, lambdaReportLinked, exportForwards, splitTabs } from "./emit.wac";
-import { coreSource, isBuiltinSpec, stdSource } from "./coretext.wac";
+import { builtinTypeDefaults, coreSource, isBuiltinSpec, stdSource } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsOf } from "./files.wac";
@@ -1412,7 +1412,7 @@ C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
  */
 C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string entry,
                    i32[] counts, Lexed?[] lexes, Program?[] progs) {
-  return checkFilesAutoIn(callerPaths, callerSources, res, entry, counts, lexes, progs, "", "");
+  return checkFilesAutoIn(callerPaths, callerSources, res, entry, counts, lexes, progs, "", "", "");
 }
 
 /**
@@ -1421,7 +1421,8 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
  * excludes it; `target` is the function collected, `""` for an ordinary check.
  */
 C checkFilesAutoIn(string[] callerPaths, string[] callerSources, Res res, string entry,
-                   i32[] counts, Lexed?[] lexes, Program?[] progs, string assume, string target) {
+                   i32[] counts, Lexed?[] lexes, Program?[] progs, string assume, string target,
+                   string placeholder) {
   // **`core` is a file, and the checker had never read it.** An import from `core` used to declare
   // each name as *unknown*, so a `Node` or a `Read` had no enum behind it — and every rule that asks
   // what an enum holds went quiet: a `match` missing a variant, an arm naming a variant that does
@@ -1813,6 +1814,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, Res res, string
     c.sCx = declsOfFiles(paths, sources, alx, apg, esrc, elexed);
     c.sFile = eat;
   }
+  c.placeholderSpec = placeholder;
   if (target != "") {
     c.autoAssume = assume;
     c.autoTarget = target;
@@ -1828,7 +1830,451 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, Res res, string
  * (ch03), then `auto` results written in (ch34). Both are idempotent.
  */
 export string[] lowerSources(string[] paths, string[] sources, Res res) {
-  return lowerAutoReturns(paths, lowerExportInstances(lowerVariadics(lowerNamespaces(paths, sources, res))), res);
+  string[] s1 = lowerPrimFromNumber(lowerTypeDefaults(lowerVariadics(lowerNamespaces(paths, sources, res))));
+  string[] s2 = lowerAutoReturns(paths, lowerResultPlaceholders(paths, lowerExportInstances(s1), res), res);
+  return lowerFromNumberLiterals(paths, s2, res);
+}
+
+// ---- A built-in numeric type's `[fromNumber]` — spec/next ch09 ----
+
+/**
+ * `f64.[fromNumber](n)` is core's `numberLiteralToF64(n)`, and likewise for `f32`, `i64` and `i32`:
+ * the conversion a built-in type answers, written as the function core implements it with, and that
+ * function imported for the file. A program's own type implements the symbol as a method.
+ */
+string[] lowerPrimFromNumber(string[] sources) {
+  bool any = false;
+  for (i32 i = 0; i < sources.len(); i++) { if (sources[i].indexOf(".[fromNumber]") >= 0) { any = true; } }
+  if (!any) { return sources; }
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 f = 0; f < sources.len(); f++) {
+    if (sources[f].indexOf(".[fromNumber]") < 0) { out[f] = sources[f]; continue; }
+    u8[] src = sources[f].toBytes();
+    Lexed lx = lex(src);
+    i32 st = tokenStride();
+    string text = "";
+    i32 from = 0;
+    string needs = "|";
+    for (i32 t = 0; t + 4 < lx.tokenCount; t++) {
+      if (lx.tokens[t * st] != kIdent() || lx.tokens[(t + 1) * st] != kDot() || lx.tokens[(t + 2) * st] != kLbrack()
+          || lx.tokens[(t + 3) * st] != kIdent() || lx.tokens[(t + 4) * st] != kRbrack()) { continue; }
+      if (tokenTextOf(src, lx, t + 3) != "fromNumber") { continue; }
+      string prim = tokenTextOf(src, lx, t);
+      string conv = prim == "f64" ? "numberLiteralToF64" : prim == "f32" ? "numberLiteralToF32"
+                : prim == "i64" ? "numberLiteralToI64" : prim == "i32" ? "numberLiteralToI32" : "";
+      if (conv == "") { continue; }
+      text = text + bytesBetween(src, from, lx.tokens[t * st + 1]) + conv;
+      from = lx.tokens[(t + 4) * st + 1] + 1;
+      if (needs.indexOf("|" + conv + "|") < 0) { needs = needs + conv + "|"; }
+    }
+    string imports = "";
+    string rest = needs.slice(1, needs.len());
+    while (rest.indexOf("|") >= 0) {
+      imports = imports + "\nimport { " + rest.slice(0, rest.indexOf("|")) + " } from \"core\";";
+      rest = rest.slice(rest.indexOf("|") + 1, rest.len());
+    }
+    out[f] = text + bytesBetween(src, from, src.len()) + imports + "\n";
+  }
+  return out;
+}
+
+/**
+ * **A literal whose type implements `[fromNumber]` is converted statically** (spec/next ch09): each such
+ * literal becomes a static of its own, `static T @"$lit_L_C" = literalValue(T.[fromNumber](
+ * NumberLiteral("3")), "3");`, so the conversion runs at compile time, once per occurrence, and an
+ * `Err` traps there — a compile error naming the literal. The checker says which literals these are.
+ */
+string[] lowerFromNumberLiterals(string[] paths, string[] sources, Res res) {
+  string types = "|";
+  for (i32 i = 0; i < sources.len(); i++) {
+    string s = sources[i];
+    if (s.indexOf("[fromNumber](") < 0) { continue; }
+    // The types declaring the method — read off the text: `struct Name … [fromNumber](`.
+    u8[] src = s.toBytes();
+    Lexed lx = lex(src);
+    i32 st = tokenStride();
+    string owner = "";
+    for (i32 t = 0; t + 3 < lx.tokenCount; t++) {
+      i32 k = lx.tokens[t * st];
+      if ((k == kStruct() || k == kEnum()) && lx.tokens[(t + 1) * st] == kIdent()) { owner = tokenTextOf(src, lx, t + 1); }
+      if (k == kLbrack() && lx.tokens[(t + 1) * st] == kIdent() && tokenTextOf(src, lx, t + 1) == "fromNumber"
+          && lx.tokens[(t + 2) * st] == kRbrack() && lx.tokens[(t + 3) * st] == kLparen() && owner != ""
+          && t > 0 && lx.tokens[(t - 1) * st] != kDot() && types.indexOf("|" + owner + "|") < 0) {
+        types = types + owner + "|";
+      }
+    }
+  }
+  if (types == "|") { return sources; }
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 i = 0; i < sources.len(); i++) { out[i] = sources[i]; }
+  for (i32 f = 0; f < paths.len() && f < out.len(); f++) {
+    bool mentions = false;
+    string rest = types.slice(1, types.len());
+    while (rest.indexOf("|") >= 0) {
+      if (out[f].indexOf(rest.slice(0, rest.indexOf("|"))) >= 0) { mentions = true; }
+      rest = rest.slice(rest.indexOf("|") + 1, rest.len());
+    }
+    if (!mentions) { continue; }
+    Lexed?[] lexes = Lexed?[].defaulted(paths.len() + 1);
+    Program?[] progs = Program?[].defaulted(paths.len() + 1);
+    i32[] counts = declCountsInto(paths, out, lexes, progs);
+    C c = checkFilesAutoIn(paths, out, res, paths[f], counts, lexes, progs, "", "", "@literals");
+    if (c.autoCollect == "") { continue; }
+    u8[] src = out[f].toBytes();
+    Lexed lx = lex(src);
+    i32 st = tokenStride();
+    string text = "";
+    string statics = "";
+    i32 from = 0;
+    for (i32 t = 0; t < lx.tokenCount; t++) {
+      string key = numText(lx.tokens[t * st + 3]) + ":" + numText(lx.tokens[t * st + 4]) + ":";
+      i32 at = c.autoCollect.indexOf(key);
+      if (at < 0 || (at > 0 && c.autoCollect.slice(at - 1, at) != "|")) { continue; }
+      string tail = c.autoCollect.slice(at + key.len(), c.autoCollect.len());
+      string ty = tail.slice(0, tail.indexOf("|"));
+      string lit = tokenTextOf(src, lx, t);
+      // Underscores, not dots: a dotted name is a namespace's member.
+      string name = "@\"$lit_" + numText(lx.tokens[t * st + 3]) + "_" + numText(lx.tokens[t * st + 4]) + "\"";
+      i32 start = lx.tokens[t * st + 1];
+      text = text + bytesBetween(src, from, start) + name;
+      from = start + lx.tokens[t * st + 2];
+      statics = statics + "\nstatic " + ty + " " + name + " = literalValue(" + ty + ".[fromNumber](NumberLiteral(\""
+              + lit + "\")), \"" + lit + "\");";
+    }
+    if (statics == "") { continue; }
+    // What the statics name, imported for the file where it does not import them already.
+    string have = coreImportsOf(src);
+    string wanted = "";
+    if (have.indexOf("|NumberLiteral|") < 0) { wanted = wanted + ", NumberLiteral"; }
+    if (have.indexOf("|literalValue|") < 0) { wanted = wanted + ", literalValue"; }
+    if (have.indexOf("|fromNumber|") < 0) { wanted = wanted + ", fromNumber"; }
+    if (wanted != "") { wanted = wanted.slice(2, wanted.len()); }
+    out[f] = text + bytesBetween(src, from, src.len()) + statics
+           + (wanted == "" ? "" : "\nimport { " + wanted + " } from \"core\";") + "\n";
+  }
+  return out;
+}
+
+/** The names a file imports from `core`, as `|a|b|`. */
+string coreImportsOf(u8[] src) {
+  Lexed lx = lex(src);
+  Program prog = parseProgram(P.create(src, lx));
+  string out = "|";
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      Import(pathTok, prefixTok, items): {
+        if (pathTok < 0 || tokenTextOf(src, lx, pathTok) != "\"core\"") { continue; }
+        for (i32 i = 0; i < items.len(); i++) {
+          if (items[i].nameTok < 0) { continue; }
+          out = out + tokenTextOf(src, lx, items[i].aliasTok >= 0 ? items[i].aliasTok : items[i].nameTok) + "|";
+        }
+      }
+      default: { }
+    }
+  }
+  return out;
+}
+
+// ---- Default type arguments — spec/next ch19 ----
+
+/**
+ * `enum Result<T, E = union>` used as `Result<i32>`: every use that omits an argument with a default
+ * gets the default written in, so `Result<i32>` is `Result<i32, union>` — and a `union` that lands in a
+ * function's result is gathered from what the function returns (`lowerAutoReturns`), which is the
+ * fresh placeholder each such use is. The defaults are read from every file supplied and from the
+ * built-ins, whose `Result` is the one most uses name.
+ */
+string[] lowerTypeDefaults(string[] sources) {
+  // The built-ins' defaults were read when they were embedded; a program's own files are read here.
+  string table = builtinTypeDefaults();
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (!mayDeclareTypeDefault(sources[i])) { continue; }
+    table = table + typeDefaultsOf(sources[i]);
+  }
+  if (table == "") { return sources; }
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 i = 0; i < sources.len(); i++) {
+    out[i] = mentionsAnyOf(sources[i], table) ? withTypeDefaults(sources[i], table) : sources[i];
+  }
+  return out;
+}
+
+/** Whether `text` may declare a type with a default argument: a `struct` or `enum` header with `=` in its `<…>`. */
+bool mayDeclareTypeDefault(string text) {
+  string rest = text;
+  while (true) {
+    i32 a = rest.indexOf("struct ");
+    i32 b = rest.indexOf("enum ");
+    i32 at = a < 0 ? b : b < 0 ? a : (a < b ? a : b);
+    if (at < 0) { return false; }
+    rest = rest.slice(at + 5, rest.len());
+    i32 brace = rest.indexOf("{");
+    string head = brace < 0 ? rest : rest.slice(0, brace);
+    i32 lt = head.indexOf("<");
+    if (lt >= 0 && head.slice(lt, head.len()).indexOf("=") >= 0) { return true; }
+  }
+  return false;
+}
+
+/** Whether `text` writes `Name<` for any name the defaults table holds. */
+bool mentionsAnyOf(string text, string table) {
+  string rest = table;
+  while (rest.indexOf("|") >= 0) {
+    string name = rest.slice(0, rest.indexOf("|"));
+    if (text.indexOf(name + "<") >= 0) { return true; }
+    if (rest.indexOf("\n") < 0) { return false; }
+    rest = rest.slice(rest.indexOf("\n") + 1, rest.len());
+  }
+  return false;
+}
+
+/**
+ * The generic types `text` declares with defaults, one `Name|count|d0;d1;…` line each — `""` for a
+ * letter with none. Read off the tokens of each `struct` or `enum` header.
+ */
+string typeDefaultsOf(string text) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  i32 st = tokenStride();
+  string out = "";
+  for (i32 t = 0; t + 2 < lx.tokenCount; t++) {
+    i32 k = lx.tokens[t * st];
+    if (k != kStruct() && k != kEnum()) { continue; }
+    if (lx.tokens[(t + 1) * st] != kIdent() || lx.tokens[(t + 2) * st] != kLt()) { continue; }
+    string name = tokenTextOf(src, lx, t + 1);
+    i32 u = t + 3;
+    i32 depth = 1;
+    i32 count = 0;
+    string defaults = "";
+    bool any = false;
+    string current = "";
+    bool inDefault = false;
+    i32 defaultFrom = 0;
+    while (u < lx.tokenCount && depth > 0) {
+      i32 kk = lx.tokens[u * st];
+      if (kk == kLt()) { depth++; }
+      if (kk == kGt()) { depth--; }
+      if ((kk == kComma() && depth == 1) || depth == 0) {
+        if (inDefault) { current = bytesBetween(src, defaultFrom, lx.tokens[u * st + 1]); any = true; }
+        defaults = defaults + (count > 0 ? ";" : "") + trimSpaces(current);
+        count++;
+        current = "";
+        inDefault = false;
+      } else if (kk == kAssign() && depth == 1) {
+        inDefault = true;
+        defaultFrom = lx.tokens[(u + 1) * st + 1];
+      }
+      u++;
+    }
+    if (any) { out = out + name + "|" + numText(count) + "|" + defaults + "\n"; }
+  }
+  return out;
+}
+
+/** `text` with each use of a type in `table` that omits trailing arguments given their defaults. */
+string withTypeDefaults(string text, string table) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  i32 st = tokenStride();
+  i32[] at = i32[].filled(lx.tokenCount + 1, 0);
+  string[] what = string[].filled(lx.tokenCount + 1, "");
+  i32 n = 0;
+  for (i32 t = 0; t + 1 < lx.tokenCount; t++) {
+    if (lx.tokens[t * st] != kIdent() || lx.tokens[(t + 1) * st] != kLt()) { continue; }
+    if (t > 0 && (lx.tokens[(t - 1) * st] == kStruct() || lx.tokens[(t - 1) * st] == kEnum())) { continue; }
+    string name = tokenTextOf(src, lx, t);
+    i32 row = table.indexOf(name + "|");
+    if (row < 0 || (row > 0 && table.slice(row - 1, row) != "\n")) { continue; }
+    string line = table.slice(row, table.len());
+    line = line.slice(0, line.indexOf("\n"));
+    string afterName = line.slice(name.len() + 1, line.len());
+    i32 declared = 0;
+    string countText = afterName.slice(0, afterName.indexOf("|"));
+    for (i32 i = 0; i < countText.len(); i++) { declared = declared * 10 + (countText.toBytes()[i] as i32 - 48); }
+    string defaults = afterName.slice(afterName.indexOf("|") + 1, afterName.len()) + ";";
+    // The written arguments: count them to the `>` that closes this list.
+    i32 u = t + 2;
+    i32 depth = 1;
+    i32 written = 1;
+    i32 closeAt = 0 - 1;
+    while (u < lx.tokenCount) {
+      i32 kk = lx.tokens[u * st];
+      if (kk == kLt()) { depth++; }
+      if (kk == kComma() && depth == 1) { written++; }
+      if (kk == kGt()) { depth--; if (depth == 0) { closeAt = lx.tokens[u * st + 1]; break; } }
+      if (kk == kShr()) {
+        if (depth == 1) { closeAt = lx.tokens[u * st + 1]; break; }
+        if (depth == 2) { closeAt = lx.tokens[u * st + 1] + 1; break; }
+        depth = depth - 2;
+      }
+      if (kk == kSemi() || kk == kLbrace() || kk == kRparen() && depth == 1) { break; }
+      u++;
+    }
+    if (closeAt < 0 || written >= declared) { continue; }
+    string add = "";
+    string ds = defaults;
+    for (i32 i = 0; i < declared; i++) {
+      string d = ds.slice(0, ds.indexOf(";"));
+      ds = ds.slice(ds.indexOf(";") + 1, ds.len());
+      if (i < written) { continue; }
+      if (d == "") { add = ""; break; }
+      add = add + ", " + d;
+    }
+    if (add == "") { continue; }
+    at[n] = closeAt;
+    what[n] = add;
+    n++;
+  }
+  if (n == 0) { return text; }
+  // A use nested in another's arguments is met after the outer one opened: put them in offset order.
+  for (i32 i = 1; i < n; i++) {
+    i32 j = i;
+    while (j > 0 && at[j - 1] > at[j]) {
+      i32 ta = at[j]; at[j] = at[j - 1]; at[j - 1] = ta;
+      string tw = what[j]; what[j] = what[j - 1]; what[j - 1] = tw;
+      j--;
+    }
+  }
+  string res = "";
+  i32 from = 0;
+  for (i32 i = 0; i < n; i++) {
+    res = res + bytesBetween(src, from, at[i]) + what[i];
+    from = at[i];
+  }
+  return res + bytesBetween(src, from, src.len());
+}
+
+/**
+ * **A `union` placeholder in a function's result, gathered** (spec/next ch19, ch33): `Result<i32,
+ * union>` — what a default writes for `Result<i32>` — collects the payloads of the variants its letter
+ * types and what each `try` propagates, and is written in as that union. A function whose result names
+ * no placeholder is left alone.
+ */
+string[] lowerResultPlaceholders(string[] paths, string[] sources, Res res) {
+  bool any = false;
+  for (i32 i = 0; i < sources.len(); i++) { if (sources[i].indexOf("union>") >= 0 || sources[i].indexOf("union,") >= 0) { any = true; } }
+  if (!any) { return sources; }
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 i = 0; i < sources.len(); i++) { out[i] = sources[i]; }
+  for (i32 f = 0; f < paths.len() && f < out.len(); f++) {
+    if (out[f].indexOf("union") < 0) { continue; }
+    u8[] src = out[f].toBytes();
+    Lexed lx = lex(src);
+    Program prog = parseProgram(P.create(src, lx));
+    // Each function's and method's result, with the name a collection asks for.
+    PlaceholderEdits ed = PlaceholderEdits(i32[].filled(256, 0), i32[].filled(256, 0), string[].filled(256, ""), 0);
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+          placeholderEditsFor(paths, out, res, f, src, lx, returnType, tokenTextOf(src, lx, nameTok), ed);
+        }
+        StructDecl(snameTok, parentTok, fields, methods, sexported, isConst, stps): {
+          for (i32 m = 0; m < methods.len(); m++) {
+            placeholderEditsFor(paths, out, res, f, src, lx, methods[m].returnType,
+                                tokenTextOf(src, lx, snameTok) + "." + tokenTextOf(src, lx, methods[m].nameTok), ed);
+          }
+        }
+        default: { }
+      }
+    }
+    string text = "";
+    i32 from = 0;
+    for (i32 r = 0; r < ed.n; r++) {
+      text = text + bytesBetween(src, from, ed.starts[r]) + ed.texts[r];
+      from = ed.starts[r] + ed.lens[r];
+    }
+    if (from > 0) { out[f] = text + bytesBetween(src, from, src.len()); }
+  }
+  return out;
+}
+
+/** Where each gathered placeholder goes in the text, in the order the declarations are written. */
+struct PlaceholderEdits {
+  i32[] starts;
+  i32[] lens;
+  string[] texts;
+  i32 n;
+}
+
+/** The placeholders in one result type `ret` of function `fname`, gathered and queued as edits. */
+void placeholderEditsFor(string[] paths, string[] sources, Res res, i32 f, u8[] src, Lexed lx, Ty ret,
+                         string fname, PlaceholderEdits ed) {
+  match (ret.kind) {
+    Named(rtok, rargs): {
+      for (i32 k = 0; k < rargs.len(); k++) {
+        match (rargs[k].kind) {
+          Named(utok, uargs): {
+            if (uargs.len() > 0 || tokenTextOf(src, lx, utok) != "union" || ed.n >= ed.starts.len()) { continue; }
+            string tmpl = tokenTextOf(src, lx, rtok);
+            string spec = tmpl + "|" + numText(k) + "|" + variantFieldsOfLetter(sources, tmpl, k);
+            Lexed?[] lexes = Lexed?[].defaulted(paths.len() + 1);
+            Program?[] progs = Program?[].defaulted(paths.len() + 1);
+            i32[] counts = declCountsInto(paths, sources, lexes, progs);
+            C c = checkFilesAutoIn(paths, sources, res, paths[f], counts, lexes, progs, "", fname, spec);
+            ed.starts[ed.n] = lx.tokens[utok * tokenStride() + 1];
+            ed.lens[ed.n] = lx.tokens[utok * tokenStride() + 2];
+            ed.texts[ed.n] = unionOfList(c.autoCollect);
+            ed.n = ed.n + 1;
+          }
+          default: { }
+        }
+      }
+    }
+    default: { }
+  }
+}
+
+/** `a|b|a|` as `union<a, b>`, or `never` for nothing. */
+string unionOfList(string list) {
+  string seen = "|";
+  string members = "";
+  string rest = list;
+  while (rest.indexOf("|") >= 0) {
+    string one = rest.slice(0, rest.indexOf("|"));
+    rest = rest.slice(rest.indexOf("|") + 1, rest.len());
+    if (one == "" || seen.indexOf("|" + one + "|") >= 0) { continue; }
+    seen = seen + one + "|";
+    members = members + (members == "" ? "" : ", ") + one;
+  }
+  return members == "" ? "never" : "union<" + members + ">";
+}
+
+/**
+ * The variant fields of enum `tmpl` typed by its letter at `index`, as `V:f,…` — read from whichever
+ * file declares it, the built-ins included.
+ */
+string variantFieldsOfLetter(string[] sources, string tmpl, i32 index) {
+  for (i32 i = 0; i <= sources.len() + 1; i++) {
+    string text = i < sources.len() ? sources[i] : i == sources.len() ? coreSource() : stdSource();
+    if (text.indexOf("enum " + tmpl) < 0) { continue; }
+    u8[] src = text.toBytes();
+    Lexed lx = lex(src);
+    Program prog = parseProgram(P.create(src, lx));
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (tokenTextOf(src, lx, nameTok) != tmpl || index >= typeParams.len()) { continue; }
+          string letter = tokenTextOf(src, lx, typeParams[index]);
+          string out = "";
+          for (i32 v = 0; v < variants.len(); v++) {
+            for (i32 fi = 0; fi < variants[v].fields.len(); fi++) {
+              match (variants[v].fields[fi].type.kind) {
+                Named(ftok, fargs): {
+                  if (fargs.len() == 0 && tokenTextOf(src, lx, ftok) == letter) {
+                    out = out + (out == "" ? "" : ",") + tokenTextOf(src, lx, variants[v].nameTok) + ":" + numText(fi);
+                  }
+                }
+                default: { }
+              }
+            }
+          }
+          return out;
+        }
+        default: { }
+      }
+    }
+  }
+  return "";
 }
 
 // ---- Variadic parameters — spec/next ch14 ----
@@ -1841,12 +2287,12 @@ export string[] lowerSources(string[] paths, string[] sources, Res res) {
  */
 string[] lowerVariadics(string[] sources) {
   bool any = false;
-  for (i32 i = 0; i < sources.len(); i++) { if (sources[i].indexOf("...") >= 0) { any = true; } }
+  for (i32 i = 0; i < sources.len(); i++) { if (hasVariadicMarker(sources[i])) { any = true; } }
   if (!any) { return sources; }
   string names = "|";
   string fixed = "|";
   for (i32 f = 0; f < sources.len(); f++) {
-    if (sources[f].indexOf("...") < 0) { continue; }
+    if (!hasVariadicMarker(sources[f])) { continue; }
     u8[] src = sources[f].toBytes();
     Lexed lx = lex(src);
     Program prog = parseProgram(P.create(src, lx));
@@ -1869,6 +2315,18 @@ string[] lowerVariadics(string[] sources) {
   string[] out = string[].filled(sources.len(), "");
   for (i32 f = 0; f < sources.len(); f++) { out[f] = variadicCallsOf(sources[f], names, fixed); }
   return out;
+}
+
+/** Whether `text` has a ` ...name` — a variadic parameter's marker, not prose's ellipsis. */
+bool hasVariadicMarker(string text) {
+  string rest = text;
+  while (rest.indexOf(" ...") >= 0) {
+    rest = rest.slice(rest.indexOf(" ...") + 4, rest.len());
+    if (rest.len() == 0) { return false; }
+    u8 c = rest.toBytes()[0];
+    if ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95) { return true; }
+  }
+  return false;
 }
 
 /** The fixed-parameter count of variadic `name`, or -1. */
@@ -2245,7 +2703,7 @@ string autoCollect(AutoRun run, i32 k, string path) {
   Program?[] progs = Program?[].defaulted(run.paths.len() + 1);
   i32[] counts = declCountsInto(run.paths, run.sources, lexes, progs);
   C c = checkFilesAutoIn(run.paths, run.sources, run.res, run.paths[run.file], counts, lexes, progs,
-                         assume, run.fns.names[k]);
+                         assume, run.fns.names[k], "");
   if (run.memoCount >= run.memoKeys.len()) {
     i32 grown = run.memoKeys.len() * 2 + 8;
     string[] mk = string[].filled(grown, "");

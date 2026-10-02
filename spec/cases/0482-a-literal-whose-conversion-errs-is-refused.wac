@@ -1,0 +1,17 @@
+// expect: refused
+// spec: §wac-fromnumber-err-refused-e8w89yu
+// why: the conversion runs at compile time, so its `Err` is a compile error at the literal
+// from: spec/next ch09
+import { NumberLiteral, fromNumber, Result } from "core";
+struct Even {
+  i64 value;
+  Result<Even, string> [fromNumber](NumberLiteral literal) {
+    i64 v = try i64.[fromNumber](literal);
+    if (v % 2 != 0) { return Result.Err("odd"); }
+    return Result.Ok(Even(v));
+  }
+}
+export i64 three() {
+  Even e = 3;
+  return e.value;
+}

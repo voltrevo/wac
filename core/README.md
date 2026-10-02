@@ -71,7 +71,8 @@ import { hashString, stringEq } from "core";
 | `Vec<T>` | growable array; `push`/`pop`/`get`/`insert`/`remove`, amortised O(1) append |
 | `Map<K, V>` | hash map, open-addressed with linear probing; hash and equality as funcrefs |
 | `Option<T>` | a value or nothing, taken apart with `match` |
-| `Result<T, E>` | a value or an error, with the error type up to the caller |
+| `Result<T, E = union>` | a value or an error; `Result<T>` gathers its error type from what is returned |
+| `number.wac` | `NumberLiteral` and the `fromNumber` symbol a type implements to be a literal's target |
 | `hash.wac` | ready-made hash and equality for `string`, `i32` and `i64` |
 
 This package exists because wac gained generics ([wac issue
@@ -176,7 +177,13 @@ Option<string> described = mapOption(count, describe);   // T from the Option, U
 
 `Result<T, E>` leaves the error type to the caller, because the useful error differs: a
 parser wants a message and a position, an arithmetic routine wants a code, and a caller that
-only branches wants `Result<T, bool>`.
+only branches wants `Result<T, bool>`. `E` defaults to a `union` placeholder (spec/next ch19), so a
+function answering `Result<i32>` has the union of the errors it returns and propagates.
+
+A type of the program's own becomes a numeric literal's target by implementing `[fromNumber]`, a
+method without a receiver taking a `NumberLiteral` and answering a `Result` — spec/next ch09. The
+compiler converts each such literal statically, through `literalValue`; the built-in numbers' own
+conversions are the `numberLiteralTo…` functions, written `f64.[fromNumber](n)` and so on.
 
 ## What is not here yet
 

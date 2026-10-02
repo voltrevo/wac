@@ -16666,6 +16666,14 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
         }
       }
+      // **A static's initialiser is a body as well**: a generic it calls is an instance the module
+      // builds, though no function names it — `literalValue(…)` in the static a `fromNumber` literal
+      // becomes is the case that found this (spec/next ch09).
+      StaticDecl(snameTok, stype, sinit, sexported): {
+        noteCallWant(env, sinit, typeOfTyName(env, src, lexed, stype));
+        collectArrayTypesOfExpr(env, src, lexed, sinit);
+        env.callWantTok = 0 - 1;
+      }
       default: { }
     }
   }

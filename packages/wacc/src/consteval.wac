@@ -20,12 +20,12 @@
 // the host fills in (`std/platform.wac`), and the compiler cannot make one, so there is no `Sys` to
 // call and nothing to ban. The only genuine wall is a wasm import, which no wac function is.
 
-import { Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind, Param, Program,
+import { Arm, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind, Method, Param, Program,
          Stmt, StmtKind, Ty } from "./ast.wac";
 import { Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { stringLiteralBytes } from "./strlit.wac";
-import { resolveFrom } from "./path.wac";
+import { endsWith, resolveFrom } from "./path.wac";
 import { tupleMembers, tupleName } from "./tuples.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
@@ -768,9 +768,9 @@ export i32 funcDeclAt(Decls cx, string name, i32 fi) {
   i32 d = cx.declAt(name, fi);
   if (d < 0) { return 0 - 1; }
   match (cx.decls[d].kind) {
-    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-      return typeParams.len() > 0 ? 0 - 1 : d;
-    }
+    // **A generic function runs as written**: every value here carries its own type, so its letters
+    // need binding only where it asks a question about one, which the evaluator then reports.
+    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): { return d; }
     default: { return 0 - 1; }
   }
 }
@@ -998,11 +998,38 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
       return ev.heap[id].slots[slot];
     }
 
+    MatchExpr(subject, arms): {
+      Value sv = evalExpr(ev, cx, fi, subject, "");
+      if (!evFinished(ev.status)) { return noneValue(); }
+      i32 at = matchedArm(ev, cx, fi, sv, arms);
+      if (at < 0) { return noneValue(); }
+      if (arms[at].value is null) { ev.unsupported("a `match` arm with no value"); return noneValue(); }
+      i32 mark = ev.localCount;
+      bindArm(ev, cx, fi, sv, arms[at]);
+      Value out = evalExpr(ev, cx, fi, arms[at].value!, want);
+      ev.localCount = mark;
+      return out;
+    }
     Unwrap(operand): {
       Value v = evalExpr(ev, cx, fi, operand, "");
       if (!evFinished(ev.status)) { return noneValue(); }
       if (isNullValue(v)) { ev.raise("`!` unwrapped a null"); return noneValue(); }
+      // `!` on a `Result` is its `Ok` value, and an `Err` traps — as it does at run time.
+      if (v.kind == vRef() && endsWith(ev.heap[v.id].type, ".Ok")) { return ev.heap[v.id].slots[0]; }
+      if (v.kind == vRef() && endsWith(ev.heap[v.id].type, ".Err")) { ev.raise("`!` unwrapped an Err"); return noneValue(); }
       return v;
+    }
+    // **`try` answers the `Ok` value, or returns the `Err`** from the function being run (spec/next
+    // ch26) — the same object, since an `Err` carries nothing of the `Ok` type it is not.
+    Try(operand): {
+      Value r = evalExpr(ev, cx, fi, operand, "");
+      if (!evFinished(ev.status)) { return noneValue(); }
+      if (r.kind != vRef()) { ev.unsupported("a `try` on something that is not a Result"); return noneValue(); }
+      string rt = ev.heap[r.id].type;
+      if (endsWith(rt, ".Ok")) { return ev.heap[r.id].slots[0]; }
+      if (endsWith(rt, ".Err")) { ev.result = r; ev.status = evReturn(); return noneValue(); }
+      ev.unsupported("a `try` on something that is not a Result");
+      return noneValue();
     }
 
     ArrNew(elem, size, fill, elements): {
@@ -1383,12 +1410,27 @@ export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
       // `Tag.One(6)` — a variant built through its enum (spec/next ch13): an object holding the payload.
       i32 arity = variantArityOf(cx, fi, obj, nm);
       if (arity >= 0) { return buildVariant(ev, cx, fi, obj, nm, args, arity); }
+      // **`Owner.method(…)` — a method without a receiver**, `Even.[fromNumber](n)` among them: the
+      // name is a type, not a value, so it is looked up before anything evaluates it.
+      match (obj.kind) {
+        Ident(otok): {
+          string on = tokText(src, lx, otok);
+          if (ev.localAt(on, ev.frameBase) < 0 && cx.constAt(on, fi) < 0 && typeDeclIndex(cx, on) >= 0) {
+            return callMethod(ev, cx, fi, on, nm, false, noneValue(), args);
+          }
+        }
+        default: { }
+      }
       Value o = evalExpr(ev, cx, fi, obj, "");
       if (!evFinished(ev.status)) { return noneValue(); }
       i32 id = refOf(o);
       if (o.kind == vType()) { return typerefMethod(ev, typeOfTyperef(ev, o), nm); }
       if (nm == "len" && id >= 0) { return numValue("i32", ev.heap[id].count as i64); }
       if (id < 0) { ev.raise("a method was called through null"); return noneValue(); }
+      // The string methods core's own conversions use, answered here as `len` is.
+      if (ev.heap[id].type == "string") { return stringMethod(ev, cx, fi, id, nm, args); }
+      string owner = ownerOfHeapType(ev.heap[id].type);
+      if (typeDeclIndex(cx, owner) >= 0) { return callMethod(ev, cx, fi, owner, nm, true, o, args); }
       ev.unsupported("the method `" + ev.heap[id].type + "." + nm + "`");
       return noneValue();
     }
@@ -1397,6 +1439,150 @@ export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
       return noneValue();
     }
   }
+}
+
+/** Which arm of a `match` the value `sv` takes — or -1, with the evaluator told why. */
+i32 matchedArm(Ev ev, Decls cx, i32 fi, Value sv, Arm[] arms) {
+  bool absent = isNullValue(sv);
+  string vt = !absent && sv.kind == vRef() ? ev.heap[sv.id].type : "";
+  string variant = vt.indexOf(".") >= 0 ? vt.slice(vt.indexOf(".") + 1, vt.len()) : vt;
+  if (variant.indexOf("@") >= 0) { variant = variant.slice(0, variant.indexOf("@")); }
+  i32 otherwise = 0 - 1;
+  for (i32 a = 0; a < arms.len(); a++) {
+    if (arms[a].elseTok >= 0 || arms[a].variantTok < 0) { otherwise = a; continue; }
+    string an = tokText(cx.srcOf(fi), cx.lexOf(fi), arms[a].variantTok);
+    if (an == "null") { if (absent) { return a; } continue; }
+    if (an == "default") { otherwise = a; continue; }
+    if (!absent && an == variant) { return a; }
+  }
+  if (otherwise >= 0) { return otherwise; }
+  if (absent) { ev.raise("a `match` on null with no `null` arm"); return 0 - 1; }
+  ev.unsupported("a `match` whose subject this evaluator cannot place");
+  return 0 - 1;
+}
+
+/** An arm's payload names, bound to the variant's slots in order; `_` binds nothing. */
+void bindArm(Ev ev, Decls cx, i32 fi, Value sv, Arm arm) {
+  if (sv.kind != vRef() || isNullValue(sv)) { return; }
+  for (i32 i = 0; i < arm.bindingToks.len() && i < ev.heap[sv.id].count; i++) {
+    string bn = tokText(cx.srcOf(fi), cx.lexOf(fi), arm.bindingToks[i]);
+    if (bn == "_" || bn == "is") { continue; }
+    ev.declare(bn, "", ev.heap[sv.id].slots[i]);
+  }
+}
+
+/** A heap object's declared type, its evaluator suffix and a variant's name taken off: `Even@1` is `Even`. */
+string ownerOfHeapType(string t) {
+  string base = t.indexOf("@") >= 0 ? t.slice(0, t.indexOf("@")) : t;
+  return base.indexOf(".") >= 0 ? base.slice(0, base.indexOf(".")) : base;
+}
+
+/** The struct or enum declared under `name`, or -1. */
+i32 typeDeclIndex(Decls cx, string name) {
+  for (i32 d = 0; d < cx.decls.len(); d++) {
+    match (cx.decls[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (d < cx.names.len() && cx.names[d] == name) { return d; }
+      }
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (d < cx.names.len() && cx.names[d] == name) { return d; }
+      }
+      default: { }
+    }
+  }
+  return 0 - 1;
+}
+
+/**
+ * **A method, run as a function is** — with `this` bound to the receiver when it has one (spec/next
+ * ch28: static evaluation runs ordinary wac). A struct's method, or an enum's.
+ */
+Value callMethod(Ev ev, Decls cx, i32 fromFi, string owner, string mname, bool hasRecv, Value recv, Expr[] args) {
+  i32 d = typeDeclIndex(cx, owner);
+  Method[] methods = Method[]();
+  match (cx.decls[d].kind) {
+    StructDecl(nameTok, parentTok, fields, ms, exported, isConst, typeParams): { methods = ms; }
+    EnumDecl(nameTok, variants, exported, ms, typeParams): { methods = ms; }
+    default: { }
+  }
+  i32 dfi = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+  for (i32 m = 0; m < methods.len(); m++) {
+    if (tokText(cx.srcOf(dfi), cx.lexOf(dfi), methods[m].nameTok) != mname) { continue; }
+    Value[] argv = Value[].filled(args.len() < 1 ? 1 : args.len(), noneValue());
+    for (i32 i = 0; i < args.len(); i++) {
+      string pt = i < methods[m].params.len() ? tyName(cx, dfi, methods[m].params[i].type) : "";
+      argv[i] = evalExpr(ev, cx, fromFi, args[i], pt);
+      if (!evFinished(ev.status)) { return noneValue(); }
+    }
+    ev.depth = ev.depth + 1;
+    if (ev.depth > ev.depthLimit) {
+      ev.status = evLimit();
+      ev.message = "static evaluation nested more than " + decimalText(ev.depthLimit)
+                 + " calls deep and this compiler stopped trying";
+      ev.depth = ev.depth - 1;
+      return noneValue();
+    }
+    i32 base = ev.localCount;
+    i32 outer = ev.frameBase;
+    string outerRet = ev.returnType;
+    ev.frameBase = base;
+    ev.returnType = tyName(cx, dfi, methods[m].returnType);
+    if (hasRecv) { ev.declare("this", owner, recv); }
+    for (i32 i = 0; i < methods[m].params.len(); i++) {
+      ev.declare(tokText(cx.srcOf(dfi), cx.lexOf(dfi), methods[m].params[i].nameTok),
+                 tyName(cx, dfi, methods[m].params[i].type), i < argv.len() ? argv[i] : noneValue());
+    }
+    pushDemand(ev, owner + "." + mname + "()");
+    execStmts(ev, cx, dfi, methods[m].body, base);
+    popDemand(ev);
+    Value out = noneValue();
+    if (ev.status == evReturn()) { out = ev.result; ev.status = evOk(); }
+    ev.localCount = base;
+    ev.frameBase = outer;
+    ev.returnType = outerRet;
+    ev.depth = ev.depth - 1;
+    return out;
+  }
+  ev.unsupported("the method `" + owner + "." + mname + "`");
+  return noneValue();
+}
+
+/** A new string object holding `bytes`. */
+Value stringFrom(Ev ev, u8[] bytes) {
+  i32 id = ev.alloc("string", true, bytes.len());
+  if (id < 0) { return noneValue(); }
+  for (i32 i = 0; i < bytes.len(); i++) { ev.heap[id].slots[i] = numValue("i8", wrapTo("i8", bytes[i] as i64)); }
+  return refValue(id);
+}
+
+/** `s.slice(a, b)`, `s.toBytes()` and `s.indexOf(t)` on the string object `id`. */
+Value stringMethod(Ev ev, Decls cx, i32 fi, i32 id, string nm, Expr[] args) {
+  u8[] bytes = stringOf(ev, id).toBytes();
+  if (nm == "toBytes" && args.len() == 0) {
+    i32 aid = ev.alloc("u8[]", true, bytes.len());
+    if (aid < 0) { return noneValue(); }
+    for (i32 i = 0; i < bytes.len(); i++) { ev.heap[aid].slots[i] = numValue("u8", bytes[i] as i64); }
+    return refValue(aid);
+  }
+  if (nm == "slice" && args.len() == 2) {
+    Value a = evalExpr(ev, cx, fi, args[0], "i32");
+    if (!evFinished(ev.status)) { return noneValue(); }
+    Value b = evalExpr(ev, cx, fi, args[1], "i32");
+    if (!evFinished(ev.status)) { return noneValue(); }
+    i32 from = intOf(a) as! i32;
+    i32 to = intOf(b) as! i32;
+    if (from < 0 || to > bytes.len() || from > to) { ev.raise("a slice out of range"); return noneValue(); }
+    u8[] part = u8[].filled(to - from, 0);
+    for (i32 i = from; i < to; i++) { part[i - from] = bytes[i]; }
+    return stringFrom(ev, part);
+  }
+  if (nm == "indexOf" && args.len() == 1) {
+    Value t = evalExpr(ev, cx, fi, args[0], "string");
+    if (!evFinished(ev.status)) { return noneValue(); }
+    return numValue("i32", stringOf(ev, id).indexOf(stringOf(ev, refOf(t))) as i64);
+  }
+  ev.unsupported("the method `string." + nm + "`");
+  return noneValue();
 }
 
 // ── Statements ────────────────────────────────────────────────────────────────
@@ -1507,7 +1693,10 @@ export void execStmt(Ev ev, Decls cx, i32 fi, Stmt st) {
 
     Return(value): {
       if (!(value is null)) {
-        ev.result = evalExpr(ev, cx, fi, value!, ev.returnType);
+        Value rv = evalExpr(ev, cx, fi, value!, ev.returnType);
+        // A `try` inside the value already returned, and its `Err` is the result.
+        if (ev.status == evReturn()) { return; }
+        ev.result = rv;
         if (!evFinished(ev.status)) { return; }
       } else {
         ev.result = noneValue();
@@ -1531,6 +1720,18 @@ export void execStmt(Ev ev, Decls cx, i32 fi, Stmt st) {
     }
 
     Block(body):    { execStmts(ev, cx, fi, body, ev.frameBase); }
+    // **`match` over a variant** (spec/next ch25): the arm whose variant the subject is, its payload
+    // bound to the arm's names; an `else` arm takes what no other did, and a `null` arm an absent one.
+    Match(subject, arms): {
+      Value sv = evalExpr(ev, cx, fi, subject, "");
+      if (!evFinished(ev.status)) { return; }
+      i32 at = matchedArm(ev, cx, fi, sv, arms);
+      if (at < 0) { return; }
+      i32 mark = ev.localCount;
+      bindArm(ev, cx, fi, sv, arms[at]);
+      execStmts(ev, cx, fi, arms[at].body, ev.frameBase);
+      ev.localCount = mark;
+    }
     ExprStmt(expr): { evalExpr(ev, cx, fi, expr, ""); }
 
     default: { ev.unsupported("this statement"); }

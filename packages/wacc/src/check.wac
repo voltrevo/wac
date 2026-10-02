@@ -598,6 +598,98 @@ void autoContributes(C c, Expr e) {
   c.autoCollect = c.autoCollect + t + "|";
 }
 
+/** The non-negative decimal `s` spells. */
+i32 decimalOf(string s) {
+  i32 n = 0;
+  for (i32 i = 0; i < s.len(); i++) { n = n * 10 + (s.toBytes()[i] as i32 - 48); }
+  return n;
+}
+
+/** Whether `e` is a number written as one and `want` a type with a `[fromNumber]` method. */
+bool fromNumberTarget(C c, string want, Expr e) {
+  match (e.kind) {
+    IntLit(tok): { }
+    FloatLit(tok): { }
+    default: { return false; }
+  }
+  if (want == "" || want == typeNone() || !c.isStruct(templateOf(want))) { return false; }
+  return c.methodAt(templateOf(want), "[fromNumber]") >= 0;
+}
+
+/**
+ * What one `return` gives a placeholder in the result's type: a variant construction's argument where
+ * the variant's field is the placeholder's letter — `Result.Err("empty")` gives `string` — or, for a
+ * value of the template's own type, its argument in the placeholder's position.
+ */
+void placeholderContributes(C c, Expr e) {
+  string spec = c.placeholderSpec;
+  string tmpl = spec.slice(0, spec.indexOf("|"));
+  string rest = spec.slice(spec.indexOf("|") + 1, spec.len());
+  i32 index = 0;
+  string digits = rest.slice(0, rest.indexOf("|"));
+  for (i32 i = 0; i < digits.len(); i++) { index = index * 10 + (digits.toBytes()[i] as i32 - 48); }
+  string fields = "," + rest.slice(rest.indexOf("|") + 1, rest.len()) + ",";
+  match (e.kind) {
+    Ternary(cond, then, els): { placeholderContributes(c, then); placeholderContributes(c, els); return; }
+    Call(callee, args, targs): {
+      match (callee.kind) {
+        Member(obj, nameTok): {
+          match (obj.kind) {
+            Ident(tok): {
+              if (tokenText(c, tok) == tmpl) {
+                string variant = tokenText(c, nameTok);
+                for (i32 i = 0; i < args.len(); i++) {
+                  if (fields.indexOf("," + variant + ":" + countText(i) + ",") < 0) { continue; }
+                  i32 lit = litFamily(c, args[i]);
+                  if (lit == litInteger() || lit == litFloat() || lit == litNull()) { continue; }
+                  string t = lit == litString() ? "string" : lit == litBool() ? "bool" : typeOfExpr(c, args[i]);
+                  if (t != "" && t != typeNone()) { c.autoCollect = c.autoCollect + t + "|"; }
+                }
+                return;
+              }
+            }
+            default: { }
+          }
+        }
+        default: { }
+      }
+    }
+    default: { }
+  }
+  placeholderFromType(c, typeOfExpr(c, e), tmpl, index);
+}
+
+/** The argument at `index` of a `tmpl<…>` type, as a placeholder's contribution. */
+void placeholderFromType(C c, string t, string tmpl, i32 index) {
+  if (!startsWith(t, tmpl + "<")) { return; }
+  string args = t.slice(tmpl.len() + 1, t.len() - 1);
+  i32 depth = 0;
+  i32 k = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= args.len(); i++) {
+    string ch = i < args.len() ? args.slice(i, i + 1) : ",";
+    if (ch == "<" || ch == "(") { depth++; }
+    if (ch == ">" || ch == ")") { depth--; }
+    if (ch == "," && depth == 0) {
+      if (k == index) {
+        string a = trimmedSpaces(args.slice(from, i));
+        if (a != "" && a != "union") { c.autoCollect = c.autoCollect + a + "|"; }
+        return;
+      }
+      k++;
+      from = i + 1;
+    }
+  }
+}
+
+string trimmedSpaces(string s) {
+  i32 a = 0;
+  i32 b = s.len();
+  while (a < b && s.slice(a, a + 1) == " ") { a++; }
+  while (b > a && s.slice(b - 1, b) == " ") { b--; }
+  return s.slice(a, b);
+}
+
 /**
  * The widening of an `auto` result's contributions (spec/next ch32, ch34): the bases joined — one
  * absorbing the other, or their closest common ancestor — at the greatest nullable depth. `""` when
@@ -3247,6 +3339,12 @@ export struct C {
    */
   string instQueue;
   string instBinding;
+  /**
+   * **Collecting a placeholder in a result's type** (spec/next ch19, ch33): `Template|index|V:f,…` —
+   * the result's template, which of its arguments is the placeholder, and the variant fields typed by
+   * that argument's letter. What each `return` and `try` gives it goes to `autoCollect`.
+   */
+  string placeholderSpec;
 
   void noteVirtual(this, string key) {
     string[] more = string[].defaulted(this.virtuals.len() + 1);
@@ -3355,7 +3453,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "");
+             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "");
   }
 
   /**
@@ -4843,6 +4941,14 @@ void widenHint(C c, i32 before, string got, string want) {
 
 void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   checkCharLiteral(c, e);
+  // **A type that implements `[fromNumber]` is a literal's target** (spec/next ch09): the literal is
+  // converted statically, which `lowerFromNumberLiterals` arranges from the sites recorded here.
+  if (fromNumberTarget(c, want, e)) {
+    if (c.placeholderSpec == "@literals") {
+      c.autoCollect = c.autoCollect + countText(e.line) + ":" + countText(e.col) + ":" + want + "|";
+    }
+    return;
+  }
   // A codepoint above 127 is not a byte in any slot that holds one — a local, a parameter, a return
   // and a field as much as an element, now that a packed type can be each of those. 233 fits a `u8`,
   // so the range rule below would accept `u8 x = 'é';`. spec/next ch15 `§wac-arr-byte-codepoint`.
@@ -6811,6 +6917,16 @@ void checkExpr(C c, Expr e) {
     }
     Try(operand): {
       checkExpr(c, operand);
+      // What a `try` propagates is a contribution to a placeholder in the result's type (spec/next ch26).
+      if (c.placeholderSpec != "" && c.autoTarget != "" && c.activeFunc == c.autoTarget && c.lambdaReturn == "") {
+        string pspec = c.placeholderSpec;
+        string ptmpl = pspec.slice(0, pspec.indexOf("|"));
+        string prest = pspec.slice(pspec.indexOf("|") + 1, pspec.len());
+        string pdigits = prest.slice(0, prest.indexOf("|"));
+        i32 pindex = 0;
+        for (i32 i = 0; i < pdigits.len(); i++) { pindex = pindex * 10 + (pdigits.toBytes()[i] as i32 - 48); }
+        placeholderFromType(c, typeOfExpr(c, operand), ptmpl, pindex);
+      }
       string rt = typeOfExpr(c, operand);
       if (rt == typeNone() || rt == "") { return; }
       if (genericBase(rt) != "Result") {
@@ -11822,7 +11938,9 @@ void checkStmt(C c, Stmt s, Ty want) {
     }
     Return(value): {
       if (c.autoTarget != "" && c.lambdaReturn == "" && c.activeFunc == c.autoTarget) {
-        if (value is null) { c.autoCollect = c.autoCollect + "void|"; } else { autoContributes(c, value!); }
+        if (c.placeholderSpec != "") {
+          if (value is not null) { placeholderContributes(c, value!); }
+        } else if (value is null) { c.autoCollect = c.autoCollect + "void|"; } else { autoContributes(c, value!); }
       }
       // An `auto` still here could not be inferred, which `errAutoUnresolved` has said once already.
       if (c.lambdaReturn == "" && isAutoTy(c, want)) {
@@ -13444,6 +13562,8 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
                    c.methodOwners[hidden] + "." + mname + " is virtual, and an implementation here must say override");
     }
     c.clearScope();
+    // Named as its key, so a collection asking for `Complex.[fromNumber]` (spec/next ch19) finds it.
+    c.activeFunc = owner + "." + mname;
     // **The function's own body is the outermost scope**, pushed before `this` and the parameters so
     // that they belong to it. `issues/lang/0122`.
     c.pushScope(methods[mi].body);
@@ -13686,7 +13806,20 @@ export void checkModule(C c, Program prog) {
             : cev.status == evTrap() ? errStaticTrapped()
             : cev.status == evLimit() ? errStaticLimit()
             : cev.status == evUnsupported() && c.sFile >= 0 ? errStaticUnsupported() : 0;
-    if (why != 0) { c.reportWith(why, cinit!.line, cinit!.col, cev.message); }
+    // **A literal's conversion is reported at the literal** (spec/next ch09
+    // `§wac-fromnumber-err-refused-e8w89yu`): the static `lowerFromNumberLiterals` made for it is named
+    // `$lit_<line>_<col>` after where it was written, which is what the reader has to change.
+    i32 wline = cinit!.line;
+    i32 wcol = cinit!.col;
+    string cname = ccx.constNames[ci];
+    if (startsWith(cname, "$lit_")) {
+      string lc = cname.slice(5, cname.len());
+      if (lc.indexOf("_") > 0) {
+        wline = decimalOf(lc.slice(0, lc.indexOf("_")));
+        wcol = decimalOf(lc.slice(lc.indexOf("_") + 1, lc.len()));
+      }
+    }
+    if (why != 0) { c.reportWith(why, wline, wcol, cev.message); }
   }
 
   for (i32 d = 0; d < prog.decls.len(); d++) {

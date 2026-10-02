@@ -1,0 +1,146 @@
+// Numbers as they are written, and the symbol that turns one into a value of a type — spec/next ch09.
+//
+// A numeric literal has no type of its own: its context gives it one. When that type is a program's own,
+// the type says how through `[fromNumber]`, a method without a receiver that takes the literal's exact
+// written value and answers a `Result`. The compiler calls it statically, once per literal, and the
+// `Ok` value is the literal's value (`§wac-fromnumber-literal-jqssasj`); an `Err` is a compile error at
+// the literal (`§wac-fromnumber-err-refused-e8w89yu`).
+//
+// The built-in numeric types answer the same question, as `f64.[fromNumber](n)` and its siblings, which
+// the compiler reads as the functions below — so a conversion written for a program's own type can
+// lean on them with ordinary `try`.
+
+import { Result } from "./result.wac";
+
+/**
+ * A numeric literal's exact value, as written — before any rounding to a machine number. Only the
+ * compiler makes one; a conversion reads `text`, or hands it to one of the conversions below.
+ */
+export struct NumberLiteral {
+  string text;
+}
+
+/** What a type implements to be the target of a numeric literal (spec/next ch09). */
+export symbol fromNumber;
+
+/** `f64.[fromNumber](n)`: the nearest `f64`. Refused only for text that is not a number. */
+export Result<f64, string> numberLiteralToF64(NumberLiteral n) {
+  string s = n.text;
+  if (isHexLiteral(s)) {
+    Result<i64, string> whole = numberLiteralToI64(n);
+    return match (whole) { Ok(v): Result.Ok(v as~ f64), Err(e): Result.Err(e) };
+  }
+  i32 i = 0;
+  bool negative = false;
+  if (i < s.len() && s.slice(i, i + 1) == "-") { negative = true; i++; }
+  f64 value = 0.0;
+  bool digits = false;
+  while (i < s.len() && isDigitOrSeparator(s.slice(i, i + 1))) {
+    string ch = s.slice(i, i + 1);
+    if (ch != "_") { value = value * 10.0 + (digitOf(ch) as f64); digits = true; }
+    i++;
+  }
+  if (i < s.len() && s.slice(i, i + 1) == ".") {
+    i++;
+    f64 scale = 0.1;
+    while (i < s.len() && isDigitOrSeparator(s.slice(i, i + 1))) {
+      string ch = s.slice(i, i + 1);
+      if (ch != "_") { value = value + (digitOf(ch) as f64) * scale; scale = scale / 10.0; digits = true; }
+      i++;
+    }
+  }
+  if (i < s.len() && (s.slice(i, i + 1) == "e" || s.slice(i, i + 1) == "E")) {
+    i++;
+    bool down = false;
+    if (i < s.len() && (s.slice(i, i + 1) == "-" || s.slice(i, i + 1) == "+")) { down = s.slice(i, i + 1) == "-"; i++; }
+    i32 exp = 0;
+    while (i < s.len() && isDigitOrSeparator(s.slice(i, i + 1))) {
+      string ch = s.slice(i, i + 1);
+      if (ch != "_") { exp = exp * 10 + digitOf(ch); }
+      i++;
+    }
+    for (i32 k = 0; k < exp; k++) { value = down ? value / 10.0 : value * 10.0; }
+  }
+  if (!digits || i != s.len()) { return Result.Err("`" + s + "` is not a number"); }
+  return Result.Ok(negative ? 0.0 - value : value);
+}
+
+/** `f32.[fromNumber](n)`: the nearest `f32`. */
+export Result<f32, string> numberLiteralToF32(NumberLiteral n) {
+  return match (numberLiteralToF64(n)) { Ok(v): Result.Ok(v as~ f32), Err(e): Result.Err(e) };
+}
+
+/** `i64.[fromNumber](n)`: the integer, refused when the text has a fraction or does not fit. */
+export Result<i64, string> numberLiteralToI64(NumberLiteral n) {
+  string s = n.text;
+  i32 i = 0;
+  bool negative = false;
+  if (i < s.len() && s.slice(i, i + 1) == "-") { negative = true; i++; }
+  bool hex = isHexLiteral(s.slice(i, s.len()));
+  if (hex) { i = i + 2; }
+  i64 value = 0 as i64;
+  bool digits = false;
+  i64 base = hex ? 16 as i64 : 10 as i64;
+  // The magnitude is gathered negatively, so `-9223372036854775808` fits as it does in the type.
+  i64 limit = negative || hex ? 0 as i64 - 9223372036854775807 - 1 : 0 as i64 - 9223372036854775807;
+  while (i < s.len()) {
+    string ch = s.slice(i, i + 1);
+    if (ch == "_") { i++; continue; }
+    i32 d = hex ? hexDigitOf(ch) : (isDigitOrSeparator(ch) ? digitOf(ch) : 0 - 1);
+    if (d < 0) { break; }
+    if (value < (limit + (d as i64)) / base) { return Result.Err("`" + s + "` does not fit in an i64"); }
+    value = value * base - (d as i64);
+    digits = true;
+    i++;
+  }
+  if (!digits || i != s.len()) { return Result.Err("`" + s + "` is not an integer"); }
+  if (negative) { return Result.Ok(value); }
+  if (hex) { return Result.Ok(0 as i64 - value); }
+  return Result.Ok(0 as i64 - value);
+}
+
+/** `i32.[fromNumber](n)`: the integer, refused when it does not fit; a hex literal names bits. */
+export Result<i32, string> numberLiteralToI32(NumberLiteral n) {
+  return match (numberLiteralToI64(n)) {
+    Ok(v): fitsBits(n.text, v, 0 as i64 - 2147483648, 2147483647 as i64, 4294967295 as i64)
+             ? Result.Ok(v as@ i32) : Result.Err("`" + n.text + "` does not fit in an i32"),
+    Err(e): Result.Err(e),
+  };
+}
+
+/** Whether `v`, written as `text`, fits a type of range `lo..hi` — or, written in hex, its width `mask`. */
+bool fitsBits(string text, i64 v, i64 lo, i64 hi, i64 mask) {
+  if (isHexLiteral(text)) { return v >= 0 as i64 && v <= mask; }
+  return v >= lo && v <= hi;
+}
+
+bool isHexLiteral(string s) {
+  return s.len() > 2 && s.slice(0, 1) == "0" && (s.slice(1, 2) == "x" || s.slice(1, 2) == "X");
+}
+
+bool isDigitOrSeparator(string ch) {
+  return ch == "_" || (ch.len() == 1 && ch.toBytes()[0] >= 48 && ch.toBytes()[0] <= 57);
+}
+
+i32 digitOf(string ch) { return ch.toBytes()[0] as i32 - 48; }
+
+i32 hexDigitOf(string ch) {
+  if (ch.len() != 1) { return 0 - 1; }
+  i32 b = ch.toBytes()[0] as i32;
+  if (b >= 48 && b <= 57) { return b - 48; }
+  if (b >= 97 && b <= 102) { return b - 87; }
+  if (b >= 65 && b <= 70) { return b - 55; }
+  return 0 - 1;
+}
+
+/**
+ * The value a literal's `[fromNumber]` conversion answered, or a trap naming the literal — which, run as
+ * the static each such literal becomes, is a compile error at it (spec/next ch09
+ * `§wac-fromnumber-err-refused-e8w89yu`).
+ */
+export T literalValue<T, E>(Result<T, E> converted, string literal) {
+  match (converted) {
+    Ok(v): { return v; }
+    Err(e): { trap "the literal " + literal + " cannot be converted: its `fromNumber` answered Err"; }
+  }
+}

@@ -1,0 +1,13 @@
+// expect: answers computed = 42
+// spec: §wac-static-eval-ordinary-ba8c628
+// why: static evaluation runs ordinary wac — methods, with and without a receiver, and `match`
+// from: spec/next ch28
+import { Result } from "core";
+struct Acc {
+  i32 n;
+  Acc start() { return Acc(40); }
+  i32 plus(const this, i32 k) { return this.n + k; }
+}
+Result<i32, string> half(i32 x) { return x % 2 == 0 ? Result.Ok(x / 2) : Result.Err("odd"); }
+static i32 K = match (half(Acc.start().plus(44))) { Ok(v): v, Err(e): 0 };
+export i32 computed() { return K; }

@@ -123,7 +123,9 @@ spec/next/2-types/09-numeric-literals.md#10
 spec/next/2-types/09-numeric-literals.md#11
 spec/next/2-types/09-numeric-literals.md#12
 spec/next/2-types/09-numeric-literals.md#13
+spec/next/2-types/09-numeric-literals.md#14
 spec/next/2-types/09-numeric-literals.md#15
+spec/next/2-types/09-numeric-literals.md#16
 spec/next/2-types/10-nullability.md#1
 spec/next/2-types/10-nullability.md#2
 spec/next/2-types/10-nullability.md#3
@@ -265,6 +267,7 @@ spec/next/2-types/19-generics.md#10
 spec/next/2-types/19-generics.md#11
 spec/next/2-types/19-generics.md#12
 spec/next/2-types/19-generics.md#13
+spec/next/2-types/19-generics.md#14
 spec/next/2-types/19-generics.md#15
 spec/next/2-types/19-generics.md#16
 spec/next/2-types/19-generics.md#17
