@@ -46,7 +46,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
-  kLbrace, kQuestion, kSymName, kString, kNull, kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq,
+  kLbrace, kQuestion, kSymName, kString, kNull, kConst, kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq,
   kCaretEq, kInc,
 } from "./kinds.wac";
 import {
@@ -1748,7 +1748,10 @@ void declareTrueBindings(C c, Expr e) {
 void declarePatternNames(C c, Pattern pat, string subjectT) {
   if (pat.type is not null) {
     if (pat.nameTok >= 0 && tokenText(c, pat.nameTok) != "_") {
-      c.declare(tokenText(c, pat.nameTok), typeOfTy(c, pat.type!));
+      string bt = typeOfTy(c, pat.type!);
+      // `const Rect r` binds a `const` reference to a `Rect` (spec/next ch18).
+      if (startsWith(bt, "const ")) { c.declareConst(tokenText(c, pat.nameTok), bt.slice(6, bt.len()), true); }
+      else { c.declare(tokenText(c, pat.nameTok), bt); }
     }
     return;
   }
@@ -1778,6 +1781,16 @@ void checkMatches(C c, Expr e, Pattern pat, Expr subject) {
     string tt = typeOfTy(c, pat.type!);
     if (tt == typeNone() || tt == "") { return; }
     bool fits = tt == core || tt == st || descendsFrom(c, tt, core) || descendsFrom(c, core, tt);
+    // **A union holds one of its alternatives** (spec/next ch18): a pattern may name any of them, or a
+    // type one of them descends from; `const T` accepts a value whichever permission it entered by.
+    if (isUnionName(core)) {
+      string want = startsWith(tt, "const ") ? tt.slice(6, tt.len()) : tt;
+      string[] ms = unionMembers(core);
+      for (i32 i = 0; i < ms.len(); i++) {
+        string m = startsWith(ms[i], "const ") ? ms[i].slice(6, ms[i].len()) : ms[i];
+        if (m == want || descendsFrom(c, m, want) || descendsFrom(c, want, m)) { fits = true; }
+      }
+    }
     // **`anyref` is the top of the references** (spec/next ch08), so any reference type may be what
     // one holds — `i31ref x matches items[0]` included.
     if (core == "anyref" && !isPrimitiveName(tt) && tt != "bool") { fits = true; }
@@ -2139,10 +2152,14 @@ string normUnion(C c, string[] ms) {
   string[] flat = flattenUnion(ms);
   bool[] gone = bool[].filled(flat.len(), false);
   for (i32 i = 0; i < flat.len(); i++) {
-    string up = c.parentOf(flat[i]);
+    // **Subsumed within its own qualification** (spec/next ch18): `const Rect` disappears into a
+    // `const Shape`, and never into a mutable `Shape`, nor a mutable `Rect` into a `const` one.
+    bool isConst = startsWith(flat[i], "const ");
+    string q = isConst ? "const " : "";
+    string up = c.parentOf(isConst ? flat[i].slice(6, flat[i].len()) : flat[i]);
     i32 guard = 0;
     while (up != "" && guard < 32) {
-      for (i32 j = 0; j < flat.len(); j++) { if (j != i && flat[j] == up) { gone[i] = true; } }
+      for (i32 j = 0; j < flat.len(); j++) { if (j != i && flat[j] == q + up) { gone[i] = true; } }
       up = c.parentOf(up);
       guard = guard + 1;
     }
@@ -2577,6 +2594,14 @@ bool isReferenceName(C c, string t) {
 export bool assignable(C c, string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
+  // **Permission** (spec/next ch18 `§wac-union-permission-no-restore-dvm5zbj`): a `const` alternative
+  // accepts a mutable value of its type, and a `const` one never becomes mutable.
+  bool wantConst = startsWith(want, "const ");
+  bool gotConst = startsWith(got, "const ");
+  if (gotConst && !wantConst && !isUnionName(want)) { return false; }
+  if ((wantConst || gotConst) && !isUnionName(want)) {
+    return assignable(c, wantConst ? want.slice(6, want.len()) : want, gotConst ? got.slice(6, got.len()) : got);
+  }
   // **Into a union**: a union whose every alternative fits, or a value with exactly one alternative
   // it enters — the most specific (`§wac-union-insert-specific-mv3jsue`).
   if (isUnionName(want)) {
@@ -4522,6 +4547,11 @@ export string typeOfTy(C c, Ty t) {
     Prim(tok): { return tokenText(c, tok); }
     TypeOf(e): { return computedTypeC(c, t); }
     Named(tok, typeArgs): {
+      // `const T` — a union's alternative entered through a `const` reference (spec/next ch18).
+      if (typeArgs.len() == 1 && tokenKind(c, tok) == kConst()) {
+        string cinner = typeOfTy(c, typeArgs[0]);
+        return cinner == "" || cinner == typeNone() ? cinner : "const " + cinner;
+      }
       if (namesTypeDeclC(c, tokenText(c, tok))) { return computedTypeC(c, t); }
       // A letter an instance check has bound is that type (spec/next ch19).
       if (typeArgs.len() == 0 && c.instBinding != "") {
@@ -12494,9 +12524,9 @@ string armNarrowing(C c, Expr subject, Arm arm) {
       // `§wac-union-match-type-rj837up`).
       string ubase = isNullableName(was) ? withoutNull(was) : was;
       if (isUnionName(ubase)) {
-        string member = unionArmMember(c, ubase, variant);
+        string member = unionArmMember(c, ubase, armWritten(c, arm, variant));
         if (member == "") { return ""; }
-        c.setType(nm, member);
+        c.setType(nm, startsWith(member, "const ") ? member.slice(6, member.len()) : member);
         return was;
       }
       if (!c.isStruct(variant)) { return ""; }
@@ -12518,15 +12548,20 @@ void checkUnionArms(C c, string u, Arm[] arms, i32 mline, i32 mcol) {
   for (i32 i = 0; i < arms.len(); i++) {
     if (arms[i].variantTok < 0) { anyDefault = true; continue; }
     if (isNullArm(c, arms[i])) { continue; }
-    string member = unionArmMember(c, u, tokenText(c, arms[i].variantTok));
+    string written = armWritten(c, arms[i], tokenText(c, arms[i].variantTok));
+    string member = unionArmMember(c, u, written);
     if (member == "") {
-      c.reportTok(errPatternType(), arms[i].variantTok, tokenText(c, arms[i].variantTok) + " is not an alternative of " + u);
+      c.reportTok(errPatternType(), arms[i].variantTok, written + " is not an alternative of " + u);
       continue;
     }
     for (i32 k = 0; k < ms.len(); k++) {
       if (ms[k] != member) { continue; }
       if (seen[k]) { c.reportTok(errDuplicateCase(), arms[i].variantTok - 1, ""); }
       seen[k] = true;
+    }
+    // A `const T` arm accepts either permission, so it covers a mutable `T` no earlier arm took (ch18).
+    if (startsWith(member, "const ")) {
+      for (i32 k = 0; k < ms.len(); k++) { if (ms[k] == member.slice(6, member.len())) { seen[k] = true; } }
     }
   }
   if (anyDefault) { return; }
@@ -12535,8 +12570,20 @@ void checkUnionArms(C c, string u, Arm[] arms, i32 mline, i32 mcol) {
   if (missing != "") { c.reportWith(errMatchInexhaustive(), mline, mcol, "missing " + missing); }
 }
 
+/** What an arm names: `Rect`, or `const Rect` when its binding list holds the `const` marker (ch18). */
+string armWritten(C c, Arm arm, string variant) {
+  if (arm.bindingToks.len() == 1 && tokenKind(c, arm.bindingToks[0]) == kConst()) { return "const " + variant; }
+  return variant;
+}
+
 /** The alternative of union `u` that an arm naming `written` is about, or `""`. */
 string unionArmMember(C c, string u, string written) {
+  if (startsWith(written, "const ")) {
+    string base = c.canon(c.renamed(written.slice(6, written.len())));
+    string[] cms = unionMembers(u);
+    for (i32 i = 0; i < cms.len(); i++) { if (cms[i] == "const " + base) { return cms[i]; } }
+    return "";
+  }
   string named = c.canon(c.renamed(written));
   string[] ms = unionMembers(u);
   for (i32 i = 0; i < ms.len(); i++) { if (ms[i] == named || ms[i] == written) { return ms[i]; } }

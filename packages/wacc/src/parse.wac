@@ -927,15 +927,29 @@ Ty[] parseTypeArgs(P p) {
   if (!p.at1(kLt())) { return args.take(); }
   p.advance();
   if (!atTypeArgEnd(p)) {
-    args.push(parseType(p));
+    args.push(parseTypeArg(p));
     while (p.eat(kComma())) {
       if (atTypeArgEnd(p)) { break; }              // trailing comma, as in every other list
-      args.push(parseType(p));
+      args.push(parseTypeArg(p));
     }
   }
   // `>>` closes two lists and `>>>` three: take one `>` worth and leave the rest for the caller.
   if (p.at1(kShr()) || p.at1(kShrU())) { splitGt(p); } else { p.expect(kGt()); }
   return args.take();
+}
+
+/**
+ * One type argument — or `const T`, a union's alternative entered through a `const` reference (spec/next
+ * ch18). It is held as a type named by the `const` keyword with `T` its one argument: a keyword cannot be
+ * the name of a type anybody declared, so the spelling `const T` it is given is never ambiguous.
+ */
+Ty parseTypeArg(P p) {
+  if (!p.at1(kConst())) { return parseType(p); }
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  i32 c = p.advance();
+  Ty inner = parseType(p);
+  return tyNamed(c, Ty[].filled(1, inner), line, col);
 }
 
 /** `<T>` or `<T, U>` after a declaration's name: the name tokens, empty when there are none. */
@@ -1039,7 +1053,7 @@ i32 afterTypeArgs(P p, i32 from) {
  */
 bool typeToken(i32 kind) {
   return kind == kIdent() || kind == kFn() || kind == kComma() || kind == kQuestion()
-      || kind == kVoid()
+      || kind == kVoid() || kind == kConst() || kind == kNull()
       || kind == kLt() || kind == kGt() || kind == kShr() || kind == kShrU()
       || kind == kLbrack() || kind == kRbrack() || kind == kLparen() || kind == kRparen();
 }
@@ -1287,6 +1301,14 @@ Expr parseIsTail(P p, Expr e) {
  * name — each followed by `matches`.
  */
 i32 patternEnd(P p) {
+  // `const Rect r` — a typed pattern that accepts either permission (spec/next ch18).
+  if (p.at1(kConst()) && p.kindAt(1) == kIdent()) {
+    i32 cj = 2;
+    i32 cargs = afterTypeArgs(p, cj);
+    if (cargs > 0) { cj = cargs; }
+    if (p.kindAt(cj) == kIdent() && p.kindAt(cj + 1) == kMatches()) { return cj + 1; }
+    return 0 - 1;
+  }
   if (!p.at1(kIdent())) { return 0 - 1; }
   // `Ok(v)`, `Err(is NotFound)`
   if (p.kindAt(1) == kLparen()) {
@@ -1348,7 +1370,7 @@ Pattern parsePattern(P p) {
     }
     return Pattern(null, 0 - 1, v, names.take(), tests.take(), line, col);
   }
-  Ty t = parseType(p);
+  Ty t = parseTypeArg(p);
   i32 name = p.expect(kIdent());
   return Pattern(t, name, 0 - 1, i32[](), Ty?[](), line, col);
 }
@@ -2821,6 +2843,14 @@ ArmHead parseArmHead(P p) {
     i32 nullTok = p.advance();
     p.expect(kColon());
     return ArmHead(nullTok, -1, i32[](), true);
+  }
+  // `const Rect:` — a union's `const` alternative (spec/next ch18). The `const` token stands in the binding
+  // list, as an `is` does, and the alternative's type is the name after it.
+  if (p.at1(kConst()) && p.kindAt(1) == kIdent()) {
+    i32 constTok = p.advance();
+    i32 constVariant = p.advance();
+    p.expect(kColon());
+    return ArmHead(constVariant, -1, i32[].filled(1, constTok), true);
   }
   if (!p.at1(kIdent())) {
     p.fail(perrExpected());

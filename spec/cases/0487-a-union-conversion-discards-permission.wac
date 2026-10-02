@@ -1,0 +1,18 @@
+// expect: answers stillConst = 10
+// spec: §wac-union-permission-no-restore-dvm5zbj
+// why: converting into `union<const Rect>` boxes the mutable entry as `const`; widening back to
+//      `union<Rect, const Rect>` keeps that box, so the mutable arm no longer matches
+// from: spec/next ch18
+struct Rect { i32 w; }
+i32 mutableIn(union<Rect, const Rect> v) {
+  return match (v) {
+    Rect:       1,
+    const Rect: 0,
+  };
+}
+export i32 stillConst() {
+  union<Rect, const Rect> a = Rect(1);
+  union<const Rect> b = a;
+  union<Rect, const Rect> c = b;
+  return mutableIn(a) * 10 + mutableIn(c);
+}

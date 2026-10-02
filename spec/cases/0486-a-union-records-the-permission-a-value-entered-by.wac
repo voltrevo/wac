@@ -1,0 +1,16 @@
+// expect: answers ancestors = 1030
+// spec: §wac-union-permission-recorded-d7yfbag
+// why: one object enters `union<Rect, const Rect>` twice, once through a `const` reference; a mutable
+//      pattern — its own type or an ancestor's — must see only the mutable entry, while `const Shape`
+//      and a `const Rect` arm accept both
+// from: spec/next ch18
+struct Shape { i32 k; }
+struct Rect : Shape { i32 w; }
+i32 mutableShape(union<Rect, const Rect> v) { if (Shape s matches v) { return 1; } return 0; }
+i32 eitherShape(union<Rect, const Rect> v) { if (const Shape s matches v) { return s.k; } return 0; }
+i32 constArm(union<Rect, const Rect> v) { return match (v) { const Rect: 5 }; }
+export i32 ancestors() {
+  Rect r = Rect(3, 1);
+  const Rect c = r;
+  return mutableShape(r) * 1000 + mutableShape(c) * 100 + eitherShape(c) * 10 + constArm(c) - 5;
+}
