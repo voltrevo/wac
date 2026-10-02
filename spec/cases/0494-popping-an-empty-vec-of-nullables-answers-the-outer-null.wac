@@ -1,0 +1,19 @@
+// expect: answers popped = 10
+// spec: §wac-vec-pop-nested-rgci8id
+// why: at `T = Node?`, `pop` answers a `Node??`, so `Vec<Node?>` is its own instance whose `T?` is a
+//      second layer — an empty `Vec` and a popped `null` must arrive as different values
+// from: spec/next ch38
+import { Vec } from "core";
+struct Node { i32 v; }
+i32 kind(Vec<Node?> v) {
+  Node?? got = v.pop();
+  if (got is null) { return 0; }
+  if (got! is null) { return 1; }
+  return 2;
+}
+export i32 popped() {
+  Vec<Node?> held;
+  held.push(null);
+  Vec<Node?> empty;
+  return kind(held) * 10 + kind(empty);
+}

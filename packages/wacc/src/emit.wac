@@ -586,6 +586,86 @@ void noteCallWant(Env env, Expr e, string want) {
   }
 }
 
+/** Whether `t` spells a reference type — what a `?` of its own is dropped from. */
+bool isRefSpellingE(string t) {
+  if (t == "" || t.slice(t.len() - 1, t.len()) == "?") { return false; }
+  return !(t == "i32" || t == "u32" || t == "i64" || t == "u64" || t == "f32" || t == "f64"
+           || t == "bool" || t == "u8" || t == "i8" || t == "u16" || t == "i16" || t == "void" || t == "never");
+}
+
+/** For a binding like `Node?` — a reference made nullable by its instance — `Node`; otherwise "". */
+string nullableRefBase(string bound) {
+  if (bound.len() < 2 || bound.slice(bound.len() - 1, bound.len()) != "?") { return ""; }
+  string base = bound.slice(0, bound.len() - 1);
+  return isRefSpellingE(base) ? base : "";
+}
+
+/** Whether template `name` writes its `k`th letter as `T?` in a field or a method's signature. */
+bool writesNullableLetter(Env env, u8[] src, Lexed lexed, string name, i32 k) {
+  if (env.nullLetters == "") {
+    string out = ";";
+    Decl[] decls = env.mergedDecls.len() > 0 ? env.mergedDecls : (env.prog is null ? Decl[]() : env.prog!.decls);
+    for (i32 d = 0; d < decls.len(); d++) {
+      u8[] ds = srcFor(env.fileSrcs, src, env.declFile(d));
+      Lexed dl = lexFor(env.fileLexeds, lexed, env.declFile(d));
+      match (decls[d].kind) {
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          for (i32 p = 0; p < typeParams.len(); p++) {
+            string letter = tokenTextOf(ds, dl, typeParams[p]);
+            bool hit = false;
+            for (i32 f = 0; f < fields.len(); f++) { if (tyHasNullableLetter(ds, dl, fields[f].type, letter)) { hit = true; } }
+            for (i32 m = 0; m < methods.len(); m++) {
+              if (tyHasNullableLetter(ds, dl, methods[m].returnType, letter)) { hit = true; }
+              for (i32 q = 0; q < methods[m].params.len(); q++) {
+                if (tyHasNullableLetter(ds, dl, methods[m].params[q].type, letter)) { hit = true; }
+              }
+            }
+            if (hit) { out = out + tokenTextOf(ds, dl, nameTok) + ":" + decimalText(p) + ";"; }
+          }
+        }
+        default: { }
+      }
+    }
+    env.nullLetters = out;
+  }
+  return env.nullLetters.indexOf(";" + name + ":" + decimalText(k) + ";") >= 0;
+}
+
+/** Whether letter `name`'s binding is a `?` its instance key carries (see `pushSubstitution`). */
+bool keyedNullable(Env env, string name) {
+  for (i32 i = env.subCount - 1; i >= 0; i--) {
+    if (env.subFrom[i] == name) { return env.nullSubs.indexOf(";" + decimalText(i) + ";") >= 0; }
+  }
+  return false;
+}
+
+/** Whether written type `t` is a bare letter whose binding is a keyed `?` (see `keyedNullable`). */
+bool isKeyedLetterTy(Env env, u8[] src, Lexed lexed, Ty t) {
+  match (t.kind) {
+    Named(tok, args): { return args.len() == 0 && keyedNullable(env, tokenTextOf(src, lexed, tok)); }
+    default: { return false; }
+  }
+}
+
+/** Whether written type `t` holds `letter?` anywhere. */
+bool tyHasNullableLetter(u8[] src, Lexed lexed, Ty t, string letter) {
+  match (t.kind) {
+    Nullable(inner): {
+      match (inner.kind) {
+        Named(tok, args): { if (args.len() == 0 && tokenTextOf(src, lexed, tok) == letter) { return true; } }
+        default: { }
+      }
+      return tyHasNullableLetter(src, lexed, inner, letter);
+    }
+    Named(tok, args): {
+      for (i32 i = 0; i < args.len(); i++) { if (tyHasNullableLetter(src, lexed, args[i], letter)) { return true; } }
+      return false;
+    }
+    Arr(elem): { return tyHasNullableLetter(src, lexed, elem, letter); }
+    default: { return false; }
+  }
+}
+
 /** Whether `e` is a number written as one — the literal that has no type of its own (spec/next ch09). */
 bool isNumericLiteralE(Expr e) {
   match (e.kind) {
@@ -976,6 +1056,15 @@ i32 pushSubstitution(Env env, u8[] src, Lexed lexed, i32[] typeParams, string in
     if (env.subCount >= env.subFrom.len()) { return i; }
     env.subFrom[env.subCount] = tokenTextOf(src, lexed, typeParams[i]);
     env.subTo[env.subCount] = typeArgAt(inst, i);
+    // A `Node?` that is this instance's key's own `?` — the template writes this letter as `T?` —
+    // reads as `Node`, and makes that `T?` a box (spec/next ch38). Recorded per entry, since the
+    // stack nests and a function instance's `T` may hold a `?` that means only itself.
+    string mark = ";" + decimalText(env.subCount) + ";";
+    i32 had = env.nullSubs.indexOf(mark);
+    if (had >= 0) { env.nullSubs = env.nullSubs.slice(0, had) + env.nullSubs.slice(had + mark.len() - 1, env.nullSubs.len()); }
+    if (nullableRefBase(env.subTo[env.subCount]) != "" && writesNullableLetter(env, src, lexed, of, i)) {
+      env.nullSubs = (env.nullSubs == "" ? ";" : env.nullSubs) + decimalText(env.subCount) + ";";
+    }
     env.subCount = env.subCount + 1;
   }
   env.curInst = inst;
@@ -1005,6 +1094,9 @@ i32 pushSubstitutionInner(Env env, u8[] src, Lexed lexed, i32[] typeParams, stri
     if (env.subCount >= env.subFrom.len()) { return i; }
     env.subFrom[env.subCount] = tokenTextOf(src, lexed, typeParams[i]);
     env.subTo[env.subCount] = typeArgAt(inst, i);
+    string mark = ";" + decimalText(env.subCount) + ";";
+    i32 had = env.nullSubs.indexOf(mark);
+    if (had >= 0) { env.nullSubs = env.nullSubs.slice(0, had) + env.nullSubs.slice(had + mark.len() - 1, env.nullSubs.len()); }
     env.subCount = env.subCount + 1;
   }
   return typeParams.len();
@@ -2794,6 +2886,10 @@ export struct Env {
   string constLocals;
   /** Guarding layers around the type being spelled — where a recursive type keeps its name (ch18). */
   i32 tyGuards;
+  /** `;Template:k;` for each letter a template's signatures write as `T?` — computed once (ch38). */
+  string nullLetters;
+  /** `;k;` for each substitution entry whose `?` is its instance key's own (ch38): see `pushSubstitution`. */
+  string nullSubs;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -3107,7 +3203,7 @@ export struct Env {
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
-               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";", 0);
+               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";", 0, "", "");
   }
 
   
@@ -7483,6 +7579,11 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       // A **type parameter** stands for its argument wherever it appears — a field's type, a
       // method's parameter, an array's element, a local inside a body.
       string bound = env.substituted(raw);
+      // A letter bound to a nullable reference reads as the reference — its `?` is the instance's,
+      // and only `T?` inside it asks for another layer (spec/next ch38, in `Nullable` below).
+      if (bound != "" && keyedNullable(env, raw)) {
+        return nullableRefBase(bound);
+      }
       if (bound != "") { return env.tyGuards == 0 ? unfoldedE(env, bound) : bound; }
       // Spelled with arguments, a name is an **instantiation**: registered on sight, compiled once.
       if (typeArgs.len() > 0) {
@@ -7503,7 +7604,14 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
           if (at == "") { return ""; }
           if (isUnresolvedBareName(env, at)) { unbound = true; }
           if (i > 0) { inst = inst + ","; spelled = spelled + ","; }
-          inst = inst + at;
+          // **`Vec<Node?>` is not `Vec<Node>`** (spec/next ch38 `§wac-vec-pop-nested-rgci8id`): where the
+          // template writes `T?`, at `T = Node?` that is a `Node??`, so the instances differ in what
+          // `pop` answers. A reference's own `?` is otherwise dropped, so it is kept here, in the key —
+          // and only where it changes something, so `Pending<u8[]?>` is still `Pending<u8[]>`.
+          // A letter that is itself such a binding passes its `?` on: `Vec<T>` inside `Vec<Chan?>`.
+          bool nullRef = (isNullableTy(typeArgs[i]) || isKeyedLetterTy(env, src, lexed, typeArgs[i]))
+                      && isRefSpellingE(at) && writesNullableLetter(env, src, lexed, raw, i);
+          inst = inst + at + (nullRef ? "?" : "");
           spelled = spelled + at + (isNullableTy(typeArgs[i]) ? "?" : "");
         }
         inst = inst + ">";
@@ -7611,6 +7719,17 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
         // is still `T`. `issues/lang/0300a`: the signature of `firstOf<i32>` said it returned a bare
         // `i32` while `return null` pushed nothing, and the engine refused the module.
         default: {
+          // `T?` where `T` is bound to a nullable reference is a second layer: a box (spec/next ch38).
+          match (inner.kind) {
+            Named(itok, itargs): {
+              string ib = itargs.len() == 0 ? env.substituted(tokenTextOf(src, lexed, itok)) : "";
+              if (ib != "" && keyedNullable(env, tokenTextOf(src, lexed, itok))) {
+                registerNamed(env, ib + "?");
+                return ib + "?";
+              }
+            }
+            default: { }
+          }
           string n = typeOfTyName(env, src, lexed, inner);
           // **The same three questions the `Prim` arm asks, and not `isWritableValType`.** That
           // predicate counts `anyref` and `i31ref`, which the arm above deliberately returns
