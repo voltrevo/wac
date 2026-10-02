@@ -22,6 +22,7 @@ import { parse } from "../../json/src/json.wac";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { cellAt, cells } from "../../wacc/src/manifest.wac";
+import { DeclaredTest, declaredTests, testEntry } from "../../wacc/src/program.wac";
 
 /**
  * The walked paths as the aggregate can import them: relative to the project, or nothing.
@@ -159,15 +160,23 @@ export string aggregateSource(string[] files, string[] texts, string up) {
              + "import { Cli, Core } from \"std\";\n";
   string wrappers = "";
   for (i32 i = 0; i < files.len(); i++) {
-    SourceTest[] tests = testsInSource(texts[i]);
+    // **Parsed, not scanned** — and from the text a test build compiles (`testEntry`), so a test that
+    // takes `Sys` or is `async` is already its `(Core, Cli)` adapter here. A scan for
+    // `export string test` missed every `void` test, every verbatim name and every adapter, and a file
+    // of nothing else dropped out of the walk without a word (spec/next ch47).
+    DeclaredTest[] tests = declaredTests(testEntry(texts[i]));
     if (tests.len() == 0) { continue; }
     string aliased = "";
     for (i32 k = 0; k < tests.len(); k++) {
-      aliased = aliased + (aliased == "" ? "" : ", ")
-              + tests[k].name + " as impl" + itoa(i) + "_" + tests[k].name;
-      wrappers = wrappers + "export string " + tests[k].name + "__f" + itoa(i)
-               + "(" + tests[k].params + ") { return impl" + itoa(i) + "_" + tests[k].name
-               + "(" + argsOf(tests[k].params) + "); }\n";
+      string impl = "impl" + itoa(i) + "_" + itoa(k);
+      aliased = aliased + (aliased == "" ? "" : ", ") + tests[k].name + " as " + impl;
+      // The `__f<n>` suffix inside a verbatim name's quotes, so `shownName` finds it either way.
+      string n = tests[k].name;
+      string wrapped = n.len() > 3 && n.slice(0, 2) == "@\""
+        ? n.slice(0, n.len() - 1) + "__f" + itoa(i) + "\"" : n + "__f" + itoa(i);
+      string call = impl + "(" + tests[k].args + ")";
+      wrappers = wrappers + "export string " + wrapped + "(" + tests[k].params + ") { "
+               + (tests[k].isVoid ? call + "; return \"\"; }\n" : "return " + call + "; }\n");
     }
     // **`./` when `up` is empty, because a specifier without it is not a relative path.**
     // spec/spec/imports.md says a path is relative *using* `./` or `../`; a bare `a_test.wac` is a
@@ -210,74 +219,6 @@ string shownName(string name) {
   return at < 0 ? name : name.slice(0, at);
 }
 
-/** One `test*` export as read from a file's *source*: its name and its parameter list, verbatim. */
-struct SourceTest {
-  string name;
-  /** `Core core, Cli cli`, or empty — copied through to the wrapper so the arity matches. */
-  string params;
-}
-
-/**
- * The `test*` exports a file declares, read from its text.
- *
- * **A scan, because this runs before anything is compiled** — it is what decides *what* to build, so
- * there is no manifest yet to ask. `runTests` reads the manifest instead and should: by then the
- * module exists and describes itself. Two readers of one fact, and they are answering at two different
- * times rather than duplicating a question.
- *
- * `export string test` at the **start of a line**, so the same words inside a comment or a doc block
- * are prose. A parameter list may span lines and is read to the first `)`; that is safe because the
- * only types a wac test signature carries are `Core` and `Cli`.
- */
-SourceTest[] testsInSource(string text) {
-  // No cap, for `testFilesIn`'s reason: a file with more tests than the limit would contribute the
-  // first few and the rest would vanish from the aggregate without a word.
-  Vec<SourceTest> out = Vec.create();
-  string mark = "export string test";
-  i32 at = 0;
-  while (at < text.len()) {
-    i32 hit = text.slice(at, text.len()).indexOf(mark);
-    if (hit < 0) { break; }
-    i32 start = at + hit;
-    at = start + mark.len();
-    // Only where nothing but whitespace precedes it on its line.
-    if (!atLineStart(text, start)) { continue; }
-    i32 open = text.slice(start, text.len()).indexOf("(");
-    if (open < 0) { break; }
-    open = start + open;
-    i32 close = text.slice(open, text.len()).indexOf(")");
-    if (close < 0) { break; }
-    close = open + close;
-    string name = trimmedText(text.slice(start + "export string ".len(), open));
-    if (!plainName(name)) { continue; }
-    out.push(SourceTest(name, trimmedText(text.slice(open + 1, close))));
-    at = close + 1;
-  }
-  return out.toArray();
-}
-
-/** Whether only whitespace stands between `at` and the start of its line. */
-bool atLineStart(string text, i32 at) {
-  for (i32 i = at - 1; i >= 0; i--) {
-    string c = text.slice(i, i + 1);
-    if (c == "\n") { return true; }
-    if (c != " " && c != "\t" && c != "\r") { return false; }
-  }
-  return true;
-}
-
-/** A name a wrapper can be built from: letters, digits and underscores. */
-bool plainName(string name) {
-  if (name.len() == 0) { return false; }
-  u8[] b = name.toBytes();
-  for (i32 i = 0; i < b.len(); i++) {
-    bool okByte = (b[i] >= 'a' && b[i] <= 'z') || (b[i] >= 'A' && b[i] <= 'Z')
-               || (b[i] >= '0' && b[i] <= '9') || b[i] == '_';
-    if (!okByte) { return false; }
-  }
-  return true;
-}
-
 /** `s` without leading or trailing whitespace. */
 string trimmedText(string s) {
   i32 from = 0;
@@ -289,23 +230,6 @@ string trimmedText(string s) {
 
 bool isBlank(string c) { return c == " " || c == "\n" || c == "\t" || c == "\r"; }
 
-/** The last word of each comma-separated parameter — `Core core, Cli cli` gives `core, cli`. */
-string argsOf(string params) {
-  if (trimmedText(params) == "") { return ""; }
-  string out = "";
-  i32 at = 0;
-  while (at <= params.len()) {
-    i32 comma = params.slice(at, params.len()).indexOf(",");
-    i32 end = comma < 0 ? params.len() : at + comma;
-    string one = trimmedText(params.slice(at, end));
-    i32 sp = -1;
-    for (i32 i = 0; i < one.len(); i++) { if (isBlank(one.slice(i, i + 1))) { sp = i; } }
-    if (one != "") { out = out + (out == "" ? "" : ", ") + (sp < 0 ? one : trimmedText(one.slice(sp + 1, one.len()))); }
-    if (comma < 0) { break; }
-    at = end + 1;
-  }
-  return out;
-}
 
 /**
  * `files` without anything `--ignore` excludes.
@@ -329,6 +253,9 @@ export string[] withoutIgnored(string[] files, string spec) {
       i32 comma = spec.slice(at, spec.len()).indexOf(",");
       i32 end = comma < 0 ? spec.len() : at + comma;
       string one = trimmedText(spec.slice(at, end));
+      // `dir/` names the directory as `dir` does — the spelling spec/next ch47's own example uses.
+      while (one.len() > 1 && one.slice(one.len() - 1, one.len()) == "/") { one = one.slice(0, one.len() - 1); }
+      if (one.len() > 2 && one.slice(0, 2) == "./") { one = one.slice(2, one.len()); }
       if (one != "" && (files[i] == one || startsWithPath(files[i], one + "/"))) { skip = true; }
       if (comma < 0) { break; }
       at = end + 1;
@@ -1046,12 +973,13 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
       if (t.passed == 0 && t.failed == 0) {
         core.warn("wac: every test in " + entry + " wants a capability this run was not granted — "
                   + "try `--allow-read`");
-        return 4;
       }
     }
+    // **Said, and not a failure** (spec/next ch47): a filter that matched nothing and a file whose
+    // every test wanted a grant are reported by name, and the run still exits 0 — neither ran a test
+    // that went wrong.
     if (t.passed == 0 && t.failed == 0 && filter != "") {
       core.log("(no test matches --filter " + filter + ")");
-      return 1;
     }
     sayTally(core, t, began);
     if (covTable != "") { sayCoverage(core, covTable, hit, string[]()); }
@@ -1159,12 +1087,9 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
   // **Nothing matched anywhere is a mistake, not a clean walk.** Per file the message says which file
   // the filter emptied; across the whole walk it says the pattern found nothing at all, and exits
   // non-zero, because `N files: 0 ok` under a filter reads like a suite that passed.
+  // Said by name, and — spec/next ch47 — not a failure: the summary below still counts the walk.
   if (unmatched > 0 && ok == 0 && withFailures == 0) {
-    // The blank line the summary would have had: the per-file blocks above end flush against it
-    // otherwise, and this message is the summary in the case where there is nothing to summarise.
-    core.log("");
     core.warn("wac: no test anywhere under " + target + " matches --filter " + filter);
-    return 1;
   }
   // The report goes between the blocks and the summary, where the native command puts it, and it
   // opens with the blank line the summary would otherwise have printed for itself.

@@ -44,7 +44,7 @@ import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, 
          manifestWire } from "../../wacc/src/api.wac";
 import { Built } from "../../wacc/src/emit.wac";
 import { Pruned } from "../../wacc/src/reach.wac";
-import { ProgramGraph, programGraph } from "../../wacc/src/program.wac";
+import { ProgramGraph, programGraph, testEntry } from "../../wacc/src/program.wac";
 import { field, linesOf } from "../../wacc/src/text.wac";
 import { cellAt, cells, hollowWhy, manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
@@ -1171,7 +1171,14 @@ export i32 main(Sys sys) {
 
   // **After the module check, because a module is a complete invocation on its own.** This guard was
   // first, so `wac prog.wasm` — one argument — printed the usage block without ever looking at what
-  // that argument was. The command is known even when nothing else is, so say what *it* takes.
+  // that argument was. The command is known even when nothing else is, so say what *it* takes — and
+  // an unknown one is named rather than answered with the usage block (spec/next ch45).
+  bool knownCmd = cmd == "check" || cmd == "compile" || cmd == "build" || cmd == "bindgen" || cmd == "run"
+      || cmd == "test" || cmd == "app" || cmd == "audit";
+  if (argc < 2 && !knownCmd) {
+    core.warn(unknownCommand(cmd));
+    return 2;
+  }
   if (argc < 2) {
     core.warn(usageFor(cmd));
     return 2;
@@ -1185,6 +1192,18 @@ export i32 main(Sys sys) {
   // A leading `./` is what tab completion produces, so the spelling most likely to be typed was the
   // one that did not work.
   string[] pos = positionals(cli, argc);
+  // **The command is checked before the entry is read.** This test used to sit after the graph was
+  // gathered and the diagnostics printed, so a line with two mistakes in it was answered about the
+  // wrong one: `wacc chekc nope.wac` reported *cannot read nope.wac* and exited 1, diagnosing the
+  // typo you did not make and giving a compile-failure code for a usage mistake. Whether a usage
+  // error is reported as one should not depend on an unrelated path happening to exist.
+  // An unknown command is named even with nothing after it — `wac frobnicate` is a typo, not a
+  // request for the usage block.
+  if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen" && cmd != "run"
+      && cmd != "test" && cmd != "app" && cmd != "audit") {
+    core.warn(unknownCommand(cmd));
+    return 2;
+  }
   if (pos.len() < 1) {
     core.warn(usageFor(cmd));
     return 2;
@@ -1210,17 +1229,7 @@ export i32 main(Sys sys) {
     return 2;
   }
 
-  // **The command is checked before the entry is read.** This test used to sit after the graph was
-  // gathered and the diagnostics printed, so a line with two mistakes in it was answered about the
-  // wrong one: `wacc chekc nope.wac` reported *cannot read nope.wac* and exited 1, diagnosing the
-  // typo you did not make and giving a compile-failure code for a usage mistake. Whether a usage
-  // error is reported as one should not depend on an unrelated path happening to exist.
-  if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen" && cmd != "run"
-      && cmd != "test" && cmd != "app" && cmd != "audit") {
-    core.warn("wacc: unknown command '" + cmd
-              + "' — check, compile, build, bindgen, run, test or app");
-    return 2;
-  }
+
 
   // **The command narrows itself to what it needs.** `packages/wac/src/grants.wac` says why at
   // length: unifying the commands unified their grants, so the seed is built with `--allow-net`
@@ -1376,6 +1385,14 @@ export i32 main(Sys sys) {
   string[] paths = exactly(src.paths, src.n);
   string[] texts = exactly(src.texts, src.n);
   Res res = resOf(src);
+  // **A test takes capabilities as `main` does** (spec/next ch47): one taking `Sys`, or `async`, is
+  // compiled behind an adapter the runner can call — `testEntry`, which leaves every other file alone.
+  if (cmd == "test") {
+    for (i32 i = 0; i < paths.len(); i++) {
+      string pi = paths[i];
+      if (pi.len() > 9 && pi.slice(pi.len() - 9, pi.len()) == "_test.wac") { texts[i] = testEntry(texts[i]); }
+    }
+  }
   // **Building a program gives `main` its contract** — spec/next ch07 — and, for a `main` the hosts
   // cannot call as written, the adapter they can. `compile` makes a plain module and leaves it alone.
   if (cmd == "build" || cmd == "run") {
@@ -1516,11 +1533,11 @@ export i32 main(Sys sys) {
   string wire = diagnoseGraphIn(paths, texts, res, entry);
   string diags = renderDiagnostics(wire, paths, texts);
   if (diags != "") { core.warn(diags); }
+  // **`check` always says what it read** (spec/next ch45 `§wac-cli-check-4mkq8wp`) — after errors
+  // and warnings as much as after nothing, since the count is the part that cannot otherwise be seen.
+  if (cmd == "check") { core.log(entry + ": " + itoa(src.n) + " file(s), " + diagnosticCount(wire)); }
   if (wireHasErrors(wire)) { return 1; }
-  if (cmd == "check") {
-    core.log(entry + ": " + itoa(src.n) + " file(s), no diagnostics");
-    return 0;
-  }
+  if (cmd == "check") { return 0; }
 
   // **`audit` stops here for the same reason `check` does**: it is a question about the source, and
   // emitting a module to answer it would be a minute of work for a table that does not depend on one.
@@ -2337,4 +2354,32 @@ string bindSummary(string glue) {
   }
   return itoa(classes) + (classes == 1 ? " class, " : " classes, ")
        + itoa(functions) + (functions == 1 ? " function" : " functions");
+}
+
+/**
+ * An unknown command, named, with every command there is (spec/next ch45 `§wac-cli-usage-3nkq8wj`) —
+ * the whole list, so the one a reader meant is in it whichever it was.
+ */
+string unknownCommand(string cmd) {
+  return "wac: unknown command '" + cmd + "' — the commands are check, compile, build, run, test, app, "
+       + "bindgen, audit, update, sh, task, self, validate, covdump, ctcompare, tracestat and app-run, "
+       + "or a module `name.wasm` to run";
+}
+
+/** `no diagnostics`, or how many errors and warnings the wire holds — `2 error(s), 1 warning(s)`. */
+string diagnosticCount(string wire) {
+  i32 errors = 0;
+  i32 warnings = 0;
+  string rest = wire;
+  while (rest.len() > 0) {
+    i32 nl = rest.indexOf("\n");
+    string ln = nl < 0 ? rest : rest.slice(0, nl);
+    rest = nl < 0 ? "" : rest.slice(nl + 1, rest.len());
+    if (ln == "") { continue; }
+    if (ln.len() >= 8 && ln.slice(ln.len() - 8, ln.len()) == "\twarning") { warnings++; } else { errors++; }
+  }
+  if (errors == 0 && warnings == 0) { return "no diagnostics"; }
+  if (warnings == 0) { return itoa(errors) + " error(s)"; }
+  if (errors == 0) { return itoa(warnings) + " warning(s)"; }
+  return itoa(errors) + " error(s), " + itoa(warnings) + " warning(s)";
 }

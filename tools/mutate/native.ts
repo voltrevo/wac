@@ -55,14 +55,23 @@ export type NativeVerdict =
   /** Nothing ran, and that is a fault in the run rather than a fact about the mutant. */
   | { kind: "abort"; why: string };
 
-export function classify(code: number): NativeVerdict {
+export function classify(code: number, output = ""): NativeVerdict {
+  // **What the run said, before what it exited with.** spec/next ch47 makes a filter that matched
+  // nothing, and a file whose every test wanted a grant or a host oracle, *not failures* — they exit
+  // 0 — so the status alone would score a mutant nobody ran as survived.
+  if (code === 0 && (output.includes("(no test matches --filter") || output.includes("matches --filter"))) {
+    return {
+      kind: "abort",
+      why: "nothing matched the filter — the selected test could not be run at all, so this mutant has " +
+        "no verdict. Scoring it either way is a made-up number.",
+    };
+  }
+  if (code === 0 && ranNothing(output)) return { kind: "no-tests-here" };
   switch (code) {
     case 0:
       return { kind: "survived" };
     case 3:
       return { kind: "killed" };
-    case 4:
-      return { kind: "no-tests-here" };
     case 1:
       return {
         kind: "abort",
@@ -72,6 +81,12 @@ export function classify(code: number): NativeVerdict {
     default:
       return { kind: "abort", why: `unexpected exit ${code} from \`wac test\`` };
   }
+}
+
+/** Whether a `wac test` run's summary says it executed no test: `0 passed, 0 failed`, or `N files: 0 ok`. */
+function ranNothing(output: string): boolean {
+  return /(^|\n)0 passed, 0 failed/.test(output) || /(^|\n)\d+ files?: 0 ok/.test(output) ||
+    output.includes("wants a capability this run was not granted");
 }
 
 /**

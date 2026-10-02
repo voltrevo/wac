@@ -72,16 +72,42 @@ export string[] wacTestArgs(string entry, string filter) {
   return filter == "" ? ["test", entry] : ["test", "--filter", filter, entry];
 }
 
-export Verdict classify(i32 code) {
+export Verdict classify(i32 code, string output) {
+  // **What the run said, before what it exited with.** spec/next ch47 makes a filter that matched
+  // nothing, and a file whose every test wanted a grant or a host oracle, *not failures* — they exit
+  // 0 — so the status alone would score a mutant nobody ran as survived.
+  if (code == 0 && output.indexOf("matches --filter") >= 0) {
+    return Verdict.Abort(
+      "nothing matched the filter — the selected test could not be run at all, so this mutant has "
+      + "no verdict. Scoring it either way is a made-up number.");
+  }
+  if (code == 0 && ranNothing(output)) { return Verdict.NoTestsHere; }
   if (code == 0) { return Verdict.Survived; }
   if (code == 3) { return Verdict.Killed; }
-  if (code == 4) { return Verdict.NoTestsHere; }
   if (code == 1) {
     return Verdict.Abort(
       "nothing matched the filter, or a file did not run — the selected test could not be "
       + "run at all, so this mutant has no verdict. Scoring it either way is a made-up number.");
   }
   return Verdict.Abort("unexpected exit " + itoa(code) + " from `wac test`");
+}
+
+/** Whether a `wac test` run's summary says it executed no test: `0 passed, 0 failed`, or `N files: 0 ok`. */
+bool ranNothing(string output) {
+  if (output.indexOf("wants a capability this run was not granted") >= 0) { return true; }
+  if (output.indexOf("\n0 passed, 0 failed") >= 0 || (output.len() >= 18 && output.slice(0, 18) == "0 passed, 0 failed")) {
+    return true;
+  }
+  i32 at = 0;
+  while (at < output.len()) {
+    i32 k = output.slice(at, output.len()).indexOf(" ok");
+    if (k < 0) { return false; }
+    i32 e = at + k;
+    // `N files: 0 ok` / `1 file: 0 ok`
+    if (e >= 3 && output.slice(e - 3, e) == ": 0") { return true; }
+    at = e + 3;
+  }
+  return false;
 }
 
 bool holds(string[] xs, string want) {

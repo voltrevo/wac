@@ -1354,7 +1354,7 @@ try {
         // A `wac test` run says which kind; a Deno run says only non-zero, which has always meant
         // killed here. Both become the same type so one rule merges them.
         verdicts.push(isWacRun(half)
-          ? classify(code)
+          ? classify(code, new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr))
           : code !== 0 ? { kind: "killed" } : { kind: "survived" });
       }
       // A timeout counts as killed: an infinite loop is a detected defect, not a silent one.

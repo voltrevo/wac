@@ -136,7 +136,7 @@ export Ran runTests(Core core, Cli cli, string binary, string work, string[] ent
   i32 took = (core.monotonicNanos().wait() / (1000000 as i64) - started) as! i32;
   if (!r.ran()) { return Ran(Verdict.Abort("the binary did not run: " + r.error), false, took); }
   if (bounded && r.status == TIMED_OUT()) { return Ran(Verdict.Killed, true, took); }
-  return Ran(classify(r.status), false, took);
+  return Ran(classify(r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr)), false, took);
 }
 
 /**

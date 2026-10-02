@@ -392,7 +392,9 @@ export string[] compareJournals(Vec<i32> a, Vec<i32> b, bool all) {
         out.push("site " + itoa(i) + " " + itoa(sa) + " " + itoa(va) + " " + itoa(vb));
       }
     }
-    if (nA != nB) {
+    // One side kept going only because the other ran out of room: that is truncation, not a split.
+    bool shortTruncated = (nA < nB && wantA * 2 > usedA) || (nB < nA && wantB * 2 > usedB);
+    if (nA != nB && !shortTruncated) {
       said = true;
       out.push("longer " + itoa(n) + " " + itoa(nA > nB ? a.get(1 + 2 * n) : b.get(1 + 2 * n)));
     }
@@ -405,6 +407,10 @@ export string[] compareJournals(Vec<i32> a, Vec<i32> b, bool all) {
     bool hasA = i < nA;
     bool hasB = i < nB;
     if (!hasA && !hasB) { i = most; continue; }
+    // **A side that ran out of room has not diverged** — it stopped recording, and what it would have
+    // recorded next is unknown (spec/next ch45 `§wac-cli-ctcompare-6knq4wp`): the answer is
+    // `truncated`, not a difference at the event it did not keep.
+    if ((!hasA && wantA * 2 > usedA) || (!hasB && wantB * 2 > usedB)) { i = most; continue; }
     i32 sa = hasA ? a.get(1 + 2 * i) : 0 - 1;
     i32 va = hasA ? a.get(2 + 2 * i) : 0 - 1;
     i32 sb = hasB ? b.get(1 + 2 * i) : 0 - 1;

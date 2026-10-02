@@ -1798,10 +1798,24 @@ fn coerce_arg<'s>(
             .parse::<f64>()
             .map(|n| v8::Number::new(scope, n).into())
             .map_err(|_| format!("`{text}` is not an {ty}")),
-        "i32" | "u32" | "i8" | "u8" | "i16" | "u16" => wac_int(text)
+        "i32" | "u32" => wac_int(text)
             .filter(|n| *n >= i32::MIN as i128 && *n <= u32::MAX as i128)
             .map(|n| v8::Number::new(scope, n as f64).into())
             .ok_or_else(|| format!("`{text}` is not an {ty}")),
+        // **A narrow type takes its own range**, not an `i32`'s: `300` is not a `u8`, and handing it
+        // over as one gave a function declared to take a byte a value no byte holds.
+        "i8" | "u8" | "i16" | "u16" => {
+            let (lo, hi): (i128, i128) = match ty {
+                "i8" => (-128, 127),
+                "u8" => (0, 255),
+                "i16" => (-32768, 32767),
+                _ => (0, 65535),
+            };
+            wac_int(text)
+                .filter(|n| *n >= lo && *n <= hi)
+                .map(|n| v8::Number::new(scope, n as f64).into())
+                .ok_or_else(|| format!("`{text}` is not a {ty}"))
+        }
         "u8[]" => {
             let bytes = parse_list(text)?
                 .iter()

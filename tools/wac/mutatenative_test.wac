@@ -44,12 +44,16 @@ string shape(string[][] halves) {
  */
 export string test_an_exit_code_is_a_verdict_or_it_is_not_one() {
   T t = T.create();
-  t.eqStr(classify(0).word(), "survived", "0 — the tests ran and passed");
-  t.eqStr(classify(3).word(), "killed", "3 — the tests ran and one failed");
-  t.eqStr(classify(4).word(), "no-tests-here", "4 — every test needs an oracle this cannot supply");
-  t.eqStr(classify(1).word(), "abort", "1 — nothing matched the filter, which is not a verdict");
-  t.eqStr(classify(2).word(), "abort", "and anything unexpected is an abort rather than a guess");
-  t.eqStr(classify(127).word(), "abort", "including a shell's `command not found`");
+  t.eqStr(classify(0, "3 passed, 0 failed in 1 ms\n").word(), "survived", "0 — the tests ran and passed");
+  t.eqStr(classify(3, "FAIL t — x\n1 passed, 1 failed in 1 ms\n").word(), "killed", "3 — the tests ran and one failed");
+  // spec/next ch47: these two exit 0, so it is the output that says no test ran.
+  t.eqStr(classify(0, "0 passed, 0 failed in 0 ms\n").word(), "no-tests-here",
+          "0, having run nothing — every test needs an oracle or a grant this cannot supply");
+  t.eqStr(classify(0, "(no test matches --filter zzz)\n0 passed, 0 failed, 4 filtered out in 0 ms\n").word(),
+          "abort", "0 with nothing matching the filter, which is not a verdict");
+  t.eqStr(classify(1, "").word(), "abort", "1 — a file did not run");
+  t.eqStr(classify(2, "").word(), "abort", "and anything unexpected is an abort rather than a guess");
+  t.eqStr(classify(127, "").word(), "abort", "including a shell's `command not found`");
   return t.report();
 }
 

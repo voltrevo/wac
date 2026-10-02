@@ -214,3 +214,157 @@ string progText(u8[] src, Lexed lexed, i32 t) {
   for (i32 i = 0; i < len; i++) { out[i] = src[start + i]; }
   return string.fromBytes(out);
 }
+
+// ---- Tests — spec/next ch47 ----
+
+/**
+ * A test file as a test build compiles it: every exported `test*` that takes a `Sys` or is `async` is
+ * renamed and given an adapter taking `(Core, Cli)`, which the runner can call, that makes the `Sys`
+ * and settles an `async` answer — "a test may take the capabilities it needs as parameters, as `main`
+ * does" (ch47). The `Sys` is made from the run's own `Core` and `Cli`, so it holds only what the run
+ * granted. Idempotent: the adapters take `Core` and `Cli`, which this leaves alone.
+ */
+export string testEntry(string text) {
+  if (text.indexOf("Sys") < 0 && text.indexOf("async") < 0) { return text; }
+  u8[] src = text.toBytes();
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed);
+  Program prog = parseProgram(p);
+  if (p.errorCount > 0) { return text; }
+  bool haveCore = false;
+  bool haveCli = false;
+  bool haveSys = false;
+  bool haveTicket = false;
+  for (i32 di = 0; di < prog.decls.len(); di++) {
+    match (prog.decls[di].kind) {
+      Import(pathTok, prefixTok, items): {
+        for (i32 ii = 0; ii < items.len(); ii++) {
+          string local = progText(src, lexed, items[ii].aliasTok);
+          if (local == "Core") { haveCore = true; }
+          if (local == "Cli") { haveCli = true; }
+          if (local == "Sys") { haveSys = true; }
+          if (local == "Ticket") { haveTicket = true; }
+        }
+      }
+      default: { }
+    }
+  }
+  // Renamed back to front, so each earlier offset is still where the source says it is.
+  string out = text;
+  string adapters = "";
+  bool anyAsync = false;
+  i32 n = 0;
+  for (i32 di = prog.decls.len() - 1; di >= 0; di--) {
+    match (prog.decls[di].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        string name = progText(src, lexed, nameTok);
+        if (!exported || typeParams.len() > 0 || !isTestName(name)) { continue; }
+        bool takesSys = params.len() == 1 && spell(src, lexed, params[0].type) == "Sys";
+        if (!takesSys && !isAsync) { continue; }
+        if (params.len() > 1 || (params.len() == 1 && !takesSys)) { continue; }
+        string ret = spell(src, lexed, returnType);
+        string impl = "__wacTest" + indexText(di);
+        i32 at = tokStart(lexed, nameTok);
+        i32 ex = exportBefore(src, lexed, nameTok);
+        i32 len = lexed.tokens[nameTok * tokenStride() + 2];
+        // `export` out and the impl's name in; blanked rather than cut, so columns hold before it.
+        out = (ex >= 0 ? out.slice(0, ex) + "      " + out.slice(ex + 6, at) : out.slice(0, at))
+            + impl + out.slice(at + len, out.len());
+        string call = impl + "(" + (takesSys ? "__wacSys" : "") + ")";
+        string bodyText = "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n";
+        if (isAsync) {
+          anyAsync = true;
+          bodyText = bodyText + "  Ticket<" + ret + "> __wacT = " + call + ";\n"
+                   + "  if (!__wacSys.__wacSettle(__wacT)) { trap \"the test's ticket never settled\"; }\n";
+          call = "__wacT.value()";
+        }
+        bodyText = bodyText + (ret == "void" ? "  " + call + ";\n" : "  return " + call + ";\n");
+        adapters = "export " + ret + " " + written(name) + "(Core __wacCore, Cli __wacCli) {\n" + bodyText + "}\n"
+                 + adapters;
+        n++;
+      }
+      default: { }
+    }
+  }
+  if (n == 0) { return text; }
+  string imports = "";
+  string names = (haveCore ? "" : "Core, ") + (haveCli ? "" : "Cli, ") + (haveSys ? "" : "Sys, ");
+  if (names != "") { imports = imports + "import { " + names.slice(0, names.len() - 2) + " } from \"std\";\n"; }
+  if (anyAsync && !haveTicket) { imports = imports + "import { Ticket } from \"core\";\n"; }
+  return out + "\n\n// wac:test — each test as the runner calls it (packages/wacc/src/program.wac).\n"
+       + imports + adapters;
+}
+
+/** A name as source spells it: itself, or `@"…"` when it is a verbatim name the lexer unquoted. */
+export string written(string name) {
+  u8[] b = name.toBytes();
+  bool plain = b.len() > 0 && !(b[0] >= '0' && b[0] <= '9');
+  for (i32 i = 0; i < b.len(); i++) {
+    bool ok = (b[i] >= 'a' && b[i] <= 'z') || (b[i] >= 'A' && b[i] <= 'Z') || (b[i] >= '0' && b[i] <= '9') || b[i] == '_';
+    if (!ok) { plain = false; }
+  }
+  return plain ? name : "@\"" + name + "\"";
+}
+
+/** Whether an export's name — plain or verbatim — makes it a test: it begins with `test`. */
+export bool isTestName(string name) {
+  string bare = name.len() > 3 && name.slice(0, 2) == "@\"" ? name.slice(2, name.len() - 1) : name;
+  return bare.len() >= 4 && bare.slice(0, 4) == "test";
+}
+
+string indexText(i32 n) {
+  if (n == 0) { return "0"; }
+  string out = "";
+  i32 v = n;
+  while (v > 0) { out = string.fromBytes(u8[].filled(1, (48 + v % 10) as@ u8)) + out; v = v / 10; }
+  return out;
+}
+
+/** One exported test as its source declares it — for the aggregate a directory run builds. */
+export struct DeclaredTest {
+  /** As written: `test_x`, or `@"test: x"`. */
+  string name;
+  /** The parameter list, verbatim — `Core core, Cli cli`, or empty. */
+  string params;
+  /** The parameter names alone, comma-separated — what a wrapper passes on. */
+  string args;
+  bool isVoid;
+}
+
+/** The exported, non-generic, synchronous `test*` functions `text` declares, in order. */
+export DeclaredTest[] declaredTests(string text) {
+  u8[] src = text.toBytes();
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed);
+  Program prog = parseProgram(p);
+  i32 n = 0;
+  for (i32 di = 0; di < prog.decls.len(); di++) {
+    match (prog.decls[di].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (exported && typeParams.len() == 0 && !isAsync && isTestName(progText(src, lexed, nameTok))) { n++; }
+      }
+      default: { }
+    }
+  }
+  DeclaredTest[] out = DeclaredTest[].filled(n, DeclaredTest("", "", "", false));
+  i32 k = 0;
+  for (i32 di = 0; di < prog.decls.len(); di++) {
+    match (prog.decls[di].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        string name = progText(src, lexed, nameTok);
+        if (!exported || typeParams.len() > 0 || isAsync || !isTestName(name)) { continue; }
+        string ps = "";
+        string passOn = "";
+        for (i32 i = 0; i < params.len(); i++) {
+          string pn = progText(src, lexed, params[i].nameTok);
+          ps = ps + (i > 0 ? ", " : "") + spell(src, lexed, params[i].type) + " " + pn;
+          passOn = passOn + (i > 0 ? ", " : "") + pn;
+        }
+        out[k] = DeclaredTest(written(name), ps, passOn, spell(src, lexed, returnType) == "void");
+        k++;
+      }
+      default: { }
+    }
+  }
+  return out;
+}

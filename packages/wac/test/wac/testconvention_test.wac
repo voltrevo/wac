@@ -1,0 +1,75 @@
+// What a test is, as spec/next ch47 says it — driven through `wac test` in both of its shapes.
+//
+// A file runs as itself; a directory runs as one aggregate module whose wrappers are generated from
+// each file's declarations. The two used to disagree about what a test *is*: the aggregate found its
+// tests by scanning for `export string test`, so a `void` test, a verbatim name and a test taking
+// `Sys` all dropped out of a directory run — and a file holding only those dropped out of the walk's
+// count without a word, `0 files: 0 ok`. So every case here runs both ways.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { Core, Cli, Exec } from "std";
+
+string SOURCE() {
+  return "import { Sys } from \"std\";\n" +
+         "export void test_void_passes() { }\n" +
+         "export void @\"test: a verbatim name\"() { }\n" +
+         "export string test_takes_sys(Sys sys) { sys.log(\"sys-was-here\"); return \"\"; }\n" +
+         "export async string test_async_takes_sys(Sys sys) { return \"\"; }\n";
+}
+
+Exec wac(Cli cli, string[] args) { return cli.exec(binaryPath(cli), args, u8[]()).wait(); }
+
+string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
+
+string prepared(Cli cli, string name) {
+  string dir = cli.cwd().wait() + "/.cache/" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  cli.writeFile(dir + "/conv_test.wac", SOURCE().toBytes()).wait();
+  return dir;
+}
+
+void expectAllFour(T t, Exec r, string how) {
+  string out = said(r);
+  t.eqI32(r.status, 0, how + " exits 0 — " + out);
+  t.isTrue(contains(out, "ok   test_void_passes"), how + ": a `void` test runs — " + out);
+  t.isTrue(contains(out, "ok   test: a verbatim name"), how + ": a verbatim name prints as written — " + out);
+  t.isTrue(contains(out, "ok   test_takes_sys"), how + ": a test taking `Sys` runs — " + out);
+  t.isTrue(contains(out, "sys-was-here"), how + ": and its `Sys` reaches the host — " + out);
+  t.isTrue(contains(out, "ok   test_async_takes_sys"), how + ": an `async` one is settled — " + out);
+}
+
+export string test_a_file_runs_void_verbatim_and_sys_tests_u76d9ae(Core core, Cli cli) {
+  T t = T.create();
+  string dir = prepared(cli, "testconv-file");
+  expectAllFour(t, wac(cli, ["test", "--allow-read", dir + "/conv_test.wac"]), "a file");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_directory_runs_the_same_tests_a_file_does_u76d9ae(Core core, Cli cli) {
+  T t = T.create();
+  string dir = prepared(cli, "testconv-dir");
+  Exec r = wac(cli, ["test", "--allow-read", dir]);
+  expectAllFour(t, r, "a directory");
+  t.isTrue(contains(said(r), "1 file: 1 ok"), "and the walk counts the file — " + said(r));
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_sys_test_with_nothing_granted_is_not_run_rather_than_failed(Core core, Cli cli) {
+  // The adapter takes the run's `Core` and `Cli`, and whether a test that takes `Sys` will reach for
+  // a capability cannot be known before it runs — so with nothing granted it is reported as wanting
+  // one, and the run is not a failure (ch47).
+  T t = T.create();
+  string dir = prepared(cli, "testconv-ungranted");
+  Exec r = wac(cli, ["test", dir + "/conv_test.wac"]);
+  t.eqI32(r.status, 0, "not a failure — " + said(r));
+  t.isTrue(contains(said(r), "want a capability this run was not granted: test_takes_sys"),
+           "named as wanting a grant — " + said(r));
+  t.isTrue(contains(said(r), "ok   test_void_passes"), "and the others still run — " + said(r));
+  cli.remove(dir, true).wait();
+  return t.report();
+}

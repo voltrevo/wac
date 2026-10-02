@@ -25,28 +25,29 @@ async function haveBinary(): Promise<boolean> {
   }
 }
 
-async function run(entry: string, filter?: string): Promise<number> {
+/** The exit code and everything the run printed — `classify` reads both. */
+async function run(entry: string, filter?: string): Promise<[number, string]> {
   const r = await new Deno.Command(`${ROOT}/${WAC_BIN}`, {
     args: wacTestArgs(entry, filter),
     cwd: ROOT,
     stdout: "piped",
     stderr: "piped",
   }).output();
-  return r.code;
+  return [r.code, new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr)];
 }
 
 Deno.test("a filter that matches runs those tests and reports success", async () => {
   if (!await haveBinary()) return;
-  const code = await run(SUBJECT, "test_basics");
-  if (classify(code).kind !== "survived") {
+  const [code, out] = await run(SUBJECT, "test_basics");
+  if (classify(code, out).kind !== "survived") {
     throw new Error(`\`wac test --filter test_basics\` exited ${code}, expected 0`);
   }
 });
 
 Deno.test("a filter that matches nothing is an abort, not a verdict", async () => {
   if (!await haveBinary()) return;
-  const code = await run(SUBJECT, "no_such_test_at_all");
-  const v = classify(code);
+  const [code, out] = await run(SUBJECT, "no_such_test_at_all");
+  const v = classify(code, out);
   if (v.kind !== "abort") {
     throw new Error(
       `a filter matching nothing exited ${code}, which \`classify\` reads as "${v.kind}". ` +
@@ -60,7 +61,7 @@ Deno.test("running the whole file is a pass, and the filter is what narrows it",
   if (!await haveBinary()) return;
   // Both spellings of the command, so `wacTestArgs`' two branches are each exercised — an argv
   // builder whose no-filter branch was never run would fail the first time a mutant widened.
-  if (classify(await run(SUBJECT)).kind !== "survived") {
+  if (classify(...await run(SUBJECT)).kind !== "survived") {
     throw new Error("running the whole file did not report success");
   }
 });
@@ -74,7 +75,7 @@ Deno.test("a file whose tests all need a host oracle is distinguished from one t
     there = false;
   }
   if (!there) return; // The corpus moved; this claim has no subject here.
-  const v = classify(await run(ORACLE_ONLY));
+  const v = classify(...await run(ORACLE_ONLY));
   if (v.kind !== "no-tests-here") {
     throw new Error(
       `${ORACLE_ONLY} classified as "${v.kind}". 31 of this repository's wac test files run ` +
@@ -97,7 +98,7 @@ Deno.test("[§wac-cli-status-8kz4rp6] a test that fails is killed, which is the 
       'export string test_passes() { return ""; }\n' +
         'export string test_fails() { return "the mutant changed this"; }\n',
     );
-    const v = classify(await run(entry));
+    const v = classify(...await run(entry));
     if (v.kind !== "killed") {
       throw new Error(
         `a file with a failing test classified as "${v.kind}". If a failure does not read as ` +
@@ -107,7 +108,7 @@ Deno.test("[§wac-cli-status-8kz4rp6] a test that fails is killed, which is the 
     }
     // And the passing test alone is still a survival, so the verdict follows the *test* rather than
     // the file — narrowing is the whole point of selecting one.
-    if (classify(await run(entry, "test_passes")).kind !== "survived") {
+    if (classify(...await run(entry, "test_passes")).kind !== "survived") {
       throw new Error("filtering to the passing test did not report success");
     }
   } finally {

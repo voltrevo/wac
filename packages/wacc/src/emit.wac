@@ -17446,14 +17446,14 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
       match (w13d[d].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() > 0) { continue; }
-          // **Declined whole, not only where an `await` is.** The checker gives an async function the
-          // signature `Pending<T>` — D3 — and this emitter would write one returning `T`, so even a
-          // body with no `await` in it would emit a function whose callers disagree with it about
-          // what came back. Refusing by name is the honest state until step 4 lowers them.
+          // **An `async` function still here is one the lowering declined** — `frontOfRawIn` rewrites
+          // every one it can take into a machine before this runs — so the lowering's own reason is
+          // the one to quote.
           if (env.funcOk[at] && isAsync) {
             env.funcOk[at] = false;
             if (at < env.funcWhy.len()) {
-              env.funcWhy[at] = "an `async` function, which `design/lang/0014` step 4 lowers";
+              env.funcWhy[at] = "an `async` function the lowering could not take"
+                              + (env.asyncWhy == "" ? "" : ": " + env.asyncWhy);
             }
             changed = true;
           }
