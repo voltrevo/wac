@@ -15,7 +15,7 @@
 //
 // None of the nine tests expects a trap.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_a_bool_is_a_padded_zero_or_one_and_nothing_else as al__a_bool_is_a_padded_zero_or_one_and_nothing_else,
@@ -40,7 +40,9 @@ import {
   test_the_table_of_what_the_real_tools_do_is_still_true as st__the_table_of_what_the_real_tools_do_is_still_true,
 } from "./wac/strictness_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (al__encoding_a_value_of_the_wrong_shape_says_which_and_where().len() > 0) {
     core.warn("error: FAILED aliasing_test test_encoding_a_value_of_the_wrong_shape_says_which_and_where");

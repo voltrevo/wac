@@ -6,14 +6,16 @@
 // The output format is `git ls-remote`'s — `<sha>\t<ref>` — which is not decoration. It makes the oracle a
 // diff rather than an interpretation, and `test/wac/lsremote_test.wac` diffs it against the real thing.
 
-import { Cli, Core } from "std";
+import { Cli, Core, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { Ad, AdRef, Advertised, parseAdvertisement } from "../src/fetch.wac";
 import { Store } from "../../tls/src/roots.wac";
 import { Answer, Remote, parseRemote, request, systemStore } from "../src/transport.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
   if (n < 1) {
     core.warn("usage: gitls <https-url>");

@@ -38,7 +38,7 @@
 // empty and everything ran in parallel exactly as before. It looked like it worked." One entry point
 // cannot disagree with itself, which is what that comment wanted.
 
-import { Core, Cli, Exec } from "std";
+import { Core, Cli, Exec, Sys } from "std";
 import { Map, hashString, stringEq, Vec } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
@@ -142,7 +142,9 @@ export Plan planFor(string[] changed) {
   return Plan(NARROWED(), targets, said);
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 nested = refuseIfNested(core, cli, "wac task test:changed");
   if (nested != 0) { return nested; }
 

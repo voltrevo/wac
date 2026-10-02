@@ -74,7 +74,7 @@
 // and `core` in both runners. So a change here is checked by `wac task docs`, not by the suite it
 // orchestrates, which is worth knowing before trusting a green suite about it.
 
-import { Change, Core, Cli, Exec, FileResult, Pending, Stat } from "std";
+import { Change, Core, Cli, Exec, FileResult, Pending, Stat, Sys } from "std";
 import { itoa, itoa64, atoi } from "../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, joined, has, splitLines }
   from "../packages/wactest/src/strings.wac";
@@ -1476,7 +1476,9 @@ void report(Core core, string[] lanes, string[] ms) {
   core.log("   in the lanes  " + secs(total));
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string[] argv = argsOf(cli);
   string sub = argv.len() > 0 ? argv[0] : "";
 

@@ -26,8 +26,8 @@ import { wacBinary } from "../../../wactest/src/built.wac";
 import { freshDir, putFile } from "../../../wactest/src/host.wac";
 
 static string PROBE =
-  "import { Core, Cli } from \"std\";\n"
-  + "export i32 main(Core core, Cli cli) {\n"
+  "import { Core, Cli, Sys } from \"std\";\n"
+  + "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n"
   + "  u8[]? id = cli.env(\"WAC_COMPILER_ID\").wait();\n"
   + "  core.log(id is null ? \"(unset)\" : string.fromBytes(id!));\n"
   + "  return 0;\n"

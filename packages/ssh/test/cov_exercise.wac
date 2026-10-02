@@ -24,7 +24,7 @@
 // an offset, and the traps only for a caller that got an argument wrong — neither is reachable through
 // the whole-buffer forms, which is why the offset forms exist and are driven separately.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { decoded } from "../../codec/src/hex.wac";
 
@@ -1006,7 +1006,9 @@ import { test_the_signed_data_length_prefixes_the_session_id as server__the_sign
 import { test_mpint_is_minimal_and_signed as transport__mpint_is_minimal_and_signed, test_a_string_carries_arbitrary_binary_including_nuls as transport__a_string_carries_arbitrary_binary_including_nuls, test_a_truncated_or_oversized_string_is_refused_not_guessed_at as transport__a_truncated_or_oversized_string_is_refused_not_guessed_at, test_padding_keeps_the_whole_packet_aligned_including_the_length_field as transport__padding_keeps_the_whole_packet_aligned_including_the_length_field, test_a_framed_packet_unframes_to_what_went_in as transport__a_framed_packet_unframes_to_what_went_in, test_a_packet_that_cannot_be_one_is_malformed_rather_than_trusted as transport__a_packet_that_cannot_be_one_is_malformed_rather_than_trusted, test_the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out as transport__the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out, test_negotiation_takes_the_clients_preference_not_the_servers as transport__negotiation_takes_the_clients_preference_not_the_servers, test_no_overlap_is_an_empty_answer_rather_than_a_default as transport__no_overlap_is_an_empty_answer_rather_than_a_default }
   from "./wac/transport_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   versions();
   framing();
   wireTypes();

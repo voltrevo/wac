@@ -8,9 +8,11 @@
 // Two capabilities are used and the rest are not, deliberately: a program that called all of them
 // would be measuring its own calls rather than the surface it inherited.
 
-import { Cli, Core } from "std";
+import { Cli, Core, Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 acc = 0;
   for (i32 i = 1; i < 1000; i++) { acc = (acc + i * i) % 65521; }
   core.log("acc");

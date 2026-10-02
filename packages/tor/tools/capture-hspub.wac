@@ -27,7 +27,7 @@
 // both must reproduce the committed `test/data/hspublish.json`.
 // `packages/tor/test/wac/capturetools_test.wac` is the `cmp`.
 
-import { Core, Cli, Exec, Change, Stat, FileResult } from "std";
+import { Core, Cli, Exec, Change, Stat, FileResult, Sys } from "std";
 import { parse } from "../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../json/src/value.wac";
 import { decoded } from "../../codec/src/hex.wac";
@@ -186,7 +186,9 @@ string b64NoPad(u8[] b) {
   return string.fromBytes(base64Encode(b, ALPHABET_STANDARD(), false));
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string root = cli.argCount().wait() > 0
     ? string.fromBytes(cli.arg(0).wait())
     : homeDir(cli) + "/tor-build/torproject-tor-c8d2b17";

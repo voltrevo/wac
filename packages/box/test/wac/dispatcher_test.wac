@@ -5,13 +5,13 @@
 // From `box.test.ts`, where it was left behind on a claim that turned out to be false. The note said
 // this could not move because "`main` reads argv from the process" — but `Frame.of` takes an argv and
 // `childCli` answers `argCount` and `arg` out of it, which is stated plainly in `frame.wac:282`. So
-// `main(childCore(f, core), childCli(f, cli))` runs the whole program, argv and all, with its streams
+// `main(Sys(childCore(f, core), childCli(f, cli), GRANT_ALL()))` runs the whole program, argv and all, with its streams
 // captured. Nothing was blocking this; I had not looked.
 //
 // `applets_test.wac` asserts what `dispatch` answers for a name it has not got — `UNKNOWN`, a sentinel
 // rather than a status. This is the other half: what `main` turns that into.
 
-import { Cli, Core } from "std";
+import { Cli, Core, GRANT_ALL, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { main } from "../../src/box.wac";
@@ -27,7 +27,7 @@ struct Said {
 
 Said box(Core core, Cli cli, string[] argv) {
   Frame f = Frame.of(argv, u8[](), cli.cwd().wait(), false);
-  i32 code = main(childCore(f, core), childCli(f, cli));
+  i32 code = main(Sys(childCore(f, core), childCli(f, cli), GRANT_ALL()));
   return Said(code, string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()));
 }
 

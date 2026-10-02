@@ -25,7 +25,7 @@
 // it was on the build path here, which is the one place it should not be — a generated file whose
 // generator needs a second runtime is a file a fresh checkout cannot regenerate.
 
-import { Core, Cli, FileResult } from "std";
+import { Core, Cli, FileResult, Sys } from "std";
 import { joined, splitKeepingEmpty } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
@@ -338,7 +338,9 @@ string waccFile(Tree tree) {
   ]);
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   bool check = false;
   i32 argc = cli.argCount().wait();
   for (i32 i = 0; i < argc; i++) {

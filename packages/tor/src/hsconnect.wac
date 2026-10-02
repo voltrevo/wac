@@ -32,7 +32,7 @@
 // **Any padding or timing defence.** The two circuits are built back to back on demand, which is a
 // recognisable shape.
 
-import { Core, Cli, FileResult } from "std";
+import { Core, Cli, FileResult, Sys } from "std";
 import {
   Awaited, Network, Session, awaitCommand, bootstrap, buildCircuit, buildCircuitTo, relayByEd25519,
 } from "./bootstrap.wac";
@@ -69,7 +69,9 @@ import {
 import { fetchDescriptor } from "./hsfetch.wac";
 import { slice } from "../../bytes/src/slice.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 4) {
     core.warn("usage: hsconnect <seed-file> <authorities-file> <onion-address> <port> [--testnet]");
     return 1;

@@ -42,11 +42,13 @@
 // that makes it usable by something other than itself; the two share `link.wac`.
 
 
-import { Core, Cli, FileResult } from "std";
+import { Core, Cli, FileResult, Sys } from "std";
 import { Network, Session, bootstrap, buildCircuit } from "./bootstrap.wac";
 import { fetchOverCircuit, itoa } from "./link.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 3) {
     core.warn("usage: tor <seed-file> <authorities-file> <path>");
     core.warn("  seed-file:        one line, `host port identityHex ntorOnionKeyBase64`");

@@ -36,7 +36,7 @@
 //     messages differ by design: bash names the offending token and the line, ours says `syntax error`.
 //     Generating them buries the real findings under a class that is already understood.
 
-import { Change, Cli, Core, Exec } from "std";
+import { Change, Cli, Core, Exec, Sys } from "std";
 import { Buf } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { Frame, childCli, childCore } from "../../packages/platform/src/frame.wac";
@@ -363,7 +363,9 @@ i32 numberOr(string s, i32 fallback) {
   return v;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string dir = ".cache/wac-shfuzz";
   if (!fixtures(cli, dir)) {
     core.warn("shfuzz: cannot make " + dir);

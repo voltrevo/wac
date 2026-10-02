@@ -45,7 +45,7 @@
 // own so neither route sees the other's files; and a way to build a runnable artefact
 // (`builtApp`), which is `harness/buildApp.ts` in wac.
 
-import { Core, Cli, Exec } from "std";
+import { Core, Cli, Exec, Sys } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
@@ -130,7 +130,9 @@ i32 flagOf(Cli cli, i32 argc, string name, i32 fallback) {
   return fallback;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string[] scripts = corpus();
   i32 argc = cli.argCount().wait();
   i32 from = flagOf(cli, argc, "from", 0);

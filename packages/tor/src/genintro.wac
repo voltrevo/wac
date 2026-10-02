@@ -10,14 +10,16 @@
 //
 // Keys are derived from fixed seeds, so a change in the output is a change in the generator.
 
-import { Core, Cli, Change, FileResult } from "std";
+import { Core, Cli, Change, FileResult, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
 import { ed25519PublicKey } from "../../crypto/src/ed25519.wac";
 import { decode as hexDecode } from "../../codec/src/hex.wac";
 import { Introduce2, establishIntroCell, macSpanOf, parseIntroduce2, sigSpanOf } from "./hsservice.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 2) {
     core.warn("usage: genintro <cell-out> <vector-out>");
     return 1;

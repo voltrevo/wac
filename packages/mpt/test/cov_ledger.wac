@@ -37,7 +37,7 @@
 // negatives beside it were passing for a reason I had not established. Without the control they would
 // have read as evidence about the payload check.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/mpt/test/cov_exercise.wac";
@@ -67,7 +67,9 @@ Pin[] pins() {
   ];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   LedgerFlags flags = LedgerFlags.read(cli);
 
   Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));

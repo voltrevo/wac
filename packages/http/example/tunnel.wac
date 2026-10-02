@@ -8,11 +8,13 @@
 // It writes nothing and reads nothing: `--allow-net` and no other grant, so what it proves is about the
 // network and cannot be about anything else.
 
-import { Cli, Core } from "std";
+import { Cli, Core, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { ProxyAt, Tunnel, connectThrough, parseProxy } from "../src/proxy.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
   if (n < 2) {
     core.warn("usage: tunnel <host> <port>");

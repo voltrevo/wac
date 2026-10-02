@@ -19,7 +19,7 @@
 // suite — so the interop tests do drive refusal paths. Whether that changes the shape of the gap is
 // the question worth asking of the first number rather than answering in advance.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_every_single_byte_tampering_is_refused as c__every_single_byte_tampering_is_refused,
@@ -274,7 +274,9 @@ import {
   test_a_hybrid_share_with_a_dead_x25519_half_is_refused as lb__a_hybrid_share_with_a_dead_x25519_half_is_refused,
 } from "./wac/loopback_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (lb__a_hybrid_share_with_a_dead_x25519_half_is_refused().len() > 0) {
     core.warn("error: FAILED loopback_test test_a_hybrid_share_with_a_dead_x25519_half_is_refused");

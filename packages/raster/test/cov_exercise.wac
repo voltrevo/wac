@@ -28,7 +28,7 @@ import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFil
          hitAt, partOf, partNone, partBody, partBar, partClose, raiseThenHit, gridRow, gridCursor,
          gridScrolled, gridEmpty, gridWideTail, gridInk, caretInk, deskPress, deskDrag,
          deskCloseDuringDrag, deskTyped, deskDrawn } from "./wac/scenes.wac";
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_the_generated_font_is_the_font_that_was_vendored as rt__the_generated_font_is_the_font_that_was_vendored,
@@ -59,7 +59,9 @@ import {
   test_the_documented_degenerate_contracts_all_hold as rt__the_documented_degenerate_contracts_all_hold,
 } from "./wac/raster_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 seen = 0;
 
   seen = seen + glyphs() + cellW() + cellH();

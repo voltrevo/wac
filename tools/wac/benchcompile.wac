@@ -31,7 +31,7 @@
 // `issues/system/0161`. The file it was ported from is in git; naming its path here would leave a
 // backticked path to something deleted, which `tools/wac/links_test.wac` rightly refuses.
 
-import { Core, Cli, Exec, FileResult } from "std";
+import { Core, Cli, Exec, FileResult, Sys } from "std";
 import { Fs } from "../../packages/fs/src/fs.wac";
 import { Sources, exactly, gather, resOf } from "../../packages/wac/src/sources.wac";
 import { Res } from "../../packages/wacc/src/path.wac";
@@ -279,7 +279,9 @@ i32 onePhase(Core core, Cli cli, Fs fs, string name, string entry) {
   return 0;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   bool all = false;
   bool mem = false;
   i32 phaseAt = 0 - 1;

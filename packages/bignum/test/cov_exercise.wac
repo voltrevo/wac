@@ -41,7 +41,7 @@
 import { T } from "../../wactest/src/assert.wac";
 import { Rng } from "../../wactest/src/rng.wac";
 import { Lines, Answers, askDeno, word } from "../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr,
          opMulSmall, opDivSmall, opRemSmall, opCmp, opCmpAbs, opBitLen, opIsZero,
@@ -139,7 +139,9 @@ i32 both(string x, string y) {
 /** `-x` as text, without arithmetic: the oracle's answers are never negative. */
 string neg(string x) { return x == "0" ? "0" : "-" + x; }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   T t = T.create();
   i32 seen = 0;
 

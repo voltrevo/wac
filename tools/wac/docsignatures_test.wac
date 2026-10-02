@@ -354,7 +354,7 @@ export string test_an_export_signature_in_a_readme_is_the_signature_in_the_sourc
       for (i32 l = 0; l < lines.len(); l++) {
         string name = exportedName(lines[l]);
         if (name == "" || foreign(pkg, name)) { continue; }
-        // **Only a line that *ends* at the signature.** `export i32 main(Core core, Cli cli) { … }`
+        // **Only a line that *ends* at the signature.** `export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; … }`
         // is a fragment showing shape, not a claim about a declaration, and the TypeScript's regex
         // skipped it by anchoring to end-of-line after an optional `{` or `;`. Stripping the trailing
         // characters instead — which this did first — turns those fragments into false failures.

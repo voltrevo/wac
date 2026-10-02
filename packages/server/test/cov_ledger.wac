@@ -27,7 +27,7 @@
 // Two are provably unreachable and say why below. The third is honestly unresolved, and is marked as
 // what it is rather than dressed up.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/server/test/cov_exercise.wac";
@@ -65,7 +65,9 @@ Pin[] pins() {
   ];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   LedgerFlags flags = LedgerFlags.read(cli);
 
   // No grants: the exercise drives `handle(request, now)` over byte strings and touches nothing else.

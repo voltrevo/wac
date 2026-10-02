@@ -15,7 +15,7 @@
 // replay keeps a handful of cases live as a canary, which is what a wholesale change of environment would
 // trip; a subtler one is caught when somebody re-runs this and reads the diff.
 
-import { Change, Cli, Core, Exec } from "std";
+import { Change, Cli, Core, Exec, Sys } from "std";
 import { Buf } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { ErrCase, Fixture, cases, fixtures, operandCases, operandErrorCases, operandErrorFixtures,
@@ -86,7 +86,9 @@ void field(Buf out, string tag, u8[] bytes) {
   out.pushAll("\n".toBytes());
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 a = capture(core, cli, cases(), fixtures(), behaviourVectors());
   if (a != 0) { return a; }
   i32 b = capture(core, cli, operandCases(), operandFixtures(), operandVectors());

@@ -8,9 +8,11 @@
 //
 // Arguments: the path, then `on` or `off`.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string path = string.fromBytes(cli.arg(0).wait());
   bool on = string.fromBytes(cli.arg(1).wait()) == "on";
   return cli.setExecutable(path, on).wait().ok() ? 0 : 1;

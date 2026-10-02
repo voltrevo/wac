@@ -46,7 +46,7 @@
 // has used since it moved. One run after this lands dispatches alphabetically, which is what a fresh
 // checkout has always done, and the stale `.json` is removed rather than left looking live.
 
-import { Core, Cli, Exec, Pending, FileResult, Stat } from "std";
+import { Core, Cli, Exec, Pending, FileResult, Stat, Sys } from "std";
 import { itoa, itoa64, atoi } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, joined, splitLines }
        from "../../packages/wactest/src/strings.wac";
@@ -289,7 +289,9 @@ string readTimes(Cli cli) {
   return f.ok ? string.fromBytes(f.bytes) : "";
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   bool verbose = false;
   i32 argc = cli.argCount().wait();
   for (i32 i = 0; i < argc; i++) {

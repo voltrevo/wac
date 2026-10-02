@@ -41,9 +41,11 @@
 //     it gives every program that watches handles — derive the limit from `CALL_SLOTS`, do not transcribe
 //     it, and count every outstanding call, not just the ones you think of as reads.
 
-import { Cli, Core, Pending, CALL_SLOTS } from "std";
+import { Cli, Core, Pending, CALL_SLOTS, Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 argc = cli.argCount().wait();
   i32 n = argc > 0 ? atoi(cli.arg(0).wait()) : CALL_SLOTS;
   i32 ms = argc > 1 ? atoi(cli.arg(1).wait()) : 200;

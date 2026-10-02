@@ -53,7 +53,7 @@
 // two callers did not need and a method on `Buf` does — the ten points that left this package are
 // seven that arrived there.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/http/test/cov_exercise.wac";
@@ -104,7 +104,9 @@ Rule[] rules() {
   ];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   LedgerFlags flags = LedgerFlags.read(cli);
 
   // No trap cases: none of the 38 tests wired into the exercise expects a trap.

@@ -6,9 +6,11 @@
 //   probe                  ->  read=ok net=ok        (built with --allow-read --allow-net)
 //   runner probe.worker.js  ->  read=denied net=denied
 
-import { Cli, Core, FAULT_NOT_GRANTED, FileResult, Socket } from "std";
+import { Cli, Core, FAULT_NOT_GRANTED, FileResult, Socket, Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   // A file that certainly exists when run from the repository root. A denial and a missing
   // file are deliberately not distinguished by the world, so the *message* is what says
   // which — and either way the answer is "not readable", which is what a caller acts on.

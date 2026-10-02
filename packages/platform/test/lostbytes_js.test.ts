@@ -29,10 +29,12 @@ const GRANTS = { read: true, write: true, net: true, run: true, env: true };
 const ENTRY = ".cache/lostbytes/jsprobe.wac";
 
 /** The parent gives up on a read, then asks again; the child answers late either way. */
-const PROGRAM = `import { Core, Cli, Child, Pending, GRANT_ALL } from "std";
+const PROGRAM = `import { Core, Cli, Child, Pending, GRANT_ALL, Sys } from "std";
 import { Read } from "core";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
   string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : "";
   if (mode == "child") {

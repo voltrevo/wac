@@ -38,8 +38,8 @@ Exec build(Cli cli, string entry, string grant, string dest) {
 /** A program with no imports beyond `Core`, so the build is a compile of two lines. */
 bool writeEntry(Cli cli, T t, string path) {
   Change wrote = cli.writeFile(path,
-    ("import { Core } from \"std\";\n" +
-     "export i32 main(Core core) { core.log(\"an app ran\"); return 0; }\n").toBytes()).wait();
+    ("import { Core, Sys } from \"std\";\n" +
+     "export i32 main(Sys sys) { Core core = sys.core; core.log(\"an app ran\"); return 0; }\n").toBytes()).wait();
   t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
   return wrote.ok();
 }
@@ -100,8 +100,8 @@ export string test_the_grants_are_in_the_module_and_not_the_preamble(Core core, 
 
   // A program that reads, so that the grant is the difference between working and refused.
   Change wrote = cli.writeFile(dir + "/read.wac",
-    ("import { Core, Cli, FileResult } from \"std\";\n" +
-     "export i32 main(Core core, Cli cli) {\n" +
+    ("import { Core, Cli, FileResult, Sys } from \"std\";\n" +
+     "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
      "  FileResult r = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();\n" +
      "  core.log(r.ok ? \"read ok\" : \"refused: \" + r.error);\n" +
      "  return r.ok ? 0 : 1;\n" +
@@ -389,8 +389,8 @@ export string test_a_closed_reader_stops_the_program(Core core, Cli cli) {
   t.isTrue(whyDir == "", whyDir);
 
   Change wrote = cli.writeFile(dir + "/forever.wac",
-    ("import { Core, Cli } from \"std\";\n" +
-     "export i32 main(Core core, Cli cli) {\n" +
+    ("import { Core, Cli, Sys } from \"std\";\n" +
+     "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
      // Unbounded, and the loop is the assertion: on a host that reports the closed reader this
      // returns, and on one that does not it never leaves the `while`.
      "  while (true) { if (!cli.write(\"y\\n\".toBytes())) { return 0; } }\n" +

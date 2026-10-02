@@ -22,11 +22,13 @@
 // serves an error rather than the file. The handler cannot exceed what this program hands it — and
 // what it hands over is the `GRANT_NONE` below, which is where to change that.
 
-import { Child, Cli, Core, FileResult, GRANT_NONE, INHERIT_NONE, Pending, Socket } from "std";
+import { Child, Cli, Core, FileResult, GRANT_NONE, INHERIT_NONE, Pending, Socket, Sys } from "std";
 import { argvOf } from "../src/stream.wac";
 import { Read } from "core";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 2) {
     core.warn("usage: inetd <port> <worker.js> [args...]");
     return 2;

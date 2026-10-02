@@ -24,7 +24,7 @@
 // was 5,994 ms and 180 files there. Passing the whole corpus is deliberate and free — `emitFiles`
 // documents that what is emitted is the closure, not the table.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { emitFiles } from "../../packages/wacc/src/api.wac";
 import { Corpus, loadCorpus } from "../../packages/wacc/test/wac/corpus_probe.wac";
@@ -35,7 +35,9 @@ import { Corpus, loadCorpus } from "../../packages/wacc/test/wac/corpus_probe.wa
  */
 static string ENTRY = "packages/box/src/bin/sh.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   // **The entry is a constant and cannot be an argument.** This runs under `wac covdump`, which
   // calls `main` with no argv of its own — and a loaded module sees the *host's*, so
   // `cli.arg(0)` here is the string `"covdump"`. Reading it took the entry to be a file of that name

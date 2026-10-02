@@ -48,7 +48,7 @@
 // time or giving up and writing one paragraph that means nothing. Two rules are whole-file and give
 // up their file's floor deliberately, and both say why.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
@@ -345,7 +345,9 @@ Pin[] pins() {
   return Pin[].filled(0, Pin("", 0, "", true, ""));
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   LedgerFlags flags = LedgerFlags.read(cli);
 
   Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));

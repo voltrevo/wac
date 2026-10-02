@@ -18,7 +18,7 @@
 // Built by `client_test.wac`; kept beside it rather than in `src/` because the reply is a fixture's
 // reply — a fixed body the test matches on, not something a server should answer.
 
-import { Core, Cli, Socket } from "std";
+import { Core, Cli, Socket, Sys } from "std";
 import { Read } from "core";
 import { tlsServerInit, tlsServerInitRsa, tlsServerFeed, tlsServerSend, tlsServerClose,
          tlsPhase, tlsRecordNeeded } from "../../src/server.wac";
@@ -118,7 +118,9 @@ string firstLine(string text) {
   return text;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 port = 0;
   string body = DEFAULT_BODY;
   string rsaDir = "";

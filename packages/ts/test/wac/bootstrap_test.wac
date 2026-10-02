@@ -50,8 +50,8 @@ import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
  * that can be wrong twice.
  */
 static string PROBE =
-  "import { Core, Cli, FileResult } from \"std\";\n" +
-  "export i32 main(Core core, Cli cli) {\n" +
+  "import { Core, Cli, FileResult, Sys } from \"std\";\n" +
+  "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
   "  cli.openOutput(\"probe.out\").wait();\n" +
   "  cli.write(\"redirected\\n\".toBytes());\n" +
   "  cli.openOutput(\"\").wait();\n" +
@@ -62,8 +62,8 @@ static string PROBE =
 
 /** A program with no imports beyond `Core`, so what is being tested is the command and not a graph. */
 static string PROGRAM =
-  "import { Core } from \"std\";\n" +
-  "export i32 main(Core core) { core.log(\"it compiled and it ran\"); return 0; }\n";
+  "import { Core, Sys } from \"std\";\n" +
+  "export i32 main(Sys sys) { Core core = sys.core; core.log(\"it compiled and it ran\"); return 0; }\n";
 
 Exec sh(Cli cli, string script) {
   return cli.exec("/bin/sh", ["-c", script], u8[]()).wait();

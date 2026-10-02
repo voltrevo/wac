@@ -51,7 +51,7 @@
 // `issues/system/0290b` unblocked, and the fourth done. It needed `Cli.execWithIn` for the host arm's
 // per-script directory and `builtApp` for the three binaries.
 
-import { Core, Cli, Exec } from "std";
+import { Core, Cli, Exec, Sys } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
@@ -143,7 +143,9 @@ i32 flagOf(Cli cli, i32 argc, string name, i32 fallback) {
   return fallback;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string[] scripts = corpus();
   i32 argc = cli.argCount().wait();
   i32 from = flagOf(cli, argc, "from", 0);

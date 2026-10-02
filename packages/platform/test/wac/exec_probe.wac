@@ -16,12 +16,14 @@
 // variables differs between a program launched by `deno` and one launched by `node`, and neither
 // number is the claim. "Did the name we passed arrive" is.
 
-import { Cli, Core, Exec } from "std";
+import { Cli, Core, Exec, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 string yn(bool b) { return b ? "yes" : "no"; }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   // Inherited: the line below arrives on *this* program's stdout, and the answer carries none of it.
   Exec a = cli.execWith("/bin/echo", ["from the grandchild"], u8[](), string[](),
                         false, true).wait();

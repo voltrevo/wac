@@ -5,7 +5,7 @@
 //
 // One of the last packages `issues/system/0205` records as unmeasured.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
@@ -29,7 +29,7 @@ import {
   test_the_ledger_says_how_much_of_the_surface_is_actually_compared as conf__the_ledger_says_how_much_of_the_surface_is_actually_compared,
 } from "./wac/conformance_test.wac";
 import {
-  test_a_program_that_asks_for_one_capability_is_described_by_one as decl__a_program_that_asks_for_one_capability_is_described_by_one,
+  test_a_program_handed_sys_is_described_by_the_world as decl__a_program_handed_sys_is_described_by_the_world,
   test_and_one_that_asks_for_two_is_described_by_two as decl__and_one_that_asks_for_two_is_described_by_two,
 } from "./wac/declared_test.wac";
 import {
@@ -201,7 +201,9 @@ import {
   test_the_c_locale_accounts_for_its_own_two_words as worl__the_c_locale_accounts_for_its_own_two_words,
 } from "./wac/world_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (arri__an_image_written_on_one_host_is_the_same_system_on_the_other(core, cli).len() > 0) {
     core.warn("error: FAILED arrival_test test_an_image_written_on_one_host_is_the_same_system_on_the_other");
@@ -243,8 +245,8 @@ export i32 main(Core core, Cli cli) {
     core.warn("error: FAILED conformance_test test_the_ledger_says_how_much_of_the_surface_is_actually_compared");
     bad = bad + 1;
   }
-  if (decl__a_program_that_asks_for_one_capability_is_described_by_one(core, cli).len() > 0) {
-    core.warn("error: FAILED declared_test test_a_program_that_asks_for_one_capability_is_described_by_one");
+  if (decl__a_program_handed_sys_is_described_by_the_world(core, cli).len() > 0) {
+    core.warn("error: FAILED declared_test test_a_program_handed_sys_is_described_by_the_world");
     bad = bad + 1;
   }
   if (decl__and_one_that_asks_for_two_is_described_by_two(core, cli).len() > 0) {

@@ -24,7 +24,7 @@
 // applet per file means each could also be built alone, with only what it needs — `bin/`
 // does exactly that for four of them, and measures what it saves.
 
-import { Cli, Core } from "std";
+import { Cli, Core, Sys } from "std";
 import { Args, parseArgs } from "./lib/args.wac";
 
 import { base32 } from "./applets/base32.wac";
@@ -93,7 +93,9 @@ import { zstd } from "./applets/zstd.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { appletHelp } from "./lib/flags.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 1) { return usage(core); }
   string applet = string.fromBytes(cli.arg(0).wait());
   // **The filesystem an applet reads is a value now, not the host by assumption.** Standing alone, `box`

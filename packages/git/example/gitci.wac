@@ -13,7 +13,7 @@
 // because `Stat` carries no mode and an executable cannot be told from a plain file
 // (issues/system/0132). Committing a tree that contained an executable therefore records a mode change.
 
-import { Cli, Core, FileResult } from "std";
+import { Cli, Core, FileResult, Sys } from "std";
 import { Fs } from "../../fs/src/fs.wac";
 import { Setting, configOf } from "../src/config.wac";
 import { configChain } from "../src/configfiles.wac";
@@ -23,7 +23,9 @@ import { commitTree, headRef, openRepo, writeWorkTree } from "../src/repo.wac";
 import { IndexEntry } from "../src/index.wac";
 import { Vec } from "core";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
   if (n < 2) {
     core.warn("usage: gitci <repo-dir> <message>");

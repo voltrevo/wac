@@ -19,7 +19,7 @@
 //
 // None of them expects a trap, so there is no `trapCase` sweep.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_container_spans_refuses_every_malformed_offset_table as rf__container_spans_refuses_every_malformed_offset_table,
@@ -68,7 +68,9 @@ import {
   test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_refused as sy__signature_slot_reads_as_a_slot_and_out_of_range_fields_are_refused,
 } from "./wac/sync_fixture_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (rf__container_spans_refuses_every_malformed_offset_table().len() > 0) {
     core.warn("error: FAILED refusals_test test_container_spans_refuses_every_malformed_offset_table");

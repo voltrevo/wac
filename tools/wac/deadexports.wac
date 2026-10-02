@@ -30,7 +30,7 @@
 // The unexported half has no such caveat: a private function is reachable only from its own file,
 // which is why the report says so where it prints them.
 
-import { Core, Cli, FileResult, Stat } from "std";
+import { Core, Cli, FileResult, Stat, Sys } from "std";
 import { Vec } from "core";
 import { sortStrings } from "./covledger.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
@@ -667,7 +667,9 @@ export string report(Scan s) {
   return out;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   Scan s = scanAt(core, cli, ".");
   bool quiet = false;
   bool strict = false;

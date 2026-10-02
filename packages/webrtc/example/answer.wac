@@ -29,7 +29,7 @@
 // candidate, and it takes the address to advertise on the command line rather than enumerating
 // interfaces — so it works on a known address and would not traverse a NAT.
 
-import { Cli, Core, Datagram, Socket } from "std";
+import { Cli, Core, Datagram, Socket, Sys } from "std";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { selfSignedP256 } from "../../tls/src/x509gen.wac";
 import { Association } from "../src/sctp.wac";
@@ -88,7 +88,9 @@ string fragment(Core core, i32 n) {
   return string.fromBytes(out);
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 2) {
     core.warn("usage: answer <host> <port>   (the peer's SDP offer on standard input)");
     return 2;

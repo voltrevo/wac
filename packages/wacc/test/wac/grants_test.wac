@@ -34,9 +34,9 @@ string probeDir(Cli cli) {
  * `--allow-read`, which is what tells a flag that was *passed through* from one that was *granted*.
  */
 string probeSource() {
-  return "import { Cli, Core } from \"std\";\n" +
+  return "import { Cli, Core, Sys } from \"std\";\n" +
          "\n" +
-         "export i32 main(Core core, Cli cli) {\n" +
+         "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
          "  i32 n = cli.argCount().wait();\n" +
          "  string first = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
          "  core.log(\"first=\" + first);\n" +

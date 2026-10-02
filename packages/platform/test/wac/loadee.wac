@@ -8,7 +8,7 @@
 // every shape the four native-only commands need: `wac test` calls `string f(Core, Cli)`, and
 // `covdump`, `tracestat` and `ctcompare` call `__cov_init`, `__cov_len` and `__cov_get`.
 
-import { Cli, Core } from "std";
+import { Cli, Core, Sys } from "std";
 
 /** A test that passes: an empty report. */
 export string test_passes(Core core, Cli cli) { return ""; }
@@ -50,7 +50,9 @@ export void nothing() { }
 export f64 half(f64 x) { return x / 2.0; }
 
 /** A program too, so the same module can be spawned as well as loaded — `load_test` compares them. */
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   core.log("loadee ran as a program");
   return 3;
 }

@@ -164,7 +164,7 @@
 // run out of reach, not that the compiler is right. Widening it is the work; a green sweep is the
 // signal to do so.
 //
-import { CallResult, Cli, Core, LoadedModule } from "std";
+import { CallResult, Cli, Core, LoadedModule, Sys } from "std";
 import { Map, Option, Vec, hashString, stringEq } from "core";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { Rng } from "../../packages/wactest/src/rng.wac";
@@ -1338,7 +1338,9 @@ i32 numberOr(string s, i32 fallback) {
  * program *is* the report: a seed reproduces it, but only if the generator has not changed since,
  * and the generator changes. The text does not go stale.
  */
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 count = numberOr(flagValue(cli, "--count", ""), 200);
   i32 seed = numberOr(flagValue(cli, "--seed", ""), 1);
   bool verbose = hasFlag(cli, "--verbose");

@@ -21,10 +21,10 @@ const EX_START_CURL = `$ curl -fsSL https://raw.githubusercontent.com/voltrevo/w
     | sh -s -- --host deno`;
 
 const EX_START_HELLO = `// main.wac
-import { Cli, Core } from "std";
+import { Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
-  cli.write("hello from wac\\n".toBytes());
+export i32 main(Sys sys) {
+  sys.log("hello from wac");
   return 0;
 }`;
 

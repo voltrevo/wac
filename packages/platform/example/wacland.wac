@@ -20,10 +20,12 @@
 // resolved every ticket immediately would pass the types and fail stage 3, which is why the out-of-order
 // clause is in the criteria rather than a single request.
 
-import { Child, Cli, Core, FAULT_NOT_GRANTED, FileResult, GRANT_ENV, GRANT_NONE, GRANT_READ, Pending } from "std";
+import { Child, Cli, Core, FAULT_NOT_GRANTED, FileResult, GRANT_ENV, GRANT_NONE, GRANT_READ, Pending, Sys } from "std";
 import { Read } from "core";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   // **This program is also its own child.** Stage 5 spawns another instance of this very module and
   // waits for it, so `main` has to be a multi-call entry — the same shape `packages/box`'s `sh.wac`
   // uses, and for the same reason: a spawned bundle re-enters `main`, and something has to say which

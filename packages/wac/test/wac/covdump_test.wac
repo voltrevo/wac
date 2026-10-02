@@ -29,8 +29,8 @@ import { manifestIn } from "../../../wacc/src/manifest.wac";
 
 /** A program that reads a file and says whether it could. */
 static string READER =
-  "import { Core, Cli, FileResult } from \"std\";\n" +
-  "export i32 main(Core core, Cli cli) {\n" +
+  "import { Core, Cli, FileResult, Sys } from \"std\";\n" +
+  "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
   "  FileResult r = cli.readFile(\"README.md\").wait();\n" +
   "  core.log(r.ok ? \"READ OK\" : \"REFUSED\");\n" +
   "  return 77;\n" +

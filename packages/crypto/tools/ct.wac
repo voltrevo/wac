@@ -28,7 +28,7 @@
 // so a pair written with different shapes parts at event 1, which is the driver and not the routine.
 // Every driver here comes from one template with one array literal substituted.
 
-import { Core, Cli, Exec, Change, FileResult, execReason} from "std";
+import { Core, Cli, Exec, Change, FileResult, execReason, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { TraceSite, traceSite, withoutPrefix } from "../../wactest/src/tracesite.wac";
 
@@ -303,7 +303,9 @@ bool listed(string[] all, i32 n, string want) {
   return false;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string dir = cli.cwd().wait() + "/" + CACHE;
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();

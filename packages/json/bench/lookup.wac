@@ -87,7 +87,7 @@ export i32 buildOnly(i32 n, i32 reps) {
 // already in here, which is what this file's header means by the crossing being amortised away.
 // So the port moves the harness and not the measurement, and the numbers are the same numbers.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 
 i32 REPS() { return 200000; }
 i32 BUILD_REPS() { return 20000; }
@@ -115,7 +115,9 @@ i64 bestOfThree(Core core, i32 which, i32 n, i32 reps) {
 /** Nanoseconds per operation, which is what the table reports. */
 i64 perOp(i64 nanos, i32 reps) { return nanos / (reps as i64); }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32[] sizes = [2, 4, 8, 12, 16, 24, 32, 64, 128, 256, 1024];
 
   // Warm up, so the first measured size does not pay for whatever the host does on a first call.

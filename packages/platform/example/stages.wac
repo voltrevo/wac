@@ -14,9 +14,11 @@
 // scheduler tick would let both lines arrive in the same read — which is the case that passes whether
 // the launcher waits or not.
 
-import { Cli, Core } from "std";
+import { Cli, Core, Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   core.log("stages: listening");
   core.sleepMillis(300).wait();
   core.log("stages: serving");

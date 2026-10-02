@@ -32,8 +32,7 @@
 // the other.
 
 import { CallResult, Change, Child, Cli, Core, Exec, FileResult, GRANT_ENV, GRANT_NET, GRANT_READ,
-         GRANT_RUN, GRANT_WRITE, INHERIT_IN, INHERIT_OUT, LoadedModule, Pending, Stat, faultWords }
-  from "std";
+         GRANT_RUN, GRANT_WRITE, INHERIT_IN, INHERIT_OUT, LoadedModule, Pending, Stat, faultWords, Sys } from "std";
 import { Read, Vec } from "core";
 import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
@@ -803,7 +802,9 @@ void rememberBuild(Cli cli, string cachePath, u8[] whole, string distinct) {
   sweepBuildCache(cli, cacheDir);
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 argc = cli.argCount().wait();
   if (argc < 1) {
     core.warn(usage());

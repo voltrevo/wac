@@ -67,7 +67,7 @@
 // So: the vocabulary is shared, the discipline is not yet, and the cost of sharing it is written down
 // here rather than discovered by whoever tries.
 
-import { Cli, Core, Event, Page } from "std";
+import { Cli, Core, Event, Page, Sys } from "std";
 import { Shell, runScript } from "../../sh/src/exec.wac";
 // `fmt`'s, not a fourth copy: this file had one, and the copies had already drifted — the i32-minimum
 // bug (GitHub wac-mono#6) was fixed in each of them separately, which is the drift a copy guarantees.
@@ -113,7 +113,7 @@ static string BANNER =
  *
  * Without this, `externalSpawnable` below would spawn a child with nothing to run.
  */
-export i32 main(Core core, Cli cli) { return boxApplet(core, cli); }
+export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return boxApplet(core, cli); }
 
 // The prompt — where you are, and a `$` — is `Session.prompt`, and this file calls it as
 // `s.prompt()`. A copy of it lived here as a free function taking a `Shell`, left behind when

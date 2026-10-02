@@ -38,7 +38,7 @@
 //     kind, and for the rule that means something specific: **driven by a test this driver must not
 //     run.** That is where the measurement stops, not where the testing does.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/ssh/test/cov_exercise.wac";
@@ -103,7 +103,9 @@ Rule[] rules() {
   ];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   LedgerFlags flags = LedgerFlags.read(cli);
 
   Measured m = measure(core, cli, EXERCISE, grants(), cases());

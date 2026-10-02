@@ -19,10 +19,12 @@
 // worth making here: that a child cannot tell which of the two ran it. The child — `shout` below —
 // is copied from `inside.wac` unchanged, because a child that had to be adapted would prove nothing.
 
-import { Captured, Cli, Core, FileResult } from "std";
+import { Captured, Cli, Core, FileResult, Sys } from "std";
 import { Frame, childCli, childCore } from "../src/frame.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 1) {
     core.warn("usage: insideValue <a writable directory>");
     return 2;

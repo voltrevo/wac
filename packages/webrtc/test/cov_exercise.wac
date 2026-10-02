@@ -10,7 +10,7 @@
 //
 // None of the 76 tests expects a trap.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
@@ -117,7 +117,9 @@ import {
   test_the_nested_lengths_that_were_already_checked_stay_checked as mf__the_nested_lengths_that_were_already_checked_stay_checked,
 } from "./wac/malformed_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (dtl__a_clientkeyexchange_of_the_wrong_width_is_refused().len() > 0) {
     core.warn("error: FAILED dtls_test test_a_clientkeyexchange_of_the_wrong_width_is_refused");

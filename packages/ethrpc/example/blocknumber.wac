@@ -5,11 +5,13 @@
 //
 //     wac task app:build packages/ethrpc/example/blocknumber.wac --allow-net -o blocknumber
 //     ./blocknumber 127.0.0.1 8545
-import { Cli, Core } from "std";
+import { Cli, Core, Sys } from "std";
 import { call, stringOf, Answer } from "../src/rpc.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
   string host = n > 0 ? string.fromBytes(cli.arg(0).wait()) : "127.0.0.1";
   i32 port = n > 1 ? atoiOr(string.fromBytes(cli.arg(1).wait()), 8545) : 8545;

@@ -31,7 +31,7 @@
 // together is that there is now one of each. It also gained a task — it had none, and was run by
 // typing `deno run -A tools/coverageUnion.ts` from memory.
 
-import { Core, Cli, Exec, FileResult } from "std";
+import { Core, Cli, Exec, FileResult, Sys } from "std";
 import { Map, hashString, stringEq, Vec } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { splitLines, startsWith } from "../../packages/wactest/src/strings.wac";
@@ -71,7 +71,9 @@ static i32 ANY = 2;
 /** Bit set for a point the file's own package reached. */
 static i32 OWN = 4;
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 argc = cli.argCount().wait();
   Vec<string> asked = Vec<string>.create();
   for (i32 i = 0; i < argc; i++) {

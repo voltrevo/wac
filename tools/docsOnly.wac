@@ -51,7 +51,7 @@
 // What it may skip is work that reads *code* — the coverage ratchets measure branch coverage of each
 // package's own sources, and a markdown edit with no fence in it cannot move them.
 
-import { Cli, Core, Exec } from "std";
+import { Cli, Core, Exec, Sys } from "std";
 import { Vec } from "core";
 import { itoa } from "../packages/fmt/src/itoa.wac";
 import { startsWith, endsWith, joined } from "../packages/wactest/src/strings.wac";
@@ -181,7 +181,9 @@ export Verdict verdict(Core core, Cli cli, string base, string tip) {
   return Verdict(true, itoa(changed.len()) + " markdown file(s), no " + fenceOpen() + " fence changed");
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 argc = cli.argCount().wait();
   string base = argc > 0 ? string.fromBytes(cli.arg(0).wait()) : "origin/master";
   string tip = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : "HEAD";

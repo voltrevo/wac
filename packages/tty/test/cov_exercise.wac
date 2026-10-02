@@ -14,7 +14,7 @@
 //
 // All eight tests take `(Core, Cli)`: every one of them opens a pty or asks a recorded oracle.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_the_oracle_is_the_configuration_this_module_implements as ln__the_oracle_is_the_configuration_this_module_implements,
@@ -30,7 +30,9 @@ import {
   test_the_live_pty_still_answers_what_was_recorded_in_each_mode as md__the_live_pty_still_answers_what_was_recorded_in_each_mode,
 } from "./wac/modes_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (ln__cbreak_still_answers_a_signal_and_the_unused_accessors_work().len() > 0) {
     core.warn("error: FAILED line_test test_cbreak_still_answers_a_signal_and_the_unused_accessors_work");

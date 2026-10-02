@@ -20,7 +20,7 @@
 //
 // Needs a `deno` on the path, and nothing default: `Cli.exec` runs it. `issues/system/0165`.
 
-import { Core, Cli, Exec } from "std";
+import { Core, Cli, Exec, Sys } from "std";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
@@ -55,7 +55,9 @@ string script() {
          "console.log(Array.from(out).map(x => x.toString(16).padStart(2, '0')).join(''));";
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   Exec r = cli.exec("deno", ["eval", script()], u8[]()).wait();
   if (!r.ran()) {
     core.warn("capture-hkdfcap: deno would not start: " + r.error);

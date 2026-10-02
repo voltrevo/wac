@@ -120,8 +120,8 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
     "export i32 main() { Read r = Read.End; return match (r) { End: 0, default: 1 }; }\n",
     "import { Option } from \"core\";\n" +
     "export i32 main() { Option<i32> o = Option.Some(7); return o.orElse(0); }\n",
-    "import { Core, Cli } from \"std\";\n" +
-    "export i32 main(Core core, Cli cli) { return 0; }\n"
+    "import { Core, Cli, Sys } from \"std\";\n" +
+    "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 0; }\n"
   ];
   for (i32 i = 0; i < names.len(); i++) {
     Change w = cli.writeFile(dir + "/" + names[i], progs[i].toBytes()).wait();
@@ -292,7 +292,7 @@ export string test_a_name_the_compilers_copy_lacks_says_so_rather_than_blaming_t
   Change w = cli.writeFile(dir + "/stale.wac",
                            ("import { Core, Cli, notInAnyVersionOfPlatform } "
                             + "from \"std\";\n"
-                            + "export i32 main(Core core, Cli cli) { return 0; }\n").toBytes()).wait();
+                            + "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 0; }\n").toBytes()).wait();
   t.isTrue(w.ok(), "could not write stale.wac — " + w.message);
   if (w.ok()) {
     Exec r = checkFrom(cli, dir, "stale.wac");

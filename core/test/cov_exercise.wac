@@ -24,7 +24,7 @@
 // instead. `covdump` catches one trap per call, and `name:<n>` makes eleven of them one export name
 // (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`).
 
-import { Core } from "std";
+import { Core, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { test_option_basics as option__option_basics, test_option_holds_any_type as option__option_holds_any_type, test_option_match_is_exhaustive as option__option_match_is_exhaustive, test_map_option as option__map_option, test_result_basics as option__result_basics, test_result_error_type_varies as option__result_error_type_varies }
   from "./option_test.wac";
@@ -41,7 +41,8 @@ import { test_traps_getting_past_the_end as traps__traps_getting_past_the_end, t
  *
  * Named rather than counted: "a test failed" sent the reader to thirty-nine candidates.
  */
-export i32 main(Core core) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
   i32 bad = 0;
   if (option__option_basics().len() > 0) { core.warn("error: FAILED option_test test_option_basics"); bad = bad + 1; }
   if (option__option_holds_any_type().len() > 0) { core.warn("error: FAILED option_test test_option_holds_any_type"); bad = bad + 1; }

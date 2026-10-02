@@ -24,7 +24,7 @@
 // **Deliberately no upper bounds.** A sleep that takes far longer than it asked for is a loaded
 // machine, not a broken host, and a test that called that a failure would be measuring the machine —
 // which is the mistake `harness/bounded.ts` exists to avoid. Only the floors are promises.
-import { Cli, Core } from "std";
+import { Cli, Core, Sys } from "std";
 
 /** Milliseconds at 2026-01-01T00:00:00Z, a moment this program is certainly running after. */
 i64 WELL_PAST() { return 1767225600000; }
@@ -32,7 +32,9 @@ i64 WELL_PAST() { return 1767225600000; }
 /** How long to sleep. Short enough not to slow a suite, long enough to be past any clock's grain. */
 i32 NAP_MS() { return 50; }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   // ── `nowMillis` dates, and that is the whole of what it may be trusted for ──
   i64 wall = core.nowMillis().wait();
   say(cli, "wall clock is past 2026", wall > WELL_PAST());

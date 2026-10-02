@@ -27,10 +27,12 @@
 // acknowledgements and no loss detection, so a dropped datagram ends this program rather than being
 // retransmitted — steps 5 and 6 of the design note.
 
-import { Cli, Core, Datagram, Socket } from "std";
+import { Cli, Core, Datagram, Socket, Sys } from "std";
 import { Client } from "../src/client.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 2) {
     core.warn("usage: handshake <host> <port> [server-name]");
     return 2;

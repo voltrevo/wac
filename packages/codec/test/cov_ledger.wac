@@ -28,7 +28,7 @@
 //
 // `base32.wac`'s `digitsFor(0)`. See the pin.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/codec/test/cov_exercise.wac";
@@ -57,7 +57,9 @@ Pin[] pins() {
   ];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   LedgerFlags flags = LedgerFlags.read(cli);
 
   // No grants: the exercise's `main` takes nothing, reads nothing and spawns nothing.

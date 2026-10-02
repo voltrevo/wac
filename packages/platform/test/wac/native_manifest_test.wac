@@ -202,9 +202,9 @@ export string test_a_program_declaring_a_name_platform_also_declares_still_runs(
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  string src = "import { Core, Cli } from \"std\";\n" +
+  string src = "import { Core, Cli, Sys } from \"std\";\n" +
                "struct Stat { i32 n; }\n" +
-               "export i32 main(Core core, Cli cli) {\n" +
+               "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
                "  Stat s = Stat(1);\n" +
                "  core.log(\"n=\" + (s.n == 1 ? \"1\" : \"?\"));\n" +
                "  return 0;\n}\n";

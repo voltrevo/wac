@@ -16,9 +16,11 @@
 // only kind of difference this program cannot show you, since a non-atomic rename looks exactly
 // like an atomic one until two of them race.
 
-import { Change, Cli, Core, faultWords, FileResult, Stat } from "std";
+import { Change, Cli, Core, faultWords, FileResult, Stat, Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string text = cli.argCount().wait() > 0 ? string.fromBytes(cli.arg(0).wait()) : "round trip";
   string a = "roundtrip.txt";
   string b = "roundtrip.moved";

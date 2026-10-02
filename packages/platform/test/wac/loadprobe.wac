@@ -7,7 +7,7 @@
 //
 // One line per call, in a fixed order, so a diff says which shape moved.
 
-import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule } from "std";
+import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule, Sys } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** Every shape in the closed set, plus the two refusals — in the order the report prints them. */
@@ -18,7 +18,9 @@ string[] shapes() {
   ];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 1) {
     core.warn("usage: loadprobe <module.wasm>");
     return 2;

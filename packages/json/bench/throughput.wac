@@ -11,7 +11,7 @@
 // bound `packages/json/src/json.wac` and drove it from JavaScript; the crossing was one call per
 // ~1 MiB document, so moving the harness into wac does not move the numbers. `issues/system/0161`.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { Canonical, canonicalize, parse } from "../src/json.wac";
 import { Buf } from "core";
 import { JsonValue } from "../src/value.wac";
@@ -110,7 +110,9 @@ i64 mbpsTenths(i32 bytes, i64 nanos) {
   return ((bytes as i64) * 10000000000) / ((MIB() as i64) * nanos);
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string[] labels = shapeLabels();
 
   core.log("| shape | MB/s | ms |");

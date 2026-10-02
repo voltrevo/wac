@@ -380,14 +380,14 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // For `run`: one that says something and succeeds, and one whose exit code is neither 0 nor the
     // 1 and 2 every failure here uses — so a forwarded status cannot be confused with a diagnosis.
     && put(t, cli, dir + "/src/hello.wac",
-           "import { Core } from \"std\";\n" +
-           "export i32 main(Core core) { core.log(\"ran\"); return 0; }\n")
+           "import { Core, Sys } from \"std\";\n" +
+           "export i32 main(Sys sys) { Core core = sys.core; core.log(\"ran\"); return 0; }\n")
     && put(t, cli, dir + "/src/seven.wac", "export i32 main() { return 7; }\n")
     // For `wac <module.wasm>`: one that reads a file, so the grants its *own manifest* declares can be
     // seen from outside, and a file whose name ends in `.wasm` and whose contents do not.
     && put(t, cli, dir + "/src/reader.wac",
-           "import { Cli, Core, FAULT_NOT_GRANTED, FileResult } from \"std\";\n" +
-           "export i32 main(Core core, Cli cli) {\n" +
+           "import { Cli, Core, FAULT_NOT_GRANTED, FileResult, Sys } from \"std\";\n" +
+           "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
            "  FileResult f = cli.readFile(\"src/lib.wac\").wait();\n" +
            "  core.log(f.ok ? \"read ok\" : (f.fault == FAULT_NOT_GRANTED() ? \"read denied\"\n" +
            "                                                                : \"read failed\"));\n" +
@@ -397,8 +397,8 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // connecting needs no privilege — only binding does — so every host gets a refusal rather than a
     // hang. It prints the *category*, which is the thing three hosts had no reason to agree on.
     && put(t, cli, dir + "/src/dial.wac",
-           "import { Cli, Core, Socket, faultWords } from \"std\";\n"
-           + "export i32 main(Core core, Cli cli) {\n"
+           "import { Cli, Core, Socket, faultWords, Sys } from \"std\";\n"
+           + "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n"
            + "  Socket s = cli.connect(\"127.0.0.1\", 1).wait();\n"
            + "  core.log(s.handle < 0 ? \"dial: \" + faultWords(s.fault) : \"dial: connected\");\n"
            + "  return 0;\n}\n")
@@ -406,7 +406,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // `test_traps_*` that traps as its name says, and one that returns instead, which is a failure
     // whose whole point is that an empty report from it must not read as a pass.
     && put(t, cli, dir + "/src/one_test.wac",
-           "import { Cli, Core } from \"std\";\n" +
+           "import { Cli, Core, Sys } from \"std\";\n" +
            "export string test_passes(Core core, Cli cli) { return \"\"; }\n" +
            "export string test_fails(Core core, Cli cli) { return \"1 of 1 assertions failed\"; }\n" +
            "export string test_traps_here(Core core, Cli cli) { return \"\"; }\n" +
@@ -423,14 +423,14 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // One trap, saying something, under a name that does *not* start `test_traps_` — so it is a
     // failure, and a failure is what prints the sentence. See the row that uses it.
     && put(t, cli, dir + "/src/breaks_test.wac",
-           "import { Cli, Core } from \"std\";\n" +
+           "import { Cli, Core, Sys } from \"std\";\n" +
            "export string test_falls_over(Core core, Cli cli) { trap \"the reason it stopped\"; }\n")
     // **The capability canary.** A test that writes, run on a read-only grant. `issues/system/0242c`
     // is the day this passed on the JavaScript hosts and left `leaked.txt` on disk: a loaded module
     // was handed the *command's* world, and a `wac` command holds every grant because it has to
     // compile and write. The row that would notice is one where a test asks for more than the run did.
     && put(t, cli, dir + "/src/writes_test.wac",
-           "import { Change, Cli, Core, FAULT_NOT_GRANTED } from \"std\";\n" +
+           "import { Change, Cli, Core, FAULT_NOT_GRANTED, Sys } from \"std\";\n" +
            "export string test_writes_a_file(Core core, Cli cli) {\n" +
            "  Change c = cli.writeFile(\"leaked.txt\", \"leaked\\n\".toBytes()).wait();\n" +
            "  if (c.ok()) { return \"\"; }\n" +
@@ -448,7 +448,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // green instead of failing identically on three hosts — and a host that traps still breaks the
     // comparison, which is the whole job.
     && put(t, cli, dir + "/src/deniedenv_test.wac",
-           "import { Cli, Core } from \"std\";\n" +
+           "import { Cli, Core, Sys } from \"std\";\n" +
            "export string test_a_denied_environment_is_null(Core core, Cli cli) {\n" +
            "  u8[]? v = cli.env(\"PATH\").wait();\n" +
            "  return v is null ? \"\" : \"PATH was readable without --allow-env\";\n" +
@@ -464,7 +464,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // `issues/system/0256c`. Moving this file back into `src/` is the regression test for that issue,
     // and is what turns those rows red today.
     && put(t, cli, dir + "/capsrc/net_test.wac",
-           "import { Cli, Core, FAULT_REFUSED, Socket } from \"std\";\n"
+           "import { Cli, Core, FAULT_REFUSED, Socket, Sys } from \"std\";\n"
            + "export string test_dials_a_closed_port(Core core, Cli cli) {\n"
            + "  Socket s = cli.connect(\"127.0.0.1\", 1).wait();\n"
            + "  if (s.handle >= 0) { cli.closeSocket(s.handle);\n"
@@ -473,8 +473,8 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // What a program is allowed to do, reported rather than assumed — `probe.wac`'s shape, inline,
     // for the two `run` rows that differ only in what they grant.
     && put(t, cli, dir + "/src/caps.wac",
-           "import { Change, Cli, Core, FAULT_NOT_GRANTED, FileResult } from \"std\";\n"
-           + "export i32 main(Core core, Cli cli) {\n"
+           "import { Change, Cli, Core, FAULT_NOT_GRANTED, FileResult, Sys } from \"std\";\n"
+           + "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n"
            + "  FileResult f = cli.readFile(\"src/hello.wac\").wait();\n"
            + "  string read = f.ok ? \"ok\" : (f.fault == FAULT_NOT_GRANTED() ? \"denied\" : \"failed\");\n"
            + "  Change w = cli.writeFile(\"caps.txt\", \"x\\n\".toBytes()).wait();\n"
@@ -494,7 +494,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            + "  core.log(\"read=\" + read + \" write=\" + write + \" env=\" + env);\n"
            + "  return 0;\n}\n")
     && put(t, cli, dir + "/capsrc/env_test.wac",
-           "import { Cli, Core } from \"std\";\n"
+           "import { Cli, Core, Sys } from \"std\";\n"
            + "export string test_reads_the_environment(Core core, Cli cli) {\n"
            + "  u8[]? v = cli.env(\"PATH\").wait();\n"
            + "  return v is null ? \"PATH is not readable\" : \"\";\n}\n")
@@ -502,7 +502,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // not given is *skipped and named*, not failed, because "you forgot a flag" and "your test is
     // wrong" are different answers.
     && put(t, cli, dir + "/src/reads_test.wac",
-           "import { Cli, Core, FAULT_NOT_GRANTED, FileResult } from \"std\";\n" +
+           "import { Cli, Core, FAULT_NOT_GRANTED, FileResult, Sys } from \"std\";\n" +
            "export string test_reads_a_file(Core core, Cli cli) {\n" +
            "  FileResult f = cli.readFile(\"src/lib.wac\").wait();\n" +
            "  if (f.ok) { return \"\"; }\n" +

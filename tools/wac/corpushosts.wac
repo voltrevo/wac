@@ -24,7 +24,7 @@
 // half already existed, and the pieces both need — the two builds, the two runners, the difference —
 // moved into `packages/platform/test/wac/hostfs.wac` so that there is one of each rather than two.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { nativeBinaryPath } from "../../packages/wactest/src/host.wac";
 import { announce, unannounce } from "./suitegate.wac";
@@ -44,7 +44,9 @@ i32 flagOf(Cli cli, i32 argc, string name, i32 fallback) {
   return fallback;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string[] scripts = corpus();
   i32 argc = cli.argCount().wait();
   i32 from = flagOf(cli, argc, "from", 0);

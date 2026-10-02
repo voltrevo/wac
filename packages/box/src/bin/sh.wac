@@ -12,13 +12,15 @@
 // wired in `boxRun` would import `box.wac` back. A `bin/` entry is imported by nothing, so the
 // cycle does not arise.
 
-import { Cli, Core } from "std";
+import { Cli, Core, Sys } from "std";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
 import { boxApplet, boxNames, boxRun } from "../shrun.wac";
 import { UNKNOWN } from "../box.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   // **This program is also its own applets.** When the shell runs `sort` as a child it spawns *this*
   // bundle with `sort` as the first argument, so `main` has to be a multi-call entry: an applet if
   // the name is one, a shell otherwise. Without it a spawned applet would start another shell and

@@ -23,7 +23,7 @@
 import { mapLower, mapUpper, mapFold, printable, decodeCode, decodeSize, valid, scalarCount,
          encodeOne, lower, upper, casefold, equalFold } from "./probe.wac";
 import { Rng } from "../../wactest/src/rng.wac";
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import {
   test_simple_case_mapping_agrees_with_the_host as u__simple_case_mapping_agrees_with_the_host,
   test_sharp_s_under_simple_uppercase as u__sharp_s_under_simple_uppercase,
@@ -61,7 +61,9 @@ u8[][] malformed() {
   ];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 seen = 0;
 
   // The whole space, thinned only where the branches cannot differ. The ends matter most: a binary

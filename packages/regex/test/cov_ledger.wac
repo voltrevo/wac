@@ -59,7 +59,7 @@
 // below rather than the word "unreachable". Four say `proven: false` because they are reachable and I
 // did not build the input — the honest flag, and each names what the next person would have to do.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/regex/test/cov_exercise.wac";
@@ -192,7 +192,9 @@ Pin[] pins() {
   ];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   LedgerFlags flags = LedgerFlags.read(cli);
 
   // No trap cases: not one of this package's 26 tests expects a trap, so every one of them is called

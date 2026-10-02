@@ -97,30 +97,33 @@ string joinedWith(string[] all, string sep) {
   return out;
 }
 
-export string test_a_program_that_asks_for_one_capability_is_described_by_one(Core core, Cli cli) {
+export string test_a_program_handed_sys_is_described_by_the_world(Core core, Cli cli) {
   T t = T.create();
   Boundary m = manifestOf(cli, "native/v8/example/hello.wac", "hello");
   t.eqStr(m.error, "", "the manifest was read");
   if (m.error != "") { return t.report(); }
 
-  // `main(Core)` — a `Core`, the ticket shapes its own methods answer with, and the `Sched` a `Core`
+  // `main(Sys)` — the one authority a program is handed (spec/next ch07), which is `Core` and `Cli`
+  // and the ticket shapes their methods answer with, and the `Sched` and continuation queue a world
   // carries. Asserted as the *whole* list rather than as an absence, because a rule that only forbids
-  // today's capabilities says nothing about the one added next week — and `Sched` arriving here is
-  // exactly that rule working: a world now includes somewhere for continuations to wait, and a
-  // program that never schedules still declares it, because it was handed one.
+  // today's capabilities says nothing about the one added next week.
   //
-  // **And the queue of continuations a `Sched` holds** (spec/next ch35), with the types it is made
-  // of — the program queue a `schedule`-less `async` call hands its continuation to. Interim: `Sys`
-  // (`design/lang/0016` phase 2) replaces `Core` and `Sched` and this list with them.
+  // It was `main(Core)` and a third of this until `Sys`: a program could ask for less than the world,
+  // and the boundary was what it asked for. With one `Sys` there is nothing smaller to ask for; what
+  // stays smaller is a program that takes nothing, which is handed nothing.
   t.eqStr(joinedWith(sorted(m.structs), ", "),
-          "Continuation, Core, Pending<i64>, Pending<u8[]>, Pending<u8[]?>, Queue<Continuation>, Sched, "
-            + "TicketBase, Vec<Continuation>",
+          "CallResult, Captured, Change, Child, Cli, Continuation, Core, Datagram, Exec, FileResult, "
+            + "LoadedModule, Pending<Captured>, Pending<Change>, Pending<Child>, Pending<Datagram>, "
+            + "Pending<Exec>, Pending<FileResult>, Pending<Read>, Pending<Socket>, Pending<Stat>, "
+            + "Pending<bool>, Pending<i32>, Pending<i64>, Pending<string>, Pending<string[]>, "
+            + "Pending<string[]?>, Pending<u8[]>, Pending<u8[]?>, Queue<Continuation>, Read, Sched, "
+            + "Socket, Stat, TicketBase, Vec<Continuation>",
           "hello.wac's declared boundary");
 
   // The callback signatures are the other half of the same boundary: each is a dispatcher the host
-  // may call into. Fifteen for a program that logs — the queue's `fn<void()>` and ticket drives among
-  // them — against 51 when every imported file's exports were roots.
-  t.isTrue(m.callbacks >= 0 && m.callbacks <= 15,
+  // may call into — every capability `Core` and `Cli` declare, against 51 when every imported file's
+  // exports were roots and fifteen when a program could take `Core` alone.
+  t.isTrue(m.callbacks >= 0 && m.callbacks <= 80,
            itoa(m.callbacks) + " callback signatures");
   return t.report();
 }

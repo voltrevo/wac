@@ -34,12 +34,14 @@
 //   ...
 //   giving up after 600ms
 
-import { Cli, Core, Pending, Socket } from "std";
+import { Cli, Core, Pending, Socket, Sys } from "std";
 import { Read } from "core";
 
 static i32 ROUNDS = 6;   // more than SLOTS, so a leaked ticket would show up as a stall
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 3) {
     core.warn("usage: patience <host> <port> <millis>");
     return 2;

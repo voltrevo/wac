@@ -15,7 +15,7 @@
 // with fewer vectors in it than it found — a half-recorded set is worse than none, since the test
 // would go on passing for the cases that survived.
 
-import { Core, Cli, Exec, Stat } from "std";
+import { Core, Cli, Exec, Stat, Sys } from "std";
 import { x25519Base } from "../../crypto/src/x25519.wac";
 import { ntorClientRequest } from "../src/ntor.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
@@ -55,7 +55,9 @@ string server1(Cli cli, string path, string b, string id, string msg, i32 keyLen
   return joined;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string path = torNtor(cli);
   Stat there = cli.stat(path).wait();
   if (!there.exists) {

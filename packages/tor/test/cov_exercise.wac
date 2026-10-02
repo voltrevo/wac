@@ -15,7 +15,7 @@
 //
 // None of the 313 tests expects a trap.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
@@ -431,7 +431,9 @@ import {
   test_the_r_line_skips_the_descriptors_dead_field as vote2__the_r_line_skips_the_descriptors_dead_field,
 } from "./wac/votestatus_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (cons__a_malformed_consensus_is_refused_without_trapping(core, cli).len() > 0) {
     core.warn("error: FAILED consensus_test test_a_malformed_consensus_is_refused_without_trapping");

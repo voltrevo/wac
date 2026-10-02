@@ -22,12 +22,13 @@
 // sweep to run. `packages/zstd/test/cov_exercise.wac` is the other shape, where most of the file is
 // exports because most of the workload is refusals.
 
-import { Core } from "std";
+import { Core, Sys } from "std";
 import { memoryOps, synthOps, imageOps, imageBadOps, renameOps, rootlessOps, mountOps, edgeOps,
          pathOps, procOps, streamOps, wireOps, permissionOps } from "./wac/cov_probe.wac";
 
 /** Every transcript, in the order the TypeScript called them, with what each one is for. */
-export i32 main(Core core) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
   string[] said = [
     memoryOps(),
     synthOps(),

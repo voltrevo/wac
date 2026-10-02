@@ -5,7 +5,7 @@
 //
 // One of the packages `issues/system/0205` records as unmeasured.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
@@ -39,7 +39,9 @@ import {
   test_the_limit_and_the_ordinary_calls_do_not_trap as tra__the_limit_and_the_ordinary_calls_do_not_trap,
 } from "./wac/traps_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (ens__namehash_and_dns_encoding_match_ethers(core, cli).len() > 0) {
     core.warn("error: FAILED ens_test test_namehash_and_dns_encoding_match_ethers");

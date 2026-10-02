@@ -26,7 +26,7 @@ import { Buf } from "core";
 import { itoa } from "../src/itoa.wac";
 import { Rng } from "../../wactest/src/rng.wac";
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import {
   test_itoa_writes_the_sign_and_the_extremes as it__itoa_writes_the_sign_and_the_extremes,
   test_atoi_reads_the_sign_and_stops_at_the_first_non_digit as it__atoi_reads_the_sign_and_stops_at_the_first_non_digit,
@@ -76,7 +76,9 @@ f64 doubleOf(i32 hi, i32 lo) {
   return f64.fromBits((h << 32) | l);
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 seen = 0;
 
   // Random bit patterns, which is the only way to reach subnormals and huge exponents.

@@ -16,6 +16,7 @@
 // language and the point is not the fraction — it is that the shape is end to end, so the next rule
 // added is measured by running it rather than by reading it.
 
+import { programGraph } from "./program.wac";
 import { blockValue, escapeValue, isBlockLiteral, isStringEscape, lex, Lexed, tokenStride,
          literalBodyStart, literalBodyEnd,
          unicodeEscapeEnd, unicodeEscapeValue, utf8Into } from "./lex.wac";
@@ -3541,6 +3542,11 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
   // **Namespaces first** (spec/next ch03): every emit route passes through here, so lowering once
   // here is lowering for all of them. A file set already lowered comes back unchanged.
   sources = lowerNamespaces(paths, sources, res);
+  // **And `main`'s adapter** (spec/next ch07, `src/program.wac`), for the same reason: a `main` that
+  // takes `Sys`, is `async` or answers a `Result` is called by the hosts as `main(Core, Cli)` whichever
+  // route built it. Idempotent, so a caller that already applied it changes nothing; refusing a `main`
+  // of the wrong shape is the build's, not every emit's.
+  sources = programGraph(paths, sources, entry).sources;
   // **Sized for the largest program here, which is `packages/box` at 168 files and climbing.** These
   // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
   // was not supplied"* — the same `return ""` a genuinely missing file takes, so the message named
@@ -3830,7 +3836,9 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
  * entry no declarations, so its module exported nothing.
  */
 i32 entryDeclCount(string[] paths, string[] sources, Res res, string entry) {
-  return declCountOf(entry, sourceOf(paths, lowerNamespaces(paths, sources, res), entry));
+  // Counted on the entry `linkFiles` compiles — with `main`'s adapter, whose `main` comes last.
+  string[] lowered = lowerNamespaces(paths, sources, res);
+  return declCountOf(entry, sourceOf(paths, programGraph(paths, lowered, entry).sources, entry));
 }
 
 /** How many declarations the entry file contributes, which is how far the exports reach. */

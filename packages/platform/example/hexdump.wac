@@ -8,9 +8,11 @@
 // Also `stat` and `readDir`: given a directory it lists it, which is what turns a
 // file-shaped tool into one that can walk a tree.
 
-import { Cli, Core, FileResult, Stat } from "std";
+import { Cli, Core, FileResult, Stat, Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   u8[] data = u8[]();
 
   if (cli.argCount().wait() < 1) {

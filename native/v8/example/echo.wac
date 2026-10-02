@@ -5,9 +5,11 @@
 // empty buffer standing in for all of them.
 
 import { Read } from "core";
-import { Cli, Core, Socket } from "std";
+import { Cli, Core, Socket, Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 2) {
     core.warn("usage: echo <address> <port>");
     return 2;

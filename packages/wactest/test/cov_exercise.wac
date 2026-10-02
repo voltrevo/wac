@@ -5,7 +5,7 @@
 //
 // One of the last packages `issues/system/0205` records as unmeasured.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
@@ -60,7 +60,9 @@ import {
   test_splitkeepingempty_keeps_every_line_the_other_one_drops as stri__splitkeepingempty_keeps_every_line_the_other_one_drops,
 } from "./wac/strings_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (asse__itoa().len() > 0) {
     core.warn("error: FAILED assert_test test_itoa");

@@ -15,7 +15,7 @@
 // depends on is neither — it is that `write` can answer false at all, which is the property both have
 // and the reason `write` returns a bool.
 
-import { Cli, Core } from "std";
+import { Cli, Core, GRANT_ALL, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -28,7 +28,7 @@ export string test_yes_stops_when_the_sink_stops_taking(Core core, Cli cli) {
   // **This returns.** That is the assertion, and nothing after it would run if it were wrong — a `yes`
   // that ignored `write`'s answer would spin here until the run was killed, which is the failure this
   // test is for and the one a timeout reports as an unhelpful nothing.
-  i32 code = main(childCore(f, core), childCli(f, cli));
+  i32 code = main(Sys(childCore(f, core), childCli(f, cli), GRANT_ALL()));
 
   string out = string.fromBytes(f.out.bytes());
   t.isTrue(out.len() > 0, "yes wrote something");

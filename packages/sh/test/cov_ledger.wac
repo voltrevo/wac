@@ -26,7 +26,7 @@
 // language, so this still counts as **`reports`** in the gate's summary — which is the honest answer
 // and the one `0288b` was filed against.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { LedgerFlags, Measured, measure, report, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/sh/test/cov_exercise.wac";
@@ -41,7 +41,9 @@ static string PREFIX = "packages/sh/";
  */
 string[] grants() { return string[].filled(0, ""); }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   LedgerFlags flags = LedgerFlags.read(cli);
 
   Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));

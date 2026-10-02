@@ -15,7 +15,9 @@ import { c, font, space } from "./tokens";
 
 
 const EX_WC = `// packages/platform/example/wc.wac — a complete application, with no TypeScript beside it
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   u8[] data = u8[].filled(0, 0);
   if (cli.argCount().wait() < 1) {
     data = cli.readStdin().wait();

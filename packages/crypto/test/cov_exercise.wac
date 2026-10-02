@@ -47,7 +47,7 @@
 // `aead_test.wac`'s `test_traps_on_a_flipped_tag_bit` and its fifteen siblings, run by `wac test`, where
 // a case that does not trap is a red test rather than a silent one. It was a second copy here.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { decoded } from "../../codec/src/hex.wac";
 
@@ -122,7 +122,9 @@ u8[] bytes(i32 n, i32 seed) {
 i32[] sha256Lens() { return [0, 1, 55, 56, 63, 64, 65, 119, 120, 200] as i32[]; }
 i32[] sha512Lens() { return [0, 1, 111, 112, 127, 128, 129, 239, 240, 400] as i32[]; }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (curve25519__a_small_order_point_has_no_shared_secret().len() > 0) {
     core.warn("error: FAILED curve25519_test test_a_small_order_point_has_no_shared_secret");

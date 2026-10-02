@@ -11,9 +11,9 @@
 // gets the same entry by calling one function before it compiles.
 
 import { Lexed, lex, tokenStride } from "./lex.wac";
+import { endsWith, startsWith } from "./path.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Decl, DeclKind, ImportItem, Param, Program, Ty, TyKind } from "./ast.wac";
-import { tokenTextOf } from "./emit.wac";
 
 export struct ProgramEntry {
   /** Why this entry cannot be built as a program, or `""`. */
@@ -47,7 +47,7 @@ export ProgramEntry programEntry(string text) {
       Import(pathTok, prefixTok, items): {
         for (i32 ii = 0; ii < items.len(); ii++) {
           ImportItem it = items[ii];
-          string local = tokenTextOf(src, lexed, it.aliasTok);
+          string local = progText(src, lexed, it.aliasTok);
           if (local == "Core") { haveCore = true; }
           if (local == "Cli") { haveCli = true; }
           if (local == "Sys") { haveSys = true; }
@@ -60,7 +60,7 @@ export ProgramEntry programEntry(string text) {
   for (i32 di = 0; di < prog.decls.len(); di++) {
     match (prog.decls[di].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        if (!exported || tokenTextOf(src, lexed, nameTok) != "main") { continue; }
+        if (!exported || progText(src, lexed, nameTok) != "main") { continue; }
         return shaped(text, src, lexed, nameTok, returnType, params, isAsync,
                       haveCore, haveCli, haveSys, haveTicket);
       }
@@ -75,10 +75,13 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
   string[] pts = string[].defaulted(params.len());
   for (i32 i = 0; i < params.len(); i++) { pts[i] = spell(src, lexed, params[i].type); }
   bool takesSys = pts.len() == 1 && pts[0] == "Sys";
-  // **The world `main` was handed before `Sys`**, which the repository's programs still take. Accepted
-  // as it is, adapter-free, until they have moved: the hosts call exactly this shape.
-  bool legacy = (pts.len() == 1 && pts[0] == "Core") || (pts.len() == 2 && pts[0] == "Core" && pts[1] == "Cli");
-  if (pts.len() > 0 && !takesSys && !legacy) {
+  // **The adapter's own `main`** is the one shape left that names `Core` and `Cli` — this entry was
+  // already adapted, and adapting is idempotent. The parameter names are ones no program writes.
+  if (pts.len() == 2 && pts[0] == "Core" && pts[1] == "Cli"
+      && progText(src, lexed, params[0].nameTok) == "__wacCore") {
+    return ProgramEntry("", text);
+  }
+  if (pts.len() > 0 && !takesSys) {
     return ProgramEntry("a program's `main` takes no parameters or one `Sys`, and this one takes ("
                         + joined(pts) + ")", text);
   }
@@ -95,7 +98,7 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
   }
   // A `main` the hosts can already call is left alone.
   bool plain = !takesSys && !isAsync && (a == NOTHING() || a == NEVER() || a == STATUS());
-  if (plain || legacy) { return ProgramEntry("", text); }
+  if (plain) { return ProgramEntry("", text); }
 
   // `export` out and `__wacMain` in, so the module's `main` is the adapter's. Blanked rather than cut,
   // so every position before the name keeps its column.
@@ -135,9 +138,9 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
 /** A type as written, with `, ` between arguments. */
 string spell(u8[] src, Lexed lexed, Ty t) {
   match (t.kind) {
-    Prim(tok): { return tokenTextOf(src, lexed, tok); }
+    Prim(tok): { return progText(src, lexed, tok); }
     Named(tok, args): {
-      string s = tokenTextOf(src, lexed, tok);
+      string s = progText(src, lexed, tok);
       if (args.len() == 0) { return s; }
       string[] ws = string[].defaulted(args.len());
       for (i32 i = 0; i < args.len(); i++) { ws[i] = spell(src, lexed, args[i]); }
@@ -169,16 +172,14 @@ i32 tokStart(Lexed lexed, i32 t) { return lexed.tokens[t * tokenStride() + 1]; }
 /** The byte offset of the `export` that begins the declaration whose name is `nameTok`, or -1. */
 i32 exportBefore(u8[] src, Lexed lexed, i32 nameTok) {
   for (i32 t = nameTok - 1; t >= 0; t--) {
-    string s = tokenTextOf(src, lexed, t);
+    string s = progText(src, lexed, t);
     if (s == "export") { return tokStart(lexed, t); }
     if (s == ";" || s == "}" || s == "{") { return -1; }
   }
   return -1;
 }
 
-bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
 
-bool endsWith(string s, string p) { return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p; }
 
 /**
  * `programEntry` applied to the entry among `sources` — what a program build compiles. `why` is the
@@ -201,4 +202,14 @@ export ProgramGraph programGraph(string[] paths, string[] sources, string entry)
 export struct ProgramGraph {
   string why;
   string[] sources;
+}
+
+/** A token's text. Local rather than the emitter's `tokenTextOf`, which links through this file. */
+string progText(u8[] src, Lexed lexed, i32 t) {
+  if (t < 0) { return ""; }
+  i32 start = lexed.tokens[t * tokenStride() + 1];
+  i32 len = lexed.tokens[t * tokenStride() + 2];
+  u8[] out = u8[].filled(len, 0);
+  for (i32 i = 0; i < len; i++) { out[i] = src[start + i]; }
+  return string.fromBytes(out);
 }

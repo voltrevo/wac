@@ -31,7 +31,7 @@
 // `hsdir_interval` entirely when `TestingTorNetwork` is set, so a client computing 1440 minutes
 // against chutney asks for a period nobody is in and gets a 404 with nothing to say why.
 
-import { Core, Cli, FileResult } from "std";
+import { Core, Cli, FileResult, Sys } from "std";
 import { Network, Session, bootstrap, buildCircuitTo } from "./bootstrap.wac";
 import { fetchOverCircuit, itoa } from "./link.wac";
 import { itoa64 } from "../../wactest/src/itoa64.wac";
@@ -48,7 +48,9 @@ import {
 } from "./hsdesc.wac";
 import { IntroPoint, parseIntroPoints, linkSpecifier, LS_IPV4, LS_ED25519_ID } from "./hsintro.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 3) {
     core.warn("usage: hsfetch <seed-file> <authorities-file> <onion-address> [--testnet]");
     return 1;

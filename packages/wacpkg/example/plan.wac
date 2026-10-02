@@ -11,13 +11,15 @@
 // It does not fetch. `design/lang/0009` D11 puts that on `packages/git`; this says what fetching
 // *would* do, which is the part a person wants before it happens and a CI mode wants instead of it.
 
-import { Cli, Core, FileResult } from "std";
+import { Cli, Core, FileResult, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Manifest, Mapping, readManifest, M_OK, unsupportedTransport } from "../src/manifest.wac";
 import { Lock, Step, readLock, plan, orphansOf, USE, CREATE, REFRESH } from "../src/lock.wac";
 import { MANIFEST_NAME } from "../src/root.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
   string dir = n > 0 ? string.fromBytes(cli.arg(0).wait()) : ".";
   string manifestPath = join(dir, MANIFEST_NAME());

@@ -27,7 +27,7 @@
 // letter added there is honoured here the next time this runs. It is the same gain as `corpus:through`
 // importing the corpus instead of a derivation of it.
 
-import { Core, Cli, Exec, Stat } from "std";
+import { Core, Cli, Exec, Stat, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, joined, splitLines } from "../../packages/wactest/src/strings.wac";
 import { trimmed } from "../../packages/wactest/src/strings.wac";
@@ -180,7 +180,9 @@ bool answers(Core core, Cli cli, string box, string[] env) {
   return false;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string box = "";
   i32 argc = cli.argCount().wait();
   for (i32 i = 0; i < argc; i++) {

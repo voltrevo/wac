@@ -63,7 +63,7 @@
 // over exact big-integer comparisons, and the inputs that reach its corners are decimals chosen to sit
 // a few ulps from a boundary rather than anything a test writes down by hand.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
 static string EXERCISE = "packages/fmt/test/cov_exercise.wac";
@@ -182,7 +182,9 @@ Pin[] pins() {
   ];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   LedgerFlags flags = LedgerFlags.read(cli);
 
   // No trap cases: none of the 24 tests wired into the exercise expects a trap.

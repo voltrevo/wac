@@ -36,7 +36,7 @@
 // as unarrangeable here, which was true of the case that had been tried — a *deepen* against GitHub,
 // which returns whole objects — and not true of an incremental fetch, which is a different conversation.
 
-import { Cli, Change, Core, FileResult } from "std";
+import { Cli, Change, Core, FileResult, Sys } from "std";
 import { Fs } from "../../fs/src/fs.wac";
 import { Buf } from "core";
 import { Vec } from "core";
@@ -63,7 +63,9 @@ u8[] advertisedTarget(u8[] advertisement, string ref) {
   }
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
   if (n < 4) {
     core.warn("usage: gitpull request <repo-dir> <ref> <advertisement-file>");

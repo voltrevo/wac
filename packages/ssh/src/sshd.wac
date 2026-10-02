@@ -34,7 +34,7 @@
 
 import { Buf } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Cli, Core, FileResult, Socket } from "std";
+import { Cli, Core, FileResult, Socket, Sys } from "std";
 import { Conn, msgNewKeys } from "./conn.wac";
 import { clientVersion, clientVersionLine, Found, scanVersion, speaksV2, Version } from "./version.wac";
 import { keyLength } from "./cipher.wac";
@@ -83,7 +83,9 @@ u8[] serverVersionLine() {
   return b.take();
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   // **This program is also `packages/box`'s applets**, so that a session can spawn its pipeline
   // stages: a stage re-enters `main` with the applet's name first. Without it a spawned `sort` would
   // start a second sshd and hand it a script called `sort`. See `sessionShell` for what the stage

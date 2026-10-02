@@ -21,7 +21,7 @@
 // test keeps a live case per mode as a canary — a wholesale change of environment trips those, and a
 // subtler one is caught when somebody re-runs this and reads the diff.
 
-import { Change, Cli, Core, Exec } from "std";
+import { Change, Cli, Core, Exec, Sys } from "std";
 import { Buf } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { SHARED, modeCases, modes, show, typed } from "../../packages/tty/test/wac/cases.wac";
@@ -29,7 +29,9 @@ import { SHARED, modeCases, modes, show, typed } from "../../packages/tty/test/w
 // cannot disagree about where they are or how the oracle is spawned.
 import { discipline, pty, vectorsPath } from "../../packages/tty/test/wac/replay.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   Buf out = Buf.create();
   out.pushAll("wac-tty-vectors 1\n".toBytes());
   out.pushAll(("kernel: " + versionOf(cli, "uname", ["-sr"]) + "\n").toBytes());

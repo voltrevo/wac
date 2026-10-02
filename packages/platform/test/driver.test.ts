@@ -115,34 +115,38 @@ Deno.test("a driven module takes capabilities, which is the conversion a host ca
 
     // The field order is the manifest's, never a copy this test keeps — the same rule the hosts
     // follow, and the reason inserting a capability does not silently shift every argument.
-    const core = manifest.structs.find((s) => s.name === "Core");
-    if (core === undefined) throw new Error("the manifest describes no Core");
-    const args = core.fields.map((f) => {
-      // **The one field that is not a function.** `Core.sched` is a value the module makes for
-      // itself, so a host builds it rather than implementing it — handing a JavaScript function here
-      // is what "type incompatibility when transforming from/to JS" means, and it is the boundary
-      // doing its job.
-      if (!f.type.startsWith("fn[")) {
-        return (driven.classes[f.type] as unknown as { create(): unknown }).create();
-      }
-      if (f.name === "log") return (s: string) => void said.push(s);
-      if (f.name === "warn") return (s: string) => void warned.push(s);
-      // Everything else is answered by refusing: `hello` reaches none of them, and a call that
-      // arrives is a fact worth failing on rather than a silent zero.
-      return () => {
-        throw new Error(`hello called ${f.name}, which this test does not serve`);
-      };
-    });
-
-    // **`of` is optional on the type now**, because an *enum* has variant constructors and neither
-    // `of` nor `create` — see `drive()`. Asserted rather than cast: a manifest whose `Core` has no
-    // `of` is a real failure and one this test should say out loud, where a `!` would report it as
-    // "cannot read properties of undefined" three lines later.
-    const coreClass = driven.classes["Core"];
-    if (coreClass?.of === undefined) throw new Error("the manifest describes no `Core.of`");
-    const built = coreClass.of(...args);
+    //
+    // **Both faces of the world**, because `hello` takes a `Sys` and the module's `main` is the
+    // adapter the hosts call as `main(Core, Cli)` (spec/next ch07).
+    const world = (name: string): unknown => {
+      const st = manifest.structs.find((s) => s.name === name);
+      if (st === undefined) throw new Error(`the manifest describes no ${name}`);
+      const args = st.fields.map((f) => {
+        // **A field that is not a function.** `Core.sched` is a value the module makes for itself, so
+        // a host builds it rather than implementing it — handing a JavaScript function here is what
+        // "type incompatibility when transforming from/to JS" means, and it is the boundary doing
+        // its job.
+        if (!f.type.startsWith("fn[")) {
+          const cls = driven.classes[f.type] as unknown as { create?(): unknown } | undefined;
+          if (cls?.create !== undefined) return cls.create();
+          return 0;
+        }
+        if (f.name === "log") return (s: string) => void said.push(s);
+        if (f.name === "warn") return (s: string) => void warned.push(s);
+        // Everything else is answered by refusing: `hello` reaches none of them, and a call that
+        // arrives is a fact worth failing on rather than a silent zero.
+        return () => {
+          throw new Error(`hello called ${name}.${f.name}, which this test does not serve`);
+        };
+      });
+      // **`of` is optional on the type now**, because an *enum* has variant constructors and neither
+      // `of` nor `create` — see `drive()`. Asserted rather than cast, so a missing one is said out loud.
+      const cls = driven.classes[name];
+      if (cls?.of === undefined) throw new Error(`the manifest describes no \`${name}.of\``);
+      return cls.of(...args);
+    };
     const main = driven.exports["main"] as CallableFunction;
-    const code = main(built);
+    const code = main(world("Core"), world("Cli"));
 
     assertEquals(code, 0, "hello returns 0");
     assertEquals(said, ["hello from a Rust host on V8"]);

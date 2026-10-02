@@ -21,7 +21,7 @@
 // the comments, the single-quoted strings and the ECMAScript numbers dead code — the opposite of the
 // truth, since `test/wac/json5_test.wac` drives every one of them against the reference.
 
-import { Core, Cli, FileResult } from "std";
+import { Core, Cli, FileResult, Sys } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../src/value.wac";
 import { parse, canonicalize, canonicalizeJson5, parseNumberValue } from "../src/json.wac";
 import { test_hex_digit, test_bytes_equal, test_json_array_growth,
@@ -294,7 +294,9 @@ string itoaLocal(i32 n) {
   return out;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 seen = corpus(core, cli) + json5Corpus(cli) + numbers() + escapes() + rawBytes() + shapes();
 
   // The package's own tests, which reach much of `value.wac` — the container accessors, the

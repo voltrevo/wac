@@ -27,7 +27,7 @@
 // corpus does not reach, and what that is depends on where the corpus comes from**: vendored real data
 // hides your refusals, hand-chosen inputs hide your unused API and your unentered modes.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 
 import { Pin, Rule, Measured, measure, report, ratchet, LedgerFlags, reportPoints } from "../../../tools/wac/covledger.wac";
 
@@ -70,7 +70,9 @@ Rule[] rules() {
   ];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   LedgerFlags flags = LedgerFlags.read(cli);
 
   Measured m = measure(core, cli, EXERCISE, grants(), string[].filled(0, ""));

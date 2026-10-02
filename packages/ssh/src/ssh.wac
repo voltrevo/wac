@@ -25,7 +25,7 @@
 // `write` for standard output as bytes but only `warn`, which is line-oriented, for the error
 // channel — so byte-exact interleaving is not expressible. Filed as wac-mono 0014.
 
-import { Change, Cli, Core, FileResult, Socket } from "std";
+import { Change, Cli, Core, FileResult, Socket, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Client } from "./client.wac";
 import { KeyError, PrivateKey, readEd25519 } from "./privatekey.wac";
@@ -34,7 +34,9 @@ import { encode as b64encode, ALPHABET_STANDARD } from "../../codec/src/base64.w
 
 i32 defaultPort() { return 22; }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   Options o = parseArgs(core, cli);
   if (o.exitCode >= 0) { return o.exitCode; }
 

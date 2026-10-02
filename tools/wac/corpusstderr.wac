@@ -35,7 +35,7 @@
 // a guard that the two agree, `KNOWN` moved outright to `packages/sh/test/wac/knownstderr.wac` with
 // its last two readers, and this file was left needing nothing from TypeScript at all.
 
-import { Core, Cli, Exec } from "std";
+import { Core, Cli, Exec, Sys } from "std";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { trimmed } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
@@ -109,7 +109,9 @@ string binDirOf(Cli cli) {
   return p.slice(0, cut);
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string[] scripts = corpus();
   i32 argc = cli.argCount().wait();
   i32 from = flagOf(cli, argc, "from", 0);

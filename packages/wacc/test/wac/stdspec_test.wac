@@ -68,8 +68,8 @@ export string test_a_std_specifier_resolves_out_of_the_compiler(Core core, Cli c
   // No manifest and no `std/` directory: nothing on disk answers for this specifier, which is the
   // point — the text comes out of the compiler the way `core`'s does.
   t.isTrue(put(cli, dir + "/main.wac",
-               "import { Cli, Core } from \"std\";\n" +
-               "export i32 main(Core core, Cli cli) { return 7; }\n"), "wrote main");
+               "import { Cli, Core, Sys } from \"std\";\n" +
+               "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 7; }\n"), "wrote main");
 
   Exec w = wacc(cli, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
@@ -90,8 +90,8 @@ export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Core
   if (!made.ok()) { return t.report(); }
 
   t.isTrue(put(cli, dir + "/main.wac",
-               "import { Cli, Core } from \"std\";\n" +
-               "export i32 main(Core core, Cli cli) { return 7; }\n"), "wrote main");
+               "import { Cli, Core, Sys } from \"std\";\n" +
+               "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 7; }\n"), "wrote main");
   // **A decoy at exactly the specifier's path.** It declares neither `Cli` nor `Core`, so if the
   // resolver preferred the file the program would not compile at all — which is what makes 7 an
   // answer about *which* module was reached rather than about arithmetic that happened to agree.
@@ -123,8 +123,8 @@ export string test_std_is_named_whole(Core core, Cli cli) {
   if (!made.ok()) { return t.report(); }
 
   t.isTrue(put(cli, dir + "/main.wac",
-               "import { Core } from \"std\";\n" +
-               "export i32 main(Core core) { return 7; }\n"), "wrote main");
+               "import { Core, Sys } from \"std\";\n" +
+               "export i32 main(Sys sys) { Core core = sys.core; return 7; }\n"), "wrote main");
   Exec w = wacc(cli, dir, "run", ["main.wac"]);
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
@@ -133,7 +133,7 @@ export string test_std_is_named_whole(Core core, Cli cli) {
 
   t.isTrue(put(cli, dir + "/path.wac",
                "import { Core } from \"std/platform.wac\";\n" +
-               "export i32 main(Core core) { return 7; }\n"), "wrote path");
+               "export i32 main(Sys sys) { Core core = sys.core; return 7; }\n"), "wrote path");
   Exec p = wacc(cli, dir, "run", ["path.wac"]);
   t.isTrue(p.ran(), "wac did not run — " + p.error);
   if (p.ran()) {

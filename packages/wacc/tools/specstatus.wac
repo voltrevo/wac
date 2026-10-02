@@ -6,11 +6,13 @@
 // Run it after a change that moves the count, and commit both files: STATUS.md says where the implementation
 // stands, and MET is the ratchet — an example in it that stops being met fails the suite.
 
-import { Change, Cli, Core } from "std";
+import { Change, Cli, Core, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { ExJudged, ExVerdict, judgeAll } from "../test/wac/specexamples.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string dir = "spec/next";
   if (cli.argCount().wait() > 0) { dir = string.fromBytes(cli.arg(0).wait()); }
   string status = dir + "/_drafting/STATUS.md";

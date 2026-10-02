@@ -14,7 +14,7 @@
 // takes a moment; that is the reason this is a tool and the keys are committed with the vector rather
 // than generated inside a test.
 
-import { Core, Cli, Change, FileResult } from "std";
+import { Core, Cli, Change, FileResult, Sys } from "std";
 import { Buf } from "core";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { encode as hexEncode, encodeUpper } from "../../codec/src/hex.wac";
@@ -56,7 +56,9 @@ bool writeWire(Core core, Cli cli, string path, u8[] doc, string what) {
   return true;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 1) {
     core.warn("usage: gendesc <out-path>");
     return 1;

@@ -71,7 +71,7 @@
 // through these relays are what `network_tor_test.wac` builds, which is the standing evidence.
 
 import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS,
-         FAULT_REFUSED, FAULT_TIMED_OUT, FAULT_UNREACHABLE } from "std";
+         FAULT_REFUSED, FAULT_TIMED_OUT, FAULT_UNREACHABLE, Sys } from "std";
 import { Read } from "core";
 import { Buf } from "core";
 import { Parsed, parseRequest } from "../../http/src/request.wac";
@@ -380,7 +380,9 @@ export u8[] ownDescriptor(
   return routerDescriptor(keys, info);
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 port = 9001;
   string bind = "127.0.0.1";
   string seedPath = "";

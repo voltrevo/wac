@@ -16,7 +16,7 @@
 // values rather than aborts because a datagram that does not parse is routine — a packet arrives from
 // anyone at any time, so "this is not for me" cannot be an exceptional condition.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
@@ -161,7 +161,9 @@ import {
   test_a_forbidden_frame_is_refused_before_it_is_read as tr__a_forbidden_frame_is_refused_before_it_is_read,
 } from "./wac/truncated_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (tr__a_frame_of_varints_cut_short_is_incomplete().len() > 0) {
     core.warn("error: FAILED truncated_test test_a_frame_of_varints_cut_short_is_incomplete");

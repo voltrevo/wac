@@ -23,7 +23,7 @@
 // transport confidentiality buys nothing a client relies on, which is exactly why tor's own DirPort is
 // unencrypted. `consensus.wac` is the reason — a client checks the documents, not the connection.
 
-import { Core, Cli, Socket, FileResult } from "std";
+import { Core, Cli, Socket, FileResult, Sys } from "std";
 import { Read } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Buf } from "core";
@@ -49,7 +49,9 @@ static i32 MAX_REQUEST = 8192;
 /** How many descriptors this directory will hold. */
 static i32 MAX_STORED = 32;
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 3) {
     core.warn("usage: dird <consensus-file> <certificate-file> <descriptor-file>... [port]");
     return 1;

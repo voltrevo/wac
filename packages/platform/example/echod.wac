@@ -19,9 +19,11 @@
 // The `--allow-net` grant is the same one `connect` and `listen` need. The authority is "speak to
 // something that is not this process", and UDP does not make that a different question.
 
-import { Cli, Core, Datagram, Socket } from "std";
+import { Cli, Core, Datagram, Socket, Sys } from "std";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 port = 0;
   if (cli.argCount().wait() > 0) {
     string given = string.fromBytes(cli.arg(0).wait());

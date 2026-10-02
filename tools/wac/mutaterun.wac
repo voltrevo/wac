@@ -54,7 +54,7 @@
 //
 // `issues/system/0161` step 6.
 
-import { Change, Core, Cli, Exec, FileResult } from "std";
+import { Change, Core, Cli, Exec, FileResult, Sys } from "std";
 import { Fs } from "../../packages/fs/src/fs.wac";
 import { Sources, gather } from "../../packages/wac/src/sources.wac";
 import { Flags, parseFlags, targetsUnder, testsUnder } from "./mutatefiles.wac";
@@ -259,7 +259,9 @@ export i32 exitFor(i32 survivors, bool refused) {
  * already red. Those are different from "the suite has a hole", and a caller that treats them the
  * same learns nothing from either.
  */
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 argc = cli.argCount().wait();
   string[] args = string[].filled(argc, "");
   for (i32 i = 0; i < argc; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }

@@ -13,7 +13,7 @@
 // `main`: a trap in `main` ends the run, and the report then looks identical to the one before the
 // wiring — which is `packages/bytes`' lesson and the tell is `test_traps_` in the name.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Item, bytesOf, itemsOf } from "../src/rlp.wac";
 import {
@@ -47,7 +47,9 @@ export void trapCase(i32 i) {
   if (i == 4) { itemsOf(Item.Bytes([1] as u8[])); }
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (ac__the_accessors_answer_for_the_variant_they_are_for().len() > 0) {
     core.warn("error: FAILED accessors_test test_the_accessors_answer_for_the_variant_they_are_for");

@@ -21,7 +21,7 @@
 //
 // None of the fifty-three tests expects a trap.
 
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_valid_points_decompress_to_the_coordinates_python_computed as cu__valid_points_decompress_to_the_coordinates_python_computed,
@@ -104,7 +104,9 @@ import {
   test_the_identity_has_no_affine_coordinates as ge__the_identity_has_no_affine_coordinates,
 } from "./wac/group_edges_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 bad = 0;
   if (ge__the_real_entry_point_refuses_what_the_probe_refuses().len() > 0) {
     core.warn("error: FAILED group_edges_test test_the_real_entry_point_refuses_what_the_probe_refuses");

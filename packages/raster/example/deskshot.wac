@@ -17,7 +17,7 @@
 // against a PNG encoder's CRC tables and deflate, and every image tool reads it. The alpha channel
 // is dropped, which is honest for a screenshot: the desktop is opaque by construction.
 
-import { Change, Cli, Core, FAULT_NONE } from "std";
+import { Change, Cli, Core, FAULT_NONE, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Desk } from "../src/desk.wac";
 import { Surface } from "../src/surface.wac";
@@ -39,7 +39,9 @@ i32[] letters(string s) {
   return out;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 1) {
     core.warn("usage: deskshot <out.ppm>");
     return 2;

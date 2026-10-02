@@ -17,7 +17,7 @@ import { exec, accepts, execBasic, execExtended, basicAsExtended, whyBasic,
          whyExtended, execBudget } from "./probe.wac";
 import { Rng } from "../../wactest/src/rng.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import {
   test_literals_dot_and_anchors as rx__literals_dot_and_anchors,
   test_character_classes as rx__character_classes,
@@ -125,7 +125,9 @@ string piece(Rng r, string[] ats, string[] qs, i32 depth) {
   return ats[r.upto(ats.len())] + qs[r.upto(qs.len())];
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 seen = 0;
 
   string[] subs = subjects();

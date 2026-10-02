@@ -17,7 +17,7 @@
 // answer a question about ignore rules. The program that already knows about environments resolves the
 // path and passes the bytes.
 
-import { Cli, Core, FileResult } from "std";
+import { Cli, Core, FileResult, Sys } from "std";
 import { Fs } from "../../fs/src/fs.wac";
 import { Vec } from "core";
 import { configOf } from "../src/config.wac";
@@ -49,7 +49,9 @@ u8[] excludesFileOf(Core core, Cli cli, Fs fs, string gitDir) {
   return f.bytes;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
   if (n < 1) {
     core.warn("usage: gitst <repo-dir>");

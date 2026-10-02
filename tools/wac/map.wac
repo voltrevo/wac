@@ -23,7 +23,7 @@
 // It was tools/map.ts. The one definition of "a program" it shares with the compile check is
 // `tools/wac/programs.wac`, ported first for that reason. `issues/system/0161`.
 
-import { Core, Cli, Change, FileResult, Stat } from "std";
+import { Core, Cli, Change, FileResult, Stat, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { KIND_CLI, KIND_PAGE, Program, findPrograms } from "./programs.wac";
 import { isSpace } from "../../packages/wactest/src/strings.wac";
@@ -456,7 +456,9 @@ string structure(string md) {
   return out;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   bool check = false;
   i32 argc = cli.argCount().wait();
   for (i32 i = 0; i < argc; i++) {

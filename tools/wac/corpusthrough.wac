@@ -27,7 +27,7 @@
 // `tools/wac/shvectors.wac` writes from that file — because it could not read wac data. This reads
 // the source.
 
-import { Core, Cli, Exec } from "std";
+import { Core, Cli, Exec, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { startsWith } from "../../packages/wactest/src/strings.wac";
 import { scratch } from "../../packages/wactest/src/host.wac";
@@ -114,7 +114,9 @@ string about(string script) {
   return "(the shell itself)";
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string shell = "";
   bool trace = false;
   bool verbose = false;

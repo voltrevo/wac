@@ -19,7 +19,7 @@
 // Note the indent: these vectors were written with `json.dump(indent=1)`, one space per level, where
 // the hs-ntor and relaycert ones use two. A capture tool reproduces the file it is the recipe for.
 
-import { Core, Cli, Exec, Change, Stat } from "std";
+import { Core, Cli, Exec, Change, Stat, Sys } from "std";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { sha3_256 } from "../../crypto/src/keccak.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
@@ -80,7 +80,9 @@ string valueOf(Core core, string text, string key) {
   trap;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   string root = cli.argCount().wait() > 0
     ? string.fromBytes(cli.arg(0).wait())
     : defaultTorRoot(cli);

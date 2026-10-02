@@ -41,7 +41,7 @@ import { test_traps_getting_past_the_end, test_traps_getting_a_negative_index,
          test_slice_returns_the_bytes_when_the_range_is_inside,
          test_clamped_answers_every_range_slice_refuses, test_get_returns_the_byte_when_in_range,
          test_repeating_from_the_last_written_byte_is_allowed } from "./wac/bounds_test.wac";
-import { Core, Cli } from "std";
+import { Core, Cli, Sys } from "std";
 import {
   test_traps_getting_past_the_end as bounds__traps_getting_past_the_end,
   test_traps_getting_a_negative_index as bounds__traps_getting_a_negative_index,
@@ -87,7 +87,9 @@ import {
   test_push_decimal_writes_the_number_including_its_sign as buf__push_decimal_writes_the_number_including_its_sign,
 } from "./wac/buf_test.wac";
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   i32 seen = 0;
   seen = seen + test_growth_from_empty().len();
   seen = seen + test_bytes_are_stored_unsigned().len();

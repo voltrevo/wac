@@ -40,7 +40,7 @@
 // one uses, so `ls`, `ps`, a pipeline of spawned applets and `^C` all behave as they do everywhere
 // else in this repository.
 
-import { Cli, Core, Event, Page } from "std";
+import { Cli, Core, Event, Page, Sys } from "std";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Vec } from "core";
 import { boxApplet } from "../src/shrun.wac";
@@ -48,7 +48,7 @@ import { UNKNOWN } from "../src/box.wac";
 import { Session } from "../src/lib/session.wac";
 
 /** This program is also its own applets, so the shell in a window can spawn them. */
-export i32 main(Core core, Cli cli) { return boxApplet(core, cli); }
+export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return boxApplet(core, cli); }
 
 /** What a window shows. */
 i32 SHELL() { return 0; }

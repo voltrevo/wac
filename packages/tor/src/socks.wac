@@ -55,7 +55,7 @@
 // `FULL_POLL_MS` and looks again. The client still waits in the backlog rather than being refused,
 // which is the property that mattered.
 
-import { Core, Cli, Socket, Pending, FileResult, CALL_SLOTS } from "std";
+import { Core, Cli, Socket, Pending, FileResult, CALL_SLOTS, Sys } from "std";
 import { Vec, Read } from "core";
 import { Network, Guard, Building, bootstrap, connectGuard, startCircuit, advanceCircuit,
          circuitReady, circuitFailed } from "./bootstrap.wac";
@@ -581,7 +581,9 @@ bool requested(Core core, Cli cli, Proxy x, Client c) {
   return true;
 }
 
-export i32 main(Core core, Cli cli) {
+export i32 main(Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
   if (cli.argCount().wait() < 3) {
     core.warn("usage: tor-socks <seed-file> <authorities-file> <port>");
     core.warn("  then: curl --socks5-hostname 127.0.0.1:<port> http://example.com/");
