@@ -5,6 +5,7 @@
 // boundary. So the surface is bytes in, text out: the caller passes source and gets
 // the canonical dump the parser's own tests read.
 
+import { Lowered, lowerProgram } from "./asynclower.wac";
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
 import { kAs, kAssign, kAsync, kComma, kDot, kEnum, kExport, kGt, kIdent, kindName, kLbrace, kLbrack, kLparen,
          kLt, kQuestion, kRbrace, kRbrack, kRparen, kSemi, kShr, kStatic, kStruct } from "./kinds.wac";
@@ -836,6 +837,23 @@ export string diagnoseGraphIn(string[] paths, string[] rawSources, Res res, stri
     Res subRes = Res(subRoots, res.mapFrom, res.mapSpec, res.mapTo, res.base);
     out = out + diagnoseFilesWithIn(subPaths, subSources, subRes, paths[i], subCounts,
                                     subLexes, subProgs);
+  }
+  // **What the build will refuse, `check` says too.** An `async` function the lowering cannot take is
+  // declined by the emitter, which `check` never runs — so a program checked clean and then would not
+  // build, with the reason only in the build's message. The lowering is cheap where there is nothing
+  // to lower, and its reason names the line when the reason has one.
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (i >= progs.len() || (progs[i] is null) || (lexes[i] is null)) { continue; }
+    Lowered lo = lowerProgram(progs[i]!, (i < sources.len() ? sources[i] : "").toBytes(), lexes[i]!);
+    if (lo.why == "") { continue; }
+    string why = lo.why;
+    string line = "1";
+    if (startsWith(why, "line ") && why.indexOf(": ") > 5) {
+      line = why.slice(5, why.indexOf(": "));
+      why = why.slice(why.indexOf(": ") + 2, why.len());
+    }
+    out = out + paths[i] + "\t" + line + "\t1\tcheck\tan `async` function this compiler cannot lower\t"
+        + why + "\t\t0\n";
   }
   return out;
 }

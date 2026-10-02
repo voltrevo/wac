@@ -172,3 +172,26 @@ export string test_await_binds_tighter_than_a_binary_operator() {
     + "i32 main() { return 0; }\n"), "", "`await t + 1` types as `(await t) + 1`");
   return t.report();
 }
+
+export string test_an_await_the_lowering_cannot_type_is_refused_by_check_as_by_a_build() {
+  // **`check` says what a build will refuse.** The lowering runs on an untyped tree, so a nested
+  // `await` on a ticket whose type no declaration *in this file* writes cannot be hoisted — and the
+  // emitter declined the function, which `check` never ran: the program checked clean and then would
+  // not build. The diagnostic names the line and the fix that works today.
+  T t = T.create();
+  string lib = TICKET
+    + "export struct Src {\n"
+    + "  i32 n;\n"
+    + "  Ticket<i32> read(this) { return Ticket<i32>.of(this.n); }\n"
+    + "}\n";
+  string main = "import { Src, Ticket } from \"./lib.wac\";\n"
+    + "export async i32 go(Src s) {\n"
+    + "  if ((await s.read()) > 0) { return 1; }\n"
+    + "  return 0;\n"
+    + "}\n";
+  string out = diagnoseGraph([ENTRY, "lib.wac"], [main, lib], ENTRY);
+  t.isTrue(contains(out, "an `async` function this compiler cannot lower"), "refused — got \"" + out + "\"");
+  t.isTrue(contains(out, "main.wac\t3\t"), "at the `await`'s line — got \"" + out + "\"");
+  t.isTrue(contains(out, "await it into a local first"), "and the fix — got \"" + out + "\"");
+  return t.report();
+}

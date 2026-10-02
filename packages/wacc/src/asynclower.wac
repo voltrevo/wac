@@ -1224,6 +1224,11 @@ struct Rz {
   i32 selfTok;
   /** How many temporaries have been handed out — `__wacAwK`. */
   i32[] next;
+  /**
+   * Why an `await` could not be hoisted, when that is what will stop the plan — the plan only sees
+   * the `await` left in place and names the position it is in, which sends a reader to the wrong fix.
+   */
+  string[] why;
 }
 
 string rzText(Rz z, i32 tok) { return synthTextAt(z.c.src, z.c.lexed, tok); }
@@ -1458,7 +1463,15 @@ Expr pullE(Rz z, Expr e, Pulled p) {
       if (operand is null) { p.failed = true; return e; }
       Expr inner = pullE(z, operand!, p);
       Ty? x = awaitedTy(z, inner);
-      if (x is null) { p.failed = true; return e; }
+      if (x is null) {
+        // **The type is what is missing, so that is what to say** — and the fix that works today.
+        if (z.why[0] == "") {
+          z.why[0] = "line " + lineOf(e.line) + ": an `await` inside a larger expression, on a ticket whose type "
+                   + "nothing in this file writes — await it into a local first, `T x = await …;`";
+        }
+        p.failed = true;
+        return e;
+      }
       i32 k = z.next[0];
       z.next[0] = z.next[0] + 1;
       pushPre(p, Stmt(StmtKind.Var(cloneTy(x!), tAw(c, k), Expr(ExprKind.Await(inner), e.line, e.col),
@@ -1967,10 +1980,10 @@ struct Site {
 Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
   Ctx c0 = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
                i32[].filled(1, at.colBase), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3));
-  Rz z = Rz(c0, at.params, body, w.prog, at.selfTok, w.next);
+  Rz z = Rz(c0, at.params, body, w.prog, at.selfTok, w.next, string[].filled(1, ""));
   Stmt[] split = splitBody(z, body);
   AsyncPlan plan = planBody(split);
-  if (!plan.ok) { noteWhy(w, plan.why); return null; }
+  if (!plan.ok) { noteWhy(w, z.why[0] != "" ? z.why[0] : plan.why); return null; }
   if (autoAwaitIn(z, split)) {
     noteWhy(w, "an `await` into an `auto` local, on a ticket whose type this file does not write — write the type");
     return null;
@@ -2187,4 +2200,12 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   for (i32 i = 0; i < nf; i++) { exact[n + i] = forms[i]; }
   return Lowered(Program(exact), src2, lexed2, true, w.why[0]);
+}
+
+string lineOf(i32 n) {
+  if (n <= 0) { return "0"; }
+  string out = "";
+  i32 v = n;
+  while (v > 0) { out = string.fromBytes(u8[].filled(1, (48 + v % 10) as@ u8)) + out; v = v / 10; }
+  return out;
 }
