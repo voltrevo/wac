@@ -19602,8 +19602,17 @@ void emitEnumHelpers(B funcs, B code, Env env, string ename) {
       funcs.u32leb(env.sigType("fn[" + bindFieldType(ft) + "(" + ename + ")]"));
       B gb = B.create();
       gb.u32leb(0);
-      gb.byte(32); gb.u32leb(0);
-      gb.byte(251); gb.u32leb(structGetOp(ft)); gb.u32leb(ti); gb.u32leb(slot0 + k);
+      // **A `void` or `never` payload has no value to hand over** — `Step<T, void>`'s `Done` — so
+      // its getter's signature answers nothing and the body must push nothing: it read the slot
+      // anyway and the engine refused the whole module (`issues/lang/0361a`), which happened to any
+      // program exporting a function that takes `Sys`, since that reaches core's `Step`.
+      if (ft == "void") {
+      } else if (ft == "never") {
+        gb.byte(0);                                             // unreachable
+      } else {
+        gb.byte(32); gb.u32leb(0);
+        gb.byte(251); gb.u32leb(structGetOp(ft)); gb.u32leb(ti); gb.u32leb(slot0 + k);
+      }
       gb.byte(11);
       code.u32leb(gb.len);
       code.bytes(gb);

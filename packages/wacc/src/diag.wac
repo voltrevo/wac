@@ -179,7 +179,7 @@ export string checkMessage(i32 code) {
   if (code == 237) { return "an async generator is iterated with `for await`, and only it"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
-  if (code == 44) { return "a switch subject must be an integer or a string"; }
+  if (code == 44) { return "a switch subject must be an i32 or a u32"; }
   // Both halves, because the code carries both: a name the struct does not have, and a field left
   // out. The headline said only the first, so a construction missing `y` was reported as though `y`
   // were misspelled — and a component, which is a named construction with a tag for a name, said it

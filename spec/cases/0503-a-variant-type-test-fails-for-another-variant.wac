@@ -1,0 +1,14 @@
+// expect: answers g = 1
+// why: the other half of 0502 — accepting a variant pattern must not make it always true; a
+//      `Square` is not a `Circle`, so the test fails and nothing is bound
+// from: issues/lang/0366a
+enum Shape {
+  Circle(f64 r),
+  Square(f64 side)
+}
+
+export i32 g() {
+  Shape s = Shape.Square(3.0);
+  if (Circle c matches s) { return 0; }
+  return 1;
+}

@@ -1,0 +1,14 @@
+// expect: answers f = 2
+// why: every variant is a type and a subtype of its enum (spec ch13), so `Circle c matches s`
+//      tests and binds as it would against a struct subtype — not only `Circle(r) matches s`
+// from: issues/lang/0366a
+enum Shape {
+  Circle(f64 r),
+  Square(f64 side)
+}
+
+export f64 f() {
+  Shape s = Shape.Circle(2.0);
+  if (Circle c matches s) { return c.r; }
+  return 0.0;
+}

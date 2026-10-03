@@ -125,3 +125,30 @@ export string test_two_files_declaring_one_struct_name_export_their_helpers_once
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * An exported function that takes `Sys` is a module the engine accepts — `issues/lang/0361a`.
+ *
+ * Exporting one reaches core's `Step<T, void>` through `Sys`, and the getter bound for its `void`
+ * payload read the slot into a function that answers nothing: *expected 0 elements on the stack for
+ * fallthru, found 1*, and V8 refused the whole module. `main(Sys)` never showed it, because the entry
+ * is not bound the way another export is.
+ */
+export string test_an_exported_function_taking_sys_is_a_module_the_engine_takes(Core core, Cli cli) {
+  T t = T.create();
+  u8[] wasm = emitFiles(["/t/main.wac"],
+                        ["import { Sys } from \"std\";\nexport i32 f(Sys sys) { return 1; }\n"], "/t/main.wac");
+  t.isTrue(wasm.len() > 8, "the module was declined (" + itoa(wasm.len()) + " bytes)");
+  if (wasm.len() <= 8) { return t.report(); }
+  string dir = cli.cwd().wait() + "/.cache/sysexport";
+  string whyDir = madeDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+  string path = dir + "/mod.wasm";
+  Change wrote = cli.writeFile(path, wasm).wait();
+  t.eqI32(wrote.fault, 0, "wrote the module");
+  if (wrote.fault != 0) { return t.report(); }
+  Exec v = cli.exec(cli.cwd().wait() + "/native/v8/target/release/wac", ["validate", path], u8[]()).wait();
+  t.isTrue(v.ran(), "wac validate ran — " + v.error);
+  t.eqI32(v.status, 0, "the module was rejected: " + string.fromBytes(v.stdout) + string.fromBytes(v.stderr));
+  return t.report();
+}

@@ -697,14 +697,15 @@ export string test_every_backticked_repository_path_names_a_file_that_exists(Cor
       checked = checked + 1;
       if (present.has(path)) { continue; }
       broken = broken + 1;
-      if (first == "") { first = f + ": `" + path + "`"; }
+      // Every one, not the first: four were broken for days while this named one of them.
+      first = first + "\n  " + f + ": `" + path + "`";
     }
   }
   // Hundreds, across the tree. Zero would mean the scan stopped matching and this had gone back to
   // checking nothing, which is the state it was written to end.
   t.isTrue(checked > 100,
            "only " + itoa(checked) + " backticked path(s) found — has the scan stopped matching?");
-  t.eqI32(broken, 0, itoa(broken) + " backticked path(s) name nothing, the first being " + first);
+  t.eqI32(broken, 0, itoa(broken) + " backticked path(s) name nothing:" + first);
   return t.report();
 }
 

@@ -730,7 +730,7 @@ for attempt in 1 2 3; do
   # **This used to test `git diff … -- packages/wacc/src` and `-- native`, and that was too narrow.**
   # The seed is built from the whole import closure of `packages/wac/src/wac.wac`, which reaches
   # `packages/bytes`, `packages/platform`, `packages/fs` and more — so a merge touching
-  # `packages/bytes/src/buf.wac` aged the seed, this condition said no, and the retry failed on
+  # packages/bytes/src/buf.wac (now `core/buf.wac`) aged the seed, this condition said no, and the retry failed on
   # `seedfresh` after 364 seconds. Naming the directories means keeping a copy of that closure here and
   # being wrong the first time somebody adds an import.
   #

@@ -2371,8 +2371,27 @@ export Stmt parseStatement(P p) {
   }
 
   Expr e = parseExpr(p);
+  // **`p?.home = …` is not an assignment**: `?.` reads through an absence (spec ch10) and there is
+  // nothing to write into when `p` is null. Said here, where the `=` shows what was meant, instead of
+  // as `expected ';'` at whatever follows it; the rest is consumed so it does not cascade.
+  if (readsThroughAbsence(e) && (p.at1(kAssign()) || atCompoundOp(p))) {
+    p.failWith(perrBadLvalue(), "a field read through `?.` cannot be assigned to — unwrap it first: `p!.f = …`");
+    p.advance();
+    parseExpr(p);
+  }
   p.expect(kSemi());
   return Stmt(StmtKind.ExprStmt(e), line, col);
+}
+
+/** Whether `e` reaches its last field through a `?.` somewhere along its chain. */
+bool readsThroughAbsence(Expr e) {
+  match (e.kind) {
+    SafeMember(obj, nameTok): { return true; }
+    Member(obj, nameTok): { return readsThroughAbsence(obj); }
+    Index(arr, index): { return readsThroughAbsence(arr); }
+    Unwrap(operand): { return readsThroughAbsence(operand); }
+    default: { return false; }
+  }
 }
 
 /** The offset of the `)` that closes the `(` at offset `open`, or -1 when the file ends first. */

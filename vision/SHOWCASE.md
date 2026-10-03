@@ -73,8 +73,8 @@ what it calls.
 
 ```wac
 void main(Sys sys) {
-  i32 found = sys.run(scan, Grant[](Grant.Read));
-  sys.log(itoa(found) + " matches");
+  i32 found = sys.run(scan, [Grant.Read]);
+  sys.log("\{found} matches");
 }
 
 i32 scan(Sys sys) {
@@ -86,14 +86,14 @@ i32 scan(Sys sys) {
 the grants listed and no others. A subsystem that asks for more than its parent holds gets what its
 parent holds.
 
-**Not yet.**
+**Done.**
 
 ---
 
 ## Markup is a value
 
 ```wac
-import { div, p } from "core/html.wac";
+import { Node, html.div, html.p } from "core";
 
 Node greeting(string who) {
   return <p class="hi">Hello, {who}</p>;
@@ -109,14 +109,14 @@ Markup is a tree of `Node`, an ordinary type from `core`, that a program builds 
 Every tag is a name in scope. `div` and `p` came from an import and `greeting` is mine; a tag is a
 function, its attributes are that function's named parameters, and its children are a parameter.
 
-**Not yet.**
+**Done.**
 
 ---
 
 ## Const is deep
 
 ```wac
-const i32[] xs = i32[](1, 2, 3);
+const i32[] xs = [1, 2, 3];
 xs[0] = 9;
 ```
 
@@ -130,7 +130,7 @@ error: cannot write through const reference
 
 In JavaScript `const` binds the name and leaves the contents open. Here it reaches the elements.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -185,7 +185,7 @@ i32 sum(Tree t) {
 
 `for … in` steps a `Generator<T, void>`.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -193,18 +193,18 @@ i32 sum(Tree t) {
 
 ```wac
 async void both(Sys sys) {
-  Ticket<u8[]> a = sys.readFile("a.txt");
-  Ticket<u8[]> b = sys.readFile("b.txt");
+  Ticket<Result<u8[], string>> a = sys.readFile("a.txt");
+  Ticket<Result<u8[], string>> b = sys.readFile("b.txt");
 
-  u8[] first = await a;
-  u8[] second = await b;
+  Result<u8[], string> first = await a;
+  Result<u8[], string> second = await b;
 }
 ```
 
 Making a `Ticket` starts the work, and `await` waits for one already running, so both reads are in
 flight before either is awaited. There is no parallel construct and nothing to join.
 
-**Not yet.**
+**Done.**
 
 ---
 

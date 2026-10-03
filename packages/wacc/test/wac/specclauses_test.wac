@@ -524,3 +524,58 @@ export string test_a_stronger_cast_where_a_plain_one_works_is_refused() {
       + "passing because widening is refused outright rather than because the spelling is: " + plain[0]);
   return t.report();
 }
+
+/**
+ * A `switch` on a string names what a subject may be, and a string is not among them.
+ *
+ * The message said *"must be an integer or a string"* while the check refused every string, so the
+ * diagnostic advertised the one alternative it was in the middle of refusing.
+ */
+export string test_a_switch_message_names_only_what_a_switch_takes() {
+  T t = T.create();
+  string[] d = firstDiagnostic(
+      "export i32 f(string s) {\n  switch (s) { case 1: { return 1; } }\n  return 0;\n}");
+  t.isTrue(d.len() == 4, "nothing reported for a switch on a string");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "a switch subject must be an i32 or a u32", "the message");
+  return t.report();
+}
+
+/**
+ * `p?.home = …` is refused as an assignment target, once, at the `=`.
+ *
+ * It was `expected ';'` pointing past the `=`, with two follow-on errors — the parser reading a field
+ * read and then stopping at the token it did not expect, so nothing said why the line was wrong.
+ */
+export string test_a_field_read_through_an_absence_is_not_an_assignment_target() {
+  T t = T.create();
+  string src = "struct A { string c; }\nstruct P { A home; }\nexport void f(P? p) { p?.home = A(\"x\"); }";
+  string[] d = firstDiagnostic(src);
+  t.isTrue(d.len() == 4, "nothing reported for an assignment through ?.");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "this cannot be assigned to", "the message");
+  t.isTrue(d[1].indexOf("?.") >= 0, "and the annotation names `?.` — got " + d[1]);
+  t.eqI32(wireLines(diagnoseFiles(["err.wac"], [src], "err.wac")).len(), 1, "one diagnostic, not a cascade");
+  return t.report();
+}
+
+/**
+ * A tuple literal of bare numbers has no type where nothing gives it one — `issues/lang/0367a`.
+ *
+ * `check` passed both of these and the emitter refused them, *a tuple literal with a member of no
+ * type of its own*. Refused at check now, as `1 == 1` and `auto n = 7;` already were; a typed member
+ * or a slot to fill is still fine.
+ */
+export string test_a_tuple_of_bare_numbers_has_no_type_without_a_slot() {
+  T t = T.create();
+  string[] cmp = firstDiagnostic("export bool f() { return (1, 2) == (1, 2); }");
+  t.isTrue(cmp.len() == 4 && cmp[0].indexOf("these literals have no type") == 0, "== of two literal tuples — got " + (cmp.len() == 4 ? cmp[0] : "nothing"));
+  string[] au = firstDiagnostic("export i32 f() { auto a = (1, 2); return 0; }");
+  t.isTrue(au.len() == 4 && au[0].indexOf("these literals have no type") == 0, "auto of a literal tuple — got " + (au.len() == 4 ? au[0] : "nothing"));
+  t.eqI32(firstDiagnostic("export bool f() { return (1 as i32, 2 as i32) == (1 as i32, 2 as i32); }").len(), 0, "typed members are fine");
+  t.eqI32(firstDiagnostic("export i32 f() { (i32, i32) p = (1, 2); return p.0; }").len(), 0, "and so is a slot");
+  string[] gen = firstDiagnostic("bool same<T>(T a, T b) { return a.0 == b.0; }\nexport bool f() { return same((\"a\", 1), (\"a\", 1)); }");
+  t.isTrue(gen.len() == 4, "a literal tuple through a generic says nothing about T, so the call is refused at check");
+  t.eqI32(firstDiagnostic("bool same<T>(T a, T b) { return a.0 == b.0; }\nexport bool f() { return same((\"a\", 1 as i32), (\"a\", 1 as i32)); }").len(), 0, "and a typed one binds it");
+  return t.report();
+}

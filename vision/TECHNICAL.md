@@ -57,7 +57,7 @@ Node sized() {
 
 The parameter is `@"data-size"`. Both tags write the attribute as HTML does.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -114,7 +114,7 @@ export void @"test: an empty read returns End"() {
 ok   test: an empty read returns End
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -147,7 +147,7 @@ error: a non-const reference cannot be taken from a const one
 
 `table` hands back the real `Vec`. Reading it is allowed and writing to it is not.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -233,7 +233,7 @@ error: this `default` is unreachable
    = help: every variant is already named — remove it
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -261,7 +261,7 @@ f64? area(Shape? s) {
 A nullable subject is not covered until the arms name `null` or carry a `default`. Every other arm
 sees a non-null subject.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -279,7 +279,7 @@ bool configured(Result<Config, string> res) {
 
 The payload binds, `is` tests a variant inside it, and the result is an ordinary bool.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -299,7 +299,7 @@ error: unexpected token
    |          ^ expected expression
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -362,7 +362,7 @@ void example() {
 
 An unawaited call runs to its first suspension and hands its continuation to the current target.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -386,7 +386,7 @@ void example() {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -425,7 +425,7 @@ what lets `Sys.drain` write `schedule` once and keep it across its own suspensio
 resumer needs no cooperation: `step()` and `call()` are ordinary calls that know nothing about
 scheduling.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -601,7 +601,7 @@ What differs is what else got to run. Under `await` the caller parks and its sib
 `wait` the caller's frame is live and they do not. So the value is identical and the program
 afterwards may not be — and `wait` can refuse where `await` cannot.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -696,7 +696,7 @@ error: `await` needs a ticket, and `5` is an `i32`
 JavaScript accepts any value here, which is what lets a forgotten `async` on the callee compile:
 `await maybePromise` is fine either way and the bug surfaces somewhere else.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -714,7 +714,7 @@ async void example(Continuation c) {
 nullable type, so there is nothing to infer it from. The bare form stays the only way to write a
 step boundary without a ticket.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -741,7 +741,7 @@ error: `total` returns `i32`, and `size(sys, "a.txt")` is a `Ticket<i32>`
 the two spellings are not interchangeable and dropping the `await` is not a shortcut. JavaScript
 adopts, which is why `Promise<Promise<T>>` cannot be built there.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -761,7 +761,7 @@ arriving. A caller that only wants to know it was sent awaits once and keeps the
 drops it. Adoption would merge the two events into one and there would be no way to ask about the
 first.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -790,7 +790,7 @@ void example() {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -812,7 +812,7 @@ async void tick() {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -839,7 +839,7 @@ async void inner() {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -862,7 +862,7 @@ Coroutine<TicketBase, i32, void>  f = coroutine counter(t);
 `Coroutine<W, Y, R>` is the machine: what it waits on, what it yields, what it returns. `W` is
 `never` where it cannot wait.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -876,7 +876,7 @@ d.step();    // Yielded(i32) | Done(void)              — W is never, so there 
 f.step();    // Yielded(i32) | Done(void) | Waiting
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -901,7 +901,7 @@ async gen<i32> void counter(Ticket<i32> t) {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -918,7 +918,7 @@ async i32 total(Ticket<i32> t) {
 The loop awaits on `Waiting`, binds on `Yielded` and stops on `Done` — the three cases the entry
 above steps through by hand.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -939,7 +939,7 @@ is one nobody wrote. The second error is the existing rule about `await`, which 
 loop over a generator needs no rule of its own — there is no marker to write, so driving it from
 sync code stays `wait`'s job.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -960,7 +960,7 @@ async void example(Ticket<i32> t) {
 The value arrives inside `Done`, which the loop consumes as it ends, so there is nothing left on the
 generator to ask for it afterwards. Taking it means stepping by hand.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -982,7 +982,7 @@ async i32 doubled(Ticket<i32> t) {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -999,7 +999,7 @@ never spin() {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1016,7 +1016,7 @@ never spin(bool once) {
 error: a `never` function cannot return
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1069,7 +1069,7 @@ error: `parse` can fail with `Malformed`, which `load` does not return
    = help: add it to the error set, or handle it here
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1124,7 +1124,7 @@ void example() {
 `as` is what types the literal. Widening a typed value wraps it, so a `Node?` reaching a `Node??`
 arrives present whatever it holds, and only a bare `null` means the outermost absence.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1141,7 +1141,7 @@ void example() {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1161,7 +1161,7 @@ i32 example(Vec<Node?> v) {
 arrives as a present outer whatever it holds. Under flattening the two would arrive as one value,
 and there is nothing the caller could write to tell them apart again.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1183,7 +1183,7 @@ the member's. The result is the member's type, made nullable only if it was not.
 constructor does not behave this way — `T??` is a distinct type — so a `T??` result comes only from a
 `T??` member.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1217,7 +1217,7 @@ Stripping one `?` from an `Addr??` leaves an `Addr?`, which is not a struct and 
 `T??` distinguishes two absences; collapsing them is what `?? null` does, and the chain requires it
 to be written.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1235,7 +1235,7 @@ void example(Person? p, Addr? one) {
 The result type of `??` is the non-null form of the left operand joined with the type of the right.
 For `Addr??` that is `Addr?`, which accepts the bare `null`, so the result is `Addr?`.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1297,7 +1297,7 @@ void example() {
 Nothing promotes. `i32` does not widen to `i64` under `+` either, and the `u32` a `u8` is held in is
 representation rather than type.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1323,7 +1323,7 @@ Widening is lossless, so it is `as` and the others are refused there. Narrowing 
 `spec/spec/types.md` has no implicit conversions between any types, and an ordinary type is one that
 obeys that rule rather than a lenient one. An element is not a special case in either direction.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1343,7 +1343,7 @@ error: literal out of range for its type
 
 A literal takes the type expected of it when the value has a reading there. 300 has none in a `u8`.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1385,7 +1385,7 @@ size<string>("ab");    // 2
 size<i32>(5);          // error: no method `len` on i32 — the branch is dead here, and checked
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1403,7 +1403,7 @@ type Slot<T> = type(slot(typeref(T)));
 `type(…)` binds the type a `typeref` names, and `pushNull` adds one level of nullability rather than
 ensuring it — `?` does not flatten, so neither does the method standing for it.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1416,7 +1416,7 @@ struct Vec<T> {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1435,7 +1435,7 @@ i32 width<T>() {
 `static_trap` is `never`, so it satisfies the arm like any other, and it fires only where that arm is
 chosen.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1454,7 +1454,7 @@ T get(const this, i32 i) {
 The dropped branch is checked at the definition like any generic body. Only the per-instantiation
 pass skips it, so what a drop can hide is a type error that needed a `T` to see.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1462,11 +1462,11 @@ pass skips it, so what a drop can hide is a type error that needed a `T` to see.
 
 ```wac
 void example(Sys sys) {
-  static_if (sys.now() > 0) { }    // error: condition is not known statically
+  static_if (sys.nowMillis() > 0) { }    // error: condition is not known statically
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1550,7 +1550,7 @@ void example() {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1578,7 +1578,7 @@ error: `Base.fire` is not virtual
 One object answering two ways depending on which static type reached it is what shadowing would
 allow. `virtual` is the base granting the override; without it there is nothing to take.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1595,7 +1595,7 @@ void example() {
 `T?` and `T[]` have a default because theirs means *nothing here*. Zero is a number someone might
 have meant, so `i32` has none to fall back on.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1614,7 +1614,7 @@ A field has a default where its type does or where it has an initialiser, and a 
 every field does. The initialiser runs at each construction rather than once, and cannot reach the
 world, since a struct body has no capability in scope to hand it.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1637,7 +1637,7 @@ void bad() {
 }
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1649,7 +1649,7 @@ Half b = Half(3, s);          // ok
 Half c = Half(s);             // error: positional construction writes every field
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1665,7 +1665,7 @@ struct Bad {
 Independent expressions, so there is no order to know and no field that is half-built when another
 is computed.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1682,7 +1682,7 @@ Identity is the ordered list of member types, so a tuple written in two places i
 makes it the only structural type in the language, and the smallest one it could have — an anonymous
 struct would add names, and with them width and order.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1699,7 +1699,7 @@ string     s    = ("a");        // grouping, not a 1-tuple
 type — `void` is the one that means *no value*. A trailing comma is accepted wherever a list is, and
 carries meaning only at length one.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1839,7 +1839,7 @@ auto (q, r)       = divmod(n, d);
 The four alternatives collide as written; they are spellings rather than a program. The last line is
 an assignment to locals that already exist, which is the shape a round function wants.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1867,7 +1867,7 @@ a trap, or the host. The async forms settle first and then answer the same way.
 string main(Sys sys) { return "hi"; }   // error: not a return type for main
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1905,7 +1905,7 @@ i32 main(Sys sys) {
 A trap does the same. Neither is distinguished from an `Err` by its status; what separates them is
 what gets printed.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1922,7 +1922,7 @@ The condition belongs to the program rather than the ticket, which is why no tic
 A program awaiting a socket read is not hung — the host has the read outstanding — and one awaiting a
 ticket nobody holds is, because the scheduler is empty and no event is pending.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -1943,5 +1943,5 @@ async void main(Sys sys) {
 Draining is the right thing to do and does not rescue it. The work was the program's from the call,
 not from the `await` that was never written.
 
-**Not yet.**
+**Done.**
 

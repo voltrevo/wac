@@ -1366,8 +1366,8 @@ export f64 towardZero(f64 x) {
  * A whole `f64` as an `i64`.
  *
  * `as~` would do it in one, but this file is compiled by a rung that cannot, and `as@` from a float
- * to `i64` the real compiler refuses outright — though `spec/spec/casts.md`'s own matrix lists the
- * pair. Splitting at 2^31 keeps both halves inside the one narrowing that does work.
+ * to `i64` the real compiler refuses outright — though the old casts page's matrix (spec/spec/casts.md,
+ * since replaced by `spec/3-expressions/24-casts.md`) listed the pair. Splitting at 2^31 keeps both halves inside the one narrowing that does work.
  */
 export i64 f64ToI64(f64 x) {
   f64 lim = 2147483648.0;

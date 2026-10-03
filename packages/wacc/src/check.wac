@@ -1728,6 +1728,24 @@ bool isNumericLiteral(C c, Expr e) {
 }
 
 /**
+ * A number written as a literal, or a tuple literal holding one at any depth — which has no type of
+ * its own either: `(1, 2)` is `(i32, i32)` or `(u8, i64)` depending on the slot it fills, and where
+ * there is no slot the emitter refused it while `check` said nothing (`issues/lang/0367a`).
+ */
+bool holdsUntypedNumber(C c, Expr e) {
+  if (isNumericLiteral(c, e)) { return true; }
+  match (e.kind) {
+    TupleLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (holdsUntypedNumber(c, elements[i])) { return true; }
+      }
+      return false;
+    }
+    default: { return false; }
+  }
+}
+
+/**
  * A module's export lists — spec ch02. An item of a list with no `from` names something the module
  * can see: its own top-level declaration, or a name it imported. And a name is exported once, whether
  * by `export` on a declaration or by an item; two of them under one name are two declarations of it.
@@ -1867,6 +1885,9 @@ void checkMatches(C c, Expr e, Pattern pat, Expr subject) {
     string tt = typeOfTy(c, pat.type!);
     if (tt == typeNone() || tt == "") { return; }
     bool fits = tt == core || tt == st || descendsFrom(c, tt, core) || descendsFrom(c, core, tt);
+    // **A variant is a subtype of its enum** (spec ch13), so `Circle c matches s` on a `Shape` is a
+    // type test like one against a struct subtype — `issues/lang/0366a`.
+    if (c.isEnum(templateOf(core)) && c.variantArityIn(templateOf(core), tt) >= 0) { fits = true; }
     // **A union holds one of its alternatives** (spec ch18): a pattern may name any of them, or a
     // type one of them descends from; `const T` accepts a value whichever permission it entered by.
     if (isUnionName(core)) {
@@ -6648,7 +6669,7 @@ void checkExpr(C c, Expr e) {
       // **Two literals compared have no type to be compared at** — `1 + 2 == 3` is `true` as an `i32`
       // and something else as an `i8` — and there is no fallback to pick one (spec ch09).
       if ((k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe())
-          && isNumericLiteral(c, left) && isNumericLiteral(c, right)) {
+          && holdsUntypedNumber(c, left) && holdsUntypedNumber(c, right)) {
         c.report(errUntypedLiteral(), e.line, e.col);
       }
       // `>>>` is an unsigned shift, so on a type that is already unsigned it says nothing that `>>`
@@ -8563,6 +8584,10 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     // A string or a `bool` is the one type it can be, and binds as any typed argument does.
     i32 argLit = litFamily(c, args[i]);
     if (argLit == litInteger() || argLit == litFloat()) { continue; }
+    // Nor does a tuple literal holding one — `same(("a", 1), ("a", 1))` has no `T` until a member
+    // is typed, and binding a half-known tuple let it through to an emitter that refused it
+    // (`issues/lang/0367a`).
+    if (holdsUntypedNumber(c, args[i])) { continue; }
     // **A call through a funcref says nothing about `T`.** `id(g(1))` for `fn<i32(i32)> g` is a
     // compile error the spec spells out — *"a call through a funcref, whose return type is not read
     // here"* — and this checker could name the type, which is not the same as the language reading
@@ -8636,6 +8661,9 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   for (i32 i = 0; i < args.len(); i++) {
     if (litKindOf(args[i]) == litNull()) { continue; }
     if (funcrefCall(c, args[i])) { continue; }
+    // A tuple of bare numbers is nameless for a reason that is the program's (0367a), not this
+    // checker's: it says nothing about `T`, as decided above.
+    if (holdsUntypedNumber(c, args[i])) { continue; }
     if (foundType(c, args[i]) == typeNone()) { return; }
   }
   // **Disagreement first**, because an unbound parameter and a contested one are different faults and
@@ -12113,7 +12141,7 @@ void checkStmt(C c, Stmt s, Ty want) {
           c.reportWith(errUntypedLiteral(), type.line, type.col, "`auto` takes its type from an initialiser");
           return;
         }
-        if (isNumericLiteral(c, init!) || numbersOnlyGenericCall(c, init!)) {
+        if (holdsUntypedNumber(c, init!) || numbersOnlyGenericCall(c, init!)) {
           c.reportWith(errUntypedLiteral(), init!.line, init!.col, "unresolved numeric type — write the type");
           return;
         }

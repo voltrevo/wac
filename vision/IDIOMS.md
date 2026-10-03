@@ -27,7 +27,7 @@ T? find<T>(T[] xs, fn<bool(T)> p) {
 Takes no capability, so it cannot reach the world. The predicate is an ordinary parameter, and `T?`
 is what comes back when nothing matches.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -77,7 +77,7 @@ The same head walks an array, a `Vec`, and an async generator, and an index that
 cursor never appears. The head keeps its parentheses, and declares its variable the way any local is
 declared. The `await` is there because the suspension is per step, not because iterating changed.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -101,7 +101,7 @@ totalLength(chunks);      // Vec<u8[]>, so `part` is a u8[]
 `part` is whatever `C` holds: a `string` in the first call, a `u8[]` in the second. Each
 instantiation supplies the type.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -144,7 +144,7 @@ a
 b
 ```
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -198,7 +198,7 @@ string render(union<f64, string, bool> cell) {
 A member is returned as itself; there is nothing to construct. An arm names a type, and inside it the
 value is that type.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -213,7 +213,7 @@ i32 timeoutMs(Config? cfg) {
 `cfg?.timeoutMs` is an `i32?`: the field's value, or null if `cfg` is absent. `??` replaces the null
 with 5000, so the function returns an `i32`.
 
-**Not yet.**
+**Done.**
 
 ---
 
@@ -231,4 +231,4 @@ string? cityOf(Person? p) {
 The result is `string?`. Both absences — no person, no address — produce null, and `city` is read
 only when both are present.
 
-**Not yet.**
+**Done.**
