@@ -113,7 +113,7 @@ export u8[] aad(i32 epoch, i64 sequence, i32 kind, i32 version, i32 plaintextLen
 }
 
 /** The twelve-byte nonce: four fixed bytes from the key block, then the eight explicit ones. */
-u8[] nonce(u8[] fixedIv, u8[] explicitPart) {
+u8[] nonce(const u8[] fixedIv, u8[] explicitPart) {
   u8[] n = u8[].filled(12, 0);
   for (i32 i = 0; i < 4; i++) { n[i] = i < fixedIv.len() ? fixedIv[i] : 0; }
   for (i32 i = 0; i < 8; i++) { n[4 + i] = i < explicitPart.len() ? explicitPart[i] : 0; }
@@ -154,7 +154,7 @@ export u8[] seal(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 
  * *discarded*, not fatal. That is the opposite of TLS over TCP, where a bad MAC ends the connection,
  * and it is the same choice `packages/quic`'s `unprotect` makes.
  */
-export u8[] open(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 version,
+export u8[] open(const u8[] key, const u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 version,
                  u8[] fragment) {
   if (fragment.len() < 8 + 16) { return u8[](); }
   u8[] explicitPart = u8[].filled(8, 0);

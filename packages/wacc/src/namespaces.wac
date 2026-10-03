@@ -111,7 +111,7 @@ struct NsEdits {
   }
 }
 
-string bytesText(u8[] src, i32 from, i32 to) {
+string bytesText(const u8[] src, i32 from, i32 to) {
   if (to <= from) { return ""; }
   u8[] b = u8[].filled(to - from, 0);
   b.copyFrom(src, from, 0, to - from);
@@ -535,7 +535,7 @@ struct NsExports {
  * The second pass, over the whole graph: every namespace use rewritten to the verbatim name of the
  * member it reaches, and the imports that reach it.
  */
-export string[] lowerNamespaces(string[] paths, string[] sources, Res res) {
+export string[] lowerNamespaces(string[] paths, string[] sources, const Res res) {
   i32 n = paths.len();
   bool any = false;
   for (i32 i = 0; i < n; i++) {
@@ -580,7 +580,7 @@ bool dottedListItem(string s) {
 }
 
 /** The index of the file a specifier in file `f` names, -1 for a missing one, -2 for `core`. */
-i32 targetOf(string[] paths, Res res, i32 f, string spec) {
+i32 targetOf(string[] paths, const Res res, i32 f, string spec) {
   if (spec == "core") { return -2; }
   string key = resolveVia(res, paths, paths[f], spec);
   if (key == "core" || key == " core") { return -2; }
@@ -591,7 +591,7 @@ i32 targetOf(string[] paths, Res res, i32 f, string spec) {
 /** The unquoted text of a string token. */
 string unquote(string q) { return q.len() >= 2 ? q.slice(1, q.len() - 1) : q; }
 
-NsExports exportsOfFlat(string[] paths, string[] flat, Res res, i32 f) {
+NsExports exportsOfFlat(string[] paths, string[] flat, const Res res, i32 f) {
   NsExports ex = NsExports(NsStrs.create(), NsStrs.create(), NsStrs.create());
   NsFile src = NsFile.of(flat[f]);
   i32 depth = 0;
@@ -757,7 +757,7 @@ string importItem(string name, string local) {
 
 string verbatimIfNeeded(string name) { return name.indexOf(".") >= 0 ? "@\"" + name + "\"" : name; }
 
-string rewriteUses(string[] paths, string[] flat, Res res, NsExports[] exports, NsLocal[] locals, i32 f) {
+string rewriteUses(string[] paths, string[] flat, const Res res, NsExports[] exports, NsLocal[] locals, i32 f) {
   NsFile src = NsFile.of(flat[f]);
   NsEdits ed = NsEdits.create();
   NsBindings binds = NsBindings(NsStrs.create(), i32[].filled(8, 0), NsStrs.create());
@@ -881,7 +881,7 @@ string[] splitSpace(string s) {
  * ends on. `import * as X` binds X; an item naming a namespace binds it and leaves the list; an item
  * `X.m` becomes an import of the member from the module that declares it.
  */
-i32 rewriteImport(string[] paths, Res res, NsExports[] exports, NsFile src, NsEdits ed, NsBindings binds,
+i32 rewriteImport(string[] paths, const Res res, NsExports[] exports, NsFile src, NsEdits ed, NsBindings binds,
                   NsWanted wanted, i32 f, i32 t) {
   i32 endTok = t;
   while (endTok < src.count() && src.kind(endTok) != kSemi()) { endTok = endTok + 1; }

@@ -336,7 +336,7 @@ export string test_static_trap_fires_only_where_it_is_reached() {
 static i32[] AFTER  = tail(BEFORE);
 static i32[] BEFORE = [7, 8, 9];
 
-i32[] tail(i32[] xs) {
+i32[] tail(const i32[] xs) {
   i32[] out = i32[].filled(xs.len() - 1, 0);
   for (i32 i = 1; i < xs.len(); i++) { out[i - 1] = xs[i]; }
   return out;
@@ -438,7 +438,7 @@ export string test_a_cyclic_constant_keeps_its_identity() {
   t.eqI32(CYCLE.v, 1, "the head");
   t.eqI32(CYCLE.next!.v, 2, "one step round");
   t.eqI32(CYCLE.next!.next!.v, 1, "and back");
-  Node back = CYCLE.next!.next!;
+  const Node back = CYCLE.next!.next!;
   t.isTrue(back is CYCLE, "the same object, or it is not a ring");
   return t.report();
 }
@@ -446,11 +446,11 @@ export string test_a_cyclic_constant_keeps_its_identity() {
 /** Two mentions of one allocation are one object; two allocations are two. */
 export string test_sharing_inside_a_constant_array() {
   T t = T.create();
-  P a = SHARED[0];
-  P b = SHARED[1];
+  const P a = SHARED[0];
+  (const P) b = SHARED[1];
   t.isTrue(a is b, "one object put in twice");
-  P c = DISTINCT[0];
-  P d = DISTINCT[1];
+  const P c = DISTINCT[0];
+  const P d = DISTINCT[1];
   t.isFalse(c is d, "two objects with equal contents");
   return t.report();
 }

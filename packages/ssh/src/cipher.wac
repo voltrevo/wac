@@ -71,14 +71,14 @@ u8[] nonceFor(i32 seq) {
 }
 
 /** K_2 — the first half. Encrypts the payload and keys the MAC. */
-u8[] payloadKey(u8[] key) {
+u8[] payloadKey(const u8[] key) {
   u8[] k = u8[].filled(32, 0);
   k.copyFrom(key, 0, 0, 32);
   return k;
 }
 
 /** K_1 — the second half. Encrypts the length field and nothing else. */
-u8[] lengthKey(u8[] key) {
+u8[] lengthKey(const u8[] key) {
   u8[] k = u8[].filled(32, 0);
   k.copyFrom(key, 32, 0, 32);
   return k;
@@ -91,7 +91,7 @@ u8[] lengthKey(u8[] key) {
  * payload from counter 0 would reuse the block that is the MAC key and hand it to anyone holding
  * a known plaintext.
  */
-u8[] macKey(u8[] key, i32 seq) {
+u8[] macKey(const u8[] key, i32 seq) {
   u8[] block = chachaBlock(payloadKey(key), 0 as! u32, nonceFor(seq));
   u8[] k = u8[].filled(32, 0);
   k.copyFrom(block, 0, 0, 32);
@@ -156,7 +156,7 @@ export u8[] sealBody(u8[] key, i32 seq, u8[] body) {
  * do not have yet — and is why the value is treated as untrusted until `open` succeeds. A caller
  * must bound it before allocating anything.
  */
-export i32 peekLength(u8[] key, i32 seq, u8[] src, i32 at) {
+export i32 peekLength(const u8[] key, i32 seq, const u8[] src, i32 at) {
   if (key.len() != keyLength()) { trap; }
   if (at < 0 || at + 4 > src.len()) { return -1; }
   u8[] first = u8[].filled(4, 0);
@@ -186,7 +186,7 @@ export struct Plain {
  * forged packet never reaches the parser. The comparison is a fold rather than an early return:
  * an attacker who can time a tag comparison can find the tag a byte at a time.
  */
-export Plain open(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
+export Plain open(const u8[] key, i32 seq, const u8[] src, i32 at, i32 end, i32 maxPacket) {
   if (key.len() != keyLength()) { trap; }
   if (at < 0 || end > src.len() || at > end) { return Plain(Opened.Bad, u8[](), 0); }
   if (end - at < 4) { return Plain(Opened.Incomplete, u8[](), 0); }

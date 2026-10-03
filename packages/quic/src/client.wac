@@ -154,7 +154,7 @@ export struct Client {
    * what a peer that says nothing useful also does. It only became reachable *because* the AEAD trap
    * was fixed this morning — before that, a packet that would not open trapped one layer earlier.
    */
-  bool readableMessage(const this, u8[] m) {
+  bool readableMessage(const this, const u8[] m) {
     if (m.len() < 4) { return false; }
     i32 len = (m[1] as i32 << 16) | (m[2] as i32 << 8) | m[3] as i32;
     return 4 + len == m.len();
@@ -162,28 +162,28 @@ export struct Client {
 
   /** The group the server chose, or 0. x25519 is 0x001d. */
   i32 serverGroup(const this, u8[] datagram) {
-    u8[] m = this.serverHelloMessage(datagram);
+    (const u8[]) m = this.serverHelloMessage(datagram);
     if (!this.readableMessage(m)) { return 0; }
     return parseServerHello(messageBody(m)).group;
   }
 
   /** Whether the server said TLS 1.3 in `supported_versions`, the only place the version is real. */
   bool serverIsTls13(const this, u8[] datagram) {
-    u8[] m = this.serverHelloMessage(datagram);
+    (const u8[]) m = this.serverHelloMessage(datagram);
     if (!this.readableMessage(m)) { return false; }
     return parseServerHello(messageBody(m)).isTls13;
   }
 
   /** Whether the server asked us to try again with another group, which is a different message. */
   bool serverAskedRetry(const this, u8[] datagram) {
-    u8[] m = this.serverHelloMessage(datagram);
+    (const u8[]) m = this.serverHelloMessage(datagram);
     if (!this.readableMessage(m)) { return false; }
     return parseServerHello(messageBody(m)).isRetry;
   }
 
   /** The Diffie-Hellman shared secret: our scalar against the share the server sent. */
   u8[] shared(const this, u8[] datagram) {
-    u8[] m = this.serverHelloMessage(datagram);
+    const u8[] m = this.serverHelloMessage(datagram);
     if (!this.readableMessage(m)) { return u8[](); }
     u8[] theirs = parseServerHello(messageBody(m)).keyShare;
     if (theirs.len() != 32) { return u8[](); }
@@ -203,7 +203,7 @@ export struct Client {
   u8[] handshakePayload(const this, u8[] datagram) {
     i32 at = nextPacketAt(datagram, 0, true);
     if (at == 0) { return u8[](); }
-    u8[] dhe = this.shared(datagram);
+    (const u8[]) dhe = this.shared(datagram);
     if (dhe.len() == 0) { return u8[](); }
     return openAt(datagram, at, handshakeKeys(dhe, this.throughServerHello(datagram), true), true, false);
   }
@@ -215,14 +215,14 @@ export struct Client {
 
   /** The first handshake message inside it. 8 is EncryptedExtensions, which follows a ServerHello. */
   i32 handshakeMessageType(const this, u8[] datagram) {
-    u8[] c = this.handshakeCrypto(datagram);
+    (const u8[]) c = this.handshakeCrypto(datagram);
     if (c.len() < 4) { return -1; }
     return messageType(c);
   }
 
   /** The message types the server's flight held, as `1 << (kind & 31)` flags. */
   i32 serverFlightKinds(const this, u8[] datagram) {
-    u8[] c = this.handshakeCrypto(datagram);
+    (const u8[]) c = this.handshakeCrypto(datagram);
     i32 seen = 0;
     i32 at = 0;
     while (at + 4 <= c.len()) {
@@ -246,15 +246,15 @@ export struct Client {
    * A client must check this before it sends anything of its own.
    */
   bool serverFinishedVerifies(const this, u8[] datagram) {
-    u8[] c = this.handshakeCrypto(datagram);
+    (const u8[]) c = this.handshakeCrypto(datagram);
     i32 fin = finishedAt(c);
     if (fin < 0) { return false; }
     i32 len = (c[fin + 1] as i32 << 16) | (c[fin + 2] as i32 << 8) | c[fin + 3] as i32;
     if (fin + 4 + len > c.len()) { return false; }
 
-    u8[] dhe = this.shared(datagram);
+    const u8[] dhe = this.shared(datagram);
     if (dhe.len() == 0) { return false; }
-    u8[] sh = this.serverHelloMessage(datagram);
+    const u8[] sh = this.serverHelloMessage(datagram);
     u8[] secret = handshakeTrafficSecret(dhe, transcript2(this.hello, sh), true);
 
     u8[] soFar = joined(joined(this.hello, sh), prefix(c, fin));
@@ -275,7 +275,7 @@ export struct Client {
    * same loop and cannot disagree.
    */
   Chain serverChain(const this, u8[] datagram) {
-    u8[] c = this.handshakeCrypto(datagram);
+    (const u8[]) c = this.handshakeCrypto(datagram);
     i32 at = 0;
     while (at + 4 <= c.len()) {
       i32 len = (c[at + 1] as i32 << 16) | (c[at + 2] as i32 << 8) | c[at + 3] as i32;
@@ -335,7 +335,7 @@ export struct Client {
    * decision, and repeating it here keeps a diagnostic that says which check failed.
    */
   i32 serverChainVerdict(const this, u8[] datagram, u8[] roots, i32[] rootOffsets, i64 now) {
-    Chain ch = this.serverChain(datagram);
+    const Chain ch = this.serverChain(datagram);
     if (ch.offsets.len() == 0) { return 8; }                 // nothing to verify, as verifyPath says
     return verifyPath(ch.der, ch.offsets, roots, rootOffsets, this.serverName.toBytes(), now, 8);
   }
@@ -349,7 +349,7 @@ export struct Client {
    * rest yet.
    */
   u8[] serverCertificate(const this, u8[] datagram) {
-    u8[] c = this.handshakeCrypto(datagram);
+    (const u8[]) c = this.handshakeCrypto(datagram);
     i32 at = 0;
     while (at + 4 <= c.len()) {
       i32 kind = c[at] as i32;
@@ -399,7 +399,7 @@ export struct Client {
    * what a function returning `true` would do.
    */
   u8[] serverSignature(const this, u8[] datagram) {
-    u8[] c = this.handshakeCrypto(datagram);
+    (const u8[]) c = this.handshakeCrypto(datagram);
     i32 cvAt = this.certificateVerifyAt(c);
     if (cvAt < 0) { return u8[](); }
     i32 cvLen = (c[cvAt + 1] as i32 << 16) | (c[cvAt + 2] as i32 << 8) | c[cvAt + 3] as i32;
@@ -413,7 +413,7 @@ export struct Client {
   }
 
   /** Where the CertificateVerify starts in a handshake CRYPTO stream, or -1. */
-  i32 certificateVerifyAt(const this, u8[] c) {
+  i32 certificateVerifyAt(const this, const u8[] c) {
     i32 at = 0;
     while (at + 4 <= c.len()) {
       i32 len = (c[at + 1] as i32 << 16) | (c[at + 2] as i32 << 8) | c[at + 3] as i32;
@@ -425,14 +425,14 @@ export struct Client {
   }
 
   /** The identity check, with the signature supplied — see `serverSignature`. */
-  bool identityVerifiesUsing(const this, u8[] datagram, u8[] sig) {
+  bool identityVerifiesUsing(const this, u8[] datagram, const u8[] sig) {
     if (sig.len() == 0) { return false; }
-    u8[] der = this.serverCertificate(datagram);
+    const u8[] der = this.serverCertificate(datagram);
     if (der.len() == 0) { return false; }
     Cert leaf = parseCert(der);
     if (!leaf.wellFormed) { return false; }
 
-    u8[] c = this.handshakeCrypto(datagram);
+    const u8[] c = this.handshakeCrypto(datagram);
     i32 cvAt = this.certificateVerifyAt(c);
     if (cvAt < 0) { return false; }
     i32 scheme = (c[cvAt + 4] as i32 << 8) | c[cvAt + 5] as i32;
@@ -476,7 +476,7 @@ export struct Client {
    * the wire — see `openShort`.
    */
   u8[] openApplication(const this, u8[] handshakeReply, u8[] packet) {
-    u8[] dhe = this.shared(handshakeReply);
+    (const u8[]) dhe = this.shared(handshakeReply);
     if (dhe.len() == 0) { return u8[](); }
     u8[] tr = transcriptOf(this.throughServerFinished(handshakeReply));
     return openShort(packet, 0, applicationKeys(dhe, tr, true), this.scid.len(), true);
@@ -489,7 +489,7 @@ export struct Client {
    * takes the handshake reply rather than any later state.
    */
   InitialKeys applicationKeysFor(const this, u8[] handshakeReply, bool isServer) {
-    u8[] dhe = this.shared(handshakeReply);
+    (const u8[]) dhe = this.shared(handshakeReply);
     if (dhe.len() == 0) { return InitialKeys(u8[](), u8[](), u8[]()); }
     return applicationKeys(dhe, transcriptOf(this.throughServerFinished(handshakeReply)), isServer);
   }
@@ -598,7 +598,7 @@ export struct Client {
 
   /** The key phase of such a packet, or -1. 1 means the server has already updated its keys. */
   i32 applicationKeyPhase(const this, u8[] handshakeReply, u8[] packet) {
-    u8[] dhe = this.shared(handshakeReply);
+    (const u8[]) dhe = this.shared(handshakeReply);
     if (dhe.len() == 0) { return -1; }
     u8[] tr = transcriptOf(this.throughServerFinished(handshakeReply));
     return shortKeyPhase(packet, 0, applicationKeys(dhe, tr, true), this.scid.len());
@@ -615,7 +615,7 @@ export struct Client {
    * carries a Handshake. Padding it anyway would work and would waste a kilobyte per handshake.
    */
   u8[] finished(const this, u8[] datagram) {
-    u8[] dhe = this.shared(datagram);
+    const u8[] dhe = this.shared(datagram);
     if (dhe.len() == 0) { return u8[](); }
     u8[] upToServerHello = this.throughServerHello(datagram);
 
@@ -634,7 +634,7 @@ export struct Client {
 }
 
 /** Where the Finished message begins in a run of handshake messages, or -1 if there is none. */
-i32 finishedAt(u8[] c) {
+i32 finishedAt(const u8[] c) {
   i32 at = 0;
   while (at + 4 <= c.len()) {
     i32 kind = c[at] as i32;

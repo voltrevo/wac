@@ -75,7 +75,7 @@ export struct ScOrder {
 }
 
 /** Big-endian bytes to 32-bit limbs, least significant first. The length must be a multiple of 4. */
-export i64[] scnFromBytes(u8[] be) {
+export i64[] scnFromBytes(const u8[] be) {
   if (be.len() % 4 != 0) { trap; }
   i32 len = be.len() / 4;
   i64[] h = i64[].filled(len, 0);

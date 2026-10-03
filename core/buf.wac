@@ -140,14 +140,14 @@ export struct Buf {
   }
 
   // `start`, not `from` — `from` is a keyword (import ... from "...").
-  void pushBytes(this, u8[] src, i32 start, i32 count) {
+  void pushBytes(this, const u8[] src, i32 start, i32 count) {
     this.reserveFor(count);
     this.data.copyFrom(src, start, this.len, count);
     this.len += count;
   }
 
   /** The whole of `src`. */
-  void pushAll(this, u8[] src) {
+  void pushAll(this, const u8[] src) {
     this.pushBytes(src, 0, src.len());
   }
 

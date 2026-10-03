@@ -301,7 +301,7 @@ export struct Fs {
    */
   bool may(const this, i32 node, i32 want) {
     if (this.user == ROOT()) { return true; }
-    Inode n = this.nodes.get(node);
+    const Inode n = this.nodes.get(node);
     i32 bits = n.owner == this.user ? (n.mode >> 6) & 7 : n.mode & 7;
     return (bits & want) == want;
   }
@@ -330,7 +330,7 @@ export struct Fs {
    */
   bool isPlainHost(const this) {
     if (this.mounts.len() != 1) { return false; }
-    Mount only = this.mounts.get(0);
+    const Mount only = this.mounts.get(0);
     if (only.at != "") { return false; }
     match (only.backing) {
       Host(cli): { return true; }

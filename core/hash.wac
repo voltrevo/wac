@@ -29,7 +29,7 @@ export i32 hashBytes(u8[] b) {
 }
 
 /** Byte-wise equality, the companion `eq` for a `u8[]`-keyed Map. */
-export bool bytesEq(u8[] a, u8[] b) {
+export bool bytesEq(const u8[] a, u8[] b) {
   if (a.len() != b.len()) { return false; }
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] != b[i]) { return false; }

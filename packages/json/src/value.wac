@@ -177,7 +177,7 @@ export struct JsonObject {
   /** Linear scan, returning the first match. What `get` does below the threshold. */
   JsonValue? scan(const this, u8[] key) {
     for (i32 i = 0; i < this.count; i++) {
-      JsonMember m = this.slots[i]!;
+      const JsonMember m = this.slots[i]!;
       if (bytesEq(m.key, key)) { return m.value; }
     }
     return null;

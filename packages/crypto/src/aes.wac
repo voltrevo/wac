@@ -111,7 +111,7 @@ export i32 aesRounds(i32 keyBytes) {
  * word passed through RotWord, SubWord and a round constant. AES-256 has the
  * extra SubWord at the halfway point, which is the one asymmetry in the schedule.
  */
-export u8[] aesExpandKey(u8[] key) {
+export u8[] aesExpandKey(const u8[] key) {
   i32 nk = key.len() / 4;
   i32 nr = aesRounds(key.len());
   i32 total = 4 * (nr + 1);

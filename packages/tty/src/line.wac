@@ -349,7 +349,7 @@ export struct Line {
    * stopping at the space it just uncovered.
    */
   i32 wordStart(const this) {
-    u8[] all = this.held.bytes();
+    (const u8[]) all = this.held.bytes();
     i32 at = all.len();
     while (at > 0 && !isWordChar(all[at - 1] as i32)) { at = at - 1; }
     while (at > 0 && isWordChar(all[at - 1] as i32)) { at = at - 1; }
@@ -358,7 +358,7 @@ export struct Line {
 
   /** The columns occupied from byte `from` to the end of the line. */
   i32 widthFrom(const this, i32 from) {
-    u8[] all = this.held.bytes();
+    const u8[] all = this.held.bytes();
     i32 w = 0;
     for (i32 i = from; i < all.len(); i++) { w = w + columns(all[i] as i32); }
     return w;

@@ -91,7 +91,7 @@ export u8[] deriveSecret(u8[] secret, u8[] label, u8[] transcriptHash) {
 export u8[] earlySecret(u8[] psk) { return hkdfExtract(u8[](), psk); }
 
 /** The Handshake Secret, from the Early Secret and the (EC)DHE shared secret. */
-export u8[] handshakeSecret(u8[] early, u8[] dhe) {
+export u8[] handshakeSecret(u8[] early, const u8[] dhe) {
   return hkdfExtract(deriveSecret(early, "derived".toBytes(), emptyHash()), dhe);
 }
 

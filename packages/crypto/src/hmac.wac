@@ -32,7 +32,7 @@ u8[] normalizeKeyWith(u8[] key, bool useSha1) {
 }
 
 /** HMAC-SHA-256 of `msg` under `key`, 32 bytes. */
-export u8[] hmacSha256(u8[] key, u8[] msg) {
+export u8[] hmacSha256(u8[] key, const u8[] msg) {
   u8[] k = normalizeKey(key);
   i32 bs = blockSize();
 

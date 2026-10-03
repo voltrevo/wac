@@ -468,7 +468,7 @@ bool flattenTree(Repo r, u8[] treeName, string prefix, Vec<TreeAt> out, i32 dept
   }
 }
 
-bool sameName(u8[] a, u8[] b) {
+bool sameName(const u8[] a, u8[] b) {
   if (a.len() != b.len()) { return false; }
   for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
   return true;
@@ -478,7 +478,7 @@ bool sameName(u8[] a, u8[] b) {
 bool anyTrackedUnder(const Vec<IndexEntry> entries, string dir) {
   string with = dir + "/";
   for (i32 i = 0; i < entries.len(); i++) {
-    IndexEntry e = entries.get(i);
+    (const IndexEntry) e = entries.get(i);
     if (e.stage != 0) { continue; }
     if (e.path.len() > with.len() && e.path.slice(0, with.len()) == with) { return true; }
   }

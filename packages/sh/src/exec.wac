@@ -4248,7 +4248,7 @@ void expandInto(Shell sh, Word word, Vec<string> argv) {
  * read the variable at all before — the splitting characters were three constants — so `IFS=:` was
  * accepted and ignored, and `for w in $x` over `a:b:c` saw one word where bash sees three.
  */
-string ifsOf(Shell sh) {
+string ifsOf(const Shell sh) {
   string? v = sh.vars.get("IFS");
   return v ?? " \t\n";
 }

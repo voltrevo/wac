@@ -47,7 +47,7 @@ export string commandLine(string prog, string[] args) {
 }
 
 /** `names[i]=values[i]` as the `NAME=value` strings `Cli.execWith` takes. */
-string[] pairs(string[] names, string[] values) {
+string[] pairs(const string[] names, const string[] values) {
   i32 n = names.len() < values.len() ? names.len() : values.len();
   string[] out = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { out[i] = names[i] + "=" + values[i]; }
@@ -60,7 +60,7 @@ string[] pairs(string[] names, string[] values) {
  * One process and no quoting: the values are handed over as bytes rather than assembled into a shell
  * line, so a value containing a space, a quote or a `$` arrives as it was written.
  */
-export Exec withEnv(Cli cli, string[] names, string[] values, string prog, string[] args) {
+export Exec withEnv(const Cli cli, const string[] names, const string[] values, string prog, string[] args) {
   return cli.execWith(prog, args, u8[](), pairs(names, values), false, false).wait();
 }
 

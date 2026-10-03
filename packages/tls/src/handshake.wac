@@ -392,7 +392,7 @@ export u8[] encryptedExtensions() {
  * `certificate_request_context` is empty for a server certificate; it is only non-empty
  * when the certificate answers a CertificateRequest.
  */
-export u8[] certificate(u8[] der) {
+export u8[] certificate(const u8[] der) {
   Writer body = Writer.create();
   body.vec8(u8[]());             // certificate_request_context
 
@@ -446,13 +446,13 @@ export u8[] finished(u8[] verifyData) {
 }
 
 /** The type of a handshake message, from its header. */
-export i32 messageType(u8[] msg) {
+export i32 messageType(const u8[] msg) {
   if (msg.len() < 4) { trap; }
   return msg[0] as i32;
 }
 
 /** The body of a handshake message, with the header removed. */
-export u8[] messageBody(u8[] msg) {
+export u8[] messageBody(const u8[] msg) {
   if (msg.len() < 4) { trap; }
   i32 len = (msg[1] as i32 << 16) | (msg[2] as i32 << 8) | msg[3] as i32;
   if (4 + len != msg.len()) { trap; }

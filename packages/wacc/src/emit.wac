@@ -2890,6 +2890,12 @@ export struct Env {
   string nullLetters;
   /** `;k;` for each substitution entry whose `?` is its instance key's own (ch38): see `pushSubstitution`. */
   string nullSubs;
+  /**
+   * Whether the type being spelled is one of a union's alternatives — the only place `const T` is a
+   * different value than `T`, since the union records which permission a value entered by (ch18).
+   * Everywhere else `const` is the checker's: the same wasm type, so the emitter drops it.
+   */
+  i32 inUnionArgs;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -3203,7 +3209,7 @@ export struct Env {
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
-               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";", 0, "", "");
+               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";", 0, "", "", 0);
   }
 
   
@@ -3796,7 +3802,7 @@ i32 countLines(string s) {
 /** How many files the linker's walk can have queued — see `queue` in `linkFiles`. */
 i32 linkQueueSize() { return 1024; }
 
-bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] starts,
+bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i32[] starts,
                  i32[] edges, string[] names, string[] filePaths,
                  u8[][] outSrc, Lexed?[] outLexed, Program?[] outProg) {
   // **One file under two keys is refused here**, which is the one place both routes pass through:
@@ -4103,7 +4109,7 @@ bool linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] st
  * lowered. The raw text of a file with a `namespace` block does not parse, and counting it gave the
  * entry no declarations, so its module exported nothing.
  */
-i32 entryDeclCount(string[] paths, string[] sources, Res res, string entry) {
+i32 entryDeclCount(string[] paths, string[] sources, const Res res, string entry) {
   // Counted on the entry `linkFiles` compiles — with `main`'s adapter, whose `main` comes last.
   string[] lowered = lowerNamespaces(paths, sources, res);
   return declCountOf(entry, sourceOf(paths, programGraph(paths, lowered, entry).sources, entry));
@@ -4296,7 +4302,7 @@ struct Front {
 }
 
 /** `null` where the callers each used to return `""`: the graph did not link. */
-Front? frontOf(string[] paths, string[] sources, Res res, string entry) {
+Front? frontOf(string[] paths, string[] sources, const Res res, string entry) {
   i32[] starts = i32[].filled(1024, 0);
   i32[] edges = i32[].filled(65536, 0);
   string[] names = string[].defaulted(32768);
@@ -4739,7 +4745,7 @@ string declaredByNote(Env env) {
   return files == "" ? "" : " — declared by " + files;
 }
 
-export Built buildLinked(string[] paths, string[] sources, Res res, string entry) {
+export Built buildLinked(string[] paths, string[] sources, const Res res, string entry) {
   Front? f = frontOf(paths, sources, res, entry);
   if (f is null) {
     return Built(bareModule(),
@@ -4818,7 +4824,7 @@ export Built buildLinked(string[] paths, string[] sources, Res res, string entry
  */
 export string typesGrewCatchAll() { return "a type this emitter names only while emitting"; }
 
-string blockedAgain(string[] paths, string[] sources, Res res, string entry, Env spent) {
+string blockedAgain(string[] paths, string[] sources, const Res res, string entry, Env spent) {
   Front? again = frontOf(paths, sources, res, entry);
   if (again is not null) {
     string said = blockedOf(again!);
@@ -5309,6 +5315,18 @@ string normUnionE(Env env, string[] ms) {
     }
   }
   return spellUnion(flat, gone);
+}
+
+/**
+ * A `matches` pattern's type: against a union, `const T` keeps its `const` — the pattern is about which
+ * permission a value entered by (spec/next ch18) — and anywhere else it is the checker's alone.
+ */
+string patternTypeE(Env env, u8[] src, Lexed lexed, Ty t, string subject) {
+  bool inUnion = isUnionName(subject);
+  if (inUnion) { env.inUnionArgs = env.inUnionArgs + 1; }
+  string out = typeOfTyName(env, src, lexed, t);
+  if (inUnion) { env.inUnionArgs = env.inUnionArgs - 1; }
+  return out;
 }
 
 /** Whether `t` is `anc` or descends from it. */
@@ -7673,6 +7691,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       // `const T` — a union's alternative entered through a `const` reference (spec/next ch18).
       if (raw == "const" && typeArgs.len() == 1) {
         string cinner = typeOfTyName(env, src, lexed, typeArgs[0]);
+        if (env.inUnionArgs == 0) { return cinner; }
         return cinner == "" ? "" : "const " + cinner;
       }
       if (namesTypeDecl(env, src, lexed, raw) && env.substituted(raw) == "") {
@@ -7696,12 +7715,16 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
         string[] ums = string[].defaulted(typeArgs.len());
         i32 ug = typeArgs.len() > 1 ? 1 : 0;
         env.tyGuards = env.tyGuards + ug;
+        // Every union keeps its alternatives' `const`, one alternative included: `union<const Rect>`
+        // holds what entered it boxed as `const`, which widening back cannot undo (ch18).
+        env.inUnionArgs = env.inUnionArgs + 1;
         for (i32 i = 0; i < typeArgs.len(); i++) {
           ums[i] = typeOfTyName(env, src, lexed, typeArgs[i]);
-          if (ums[i] == "") { env.tyGuards = env.tyGuards - ug; return ""; }
+          if (ums[i] == "") { env.tyGuards = env.tyGuards - ug; env.inUnionArgs = env.inUnionArgs - 1; return ""; }
           if (unionBoxes(ums[i])) { env.boxType(ums[i]); }
         }
         env.tyGuards = env.tyGuards - ug;
+        env.inUnionArgs = env.inUnionArgs - 1;
         return normUnionE(env, ums);
       }
       // A **type parameter** stands for its argument wherever it appears — a field's type, a
@@ -8560,7 +8583,7 @@ void emitMatches(B fb, u8[] src, Lexed lexed, Env env, Pattern pat, Expr subject
   env.addLocal(" matched", "i32");
   i32 tst = env.localCount - 1;
   if (pat.type is not null) {
-    string tt = typeOfTyName(env, src, lexed, pat.type!);
+    string tt = patternTypeE(env, src, lexed, pat.type!, st);
     emitTypeTest(fb, env, subj, st, tt);
     fb.byte(34); fb.u32leb(tst);                       // local.tee
     i32 bind = declarePatternLocals(src, lexed, env, pat, st);
@@ -8669,7 +8692,7 @@ i32 declarePatternLocals(u8[] src, Lexed lexed, Env env, Pattern pat, string st)
   i32 first = 0 - 1;
   if (pat.type is not null) {
     if (pat.nameTok < 0 || tokenTextOf(src, lexed, pat.nameTok) == "_") { return first; }
-    string pt = typeOfTyName(env, src, lexed, pat.type!);
+    string pt = patternTypeE(env, src, lexed, pat.type!, st);
     env.addLocal(tokenTextOf(src, lexed, pat.nameTok), isConstAlt(pt) ? pt.slice(6, pt.len()) : pt);
     env.noteMatchBound(env.localCount - 1);
     return env.localCount - 1;
@@ -8699,7 +8722,7 @@ string refCore(Env env, string t) {
 string matchesWhyNot(u8[] src, Lexed lexed, Env env, Pattern pat, string st) {
   if (st == "") { return "a `matches` whose subject's type this emitter could not work out"; }
   if (pat.type is not null) {
-    string tt = typeOfTyName(env, src, lexed, pat.type!);
+    string tt = patternTypeE(env, src, lexed, pat.type!, st);
     return typeTestable(env, st, tt) ? "" : "a `matches` pattern of a type this emitter cannot test";
   }
   string en = env.canonType(refCore(env, st));
@@ -16216,7 +16239,7 @@ export string missingImportParts(string[] paths, string[] sources, Res res, stri
   return filePaths[0] + "\t" + filePaths[1] + "\t" + filePaths[2];
 }
 
-string linkFailure(string[] paths, string[] sources, Res res, string entry) {
+string linkFailure(string[] paths, string[] sources, const Res res, string entry) {
   i32[] starts = i32[].filled(1024, 0);
   i32[] edges = i32[].filled(65536, 0);
   string[] names = string[].defaulted(32768);

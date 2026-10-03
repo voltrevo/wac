@@ -108,7 +108,7 @@ export u8[] parametersExtension(u8[] params) {
  * A server that omitted it, or echoed the wrong one, produces a handshake that completes against a
  * peer that does not check and fails against every one that does.
  */
-export u8[] serverParameters(u8[] originalDcid, u8[] scid, i64 maxData, i64 maxStreamData,
+export u8[] serverParameters(const u8[] originalDcid, const u8[] scid, i64 maxData, i64 maxStreamData,
                              i64 maxStreamsBidi, i64 idleTimeoutMs) {
   i32 origLen = encodedLength(PARAM_ORIGINAL_DESTINATION_CONNECTION_ID() as i64)
               + encodedLength(originalDcid.len() as i64) + originalDcid.len();

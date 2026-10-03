@@ -25,7 +25,7 @@ import {
 } from "../../bignum/src/big.wac";
 
 /** A big integer from big-endian bytes, which is how RSA writes everything. */
-export Big fromBytes(u8[] b) {
+export Big fromBytes(const u8[] b) {
   // Build by repeated shift-and-add through the existing API rather than by poking
   // limbs: `bignum` owns its representation, and reaching into it here would be a second
   // place that has to know about normalisation.
@@ -118,7 +118,7 @@ u8[] digestInfoPrefix(i32 hashLen) {
   trap;
 }
 
-u8[] digest(u8[] msg, i32 hashLen) {
+u8[] digest(const u8[] msg, i32 hashLen) {
   if (hashLen == 32) { return sha256(msg); }
   if (hashLen == 48) { return sha384(msg); }
   if (hashLen == 64) { return sha512(msg); }
@@ -252,7 +252,7 @@ u8[] mgf1(u8[] seed, i32 length, i32 hashLen) {
  *
  * `saltLen` is the salt length the signer used, which for TLS is always the hash length.
  */
-export bool rsaVerifyPss(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen, i32 saltLen) {
+export bool rsaVerifyPss(u8[] n, u8[] e, const u8[] msg, const u8[] sig, i32 hashLen, i32 saltLen) {
   // **Both lengths are non-negative, and the size check below cannot stand in for saying so.** It
   // reads `emLen < hashLen + saltLen + 2`, so a `saltLen` of -1 weakens it to `emLen < hashLen + 1`
   // and an ordinary modulus sails through; the delimiter index computed from it then falls beyond
@@ -385,7 +385,7 @@ u8[] padPkcs1(u8[] payload, i32 emLen) {
 }
 
 /** `s = EM^d mod n`, big-endian and left-padded to the modulus's width. Empty if `em` is empty. */
-u8[] rawSign(u8[] n, u8[] d, u8[] em) {
+u8[] rawSign(const u8[] n, const u8[] d, u8[] em) {
   if (em.len() == 0) { return u8[](); }
   Big modulus = fromBytes(n);
   if (isZero(modulus)) { return u8[](); }
@@ -445,7 +445,7 @@ export u8[] rsaSignRawPkcs1(u8[] n, u8[] d, u8[] payload) {
  * Empty if the key is too small to hold the encoding, which is the condition RFC 8017 states as
  * "encoding error" and is not something a caller can recover from by retrying.
  */
-export u8[] rsaSignPss(u8[] n, u8[] d, u8[] msg, i32 hashLen, u8[] salt) {
+export u8[] rsaSignPss(const u8[] n, const u8[] d, u8[] msg, i32 hashLen, u8[] salt) {
   Big modulus = fromBytes(n);
   if (isZero(modulus)) { return u8[](); }
 

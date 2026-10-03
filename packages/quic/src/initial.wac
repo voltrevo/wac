@@ -61,14 +61,14 @@ export struct InitialKeys {
  * anything about the server — which is why a server can answer a client it has never seen and why a
  * Retry changes the keys.
  */
-export u8[] initialSecret(u8[] clientDcid, bool isServer) {
+export u8[] initialSecret(const u8[] clientDcid, bool isServer) {
   u8[] common = hkdfExtract(initialSalt(), clientDcid);
   u8[] label = isServer ? "server in".toBytes() : "client in".toBytes();
   return expandLabel(common, label, u8[](), 32);
 }
 
 /** The three keys for one side. */
-export InitialKeys initialKeys(u8[] clientDcid, bool isServer) {
+export InitialKeys initialKeys(const u8[] clientDcid, bool isServer) {
   u8[] secret = initialSecret(clientDcid, isServer);
   return InitialKeys(
     expandLabel(secret, "quic key".toBytes(), u8[](), 16),
@@ -180,12 +180,12 @@ export u8[] openClientInitial(u8[] packet, bool greased) {
  * that could work without it. That asymmetry is the reason this is a separate function rather than
  * a flag on the one above: the argument list is different because the situation is.
  */
-export u8[] openServerInitial(u8[] packet, u8[] clientDcid, bool greased) {
+export u8[] openServerInitial(u8[] packet, const u8[] clientDcid, bool greased) {
   return openInitial(packet, clientDcid, true, greased);
 }
 
 /** The shared body: `keyDcid` is what the keys come from, which is not always the packet's own. */
-u8[] openInitial(u8[] packet, u8[] keyDcid, bool isServer, bool greased) {
+u8[] openInitial(u8[] packet, const u8[] keyDcid, bool isServer, bool greased) {
   return openAt(packet, 0, initialKeys(keyDcid, isServer), greased, true);
 }
 
@@ -257,7 +257,7 @@ export u8[] openAt(u8[] packet, i32 at, InitialKeys keys, bool greased, bool ini
  * stays two bytes whatever the payload, so the header's size does not depend on its own contents,
  * and the header-protection sample at `numberAt + 4` is always inside the ciphertext.
  */
-export u8[] sealClientInitial(u8[] dcid, u8[] scid, u8[] cryptoData, i64 packetNumber) {
+export u8[] sealClientInitial(const u8[] dcid, const u8[] scid, const u8[] cryptoData, i64 packetNumber) {
   i32 framed = 1 + 1 + encodedLength(cryptoData.len() as i64) + cryptoData.len();
   u8[] payload = u8[].filled(framed, 0);
   if (writeCrypto(payload, 0, 0 as i64, cryptoData) == 0) { return u8[](); }
@@ -285,7 +285,7 @@ export u8[] sealClientInitial(u8[] dcid, u8[] scid, u8[] cryptoData, i64 packetN
  * varint stays two bytes whatever the payload, so the header's size does not depend on its own
  * contents, and the header-protection sample at `numberAt + 4` is always inside the ciphertext.
  */
-export u8[] sealLong(i32 packetType, u8[] dcid, u8[] scid, u8[] frames, i64 packetNumber,
+export u8[] sealLong(i32 packetType, const u8[] dcid, const u8[] scid, u8[] frames, i64 packetNumber,
                      InitialKeys keys, i32 padTo) {
   i32 maxCid = MAX_CID();
   if (dcid.len() > maxCid || scid.len() > maxCid) { return u8[](); }
@@ -453,7 +453,7 @@ export i32 shortKeyPhase(u8[] packet, i32 at, InitialKeys keys, i32 cidLen) {
  * disable it — it exists so a network can measure round-trip time by watching, which is a thing to
  * offer deliberately rather than by default.
  */
-export u8[] sealShort(u8[] dcid, u8[] frames, i64 packetNumber, InitialKeys keys, i32 padTo) {
+export u8[] sealShort(const u8[] dcid, u8[] frames, i64 packetNumber, InitialKeys keys, i32 padTo) {
   if (dcid.len() > MAX_CID()) { return u8[](); }
 
   i32 pnLen = 4;

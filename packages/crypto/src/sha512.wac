@@ -68,7 +68,7 @@ static u64[] H384 = [0xcbbb9d5dc1059ed8, 0x629a292a367cd507, 0x9159015a3070dd17,
  * and eighty 64-bit words per block of a large file is a garbage collector benchmark
  * rather than a hash.
  */
-void compressBlock(u64[] h, u8[] m, i32 off, u64[] w) {
+void compressBlock(u64[] h, const u8[] m, i32 off, u64[] w) {
   for (i32 t = 0; t < 16; t++) { w[t] = beWord64(m, off + t * 8); }
   for (i32 t = 16; t < 80; t++) {
     w[t] = smallSigma1(w[t - 2]) + w[t - 7] + smallSigma0(w[t - 15]) + w[t - 16];
@@ -108,7 +108,7 @@ export struct Sha512 {
   Sha512 create() { return start(H512); }
   Sha512 create384() { return start(H384); }
 
-  void update(this, u8[] data) {
+  void update(this, const u8[] data) {
     this.total += data.len() as i64;
     i32 at = 0;
     if (this.filled > 0) {
@@ -145,7 +145,7 @@ export struct Sha512 {
   }
 }
 
-Sha512 start(u64[] iv) {
+Sha512 start(const u64[] iv) {
   u64[] h = u64[].filled(8, 0);
   for (i32 i = 0; i < 8; i++) { h[i] = iv[i]; }
   return Sha512(h, u8[].filled(128, 0), 0, 0, u64[].filled(80, 0));
@@ -163,10 +163,10 @@ u8[] serialize(u64[] h, i32 bytes) {
 }
 
 /** SHA-512 of `msg`, 64 bytes. */
-export u8[] sha512(u8[] msg) { return oneShot(Sha512.create(), msg, 64); }
+export u8[] sha512(const u8[] msg) { return oneShot(Sha512.create(), msg, 64); }
 
 /** SHA-384 of `msg`, 48 bytes. */
-export u8[] sha384(u8[] msg) { return oneShot(Sha512.create384(), msg, 48); }
+export u8[] sha384(const u8[] msg) { return oneShot(Sha512.create384(), msg, 48); }
 
 /**
  * A whole message through the streaming form.
@@ -177,7 +177,7 @@ export u8[] sha384(u8[] msg) { return oneShot(Sha512.create384(), msg, 48); }
  * the one-shot form always was underneath (wac-mono 0034). `wac task bench:hash --quick`, 4 MB: 19.2 ms
  * before, 16.3 ms after — 209 MB/s to 246 MB/s.
  */
-u8[] oneShot(Sha512 s, u8[] msg, i32 bytes) {
+u8[] oneShot(Sha512 s, const u8[] msg, i32 bytes) {
   s.update(msg);
   return s.digest(bytes);
 }

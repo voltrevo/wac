@@ -90,7 +90,7 @@ export u8[] frame(u8[] payload, u8[] random, i32 block) {
  * a signed i32, so a peer claiming 2^31 or more arrives negative; that is malformed rather than
  * something to clamp, and saying so here keeps every caller from having to remember it.
  */
-export Framed unframe(u8[] src, i32 at, i32 end) {
+export Framed unframe(const u8[] src, i32 at, i32 end) {
   if (at < 0 || end > src.len() || at > end) { return Framed(Status.Malformed, u8[](), 0); }
   if (end - at < 4) { return Framed(Status.Incomplete, u8[](), 0); }
 

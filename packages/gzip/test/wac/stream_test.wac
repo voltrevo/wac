@@ -79,7 +79,7 @@ struct Sink {
     u8[] out = u8[].filled(total, 0);
     i32 o = 0;
     for (i32 i = 0; i < this.n; i++) {
-      u8[] p = this.parts[i];
+      const u8[] p = this.parts[i];
       for (i32 k = 0; k < p.len(); k++) { out[o + k] = p[k]; }
       o = o + p.len();
     }

@@ -510,7 +510,7 @@ export u8[] ed25519Sign(u8[] seed, u8[] msg) {
  * which is what stops a signature being malleable: without it, S and S+L both verify and
  * a signature is no longer a unique token.
  */
-export bool ed25519Verify(u8[] pub, u8[] msg, u8[] sig) {
+export bool ed25519Verify(u8[] pub, const u8[] msg, const u8[] sig) {
   if (pub.len() != 32) { return false; }
   if (sig.len() != 64) { return false; }
 

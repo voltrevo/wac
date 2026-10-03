@@ -40,7 +40,7 @@ export struct Writer {
   void raw(this, u8[] v) { this.out.pushAll(v); }
 
   /** A length-prefixed string. */
-  void str(this, u8[] v) {
+  void str(this, const u8[] v) {
     this.u32(v.len());
     this.out.pushAll(v);
   }

@@ -182,7 +182,7 @@ SeqCount readCount(u8[] src, i32 at, i32 end) {
 /** Build one of the three tables according to its two-bit mode. */
 FseTable tableFor(
   i32 mode, u8[] src, i32 at, i32 end, i32 maxSymbol, i32 maxLog,
-  i32[] defaults, i32 defaultLog, FseTable previous, bool hasPrevious, i32[] used
+  const i32[] defaults, i32 defaultLog, FseTable previous, bool hasPrevious, i32[] used
 ) {
   if (mode == 0) {
     // The distribution's own length, not the code's maximum symbol: the offset default stops

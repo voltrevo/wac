@@ -25,7 +25,7 @@ export void storeLE32(u32 v, u8[] out, i32 at) {
 }
 
 /** Big-endian u32 at byte offset `i`. */
-export u32 beWord32(u8[] b, i32 i) {
+export u32 beWord32(const u8[] b, i32 i) {
   return ((b[i] as i32 << 24) | (b[i + 1] as i32 << 16) | (b[i + 2] as i32 << 8) | b[i + 3] as i32) as@ u32;
 }
 
@@ -35,7 +35,7 @@ export void storeBE32(u32 v, u8[] out, i32 at) {
 }
 
 /** Big-endian u64 at byte offset `i`. */
-export u64 beWord64(u8[] b, i32 i) {
+export u64 beWord64(const u8[] b, i32 i) {
   u64 v = 0;
   for (i32 j = 0; j < 8; j++) { v = (v << 8) | (b[i + j] as u64); }
   return v;

@@ -1097,7 +1097,7 @@ void checkInstances(C c, Program prog) {
           c.clearScope();
           c.pushScope(body);
           for (i32 i = 0; i < params.len(); i++) {
-            c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type), params[i].isConst);
+            declareParam(c, params[i]);
           }
           declareAll(c, body);
           bool wasAsync = c.inAsync;
@@ -1228,6 +1228,66 @@ string unfoldedC(C c, string t) {
   if (!ok || shape == "" || shape == base) { return ""; }
   shape = withoutEvalKeys(shape);
   return nullable ? shape + "?" : shape;
+}
+
+/** Whether a type spelling is `const T` — a `const` reference's type (spec/next ch17). */
+bool isConstTy(string t) { return t.len() > 6 && t.slice(0, 6) == "const "; }
+
+/** `const T` as `T`; anything else as itself. */
+string constBase(string t) { return isConstTy(t) ? t.slice(6, t.len()) : t; }
+
+/**
+ * `union<const T>` as `const T` — a union of one is its alternative (spec/next ch18) — so a binding of
+ * that type is a `const` one; anything else as itself. The emitter keeps the union, which is where the
+ * permission a value entered by is recorded.
+ */
+string soleAlternative(string t) {
+  if (!isUnionName(t)) { return t; }
+  string[] ms = unionMembers(t);
+  return ms.len() == 1 && isConstTy(ms[0]) ? ms[0] : t;
+}
+
+/** Whether a value of type `t` can be written through: a struct or an array, nullable or not. */
+bool writableType(C c, string t) {
+  string core = withoutNull(t);
+  string base = core == "" ? t : core;
+  return isArrayName(base) || c.isStruct(base);
+}
+
+/**
+ * A parameter as its body sees it: `const P p` is const and fixed, `(const P) p` is const and may be
+ * rebound (spec/next ch17 `§wac-const-rebindable-ri3wpfz`), and anything else is neither.
+ */
+void declareParam(C c, Param p) {
+  string name = tokenText(c, p.nameTok);
+  string ty = soleAlternative(typeOfTy(c, p.type));
+  if (isConstTy(ty)) {
+    c.declareConst(name, constBase(ty), true);
+    if (!p.isConst) { c.markAliasOnly(name); }
+    return;
+  }
+  c.declareConst(name, ty, p.isConst);
+}
+
+/**
+ * A parameter's type as a caller sees it: `const P p` takes a `const P` — so a `const` argument fits it —
+ * where a plain `P p` does not (spec/next ch17). `t` is the written type, already spelled.
+ */
+string paramTypeOf(C c, Param p, string t) {
+  if (!p.isConst || isConstTy(t) || t == "" || t == typeNone()) { return t; }
+  // Not `writableType`: this runs while declarations are still being gathered, so an imported struct
+  // may not be known yet. Anything that is not a number or `bool` may be a reference.
+  string core = withoutNull(t);
+  return isPrimitiveName(core == "" ? t : core) || t == "string" ? t : "const " + t;
+}
+
+/**
+ * Whether passing `arg` where `want` is wanted would turn a `const` reference into a plain one — a
+ * parameter of plain writable type handed a `const` (spec/next ch17 `§wac-const-no-launder-t584c4n`).
+ */
+bool constIntoPlain(C c, string want, Expr arg) {
+  if (want == "" || want == typeNone() || isConstTy(want)) { return false; }
+  return writableType(c, want) && constExpr(c, arg);
 }
 
 /**
@@ -2620,6 +2680,9 @@ bool isReferenceName(C c, string t) {
 export bool assignable(C c, string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
+  // **A function that takes a `const T` can stand where one taking a `T` is wanted** — it promises
+  // more, never less (spec/next ch17). Only that direction, and only on the parameters.
+  if (startsWithFn(want) && startsWithFn(got) && funcrefWithoutConstParams(got, want) == want) { return true; }
   // A recursive type held by its name is compared by what it unfolds to (spec/next ch18).
   string wantShape = unfoldedC(c, want);
   if (wantShape != "") { return assignable(c, wantShape, got); }
@@ -5024,6 +5087,8 @@ void widenHint(C c, i32 before, string got, string want) {
 }
 
 void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
+  // A literal is a fresh value, so a `const` slot takes it as its plain type would (spec/next ch17).
+  want = constBase(want);
   checkCharLiteral(c, e);
   // **A type that implements `[fromNumber]` is a literal's target** (spec/next ch09): the literal is
   // converted statically, which `lowerFromNumberLiterals` arranges from the sites recorded here.
@@ -5447,7 +5512,15 @@ export string typeOfLvalue(C c, Lvalue lv) {
     LField(base, nameTok): {
       string owner = typeOfLvalue(c, base);
       if (owner == typeNone()) { return typeNone(); }
-      return c.fieldType(owner, tokenText(c, nameTok));
+      // `t.0` — a tuple's member, which may be `const T` (spec/next ch14, ch17).
+      string fname = tokenText(c, nameTok);
+      if (isTupleName(owner) && fname.len() > 0 && fname.toBytes()[0] >= 48 && fname.toBytes()[0] <= 57) {
+        string[] ms = tupleMembers(owner);
+        i32 k = 0;
+        for (i32 i = 0; i < fname.len(); i++) { k = k * 10 + (fname.toBytes()[i] as i32 - 48); }
+        return k < ms.len() ? ms[k] : typeNone();
+      }
+      return c.fieldType(constBase(owner), fname);
     }
     LIndex(base, index): {
       string arr = typeOfLvalue(c, base);
@@ -7924,7 +7997,12 @@ void checkFuncrefArgs(C c, string held, Expr[] args, i32 callLine) {
     }
     string got = typeOfExpr(c, args[i]);
     if (got == typeNone() || got == "") { continue; }
-    if (nullableIntoNonNull(c, want, got)) {
+    if (constIntoPlain(c, want, args[i])) {
+      reportExprHinted(c, errNonConstThroughConst(), args[i],
+                       "a const " + want + " passed to parameter " + countText(i + 1) + " of a `" + held
+                       + "`, which is a plain " + want,
+                       "declare that parameter of the function type `const " + want + "` if it only reads it");
+    } else if (nullableIntoNonNull(c, want, got)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
@@ -8067,7 +8145,7 @@ void checkLambda(C c, string slot, bool wantUnknown, Expr e, Param[] params, Stm
   c.inAsync = isAsync;
   c.pushScope(body);
   for (i32 i = 0; i < params.len(); i++) {
-    c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type), params[i].isConst);
+    declareParam(c, params[i]);
     c.noteFuncArity(funcrefArityOfTy(c, params[i].type));
   }
   // **The locals, before the walk** — the same two passes a function body gets, and for the same
@@ -8159,6 +8237,50 @@ string funcrefParamAt(string t, i32 at) {
     }
   }
   return n == at ? trimSpace(inside.slice(start, a.len())) : "";
+}
+
+/**
+ * Funcref `got` with each parameter's `const` dropped where `want` has the same parameter without it —
+ * what `got` looks like to a caller of `want`. Anything else is left as it was, so a mismatch stays one.
+ */
+string funcrefWithoutConstParams(string got, string want) {
+  string gp = funcrefParamText(got);
+  string wp = funcrefParamText(want);
+  string[] gs = splitTopCommas(gp);
+  string[] ws = splitTopCommas(wp);
+  if (gs.len() != ws.len()) { return got; }
+  string out = "";
+  for (i32 i = 0; i < gs.len(); i++) {
+    string g = trimSpace(gs[i]);
+    string w = trimSpace(ws[i]);
+    if (isConstTy(g) && constBase(g) == w) { g = w; }
+    out = out + (i > 0 ? ", " : "") + g;
+  }
+  return "fn(" + out + got.slice(3 + gp.len(), got.len());
+}
+
+/** `A, B<C, D>, E` as its three top-level members. */
+string[] splitTopCommas(string s) {
+  if (trimSpace(s) == "") { return string[].filled(0, ""); }
+  i32 n = 1;
+  i32 depth = 0;
+  u8[] a = s.toBytes();
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] == 40 || a[i] == 60 || a[i] == 91) { depth++; }
+    if (a[i] == 41 || a[i] == 62 || a[i] == 93) { depth--; }
+    if (a[i] == 44 && depth == 0) { n++; }
+  }
+  string[] out = string[].filled(n, "");
+  i32 k = 0;
+  i32 from = 0;
+  depth = 0;
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] == 40 || a[i] == 60 || a[i] == 91) { depth++; }
+    if (a[i] == 41 || a[i] == 62 || a[i] == 93) { depth--; }
+    if (a[i] == 44 && depth == 0) { out[k] = s.slice(from, i); k++; from = i + 1; }
+  }
+  out[k] = s.slice(from, s.len());
+  return out;
 }
 
 /** What is between `fn(` and its matching `)`. */
@@ -8585,7 +8707,12 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
       continue;
     }
     string got = typeOfExpr(c, args[i]);
-    if (nullableIntoNonNull(c, want, got)) {
+    if (constIntoPlain(c, want, args[i])) {
+      reportExprHinted(c, errNonConstThroughConst(), args[i],
+                       "a const " + want + " passed to parameter " + countText(i + 1) + " of `" + name
+                       + "`, which is a plain " + want,
+                       "declare that parameter `const " + want + "` if `" + name + "` only reads it");
+    } else if (nullableIntoNonNull(c, want, got)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
@@ -8908,8 +9035,10 @@ bool indirectLvalue(Lvalue lv) {
 bool constPath(C c, Lvalue lv) {
   match (lv.kind) {
     LIdent(tok): { return c.isConstName(tokenText(c, tok)); }
-    LField(base, nameTok): { return constPath(c, base); }
-    LIndex(base, index): { return constPath(c, base); }
+    // Or a path whose own type is `const T`: `t.0` for a `(const S, i32) t` (ch17), so `t.0.v = 5`
+    // writes through a const reference.
+    LField(base, nameTok): { return constPath(c, base) || isConstTy(typeOfLvalue(c, lv)); }
+    LIndex(base, index): { return constPath(c, base) || isConstTy(typeOfLvalue(c, lv)); }
     LUnwrap(base): { return constPath(c, base); }
   }
 }
@@ -9298,8 +9427,16 @@ i64 switchCaseValue(C c, Expr e) {
 
 bool constExpr(C c, Expr e) {
   match (e.kind) {
-    Ident(tok): { return c.isConstName(tokenText(c, tok)); }
-    Member(obj, nameTok): { return constExpr(c, obj); }
+    // A converted literal is a static the compiler made (`lowerFromNumberLiterals`), standing for a
+    // value the program wrote — `Complex x = 3;` binds a fresh-looking value, not a shared constant.
+    // That it *is* shared is `issues/lang/0360a`; until it is not, it is not const either.
+    Ident(tok): {
+      string id = tokenText(c, tok);
+      if (startsWith(id, "$lit_")) { return false; }
+      return c.isConstName(id);
+    }
+    // A member whose *type* is `const T` — a tuple's `const` member — is const whatever holds it.
+    Member(obj, nameTok): { return constExpr(c, obj) || isConstTy(typeOfExpr(c, e)); }
     Index(arr, index): { return constExpr(c, arr); }
     Unwrap(operand): { return constExpr(c, operand); }
     // What a method hands back through a const receiver is itself const. `this.getInner().mutate()`
@@ -9307,9 +9444,13 @@ bool constExpr(C c, Expr e) {
     // looks like a way to launder the constness and is not one. The receiver decides, not the return
     // type — a method called on something const returns something const.
     Call(callee, args, callTargs): {
+      // A function or method that declares a `const T` result hands back a `const T` (spec/next ch17).
+      if (isConstTy(typeOfExpr(c, e))) { return true; }
       match (callee.kind) {
         Member(obj, nameTok): {
           if (!constExpr(c, obj)) { return false; }
+          // A string is immutable and its methods answer fresh values — `HOST.toBytes()` is a new array.
+          if (typeOfExpr(c, obj) == "string") { return false; }
           // …unless the method can only be handing back something it built out of copies, which
           // reaches nothing the receiver holds [issue 0060].
           i32 mi = c.methodAt(typeOfExpr(c, obj), tokenText(c, nameTok));
@@ -9317,7 +9458,14 @@ bool constExpr(C c, Expr e) {
           // the receiver handed nothing to — `this.core.nowMillis()` in a `const this` method is a
           // fresh ticket, not a piece of `this`.
           if (mi < 0 && c.fieldType(templateOf(typeOfExpr(c, obj)), tokenText(c, nameTok)) != "") { return false; }
-          if (mi < 0) { return true; }
+          // **A method this checker cannot find is silent**, as unknown is everywhere here: a receiver
+          // spelled with a linker key (`Cli@3`) finds neither its methods nor its funcref fields, and
+          // answering "const" for it refused `cli.readDir(d).wait()` in two working files.
+          if (mi < 0) { return false; }
+          // A ticket is made when the call is: what it settles with comes from whatever settles it, not
+          // from the receiver — `this.cli.env(name).wait()` in a `const this` method holds nothing of `this`.
+          string mret = c.methodReturns[mi];
+          if (startsWith(mret, "Pending<") || startsWith(mret, "Ticket<")) { return false; }
           return !returnsOnlyFresh(c, c.methodBodyAt(mi));
         }
         default: { return false; }
@@ -10940,7 +11088,12 @@ void checkMethodArgs(C c, string owner, i32 at, Expr[] args, i32 callLine) {
     }
     string mgot = typeOfExpr(c, args[i]);
     if (mgot == typeNone() || mgot == "") { continue; }
-    if (nullableIntoNonNull(c, mwant, mgot)) {
+    if (constIntoPlain(c, mwant, args[i])) {
+      reportExprHinted(c, errNonConstThroughConst(), args[i],
+                       "a const " + mwant + " passed to parameter " + countText(i + 1) + " of `"
+                       + templateOf(owner) + "." + c.methodNames[at] + "`, which is a plain " + mwant,
+                       "declare that parameter `const " + mwant + "` if the method only reads it");
+    } else if (nullableIntoNonNull(c, mwant, mgot)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, mwant, mgot)) {
       i32 hinted = c.errorCount;
@@ -11299,11 +11452,19 @@ void declareStmt(C c, Stmt s) {
       // immutable one — assigning a new string to the local mutates nothing, which is why
       // `string s = SOME_CONST; s = s + "x";` is ordinary and reported seven times before this said
       // "reference" where it meant "writable".
-      string vt = isAutoTy(c, type) ? (init is null ? typeNone() : typeOfExpr(c, init!)) : typeOfTy(c, type);
+      bool auto = isAutoTy(c, type);
+      string vt = auto ? (init is null ? typeNone() : typeOfExpr(c, init!)) : soleAlternative(typeOfTy(c, type));
+      // **`(const T) x` is a binding of type `const T` that may be rebound** (spec/next ch17
+      // `§wac-const-rebindable-ri3wpfz`) — and `union<const T>` is the same type by another spelling.
+      bool constTyped = isConstTy(vt);
+      vt = constBase(vt);
       string vcore = withoutNull(vt);
       string vbase = vcore == "" ? vt : vcore;
       bool writable = isArrayName(vbase) || c.isStruct(vbase);
-      bool aliasesConst = writable && (init is not null) && constExpr(c, init!);
+      // **Only `auto` takes the initialiser's constness**: it writes no type, so the one it infers is
+      // `const T` when the initialiser is. A written plain type cannot hold a `const` reference —
+      // `checkStmt` refuses that (`§wac-const-no-launder-t584c4n`).
+      bool aliasesConst = constTyped || (auto && writable && (init is not null) && constExpr(c, init!));
       // **A local built out of a live type parameter keeps its written spelling.** `Box<T> b` is
       // unknown to every other rule here, and has to be — but the name then carries no trace of `T`
       // at all, which is what a self-instantiating generic is recognised by. Only when the written
@@ -11966,7 +12127,11 @@ void checkStmt(C c, Stmt s, Ty want) {
         c.setType(tokenText(c, nameTok), typeOfExpr(c, init!));
         return;
       }
-      string wantVar = typeOfTy(c, type);
+      string wantWritten = typeOfTy(c, type);
+      string wantFull = soleAlternative(wantWritten);
+      // `(const T) x` holds a `const T`: the binding's type is `T` here and its constness is a flag.
+      bool wantConst = isConstTy(wantFull);
+      string wantVar = constBase(wantFull);
       checkVoidNullable(c, wantVar, type);
       if (wantVar == typeNone()) { return; }
       // `T x;` — nothing to check against the type; whether it is read before it is written is the
@@ -11995,20 +12160,30 @@ void checkStmt(C c, Stmt s, Ty want) {
         return;
       }
       string gotVar = typeOfExpr(c, initE);
-      if (nullableIntoNonNull(c, wantVar, gotVar)) {
+      // Checked against the type as written: `union<const Rect> b = a` is a conversion between unions,
+      // even though the binding it makes is a `const Rect` (ch18).
+      string wantCheck = wantFull != wantWritten ? wantWritten : wantVar;
+      if (nullableIntoNonNull(c, wantCheck, gotVar)) {
         c.report(errNullableToNonNull(), initE.line, initE.col);
-      } else if (!assignable(c, wantVar, gotVar)) {
+      } else if (!assignable(c, wantCheck, gotVar)) {
         // `i64 x = 1 << count;` is the idiom this catches, and the reason is not in the message
         // without help — `issues/lang/0233a`. Empty for everything else, which falls through to the
         // code's own hint exactly as before.
         string sh = shiftLiteralHint(c, initE);
         if (sh == "") {
           i32 hinted = c.errorCount;
-          reportExpr(c, errInitTypeMismatch(), initE, expectedFound(wantVar, gotVar));
+          reportExpr(c, errInitTypeMismatch(), initE, expectedFound(wantCheck, gotVar));
           widenHint(c, hinted, gotVar, wantVar);
         } else {
-          reportExprHinted(c, errInitTypeMismatch(), initE, expectedFound(wantVar, gotVar), sh);
+          reportExprHinted(c, errInitTypeMismatch(), initE, expectedFound(wantCheck, gotVar), sh);
         }
+      }
+      // **A `const` reference never becomes a plain one** (spec/next ch17 `§wac-const-no-launder-t584c4n`):
+      // a binding written `S` would let it be written through. `const S x` and `(const S) x` hold one.
+      if (!wantConst && !isConst && writableType(c, wantVar) && constExpr(c, initE)) {
+        reportExprHinted(c, errNonConstThroughConst(), initE, "a const " + wantVar + " cannot become a " + wantVar,
+                         "write `(const " + wantVar + ") " + tokenText(c, nameTok)
+                         + "` for a binding you can reassign, or `const " + wantVar + " " + tokenText(c, nameTok) + "`");
       }
       c.expected = wantVar;
       checkExpr(c, initE);
@@ -13144,7 +13319,7 @@ export void declareModule(C c, Program prog, string[] only) {
         for (i32 mi = 0; mi < methods.len(); mi++) {
           string[] emps = string[].defaulted(methods[mi].params.len());
           for (i32 pi = 0; pi < methods[mi].params.len(); pi++) {
-            emps[pi] = typeOfTy(c, methods[mi].params[pi].type);
+            emps[pi] = paramTypeOf(c, methods[mi].params[pi], typeOfTy(c, methods[mi].params[pi].type));
           }
           // **A generic enum's method answers its return type as *written*, for the call site to
           // substitute.** It used to be erased to unknown here, and the reason given was that "there is
@@ -13213,8 +13388,9 @@ export void declareModule(C c, Program prog, string[] only) {
           bool ownLetters = methods[i].typeParams.len() > 0;
           string[] mps = string[].defaulted(methods[i].params.len());
           for (i32 pi = 0; pi < methods[i].params.len(); pi++) {
-            mps[pi] = ownLetters ? writtenTy(c, methods[i].params[pi].type)
-                                 : typeOfTy(c, methods[i].params[pi].type);
+            mps[pi] = paramTypeOf(c, methods[i].params[pi],
+                                  ownLetters ? writtenTy(c, methods[i].params[pi].type)
+                                             : typeOfTy(c, methods[i].params[pi].type));
           }
           c.declareMethod(name, tokenText(c, methods[i].nameTok),
                           !methods[i].hasThis, methods[i].thisConst,
@@ -13245,7 +13421,7 @@ export void declareModule(C c, Program prog, string[] only) {
         // is now the thing standing between a generic call and its return type.
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
         string[] prims = string[].defaulted(params.len());
-        for (i32 i = 0; i < params.len(); i++) { prims[i] = typeOfTy(c, params[i].type); }
+        for (i32 i = 0; i < params.len(); i++) { prims[i] = paramTypeOf(c, params[i], typeOfTy(c, params[i].type)); }
         string[] ftps = string[].defaulted(typeParams.len());
         for (i32 i = 0; i < typeParams.len(); i++) { ftps[i] = tokenText(c, typeParams[i]); }
         // **D3, and it is one change here rather than one at every call.** `funcReturns` is the
@@ -13675,9 +13851,7 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
     }
     checkParams(c, methods[mi].params);
     for (i32 i = 0; i < methods[mi].params.len(); i++) {
-      c.declareConst(tokenText(c, methods[mi].params[i].nameTok),
-                     typeOfTy(c, methods[mi].params[i].type),
-                     methods[mi].params[i].isConst);
+      declareParam(c, methods[mi].params[i]);
       c.noteFuncArity(funcrefArityOfTy(c, methods[mi].params[i].type));
     }
     declareAll(c, methods[mi].body);
@@ -14006,8 +14180,7 @@ export void checkModule(C c, Program prog) {
         c.pushScope(body);
         checkParams(c, params);
         for (i32 i = 0; i < params.len(); i++) {
-          c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type),
-                         params[i].isConst);
+          declareParam(c, params[i]);
           c.noteFuncArity(funcrefArityOfTy(c, params[i].type));
         }
         declareAll(c, body);

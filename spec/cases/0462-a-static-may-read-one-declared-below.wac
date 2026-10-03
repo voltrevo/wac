@@ -3,7 +3,7 @@
 // spec: §wac-static-dep-order-free-au43dhv
 static i32[] AFTER = tail(BEFORE);
 static i32[] BEFORE = [7, 8, 9];
-i32[] tail(i32[] xs) {
+i32[] tail(const i32[] xs) {
   i32[] out = i32[].filled(xs.len() - 1, 0);
   for (i32 i = 1; i < xs.len(); i++) { out[i - 1] = xs[i]; }
   return out;

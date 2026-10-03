@@ -154,7 +154,7 @@ export struct Server {
 
   /** The Diffie-Hellman shared secret: our scalar against the client's share. */
   u8[] shared(const this) {
-    u8[] theirs = this.clientShare();
+    const u8[] theirs = this.clientShare();
     if (theirs.len() != 32) { return u8[](); }
     // **A small-order point makes this all zeros for every scalar**, so a client sending one would
     // hand the session's keys to anyone watching. Empty is already this function's failure answer.
@@ -223,7 +223,7 @@ export struct Server {
    * All four go in one CRYPTO stream, which is what makes them one packet.
    */
   u8[] handshakeMessages(const this) {
-    u8[] dhe = this.shared();
+    (const u8[]) dhe = this.shared();
     if (dhe.len() == 0) { return u8[](); }
 
     u8[] ee = this.extensions();
@@ -257,7 +257,7 @@ export struct Server {
    */
   u8[] flight(const this) {
     if (!this.ok()) { return u8[](); }
-    u8[] dhe = this.shared();
+    (const u8[]) dhe = this.shared();
     if (dhe.len() == 0) { return u8[](); }
     u8[] rest = this.handshakeMessages();
     if (rest.len() == 0) { return u8[](); }
@@ -294,7 +294,7 @@ export struct Server {
 
   /** 1-RTT keys for one direction. `isServer` is the sender's side, as everywhere else. */
   InitialKeys applicationKeysFor(const this, bool isServer) {
-    u8[] dhe = this.shared();
+    const u8[] dhe = this.shared();
     if (dhe.len() == 0) { return InitialKeys(u8[](), u8[](), u8[]()); }
     return applicationKeys(dhe, transcriptOf(this.throughFinished()), isServer);
   }

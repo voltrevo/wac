@@ -1,6 +1,8 @@
-// expect: emits
-// why: the one hole variables.md names — const lives on the variable, not in the type, so a
-// why: non-const parameter accepts it and may write through it (issue 0052)
+// expect: refused
+// spec: §wac-const-no-launder-t584c4n
+// why: `const` is part of the type, so a `const S` passed to a plain `S` parameter is refused — the
+//      callee could write through it. This case pinned the hole while `const` lived on the variable
+//      (issue 0052).
 struct S { i32 v; }
 void g(S s) { s.v = 9; }
 export i32 f(const S c) { g(c); return c.v; }

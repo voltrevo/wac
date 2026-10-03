@@ -18,7 +18,7 @@ export i32 digitValue(i32 c) {
   return -1;
 }
 
-export u8[] encode(u8[] data) {
+export u8[] encode(const u8[] data) {
   Buf out = Buf.create();
   out.reserveFor(data.len() * 2);
   for (i32 i = 0; i < data.len(); i++) {

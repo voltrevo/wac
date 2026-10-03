@@ -197,7 +197,7 @@ export struct CTable {
 }
 
 /** Build the encoding table from the same normalised counts a decoder would be given. */
-export CTable buildCTable(i32[] norm, i32 maxSymbol, i32 log) {
+export CTable buildCTable(const i32[] norm, i32 maxSymbol, i32 log) {
   FseTable t = buildFromCounts(norm, maxSymbol, log);
   i32 size = 1 << log;
   i32[] fromState = i32[].filled((maxSymbol + 1) * size, 0);

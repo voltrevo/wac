@@ -41,7 +41,7 @@ export struct Blowfish {
    * with xor is what stops the cipher being affine.
    */
   i32 f(const this, i32 x) {
-    i32[] s = this.s;
+    const i32[] s = this.s;
     return (((s[x >>> 24] + s[256 + ((x >>> 16) & 255)]) ^ s[512 + ((x >>> 8) & 255)])
             + s[768 + (x & 255)]);
   }
@@ -53,7 +53,7 @@ export struct Blowfish {
    * what the cipher specifies: the final round does not swap.
    */
   void encipher(const this, i32[] v, i32 at) {
-    i32[] p = this.p;
+    const i32[] p = this.p;
     i32 xl = v[at];
     i32 xr = v[at + 1];
     for (i32 i = 0; i < 16; i++) {

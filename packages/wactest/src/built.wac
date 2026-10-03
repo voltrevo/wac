@@ -39,7 +39,7 @@
 import { Cli, Exec, Stat, FileResult } from "std";
 
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
-export i64 newestUnder(Cli cli, string dir) {
+export i64 newestUnder(const Cli cli, string dir) {
   return newestUnderExcept(cli, dir, string[].filled(0, ""));
 }
 
@@ -53,7 +53,7 @@ export i64 newestUnder(Cli cli, string dir) {
  * differed from this file's in exactly that line, which is the kind of divergence two copies of one
  * walk are for. `issues/system/0208`.
  */
-export i64 newestUnderExcept(Cli cli, string dir, string[] skip) {
+export i64 newestUnderExcept(const Cli cli, string dir, string[] skip) {
   i64 newest = 0 as i64;
   string[]? names = cli.readDir(dir).wait();
   if (names is null) { return 0 as i64; }
@@ -161,7 +161,7 @@ export struct Closure {
  * one walk — the build cache wants the time, and a freshness check reporting to a human wants the file
  * name to put in the message and the count to prove the walk resolved.
  */
-export Closure closureOf(Cli cli, string entry) {
+export Closure closureOf(const Cli cli, string entry) {
   string[] seen = string[].filled(CLOSURE_CAP, "");
   seen[0] = entry;
   i32 n = 1;
@@ -265,7 +265,7 @@ export Sources sourcesOf(Cli cli, string entry) {
  * cannot see what it is made of — the safe direction, since the alternative is asserting against
  * yesterday's build.
  */
-export i64 newestInClosure(Cli cli, string entry) {
+export i64 newestInClosure(const Cli cli, string entry) {
   Closure c = closureOf(cli, entry);
   if (!c.complete) { return nowMillis(cli); }
   i64 carried = newestCarried(cli);
@@ -279,7 +279,7 @@ export i64 newestInClosure(Cli cli, string entry) {
  * them, nor the compiler that embeds them, nor the JavaScript host a Deno build bundles. A build made
  * while `std` named a type wrongly stayed cached after the fix, and a dozen tests failed on it.
  */
-export i64 newestCarried(Cli cli) {
+export i64 newestCarried(const Cli cli) {
   string[] carried = ["core", "std", "packages/wacc/src", "packages/platform/host"];
   i64 newest = 0 as i64;
   for (i32 i = 0; i < carried.len(); i++) {
@@ -290,13 +290,13 @@ export i64 newestCarried(Cli cli) {
 }
 
 /** A stand-in for "newer than anything", used when the closure cannot be read. */
-i64 nowMillis(Cli cli) {
+i64 nowMillis(const Cli cli) {
   Stat s = cli.stat(wacBinary(cli)).wait();
   return s.exists ? s.modifiedMillis + (1000000 as i64) : 1000000000000000;
 }
 
 /** The path of the `wac` binary these tests build and run with. */
-export string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+export string wacBinary(const Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
 /**
  * The newest mtime of `path`, whether it is a file or a directory.
@@ -422,7 +422,7 @@ export string seedStale(Cli cli, string seed) {
  * comparison cannot collide, the file is two lines, and a missing sidecar forces a rebuild, which is
  * the right way to be wrong.
  */
-export string builtProgram(Cli cli, string entry, string name, string[] grants) {
+export string builtProgram(const Cli cli, string entry, string name, string[] grants) {
   string wac = wacBinary(cli);
   string dir = cli.cwd().wait() + "/.cache/built-" + name;
   cli.mkdir(dir, true).wait();
@@ -457,7 +457,7 @@ export string builtProgram(Cli cli, string entry, string name, string[] grants) 
   // remembered to look. The compiler's own message went to this process's stderr on the way past, so
   // the reason is in the run's output even though the return value cannot carry it. `.flags` goes too,
   // or a later build with the same grants would find a sidecar agreeing with it and no module.
-  Exec built = cli.exec(wac, args, u8[]()).wait();
+  (const Exec) built = cli.exec(wac, args, u8[]()).wait();
   if (!built.ran() || built.status != 0) {
     cli.remove(stem + ".wasm", false).wait();
     cli.remove(stem + ".flags", false).wait();

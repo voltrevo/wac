@@ -87,7 +87,7 @@ export bool p256Decodes(u8[] point) { return curveDecodes(p256(), point); }
 export u8[] p256Ecdh(u8[] priv, u8[] peerPublic) { return curveEcdh(p256(), priv, peerPublic); }
 
 /** Verify an ECDSA-P256 signature over SHA-256 of `msg`. `sig` is r ++ s, 64 bytes. */
-export bool p256Verify(u8[] publicKey, u8[] msg, u8[] sig) {
+export bool p256Verify(u8[] publicKey, const u8[] msg, u8[] sig) {
   return ecdsaVerify(p256(), publicKey, sha256(msg), sig);
 }
 
@@ -97,7 +97,7 @@ export bool p256VerifyDigest(u8[] publicKey, u8[] digest, u8[] sig) {
 }
 
 /** Sign SHA-256 of `msg` with the caller's `k`. Empty on a k that does not work. */
-export u8[] p256Sign(u8[] priv, u8[] msg, u8[] k) {
+export u8[] p256Sign(const u8[] priv, u8[] msg, const u8[] k) {
   return ecdsaSign(p256(), priv, sha256(msg), k);
 }
 

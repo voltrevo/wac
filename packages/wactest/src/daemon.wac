@@ -219,7 +219,7 @@ export bool waitForLogWithin(Core core, Cli cli, Daemon d, string text, i32 mill
 }
 
 /** Whatever the daemon wrote, for a message about why it did not come up. */
-export string logOf(Cli cli, Daemon d) {
+export string logOf(Cli cli, const Daemon d) {
   return string.fromBytes(cli.readFile(d.log).wait().bytes);
 }
 

@@ -500,7 +500,7 @@ i32[] readDynamicLengths(BitReader br, i32[] outSplit) {
   if (hlit > 286 || hdist > 30) { trap; }   // beyond what the format defines
 
   // The code-length code, sent in a fixed permuted order.
-  i32[] order = CL_ORDER;
+  const i32[] order = CL_ORDER;
   i32[] clLengths = i32[].filled(19, 0);
   for (i32 i = 0; i < hclen; i++) {
     clLengths[order[i]] = br.readBits(3);

@@ -2533,6 +2533,8 @@ i32 scan_params() {
   i32 st = nfnparam;
   next();
   while (ispunct(41) == 0 & kind() != K_EOF) {
+    // `const P p` — the parameter's type is `P` to this pass, as `function` reads it (spec/next ch17).
+    eatword("const");
     if (isword("this")) { next(); } else {
       i32 s0 = tp;
       i32 pt = prim_type();

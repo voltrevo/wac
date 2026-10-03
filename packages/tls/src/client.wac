@@ -399,7 +399,7 @@ u8[] fail(CConn c, i32 code, i32 alert, Writer out, Writer appData) {
  * hundreds; one is enough to demonstrate that the check happens, and refusing to pretend
  * otherwise is why this takes a root rather than a flag to skip verification.
  */
-export u8[] tlsClientInit(u8[] host, u8[] rootDer, i32[] rootOffsets, u8[] ephemeralPriv,
+export u8[] tlsClientInit(u8[] host, const u8[] rootDer, const i32[] rootOffsets, u8[] ephemeralPriv,
                           u8[] p256Priv, u8[] kemSeed, u8[] clientRandom, i64 now) {
   if (ephemeralPriv.len() != 32) { trap; }
   if (p256Priv.len() != 32) { trap; }

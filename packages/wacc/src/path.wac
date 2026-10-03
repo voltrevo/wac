@@ -269,7 +269,7 @@ export struct Res {
  * A mapping first, because only the reader could have resolved one; then the ordinary rule with the
  * importing file's project root.
  */
-export string resolveVia(Res res, string[] paths, string from, string spec) {
+export string resolveVia(const Res res, string[] paths, string from, string spec) {
   string mapped = res.mappedTo(from, spec);
   if (mapped != "") { return mapped; }
   return resolveFromAt(from, spec, res.rootAt(paths, from), res.base);

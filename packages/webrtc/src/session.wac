@@ -84,7 +84,7 @@ export struct Session {
   bool peerIsExpected(const this) {
     if (this.expectFingerprint.len() == 0) { return false; }
     if (!this.peer.peerAuthenticated()) { return false; }
-    u8[] der = this.peer.peerCertificate();
+    const u8[] der = this.peer.peerCertificate();
     if (der.len() == 0) { return false; }
     return hexColons(sha256(der)) == this.expectFingerprint;
   }

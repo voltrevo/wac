@@ -172,7 +172,7 @@ export u8[] writeIndex(const GitIndex idx) {
   pushBe32(out, idx.entries.len());
 
   for (i32 e = 0; e < idx.entries.len(); e++) {
-    IndexEntry it = idx.entries.get(e);
+    const IndexEntry it = idx.entries.get(e);
     i32 start = out.len;
     // ctime, mtime, dev, ino — twenty-four bytes of cache that git will refill.
     for (i32 i = 0; i < 24; i++) { out.push(0); }

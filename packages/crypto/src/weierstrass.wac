@@ -147,7 +147,7 @@ Jac jacSelect(Jac a, Jac b, i32 pick) {
 }
 
 /** scalar * P, most significant bit first. `scalar` is big-endian, `byteLen` long. */
-export Jac jacMul(Curve c, u8[] scalar, Jac p) {
+export Jac jacMul(Curve c, const u8[] scalar, Jac p) {
   Jac acc = jacInfinity(c);
   i32 bits = 8 * byteLen(c);
   for (i32 i = 0; i < bits; i++) {
@@ -266,7 +266,7 @@ export u8[] curveEncode(Curve c, Jac p) {
  * both differ from n in their *first* byte — so both runs left the old loop at i=0 and agreed. A
  * differential is only as wide as its inputs.
  */
-export i32 cmpBE(u8[] a, u8[] b) {
+export i32 cmpBE(const u8[] a, u8[] b) {
   i32 lt = 0;
   i32 gt = 0;
   for (i32 i = a.len() - 1; i >= 0; i--) {
@@ -279,7 +279,7 @@ export i32 cmpBE(u8[] a, u8[] b) {
   return gt - lt;
 }
 
-export bool isZeroBE(u8[] a) {
+export bool isZeroBE(const u8[] a) {
   i32 acc = 0;
   for (i32 i = 0; i < a.len(); i++) { acc = acc | a[i] as i32; }
   return acc == 0;
@@ -393,7 +393,7 @@ export bool ecdsaVerify(Curve c, u8[] publicKey, u8[] digest, u8[] sig) {
  * belongs where the caller can see the responsibility. Returns r ++ s, or an empty array
  * if this k does not work, in which case the caller must try another.
  */
-export u8[] ecdsaSign(Curve c, u8[] priv, u8[] digest, u8[] k) {
+export u8[] ecdsaSign(Curve c, const u8[] priv, u8[] digest, const u8[] k) {
   i32 len = byteLen(c);
   if (priv.len() != len || k.len() != len) { trap; }
   if (isZeroBE(k) || cmpBE(k, c.order) >= 0) { return u8[](); }

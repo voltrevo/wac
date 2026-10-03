@@ -16,7 +16,7 @@ i32 hashLen() { return 32; }
  * An empty salt is legal and means a block of zeros, which normalizeKey already
  * produces — so no special case is needed here.
  */
-export u8[] hkdfExtract(u8[] salt, u8[] ikm) {
+export u8[] hkdfExtract(u8[] salt, const u8[] ikm) {
   return hmacSha256(salt, ikm);
 }
 

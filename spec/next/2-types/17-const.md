@@ -62,7 +62,7 @@ In JavaScript `const` binds the name and leaves the contents open. Here it reach
 ## Const travels with the reference
 
 A reference obtained through a `const` one is `const` itself — read from a field, returned by a method, or
-copied into a new binding:
+copied into a new binding — and it stays `const`: no binding of a plain type can hold it.
 
 ```wac
 // expect: emits
@@ -83,10 +83,13 @@ struct Outer {
     // ERROR: the result of a call through a const receiver keeps its constness
     // this.getInner().mutate();
 
-    Inner copy = this.inner;               // the binding may be reassigned...
+    (const Inner) copy = this.inner;       // the binding may be reassigned...
 
     // ERROR: ...but the object it refers to is const
     // copy.mutate();
+
+    // ERROR: a const Inner cannot become an Inner
+    // Inner plain = this.inner;
   }
 }
 
@@ -98,9 +101,12 @@ export void inspect(const Outer o) { o.tryMutate(); }
 `[§wac-deep-const-accessor-w3kf8nq]` A method that returns a reference reached through its `const` receiver
 returns it `const`: writing through the result is refused.
 
-`[§wac-deep-const-alias-p6mk2wf]` Assigning a `const` reference to a plain local is allowed — read-only
-cursors depend on it — but the constness comes with it: writes and `this`-taking calls through the new
-binding are refused, and it may not be stored where it would be reachable as mutable.
+`const` at the head of a declaration applies throughout: the binding cannot be rebound, and what it holds is
+`const`. Written in parentheses, it applies to the type alone — `(const T) x` is a binding that may be
+reassigned, holding a `const T`. That is how a read-only cursor is written:
+
+`[§wac-const-rebindable-ri3wpfz]` `(const T) x` declares a binding of type `const T` that may be reassigned;
+writes and `this`-taking calls through it are refused like those through any `const` reference.
 
 ```wac
 // expect: answers twoNodes = 2
@@ -108,7 +114,7 @@ struct Node { i32 v; Node? next; }
 
 i32 length(const Node head) {
   i32 n = 0;
-  Node? cur = head;                        // a cursor over const data
+  (const Node)? cur = head;                // a cursor over const data: rebound, never written through
   while (cur is not null) {
     n++;
     cur = cur!.next;
@@ -187,7 +193,8 @@ container does not make the references it contains mutable: a fresh array holdin
 ## Const is part of a reference's type
 
 `const T` is the type of a `const` reference to a `T`. A `T` widens to a `const T`; a `const T` never
-becomes a `T`:
+becomes a `T`. Where a type is written without a binding — a type argument, a tuple member, a parameter of a
+function type — `const T` needs no parentheses: `Vec<const S>`, `(const S, i32)`, `fn<i32(const S)>`.
 
 ```wac
 // expect: answers widening = 1

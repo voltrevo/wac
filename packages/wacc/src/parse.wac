@@ -1079,12 +1079,11 @@ export Ty parseType(P p) {
     // not yet kept — the funcref's type says `S`, so the `const` refuses nothing here a declaration's
     // own `const` parameter would.
     if (!p.at1(kRparen())) {
-      p.eat(kConst());
-      params.push(parseType(p));
+      // `const T` is a type here — a function value carries its parameters' promises (spec/next ch17).
+      params.push(parseTypeArg(p));
       while (p.eat(kComma())) {
         if (p.at1(kRparen())) { break; }
-        p.eat(kConst());
-        params.push(parseType(p));
+        params.push(parseTypeArg(p));
       }
     }
     p.expect(kRparen());
@@ -1096,12 +1095,18 @@ export Ty parseType(P p) {
     // at length one, so it is eaten wherever it is.
     p.advance();
     TyList members = TyList.create();
+    bool sawComma = false;
     while (!p.at1(kRparen()) && !p.at1(kEof())) {
-      members.push(parseType(p));
+      // A member has no binding of its own, so `const T` is its type (spec/next ch17).
+      members.push(parseTypeArg(p));
       if (!p.eat(kComma())) { break; }
+      sawComma = true;
     }
     p.expect(kRparen());
-    node = tyTuple(members.take(), line, col);
+    Ty[] ms = members.take();
+    // **`(T)` is `T` in parentheses**, not a tuple (spec/next ch14 `§wac-tuple-zero-one-fhcjtvh`) —
+    // and `(const T) x` is how a binding that may be rebound holds a `const T` (ch17).
+    node = ms.len() == 1 && !sawComma ? ms[0] : tyTuple(ms, line, col);
   } else if (p.at1(kIdent()) && p.textAt(0) == "type" && p.kindAt(1) == kLparen()) {
     // `type(e)` — the one expression a type position takes (spec/next ch30).
     p.advance();

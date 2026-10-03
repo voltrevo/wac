@@ -47,7 +47,7 @@ export i64[] feOne() {
   return h;
 }
 
-export i64[] feCopy(i64[] a) {
+export i64[] feCopy(const i64[] a) {
   i64[] h = i64[].filled(10, 0);
   for (i32 i = 0; i < 10; i++) { h[i] = a[i]; }
   return h;
@@ -258,7 +258,7 @@ export u8[] feToBytes(i64[] hIn) {
  * showed the branch could not be taken; the masking is structural, and saying so is
  * better than a guard that reads as if the case were live.
  */
-export i64[] feFromBytes(u8[] s) {
+export i64[] feFromBytes(const u8[] s) {
   i64[] h = i64[].filled(10, 0);
   i32 bitPos = 0;
   for (i32 i = 0; i < 10; i++) {

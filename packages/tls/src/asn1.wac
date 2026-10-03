@@ -73,7 +73,7 @@ export struct Der {
    */
   bool[] bad;
 
-  Der create(u8[] buf) { return Der(buf, 0, buf.len(), bool[].filled(1, false)); }
+  Der create(const u8[] buf) { return Der(buf, 0, buf.len(), bool[].filled(1, false)); }
 
   /**
    * A cursor over part of a buffer, with `end` clamped to what the buffer holds.

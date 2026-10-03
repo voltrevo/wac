@@ -222,7 +222,7 @@ export struct Procs {
   /** The row for `pid`, or null. */
   Proc? find(const this, i32 pid) {
     for (i32 i = 0; i < this.rows.len(); i++) {
-      Proc p = this.rows.get(i);
+      (const Proc) p = this.rows.get(i);
       if (p.pid == pid) { return p; }
     }
     return null;

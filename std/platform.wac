@@ -399,7 +399,7 @@ export struct Pending<T> {
    * caller say so a second time; `linkedTo` above is for a ticket some *other* capability handed
    * out, and `Cli`'s are all of those.
    */
-  Pending<T> on(const this, Sched s) {
+  Pending<T> on(const this, const Sched s) {
     return Pending<T>(this.id, this.resolve, this.settled, this.drop, s, this.waitable);
   }
 
@@ -631,7 +631,7 @@ export struct Captured {
    */
   bool truncated;
 
-  Captured of(u8[] out, u8[] err, bool truncated) { return Captured(out, err, truncated); }
+  Captured of(const u8[] out, const u8[] err, bool truncated) { return Captured(out, err, truncated); }
 }
 
 export struct Picked {
@@ -2681,7 +2681,7 @@ export struct Cli {
     fn<CallResult(i32, string, i32)> call,
     fn<void(i32)> unload,
     fn<string(u8[])> validated,
-    Sched sched
+    const Sched sched
   ) {
     return Cli(
       () => argCount().on(sched), (i32 a0) => arg(a0).on(sched),

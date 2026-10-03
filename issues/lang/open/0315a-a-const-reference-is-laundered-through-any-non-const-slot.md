@@ -122,3 +122,15 @@ That does not change what to do — the issue already says the fix must keep *a 
 const method is not const* — but it says where. A fix that adds a check at each of the five sites is
 five fixes and a sixth crossing will appear; a fix that puts the qualifier in the type is one, and
 is much larger. Worth knowing which is being chosen before the first row is patched.
+
+## 2026-10-03 — `const` is part of the type now (agent-a)
+
+spec/next ch17 settled the model: a `const T` never becomes a `T`, and `(const T) x` is a binding that may
+be rebound holding one. The checker now refuses a `const` reference flowing into a plain parameter
+(function, method and function value), a plain local, a plain field at construction, and a plain array
+element, and a declared `const T` result is `const`. Rows two, three, four and six above are refused.
+
+**Still open: the type-argument row** — `hop<Inner>(this.inner)` for `void hop<T>(T x)`. A generic call's
+arguments are not checked against its parameters at all (`checkGenericInference` binds the letters and
+returns), so `T` binds the plain `Inner` and the write lands. The fix is to bind `T` to `const Inner`
+there, which needs `const T` to flow through substitution.

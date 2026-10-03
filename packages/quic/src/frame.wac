@@ -498,7 +498,7 @@ export Reassembly cryptoStream(u8[] payload) {
  * "this could not be done whole", and for the same reason: a frame written partially is worse than
  * one not written, because the bytes after it are then read as a frame.
  */
-export i32 writeCrypto(u8[] out, i32 at, i64 offset, u8[] data) {
+export i32 writeCrypto(u8[] out, i32 at, i64 offset, const u8[] data) {
   i32 need = 1 + encodedLength(offset) + encodedLength(data.len() as i64) + data.len();
   i32 room = out.len();
   if (at < 0) { return 0; }

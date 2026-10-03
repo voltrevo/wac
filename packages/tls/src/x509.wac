@@ -232,7 +232,7 @@ i64 readTime(Der v) {
  * algorithm, the unique identifiers — are skipped rather than read. Parsing something to
  * throw it away is a place for a bug to hide with nothing to catch it.
  */
-export Cert parseCert(u8[] der) {
+export Cert parseCert(const u8[] der) {
   Der top = Der.create(der);
   Der cert = top.element(tagSequence());
 
@@ -662,7 +662,7 @@ bool matchesOne(u8[] pat, i32 at, i32 len, u8[] host) {
  * back to `len`: a shorter r is not a smaller signature, it is the same number with fewer
  * digits.
  */
-u8[] ecdsaFromDer(u8[] der, i32 len) {
+u8[] ecdsaFromDer(const u8[] der, i32 len) {
   Der outer = Der.create(der);
   Der seq = outer.element(tagSequence());
   u8[] r = unsignedInteger(seq.element(tagInteger()).rest());
@@ -763,7 +763,7 @@ export i32 verifyChain(Cert leaf, Cert root, u8[] host, i64 now) {
  * signature its certificate can actually carry, and accepting a mismatch would mean
  * verifying an ECDSA signature against whatever bytes an RSA modulus happens to be.
  */
-export bool certVerifySignature(Cert c, i32 scheme, u8[] content, u8[] signature) {
+export bool certVerifySignature(Cert c, i32 scheme, const u8[] content, const u8[] signature) {
   if (scheme == 0x0807) {                       // ed25519
     if (c.keyType != 1) { return false; }
     return ed25519Verify(c.publicKey, content, signature);
@@ -825,7 +825,7 @@ export bool certVerifySignature(Cert c, i32 scheme, u8[] content, u8[] signature
  * the two blobs, because wac has no array of byte arrays crossing a boundary and
  * flattening is cheaper than a struct nobody else needs.
  */
-export i32 verifyPath(u8[] chain, i32[] chainOffsets, u8[] roots, i32[] rootOffsets,
+export i32 verifyPath(const u8[] chain, const i32[] chainOffsets, u8[] roots, i32[] rootOffsets,
                       u8[] host, i64 now, i32 maxDepth) {
   i32 nChain = chainOffsets.len() / 2;
   i32 nRoots = rootOffsets.len() / 2;

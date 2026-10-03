@@ -54,7 +54,7 @@ export u8[] absentName() { return u8[].filled(20, 0); }
 export bool noRefsYet(const Advertised ad) {
   if (ad.refs.len() != 1) { return false; }
   if (ad.refs.get(0).name != "capabilities^{}") { return false; }
-  u8[] t = ad.refs.get(0).target;
+  const u8[] t = ad.refs.get(0).target;
   for (i32 i = 0; i < t.len(); i++) {
     if (t[i] != 0) { return false; }
   }

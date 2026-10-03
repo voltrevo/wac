@@ -352,7 +352,7 @@ export Built buildFiles(string[] paths, string[] sources, string entry) {
 }
 
 /** `buildFiles` with the project root each file sits in — `design/lang/0009` D7. */
-export Built buildFilesIn(string[] paths, string[] sources, Res res, string entry) {
+export Built buildFilesIn(string[] paths, string[] sources, const Res res, string entry) {
     return buildLinked(paths, lowerSources(paths, sources, res), res, entry);
 }
 
@@ -661,7 +661,7 @@ export string namesFiles(string[] paths, string[] sources, string entry) {
  *
  * Bounded, so a cycle of re-exports ends rather than spins.
  */
-string[] followExport(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs, Res res,
+string[] followExport(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs, const Res res,
                       string at, string nm) {
   string local = "";
   for (i32 hop = 0; hop < 32; hop++) {
@@ -776,7 +776,7 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
  * a copy, it had also missed `issues/lang/0133`, so it walked the graph from the text. One body now.
  * `issues/lang/0175a`.
  */
-export string diagnoseGraphIn(string[] paths, string[] rawSources, Res res, string entry) {
+export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res, string entry) {
   // Namespaces are lowered first, so checking a project reads what a build would (spec/next ch03).
   string[] sources = lowerSources(paths, rawSources, res);
   string out = "";
@@ -925,7 +925,7 @@ i32 indexVia(ByLen ix, string[] paths, string path) {
   return 0 - 1;
 }
 
-Edges edgesOfIn(string[] paths, string[] sources, Res res) {
+Edges edgesOfIn(string[] paths, string[] sources, const Res res) {
   i32 n = paths.len();
   ByLen ix = byLength(paths);
   // **Parsed once, resolved once, and looked up through buckets — measured at 41% of a whole-corpus
@@ -1438,7 +1438,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
  * `assume` is `name=type` lines, one per `auto` function in the entry, the type empty where this path
  * excludes it; `target` is the function collected, `""` for an ordinary check.
  */
-C checkFilesAutoIn(string[] callerPaths, string[] callerSources, Res res, string entry,
+C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, string entry,
                    i32[] counts, Lexed?[] lexes, Program?[] progs, string assume, string target,
                    string placeholder) {
   // **`core` is a file, and the checker had never read it.** An import from `core` used to declare
@@ -1847,7 +1847,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, Res res, string
  * The source-to-source passes every route takes before parsing for real: namespaces flattened
  * (ch03), then `auto` results written in (ch34). Both are idempotent.
  */
-export string[] lowerSources(string[] paths, string[] sources, Res res) {
+export string[] lowerSources(string[] paths, string[] sources, const Res res) {
   string[] s1 = lowerPrimFromNumber(lowerTypeDefaults(lowerVariadics(lowerStaticLocals(lowerNamespaces(paths, sources, res)))));
   string[] s2 = lowerAutoReturns(paths, lowerResultPlaceholders(paths, lowerExportInstances(s1), res), res);
   return lowerFromNumberLiterals(paths, s2, res);
@@ -1902,7 +1902,7 @@ string[] lowerPrimFromNumber(string[] sources) {
  * NumberLiteral("3")), "3");`, so the conversion runs at compile time, once per occurrence, and an
  * `Err` traps there — a compile error naming the literal. The checker says which literals these are.
  */
-string[] lowerFromNumberLiterals(string[] paths, string[] sources, Res res) {
+string[] lowerFromNumberLiterals(string[] paths, string[] sources, const Res res) {
   string types = "|";
   for (i32 i = 0; i < sources.len(); i++) {
     string s = sources[i];
@@ -2168,7 +2168,7 @@ string withTypeDefaults(string text, string table) {
  * types and what each `try` propagates, and is written in as that union. A function whose result names
  * no placeholder is left alone.
  */
-string[] lowerResultPlaceholders(string[] paths, string[] sources, Res res) {
+string[] lowerResultPlaceholders(string[] paths, string[] sources, const Res res) {
   bool any = false;
   for (i32 i = 0; i < sources.len(); i++) { if (sources[i].indexOf("union>") >= 0 || sources[i].indexOf("union,") >= 0) { any = true; } }
   if (!any) { return sources; }
@@ -2215,7 +2215,7 @@ struct PlaceholderEdits {
 }
 
 /** The placeholders in one result type `ret` of function `fname`, gathered and queued as edits. */
-void placeholderEditsFor(string[] paths, string[] sources, Res res, i32 f, u8[] src, Lexed lx, Ty ret,
+void placeholderEditsFor(string[] paths, string[] sources, const Res res, i32 f, u8[] src, Lexed lx, Ty ret,
                          string fname, PlaceholderEdits ed) {
   match (ret.kind) {
     Named(rtok, rargs): {
@@ -2923,7 +2923,7 @@ string autoWideOf(AutoRun run, string key) {
  * be inferred stays `auto`, and the checker says why (`errAutoUnresolved`). An empty collection is
  * `never`, and `never?` is spelled `null`, which is how the language writes it (ch10).
  */
-export string[] lowerAutoReturns(string[] paths, string[] sources, Res res) {
+export string[] lowerAutoReturns(string[] paths, string[] sources, const Res res) {
   bool any = false;
   for (i32 i = 0; i < sources.len(); i++) { if (mentionsAutoReturn(sources[i])) { any = true; } }
   if (!any) { return sources; }
@@ -3026,7 +3026,7 @@ string bytesBetween(u8[] src, i32 from, i32 to) {
  * bound that was hit. **A bound is reported rather than absorbed**: a truncated table that says
  * `sealed` about a file it ran out of room for is the one failure this must not have.
  */
-export string capReachFiles(string[] paths, string[] sources) {
+export string capReachFiles(const string[] paths, const string[] sources) {
   i32 n = 0;
   for (i32 i = 0; i < paths.len(); i++) { if (paths[i] != "") { n = i + 1; } }
 

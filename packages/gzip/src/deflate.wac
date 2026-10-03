@@ -400,7 +400,7 @@ export void writeDynamicBlock(BitWriter w, Tokens tok, Tables t, bool bfinal) {
   Huff cl = Huff.build(clFreq, numCl(), maxClBits());
 
   // Drop trailing zero lengths in the transmission order; at least 4 are sent.
-  i32[] order = CL_ORDER;
+  const i32[] order = CL_ORDER;
   i32 hclen = numCl();
   while (hclen > 4 && cl.len[order[hclen - 1]] == 0) {
     hclen--;

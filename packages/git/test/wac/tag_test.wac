@@ -61,7 +61,7 @@ struct Git {
 
   /** stdout and stderr together — `git fsck` prints its findings on stderr. */
   string both(const this, string[] args) {
-    Exec r = this.run(args, u8[]());
+    const Exec r = this.run(args, u8[]());
     return trimmed(string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
   }
 }

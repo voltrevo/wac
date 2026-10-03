@@ -16,6 +16,7 @@ not have.
 | `§wac-nonnull-isnull-warn-2mkq7np` | `§wac-nonnull-isnull-may-warn-udv9kfr` | a decided null test *may* warn; no warning is mandatory ([10](../2-types/10-nullability.md)) |
 | `§wac-struct-default-ar2wgyf` | `§wac-field-initialiser-default-28c4ffw` | a field's default is its initialiser, and a field without one has none ([12](../2-types/12-structs.md)) |
 | `§wac-recursive-nodefault-1os4yl4` | `§wac-uninhabited-valid-2f9cxmt` | a type no value can inhabit is valid; it cannot be defaulted ([11](../2-types/11-never-and-uninhabited.md)) |
+| `§wac-deep-const-alias-p6mk2wf` | `§wac-const-rebindable-ri3wpfz` | a `const` reference never becomes non-const, so a plain local cannot hold one; a reassignable binding holding one is written `(const T) x` ([17](../2-types/17-const.md)) |
 | `§wac-override-k7fn3qp` | `§wac-override-virtual-8bj3d46` | `override` replaces only a method the parent marked `virtual` ([12](../2-types/12-structs.md)) |
 | `§wac-override-missing-m4jw2rk` | `§wac-override-required-fgt5fkj` | the same requirement, against a `virtual` parent method |
 | `§wac-static-disp-x4rk7m2` | `§wac-virtual-dispatch-a4xhpib` | a `virtual` method dispatches on the runtime type; a non-`virtual` one is final ([12](../2-types/12-structs.md)) |

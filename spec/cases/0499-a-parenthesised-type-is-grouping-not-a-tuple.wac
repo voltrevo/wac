@@ -1,0 +1,9 @@
+// expect: answers grouped = 7
+// spec: §wac-tuple-zero-one-fhcjtvh
+// why: `(S)` in a type is `S` in parentheses, as `(x)` in an expression is `x` — a one-tuple is `(S,)`
+// from: spec/next ch14
+struct S { i32 v; }
+export i32 grouped() {
+  (S) s = S(7);
+  return s.v;
+}

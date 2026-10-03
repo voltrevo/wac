@@ -90,7 +90,7 @@ export struct Writer {
   void u24(this, i32 v) { this.u8((v >> 16) & 0xFF); this.u16(v & 0xFFFF); }
   void u32(this, i32 v) { this.u16((v >> 16) & 0xFFFF); this.u16(v & 0xFFFF); }
 
-  void bytes(this, u8[] src) {
+  void bytes(this, const u8[] src) {
     this.reserve(src.len());
     for (i32 i = 0; i < src.len(); i++) { this.buf[this.len + i] = src[i]; }
     this.len += src.len();
@@ -107,7 +107,7 @@ export struct Writer {
     this.u16(src.len());
     this.bytes(src);
   }
-  void vec24(this, u8[] src) {
+  void vec24(this, const u8[] src) {
     if (src.len() > 16777215) { trap; }
     this.u24(src.len());
     this.bytes(src);

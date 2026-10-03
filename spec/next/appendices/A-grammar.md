@@ -253,14 +253,15 @@ The closing tag is carried, not matched by the grammar: `<div></span>` parses, a
 type           = base_type , { "?" | "[" , "]" } ;          (* `T??` is its own type: 10 *)
 
 base_type      = name , [ type_args ]                         (* primitive, struct, enum, alias, generic *)
-               | "fn" , "<" , ret_type , "(" , [ type , { "," , type } , [ "," ] ] , ")" , ">"   (* 20 *)
-               | "(" , ")" | "(" , type , "," , [ type , { "," , type } , [ "," ] ] , ")"     (* tuples: 14 *)
-               | "(" , type , ")"
-               | "union" , [ "<" , type , { "," , type } , [ "," ] , ">" ]                    (* 18, 33 *)
+               | "fn" , "<" , ret_type , "(" , [ elem_type , { "," , elem_type } , [ "," ] ] , ")" , ">"   (* 20 *)
+               | "(" , ")" | "(" , elem_type , "," , [ elem_type , { "," , elem_type } , [ "," ] ] , ")"   (* tuples: 14 *)
+               | "(" , elem_type , ")"                        (* grouping; `(const T) x` may be rebound: 17 *)
+               | "union" , [ "<" , elem_type , { "," , elem_type } , [ "," ] , ">" ]          (* 18, 33 *)
                | "auto"                                                                       (* 33 *)
                | "type" , "(" , expr , ")" ;                                                 (* 30 *)
 
-type_args      = "<" , type , { "," , type } , [ "," ] , ">" ;
+type_args      = "<" , elem_type , { "," , elem_type } , [ "," ] , ">" ;
+elem_type      = [ "const" ] , type ;                         (* a type with no binding of its own: 17 *)
 type_name      = name , [ type_args ] ;
 element_type   = base_type , { "?" } ;
 ```
