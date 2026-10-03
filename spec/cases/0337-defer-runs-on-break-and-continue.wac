@@ -1,6 +1,6 @@
 // expect: answers f = 4
 // why: leaving a loop body by `break` or `continue` leaves the block, so its deferred statement runs
-// from: `defer` (design/lang/0016), spec/next ch25 §wac-defer-7tf59c7
+// from: `defer` (design/lang/0016), spec ch25 §wac-defer-7tf59c7
 struct Log { i32 n; }
 
 export i32 f() {

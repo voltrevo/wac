@@ -1,6 +1,6 @@
 // expect: answers run = 0
 // why: a child converts through core's toNode, and a string's conversion is a Text node holding it
-// from: spec/next ch23 §wac-markup-child-tonode-vp842rw
+// from: spec ch23 §wac-markup-child-tonode-vp842rw
 import { Attr, Node } from "core";
 
 export i32 run() {

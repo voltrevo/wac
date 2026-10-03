@@ -1,6 +1,6 @@
 // expect: answers f = 49
 // why: a type pattern tests a nullable for presence, a boxed primitive for a value, and a reference for a subtype, binding it at that type
-// from: `matches` (design/lang/0016), spec/next ch25
+// from: `matches` (design/lang/0016), spec ch25
 struct Rgb { i32 r; i32 g; i32 b; }
 struct Shape { i32 k; }
 struct Circle : Shape { i32 r; }

@@ -10,7 +10,7 @@
 // is not something to generate a lexer from — so a caller brings its own lexer and treats those
 // names as terminals. That is the honest arrangement rather than a gap, and `ebnfaudit` says so.
 
-export const GRAMMAR = "spec/next/appendices/A-grammar.md";
+export const GRAMMAR = "spec/appendices/A-grammar.md";
 
 /** One EBNF term. `alt` is a choice, `seq` a concatenation, the rest wrap a single child. */
 export type Term =

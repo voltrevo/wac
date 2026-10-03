@@ -1,6 +1,6 @@
 // expect: answers run = true true 4
 // why: `match` takes a `T?` when a `null` arm or a `default` covers the absent case; the other arms see it non-null
-// from: spec/next ch25 §wac-match-nullable-subject-zcnasbp
+// from: spec ch25 §wac-match-nullable-subject-zcnasbp
 enum Shape { Circle(f64 r), Square(f64 side) }
 
 export f64? area(Shape? s) {

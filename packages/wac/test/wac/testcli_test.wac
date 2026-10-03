@@ -134,7 +134,7 @@ export string test_a_filter_after_the_path_keeps_its_value(Core core, Cli cli) {
   t.eqI32(r.status, 0, said(r));
   t.isTrue(!contains(said(r), "did not run"), "the filter's value is not a target: " + said(r));
 
-  // And a filter matching nothing is said by name — spec/next ch47: "neither is a failure, and
+  // And a filter matching nothing is said by name — spec ch47: "neither is a failure, and
   // neither is silence" — so a typo shows in the output rather than in the status.
   Exec none = wac(cli, ["test", dir, "--filter", "nosuchtest"]);
   t.eqI32(none.status, 0, "a filter matching nothing is not a failure: " + said(none));

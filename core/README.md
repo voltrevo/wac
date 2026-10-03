@@ -6,7 +6,7 @@
 spec/spec/funcrefs.md — so two identical declarations of a type are two types and no adapter can
 convert between them.
 
-That sentence used to cite `[§wac-fnref-nocapture-j4wk8pm]`, which said `c.inc` is a compile error.
+That sentence used to cite the old spec's `§wac-fnref-nocapture-j4wk8pm`, which said `c.inc` is a compile error.
 It is a value now (`§wacc-fnref-bound`, `design/lang/0002` tier one), and the tag went with it. The
 argument here is untouched: a bound reference captures a *receiver*, not an enclosing scope, so
 there is still nothing that could adapt one nominal type to another. That is fine while everything is one tree — the two sides can
@@ -28,11 +28,11 @@ diamond in it. See `design/0001` for the whole argument.
 ## One module, several files
 
 `core` is one module, named whole — `import { Vec, Map, Read } from "core"` — and a path below it
-(`"core/vec.wac"`) is refused, since a package is named whole (spec/next ch02,
+(`"core/vec.wac"`) is refused, since a package is named whole (spec ch02,
 `§wac-no-subpath-wqatc72`). The files here are how it is kept readable, not a structure anybody
 imports: `tools/wac/gencore.wac` concatenates them, in the order its `coreTree()` lists, into
 `packages/wacc/src/coretext.wac`, blanking the imports between them. So everything they export is at
-`core`'s root (spec/next ch37), and a file of `core` reaches another file's declarations without
+`core`'s root (spec ch37), and a file of `core` reaches another file's declarations without
 importing it.
 
 The embedding also records where each file starts, so a coverage point in the module is reported as
@@ -177,11 +177,11 @@ Option<string> described = mapOption(count, describe);   // T from the Option, U
 
 `Result<T, E>` leaves the error type to the caller, because the useful error differs: a
 parser wants a message and a position, an arithmetic routine wants a code, and a caller that
-only branches wants `Result<T, bool>`. `E` defaults to a `union` placeholder (spec/next ch19), so a
+only branches wants `Result<T, bool>`. `E` defaults to a `union` placeholder (spec ch19), so a
 function answering `Result<i32>` has the union of the errors it returns and propagates.
 
 A type of the program's own becomes a numeric literal's target by implementing `[fromNumber]`, a
-method without a receiver taking a `NumberLiteral` and answering a `Result` — spec/next ch09. The
+method without a receiver taking a `NumberLiteral` and answering a `Result` — spec ch09. The
 compiler converts each such literal statically, through `literalValue`; the built-in numbers' own
 conversions are the `numberLiteralTo…` functions, written `f64.[fromNumber](n)` and so on.
 

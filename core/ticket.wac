@@ -1,4 +1,4 @@
-// Tickets, and the scheduling they need — spec/next ch35.
+// Tickets, and the scheduling they need — spec ch35.
 //
 // A `Ticket<T>` is a value that will answer a `T`. An `async` function hands its caller one, and the
 // lowering of its body is the only other thing that writes these fields: it parks a `Continuation`
@@ -138,7 +138,7 @@ export struct Queue<T> {
 }
 
 /**
- * What one step of a coroutine came to (spec/next ch36): it is waiting on a ticket, it yielded a
+ * What one step of a coroutine came to (spec ch36): it is waiting on a ticket, it yielded a
  * value, or it is done with its result. `W` is `never` for a machine that cannot wait and `Y` for one
  * that cannot yield.
  */

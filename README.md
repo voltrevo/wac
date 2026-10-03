@@ -222,7 +222,7 @@ surprises you.
 | --- | --- |
 | [`docs/your-own-project.md`](docs/your-own-project.md) | Installing `wac` and using it outside this repository — every step run in an empty directory |
 | [`docs/`](docs/) | Integer overflow, constant-time checking, the wasm floor, development |
-| [`spec/`](spec/) | The language, [the tour](spec/tour.wac), [bindgen](spec/next/8-tooling/48-bindgen.md), [the command](spec/next/8-tooling/45-cli.md) |
+| [`spec/`](spec/) | The language, [the tour](spec/tour.wac), [bindgen](spec/8-tooling/48-bindgen.md), [the command](spec/8-tooling/45-cli.md) |
 | [`design/`](design/) | Why things are the way they are |
 | [`issues/`](issues/) | What is known to be wrong |
 | [`WASM-WISHLIST.md`](WASM-WISHLIST.md) | What wac wanted from WebAssembly and could not have |

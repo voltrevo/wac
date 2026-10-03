@@ -1,5 +1,5 @@
 // expect: refused
 // why: `[s]` needs `s` to be a symbol in scope
-// from: spec/next ch21
+// from: spec ch21
 struct Q { i32 [nope]; }
 export i32 f() { Q q = Q(1); return q.[nope]; }

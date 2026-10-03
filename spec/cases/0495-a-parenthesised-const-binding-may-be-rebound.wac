@@ -2,7 +2,7 @@
 // spec: §wac-const-rebindable-ri3wpfz
 // why: `(const Node)? cur` is a cursor over const data: rebinding it walks the list, and the type is
 //      `const Node?`, so `cur = cur!.next` reads through a const reference into a const binding
-// from: spec/next ch17
+// from: spec ch17
 struct Node { i32 v; Node? next; }
 i32 length(const Node head) {
   i32 n = 0;

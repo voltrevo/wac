@@ -512,7 +512,7 @@ fn gather_paths(
         }
     }
     // A program's file set also follows `export { … } from`, `export * as X from` and
-    // `import * as X from` (spec/next ch02, ch03) — forms the compiler's own source never uses, so
+    // `import * as X from` (spec ch02, ch03) — forms the compiler's own source never uses, so
     // `imports` above, which flattens that source, does not look for them.
     for spec in other_froms(&text) {
         if let Some(next) = resolve(&dir, &spec) {

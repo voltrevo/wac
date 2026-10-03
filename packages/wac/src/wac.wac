@@ -1172,14 +1172,14 @@ export i32 main(Sys sys) {
   // **After the module check, because a module is a complete invocation on its own.** This guard was
   // first, so `wac prog.wasm` — one argument — printed the usage block without ever looking at what
   // that argument was. The command is known even when nothing else is, so say what *it* takes — and
-  // an unknown one is named rather than answered with the usage block (spec/next ch45).
+  // an unknown one is named rather than answered with the usage block (spec ch45).
   bool knownCmd = cmd == "check" || cmd == "compile" || cmd == "build" || cmd == "bindgen" || cmd == "run"
       || cmd == "test" || cmd == "app" || cmd == "audit";
   if (argc < 2 && !knownCmd) {
     core.warn(unknownCommand(cmd));
     return 2;
   }
-  // `wac check` alone checks the project it is run in (spec/next ch06) — it needs no path.
+  // `wac check` alone checks the project it is run in (spec ch06) — it needs no path.
   if (argc < 2 && cmd != "check") {
     core.warn(usageFor(cmd));
     return 2;
@@ -1392,7 +1392,7 @@ export i32 main(Sys sys) {
   string[] paths = exactly(src.paths, src.n);
   string[] texts = exactly(src.texts, src.n);
   Res res = resOf(src);
-  // **A test takes capabilities as `main` does** (spec/next ch47): one taking `Sys`, or `async`, is
+  // **A test takes capabilities as `main` does** (spec ch47): one taking `Sys`, or `async`, is
   // compiled behind an adapter the runner can call — `testEntry`, which leaves every other file alone.
   if (cmd == "test") {
     for (i32 i = 0; i < paths.len(); i++) {
@@ -1400,7 +1400,7 @@ export i32 main(Sys sys) {
       if (pi.len() > 9 && pi.slice(pi.len() - 9, pi.len()) == "_test.wac") { texts[i] = testEntry(texts[i]); }
     }
   }
-  // **Building a program gives `main` its contract** — spec/next ch07 — and, for a `main` the hosts
+  // **Building a program gives `main` its contract** — spec ch07 — and, for a `main` the hosts
   // cannot call as written, the adapter they can. `compile` makes a plain module and leaves it alone.
   if (cmd == "build" || cmd == "run") {
     ProgramGraph pg = programGraph(paths, texts, entry);
@@ -1527,7 +1527,7 @@ export i32 main(Sys sys) {
   // error. One pass: rendering and deciding from the same string is what stops this being the second
   // whole-graph walk `issues/lang/0133` was about.
   //
-  // **A build compiles what its entry reaches, and nothing else** — spec/next ch05. A declaration no
+  // **A build compiles what its entry reaches, and nothing else** — spec ch05. A declaration no
   // export of the entry names is dropped before it is checked, and a file no retained declaration
   // needs is not compiled at all, so a missing one is an error exactly when something needs it.
   // `check` and `audit` are questions about the whole source and keep every file (ch06).
@@ -1663,9 +1663,9 @@ export i32 main(Sys sys) {
     // interface should agree" — they agree by the interface catching up, because `compile` already
     // does this and two commands on one usage line should not mean two things.
     // `vecs.wac` binds as `vecs.wac.ts` — the module's own name with the host's extension
-    // (spec/next ch48).
+    // (spec ch48).
     string out = pos.len() > 1 ? pos[1] : entry + (js ? ".js" : ".ts");
-    // **A generic the entry exports is said where it will be read** (spec/next ch48
+    // **A generic the entry exports is said where it will be read** (spec ch48
     // `§wac-bind-generic-warns-cg9p295`): not refused — `export { Pair };` is ordinary code for wac
     // importers — but not bound either, and a host author finds that out here rather than at a call.
     string xs = types;
@@ -1994,7 +1994,7 @@ export i32 main(Sys sys) {
  * **Grouped by where the code came from, because that is the unit of trust.** A reader does not
  * choose files, they choose dependencies — `wac update` writes a lock and every file of a package
  * arrived together on one decision. So the default output is one line per dependency plus one for
- * the project, and `--verbose` is the file-by-file table underneath it (spec/next ch49).
+ * the project, and `--verbose` is the file-by-file table underneath it (spec ch49).
  *
  * `design/system/0003` is the destination this is for: an Ethereum-centric distribution is a program
  * holding keys, and *what can this reach* is the question its operator has to be able to answer
@@ -2008,7 +2008,7 @@ i32 auditReport(Core core, const Sources src, string entry, bool verbose) {
   }
   string[] rows = linesOf(table);
 
-  // **One line per dependency, and the project last** (spec/next ch49): a dependency is the files
+  // **One line per dependency, and the project last** (spec ch49): a dependency is the files
   // under one package's directory — the `confine` the walk recorded for each — named by the import
   // that brought it in, and the project is `./`. `std` and `core` are the platform the program runs
   // on, not code anybody chose, and are left out of the count.
@@ -2342,7 +2342,7 @@ i32 removeProfileLine(Cli cli, string profile) {
   return wrote.ok() ? dropped : 0;
 }
 
-/** What the glue binds, as a person reads it: `2 classes, 1 function` (spec/next ch48). */
+/** What the glue binds, as a person reads it: `2 classes, 1 function` (spec ch48). */
 string bindSummary(string glue) {
   i32 classes = 0;
   i32 functions = 0;
@@ -2360,7 +2360,7 @@ string bindSummary(string glue) {
 }
 
 /**
- * An unknown command, named, with every command there is (spec/next ch45 `§wac-cli-usage-3nkq8wj`) —
+ * An unknown command, named, with every command there is (spec ch45 `§wac-cli-usage-3nkq8wj`) —
  * the whole list, so the one a reader meant is in it whichever it was.
  */
 string unknownCommand(string cmd) {
@@ -2388,14 +2388,14 @@ string diagnosticCount(string wire) {
 }
 
 /**
- * `wac check [files…]` — spec/next ch06. With files, each is a root and everything they import is
+ * `wac check [files…]` — spec ch06. With files, each is a root and everything they import is
  * checked in full (`§wac-check-files-2ncb9c8`); with none, every `.wac` file under the project's
  * `wac.json5` is a root, less what its `check.exclude` names (`§wac-check-project-x9xt4fg`,
  * `§wac-check-exclude-2ixx2cu`). One graph, merged from every root, checked once — and, like every
  * command, it ends by saying how much it read.
  */
 i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
-  // **It always says what it read** (spec/next ch45 `§wac-cli-check-4mkq8wp`) — after errors and
+  // **It always says what it read** (spec ch45 `§wac-cli-check-4mkq8wp`) — after errors and
   // warnings as much as after nothing, since the count is the part that cannot otherwise be seen.
   string[] roots = given;
   string label = given.len() == 1 ? given[0] : (given.len() > 1 ? given[0] + " and " + itoa(given.len() - 1) + " more" : "");

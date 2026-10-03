@@ -1,5 +1,5 @@
 // Rewriting an `async` function into ordinary wac — `design/lang/0014` step 4, retargeted onto
-// core's `Ticket` by spec/next ch35.
+// core's `Ticket` by spec ch35.
 //
 // The body becomes a **flattened state machine**: a `while (true)` over a `switch` on a state
 // variable, where each `await` ends one arm and begins the next. The machine's locals live in the
@@ -1007,7 +1007,7 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet, Ty? yieldTy, bo
 
 /**
  * `coroutine f(…)` — the call of `f`'s coroutine form, `__wacCo_f(…)`, which builds the machine and
- * runs none of it (spec/next ch36). Left as written when no such form is spelled in this file, and the
+ * runs none of it (spec ch36). Left as written when no such form is spelled in this file, and the
  * emitter names the refusal.
  */
 Expr coroutineCall(Ctx c, Expr call, Expr whole) {

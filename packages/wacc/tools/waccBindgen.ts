@@ -114,7 +114,7 @@ export function parseNamed(wire: string): Map<string, string> {
   return out;
 }
 
-/** The `F` lines: a member that is `private` or `const`, keyed `bind\tmember` (spec/next ch48). */
+/** The `F` lines: a member that is `private` or `const`, keyed `bind\tmember` (spec ch48). */
 export function parseFlags(wire: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const line of wire.split("\n")) {
@@ -446,7 +446,7 @@ function fromWasm(t: string, expr: string): string {
  * A monomorphisation's name is its *type*, `Vec<Setting>`, which is not a name a TypeScript file can
  * declare — so it is reduced the way the reference reduces one: `[]` reads as `Arr` and `?` as
  * `Opt`, because `Map<u8[],i32>` spelled character by character is not a name anyone would ship, and
- * every other run that is not an identifier becomes `_`: `Vec<f64>` is `Vec_f64` (spec/next ch48
+ * every other run that is not an identifier becomes `_`: `Vec<f64>` is `Vec_f64` (spec ch48
  * `§wac-bind-instantiation-name-dwptdfb`). A struct somebody named `Vec_f64` would collide with it.
  */
 function classNameOf(t: { name: string }): string {
@@ -478,7 +478,7 @@ function classFor(t: BindType): string[] {
     const conv = t.fields.map(f => toWasm(f.type, f.name)).join(", ");
     // **`of` builds one from its fields** — unless the struct declares its own `of`, which binds
     // below as written, or has a private field, which only its own static methods may set
-    // (spec/next ch48 `§wac-bind-private-7kpcy8t`).
+    // (spec ch48 `§wac-bind-private-7kpcy8t`).
     const ownOf = t.methods.some(m => m.name === "of" && !m.hasThis);
     const anyPrivate = t.fields.some(f => memberHas(t, f.name, "private"));
     if (anyPrivate) {
@@ -506,7 +506,7 @@ function classFor(t: BindType): string[] {
       lines.push("  }");
     }
     // **A plain-data snapshot, one level deep**: a struct-typed field stays its wrapper, so a value
-    // that reaches itself does not recurse (spec/next ch48).
+    // that reaches itself does not recurse (spec ch48).
     const shape = shown.map(f => `${f.name}: ${tsType(f.type)}`).join("; ");
     lines.push(`  toObject()${annRaw(shape === "" ? "{}" : `{ ${shape} }`)} {`);
     lines.push(`    return { ${shown.map(f => `${f.name}: this.${f.name}`).join(", ")} };`);
@@ -540,7 +540,7 @@ function classFor(t: BindType): string[] {
         // method of that name hands back the function object instead — which compares unequal to
         // everything and reads as a wrong answer rather than a missing feature [issue 0102].
         lines.push(`  get ${v.name}_${f.name}()${ann(f.type)} {`);
-        // **Throws unless this is that variant** — the protection `match` gives (spec/next ch48
+        // **Throws unless this is that variant** — the protection `match` gives (spec ch48
         // `§wac-bind-enum-3nqk7vm`), as an exception rather than a wrong answer.
         lines.push(`    if (this.tag !== "${v.name}") throw new TypeError("not a ${v.name}: " + this.tag);`);
         lines.push(`    return ${fromWasm(f.type, `($exports.$bind$e_${t.bind}_${v.name}_get_${f.name}${CF})(this.ref)`)};`);
@@ -598,7 +598,7 @@ export function generate(
   namedClasses = opts.named ?? new Map();
   memberFlags = opts.flags ?? new Map();
   // **An enum with a variant named `tag`, `ref` or `toObject` is skipped** rather than renamed: a
-  // renamed variant would no longer be the name in the source (spec/next ch48).
+  // renamed variant would no longer be the name in the source (spec ch48).
   const skipped: string[] = [];
   const colliding = types.filter(t => t.kind === "enum" && t.variants.some(v => RESERVED.has(v.name)));
   types = types.filter(t => !colliding.includes(t));
@@ -806,7 +806,7 @@ export function generate(
   for (const t of types) lines.push(...classFor(t));
 
   for (const sig of sigs) {
-    // **A skipped export says so where it would have been** (spec/next ch48
+    // **A skipped export says so where it would have been** (spec ch48
     // `§wac-bind-skip-h9pd5wn`), and again in `__bindgenSkipped` below, where a caller looks.
     if (!usable.includes(sig)) {
       const why = skipReason(sig, types, cbs, outs);
@@ -829,7 +829,7 @@ export function generate(
     lines.push("");
   }
 
-  // **A generic the entry exports has no single shape to bind** (spec/next ch48
+  // **A generic the entry exports has no single shape to bind** (spec ch48
   // `§wac-bind-generic-skipped-biz4394`), so it is skipped too, with the form that would bind it.
   for (const gen of opts.generics ?? []) {
     const why = `${gen.name} — generic; export an instantiation by name, e.g. export { ${gen.form} }`;

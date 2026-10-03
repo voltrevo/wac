@@ -1,5 +1,5 @@
 // expect: refused
 // why: an export list naming a name the module already exports, under that name, is refused
-// from: export lists (design/lang/0016), spec/next ch02 §wac-export-list-collision-unxcmkj
+// from: export lists (design/lang/0016), spec ch02 §wac-export-list-collision-unxcmkj
 export i32 area(i32 w, i32 h) { return w * h; }
 export { area };

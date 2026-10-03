@@ -1,7 +1,7 @@
 // A Git-mapped specifier resolves from the lockfile and the cache — `design/lang/0009` D9-D11, with
-// the package model of spec/next ch04.
+// the package model of spec ch04.
 //
-// `[§wac-import-mapped-6np2rkq]` `[§wac-cli-update-2rq7knp]`
+// `[§wac-package-key-exact-rme93fh]` `[§wac-cli-update-2rq7knp]`
 //
 // **A package is named whole and enters through its `exports`.** The specifier is the manifest key
 // itself (`import { two } from "dep";`), `subdir` picks the package's directory in the checkout, and
@@ -381,7 +381,7 @@ export string test_update_caches_where_the_compiler_looks(Core core, Cli cli) {
 }
 
 /**
- * A package's code may not import outside its package directory — `issues/lang/0169a`, and spec/next
+ * A package's code may not import outside its package directory — `issues/lang/0169a`, and spec
  * ch04's "nor can its files reach out of it".
  *
  * You took the package at `src`. The rest of that repository is not part of what you took, and code

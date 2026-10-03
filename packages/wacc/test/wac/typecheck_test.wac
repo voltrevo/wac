@@ -660,7 +660,7 @@ string[] LITERALS() { return ["1", "1.5", "\"x\"", "true"]; }
  * new claim. The cell counts still check it: a rule that drifted would not give 12 and 36.
  */
 bool acceptsLiteral(string ty, i32 kind) {
-  // An integer spelling is read as a float where a float is expected (spec/next ch09
+  // An integer spelling is read as a float where a float is expected (spec ch09
   // `§wac-float-integer-spelled-ur9ttxq`), so it fits the two floats as well as the integers.
   if (kind == 0) {
     return ty == "i32" || ty == "i64" || ty == "u32" || ty == "u64" || ty == "u8" || ty == "u16" ||
@@ -701,7 +701,7 @@ export string test_rung3_every_primitive_against_every_literal_kind() {
     }
   }
   // 48 cells, 14 accepted: an integer literal from the eight integer types — the packed four are
-  // integers like any other (spec/next ch08 `§wac-packed-ordinary-kawnzqm`) — and from the two floats
+  // integers like any other (spec ch08 `§wac-packed-ordinary-kawnzqm`) — and from the two floats
   // (ch09), a float from f32/f64, a boolean from bool, a string from string.
   //
   // Asserting the shape rather than a bare "some failed": an `acceptsLiteral` that started calling
@@ -844,7 +844,7 @@ export string test_rung3_a_function_that_can_reach_its_closing_brace(Core core, 
  * `null` is the new part. `i32 x = null;` is *"expected i32, got null"*; a `T?` declaration is
  * nullable and legitimately takes one, and `primOfType` answers `primNone` for a nullable type, so those
  * stay silent rather than being wrongly refused. `i32 z;` was the same `NullLit` once and is a
- * declaration now — unassigned until written, which is definite assignment's question (spec/next
+ * declaration now — unassigned until written, which is definite assignment's question (spec
  * ch08), not this one's.
  */
 export string test_rung3_a_variables_initialiser_against_its_declared_type() {
@@ -1532,7 +1532,7 @@ export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core cor
 /**
  * **A packed type in every position it can be written in.**
  *
- * `u8 i8 u16 i16` were array elements and nowhere else until spec/next ch08 made them integers like
+ * `u8 i8 u16 i16` were array elements and nowhere else until spec ch08 made them integers like
  * any other (`§wac-packed-ordinary-kawnzqm`): a parameter, a local, a return, a field, a nullable and
  * an element. Every position is legal now, so the grid asks the opposite of what it used to — each
  * position checks quiet — and keeps the one thing a packed position can still get wrong: a lossy cast
@@ -2113,7 +2113,7 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     "struct Point { i32 x; i32 y; } export void bad() { Point p = Point(3); }",
     "struct A { i32 a; } struct B : A { i32 b; } export void bad() { B x = B(1); }",
     // `P()` is a positional construction short of every field, and a number has no default
-    // (spec/next ch08, ch12).
+    // (spec ch08, ch12).
     "struct P { i32 v; } export void f() { P p = P(); }",
     "struct Node { i32 v; Node? next; } export void f() { Node n = Node { }; }",
     // Nothing to default-construct from: a recursive struct, an enum, a struct containing one.
@@ -2130,7 +2130,7 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     "export void bad(Shape s) { Circle c = s as Circle; }"
   ],
   [
-    // An uninhabited struct is a valid type — spec/next ch11 — refused on sight until then, and a
+    // An uninhabited struct is a valid type — spec ch11 — refused on sight until then, and a
     // parameter of one is a signature nothing can call, which is legal too.
     "struct Node { Node next; } export Node? none() { return null; }",
     "struct N { i32 v; N next; } export i32 f(N n) { return n.v; }",
@@ -2184,12 +2184,12 @@ export string test_rung3_arity_loop_depth_representation_and_static_evaluation(
     "i32 g() { return 1; } export i32 f() { return g(1); }",
     "i32 g(i32 a) { return a; } export i32 f() { return g(); }",
     "i32 g(i32 a) { return a; } export i32 f() { return g(1, 2); }",
-    // A static whose evaluation traps (spec/next ch28) — computing a static by calling something was
+    // A static whose evaluation traps (spec ch28) — computing a static by calling something was
     // here, refused, until static evaluation made a call in an initialiser something that runs.
     "i32 z() { return 0; } static i32 K = 1 / z(); export i32 f() { return K; }"
   ],
   [
-    // ...and a static computed by calling something, which is now accepted (spec/next ch27).
+    // ...and a static computed by calling something, which is now accepted (spec ch27).
     "i32 n() { return 3; } static i32 K = n(); export i32 f() { return K; }",
     "i32 n() { return 3; } static i32[] T = i32[].filled(n(), 0); export i32 f() { return T[0]; }",
     // Every enclosing form that makes `break` legal. **`continue` in a switch was here** and both
@@ -2395,7 +2395,7 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
 }
 
 /**
- * A cast into a packed type is a cast like any other — spec/next ch24 `§wac-cast-packed-ordinary-65bdykv`.
+ * A cast into a packed type is a cast like any other — spec ch24 `§wac-cast-packed-ordinary-65bdykv`.
  *
  * It was refused in every spelling while a packed type could be nothing but an element (`0289b` named
  * that rule rather than the operator). Now `i32 as u8` is a lossy pair: plain `as` is refused for its

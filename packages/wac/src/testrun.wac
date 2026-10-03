@@ -163,7 +163,7 @@ export string aggregateSource(string[] files, string[] texts, string up) {
     // **Parsed, not scanned** — and from the text a test build compiles (`testEntry`), so a test that
     // takes `Sys` or is `async` is already its `(Core, Cli)` adapter here. A scan for
     // `export string test` missed every `void` test, every verbatim name and every adapter, and a file
-    // of nothing else dropped out of the walk without a word (spec/next ch47).
+    // of nothing else dropped out of the walk without a word (spec ch47).
     DeclaredTest[] tests = declaredTests(testEntry(texts[i]));
     if (tests.len() == 0) { continue; }
     string aliased = "";
@@ -253,7 +253,7 @@ export string[] withoutIgnored(string[] files, string spec) {
       i32 comma = spec.slice(at, spec.len()).indexOf(",");
       i32 end = comma < 0 ? spec.len() : at + comma;
       string one = trimmedText(spec.slice(at, end));
-      // `dir/` names the directory as `dir` does — the spelling spec/next ch47's own example uses.
+      // `dir/` names the directory as `dir` does — the spelling spec ch47's own example uses.
       while (one.len() > 1 && one.slice(one.len() - 1, one.len()) == "/") { one = one.slice(0, one.len() - 1); }
       if (one.len() > 2 && one.slice(0, 2) == "./") { one = one.slice(2, one.len()); }
       if (one != "" && (files[i] == one || startsWithPath(files[i], one + "/"))) { skip = true; }
@@ -975,7 +975,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
                   + "try `--allow-read`");
       }
     }
-    // **Said, and not a failure** (spec/next ch47): a filter that matched nothing and a file whose
+    // **Said, and not a failure** (spec ch47): a filter that matched nothing and a file whose
     // every test wanted a grant are reported by name, and the run still exits 0 — neither ran a test
     // that went wrong.
     if (t.passed == 0 && t.failed == 0 && filter != "") {
@@ -1087,7 +1087,7 @@ export i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifes
   // **Nothing matched anywhere is a mistake, not a clean walk.** Per file the message says which file
   // the filter emptied; across the whole walk it says the pattern found nothing at all, and exits
   // non-zero, because `N files: 0 ok` under a filter reads like a suite that passed.
-  // Said by name, and — spec/next ch47 — not a failure: the summary below still counts the walk.
+  // Said by name, and — spec ch47 — not a failure: the summary below still counts the walk.
   if (unmatched > 0 && ok == 0 && withFailures == 0) {
     core.warn("wac: no test anywhere under " + target + " matches --filter " + filter);
   }

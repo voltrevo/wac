@@ -31,11 +31,11 @@ Actual: `107` (`wac run`, 2026-10-03) — the second iteration sees the first on
 ## Notes
 
 `lowerFromNumberLiterals` turns each converted literal into a static, `static Box @"$lit_L_C" =
-literalValue(Box.[fromNumber](…))`, computed once at compile time (spec/next ch09 says *"The compiler
+literalValue(Box.[fromNumber](…))`, computed once at compile time (spec ch09 says *"The compiler
 calls it statically, once per literal"*). For a number or an immutable value that is exactly right. For a
 struct the program can write to, every evaluation of the literal binds the same object.
 
-The `const`-as-type change (spec/next ch17) made this visible: a static is `const`, so `Box b = 3;` was
+The `const`-as-type change (spec ch17) made this visible: a static is `const`, so `Box b = 3;` was
 refused as a `const Box` becoming a `Box`. The checker exempts the `$lit_` statics for now
 (`constExpr` in `packages/wacc/src/check.wac`) so ch09's examples keep working, which keeps the sharing.
 

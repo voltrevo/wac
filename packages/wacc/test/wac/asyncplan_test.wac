@@ -71,7 +71,7 @@ export string test_the_shapes_this_cut_declines_are_named_apart() {
           "declined: an `await` nested inside a larger expression, on a ticket whose type this file does not write — bind it first: `T v = await e;`\n",
           "nested in a call, as the plan sees it before the lowering hoists what it can read");
   // **A discarded value needs no slot type**: the machine parks on the ticket as a `TicketBase?`
-  // and nothing reads what it answered (spec/next ch35).
+  // and nothing reads what it answered (spec ch35).
   t.eqStr(planOf("async i32 f(Cli cli) {\n"
                  + "  await cli.readFile(\"x\");\n"
                  + "  await;\n"

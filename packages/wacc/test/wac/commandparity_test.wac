@@ -249,7 +249,7 @@ string[][] cases() {
     // **The two grant rows.** The first is the canary for `issues/system/0242c`: a test that writes,
     // on a run that granted only read, has to be *denied* — and "denied" rather than "failed", because
     // `Change` reading the fault off its own refusal is half of what that issue fixed. The second is a
-    // run that granted nothing at all, where the test is skipped and named — and, since spec/next ch47
+    // run that granted nothing at all, where the test is skipped and named — and, since spec ch47
     // says neither that nor a filter matching nothing is a failure, the status is 0.
     ["test", "--allow-read", "src/writes_test.wac"],
     ["test", "src/reads_test.wac"],
@@ -617,7 +617,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // `app-run` runs it, `validate hello.wasm` accepts a module, `sh -c "echo hi"` echoes, and `update`
   // in a directory with no manifest says so and exits 0. The other five new rows are usage errors and
   // rejections, which are the half of `issues/system/0268a` step 2 that had to fail.
-  // **Twenty-seven since 2026-10-02**: spec/next ch47 says a run whose filter matched nothing and one
+  // **Twenty-seven since 2026-10-02**: spec ch47 says a run whose filter matched nothing and one
   // whose every test wanted an ungranted capability are reported and are *not failures*, so the two
   // `--filter zzz` rows and the ungranted `reads_test` row exit 0 where they exited 1 and 4.
   t.eqI32(zeroes, 27, "twenty-seven of these fifty-two succeed on the native host; a different count " +

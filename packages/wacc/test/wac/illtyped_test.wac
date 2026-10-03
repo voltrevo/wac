@@ -52,7 +52,7 @@ string[] names() {
     "a27 int arms -> string", "a28 int arms -> bool", "a29 string arms -> i32",
     "a30 bool arms -> i32",
     // A **bare `null`** unwrapped. `null is null` was here too, refused for having no type
-    // (`issues/lang/0249a`); spec/next ch10 gives the literal the type `never?` and the test the answer
+    // (`issues/lang/0249a`); spec ch10 gives the literal the type `never?` and the test the answer
     // `true` (`§wac-isnull-kxsqi4g`), so only the unwrap is left — there is nothing present to assert.
     "a34 null!",
     // A `bool` compared against an integer **literal**. `b > y` for two variables was refused and
@@ -340,7 +340,7 @@ export string test_a_jsx_attribute_and_child_refuse_a_nullable() {
   t.isTrue(kidNull > 0, "a nullable Node as a child was accepted");
   // The slots do check — an `i32` attribute and a child with no `toNode` are refused — so the rows
   // above are a gap rather than a position nothing looks at. An `i32` child is not one: a number
-  // converts to text through core's `toNode` (spec/next ch23).
+  // converts to text through core's `toNode` (spec ch23).
   i32 attrWrong = dumpTypeErrors((HEAD + "export Node f(i32 n) { return <\"div\" class={n}></\"div\">; }\n").toBytes()).len() / 3;
   i32 kidWrong = dumpTypeErrors((HEAD + "struct P { i32 x; }\nexport Node f(P kid) { return <\"div\">{kid}</\"div\">; }\n").toBytes()).len() / 3;
   t.isTrue(attrWrong > 0, "an i32 attribute was accepted, so this slot checks nothing");
@@ -359,7 +359,7 @@ export string test_a_tag_and_its_call_agree() {
     "import { Attr, Node } from \"core\";\n" +
     "struct P { i32 x; }\n" +
     "Node card(P p, Node[] kids) { return <\"section\" class=\"card\"></\"section\">; }\n";
-  // A nullable into the non-null parameter, both ways round: a tag is a call (spec/next ch23), so
+  // A nullable into the non-null parameter, both ways round: a tag is a call (spec ch23), so
   // one program written two ways must get one answer.
   i32 viaJsx = dumpTypeErrors((DECL + "export Node f(P? a) { return <card p={a} />; }\n").toBytes()).len() / 3;
   i32 viaCall = dumpTypeErrors((DECL + "export Node f(P? a) { return card(a, Node[]()); }\n").toBytes()).len() / 3;

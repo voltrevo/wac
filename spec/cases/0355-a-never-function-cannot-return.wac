@@ -1,6 +1,6 @@
 // expect: refused
 // why: a `never` function may not return, and control may not reach its end
-// from: never (design/lang/0016), spec/next ch11 §wac-never-cannot-return-eaffw52
+// from: never (design/lang/0016), spec ch11 §wac-never-cannot-return-eaffw52
 export never early(bool once) {
   if (once) { return; }
   while (true) { }

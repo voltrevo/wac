@@ -1,6 +1,6 @@
 // expect: answers f = 1
 // why: a struct with a non-null field that reaches it again has no finite value, and is still a valid type — in nullable forms and signatures
-// from: uninhabited types (design/lang/0016), spec/next ch11 §wac-uninhabited-valid-2f9cxmt
+// from: uninhabited types (design/lang/0016), spec ch11 §wac-uninhabited-valid-2f9cxmt
 struct Node { Node next; }
 
 Node? none() { return null; }

@@ -55,18 +55,18 @@ string[] statementLabels() {
   return [
     "Var", "Assign", "IncrStmt", "If", "If-else", "While", "For", "For-init", "DoWhile", "Switch",
     "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt", "Defer",
-    // `schedule f;` — spec/next ch35. It holds only its target, so the walk has to go on past it.
+    // `schedule f;` — spec ch35. It holds only its target, so the walk has to go on past it.
     "Schedule",
-    // `yield v;` — spec/next ch36. The fault is in the value.
+    // `yield v;` — spec ch36. The fault is in the value.
     "Yield",
-    // spec/next ch31: the live branch holds the fault; a dead `static_trap` must not stop the walk;
+    // spec ch31: the live branch holds the fault; a dead `static_trap` must not stop the walk;
     // and a `static_for`'s body is checked once per turn.
     "StaticIf", "StaticTrap", "StaticFor",
     // A `static` in a function — ch27. The fault is in its initialiser.
     "StaticLocal",
-    // `for (T x in e)` — spec/next ch25. The body holds the fault.
+    // `for (T x in e)` — spec ch25. The body holds the fault.
     "ForIn",
-    // Tuples — spec/next ch14. Neither holds a body; the walk has to go on past them.
+    // Tuples — spec ch14. Neither holds a body; the walk has to go on past them.
     "Destructure", "TupleAssign"
   ];
 }
@@ -108,13 +108,13 @@ string[] expressionLabels() {
     // operand *before* deciding whether it is a ticket — so a fault buried in one is reported even
     // when the await itself is also wrong. `design/lang/0014`.
     "Await",
-    // `try e` — spec/next ch26. The fault is buried in its operand. A `Result` of the file's own, since
+    // `try e` — spec ch26. The fault is buried in its operand. A `Result` of the file's own, since
     // this entry point resolves no built-ins; the rule asks for the name.
     "Try",
-    // `coroutine f(…)` — spec/next ch36. The fault is buried in an argument.
+    // `coroutine f(…)` — spec ch36. The fault is buried in an argument.
     "CoroutineOf",
     "Binary", "Cast", "Ternary", "Ternary-cond", "Index", "Member",
-    // `p?.m` — spec/next ch10. The fault is buried in the object, which is the only sub-expression.
+    // `p?.m` — spec ch10. The fault is buried in the object, which is the only sub-expression.
     "SafeMember",
     "Call", "Call-method",
     "Construct", "Assign-rhs", "Return-value", "Condition",
@@ -136,7 +136,7 @@ string[] expressionLabels() {
     // even though it is not one for the checker's. `issues/lang/0088`.
     "TypeName",
     // `typeref(T)` holds a `Ty` too, and `static_trap "…"` only a string literal — leaves alike
-    // (spec/next ch30, ch31). `static_match` holds values, every one of which is checked.
+    // (spec ch30, ch31). `static_match` holds values, every one of which is checked.
     "TypeRefOf", "StaticTrapE", "StaticMatch",
     // **A real cell now.** This was empty while the syntax was in flight — a placeholder that kept
     // the completeness check green and covered nothing. A lambda parses now (`design/lang/0002` tier

@@ -10,10 +10,10 @@
 // module has no filesystem. So it keeps a literal, and de-duplicating means generating that literal
 // from the tree rather than teaching the compiler to open a file.
 //
-// **`core` is one module and `std` is another**, each reached by its name alone — spec/next ch02,
+// **`core` is one module and `std` is another**, each reached by its name alone — spec ch02,
 // `§wac-no-subpath-wqatc72`. `core`'s files are a way of keeping it readable on disk, not a structure
 // anyone imports: they are concatenated into the one module, with the imports between them dropped,
-// so everything they export is at `core`'s root (spec/next ch37). `std` is `std/platform.wac`.
+// so everything they export is at `core`'s root (spec ch37). `std` is `std/platform.wac`.
 //
 // There were two outputs until 2026-08-28: this also wrote the TypeScript reference's copy of the
 // same declarations, and generating both from one tree was how they were kept from drifting. There
@@ -164,7 +164,7 @@ string[] exportsOf(string text) {
     while (start > 7 && b[start - 1] != 32 && b[start - 1] != 62) { start = start - 1; }
     if (start < end) {
       string name = ls[i].slice(start, end);
-      // A verbatim name, `@"operators.add"`, exports its text (spec/next ch01).
+      // A verbatim name, `@"operators.add"`, exports its text (spec ch01).
       if (name.len() > 3 && name.slice(0, 2) == "@\"") { name = name.slice(2, name.len() - 1); }
       found[n] = name;
       n = n + 1;
@@ -386,7 +386,7 @@ string waccFile(Tree tree) {
     "",
     "/**",
     " * The default type arguments `core` and `std` declare, as `Name|count|d0;d1;…` lines — read here, once,",
-    " * so `lowerTypeDefaults` need not lex the whole of both on every compile (spec/next ch19).",
+    " * so `lowerTypeDefaults` need not lex the whole of both on every compile (spec ch19).",
     " */",
     "export string builtinTypeDefaults() {",
     "  return " + typeDefaultsWac(typeDefaultsTable(core + "\n" + tree.stdText())) + ";",

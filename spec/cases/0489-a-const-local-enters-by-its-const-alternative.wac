@@ -1,7 +1,7 @@
 // expect: answers byPermission = 1
 // spec: §wac-union-permission-recorded-d7yfbag
 // why: the permission recorded is the reference's, not the object's — `r` and `c` name one object
-// from: spec/next ch18
+// from: spec ch18
 struct Rect { i32 w; void grow(this) { this.w += 1; } }
 i32 tryGrow(union<Rect, const Rect> value) {
   if (Rect r matches value) {

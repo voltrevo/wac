@@ -48,9 +48,9 @@ export enum TyKind {
   Arr(Ty elem),
   Nullable(Ty inner),
   Funcref(Ty ret, Ty[] params),
-  /** `(A, B)`, `(A,)` and `()` — spec/next ch14. Identity is the member list. */
+  /** `(A, B)`, `(A,)` and `()` — spec ch14. Identity is the member list. */
   TupleOf(Ty[] members),
-  /** `type(e)` — the type a `typeref` value stands for, `e` evaluated statically (spec/next ch30). */
+  /** `type(e)` — the type a `typeref` value stands for, `e` evaluated statically (spec ch30). */
   TypeOf(Expr e),
 }
 
@@ -134,11 +134,11 @@ export enum ExprKind {
    * variant makes every match that must care say so, and the ones that genuinely do not keep
    * their `else`.
    */
-  /** `operand` is null for a bare `await;` — one step boundary (spec/next ch35). */
+  /** `operand` is null for a bare `await;` — one step boundary (spec ch35). */
   Await(Expr? operand),
-  /** `try e` — `e`'s `Ok` value, or its `Err` returned from the enclosing function (spec/next ch26). */
+  /** `try e` — `e`'s `Ok` value, or its `Err` returned from the enclosing function (spec ch26). */
   Try(Expr operand),
-  /** `coroutine f(…)` — the call's machine, with nothing of it run (spec/next ch36). */
+  /** `coroutine f(…)` — the call's machine, with nothing of it run (spec ch36). */
   CoroutineOf(Expr call),
   Binary(i32 op, Expr left, Expr right),
   /** One of `as`, `as!`, `as~`, `as@` — which is in `op`. */
@@ -152,7 +152,7 @@ export enum ExprKind {
    * expression here, so they are separate optional fields and at most one is set.
    */
   Is(Expr left, Ty? target, Expr? other, bool negated),
-  /** `p matches e` — a pattern tested against a value, binding the pattern's names. spec/next ch25. */
+  /** `p matches e` — a pattern tested against a value, binding the pattern's names. spec ch25. */
   Matches(Pattern pattern, Expr subject),
   Ternary(Expr cond, Expr then, Expr els),
   /**
@@ -175,7 +175,7 @@ export enum ExprKind {
   Call(Expr callee, Expr[] args, Ty[] typeArgs),
   Index(Expr arr, Expr index),
   Member(Expr obj, i32 nameTok),
-  /** `p?.m` — `null` when `p` is absent, `p!.m` otherwise. spec/next ch10. */
+  /** `p?.m` — `null` when `p` is absent, `p!.m` otherwise. spec ch10. */
   SafeMember(Expr obj, i32 nameTok),
   /** `x!` — the non-null assertion. */
   Unwrap(Expr operand),
@@ -193,10 +193,10 @@ export enum ExprKind {
    * Anywhere other than a `Member`'s object this is an error: a type is not a value.
    */
   TypeName(Ty qualifier),
-  /** `typeref(T)` — a value of type `typeref` standing for the type `T` (spec/next ch30). */
+  /** `typeref(T)` — a value of type `typeref` standing for the type `T` (spec ch30). */
   TypeRefOf(Ty t),
   /**
-   * `static_match (T) { u32: 4, default: … }` — spec/next ch31. The arm whose type is `T` is chosen at
+   * `static_match (T) { u32: 4, default: … }` — spec ch31. The arm whose type is `T` is chosen at
    * compile time; `default` is at `defaultAt` (-1 when there is none), its entry in `types` unused.
    */
   StaticMatch(Ty subject, Ty[] types, Expr[] values, i32 defaultAt),
@@ -214,12 +214,12 @@ export enum ExprKind {
   ArrNew(Ty elem, Expr? size, Expr? fill, Expr[] elements),
   /**
    * `[a, b, c]` — an array literal. Its element type is not written: it comes from where the array is
-   * going, or from its elements (`spec/next/2-types/15-arrays.md`), which is why this is not an
+   * going, or from its elements (`spec/2-types/15-arrays.md`), which is why this is not an
    * `ArrNew` — that one carries a written `Ty` and this has none to carry.
    */
   ArrLit(Expr[] elements),
   /**
-   * `(a, b)`, `(a,)` and `()` — a tuple, spec/next ch14. `(a)` is grouping and never arrives here.
+   * `(a, b)`, `(a,)` and `()` — a tuple, spec ch14. `(a)` is grouping and never arrives here.
    * A member is read as `Member(t, tok)` where `tok` is an integer token: `t.0`.
    */
   TupleLit(Expr[] elements),
@@ -265,7 +265,7 @@ export enum LvalueKind {
 
 /**
  * An assignment target read as the expression that names the same place — the receiver an operator
- * method on a struct is called on, which `a += b` evaluates once and never rebinds (spec/next ch22
+ * method on a struct is called on, which `a += b` evaluates once and never rebinds (spec ch22
  * `§wac-operator-compound-own-u7m6y7c`).
  */
 export Expr lvalueExpr(Lvalue lv) {
@@ -356,7 +356,7 @@ export struct TupleBinding {
 export enum StmtKind {
   /**
    * `isConst` folds what the pool needed two tags for. `init` is null for `T x;`, which is unassigned
-   * until written, or holds its type's default — spec/next ch08.
+   * until written, or holds its type's default — spec ch08.
    */
   Var(Ty type, i32 nameTok, Expr? init, bool isConst),
   Assign(Lvalue target, i32 op, Expr rhs),
@@ -367,13 +367,13 @@ export enum StmtKind {
   /** Four references, which the pool could not hold without bit-packing. */
   For(Stmt? init, Expr? cond, Stmt? update, Stmt[] body),
   /**
-   * `for (T x in e) { … }` — spec/next ch25. `type` is null for `auto`, which takes the element type;
+   * `for (T x in e) { … }` — spec ch25. `type` is null for `auto`, which takes the element type;
    * `e` is an array or a `Vec` (a generator, when there are generators).
    */
   ForIn(Ty? type, i32 nameTok, Expr iterable, Stmt[] body),
   /**
    * `(T a, U b) = e;` and its spellings — one local per member of the tuple `e`, nesting allowed
-   * (spec/next ch14 `§wac-tuple-destructure-gn8i48y`). `type` is the whole tuple's, written before the
+   * (spec ch14 `§wac-tuple-destructure-gn8i48y`). `type` is the whole tuple's, written before the
    * names (`(u32, u32) (q, r) = e`), null when each name carries its own or `auto` does.
    */
   Destructure(Ty? type, TupleBinding pattern, Expr init),
@@ -389,14 +389,14 @@ export enum StmtKind {
   Match(Expr subject, Arm[] arms),
   Block(Stmt[] body),
   ExprStmt(Expr expr),
-  /** `defer s;` — `s` runs when the enclosing block is left, however it is left. spec/next ch25. */
+  /** `defer s;` — `s` runs when the enclosing block is left, however it is left. spec ch25. */
   Defer(Stmt body),
-  /** `schedule f;` — `f` is the schedule target to the end of the enclosing block. spec/next ch35. */
+  /** `schedule f;` — `f` is the schedule target to the end of the enclosing block. spec ch35. */
   Schedule(Expr target),
-  /** `yield v;`, or `yield;` in a generator yielding `void` — spec/next ch36. */
+  /** `yield v;`, or `yield;` in a generator yielding `void` — spec ch36. */
   Yield(Expr? value),
   /**
-   * `static_if (cond) { … } else { … }` — spec/next ch31. The condition is evaluated by the compiler
+   * `static_if (cond) { … } else { … }` — spec ch31. The condition is evaluated by the compiler
    * and the branch not taken is dropped from the program, rather than folded away after being checked
    * like an ordinary `if` with a constant condition.
    */
@@ -409,7 +409,7 @@ export enum StmtKind {
    */
   StaticFor(Stmt? init, Expr? cond, Stmt? update, Stmt[] body),
   /**
-   * `static T name = e;` in a function — spec/next ch27. Visible throughout its block, before its
+   * `static T name = e;` in a function — spec ch27. Visible throughout its block, before its
    * declaration as after, and computed by dependency order rather than when execution reaches it.
    */
   StaticLocal(Ty type, i32 nameTok, Expr init),
@@ -435,10 +435,10 @@ export struct Field {
   i32 nameTok;
   Ty type;
   bool isConst;
-  /** `private i32 cents;` — visible only inside the struct's body. spec/next ch12. */
+  /** `private i32 cents;` — visible only inside the struct's body. spec ch12. */
   bool isPrivate;
   /**
-   * `i32 retries = 3;` — the field's initialiser, which gives it a default (spec/next ch12
+   * `i32 retries = 3;` — the field's initialiser, which gives it a default (spec ch12
    * `§wac-field-initialiser-default-28c4ffw`). Evaluated at each construction that leaves the field out.
    */
   Expr? init;
@@ -483,19 +483,19 @@ export struct Method {
    */
   bool isAsync;
   /**
-   * `private` — visible only inside its type's body. spec/next ch12, ch13. Appended last, for the
+   * `private` — visible only inside its type's body. spec ch12, ch13. Appended last, for the
    * reason `typeParams` gives: three `bool`s already sit together here.
    */
   bool isPrivate;
   /**
    * `virtual` — a subtype may override it, and a call dispatches on the receiver's runtime type
-   * (spec/next ch12 `§wac-virtual-dispatch-a4xhpib`). Appended last, as every field since `typeParams`.
+   * (spec ch12 `§wac-virtual-dispatch-a4xhpib`). Appended last, as every field since `typeParams`.
    */
   bool isVirtual;
 }
 
 /**
- * The left side of `matches` — a match arm's pattern. spec/next ch25.
+ * The left side of `matches` — a match arm's pattern. spec ch25.
  *
  * Two shapes. `Rgb p` is a **type and a name**: `type` is set and `nameTok` binds the value at that
  * type when it is one. `Ok(v)` and `Err(is NotFound)` are a **variant and its payload**: `variantTok`
@@ -532,7 +532,7 @@ export enum DeclKind {
    */
   Import(i32 pathTok, i32 prefixTok, ImportItem[] items),
   /**
-   * `export { a, b as c };` and `export { a, b as c } from "./m.wac";` — spec/next ch02.
+   * `export { a, b as c };` and `export { a, b as c } from "./m.wac";` — spec ch02.
    *
    * Each item's `nameTok` is what it names and `aliasTok` what it is exported as. `pathTok` is the
    * specifier of a re-export, and -1 for a list naming what this module can already see.
@@ -555,10 +555,10 @@ export enum DeclKind {
            i32[] typeParams),
   /** `[export] static <type> <name> = <expr>;` at file scope. */
   StaticDecl(i32 nameTok, Ty type, Expr init, bool exported),
-  /** `[export] symbol name;` — a declared identity that can name a member. spec/next ch21. */
+  /** `[export] symbol name;` — a declared identity that can name a member. spec ch21. */
   SymbolDecl(i32 nameTok, bool exported),
   /**
-   * `type Name<…> = T;` or `type Name<…> { … }` — spec/next ch30. A plain alias, or `type(e)` in
+   * `type Name<…> = T;` or `type Name<…> { … }` — spec ch30. A plain alias, or `type(e)` in
    * `alias`, or a body run statically whose returned `typeref` is the type, with the type parameters
    * in scope. Exactly one of `alias` and `body` says what the type is: `body` is empty for an alias.
    */

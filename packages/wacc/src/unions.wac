@@ -1,4 +1,4 @@
-// Union types as spellings — spec/next ch18.
+// Union types as spellings — spec ch18.
 //
 // A union *is* its normalised set of alternatives, and the checker and the emitter each spell types
 // as strings, so both have to arrive at one string for one union or the same type becomes two. These
@@ -119,13 +119,13 @@ bool after(string a, string b) {
 }
 
 /** Whether `t` is one of the primitive types a union holds boxed. */
-/** Whether union alternative `t` is one entered through a `const` reference: `const T` (spec/next ch18). */
+/** Whether union alternative `t` is one entered through a `const` reference: `const T` (spec ch18). */
 export bool isConstAlt(string t) { return t.len() > 6 && t.slice(0, 6) == "const "; }
 
 export bool unionBoxes(string t) {
   return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "f32" || t == "f64"
       || t == "bool" || t == "u8" || t == "i8" || t == "u16" || t == "i16"
       // A `const` alternative's reference is held in a box of its own, so `ref.test` can tell the
-      // permission a value entered by from the object itself (spec/next ch18).
+      // permission a value entered by from the object itself (spec ch18).
       || isConstAlt(t);
 }

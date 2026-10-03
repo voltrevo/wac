@@ -1,4 +1,4 @@
-// Writes the status of every example in the specification: `spec/next/_drafting/STATUS.md`, and the list of
+// Writes the status of every example in the specification: `spec/_status/STATUS.md`, and the list of
 // met examples `specexamples_test.wac` holds the compiler to.
 //
 //     wac run --allow-read --allow-write --allow-run packages/wacc/tools/specstatus.wac [dir]
@@ -13,10 +13,10 @@ import { ExJudged, ExVerdict, judgeAll } from "../test/wac/specexamples.wac";
 export i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
-  string dir = "spec/next";
+  string dir = "spec";
   if (cli.argCount().wait() > 0) { dir = string.fromBytes(cli.arg(0).wait()); }
-  string status = dir + "/_drafting/STATUS.md";
-  string metPath = dir + "/_drafting/MET";
+  string status = dir + "/_status/STATUS.md";
+  string metPath = dir + "/_status/MET";
 
   ExJudged j = judgeAll(cli, dir);
   if (j.verdicts.len() == 0) { core.warn("no examples under " + dir + " — is the cwd the repository?"); return 2; }

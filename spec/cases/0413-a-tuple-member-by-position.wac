@@ -1,6 +1,6 @@
 // expect: answers secondMember = 1
 // why: a tuple is written `(a, b)` with type `(A, B)`, and `t.0`, `t.1` read its members by position, each at its own type
-// from: spec/next ch14 §wac-tuple-members-mef8e82
+// from: spec ch14 §wac-tuple-members-mef8e82
 export i32 secondMember() {
   (string, i32) pair = ("a", 1);
   string first = pair.0;

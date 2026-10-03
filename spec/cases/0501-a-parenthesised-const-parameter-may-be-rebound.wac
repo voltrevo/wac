@@ -1,7 +1,7 @@
 // expect: answers rebound = 3
 // spec: §wac-const-rebindable-ri3wpfz, §wac-const-param-2vhk7dq
 // why: `const P p` may not be reassigned; `(const P) p` may, and is still never written through
-// from: spec/next ch17
+// from: spec ch17
 struct P { i32 v; P? next; }
 i32 last((const P) p) {
   while (p.next is not null) { p = p.next!; }

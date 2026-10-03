@@ -116,7 +116,7 @@ string[] checkSrc() {
 // errUndefinedName, errConstVariable, errCallArity, errNoSuchField, errMatchNotEnum, errArmBindArity,
 // errFloatRange, errWrongCastOp, errOverrideSpurious, errOverrideMissing, errNotVirtual
 //
-// The packed row was `errPackedPosition` while a packed type could be nothing but an element. spec/next
+// The packed row was `errPackedPosition` while a packed type could be nothing but an element. spec
 // ch08 makes it an integer like any other (`§wac-packed-ordinary-kawnzqm`), so what a packed type can
 // still get wrong is a literal that does not fit it — the range code every integer type shares.
 i32[] checkCode() { return [35, 10, 32, 39, 72, 76, 50, 16, 22, 21, 231] as i32[]; }
@@ -274,7 +274,7 @@ export string test_a_unicode_escape_is_bounded_by_what_fromCodepoint_accepts() {
  * A character literal in a byte is a codepoint in a byte, and that is its own fault.
  *
  * **A plain number is not this rule.** `[300] as u8[]` truncating to `44` is deliberate and has a clause
- * of its own — spec/spec/arrays.md's `[§wac-arr-i8-lit-trunc-i9g6kol]`, *"the fixed-element form
+ * of its own — spec/spec/arrays.md's `[§wac-packed-no-coercion-udspvhv]`, *"the fixed-element form
  * takes `i32` values too, and truncates them the same way a write does"* — so a byte array can be
  * written as a literal list. A first version of this test refused those too; the spec's acceptance
  * corpus and `spec/tour.wac` both said no within a minute of each other.

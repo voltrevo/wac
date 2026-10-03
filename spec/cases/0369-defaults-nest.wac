@@ -1,6 +1,6 @@
 // expect: answers f = 2
 // why: a field whose struct type has a default takes that default, constructed recursively
-// from: spec/next ch12 §wac-nested-default-tctff6b
+// from: spec ch12 §wac-nested-default-tctff6b
 struct Point { i32 x = 1; i32 y = 1; }
 struct Line { Point start; Point end; }
 export i32 f() {

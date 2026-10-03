@@ -1,6 +1,6 @@
 // expect: answers f = 14
 // why: when the left operand is an unresolved numeric literal and the right is a struct, `2 * v` calls `v.[multiplyFromLeft](2)` and the parameter types the literal
-// from: spec/next ch22 §wac-operator-reverse-sw6qk57
+// from: spec ch22 §wac-operator-reverse-sw6qk57
 import { operators.multiplyFromLeft } from "core";
 struct Vec2 {
   i32 x;

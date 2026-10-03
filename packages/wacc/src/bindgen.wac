@@ -143,7 +143,7 @@ string dollared(string s) {
  *
  * A monomorphisation's name is its *type*, `Vec<Setting>`, which is not a name a TypeScript file can
  * declare — so `[]` reads as `Arr` and `?` as `Opt`, and every other run that is not an identifier
- * becomes `_`: `Vec<f64>` is `Vec_f64` (spec/next ch48 `§wac-bind-instantiation-name-dwptdfb`). A
+ * becomes `_`: `Vec<f64>` is `Vec_f64` (spec ch48 `§wac-bind-instantiation-name-dwptdfb`). A
  * struct somebody named `Vec_f64` would collide with it.
  */
 string classNameOf(string name) {
@@ -182,7 +182,7 @@ string reservedVariantIn(string payload) {
 
 /**
  * The class a bind type is under: the name the entry exported it by, `IntVec` for `Vec<i32>`
- * (spec/next ch48 `§wac-bind-instantiation-name-dwptdfb`), or one spelled from it.
+ * (spec ch48 `§wac-bind-instantiation-name-dwptdfb`), or one spelled from it.
  */
 string className(G g, string name) {
   i32 at = g.named.indexOf("\n" + name + "\t");
@@ -372,7 +372,7 @@ G readWires(string wire, string sigs, bool js) {
     string tag = field(wl[i], 0);
     if (tag == "E" && reservedVariantIn(field(wl[i], 3)) != "") {
       // **An enum with a variant named `tag`, `ref` or `toObject` is skipped** rather than renamed:
-      // a renamed variant would no longer be the name in the source (spec/next ch48).
+      // a renamed variant would no longer be the name in the source (spec ch48).
       g.dropped = g.dropped + field(wl[i], 1) + "\t" + reservedVariantIn(field(wl[i], 3)) + "\n";
       continue;
     }
@@ -920,7 +920,7 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
   for (i32 t = 0; t < g.tCount; t++) { classFor(o, g, t); }
 
   for (i32 s = 0; s < g.sCount; s++) {
-    // **A skipped export says so where it would have been** (spec/next ch48
+    // **A skipped export says so where it would have been** (spec ch48
     // `§wac-bind-skip-h9pd5wn`), and again in `__bindgenSkipped` below, where a caller looks.
     if (!usable[s]) {
       string why = skipReason(g, s);
@@ -954,7 +954,7 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
     line(o, "");
   }
 
-  // **A generic the entry exports has no single shape to bind** (spec/next ch48
+  // **A generic the entry exports has no single shape to bind** (spec ch48
   // `§wac-bind-generic-skipped-biz4394`), so it is skipped too, with the form that would bind it.
   string[] gl = linesOf(g.generics);
   for (i32 i = 0; i < gl.len(); i++) {
@@ -1061,7 +1061,7 @@ void classFor(Out o, G g, i32 t) {
     }
     // **`of` builds one from its fields** — unless the struct declares its own `of`, which binds
     // below as written, or has a private field, which only its own static methods may set
-    // (spec/next ch48 `§wac-bind-private-7kpcy8t`).
+    // (spec ch48 `§wac-bind-private-7kpcy8t`).
     bool ownOf = false;
     for (i32 m = 0; m < g.mCount; m++) {
       if (field(g.mLines[m], 1) == bind && field(g.mLines[m], 2) == "of" && field(g.mLines[m], 3) != "this") { ownOf = true; }
@@ -1102,7 +1102,7 @@ void classFor(Out o, G g, i32 t) {
       line(o, "  }");
     }
     // **A plain-data snapshot, one level deep**: a struct-typed field stays its wrapper, so a value
-    // that reaches itself does not recurse (spec/next ch48).
+    // that reaches itself does not recurse (spec ch48).
     line(o, "  toObject()" + annRaw(g, shape == "" ? "{}" : "{ " + shape + " }") + " {");
     line(o, "    return { " + snapshot + " };");
     line(o, "  }");
@@ -1155,7 +1155,7 @@ void classFor(Out o, G g, i32 t) {
         // A getter, as the reference's generator writes it: a caller reads `v.Bool_value`, and a
         // method of that name hands back the function object instead.
         line(o, "  get " + vn + "_" + fname + "()" + ann(g, ft) + " {");
-        // **Throws unless this is that variant** — the protection `match` gives (spec/next ch48
+        // **Throws unless this is that variant** — the protection `match` gives (spec ch48
         // `§wac-bind-enum-3nqk7vm`), as an exception rather than a wrong answer.
         line(o, "    if (this.tag !== \"" + vn + "\") throw new TypeError(\"not a " + vn + ": \" + this.tag);");
         line(o, "    return " + fromWasm(g, ft, "($exports.$bind$e_" + bind + "_" + vn + "_get_" + fname

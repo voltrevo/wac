@@ -61,7 +61,7 @@ string[] cases() { return ["trapCase:12"]; }
 
 Pin[] pins() {
   // The one pin here was `Buf`'s capacity clamp, which moved to `core/buf.wac` with `Buf` itself
-  // (spec/next ch42) and is core's coverage to account for now.
+  // (spec ch42) and is core's coverage to account for now.
   return Pin[]();
 }
 

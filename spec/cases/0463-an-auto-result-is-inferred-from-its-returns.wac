@@ -1,7 +1,7 @@
 // expect: answers total = 128
 // spec: §wac-auto-return-vm59825, §wac-auto-path-exclusion-ffs3tt5
 // why: each `auto` widens its own returns, and a path back to itself contributes nothing
-// from: spec/next ch34
+// from: spec ch34
 auto value() { return 1 as i32; }
 auto forwarded() { return value(); }
 

@@ -7,7 +7,7 @@
 // each difference was found by running it rather than by reading the old test.
 //
 //   - `check` on a clean file prints a summary. `wacx` printed nothing.
-//   - `bindgen` writes `<name>.wac.ts`, as `wacx` did and spec/next ch48 says; it wrote `<stem>.gen.ts`
+//   - `bindgen` writes `<name>.wac.ts`, as `wacx` did and spec ch48 says; it wrote `<stem>.gen.ts`
 //     for a while.
 //   - A usage error is exit 2. `wacx` used 1 for both usage and compile failures.
 //
@@ -138,7 +138,7 @@ export string test_compile_writes_a_module_and_bindgen_writes_the_glue_9wkn3pq_5
 
   Ran b = wac(cli, d.path, ["bindgen", "math.wac"]);
   t.eqI32(b.status, 0, "bindgen exits 0 — " + b.out);
-  // `math.wac.ts`, and what it bound — spec/next ch48.
+  // `math.wac.ts`, and what it bound — spec ch48.
   t.isTrue(contains(b.out, "math.wac.ts: 0 classes, "), "and prints the path and a summary — got \"" + b.out + "\"");
   FileResult glue = cli.readFile(d.path + "/math.wac.ts").wait();
   t.isTrue(glue.ok, "the glue is there");
@@ -176,7 +176,7 @@ export string test_usage_and_unknown_commands_3nkq8wj(Core core, Cli cli) {
   Ran help = wac(cli, d.path, ["--help"]);
   t.eqI32(help.status, 0, "--help is not an error");
 
-  // `compile` rather than `check`: `wac check` alone checks the project it is run in (spec/next ch06).
+  // `compile` rather than `check`: `wac check` alone checks the project it is run in (spec ch06).
   Ran noEntry = wac(cli, d.path, ["compile"]);
   t.eqI32(noEntry.status, 2, "a command with no entry is a usage error");
 

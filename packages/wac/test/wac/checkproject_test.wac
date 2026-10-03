@@ -1,4 +1,4 @@
-// `wac check` in its three forms — spec/next ch06 — driven through the command.
+// `wac check` in its three forms — spec ch06 — driven through the command.
 //
 // `wac check` alone answered with the usage block until 2026-10-02, and the spec probe counted that
 // exit 2 as the refusal its examples expected: every `(wac check): refused` was met by a command that

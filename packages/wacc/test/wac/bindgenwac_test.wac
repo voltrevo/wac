@@ -156,7 +156,7 @@ Program[] cases() {
          "  }\n" +
          "}\n" +
          "export u8[] bytes(u8[] b) { return b; }\n"),
-    // spec/next ch48: what is left out is said where it would have been and in `__bindgenSkipped`,
+    // spec ch48: what is left out is said where it would have been and in `__bindgenSkipped`,
     // a generic the entry exports is one of those, and an instantiation exported by name is a class
     // under that name — `Vec<i32>` as `IntVec`, beside one reached only through a signature.
     Program("a skipped export, a generic one, and instantiations named and reached",
@@ -166,7 +166,7 @@ Program[] cases() {
          "export struct Pair<T> { T a; T b; }\n" +
          "export i32 simple() { return 42; }\n" +
          "export i32 firstOf(fn<i32(i32)>[] fs) { return fs[0](1); }\n"),
-    // spec/next ch48: a private field has no accessor and keeps `of` from being generated, a private
+    // spec ch48: a private field has no accessor and keeps `of` from being generated, a private
     // method is not bound, a `const` field has no setter, a declared `of` is the one bound, every
     // class has `toObject()`, and an enum with a variant named `tag` is skipped.
     Program("private and const members, a declared `of`, and a variant that would hide `tag`",

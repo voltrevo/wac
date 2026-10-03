@@ -1278,7 +1278,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         });
     }
 
-    // **A `main` that takes something other than a world is an ordinary export** (spec/next ch07,
+    // **A `main` that takes something other than a world is an ordinary export** (spec ch07,
     // `§wac-main-ordinary-pnxd9gt`): the module is a library, not a program, and `wac run m.wasm main wac`
     // calls it by name like any other.
     let is_world = |ps: &[String]| {
@@ -1749,7 +1749,7 @@ fn coerce_arg<'s>(
     text: &str,
     ty: &str,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    // **`null` is a wac literal**, and an argument is written as one (spec/next README) — so a
+    // **`null` is a wac literal**, and an argument is written as one (spec README) — so a
     // nullable parameter takes it, whatever it is nullable of: a wasm reference is null as JS
     // `null`, a struct and a boxed number alike. A present value of a nullable reference is the
     // reference itself, so it is read as the inner type.
@@ -2219,7 +2219,7 @@ fn dispatch(
     };
 
     match cap {
-        // **End the program now** (spec/next ch07 `sys.exit`): unwind to `main`'s call, abandoning
+        // **End the program now** (spec ch07 `sys.exit`): unwind to `main`'s call, abandoning
         // whatever is left. A throw rather than `process::exit` because a child is a thread here.
         Cap::Exit => {
             let code = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(1);
@@ -4969,7 +4969,7 @@ fn build_names<'s>(
 /// A wac `string` from Rust, through the staging buffer.
 /**
  * An integer argument as wac writes one: decimal or `0x` hex, a sign, `_` between digits. A hex
- * literal is a bit pattern (spec/next ch09), so `0xFFFFFFFF` is a `u32`'s whole range and an `i32`'s
+ * literal is a bit pattern (spec ch09), so `0xFFFFFFFF` is a `u32`'s whole range and an `i32`'s
  * `-1` alike — the wasm parameter takes the bits either way.
  */
 fn wac_int(text: &str) -> Option<i128> {

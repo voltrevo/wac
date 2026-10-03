@@ -309,20 +309,20 @@ export i32 kAsync() { return 86; }
 export i32 kAwait() { return 87; }
 /** `static` — a module-level declaration, evaluated at compile time. `design/lang/0016`. */
 export i32 kStatic() { return 88; }
-/** `private` — a member visible only inside its type's body. spec/next ch12. */
+/** `private` — a member visible only inside its type's body. spec ch12. */
 export i32 kPrivate() { return 89; }
-/** `defer` — a statement run when its block is left. spec/next ch25. */
+/** `defer` — a statement run when its block is left. spec ch25. */
 export i32 kDefer() { return 90; }
-/** `matches` — a pattern tested against a value. spec/next ch25. */
+/** `matches` — a pattern tested against a value. spec ch25. */
 export i32 kMatches() { return 91; }
 
-/** `?.` — a member read through an absence. spec/next ch10. */
+/** `?.` — a member read through an absence. spec ch10. */
 export i32 kQuestionDot() { return 92; }
 
 /**
  * A member named by a symbol — `[describe]` — as the parser records it: a token of its own after the
  * end of the file, carrying the symbol identifier's position. Never produced by the lexer. Its text is
- * the member's name, `[` and the symbol's key and `]`, which no identifier can spell. spec/next ch21.
+ * the member's name, `[` and the symbol's key and `]`, which no identifier can spell. spec ch21.
  */
 export i32 kSymName() { return 93; }
 

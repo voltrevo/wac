@@ -574,7 +574,7 @@ Deno.test("site: the ladder page's rung excerpts are verbatim from the rungs", a
  * have passed on the day it was written.
  */
 Deno.test("site: the command spellings the site prints are the ones the CLI page names", async () => {
-  const cli = await Deno.readTextFile(new URL("../../spec/next/8-tooling/45-cli.md", import.meta.url).pathname);
+  const cli = await Deno.readTextFile(new URL("../../spec/8-tooling/45-cli.md", import.meta.url).pathname);
   const next = new URL("../src/next/", import.meta.url);
   const files = [new URL("../src/snippets.ts", import.meta.url)];
   for await (const e of Deno.readDir(next)) {
@@ -589,7 +589,7 @@ Deno.test("site: the command spellings the site prints are the ones the CLI page
   if (missing.length > 0) {
     throw new Error(
       `the site prints ${missing.map((w) => `\`wac ${w}\``).join(", ")}, which ` +
-        `spec/next/8-tooling/45-cli.md does not name — a reader who types that gets "unknown command"`);
+        `spec/8-tooling/45-cli.md does not name — a reader who types that gets "unknown command"`);
   }
 });
 
@@ -910,7 +910,7 @@ function specKeywords(md: string): Set<string> {
 }
 
 Deno.test("site: the editor's keyword list is the one the spec prints", async () => {
-  const md = await Deno.readTextFile(new URL("../../spec/next/appendices/A-grammar.md", import.meta.url));
+  const md = await Deno.readTextFile(new URL("../../spec/appendices/A-grammar.md", import.meta.url));
   const spec = specKeywords(md);
 
   // A floor first: a fence that stopped being found, or an extraction that collapsed, would make

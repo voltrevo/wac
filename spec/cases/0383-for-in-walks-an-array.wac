@@ -1,6 +1,6 @@
 // expect: answers f = 8
 // why: `for (T x in xs)` binds each element in turn; `continue` goes on to the next and `break` leaves
-// from: spec/next ch25 §wac-for-in-qkcbmxf
+// from: spec ch25 §wac-for-in-qkcbmxf
 export i32 f() {
   i32 s = 0;
   for (i32 x in [1, 2, 3, 4, 5]) {

@@ -1,5 +1,5 @@
 // expect: refused
 // why: a number has no default, so braces may not leave out a numeric field that has no initialiser
-// from: spec/next ch08 §wac-default-absence-8mxpz7y, ch12 §wac-struct-named-defaults-y5em4qj
+// from: spec ch08 §wac-default-absence-8mxpz7y, ch12 §wac-struct-named-defaults-y5em4qj
 struct Node { i32 val; Node? next; }
 export i32 f() { Node n = Node { next: null }; return n.val; }

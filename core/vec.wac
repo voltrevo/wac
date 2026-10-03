@@ -17,7 +17,7 @@
 
 export struct Vec<T> {
   T[] data;
-  // A default, so `Vec<i32> v;` is an empty Vec (spec/next ch38 `§wac-vec-create-8zprdms`) — the
+  // A default, so `Vec<i32> v;` is an empty Vec (spec ch38 `§wac-vec-create-8zprdms`) — the
   // array beside it defaults to empty already.
   i32 n = 0;
   /**
@@ -35,7 +35,7 @@ export struct Vec<T> {
   }
 
   /**
-   * An empty Vec meant to hold about `capacity` elements (spec/next ch38).
+   * An empty Vec meant to hold about `capacity` elements (spec ch38).
    *
    * The slots past the length are never read before they are written, so nothing observable has to
    * be put there — but a WasmGC array is filled when it is made, and wac will not invent a value for a
@@ -65,7 +65,7 @@ export struct Vec<T> {
     return this.data[i];
   }
 
-  /** Element `i`, or `null` rather than a trap (spec/next ch38 `§wac-vec-at-3dehker`). */
+  /** Element `i`, or `null` rather than a trap (spec ch38 `§wac-vec-at-3dehker`). */
   T? at(const this, i32 i) {
     if (i < 0 || i >= this.n) { return null; }
     return this.data[i];
@@ -90,7 +90,7 @@ export struct Vec<T> {
   }
 
   /**
-   * The last element, removed, or `null` when there is none (spec/next ch38 `§wac-vec-pop-yszir66`).
+   * The last element, removed, or `null` when there is none (spec ch38 `§wac-vec-pop-yszir66`).
    * At `T = U?` that is a `U??`, so an empty `Vec` and a popped `null` stay apart.
    */
   T? pop(this) {

@@ -1,5 +1,5 @@
 // expect: refused
 // why: a module-level variable must be `static` — `const` alone does not ask for compile-time evaluation
-// from: the `static` flip (design/lang/0016), spec/next ch27
+// from: the `static` flip (design/lang/0016), spec ch27
 const i32 LIMIT = 100;
 export i32 f() { return LIMIT; }

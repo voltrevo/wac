@@ -1,6 +1,6 @@
 // expect: refused
 // why: implementing `add` does not supply `addAssign`: `a += b` is its own operation, never `a = a + b`
-// from: spec/next ch22 §wac-operator-independent-4ssj2cv, §wac-operator-compound-own-u7m6y7c
+// from: spec ch22 §wac-operator-independent-4ssj2cv, §wac-operator-compound-own-u7m6y7c
 import { operators } from "core";
 struct Counter {
   i32 value;

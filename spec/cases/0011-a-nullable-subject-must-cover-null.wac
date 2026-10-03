@@ -1,6 +1,6 @@
 // expect: refused
 // why: a match on a `T?` must cover the absent case — with a `null` arm or a `default` — and this has neither
-// from: spec/next ch25 §wac-match-nullable-subject-zcnasbp
+// from: spec ch25 §wac-match-nullable-subject-zcnasbp
 enum Shape { Point, Circle(f64 radius) }
 export f64 f(Shape? s) {
   match (s) {

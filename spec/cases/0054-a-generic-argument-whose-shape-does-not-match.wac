@@ -1,6 +1,6 @@
 // expect: refused
 // why: the parameter is Box<T> and the argument is a P — there is no T that makes those the same
-// from: specSingle's §wac-generic-fn cluster
+// from: specSingle's §wac-generic-fn-5hvq3mt cluster
 struct Box<T> { T v; }
 struct P { i32 v; }
 T unbox<T>(Box<T> b) { return b.v; }

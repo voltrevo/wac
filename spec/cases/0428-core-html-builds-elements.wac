@@ -1,6 +1,6 @@
 // expect: answers paragraph = true
 // why: core.html holds a function per element, building Node.Element with one Attr per attribute written
-// from: spec/next ch43 §wac-html-tag-functions-sb9cij9
+// from: spec ch43 §wac-html-tag-functions-sb9cij9
 import { Node, html.p } from "core";
 
 export bool paragraph() {

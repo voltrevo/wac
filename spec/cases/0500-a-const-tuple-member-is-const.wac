@@ -2,7 +2,7 @@
 // spec: §wac-const-ref-617go61, §wac-const-rebindable-ri3wpfz
 // why: `const T` is a type wherever a type is written without a binding — a tuple member included —
 //      so writing through the member is refused
-// from: spec/next ch17
+// from: spec ch17
 struct S { i32 v; }
 export i32 member() {
   (const S, i32) t = (S(1), 2);

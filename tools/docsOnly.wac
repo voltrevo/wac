@@ -12,7 +12,7 @@
 //
 // ## What "documentation only" has to mean here, which is narrower than "only markdown changed"
 //
-// **A `.md` file can hold a program.** `spec/next/**/*.md` is prose with code in it, and two consumers
+// **A `.md` file can hold a program.** `spec/**/*.md` is prose with code in it, and two consumers
 // execute fences: `packages/wacc/test/wac/specexamples_test.wac` runs every example in the specification,
 // and `tools/wac/docsignatures_test.wac` matches package READMEs' `export` lines against real
 // declarations. Editing a fence is editing a program, so the file's extension is not the question — its

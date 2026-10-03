@@ -125,7 +125,7 @@ is much larger. Worth knowing which is being chosen before the first row is patc
 
 ## 2026-10-03 — `const` is part of the type now (agent-a)
 
-spec/next ch17 settled the model: a `const T` never becomes a `T`, and `(const T) x` is a binding that may
+spec ch17 settled the model: a `const T` never becomes a `T`, and `(const T) x` is a binding that may
 be rebound holding one. The checker now refuses a `const` reference flowing into a plain parameter
 (function, method and function value), a plain local, a plain field at construction, and a plain array
 element, and a declared `const T` result is `const`. Rows two, three, four and six above are refused.

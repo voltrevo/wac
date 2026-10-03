@@ -1,6 +1,6 @@
 // expect: answers f = 42 -7 false 0.5 -0 -9223372036854775808 1e+21
 // why: bool, every integer and every float have a built-in conversion: decimal, the shortest round-tripping decimal, true or false — and negative zero is "-0"
-// from: spec/next ch23 §wac-tostring-builtin-4t3buvz
+// from: spec ch23 §wac-tostring-builtin-4t3buvz
 export string f() {
   i32 n = 42;
   i32 m = -7;

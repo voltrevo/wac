@@ -1,6 +1,6 @@
 // expect: answers f = 8
 // why: a `Vec` is walked as an array is, and `auto` takes the element type
-// from: spec/next ch25 §wac-for-in-qkcbmxf, ch38
+// from: spec ch25 §wac-for-in-qkcbmxf, ch38
 import { Vec } from "core";
 export i32 f() {
   Vec<string> lines;

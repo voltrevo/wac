@@ -1,7 +1,7 @@
 // expect: answers f = 1
 // why: a packed type is an integer like any other, so it may be nullable — and a field may hold one
 // from: specSingle's named misses; refused while a packed type could be nothing but an element, and
-// spec/next ch08 §wac-packed-ordinary-kawnzqm made it ordinary
+// spec ch08 §wac-packed-ordinary-kawnzqm made it ordinary
 struct Holder { u8? b; }
 export i32 f() {
   Holder h = Holder(null);

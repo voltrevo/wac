@@ -1,7 +1,7 @@
 // expect: answers onePerInstantiation = true
 // spec: §wac-static-per-instantiation-79mu9di
 // why: `Cache<i32>.marker` and `Cache<string>.marker` are two statics, each one object however read
-// from: spec/next ch27
+// from: spec ch27
 struct Box { i32 value; }
 struct Cache<T> {
   static Box marker = Box(1);

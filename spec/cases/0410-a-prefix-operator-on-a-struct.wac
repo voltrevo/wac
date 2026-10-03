@@ -1,6 +1,6 @@
 // expect: answers run = -5 true
 // why: `-a` and `!a` on a struct call its `negate` and `not` methods; `not` is reserved, so the member is named verbatim
-// from: spec/next ch22, appendix A §wac-keywords-reserved-w9tpxmx
+// from: spec ch22, appendix A §wac-keywords-reserved-w9tpxmx
 import { operators } from "core";
 struct Counter {
   i32 value;

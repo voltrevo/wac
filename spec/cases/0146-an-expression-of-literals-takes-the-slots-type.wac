@@ -1,4 +1,4 @@
 // expect: answers run = 3
 // why: an integer-spelled literal is read as a float where a float is expected, so a sum of them in an `f64` slot is an `f64` sum
-// from: spec/next ch09 §wac-float-integer-spelled-ur9ttxq; issues/lang/0120
+// from: spec ch09 §wac-float-integer-spelled-ur9ttxq; issues/lang/0120
 export f64 run() { f64 s = 1 + 2; return s; }

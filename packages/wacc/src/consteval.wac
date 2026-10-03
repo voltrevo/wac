@@ -113,7 +113,7 @@ export i32 vF64()  { return 2; }
 export i32 vRef()  { return 3; }
 export i32 vNull() { return 4; }
 export i32 vNone() { return 5; }
-/** A `typeref`: its object's `type` is the spelling of the type it stands for (spec/next ch30). */
+/** A `typeref`: its object's `type` is the spelling of the type it stands for (spec ch30). */
 export i32 vType() { return 6; }
 
 export Value numValue(string ty, i64 bits) { return Value(vNum(), ty, bits, 0.0, 0 - 1); }
@@ -195,7 +195,7 @@ export struct Ev {
   i32[] constOrder;
   i32 constOrderCount;
   /**
-   * The type parameters in force and the types they stand for (spec/next ch30): what `typeref(T)`
+   * The type parameters in force and the types they stand for (spec ch30): what `typeref(T)`
    * answers inside a generic, bound by whoever asks — an instantiation, or a type declaration's own
    * parameters while its body runs. A name bound to `""` is opaque: a parameter with no instance yet.
    */
@@ -206,7 +206,7 @@ export struct Ev {
    * The `type` declarations being computed, innermost last, each with how many guarding layers — a
    * union of two or more, a tuple, a struct's arguments — stood around the computation when it began.
    * Reaching one again with more guards since is recursion a type may have; with none, a cycle
-   * (spec/next ch29 `§wac-static-dep-recursion-guard-va5yec4`).
+   * (spec ch29 `§wac-static-dep-recursion-guard-va5yec4`).
    */
   string[] typeStack;
   i32[] typeGuards;
@@ -984,7 +984,7 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
     }
 
     Member(obj, nameTok): {
-      // `Tag.Two` — a payload-free variant is a value (spec/next ch13).
+      // `Tag.Two` — a payload-free variant is a value (spec ch13).
       if (variantArityOf(cx, fi, obj, tokText(src, lx, nameTok)) == 0) {
         return buildVariant(ev, cx, fi, obj, tokText(src, lx, nameTok), Expr[](), 0);
       }
@@ -1019,7 +1019,7 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
       if (v.kind == vRef() && endsWith(ev.heap[v.id].type, ".Err")) { ev.raise("`!` unwrapped an Err"); return noneValue(); }
       return v;
     }
-    // **`try` answers the `Ok` value, or returns the `Err`** from the function being run (spec/next
+    // **`try` answers the `Ok` value, or returns the `Err`** from the function being run (spec
     // ch26) — the same object, since an `Err` carries nothing of the `Ok` type it is not.
     Try(operand): {
       Value r = evalExpr(ev, cx, fi, operand, "");
@@ -1071,14 +1071,14 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
       return refValue(lid);
     }
 
-    // `typeref(T)` — a type as a value (spec/next ch30).
+    // `typeref(T)` — a type as a value (spec ch30).
     TypeRefOf(t): {
       string spelled = evTyName(ev, cx, fi, t);
       if (!evFinished(ev.status)) { return noneValue(); }
       return typeValue(ev, spelled);
     }
 
-    // `[a, b, c]` — its element type is the slot's (spec/next ch15), or the first element's.
+    // `[a, b, c]` — its element type is the slot's (spec ch15), or the first element's.
     ArrLit(elements): {
       string at = want.len() > 2 && want.slice(want.len() - 2, want.len()) == "[]" ? want : "";
       string et = at == "" ? "" : at.slice(0, at.len() - 2);
@@ -1162,7 +1162,7 @@ export Value evalBinary(Ev ev, Decls cx, i32 fi, i32 op, Expr left, Expr right, 
   }
   string t = typeOfValue(a);
   Value b = evalExpr(ev, cx, fi, right, t != "" ? t : inner);
-  // Two `typeref`s are equal when they stand for the same type (spec/next ch30).
+  // Two `typeref`s are equal when they stand for the same type (spec ch30).
   if (a.kind == vType() && b.kind == vType() && (op == kEq() || op == kNe())) {
     bool same = typeOfTyperef(ev, a) == typeOfTyperef(ev, b);
     return boolValue(op == kEq() ? same : !same);
@@ -1407,7 +1407,7 @@ export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
     // function anywhere in the program for it to go and run.
     Member(obj, nameTok): {
       string nm = tokText(src, lx, nameTok);
-      // `Tag.One(6)` — a variant built through its enum (spec/next ch13): an object holding the payload.
+      // `Tag.One(6)` — a variant built through its enum (spec ch13): an object holding the payload.
       i32 arity = variantArityOf(cx, fi, obj, nm);
       if (arity >= 0) { return buildVariant(ev, cx, fi, obj, nm, args, arity); }
       // **`Owner.method(…)` — a method without a receiver**, `Even.[fromNumber](n)` among them: the
@@ -1494,7 +1494,7 @@ i32 typeDeclIndex(Decls cx, string name) {
 }
 
 /**
- * **A method, run as a function is** — with `this` bound to the receiver when it has one (spec/next
+ * **A method, run as a function is** — with `this` bound to the receiver when it has one (spec
  * ch28: static evaluation runs ordinary wac). A struct's method, or an enum's.
  */
 Value callMethod(Ev ev, Decls cx, i32 fromFi, string owner, string mname, bool hasRecv, Value recv, Expr[] args) {
@@ -1607,7 +1607,7 @@ export void execStmt(Ev ev, Decls cx, i32 fi, Stmt st) {
   match (st.kind) {
     Var(type, nameTok, init, isConst): {
       string t = tyName(cx, fi, type);
-      // `T x;` holds `T`'s default until it is assigned (spec/next ch08).
+      // `T x;` holds `T`'s default until it is assigned (spec ch08).
       Value v = init is null ? defaultOf(t) : evalExpr(ev, cx, fi, init!, t);
       if (!evFinished(ev.status)) { return; }
       ev.declare(tokText(src, lx, nameTok), t, v);
@@ -1720,7 +1720,7 @@ export void execStmt(Ev ev, Decls cx, i32 fi, Stmt st) {
     }
 
     Block(body):    { execStmts(ev, cx, fi, body, ev.frameBase); }
-    // **`match` over a variant** (spec/next ch25): the arm whose variant the subject is, its payload
+    // **`match` over a variant** (spec ch25): the arm whose variant the subject is, its payload
     // bound to the arm's names; an `else` arm takes what no other did, and a `null` arm an absent one.
     Match(subject, arms): {
       Value sv = evalExpr(ev, cx, fi, subject, "");
@@ -2252,7 +2252,7 @@ export string staticForType(Decls cx, i32 fi, Stmt? init) {
 
 /**
  * What an expression is, in words, for a diagnostic that names the construct this evaluator cannot
- * run yet (spec/next ch28: "an error that says so, naming the construct").
+ * run yet (spec ch28: "an error that says so, naming the construct").
  */
 export string exprKindName(Expr e) {
   match (e.kind) {
@@ -2324,7 +2324,7 @@ export struct StaticBind {
 }
 
 /**
- * Bind every `static` local of `body` into `ev` — spec/next ch27 `§wac-static-local-mpg3rw7`.
+ * Bind every `static` local of `body` into `ev` — spec ch27 `§wac-static-local-mpg3rw7`.
  *
  * **By dependency, not by position**: a static may read one declared after it in the block, so each
  * is tried until none moves, and one whose initialiser asked for a name another of them supplies is
@@ -2400,7 +2400,7 @@ export StaticBind bindStaticLocals(Ev ev, Decls cx, i32 fi, Stmt[] body) {
   return out;
 }
 
-// ── Computed types — spec/next ch30 ─────────────────────────────────────────
+// ── Computed types — spec ch30 ─────────────────────────────────────────
 
 /** A `typeref` standing for the type spelled `spelled`. */
 export Value typeValue(Ev ev, string spelled) {
@@ -2421,7 +2421,7 @@ export bool isValueTypeName(string t) {
 }
 
 /**
- * `t.isRef()`, `t.pushNull()` and the rest (spec/next ch30 `§wac-typeref-ops-u2h77nf`), on the type
+ * `t.isRef()`, `t.pushNull()` and the rest (spec ch30 `§wac-typeref-ops-u2h77nf`), on the type
  * spelled `t`. `pushNull` adds a layer rather than ensuring one, since `?` does not flatten.
  */
 export Value typerefMethod(Ev ev, string t, string m) {
@@ -2446,7 +2446,7 @@ export Value typerefMethod(Ev ev, string t, string m) {
 
 /**
  * A written type as the spelling this evaluator holds types in — with the type parameters in force
- * substituted, `type(e)` evaluated, and a `type` declaration's computation run (spec/next ch30).
+ * substituted, `type(e)` evaluated, and a `type` declaration's computation run (spec ch30).
  * A parameter with no instance yet makes the answer unknowable here: unsupported, saying so.
  */
 export string evTyName(Ev ev, Decls cx, i32 fi, Ty t) {
@@ -2599,7 +2599,7 @@ export string evalTypeDecl(Ev ev, Decls cx, i32 d, string[] args) {
       ev.tpCount = tpMark;
       ev.depth = ev.depth - 1;
       if (ev.typeDepth > 0) { ev.typeDepth = ev.typeDepth - 1; }
-      // **A recursive type is spelled by its name inside a guarding layer** (spec/next ch18
+      // **A recursive type is spelled by its name inside a guarding layer** (spec ch18
       // `§wac-union-recursive-guard-e4vnb4j`): its expansion holds the name, so `Box<A>` written
       // anywhere is the `Box<A>` inside `A`, not a `Box` of a one-level unfolding. Only the outermost
       // use is unfolded, and `unfoldTypeName` unfolds a named one where a reader needs its shape.

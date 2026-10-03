@@ -1,4 +1,4 @@
-// Text — the built-in `toString` conversions. spec/next ch23 `§wac-tostring-builtin-4t3buvz`.
+// Text — the built-in `toString` conversions. spec ch23 `§wac-tostring-builtin-4t3buvz`.
 //
 // `bool`, every integer and every float type convert to text without a method of their own: decimal
 // digits for an integer, the shortest decimal that reads back as the same float, and `true` or

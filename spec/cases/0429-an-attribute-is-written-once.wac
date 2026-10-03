@@ -1,6 +1,6 @@
 // expect: refused
 // why: writing an attribute twice on one element is refused — the tree cannot express which wins
-// from: spec/next ch23 §jsx-attribute-written-once
+// from: spec ch23 §jsx-attribute-written-once
 import { Node } from "core";
 
 export Node card() { return <"div" class="a" class="b" />; }

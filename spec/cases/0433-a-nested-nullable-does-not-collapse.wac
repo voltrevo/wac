@@ -1,6 +1,6 @@
 // expect: refused
 // why: a `T??` has a state a `T?` cannot hold, so it does not convert — collapsing is written `?? null`
-// from: spec/next ch10 §wac-nested-not-collapsed-m6cz4gb
+// from: spec ch10 §wac-nested-not-collapsed-m6cz4gb
 struct Node { i32 v; }
 
 export bool f() {

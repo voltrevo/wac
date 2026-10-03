@@ -1,6 +1,6 @@
 // expect: refused
 // why: a deferred statement runs on the way out, so it cannot itself leave the block
-// from: `defer` (design/lang/0016), spec/next ch25
+// from: `defer` (design/lang/0016), spec ch25
 export i32 f(i32 n) {
   defer return 1;
   return n;

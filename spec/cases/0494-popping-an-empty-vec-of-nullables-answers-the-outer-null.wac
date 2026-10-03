@@ -2,7 +2,7 @@
 // spec: §wac-vec-pop-nested-rgci8id
 // why: at `T = Node?`, `pop` answers a `Node??`, so `Vec<Node?>` is its own instance whose `T?` is a
 //      second layer — an empty `Vec` and a popped `null` must arrive as different values
-// from: spec/next ch38
+// from: spec ch38
 import { Vec } from "core";
 struct Node { i32 v; }
 i32 kind(Vec<Node?> v) {

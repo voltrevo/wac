@@ -261,7 +261,7 @@ function structDecl(s: BType & { k: "struct" }): string {
 function build(t: BType, v: Val, mod: Record<string, unknown>): unknown {
   if (t.k === "struct") {
     const cls = mod[t.name] as { of(...a: unknown[]): unknown };
-    // `of`, spec/next ch48's name for the generated constructor — which a struct declaring its own
+    // `of`, spec ch48's name for the generated constructor — which a struct declaring its own
     // `of` does not get, and none of the fuzzer's structs does.
     return cls.of(...t.fields.map((f, i) => build(f, (v as Val[])[i], mod)));
   }

@@ -1,6 +1,6 @@
 // `std` — the capability half of the built-in trees, `design/lang/0009` D4.
 //
-// `[§wac-std-reserved-5kt8nqw]` `[§wac-std-no-root-2vp6xmk]` `[§wac-std-imports-core-7hn3qrz]`
+// `§wac-std-reserved-5kt8nqw` `§wac-no-subpath-wqatc72`
 //
 // **These cases ask wacc only**, which was a finding when there were two compilers and is simply
 // the situation now. `std` could never be asked of the TypeScript reference: it carried none of
@@ -111,7 +111,7 @@ export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Core
 /**
  * `std` is named whole: the bare name runs, and a path below it says to write the name.
  *
- * Until spec/next it was the other way round — `std` had no root module and a program named its one
+ * Until spec it was the other way round — `std` had no root module and a program named its one
  * file. A package is named whole now (`§wac-no-subpath-wqatc72`), so the file is the thing refused.
  */
 export string test_std_is_named_whole(Core core, Cli cli) {

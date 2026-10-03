@@ -1,6 +1,6 @@
 // expect: answers run = 3 3
 // why: `(T a, U b) = e` declares one local per member of the tuple `e`, and the pattern may nest
-// from: spec/next ch14 §wac-tuple-destructure-gn8i48y
+// from: spec ch14 §wac-tuple-destructure-gn8i48y
 (u32, u32) divmod(u32 n, u32 d) { return (n / d, n % d); }
 export i32 quotient() {
   (u32 q, u32 r) = divmod(17, 5);

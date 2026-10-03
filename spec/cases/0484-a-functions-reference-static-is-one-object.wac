@@ -1,7 +1,7 @@
 // expect: answers oneValueForEveryCall = true
 // spec: §wac-modconst-ref-9jvq2mt
 // why: a static in a function is one value however often the function runs — for a reference, one object
-// from: spec/next ch27
+// from: spec ch27
 struct Box { i32 value; }
 Box shared() {
   static Box value = Box(1);

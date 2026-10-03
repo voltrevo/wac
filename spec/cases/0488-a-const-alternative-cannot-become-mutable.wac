@@ -2,7 +2,7 @@
 // spec: §wac-union-permission-no-restore-dvm5zbj
 // why: every case the source can hold must fit — its `const Circle` has no mutable `Circle` to become,
 //      even though this initialiser chose a `Rect`
-// from: spec/next ch18
+// from: spec ch18
 struct Rect { i32 w; }
 struct Circle { i32 r; }
 export i32 widen() {

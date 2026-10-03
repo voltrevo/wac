@@ -1,6 +1,6 @@
 // expect: refused
 // why: a fresh symbol spelled `toString` is a different identity, and does not implement the conversion
-// from: spec/next ch23 §wac-conversion-symbol-identity-4ga8txc
+// from: spec ch23 §wac-conversion-symbol-identity-4ga8txc
 symbol toString;
 struct Label { string [toString](const this) { return "hello"; } }
 export string f() { Label label = Label(); return "\{label}"; }

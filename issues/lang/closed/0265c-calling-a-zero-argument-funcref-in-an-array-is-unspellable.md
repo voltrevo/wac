@@ -140,7 +140,7 @@ message rather than a missing one, and matching the reference's wording is a sep
 
 ## Resolution — 2026-10-01
 
-The collision went with the syntax that caused it. `spec/next` takes the length out of the brackets:
+The collision went with the syntax that caused it. `spec` takes the length out of the brackets:
 an array is built with `T[]()`, `T[].filled(n, v)`, `T[].defaulted(n)` or a literal `[a, b]`, so
 `name[expr]` is an index wherever it appears and `a[0]()` calls the funcref. `fill:` went with it.
 `spec/cases/0323` pins both arities; `zz[1]()` on an `i32` is now refused as an index of an `i32`.

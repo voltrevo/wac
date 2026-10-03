@@ -1,6 +1,6 @@
 // expect: refused
 // why: an element is a write through the reference, exactly as a field is
-// from: specSingle's §wac-const-deep cluster
+// from: specSingle's §wac-const-deep-j6b1nyg cluster
 export i32 bad() {
   const i32[] a = [1, 2, 3];
   a[0] = 99;

@@ -1,6 +1,6 @@
 // expect: refused
 // why: there are no derived overloads — implementing `equal` does not supply `notEqual`
-// from: spec/next ch22 §wac-operator-independent-4ssj2cv
+// from: spec ch22 §wac-operator-independent-4ssj2cv
 import { operators } from "core";
 struct Pair {
   i32 x;

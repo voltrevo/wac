@@ -1,6 +1,6 @@
 // expect: answers run = 80 770
 // why: a call to a `virtual` method runs the receiver's runtime type's implementation, whatever static type it is made through — a grandchild's override included
-// from: spec/next ch12 §wac-virtual-dispatch-a4xhpib, §wac-override-virtual-8bj3d46
+// from: spec ch12 §wac-virtual-dispatch-a4xhpib, §wac-override-virtual-8bj3d46
 struct Base {
   virtual i32 fire(const this) { return 0; }
 }

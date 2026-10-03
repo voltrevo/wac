@@ -1032,7 +1032,7 @@ a second call is a second program run, with a fresh world. The constraint is the
 it is worth knowing before anyone tidies `host/entry.ts`: **the capabilities may not be
 rebuilt for the second call.** A JS closure is not a wasm function, so bindgen registers one
 wasm function per host function and [only sixteen per signature can be
-live](../../spec/next/8-tooling/48-bindgen.md) — registration is by identity, so passing the *same*
+live](../../spec/8-tooling/48-bindgen.md) — registration is by identity, so passing the *same*
 closures costs one slot each, and building a new `Core` and `Cli` per run burns three more
 every time and fails on the fifth with `at most 16 distinct fn<void(i32)> functions can be
 passed to this module`. So `entry.ts` builds the world once and `Bridge.rebind` points it at

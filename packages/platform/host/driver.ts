@@ -47,7 +47,7 @@ export type Driven = {
   toWasm(type: string, v: unknown): unknown;
 };
 
-/** `Pending<i64>` is `Pending_i64` to a host — bindgen's name for it (spec/next ch48). */
+/** `Pending<i64>` is `Pending_i64` to a host — bindgen's name for it (spec ch48). */
 export function hostName(wac: string): string {
   return wac
     .replace(/\?/g, "Opt")

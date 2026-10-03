@@ -1,6 +1,6 @@
 // expect: answers run = true 3 40
 // why: `pop()`, `first()` and `last()` answer `T?` — `null` where there is no element, rather than a trap or an `Option`
-// from: spec/next ch38 §wac-vec-pop-yszir66, §wac-vec-at-3dehker
+// from: spec ch38 §wac-vec-pop-yszir66, §wac-vec-at-3dehker
 import { Vec } from "core";
 
 export string run() {

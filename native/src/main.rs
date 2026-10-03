@@ -1531,7 +1531,7 @@ fn dispatch(
     let arg = |i: usize| -> Val { params.get(i).cloned().unwrap_or(Val::I32(0)) };
 
     match cap {
-        // **End the program now** (spec/next ch07 `sys.exit`): an error unwinds its frames to the call
+        // **End the program now** (spec ch07 `sys.exit`): an error unwinds its frames to the call
         // of `main`, which reads the request and answers it as the status.
         Cap::Exit => {
             let code = match params.get(1) {

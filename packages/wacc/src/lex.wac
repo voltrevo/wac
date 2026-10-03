@@ -846,7 +846,7 @@ void lexNumber(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
   while (!lx.atEnd() && (isDigit(lx.peek(0)) || lx.peek(0) == '_')) { lx.advance(); }
 
   // **After a `.`, digits are a tuple member's position** — `t.0.1` is two selections, not `t.` and
-  // the float `0.1` (spec/next ch14 `§wac-tuple-members-mef8e82`).
+  // the float `0.1` (spec ch14 `§wac-tuple-members-mef8e82`).
   i32 before = out.tokenCount > 0 ? out.tokens[(out.tokenCount - 1) * tokenStride()] : -1;
   if (before == kDot() || before == kQuestionDot()) {
     pushToken(out, kInt(), start, lx.pos - start, startLine, startCol);
@@ -886,7 +886,7 @@ bool takeExponent(Lexer lx) {
 }
 
 /**
- * `@"…"` — a name written verbatim, spec/next ch01 `§wac-verbatim-name-jzwznre`.
+ * `@"…"` — a name written verbatim, spec ch01 `§wac-verbatim-name-jzwznre`.
  *
  * **An identifier whose span is the quoted text**, so everything downstream that reads a name by its
  * span reads the text: `@"n"` and `n` are one binding without anything else knowing verbatim names
@@ -1013,7 +1013,7 @@ i32 lexOperator(Lexer lx) {
   if (c == ',') { return kComma(); }
   if (c == '.') { return kDot(); }
   if (c == '?') {
-    // `?.`, spec/next ch10 — one token, since nothing else puts a `.` straight after a `?`. **`??` is
+    // `?.`, spec ch10 — one token, since nothing else puts a `.` straight after a `?`. **`??` is
     // two `?` tokens**, because `T??` is a type and every lookahead that recognises one counts `?`s;
     // the expression parser reads two adjacent ones as the operator.
     if (lx.peek(0) == '.') { lx.advance(); return kQuestionDot(); }
@@ -1128,7 +1128,7 @@ bool endsExpression(i32 kind) {
 bool startsTag(Lexer lx, i32 offset) {
   i32 c = lx.peek(offset);
   // `<@"caption">` — a tag name written verbatim is a name like any other — and `<"my-widget">`, an
-  // element by name (spec/next ch23 `§wac-markup-quoted-tag-3dnrvxj`).
+  // element by name (spec ch23 `§wac-markup-quoted-tag-3dnrvxj`).
   return c == '/' || c == '>' || c == '"' || isIdentStart(c) || (c == '@' && lx.peek(offset + 1) == '"');
 }
 
@@ -1274,7 +1274,7 @@ export Lexed lex(u8[] src) {
       lexVerbatimName(lx, out, startLine, startCol);
     } else if (isIdentStart(c) && md.mode == mTag()) {
       // **Inside a tag a name is written as in HTML**: it runs through hyphens, and no word is a
-      // keyword — `data-size=` and `for=` are attribute names (spec/next ch23
+      // keyword — `data-size=` and `for=` are attribute names (spec ch23
       // `§wac-markup-attr-verbatim-param-yd3farv`).
       i32 start = lx.pos;
       while (!lx.atEnd() && (isIdentPart(lx.peek(0)) || (lx.peek(0) == '-' && isIdentPart(lx.peek(1))))) {

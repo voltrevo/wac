@@ -117,7 +117,7 @@ Deno.test("a driven module takes capabilities, which is the conversion a host ca
     // follow, and the reason inserting a capability does not silently shift every argument.
     //
     // **Both faces of the world**, because `hello` takes a `Sys` and the module's `main` is the
-    // adapter the hosts call as `main(Core, Cli)` (spec/next ch07).
+    // adapter the hosts call as `main(Core, Cli)` (spec ch07).
     const world = (name: string): unknown => {
       const st = manifest.structs.find((s) => s.name === name);
       if (st === undefined) throw new Error(`the manifest describes no ${name}`);

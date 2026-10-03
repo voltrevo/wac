@@ -1,6 +1,6 @@
 // expect: refused
 // why: a child that is not a node, text or a number converts only through a method named by core's toNode
-// from: spec/next ch23 §wac-markup-child-tonode-vp842rw
+// from: spec ch23 §wac-markup-child-tonode-vp842rw
 import { Node } from "core";
 
 struct Plain { string text; }

@@ -1,6 +1,6 @@
 // expect: answers f = 7
 // why: `namespace name { … }` declares a namespace inline, and `export` marks the members visible through it
-// from: spec/next ch03 §wac-namespace-inline-8r8emsb
+// from: spec ch03 §wac-namespace-inline-8r8emsb
 // ---- lib.wac ----
 export namespace shapes {
   export struct Circle { i32 r; }

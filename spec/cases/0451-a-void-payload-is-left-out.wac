@@ -4,7 +4,7 @@
 
 /**
  * `Result<void, string>` is what a `Ticket<void>`'s `wait` answers, and what `Result.Ok()` builds with
- * no argument (spec/next ch11: `R = void` gives a payload-free variant; ch44 writes `Result.Ok()`).
+ * no argument (spec ch11: `R = void` gives a payload-free variant; ch44 writes `Result.Ok()`).
  *
  * The slot is still in the enum's layout, holding a placeholder, so `match` and `unwrap` work at
  * `void` exactly as at any other type.

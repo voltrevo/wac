@@ -241,7 +241,7 @@ bool isUnresolvedBareName(Env env, string t) {
     }
   }
   if (env.isStructName(t) || env.isEnumName(t) || isWritableValType(t)) { return false; }
-  // A recursive type held by its name (spec/next ch18) is a type, not a letter.
+  // A recursive type held by its name (spec ch18) is a type, not a letter.
   return env.staticCx is null || typeDeclAt(env.staticCx!, t, env.curFile) < 0;
 }
 
@@ -275,10 +275,10 @@ string elemOf(string t) {
  */
 
 void writeValType(B out, Env env, string t) {
-  // **A union is an `anyref`** — spec/next ch18's representation: a reference of whichever alternative
+  // **A union is an `anyref`** — spec ch18's representation: a reference of whichever alternative
   // it holds, numbers boxed, told apart by `ref.test`.
   if (isUnionName(t)) { out.byte(110); return; }
-  // **A `typeref` exists only in static evaluation** (spec/next ch30), so a signature that names one
+  // **A `typeref` exists only in static evaluation** (spec ch30), so a signature that names one
   // belongs to a function nothing runs (`canEmit` leaves it out); its slot needs some type to be
   // registered with, and an `i32` is the cheapest one that holds nothing.
   if (t == "typeref") { out.byte(127); return; }
@@ -354,11 +354,11 @@ void writeValType(B out, Env env, string t) {
   // A bare unresolved name now falls to the refusal below and is named.
   //
   // **A slot of type `never` holds nothing, ever** — the payload of `Step<never, i32>.Waiting`, which no
-  // program can construct (spec/next ch11). It still has a place in the enum's layout, so it is given
+  // program can construct (spec ch11). It still has a place in the enum's layout, so it is given
   // the cheapest storage there is; nothing will ever write to it or read from it.
   if (t == "never") { out.byte(127); return; }
   // **So does a slot a `void` argument made** — `Result<void, E>.Ok`'s payload, and a local binding
-  // one — which holds a placeholder nothing reads (spec/next ch11).
+  // one — which holds a placeholder nothing reads (spec ch11).
   if (t == "void") { out.byte(127); return; }
   if (!isWritableValType(t)) {
     // **And where**, because the type alone has repeatedly not been enough. `$cell$…` names a
@@ -509,7 +509,7 @@ void registerNamed(Env env, string t) {
     env.boxType(boxedInner(t));
   }
   // A union's boxes, one for each numeric or `const` alternative — a union a computed type spelled
-  // (spec/next ch18) reaches here without passing the loop that registers them for a written one.
+  // (spec ch18) reaches here without passing the loop that registers them for a written one.
   if (isUnionName(t)) {
     string[] ums = unionMembers(t);
     for (i32 i = 0; i < ums.len(); i++) { if (unionBoxes(ums[i])) { env.boxType(ums[i]); } }
@@ -570,7 +570,7 @@ string emittedSigOf(Env env, u8[] src, Lexed lexed, string ret, Param[] params, 
 /** The type a literal is when nothing else says — the default of its family, or `""`. */
 /**
  * When `e` is a generic call written without type arguments, the slot `want` it fills — read by
- * `genericCallInstance` for a letter no argument binds (spec/next ch19).
+ * `genericCallInstance` for a letter no argument binds (spec ch19).
  */
 void noteCallWant(Env env, Expr e, string want) {
   env.callWantTok = 0 - 1;
@@ -666,7 +666,7 @@ bool tyHasNullableLetter(u8[] src, Lexed lexed, Ty t, string letter) {
   }
 }
 
-/** Whether `e` is a number written as one — the literal that has no type of its own (spec/next ch09). */
+/** Whether `e` is a number written as one — the literal that has no type of its own (spec ch09). */
 bool isNumericLiteralE(Expr e) {
   match (e.kind) {
     IntLit(tok): { return true; }
@@ -716,7 +716,7 @@ bool matchTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] 
       if (!isArrayType(actual)) { return false; }
       return matchTypeParams(env, src, lexed, elem, elemOf(actual), tps, out);
     }
-    // **`T?` against `i32?` binds `T = i32`**, one layer off (spec/next ch19). A reference arrives
+    // **`T?` against `i32?` binds `T = i32`**, one layer off (spec ch19). A reference arrives
     // with its `?` already dropped, so there is nothing to take off and `T` is the reference.
     Nullable(inner): {
       string under = actual.len() > 1 && actual.slice(actual.len() - 1, actual.len()) == "?"
@@ -841,7 +841,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
               default: { }
             }
           }
-          // A number is not among them (spec/next ch09): it binds nothing, and the slot the call fills
+          // A number is not among them (spec ch09): it binds nothing, and the slot the call fills
           // says what `T` is — `u8 x = echo(200)` is `echo<u8>`.
           if (at == "" && !isNumericLiteralE(args[i])) { at = naturalLiteralType(args[i]); }
           // **An argument with no type of its own constrains nothing** — a lambda takes its type from
@@ -850,7 +850,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
           if (at == "") { continue; }
           if (!matchTypeParams(env, cs, cl, params[i].type, at, typeParams, bound)) { return ""; }
         }
-        // **A letter no argument binds is bound by the declaration the call initialises** (spec/next
+        // **A letter no argument binds is bound by the declaration the call initialises** (spec
         // ch19): `i32 z = zero();` is `zero<i32>`. The instance walk sees the declaration and records
         // the answer under the call's token, so emitting the call later finds the same instance.
         bool open = false;
@@ -1057,7 +1057,7 @@ i32 pushSubstitution(Env env, u8[] src, Lexed lexed, i32[] typeParams, string in
     env.subFrom[env.subCount] = tokenTextOf(src, lexed, typeParams[i]);
     env.subTo[env.subCount] = typeArgAt(inst, i);
     // A `Node?` that is this instance's key's own `?` — the template writes this letter as `T?` —
-    // reads as `Node`, and makes that `T?` a box (spec/next ch38). Recorded per entry, since the
+    // reads as `Node`, and makes that `T?` a box (spec ch38). Recorded per entry, since the
     // stack nests and a function instance's `T` may hold a `?` that means only itself.
     string mark = ";" + decimalText(env.subCount) + ";";
     i32 had = env.nullSubs.indexOf(mark);
@@ -1407,7 +1407,7 @@ bool isPairEntry(string t) { return t.len() > 5 && t.slice(0, 5) == pairMark(); 
  */
 string boxMark() { return "box:"; }
 
-/** A tuple's struct shares the signature table behind this mark, as a box does — spec/next ch14. */
+/** A tuple's struct shares the signature table behind this mark, as a box does — spec ch14. */
 string tupleMark() { return "tuple:"; }
 
 /** Whether a signature-table entry is a tuple's struct. */
@@ -1422,7 +1422,7 @@ string boxInner(string t) { return t.slice(boxMark().len(), t.len()); }
 /**
  * Whether a type name is a box: a nullable primitive — `i32?`, `bool?` — which is a box rather than a
  * number, or a nested nullable — `Node??`, `i32??` — whose box holds one layer less, so that a present
- * `null` and an absent value are different things (spec/next ch10 `§wac-nullable-nested-ak7583p`).
+ * `null` and an absent value are different things (spec ch10 `§wac-nullable-nested-ak7583p`).
  */
 bool isBoxedName(string t) {
   if (t.len() < 2) { return false; }
@@ -1477,7 +1477,7 @@ string pairInner(string t) { return t.slice(pairMark().len(), t.len()); }
 /**
  * Where a signature's parameter list opens when its return is a tuple — `fn[(i32, i32)(u32)]` — or -1
  * for any other return. Every other return is spelled without a `(` at depth zero, which is what the
- * scanners below rely on; a tuple is the one that starts with one (spec/next ch14).
+ * scanners below rely on; a tuple is the one that starts with one (spec ch14).
  */
 i32 sigTupleReturnEnd(string t) {
   if (t.len() < 5 || t[3] != "(") { return -1; }
@@ -2816,7 +2816,7 @@ export struct Env {
   Decl[] mergedDecls;
   i32[] mergedFiles;
   /**
-   * The static evaluator (spec/next ch28), and what it was given to look at — built once, on the first
+   * The static evaluator (spec ch28), and what it was given to look at — built once, on the first
    * static that wants a value, and kept because *one* run is what makes identity mean anything: two
    * statics naming the same object have to come back with the same heap index.
    */
@@ -2833,13 +2833,13 @@ export struct Env {
   i32 deferVal;
   /**
    * The locals a `matches` has bound in the statement being emitted, so that the statement can retire
-   * them when it ends — they are names of that statement's (spec/next ch25 `§wac-matches-scope-i52ba3w`),
+   * them when it ends — they are names of that statement's (spec ch25 `§wac-matches-scope-i52ba3w`),
    * and left alive they would shadow an outer name of the same spelling for the rest of the block.
    */
   i32[] matchBound;
   i32 matchBoundCount;
   /**
-   * Each field's initialiser (spec/next ch12), parallel to `fieldNames`, with the text it was parsed
+   * Each field's initialiser (spec ch12), parallel to `fieldNames`, with the text it was parsed
    * from — a field is declared in one file and defaulted wherever its struct is built, so the
    * expression has to travel with its own source and tokens. Sized on first use.
    */
@@ -2848,13 +2848,13 @@ export struct Env {
   Lexed?[] fieldInitLexeds;
   /**
    * Each function parameter's name, parallel to `funcParamTypes` — what a markup tag's attributes
-   * fill (spec/next ch23). Only free functions record them; grown on first use.
+   * fill (spec ch23). Only free functions record them; grown on first use.
    */
   string[] funcParamNames;
-  /** `Owner.method` for each method a call dispatches on its receiver's runtime type (spec/next ch12). */
+  /** `Owner.method` for each method a call dispatches on its receiver's runtime type (spec ch12). */
   string[] virtualMethods;
   /**
-   * The global holding the schedule target (spec/next ch35), or -1 when core's
+   * The global holding the schedule target (spec ch35), or -1 when core's
    * `__wacScheduleTarget` is not in the program. Its type is that function's return type.
    */
   i32 schedGlobal;
@@ -2865,16 +2865,16 @@ export struct Env {
   string asyncWhy;
   /** While a lambda's body is walked, how many locals are outside it — a lower index is a capture. */
   i32 captureFloor;
-  /** How many `type` declarations the program has (spec/next ch30), or -1 before anyone asked. */
+  /** How many `type` declarations the program has (spec ch30), or -1 before anyone asked. */
   i32 typeDecls;
   /**
-   * `;file:line:col=type;` for each bare `union` local — what its scope gathered (spec/next ch33) —
+   * `;file:line:col=type;` for each bare `union` local — what its scope gathered (spec ch33) —
    * opened with `|` once computed, which `bareUnionE` does the first time one is asked about.
    */
   string unionAt;
   /**
    * The generic call the instance walk is looking at as a declaration's initialiser, and that
-   * declaration's type — what a letter no argument binds is bound from (spec/next ch19) — then
+   * declaration's type — what a letter no argument binds is bound from (spec ch19) — then
    * `;file:tok=instance;` for each call so bound, which every later lookup of that call reads.
    */
   i32 callWantTok;
@@ -3681,7 +3681,7 @@ export string sourceOf(string[] paths, string[] sources, string path) {
  * over, since the missing declarations would otherwise look merely undefined.
  */
 /**
- * What a file's export lists forward, one `exported\tspecifier\tsource` each — spec/next ch02.
+ * What a file's export lists forward, one `exported\tspecifier\tsource` each — spec ch02.
  *
  * `export { a as b } from "m"` forwards `b` to `m`'s `a`. `export { a as b };` forwards `b` to `a` as
  * this file sees it: its own declaration, specifier `""`, or what it imported under that name, in
@@ -3741,7 +3741,7 @@ string forwardMark() { return string.fromCodepoint(1); }
  * The entry's `export { … }` items that name functions, as export entries — and how many.
  *
  * In the entry module a re-exported or renamed function is an export of the compiled program under the
- * name it is exported as (spec/next ch02). `linkFiles` gave each item an edge from the entry, named
+ * name it is exported as (spec ch02). `linkFiles` gave each item an edge from the entry, named
  * with `forwardMark` so no source can spell it and already followed to its declaration, so the name
  * resolves here the way any import does.
  */
@@ -3813,10 +3813,10 @@ bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i3
   // checker stayed clean and the **engine** rejected the module, telling the user it was a compiler
   // bug with no source line. `issues/lang/0163`.
   if (twoKeysForOneFile(paths) != "") { return false; }
-  // **Namespaces first** (spec/next ch03): every emit route passes through here, so lowering once
+  // **Namespaces first** (spec ch03): every emit route passes through here, so lowering once
   // here is lowering for all of them. A file set already lowered comes back unchanged.
   sources = lowerNamespaces(paths, sources, res);
-  // **And `main`'s adapter** (spec/next ch07, `src/program.wac`), for the same reason: a `main` that
+  // **And `main`'s adapter** (spec ch07, `src/program.wac`), for the same reason: a `main` that
   // takes `Sys`, is `async` or answers a `Result` is called by the hosts as `main(Core, Cli)` whichever
   // route built it. Idempotent, so a caller that already applied it changes nothing; refusing a `main`
   // of the wrong shape is the build's, not every emit's.
@@ -3940,10 +3940,10 @@ bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i3
       fwdSrc[fwdCount] = parts[2];
       fwdCount = fwdCount + 1;
     }
-    // **An interpolation converts through core** (spec/next ch23) — `"\{n}"` calls core's spelling of
+    // **An interpolation converts through core** (spec ch23) — `"\{n}"` calls core's spelling of
     // an `i32` — so a file with one needs core linked whether or not it imports anything from it.
     // **And so does an `async` body**, whose lowering builds core's `Ticket` and `__wacMachine`
-    // (spec/next ch35) — `spec/cases/0319` is what that cost while the ticket type lived in `std`.
+    // (spec ch35) — `spec/cases/0319` is what that cost while the ticket type lived in `std`.
     if (hasInterpolation(b, lexed) || hasAsync(b, lexed)) {
       if (qn >= queue.len()) { starts[0] = 2; return false; }
       queue[qn] = " core";
@@ -4457,7 +4457,7 @@ string bindTypesOf(Front f) {
 }
 
 /**
- * The entry's names for what it binds (spec/next ch48): an `N` line per instantiation exported by
+ * The entry's names for what it binds (spec ch48): an `N` line per instantiation exported by
  * name — `N\tVec<i32>\tIntVec` — and an `X` line per generic it exports with none, naming the form
  * that would bind it — `X\tPair\tPair<i32> as IntPair`. Generics only other modules export are
  * not the host's interface and draw none (`§wac-bind-generic-warns-cg9p295`).
@@ -4564,7 +4564,7 @@ i32 genericArityOf(Env env, Decl[] ds, u8[] s0, Lexed l0, string name) {
 
 /**
  * One `F` line per member that is `private` or `const` — `F\tAccount\tbalance\tprivate` — which
- * bindgen reads: a private member is not bound, a `const` field has no setter (spec/next ch48
+ * bindgen reads: a private member is not bound, a `const` field has no setter (spec ch48
  * `§wac-bind-private-7kpcy8t`). A manifest has no use for them and skips the tag.
  */
 string memberFlagLines(u8[] src, Lexed lexed, string bind, Field[] fields, Method[] methods) {
@@ -4879,7 +4879,7 @@ string exportSigsOf(Front f) {
       default: { }
     }
   }
-  // **The entry's re-exports are its exports too** (spec/next ch02 `§wac-reexport-names-khyrww8`):
+  // **The entry's re-exports are its exports too** (spec ch02 `§wac-reexport-names-khyrww8`):
   // `forwardExportsInto` puts them in the module, and a host finds an export through this list, so
   // one missing here is a function the module has and nothing can call.
   for (i32 e = 0; e < env.importCount; e++) {
@@ -5132,7 +5132,7 @@ bool emitNameValue(B fb, u8[] src, Lexed lexed, Env env, string nm) {
 }
 
 /**
- * `try e` — spec/next ch26. `e` goes into a scratch; on `Err` the function leaves with its own
+ * `try e` — spec ch26. `e` goes into a scratch; on `Err` the function leaves with its own
  * `Result`'s `Err` holding the same payload, through any `defer` regions on the way out; on `Ok` the
  * payload is the value.
  */
@@ -5160,7 +5160,7 @@ void emitTry(B fb, u8[] src, Lexed lexed, Env env, Expr operand) {
       fb.byte(251); fb.u32leb(2);                      // struct.get — the error
       fb.u32leb(env.structType(rt));
       fb.u32leb(env.variantSlot[ev]);
-      // Into a union of errors, a number enters boxed (spec/next ch18).
+      // Into a union of errors, a number enters boxed (spec ch18).
       string et = env.fieldTypeAt(rt, env.variantSlot[ev]);
       if (isUnionName(ft) && unionBoxes(et)) { fb.byte(251); fb.u32leb(0); fb.u32leb(env.boxType(et)); }
     } else if (ft == "void") {
@@ -5225,7 +5225,7 @@ string unionArmMemberE(Env env, string u, string written, u8[] src, Lexed lexed,
 }
 
 /**
- * `match` on a union — spec/next ch18. The subject goes into a scratch `anyref`; each arm but the last
+ * `match` on a union — spec ch18. The subject goes into a scratch `anyref`; each arm but the last
  * asks `ref.test` of its alternative's representation, and in the arm the subject's name is that
  * alternative, cast and unboxed. A `default` arm is the one left over.
  */
@@ -5249,7 +5249,7 @@ void emitUnionMatch(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] ar
     if (!tail) {
       if (m == "") { env.declineFor("a union arm that names no alternative"); return; }
       if (isConstAlt(m)) {
-        // Either permission (spec/next ch18): the object, or its `const` box.
+        // Either permission (spec ch18): the object, or its `const` box.
         emitConstTest(fb, env, subj, u, m.slice(6, m.len()));
       } else {
         fb.byte(32); fb.u32leb(subj);
@@ -5303,7 +5303,7 @@ string normUnionE(Env env, string[] ms) {
   string[] flat = flattenUnion(ms);
   bool[] gone = bool[].filled(flat.len(), false);
   for (i32 i = 0; i < flat.len(); i++) {
-    // Within its own qualification only, as the checker's `normUnion` (spec/next ch18).
+    // Within its own qualification only, as the checker's `normUnion` (spec ch18).
     bool isConst = isConstAlt(flat[i]);
     string q = isConst ? "const " : "";
     string up = parentOfE(env, isConst ? flat[i].slice(6, flat[i].len()) : flat[i]);
@@ -5319,7 +5319,7 @@ string normUnionE(Env env, string[] ms) {
 
 /**
  * A `matches` pattern's type: against a union, `const T` keeps its `const` — the pattern is about which
- * permission a value entered by (spec/next ch18) — and anywhere else it is the checker's alone.
+ * permission a value entered by (spec ch18) — and anywhere else it is the checker's alone.
  */
 string patternTypeE(Env env, u8[] src, Lexed lexed, Ty t, string subject) {
   bool inUnion = isUnionName(subject);
@@ -5348,7 +5348,7 @@ bool isOrDescends(Env env, string t, string anc) {
 string unionTargetE(u8[] src, Lexed lexed, Env env, string u, Expr e) {
   string t = typeOfE(src, lexed, env, e);
   string[] ms = unionMembers(u);
-  // **A `const` source enters by a `const` alternative** (spec/next ch18 `§wac-union-permission-recorded-
+  // **A `const` source enters by a `const` alternative** (spec ch18 `§wac-union-permission-recorded-
   // d7yfbag`): the permission recorded is the reference's, whatever the object is.
   if (isConstSourceE(src, lexed, env, e)) {
     for (i32 i = 0; i < ms.len(); i++) {
@@ -5384,7 +5384,7 @@ bool isConstSourceE(u8[] src, Lexed lexed, Env env, Expr e) {
 /**
  * The value of union `from` on the stack, made fit for union `to`: each alternative `to` holds only
  * `const` access to is boxed where the value holds it mutably — the conversion discards permission and
- * never adds it (spec/next ch18 `§wac-union-permission-no-restore-dvm5zbj`).
+ * never adds it (spec ch18 `§wac-union-permission-no-restore-dvm5zbj`).
  */
 void emitPermissionDiscard(B fb, Env env, string from, string to) {
   string[] fs = unionMembers(from);
@@ -6681,7 +6681,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     // **A box, not a function.** One immutable field holding the primitive — a nullable primitive is
     // a reference to this, so `null` is the absent value and `!` reads field 0.
     if (isTupleEntry(sig)) {
-      // **A tuple, not a function**: a struct of its members, each writable (spec/next ch14
+      // **A tuple, not a function**: a struct of its members, each writable (spec ch14
       // `§wac-tuple-reference-qvgasjf`).
       string[] tms = tupleMembers(sig.slice(tupleMark().len(), sig.len()));
       types.byte(95);                       // struct
@@ -6720,7 +6720,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       writeValType(types, env, sigParamAt(sig, pi));
     }
     string r = sigReturn(sig);
-    // `never` answers nothing, as `void` does: no value of it ever arrives (spec/next ch11).
+    // `never` answers nothing, as `void` does: no value of it ever arrives (spec ch11).
     bool none = r == "void" || r == "never";
     types.u32leb(none ? 0 : 1);
     if (!none) { writeValType(types, env, r); }
@@ -7415,7 +7415,7 @@ export string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
   u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = src[start + i]; }
   string text = string.fromBytes(out);
-  // **A symbol-named member's name is `[key]`** (spec/next ch21) — the brackets are what keep it apart
+  // **A symbol-named member's name is `[key]`** (spec ch21) — the brackets are what keep it apart
   // from every name an identifier can spell. A token the linker already resolved carries them.
   if (lexed.tokens[t * tokenStride()] == kSymName() && (len == 0 || src[start] != '[')) {
     return "[" + text + "]";
@@ -7425,7 +7425,7 @@ export string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
 
 /**
  * What `t` unfolds to when it is a recursive type held by its name — the evaluator spells one so
- * inside a guarding layer (spec/next ch18) — as a value's type needs it; otherwise `t` itself.
+ * inside a guarding layer (spec ch18) — as a value's type needs it; otherwise `t` itself.
  */
 string unfoldedE(Env env, string t) {
   if (t.len() == 0 || t.indexOf("<") >= 0 || t.indexOf("[") >= 0 || t.indexOf("?") >= 0) { return t; }
@@ -7445,7 +7445,7 @@ string unfoldedE(Env env, string t) {
 }
 
 /**
- * A computed type (spec/next ch30) — `type(e)`, or a name a `type` declaration gives — as the
+ * A computed type (spec ch30) — `type(e)`, or a name a `type` declaration gives — as the
  * spelling the rest of this emitter uses: evaluated with the type parameters of the instance being
  * emitted bound, so `Slot<T>` inside `fromSlot<i32>` is `i32`.
  */
@@ -7510,7 +7510,7 @@ i32 foldedCondOf(Env env, u8[] src, Lexed lexed, Expr cond) {
 
 /**
  * The arm of a `static_match` this instance takes: the one whose type is the subject's, else
- * `default`, else -1 (spec/next ch31 `§wac-static-match-ybv9j9x`).
+ * `default`, else -1 (spec ch31 `§wac-static-match-ybv9j9x`).
  */
 i32 staticArmOf(Env env, u8[] src, Lexed lexed, Ty subject, Ty[] types, i32 defaultAt) {
   string st = typeOfTyName(env, src, lexed, subject);
@@ -7537,7 +7537,7 @@ string commonAncestorE(Env env, string a, string b) {
 }
 
 /**
- * The type a bare `union` local gathered in its scope (spec/next ch33), found by where its type is
+ * The type a bare `union` local gathered in its scope (spec ch33), found by where its type is
  * written. Every function's blocks are scanned once, the first time any is asked about.
  */
 string bareUnionE(Env env, u8[] src, Lexed lexed, Ty t) {
@@ -7688,7 +7688,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
     TypeOf(e): { return computedTypeE(env, src, lexed, t); }
     Named(tok, typeArgs): {
       string raw = tokenTextOf(src, lexed, tok);
-      // `const T` — a union's alternative entered through a `const` reference (spec/next ch18).
+      // `const T` — a union's alternative entered through a `const` reference (spec ch18).
       if (raw == "const" && typeArgs.len() == 1) {
         string cinner = typeOfTyName(env, src, lexed, typeArgs[0]);
         if (env.inUnionArgs == 0) { return cinner; }
@@ -7704,11 +7704,11 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       // resolution would go hunting for a declaration in the file, find none, and answer `""`,
       // which is how `i31ref x = …` came out as a bare `i32`.
       if (raw == "anyref" || raw == "i31ref" || raw == "typeref") { return raw; }
-      // **`null` as a type** (spec/next ch10) holds nothing but `null`, so any nullable reference
+      // **`null` as a type** (spec ch10) holds nothing but `null`, so any nullable reference
       // carries it; `anyref` is the one every reference converts to. A `never?` passed on into a
       // narrower slot would want the format's `nullref` instead, and nothing here needs that yet.
       if (raw == "null" && typeArgs.len() == 0) { return "anyref"; }
-      // **`union<A, B>`, normalised as the checker normalises it** (spec/next ch18), with a box
+      // **`union<A, B>`, normalised as the checker normalises it** (spec ch18), with a box
       // registered for each numeric alternative, since that is how one enters the `anyref`.
       if (raw == "union") {
         if (typeArgs.len() == 0) { return bareUnionE(env, src, lexed, t); }
@@ -7731,7 +7731,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       // method's parameter, an array's element, a local inside a body.
       string bound = env.substituted(raw);
       // A letter bound to a nullable reference reads as the reference — its `?` is the instance's,
-      // and only `T?` inside it asks for another layer (spec/next ch38, in `Nullable` below).
+      // and only `T?` inside it asks for another layer (spec ch38, in `Nullable` below).
       if (bound != "" && keyedNullable(env, raw)) {
         return nullableRefBase(bound);
       }
@@ -7755,7 +7755,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
           if (at == "") { return ""; }
           if (isUnresolvedBareName(env, at)) { unbound = true; }
           if (i > 0) { inst = inst + ","; spelled = spelled + ","; }
-          // **`Vec<Node?>` is not `Vec<Node>`** (spec/next ch38 `§wac-vec-pop-nested-rgci8id`): where the
+          // **`Vec<Node?>` is not `Vec<Node>`** (spec ch38 `§wac-vec-pop-nested-rgci8id`): where the
           // template writes `T?`, at `T = Node?` that is a `Node??`, so the instances differ in what
           // `pop` answers. A reference's own `?` is otherwise dropped, so it is kept here, in the key —
           // and only where it changes something, so `Pending<u8[]?>` is still `Pending<u8[]>`.
@@ -7799,7 +7799,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
     // `fn[i32(i32, u8[])]` — spelled canonically, since the string *is* the identity: two spellings
     // of one signature have to reach the same type index or a value of one cannot be called as the
     // other.
-    // The checker's spelling, so a tuple names one type in both (spec/next ch14).
+    // The checker's spelling, so a tuple names one type in both (spec ch14).
     TupleOf(members): {
       string[] ms = string[].defaulted(members.len());
       for (i32 i = 0; i < members.len(); i++) {
@@ -7834,7 +7834,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
     Nullable(inner): {
       // **A nullable of a nullable is a box** holding the inner one, spelled with every `?` it has —
       // `Node??`, `i32??` — since a reference's own `?` is dropped from its spelling and would leave
-      // the two layers indistinguishable (spec/next ch10 `§wac-nullable-nested-ak7583p`).
+      // the two layers indistinguishable (spec ch10 `§wac-nullable-nested-ak7583p`).
       match (inner.kind) {
         Nullable(deeper): { return nestedNullSpelling(env, src, lexed, t); }
         default: { }
@@ -7854,7 +7854,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
           // number. This answered `""` — the emitter's "I don't know" — which is why `canEmit` approved
           // these functions and the emitter then dropped them (`issues/lang/0171a`).
           //
-          // The packed types box too, now that they are ordinary (spec/next ch08, `spec/cases/0025`):
+          // The packed types box too, now that they are ordinary (spec ch08, `spec/cases/0025`):
           // the box's field is the `i32` carrier, which already holds the value normalised.
           if (pn == "i32" || pn == "u32" || pn == "i64" || pn == "u64"
               || pn == "f32" || pn == "f64" || pn == "bool" || isPackedValue(pn)) {
@@ -7870,7 +7870,7 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
         // is still `T`. `issues/lang/0300a`: the signature of `firstOf<i32>` said it returned a bare
         // `i32` while `return null` pushed nothing, and the engine refused the module.
         default: {
-          // `T?` where `T` is bound to a nullable reference is a second layer: a box (spec/next ch38).
+          // `T?` where `T` is bound to a nullable reference is a second layer: a box (spec ch38).
           match (inner.kind) {
             Named(itok, itargs): {
               string ib = itargs.len() == 0 ? env.substituted(tokenTextOf(src, lexed, itok)) : "";
@@ -8142,7 +8142,7 @@ void noteFieldInit(Env env, i32 at, Expr? init, u8[] src, Lexed lexed) {
 /**
  * Field `i` of struct `canon`'s default, pushed: its initialiser where it has one, else its type's.
  *
- * **The initialiser runs here, once per construction that leaves the field out** — spec/next ch12
+ * **The initialiser runs here, once per construction that leaves the field out** — spec ch12
  * `§wac-field-initialiser-each-8upxvn7` — so `i32[] seen = [0]` is a fresh array each time.
  */
 void emitFieldDefault(B fb, Env env, string canon, i32 i) {
@@ -8284,7 +8284,7 @@ void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, 
     fb.u32leb(env.structType(fen));
     return;
   }
-  // **A tag that is a name calls the function of that name** (spec/next ch23
+  // **A tag that is a name calls the function of that name** (spec ch23
   // `§wac-markup-tag-is-function-vv4pvhq`); only a string builds an element itself.
   if (lexed.tokens[tagTok * tokenStride()] != kString()) {
     emitJsxCall(fb, src, lexed, env, tagTok, attrs, kids);
@@ -8339,7 +8339,7 @@ void emitJsxCall(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] att
 }
 
 /**
- * A child as a `Node`, through core's `toNode` (spec/next ch23 `§wac-markup-child-tonode-vp842rw`): a
+ * A child as a `Node`, through core's `toNode` (spec ch23 `§wac-markup-child-tonode-vp842rw`): a
  * node is itself, text becomes `Node.Text`, and anything else calls its method named by the symbol.
  */
 void emitToNode(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
@@ -8470,7 +8470,7 @@ void emitJsxKids(B fb, u8[] src, Lexed lexed, Env env, Expr[] kids) {
 /** The tag of the value on the stack, which is what every arm and every `is` compares. */
 /**
  * `Err(is NotFound)` — narrow the arm's test, the variant's `i32` already on the stack, by each payload
- * field an `is` names: true only when that field holds the variant (spec/next ch13
+ * field an `is` names: true only when that field holds the variant (spec ch13
  * `§enum-payload-is-pattern-mec7vyh`). The field is read only once the variant is known to be this one,
  * which is the only variant that has it.
  */
@@ -8562,7 +8562,7 @@ void emitArmNames(B fb, u8[] src, Lexed lexed, Env env, i32 subj, string vn, i32
 }
 
 /**
- * `p matches e` — spec/next ch25 `§wac-matches-pattern-q76z7yq`. Leaves the answer, an `i32`.
+ * `p matches e` — spec ch25 `§wac-matches-pattern-q76z7yq`. Leaves the answer, an `i32`.
  *
  *     subject → local
  *     test    → local          ;; `emitTypeTest`: a tag, a null test, `ref.test`
@@ -8742,7 +8742,7 @@ string matchesWhyNot(u8[] src, Lexed lexed, Env env, Pattern pat, string st) {
 
 /** Whether `emitTypeTest` has an instruction for "is this `from` a `to`". */
 bool typeTestable(Env env, string from, string to) {
-  // A `const T` pattern on a union: the object or its `const` box (spec/next ch18).
+  // A `const T` pattern on a union: the object or its `const` box (spec ch18).
   if (isUnionName(from) && isConstAlt(to)) { return true; }
   if (isUnionName(from) && env.isStructName(env.canonType(to))) { return true; }
   if (isUnionName(from) && unionBoxes(to) && unionHasMember(from, to)) { return true; }
@@ -8943,7 +8943,7 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   }
 }
 
-/** Whether a `match` arm is `null:` (spec/next ch25). */
+/** Whether a `match` arm is `null:` (spec ch25). */
 bool isNullArmE(Lexed lexed, Arm a) {
   return a.variantTok >= 0 && lexed.tokens[a.variantTok * tokenStride()] == kNull();
 }
@@ -8951,7 +8951,7 @@ bool isNullArmE(Lexed lexed, Arm a) {
 /**
  * What an expression arm gives: its value at `rt`, or — for an arm that leaves, `continue` or
  * `return` in place of a value — its statement and then `unreachable`, since the block still owes a
- * result it will never produce (spec/next ch25 `§wac-match-arm-leaves-y33uzzi`).
+ * result it will never produce (spec ch25 `§wac-match-arm-leaves-y33uzzi`).
  */
 void emitArmResult(B fb, u8[] src, Lexed lexed, Env env, Arm arm, string rt) {
   if (!(arm.value is null)) { emitExprAt(fb, src, lexed, env, arm.value!, rt); return; }
@@ -9020,7 +9020,7 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   }
   // **A subject that may be absent is tested by a tag read once**, `-1` for `null`: a `null:` arm is
   // the case for `-1`, and with only a `default` the absent subject matches no variant and lands
-  // there — no arm emitted twice (spec/next ch25 `§wac-match-nullable-subject-zcnasbp`).
+  // there — no arm emitted twice (spec ch25 `§wac-match-nullable-subject-zcnasbp`).
   bool nullSafe = anyNullArm || elseAt >= 0;
   i32 tagAt = -1;
   if (nullSafe) {
@@ -9098,7 +9098,7 @@ void emitBody(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body) {
 }
 
 /**
- * A block's own `static`s (spec/next ch27), bound where the block starts: each computed by the
+ * A block's own `static`s (spec ch27), bound where the block starts: each computed by the
  * evaluator in dependency order, made a local, and — when `write` — given its value as a literal, so
  * a read before the declaration reads the same number as one after. Answers the evaluator's mark to
  * restore at the block's end, or -1 when the block has none.
@@ -9159,7 +9159,7 @@ void emitFrom(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from) {
       }
       // `schedule f;` — the target saved, `f` put in its place, and the rest of the block a region
       // whose every exit puts the saved one back, exactly as a `defer` of that write would
-      // (spec/next ch35 `§wac-schedule-block-wrhaazj`).
+      // (spec ch35 `§wac-schedule-block-wrhaazj`).
       Schedule(target): {
         i32 old = env.scratchNamed("schedule old " + numText(env.depth), env.schedType);
         fb.byte(35); fb.u32leb(env.schedGlobal);     // global.get
@@ -9175,7 +9175,7 @@ void emitFrom(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body, i32 from) {
 }
 
 /**
- * `defer s;` and the rest of its block — spec/next ch25 `§wac-defer-7tf59c7`.
+ * `defer s;` and the rest of its block — spec ch25 `§wac-defer-7tf59c7`.
  *
  *     block                  ;; the region: everything after the `defer`, to the end of the block
  *       …                    ;; a `return` stores its value and kind 1 and branches out here; a
@@ -9331,7 +9331,7 @@ i64[] staticTurnsOf(Env env, u8[] src, Lexed lexed, Stmt? init, Expr? cond, Stmt
 
 void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
-    // Only the branch in the program is written (spec/next ch31).
+    // Only the branch in the program is written (spec ch31).
     StaticIf(cond, then, els): {
       i32 live = liveBranchOf(env, src, lexed, cond);
       if (live < 0) { env.declineFor("a `static_if` whose condition has no static value"); return; }
@@ -9369,7 +9369,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       if (init is not null) {
         emitExprAt(fb, src, lexed, env, init!, vt);
       } else if (tyIsNullable(type)) {
-        // `T? x;` holds `null` — its default (spec/next ch08 `§wac-default-absence-8mxpz7y`). Asked of
+        // `T? x;` holds `null` — its default (spec ch08 `§wac-default-absence-8mxpz7y`). Asked of
         // the written type, because the name this emitter keeps for a nullable struct drops its `?`.
         emitNull(fb, env, isBoxedName(vt) ? vt : refCore(env, vt));
       } else {
@@ -9399,7 +9399,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     }
     Assign(rawTarget, op, rhs): {
       Lvalue target = peelLv(rawTarget);
-      // `a op= b` on a struct calls its `opAssign` on the object in place (spec/next ch22).
+      // `a op= b` on a struct calls its `opAssign` on the object in place (spec ch22).
       i32 asm = structOperatorE(env, typeOfLv(src, lexed, env, target),
                                 assignSymbolE(lexed.tokens[op * tokenStride()]));
       if (asm >= 0) {
@@ -9409,7 +9409,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       match (target.kind) {
         LField(base, nameTok): {
           string ot3 = typeOfLv(src, lexed, env, base);
-          // `t.0 = v;` — a tuple member is a writable field (spec/next ch14 `§wac-tuple-reference-qvgasjf`).
+          // `t.0 = v;` — a tuple member is a writable field (spec ch14 `§wac-tuple-reference-qvgasjf`).
           i32 aix = tupleIndexE(env, src, lexed, nameTok);
           if (aix >= 0 && isTupleName(ot3) && lexed.tokens[op * tokenStride()] == kAssign()) {
             string amt = tupleMembers(ot3)[aix];
@@ -9581,7 +9581,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       emitLeave(fb, env, !(value is null));
     }
     If(cond, then, els): {
-      // **A condition on types folds** (spec/next ch31 `§wac-if-folds-checks-both-795w3wt`): one that
+      // **A condition on types folds** (spec ch31 `§wac-if-folds-checks-both-795w3wt`): one that
       // only static evaluation can compute — it asks a `typeref` — is decided for this instance and the
       // dead branch left out; the checker has already checked both.
       i32 foldedIf = foldedCondOf(env, src, lexed, cond);
@@ -9945,7 +9945,7 @@ bool forInWalkable(Env env, string t) {
 }
 
 /**
- * `for (T x in xs) { … }` over an array — spec/next ch25 `§wac-for-in-qkcbmxf`.
+ * `for (T x in xs) { … }` over an array — spec ch25 `§wac-for-in-qkcbmxf`.
  *
  * The array is evaluated once into a hidden local, and so is its length; a hidden index walks it.
  * The shape is `emitLoop`'s — a block `break` leaves, a loop, and a block round the body whose end
@@ -10195,10 +10195,10 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
  * the wanted type is passed down every arm rather than special-cased at the few places one is likely.
  */
 void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
-  // **Into a union, a value enters its alternative** (spec/next ch18): emitted as that type, and boxed
+  // **Into a union, a value enters its alternative** (spec ch18): emitted as that type, and boxed
   // when it is a number. A union already is the `anyref`.
   if (isUnionName(want) && !isNullLit(e)) {
-    // **A conditional's branches enter the union one by one** (spec/next ch32
+    // **A conditional's branches enter the union one by one** (spec ch32
     // `§wac-widen-expected-union-cyghd6c`), each its own alternative — not widened together first,
     // which would give `c ? Rect(…) : Circle(…)` the `Shape` no alternative is.
     match (e.kind) {
@@ -10272,13 +10272,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     fb.u32leb(env.boxType(inner));
     return;
   }
-  // **A question about a type answers a constant** (spec/next ch30): `typeref(Ts).members().len()`
+  // **A question about a type answers a constant** (spec ch30): `typeref(Ts).members().len()`
   // in `count<(i32, string)>` is 2, decided per instance by the evaluator and written as a literal.
   if (isStaticScalarType(want) && mentionsTypeRefE(e) && emitTypeRefScalar(fb, env, src, lexed, e, want)) { return; }
   match (e.kind) {
-    // Declined by `unsupportedExpr`: a `typeref` exists only in static evaluation (spec/next ch30, Open).
+    // Declined by `unsupportedExpr`: a `typeref` exists only in static evaluation (spec ch30, Open).
     TypeRefOf(t): { fb.byte(0); }
-    // The arm this instance chooses, and nothing of the others (spec/next ch31).
+    // The arm this instance chooses, and nothing of the others (spec ch31).
     StaticMatch(subject, types, values, defaultAt): {
       i32 armE = staticArmOf(env, src, lexed, subject, types, defaultAt);
       if (armE < 0) { env.declineFor("a `static_match` with no arm for this type"); fb.byte(0); return; }
@@ -10396,7 +10396,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     Cast(op, operand, target): {
       // **`[a, b] as T[]` is not a conversion**: it builds the literal at `T[]` in the first place, so
-      // its elements are `T`s from the start — `spec/next/2-types/15-arrays.md`.
+      // its elements are `T`s from the start — `spec/2-types/15-arrays.md`.
       match (operand.kind) {
         ArrLit(elements): {
           string lat = typeOfTyName(env, src, lexed, target);
@@ -10415,7 +10415,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
       string from = typeOfE(src, lexed, env, operand);
       string to = typeOfTyName(env, src, lexed, target);
-      // `v as U` into a union is the value entering one of its alternatives (spec/next ch18).
+      // `v as U` into a union is the value entering one of its alternatives (spec ch18).
       if (isUnionName(to) && lexed.tokens[op * tokenStride()] == kAs()) {
         emitExprAt(fb, src, lexed, env, operand, to);
         return;
@@ -10490,7 +10490,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         return;
       }
       if (env.constInits[ci] is null) { return; }
-      // **A scalar static is substituted as its value** (spec/next ch27-28). Re-emitting the
+      // **A scalar static is substituted as its value** (spec ch27-28). Re-emitting the
       // initialiser at every use was equivalent while an initialiser was arithmetic on literals; once
       // it can be a call it is not — the call would be *made* at each use.
       if (emitStaticScalar(fb, env, src, lexed, ci, env.constTypes[ci])) { return; }
@@ -10541,12 +10541,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     Binary(op, left, right): {
       i32 k = lexed.tokens[op * tokenStride()];
-      // `a ?? b` — the one binary operator whose op token is a `?`. spec/next ch10.
+      // `a ?? b` — the one binary operator whose op token is a `?`. spec ch10.
       if (k == kQuestion()) {
         emitCoalesce(fb, src, lexed, env, left, right, want);
         return;
       }
-      // **An operator on a struct is a call to its method** — spec/next ch22.
+      // **An operator on a struct is a call to its method** — spec ch22.
       i32[] om = operatorMethodE(src, lexed, env, k, left, right);
       if (om[0] >= 0) {
         emitOperatorCall(fb, src, lexed, env, om, left, right);
@@ -10581,7 +10581,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         i32 cc = env.funcAt(" str_concat");
         if (!haveRequired(env, cc, " str_concat")) { return; }
         emitExpr(fb, src, lexed, env, left);
-        // **An interpolated value converts to text** (spec/next ch23) — the `+` the lexer wrote for
+        // **An interpolated value converts to text** (spec ch23) — the `+` the lexer wrote for
         // `\{` is the one place a value that is not a string may stand beside one.
         if (isInterpPlus(src, lexed, op)) {
           emitToText(fb, src, lexed, env, right);
@@ -11113,7 +11113,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // first parameter, which is the whole of what a method is here.
           i32 at = methodSlotForArgs(env, src, lexed, ot, mname, callTargs, args);
           if (!haveRequired(env, at, ot + "." + mname)) { return; }
-          // **A virtual method dispatches on the runtime type** (spec/next ch12): when a type below the
+          // **A virtual method dispatches on the runtime type** (spec ch12): when a type below the
           // static one overrides it, the call is a chain of `ref.test`s, most derived first.
           string[] overs = overridersOf(env, ot, mname, at);
           if (overs.len() > 0) {
@@ -11153,7 +11153,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
     }
     Member(obj, nameTok): {
-      // `t.1` — a tuple member is a field of its struct, by position (spec/next ch14).
+      // `t.1` — a tuple member is a field of its struct, by position (spec ch14).
       i32 tix = tupleIndexE(env, src, lexed, nameTok);
       if (tix >= 0) {
         string tot = typeOfE(src, lexed, env, obj);
@@ -11216,7 +11216,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // Three tests share one node, and which one it is comes from what is present: a type, a value,
       // or neither, which is `x is null`.
       if ((target is null) && (other is null)) {
-        // `null is null` is true and a number is never null (spec/next ch10): both are constants,
+        // `null is null` is true and a number is never null (spec ch10): both are constants,
         // the operand still evaluated where it is not the literal.
         if (isNullLit(left)) {
           fb.byte(65); fb.i32leb(negated ? 0 : 1);
@@ -11273,7 +11273,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         // the container, and `i31` is a heap type the format names rather than one this module
         // declares — one byte where a struct takes an index.
         // **A union holds one of its alternatives**, told apart by `ref.test` — a number by its box
-        // (spec/next ch18).
+        // (spec ch18).
         string ulty = env.canonType(typeOfE(src, lexed, env, left));
         if (isUnionName(ulty) && unionHolds(env, ulty, env.canonType(tt3))) {
           emitExpr(fb, src, lexed, env, left);
@@ -11354,7 +11354,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // with the same type — our references are all nullable — and a different answer: the reference
     // traps on a null and silence would return one.
     Unwrap(operand): {
-      // **On a `Result`, `!` is its `unwrap`** — the value, or a trap on `Err`. spec/next ch35 writes
+      // **On a `Result`, `!` is its `unwrap`** — the value, or a trap on `Err`. spec ch35 writes
       // `t.wait()!`, where `wait` answers a `Result`.
       string rt0 = typeOfE(src, lexed, env, operand);
       if (genericBaseOf(rt0) == "Result") {
@@ -11393,7 +11393,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // **Two arms of related types need the type they share**, not the first one's. `flag ? c : s`
       // with a `Circle` and a `Shape` declared a block returning a `Circle` and then handed it a
       // `Shape`: `type error in fallthru[0]`. A parent and a child give the parent; two siblings give
-      // the ancestor they have in common, which is what `§wac-ternary-lca` asks for.
+      // the ancestor they have in common, which is what `§wac-ternary-lca-q7fk3wn` asks for.
       // `issues/lang/0117`.
       if (tt != "" && et != "" && tt != et) {
         string shared = commonStructAncestor(env, tt, et);
@@ -11574,7 +11574,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         return cm[0] >= 0 ? env.funcReturns[cm[0]] : "bool";
       }
       if (k == kQuestion()) { return coalesceType(src, lexed, env, left, right); }
-      // An interpolated literal is a string, whatever it interpolates (spec/next ch23).
+      // An interpolated literal is a string, whatever it interpolates (spec ch23).
       if (k == kPlus() && isInterpPlus(src, lexed, op)) { return "string"; }
       // Each operand typed once — see `operatorMethodOfE`.
       string lt = typeOfE(src, lexed, env, left);
@@ -11632,7 +11632,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       i32 im = structOperatorE(env, itt, incrSymbolE(lexed.tokens[op * tokenStride()], prefix));
       return im >= 0 ? env.funcReturns[im] : itt;
     }
-    // `try e` answers `e`'s `Ok` type, as `e!` does (spec/next ch26).
+    // `try e` answers `e`'s `Ok` type, as `e!` does (spec ch26).
     Try(operand): {
       string tt = typeOfE(src, lexed, env, operand);
       i32 um = genericBaseOf(tt) == "Result" ? env.methodAt(tt, "unwrap") : 0 - 1;
@@ -11676,14 +11676,14 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         if (et != "") { return et; }
       }
       string tt = typeOfE(src, lexed, env, then);
-      // **Two structs take their closest common ancestor** (spec/next ch32): `c ? sq : ci` on a
+      // **Two structs take their closest common ancestor** (spec ch32): `c ? sq : ci` on a
       // `Square` and a `Circle` is a `Shape`, and typing it as the first branch put a `Circle` where a
       // `Square` was promised — a module the engine refuses.
       string ett = isNullLit(els) ? "" : typeOfE(src, lexed, env, els);
       string anc = commonAncestorE(env, env.canonType(tt), env.canonType(ett));
       if (anc != "") { return anc; }
       // **A number on one side and `null` on the other is a nullable number** — `ok ? c.r : null` is an
-      // `f64?` (spec/next ch32), and typing it `f64` put the `null` in a slot that has no absence.
+      // `f64?` (spec ch32), and typing it `f64` put the `null` in a slot that has no absence.
       if (tt != "" && isNullLit(els) && isPrimitiveNumberType(tt)) { return tt + "?"; }
       if (tt != "") { return tt; }
       string et2 = typeOfE(src, lexed, env, els);
@@ -11730,7 +11730,7 @@ string oneLayerLess(string t) {
 }
 
 /**
- * The type `p?.m` answers, in this emitter's spelling — spec/next ch10.
+ * The type `p?.m` answers, in this emitter's spelling — spec ch10.
  *
  * The member's type made nullable, and **here only a number shows it**: every reference is nullable
  * in wasm, so a `string?` or an `Addr?` is spelled as the reference itself everywhere in this file,
@@ -11762,7 +11762,7 @@ string coalesceType(u8[] src, Lexed lexed, Env env, Expr left, Expr right) {
 }
 
 /**
- * `p?.m` — `null` when `p` is absent, the member otherwise, read once. spec/next ch10.
+ * `p?.m` — `null` when `p` is absent, the member otherwise, read once. spec ch10.
  *
  * The receiver is held in a scratch local so it is evaluated once, then tested: absent gives the
  * result type's null, present gives the field — boxed where the field is a number and the result,
@@ -11943,7 +11943,7 @@ void emitStructOperator(B fb, u8[] src, Lexed lexed, Env env, i32 m, Expr recv, 
 
 /** A tuple member's position from its integer token — `t.1` — or -1 for a name that is not one. */
 i32 tupleIndexE(Env env, u8[] src, Lexed lexed, i32 nameTok) {
-  // `t.[i]` — the static value of `i` (spec/next ch14), which the checker has already insisted on.
+  // `t.[i]` — the static value of `i` (spec ch14), which the checker has already insisted on.
   if (nameTok >= 0 && lexed.tokens[nameTok * tokenStride()] == kSymName()) {
     Ev ev = staticEvalOf(env, src, lexed);
     if (env.staticCx is null) { return 0 - 1; }
@@ -11973,7 +11973,7 @@ string tupleLitTypeE(u8[] src, Lexed lexed, Env env, Expr[] elements) {
   return tupleName(ms);
 }
 
-/** `(a, b)` at type `tt`: each member at its own type, then `struct.new` (spec/next ch14). */
+/** `(a, b)` at type `tt`: each member at its own type, then `struct.new` (spec ch14). */
 void emitTupleLiteral(B fb, u8[] src, Lexed lexed, Env env, Expr[] elements, string tt) {
   string[] ms = tupleMembers(tt);
   if (!isTupleName(tt) || ms.len() != elements.len()) {
@@ -11986,7 +11986,7 @@ void emitTupleLiteral(B fb, u8[] src, Lexed lexed, Env env, Expr[] elements, str
 
 /**
  * `a == b` on two tuples of type `tt`, held in locals `la` and `lb`: every member compared with its
- * own `==`, in order, and the answers and-ed (spec/next ch14 `§wac-tuple-equality-9cjg4r6`).
+ * own `==`, in order, and the answers and-ed (spec ch14 `§wac-tuple-equality-9cjg4r6`).
  */
 void emitTupleEqualsLocals(B fb, Env env, string tt, i32 la, i32 lb, string tag) {
   string[] ms = tupleMembers(tt);
@@ -12040,7 +12040,7 @@ string destructuredTypeE(u8[] src, Lexed lexed, Env env, Ty? whole, TupleBinding
 
 /**
  * `(T a, U b) = e;` — `e` held once, then each name declared and given its member; a nested group is
- * its member held and taken apart the same way (spec/next ch14 `§wac-tuple-destructure-gn8i48y`).
+ * its member held and taken apart the same way (spec ch14 `§wac-tuple-destructure-gn8i48y`).
  */
 void emitDestructure(B fb, u8[] src, Lexed lexed, Env env, Ty? whole, TupleBinding pattern, Expr init,
                      i32 line, i32 col) {
@@ -12128,7 +12128,7 @@ void emitTupleAssign(B fb, u8[] src, Lexed lexed, Env env, Lvalue[] targets, Exp
   }
 }
 
-/** Whether a written type is the placeholder `auto` (spec/next ch33). */
+/** Whether a written type is the placeholder `auto` (spec ch33). */
 bool isAutoTyE(u8[] src, Lexed lexed, Ty t) {
   match (t.kind) {
     Named(tok, typeArgs): { return typeArgs.len() == 0 && tokenTextOf(src, lexed, tok) == "auto"; }
@@ -12262,7 +12262,7 @@ string textFunctionFor(string t) {
 }
 
 /**
- * `e` as a string, through core's `toString` (spec/next ch23 `§wac-interp-tostring-2qpb4rs`): a string
+ * `e` as a string, through core's `toString` (spec ch23 `§wac-interp-tostring-2qpb4rs`): a string
  * as itself, a built-in type through core's spelling of it, anything else through its `[toString]`
  * method. The checker has refused a value with none.
  */
@@ -12294,7 +12294,7 @@ string operandType(u8[] src, Lexed lexed, Env env, Expr left, Expr right) {
   return typeOfE(src, lexed, env, right);
   // **Two literals leave this empty, and the caller reads empty as `i32`.** `1.0 == 1.0` is
   // therefore compared with `i32.eq` against two `f64` constants, and the module does not validate —
-  // `§wac-cmpfloat` in `issues/lang/0116`'s list.
+  // `§wac-cmpfloat-68s8unj` in `issues/lang/0116`'s list.
   //
   // Answering `"f64"` when either side is a float literal is the obvious repair and is **wrong**:
   // it is not the literals' family that decides, it is the slot's. Tried, and it made twelve corpus
@@ -13934,7 +13934,7 @@ void emitCheckedArith(B fb, Env env, i32 k, string t) {
 }
 
 /**
- * `k` on two `t`s. **A packed type computes in its carrier and is brought back to its width** — spec/next
+ * `k` on two `t`s. **A packed type computes in its carrier and is brought back to its width** — spec
  * ch08 `§wac-packed-arith-ctd4aqd`: `u8 + u8` is a `u8`, wrapped at 8 bits. A packed value is held in an
  * `i32` already reduced to its range (zero-extended for `u8`/`u16`, sign-extended for `i8`/`i16`), so a
  * comparison, `&`, `|`, `^` and `>>` keep it there and only the operators that can leave it re-reduce.
@@ -13966,7 +13966,7 @@ i32 packedMin(string t) { return t == "i8" ? -128 : t == "i16" ? -32768 : 0; }
 i32 packedMax(string t) { return t == "i8" ? 127 : t == "u8" ? 255 : t == "i16" ? 32767 : 65535; }
 
 /**
- * A cast where either side is packed — spec/next ch24 `§wac-cast-packed-ordinary-65bdykv`.
+ * A cast where either side is packed — spec ch24 `§wac-cast-packed-ordinary-65bdykv`.
  *
  * Out of a packed type, the value is already exact in its carrier, so the cast is the carrier's. Into
  * one, the value is first cast to the carrier with the same operator and then brought into range the way
@@ -14581,7 +14581,7 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
                   i32 index, i32 declTypes, i32 nameTok) {
   // **core's two schedule-target functions have bodies this replaces** with a read and a write of
   // `env.schedGlobal` — the one piece of mutable module state a program has, and not one it can name
-  // (spec/next ch35, core/ticket.wac).
+  // (spec ch35, core/ticket.wac).
   string fname = nameTok >= 0 ? tokenTextOf(src, lexed, nameTok) : "";
   if (receiver == "" && fname == "__wacScheduleTarget") { env.intrinsic = 1; }
   if (receiver == "" && fname == "__wacSetScheduleTarget") { env.intrinsic = 2; }
@@ -15163,7 +15163,7 @@ string unsupportedConstructOf(u8[] src, Lexed lexed, Env env, string n, Expr[] a
                 }
               }
               // **None is allowed: the field takes its default** — its initialiser, or its type's
-              // (spec/next ch12). The checker has refused the construction where the field has
+              // (spec ch12). The checker has refused the construction where the field has
               // none, so the only shape left to decline here is a field named twice.
               if (seen > 1) { return "a named construction that names a field twice"; }
             }
@@ -15462,7 +15462,7 @@ bool isLiteral(Expr e) {
 
 string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
   match (e.kind) {
-    // **Whether a `typeref` may exist at run time is not decided** (spec/next ch30, Open), so one that
+    // **Whether a `typeref` may exist at run time is not decided** (spec ch30, Open), so one that
     // would is declined by name rather than given a representation the spec has not chosen.
     TypeRefOf(t): { return "a `typeref` at run time"; }
     StaticMatch(subject, types, values, defaultAt): {
@@ -15635,7 +15635,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       if (env.constInits[ci] is null) { return "a constant with no initialiser"; }
       // **A static that folds is its value**, so what its initialiser would need to run does not matter:
-      // it never runs (spec/next ch28). One with storage is read from its global.
+      // it never runs (spec ch28). One with storage is read from its global.
       if (constSubstitutes(env, src, lexed, ci) || env.constGlobal[ci] >= 0) { return ""; }
       return unsupportedValue(cSrc(env, src, ci), cLex(env, lexed, ci), env, env.constInits[ci]!);
     }
@@ -15680,7 +15680,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       i32 bk = lexed.tokens[op * tokenStride()];
       // An operator a struct implements is a method call, which the walks above already approved.
       if (operatorMethodE(src, lexed, env, bk, left, right)[0] >= 0) { return ""; }
-      // `a ?? b` takes any type that can be absent, references included (spec/next ch10).
+      // `a ?? b` takes any type that can be absent, references included (spec ch10).
       if (bk == kQuestion()) { return ""; }
       if (isTupleName(ot2) && (bk == kEq() || bk == kNe())) { return ""; }
       // String equality has a helper now; everything else on a reference still does not.
@@ -15702,7 +15702,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
                    (isUnionName(t) && lexed.tokens[op * tokenStride()] == kAs());
       if (!known) { return "cast to an unsupported type"; }
       // `[a, b] as T[]` is asked about at `T[]`, which is the type it is built at — and `null as T?`
-      // is a null of that type (spec/next ch10 `§wac-null-as-typed-ifyaj6m`).
+      // is a null of that type (spec ch10 `§wac-null-as-typed-ifyaj6m`).
       match (operand.kind) {
         ArrLit(elements): { return unsupportedValueAt(src, lexed, env, operand, t); }
         NullLit: { return ""; }
@@ -16035,7 +16035,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     Is(left, target, other, negated): {
       if ((target is null) && (other is null)) {
-        // `null is null`, and a null test on a number: constants (spec/next ch10).
+        // `null is null`, and a null test on a number: constants (spec ch10).
         if (isNullLit(left)) { return ""; }
         string nl = unsupportedValue(src, lexed, env, left);
         if (nl != "") { return nl; }
@@ -16153,7 +16153,7 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
   // now, so the claim is a test rather than a paragraph.
   string why = unsupportedIn(src, lexed, env, body);
   env.lastWhy = why;
-  // **A function over `typeref`s is for static evaluation** (spec/next ch30): its body has nothing to
+  // **A function over `typeref`s is for static evaluation** (spec ch30): its body has nothing to
   // run as at run time, so it is left out rather than refusing the module — and a caller that runs is
   // declined in its own right, naming it.
   bool staticOnly = staticOnlyWhy(why);
@@ -16570,7 +16570,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
         }
         // **An instantiation exported by name is an instance** even where nothing else names it —
-        // `export { Vec<i32> as IntVec }` binds a class (spec/next ch48), so it has to be built.
+        // `export { Vec<i32> as IntVec }` binds a class (spec ch48), so it has to be built.
         TypeDecl(tnameTok, ttypeParams, talias, tbody, texported): {
           if (texported && ttypeParams.len() == 0 && (talias is not null)) { typeOfTyName(env, src, lexed, talias!); }
         }
@@ -17187,7 +17187,7 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
       }
       // **A static's initialiser is a body as well**: a generic it calls is an instance the module
       // builds, though no function names it — `literalValue(…)` in the static a `fromNumber` literal
-      // becomes is the case that found this (spec/next ch09).
+      // becomes is the case that found this (spec ch09).
       StaticDecl(snameTok, stype, sinit, sexported): {
         noteCallWant(env, sinit, typeOfTyName(env, src, lexed, stype));
         collectArrayTypesOfExpr(env, src, lexed, sinit);
@@ -17785,7 +17785,7 @@ bool needsStartFunction(Env env, u8[] src, Lexed lexed) {
  * another in.
  */
 /**
- * The evaluator for this module (spec/next ch28), built on the first static that wants a value.
+ * The evaluator for this module (spec ch28), built on the first static that wants a value.
  *
  * Lazy because most modules have none that need one, and because it must be built *after* the
  * declaration passes, which is where the fields and statics it reads come from. Kept on the `Env`
@@ -17987,7 +17987,7 @@ void emitStartFunction(B funcs, B code, u8[] src, Lexed lexed, Env env, i32 inde
 
   B insns = B.create();
   // **Demand order, not the file's.** A static whose initialiser reads another is written after it,
-  // whichever way round the two are declared (spec/next ch29 `§wac-static-dep-order-free-au43dhv`).
+  // whichever way round the two are declared (spec ch29 `§wac-static-dep-order-free-au43dhv`).
   i32[] order = startOrder(env, src, lexed);
   for (i32 oi = 0; oi < order.len(); oi++) {
     i32 i = order[oi];
@@ -19714,7 +19714,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
         n = noteBindStruct(env, out, n,
                            env.keyAt(tokenTextOf(src, lexed, nameTok), fileFor(env, lexed, nameTok, 0 - 1)));
       }
-      // **An instantiation exported by name is a root** (spec/next ch48
+      // **An instantiation exported by name is a root** (spec ch48
       // `§wac-bind-instantiation-name-dwptdfb`): `export { Vec<i32> as IntVec }` arrives here as
       // `export type IntVec = Vec<i32>;`, and binds as the class `IntVec`.
       TypeDecl(nameTok, typeParams, alias, body, exported): {
@@ -20842,7 +20842,7 @@ string arrLitTypeOf(u8[] src, Lexed lexed, Env env, Expr[] elements) {
   string t = "";
   string lit = "";
   bool sawNull = false;
-  // An element that is a union absorbs the others (spec/next ch32), whichever is written first.
+  // An element that is a union absorbs the others (spec ch32), whichever is written first.
   for (i32 i = 0; i < elements.len(); i++) {
     if (numberLiteralType(elements[i]) != "" || isNullLit(elements[i])) { continue; }
     string ut = typeOfE(src, lexed, env, elements[i]);

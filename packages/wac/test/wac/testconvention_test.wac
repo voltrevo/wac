@@ -1,4 +1,4 @@
-// What a test is, as spec/next ch47 says it — driven through `wac test` in both of its shapes.
+// What a test is, as spec ch47 says it — driven through `wac test` in both of its shapes.
 //
 // A file runs as itself; a directory runs as one aggregate module whose wrappers are generated from
 // each file's declarations. The two used to disagree about what a test *is*: the aggregate found its

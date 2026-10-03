@@ -1,6 +1,6 @@
 // expect: answers run = my-widget label label caption
 // why: a quoted tag builds an element by that name; a bare or verbatim tag calls the function in scope
-// from: spec/next ch23 §wac-markup-quoted-tag-3dnrvxj, §wac-markup-verbatim-tag-ca3myup
+// from: spec ch23 §wac-markup-quoted-tag-3dnrvxj, §wac-markup-verbatim-tag-ca3myup
 import { Node } from "core";
 
 string tagOf(Node n) {

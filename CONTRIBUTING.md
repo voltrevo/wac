@@ -20,7 +20,7 @@ you could edit.
 
 ## Spec tags
 
-[The language spec](spec/next/) is written as examples, and each example carries tagged requirements —
+[The language spec](spec/) is written as examples, and each example carries tagged requirements —
 `[§wac-int32-dfkqg8u]` and the like — directly below it. Each tag names one testable behaviour, and the
 example above it is the test: `packages/wacc/test/wac/specexamples_test.wac` runs every example.
 
@@ -33,9 +33,9 @@ example above it is the test: `packages/wacc/test/wac/specexamples_test.wac` run
 - A tag that cannot be satisfied because the *spec* is wrong gets a test for the intention, without
   the tag in its name, and an explanation in the commit.
 
-The next language is being implemented (`design/lang/0016`), so not every example is met yet.
-`packages/wacc/tools/specstatus.wac` records which are in `spec/next/_drafting/STATUS.md` and
-`spec/next/_drafting/MET`, and the test fails if an example in `MET` stops being met. Run the status program
+Not every example is met: `spec/_status/STATUS.md` lists the ones that are not, each with the reason.
+`packages/wacc/tools/specstatus.wac` records which are in `spec/_status/STATUS.md` and
+`spec/_status/MET`, and the test fails if an example in `MET` stops being met. Run the status program
 after a change that meets more, and commit both files.
 
 ## Writing a test

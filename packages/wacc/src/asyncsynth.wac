@@ -39,7 +39,7 @@ string[] fixedWords() {
 }
 
 /** Index of each fixed word. A caller names it rather than counting. */
-/** `Ticket` — core's, which a value-reading `await`'s slot holds (spec/next ch35). */
+/** `Ticket` — core's, which a value-reading `await`'s slot holds (spec ch35). */
 export i32 synthTicket()     { return 0; }
 export i32 synthValue()      { return 1; }
 /** core's `Step` and its variants — what a machine's step answers (ch36). */

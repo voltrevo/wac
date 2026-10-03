@@ -73,7 +73,7 @@ export i32[] dumpParseErrors(u8[] src) {
 }
 
 /**
- * A lone source with its namespaces lowered — what a build parses (spec/next ch03). A file naming
+ * A lone source with its namespaces lowered — what a build parses (spec ch03). A file naming
  * `html.li` or `[operators.add]` does not parse until this has made them verbatim names.
  */
 u8[] loweredOne(u8[] src) {
@@ -151,7 +151,7 @@ export string dumpFirstTypeHint(u8[] src) {
 }
 
 /**
- * Every static's value, as `NAME = value` or `NAME ! outcome: why` — spec/next ch28.
+ * Every static's value, as `NAME = value` or `NAME ! outcome: why` — spec ch28.
  *
  * The evaluator's oracle surface, and single-file on purpose: it asks what a value *is* with no
  * emitter in the way, so a disagreement here is the interpreter's and nothing else's.
@@ -188,7 +188,7 @@ export string[] dumpConstValuesIn(string[] paths, string[] sources) {
  * because the oracle for this rung is that the caller can *run* what comes back.
  */
 export u8[] emit(u8[] src) {
-  // **An interpolation converts through core** (spec/next ch23), and core is linked by the
+  // **An interpolation converts through core** (spec ch23), and core is linked by the
   // many-file route — so a lone file that interpolates takes it, as a file set of one.
   if (needsLinking(src)) { return emitFiles(onePath(), oneSource(src), "main.wac"); }
   return emitModule(src);
@@ -202,11 +202,11 @@ export string blocked(u8[] src) {
 
 /**
  * Whether a lone file has to take the many-file route: an interpolation converts through core, and a
- * namespace is lowered there (spec/next ch03) — the one-file emitter does neither.
+ * namespace is lowered there (spec ch03) — the one-file emitter does neither.
  */
 bool needsLinking(u8[] src) {
   if (interpolates(src)) { return true; }
-  // **And an `async` body**, whose lowering builds core's `Ticket` (spec/next ch35).
+  // **And an `async` body**, whose lowering builds core's `Ticket` (spec ch35).
   if (saysAsync(src)) { return true; }
   string text = string.fromBytes(src);
   return loweredSources(onePath(), string[].filled(1, text))[0] != text;
@@ -218,7 +218,7 @@ bool saysAsync(u8[] src) {
   for (i32 t = 0; t < lx.tokenCount; t++) {
     i32 k = lx.tokens[t * tokenStride()];
     if (k == kAsync()) { return true; }
-    // A generator — `gen<…>`, `yield`, `coroutine` — is a machine too (spec/next ch36).
+    // A generator — `gen<…>`, `yield`, `coroutine` — is a machine too (spec ch36).
     if (k != kIdent()) { continue; }
     i32 from = lx.tokens[t * tokenStride() + 1];
     i32 len = lx.tokens[t * tokenStride() + 2];
@@ -746,7 +746,7 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  * is the usual fate of a figure in a comment nothing checks.
  */
 /**
- * The graph a build of `entry` compiles — spec/next ch05.
+ * The graph a build of `entry` compiles — spec ch05.
  *
  * Every declaration no export of the entry reaches is blanked, and every file no retained declaration
  * needs is left out, so what remains is checked and emitted as it stands. `wac check` does not come
@@ -777,7 +777,7 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
  * `issues/lang/0175a`.
  */
 export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res, string entry) {
-  // Namespaces are lowered first, so checking a project reads what a build would (spec/next ch03).
+  // Namespaces are lowered first, so checking a project reads what a build would (spec ch03).
   string[] sources = lowerSources(paths, rawSources, res);
   string out = "";
   // **Counted once for the whole graph.** Every closure below overlaps almost every other, so
@@ -1141,7 +1141,7 @@ export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry)
 }
 
 /**
- * A file set with its namespaces lowered — the text a build parses (spec/next ch03). A caller that
+ * A file set with its namespaces lowered — the text a build parses (spec ch03). A caller that
  * parses files one at a time must parse these: `[operators.add]` is not a member name until the
  * lowering has made it `[@"operators.add"]`.
  */
@@ -1434,7 +1434,7 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
 }
 
 /**
- * `checkFilesWithIn`, collecting one `auto` function's return contributions (spec/next ch34).
+ * `checkFilesWithIn`, collecting one `auto` function's return contributions (spec ch34).
  * `assume` is `name=type` lines, one per `auto` function in the entry, the type empty where this path
  * excludes it; `target` is the function collected, `""` for an ordinary check.
  */
@@ -1587,7 +1587,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   }
 
   // **Each name asked for, followed through the export lists it passes** to the file and name that
-  // declare it — spec/next ch02. A name an export list exports as this file's own (`export { area as
+  // declare it — spec ch02. A name an export list exports as this file's own (`export { area as
   // size };`, or naming it with no `as`) is exported by that list whether or not the declaration says
   // `export`, so the check below is skipped for it; a name forwarded to another module is checked
   // there, as any import is.
@@ -1684,7 +1684,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
       if (wantAlias[k] != canonical) { c.addLocalAlias(wantAlias[k], canonical); }
     }
     // **How this file spells core's `toString`**, which is what interpolation converts through — under
-    // whatever alias it was imported (spec/next ch23 `§wac-conversion-symbol-identity-4ga8txc`).
+    // whatever alias it was imported (spec ch23 `§wac-conversion-symbol-identity-4ga8txc`).
     if (isBuiltinSpec(paths[i]) || paths[i] == corePath()) {
       for (i32 k = 0; k < n; k++) {
         if (wantFrom[k] != paths[i]) { continue; }
@@ -1796,7 +1796,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
 
   c.src = esrc;
   c.toks = elexed.tokens;
-  // **Every file, for the static evaluator** (spec/next ch28): a static calling an imported function
+  // **Every file, for the static evaluator** (spec ch28): a static calling an imported function
   // is computed, and a `static_if` reading an imported static is decided, only with all of them.
   // Only for an entry that says `static` at all — the view parses every file it reaches, `std`
   // included, and a file with no static has nothing to ask it.
@@ -1841,7 +1841,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   return c;
 }
 
-// ---- `auto` results — spec/next ch34 ----
+// ---- `auto` results — spec ch34 ----
 
 /**
  * The source-to-source passes every route takes before parsing for real: namespaces flattened
@@ -1853,7 +1853,7 @@ export string[] lowerSources(string[] paths, string[] sources, const Res res) {
   return lowerFromNumberLiterals(paths, s2, res);
 }
 
-// ---- A built-in numeric type's `[fromNumber]` — spec/next ch09 ----
+// ---- A built-in numeric type's `[fromNumber]` — spec ch09 ----
 
 /**
  * `f64.[fromNumber](n)` is core's `numberLiteralToF64(n)`, and likewise for `f32`, `i64` and `i32`:
@@ -1897,7 +1897,7 @@ string[] lowerPrimFromNumber(string[] sources) {
 }
 
 /**
- * **A literal whose type implements `[fromNumber]` is converted statically** (spec/next ch09): each such
+ * **A literal whose type implements `[fromNumber]` is converted statically** (spec ch09): each such
  * literal becomes a static of its own, `static T @"$lit_L_C" = literalValue(T.[fromNumber](
  * NumberLiteral("3")), "3");`, so the conversion runs at compile time, once per occurrence, and an
  * `Err` traps there — a compile error naming the literal. The checker says which literals these are.
@@ -1993,7 +1993,7 @@ string coreImportsOf(u8[] src) {
   return out;
 }
 
-// ---- Default type arguments — spec/next ch19 ----
+// ---- Default type arguments — spec ch19 ----
 
 /**
  * `enum Result<T, E = union>` used as `Result<i32>`: every use that omits an argument with a default
@@ -2163,7 +2163,7 @@ string withTypeDefaults(string text, string table) {
 }
 
 /**
- * **A `union` placeholder in a function's result, gathered** (spec/next ch19, ch33): `Result<i32,
+ * **A `union` placeholder in a function's result, gathered** (spec ch19, ch33): `Result<i32,
  * union>` — what a default writes for `Result<i32>` — collects the payloads of the variants its letter
  * types and what each `try` propagates, and is written in as that union. A function whose result names
  * no placeholder is left alone.
@@ -2295,7 +2295,7 @@ string variantFieldsOfLetter(string[] sources, string tmpl, i32 index) {
   return "";
 }
 
-// ---- A function's reference-typed statics — spec/next ch27 ----
+// ---- A function's reference-typed statics — spec ch27 ----
 
 /**
  * `static Box value = Box(1);` in a function is one value however often the function runs
@@ -2428,7 +2428,7 @@ bool isScalarSpelling(string t) {
       || t == "u8" || t == "i8" || t == "u16" || t == "i16";
 }
 
-// ---- Variadic parameters — spec/next ch14 ----
+// ---- Variadic parameters — spec ch14 ----
 
 /**
  * `i32 count<Ts>(Ts ...items)` called as `count(1 as i32, "a")`: the remaining arguments are one tuple,
@@ -2592,7 +2592,7 @@ string variadicCallsOf(string text, string names, string fixed) {
   return res + bytesBetween(src, from, src.len());
 }
 
-// ---- Instantiations in an export list — spec/next ch02, ch19 ----
+// ---- Instantiations in an export list — spec ch02, ch19 ----
 
 /**
  * `export { max<i32> as maxI32 };` — an instantiation exported under a name the author wrote. Each such
@@ -2872,7 +2872,7 @@ struct AutoRun {
 }
 
 /**
- * Function `k`'s contributions on the dependency path `path` (`|a|b|`), and their widening — spec/next
+ * Function `k`'s contributions on the dependency path `path` (`|a|b|`), and their widening — spec
  * ch34. Every `auto` it calls is traversed afresh with itself added to the path, and one already on
  * the path contributes nothing: so the answer depends on the root, never on which was inferred first.
  * A traversal's contributions reach its caller widened, as the call's type.
@@ -2919,7 +2919,7 @@ string autoWideOf(AutoRun run, string key) {
 }
 
 /**
- * Every `auto` result written into its source as the type inferred — spec/next ch34. One that cannot
+ * Every `auto` result written into its source as the type inferred — spec ch34. One that cannot
  * be inferred stays `auto`, and the checker says why (`errAutoUnresolved`). An empty collection is
  * `never`, and `never?` is spelled `null`, which is how the language writes it (ch10).
  */
@@ -2985,7 +2985,7 @@ string bytesBetween(u8[] src, i32 from, i32 to) {
  *
  * A **bearing type** is `Sys`, a type `std` declares whose methods reach the host — `Cli`, `Core`,
  * `Listener`, `Socket`, `Child` — or any type with a field, a variant payload or a method return
- * whose type is bearing, to a fixpoint (spec/next ch49 `§wac-cli-audit-bearing-9km4txr`). That second clause is not theoretical: `packages/fs/src/remote.wac` and
+ * whose type is bearing, to a fixpoint (spec ch49 `§wac-cli-audit-bearing-9km4txr`). That second clause is not theoretical: `packages/fs/src/remote.wac` and
  * `packages/platform/src/stream.wac` both hold a `Cli cli;` field, so a file handed one of those has
  * the whole capability set without ever naming `Cli`.
  *

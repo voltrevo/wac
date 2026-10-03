@@ -123,7 +123,7 @@ export string test_the_program_compiles_what_the_library_compiles_byte_for_byte(
   if (r.status != 0) { return t.report(); }
 
   // The same program through the library — the graph a build compiles, which is what reachability
-  // retains of the import graph (spec/next ch05).
+  // retains of the import graph (spec ch05).
   Graph g = graphOf(cli, entry);
   t.isTrue(g.ok, "the import graph — " + g.error);
   if (!g.ok) { return t.report(); }

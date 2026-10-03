@@ -1,4 +1,4 @@
-// Numbers as they are written, and the symbol that turns one into a value of a type — spec/next ch09.
+// Numbers as they are written, and the symbol that turns one into a value of a type — spec ch09.
 //
 // A numeric literal has no type of its own: its context gives it one. When that type is a program's own,
 // the type says how through `[fromNumber]`, a method without a receiver that takes the literal's exact
@@ -20,7 +20,7 @@ export struct NumberLiteral {
   string text;
 }
 
-/** What a type implements to be the target of a numeric literal (spec/next ch09). */
+/** What a type implements to be the target of a numeric literal (spec ch09). */
 export symbol fromNumber;
 
 /** `f64.[fromNumber](n)`: the nearest `f64`. Refused only for text that is not a number. */
@@ -135,7 +135,7 @@ i32 hexDigitOf(string ch) {
 
 /**
  * The value a literal's `[fromNumber]` conversion answered, or a trap naming the literal — which, run as
- * the static each such literal becomes, is a compile error at it (spec/next ch09
+ * the static each such literal becomes, is a compile error at it (spec ch09
  * `§wac-fromnumber-err-refused-e8w89yu`).
  */
 export T literalValue<T, E>(Result<T, E> converted, string literal) {

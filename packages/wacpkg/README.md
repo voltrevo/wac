@@ -9,7 +9,7 @@ wac task coverage:wacpkg              # branch coverage
 
 A project is a directory with a `wac.json5` in it. An empty one is valid — a project that imports
 only its own files needs a manifest to *exist*, not to say anything. The field this package reads
-is `imports`, a table from a **package name** to the repository it comes from (spec/next ch04):
+is `imports`, a table from a **package name** to the repository it comes from (spec ch04):
 
 ```json5
 {

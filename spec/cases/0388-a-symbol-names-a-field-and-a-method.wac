@@ -1,6 +1,6 @@
 // expect: answers f = 13
 // why: a field or method may be named by a symbol, written `[s]` and selected as `x.[s]`; otherwise it is an ordinary member
-// from: spec/next ch21 §wac-symbol-member-4z5ndyy
+// from: spec ch21 §wac-symbol-member-4z5ndyy
 symbol metadata;
 symbol describe;
 struct Point {

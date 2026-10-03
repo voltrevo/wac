@@ -1,6 +1,6 @@
 // expect: answers f = 1
 // why: a packed local is an integer of its own width, so arithmetic on one wraps there — `255 + 1` in a `u8` is `0` and `127 + 1` in an `i8` is `-128`
-// from: spec/next ch08 §wac-packed-ordinary-kawnzqm
+// from: spec ch08 §wac-packed-ordinary-kawnzqm
 export i32 f() {
   u8 a = 255;
   a++;

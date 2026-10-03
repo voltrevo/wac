@@ -83,7 +83,7 @@ export struct Sink {
    * capability reference costs nothing.
    *
    * (This said wac "has no nullable struct fields", which it does —
-   * `[§wacc-struct-nullable-optional]`. The judgement is unchanged; the reason given for it was not
+   * spec ch12 `§wac-field-initialiser-default-28c4ffw`. The judgement is unchanged; the reason given for it was not
    * a judgement.)
    */
   Sink toBuffer(Cli cli) { return Sink(cli, TO_BUFFER(), Buf.create(), false); }

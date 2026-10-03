@@ -1,6 +1,6 @@
 // expect: answers mutatedInPlace = 3
 // why: `a += b` on a struct calls `a.[addAssign](b)` on the object itself — it does not rebind `a`, so an alias sees the change
-// from: spec/next ch22 §wac-operator-compound-own-u7m6y7c
+// from: spec ch22 §wac-operator-compound-own-u7m6y7c
 import { operators } from "core";
 struct Counter {
   i32 value;

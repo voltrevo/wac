@@ -1,4 +1,4 @@
 // expect: answers f = true
 // why: the literal's type is `never?`, so a null test on it has an answer, and it is true
-// from: spec/next ch10 §wac-isnull-kxsqi4g; the old spec refused it for having no type (issues/lang/0249a)
+// from: spec ch10 §wac-isnull-kxsqi4g; the old spec refused it for having no type (issues/lang/0249a)
 export bool f() { return null is null; }

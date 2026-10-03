@@ -1,6 +1,6 @@
 // expect: refused
 // why: an independent declaration with the same spelling is a different symbol, and names a different member
-// from: spec/next ch21 §wac-symbol-identity-anh5a8y
+// from: spec ch21 §wac-symbol-identity-anh5a8y
 // ---- names.wac ----
 export symbol describe;
 // ---- unrelated.wac ----

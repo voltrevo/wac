@@ -17,7 +17,7 @@ import { Attr, Node, html.li } from "core";
  * A tag function: its parameters are its attributes, and it answers a tree.
  *
  * `<item at={i} of="args">…</item>` is `item(at: i, of: "args", kids: […])`, so `at` is an `i32`
- * rather than text it would have to parse back (spec/next ch23).
+ * rather than text it would have to parse back (spec ch23).
  */
 Node item(i32 at, string of, Node[] kids) {
   return <li class={of}>{kids.len() > 0 ? kids[0] : Node.Text("")}</li>;

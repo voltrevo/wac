@@ -1,6 +1,6 @@
 // expect: answers f = 7
 // why: `export * as name from "…"` exports the named module's exports as a namespace called `name`
-// from: spec/next ch03 §wac-namespace-module-ewetmdc
+// from: spec ch03 §wac-namespace-module-ewetmdc
 // ---- shapes.wac ----
 export struct Circle { i32 r; }
 export i32 area(Circle c) { return 3 * c.r * c.r; }

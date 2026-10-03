@@ -1,6 +1,6 @@
 // expect: answers run = 2 true 7
 // why: `get(k)` answers the value under `k`, or `null`; `getOr(k, d)` answers `d` instead
-// from: spec/next ch39 §wac-map-get-nww5rzz
+// from: spec ch39 §wac-map-get-nww5rzz
 import { Map, hashString, stringEq } from "core";
 
 export string run() {

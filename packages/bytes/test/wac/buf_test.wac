@@ -35,7 +35,7 @@ export string test_bytes_are_stored_unsigned() {
 export string test_push_truncates_to_a_byte() {
   T t = T.create();
   Buf b = Buf.create();
-  // `push` takes a byte (spec/next ch42); a wider value says which bits it means, and `as@` keeps
+  // `push` takes a byte (spec ch42); a wider value says which bits it means, and `as@` keeps
   // the low eight.
   b.push(0x1FF as@ u8);
   b.push((-1) as@ u8);

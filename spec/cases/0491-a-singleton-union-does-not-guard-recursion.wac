@@ -1,6 +1,6 @@
 // expect: refused
 // spec: §wac-union-recursive-guard-e4vnb4j
 // why: a union of one is its alternative, so `A = union<A>` is `A = A`
-// from: spec/next ch18
+// from: spec ch18
 type A = union<A>;
 export i32 f() { return 0; }

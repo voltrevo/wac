@@ -103,7 +103,7 @@ export string test_a_program_handed_sys_is_described_by_the_world(Core core, Cli
   t.eqStr(m.error, "", "the manifest was read");
   if (m.error != "") { return t.report(); }
 
-  // `main(Sys)` — the one authority a program is handed (spec/next ch07), which is `Core` and `Cli`
+  // `main(Sys)` — the one authority a program is handed (spec ch07), which is `Core` and `Cli`
   // and the ticket shapes their methods answer with, and the `Sched` and continuation queue a world
   // carries. Asserted as the *whole* list rather than as an absence, because a rule that only forbids
   // today's capabilities says nothing about the one added next week.

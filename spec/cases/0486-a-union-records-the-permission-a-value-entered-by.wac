@@ -3,7 +3,7 @@
 // why: one object enters `union<Rect, const Rect>` twice, once through a `const` reference; a mutable
 //      pattern — its own type or an ancestor's — must see only the mutable entry, while `const Shape`
 //      and a `const Rect` arm accept both
-// from: spec/next ch18
+// from: spec ch18
 struct Shape { i32 k; }
 struct Rect : Shape { i32 w; }
 i32 mutableShape(union<Rect, const Rect> v) { if (Shape s matches v) { return 1; } return 0; }

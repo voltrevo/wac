@@ -1,6 +1,6 @@
 // expect: answers f = 0
 // spec: §wac-generic-infer-expected-endugbi
-// why: no argument says what T is, and the slot the call fills does — a return is one (spec/next ch19,
+// why: no argument says what T is, and the slot the call fills does — a return is one (spec ch19,
 //      restated: the old spec refused this, since a call could not name its type arguments)
 T zero<T>() { return 0; }
 export i32 f() { return zero(); }

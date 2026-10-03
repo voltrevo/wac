@@ -1,4 +1,4 @@
-// `wac audit` — spec/next ch49, driven through the command against a project and two packages.
+// `wac audit` — spec ch49, driven through the command against a project and two packages.
 //
 // The report is grouped by dependency because that is the unit a reader chooses, so the test needs
 // real dependencies: two packages checked out where the command looks for them — `$WAC_HOME`'s cache at

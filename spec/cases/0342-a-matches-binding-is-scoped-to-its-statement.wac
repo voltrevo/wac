@@ -1,6 +1,6 @@
 // expect: refused
 // why: a name bound by `matches` is readable only where the match let control reach it, and not after its statement
-// from: `matches` (design/lang/0016), spec/next ch25 §wac-matches-scope-i52ba3w
+// from: `matches` (design/lang/0016), spec ch25 §wac-matches-scope-i52ba3w
 struct Rgb { i32 r; }
 
 export i32 f(Rgb? m) {

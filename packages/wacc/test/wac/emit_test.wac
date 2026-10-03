@@ -299,7 +299,7 @@ string[] sources() {
     // generic child into its parent was refused outright, both while the reference accepted, emitted
     // and ran them. Those are fixed; these are here so the *answers* stay compared, which acceptance
     // never showed. `override` through a parent-typed slot is included deliberately: a `virtual`
-    // method dispatches on the runtime type (spec/next ch12, closing `issues/lang/0144`).
+    // method dispatches on the runtime type (spec ch12, closing `issues/lang/0144`).
     "struct S { i32 v; i32 mine(const this) { return this.v; } } struct K : S { i32 w; } export i32 f() { S s = K(3, 4); return s.v; }",
     "struct S { i32 v; i32 mine(const this) { return this.v; } } struct K : S { i32 w; } export i32 f() { S? s = K(3, 4); return s is null ? 0 : s!.v; }",
     "struct S { i32 v; virtual i32 mine(const this) { return this.v; } } struct KO : S { i32 w; override i32 mine(const this) { return this.w; } } export i32 f() { KO k = KO(3, 4); return k.mine(); } export i32 g() { S s = KO(3, 4); return s.mine(); }",

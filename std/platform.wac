@@ -117,7 +117,7 @@ export struct Sched {
   i32 n;
   /**
    * The continuations nobody awaited — the program's schedule target, installed by `Core.of`, and
-   * what `Core.drain` runs (spec/next ch35). Here rather than on `Core` because the host builds this
+   * what `Core.drain` runs (spec ch35). Here rather than on `Core` because the host builds this
    * with `create` and marshals `Core` field by field.
    */
   Queue<Continuation> queued;
@@ -482,7 +482,7 @@ export struct Pending<T> {
   bool isDone(const this) { return this.settled(this.id); }
 
   /**
-   * This host ticket as core's `Ticket`, which is what `await` takes (spec/next ch35).
+   * This host ticket as core's `Ticket`, which is what `await` takes (spec ch35).
    *
    * **A bridge, and a temporary one**: `design/lang/0016` phase 2 has the host hand out `Ticket`s
    * itself and deletes `Pending`, and this with it. Until then a `wait` on the result blocks on the
@@ -910,7 +910,7 @@ export struct Core {
   fn<i32()> askInterrupt;
 
   /**
-   * End the program now with this status, abandoning whatever is left — `Sys.exit` (spec/next ch07).
+   * End the program now with this status, abandoning whatever is left — `Sys.exit` (spec ch07).
    * Does not return: the host unwinds the program to the call of its `main`.
    */
   fn<void(i32)> exit;
@@ -2713,11 +2713,11 @@ export struct Cli {
 
 // ── Sys ─────────────────────────────────────────────────────────────────────────────────────────
 
-/** What a `Sys` may be narrowed to — spec/next ch44. */
+/** What a `Sys` may be narrowed to — spec ch44. */
 export enum Grant { Read, Write, Listen, Spawn }
 
 /**
- * The authority a program is handed on its `main` (spec/next ch07, ch44): every effect on the world is
+ * The authority a program is handed on its `main` (spec ch07, ch44): every effect on the world is
  * a method reached through one.
  *
  * **Built on `Core` and `Cli`**, the two faces the hosts construct, and holding them is how a program

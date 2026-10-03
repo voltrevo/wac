@@ -1,6 +1,6 @@
 // expect: answers run = true false true
 // why: `==` on two tuples compares their members in order with `==`, strings and nested tuples included; `is` compares objects
-// from: spec/next ch14 §wac-tuple-equality-9cjg4r6
+// from: spec ch14 §wac-tuple-equality-9cjg4r6
 export bool membersEqual() {
   (i32, i32) a = (1, 2);
   (i32, i32) b = (1, 2);

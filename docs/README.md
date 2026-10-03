@@ -12,8 +12,8 @@ Detail that does not belong on the front page, and has no home in [`spec/`](../s
 
 The language itself is specified in [`spec/`](../spec/) — start with
 [`spec/tour.wac`](../spec/tour.wac), which is the whole language in one annotated file that compiles
-and self-tests. [spec/next/8-tooling/48-bindgen.md](../spec/next/8-tooling/48-bindgen.md) covers the TypeScript boundary and
-[spec/next/8-tooling/45-cli.md](../spec/next/8-tooling/45-cli.md) the `wac` command — the commands, where a grant goes and
+and self-tests. [spec/8-tooling/48-bindgen.md](../spec/8-tooling/48-bindgen.md) covers the TypeScript boundary and
+[spec/8-tooling/45-cli.md](../spec/8-tooling/45-cli.md) the `wac` command — the commands, where a grant goes and
 what each exit code means.
 
 Design notes live in [`design/`](../design/), open work in [`issues/`](../issues/), and the

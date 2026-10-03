@@ -1,6 +1,6 @@
 // expect: refused
 // why: a numeric literal has no type of its own, so `auto n = 7` has nothing to take one from — later statements cannot rescue it
-// from: spec/next ch33 §wac-auto-local-59gczx4
+// from: spec ch33 §wac-auto-local-59gczx4
 export i32 f() {
   auto n = 7;
   return 1;

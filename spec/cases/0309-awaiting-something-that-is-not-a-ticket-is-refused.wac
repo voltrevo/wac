@@ -3,7 +3,7 @@
 // spec: §wac-await-pending-9km2xtr
 import { Ticket } from "core";
 
-/** A ticket that is already answered: made directly, and settled with `resolve` (spec/next ch35). */
+/** A ticket that is already answered: made directly, and settled with `resolve` (spec ch35). */
 Ticket<i32> ready(i32 v) {
   Ticket<i32> t;
   t.resolve(v);

@@ -1,6 +1,6 @@
 // expect: answers f = 2
 // why: a `Vec` has a default, so one declared without an initialiser is an empty Vec
-// from: spec/next ch38 §wac-vec-create-8zprdms
+// from: spec ch38 §wac-vec-create-8zprdms
 import { Vec } from "core";
 export i32 f() {
   Vec<i32> v;

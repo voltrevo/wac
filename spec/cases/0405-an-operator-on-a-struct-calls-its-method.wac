@@ -1,6 +1,6 @@
 // expect: answers f = 6
 // why: a binary operator whose left operand's type is not built in calls that type's method named by the operator's symbol
-// from: spec/next ch22 §wac-operator-dispatch-left-txsqbyi
+// from: spec ch22 §wac-operator-dispatch-left-txsqbyi
 import { operators } from "core";
 struct Vec2 {
   i32 x;

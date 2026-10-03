@@ -1,4 +1,4 @@
-// Reachability — spec/next ch05.
+// Reachability — spec ch05.
 //
 // A program is compiled from its entry points outward: a declaration no entry point reaches is dropped
 // before it is checked, and a file no retained declaration needs is never read. This is the step
@@ -319,7 +319,7 @@ export Pruned pruneFor(string[] paths, string[] sources, Res res, string entry) 
     }
   }
 
-  // **Two declarations of one name are a fault of the file**, not of whatever reaches it (spec/next ch01
+  // **Two declarations of one name are a fault of the file**, not of whatever reaches it (spec ch01
   // `§wac-dup-any-kind-ctguh44`), so pruning one away must not hide it: both are kept to be refused.
   for (i32 f = 0; f < n; f++) {
     if (!w.needed[f] || builtinKey(paths[f])) { continue; }
@@ -333,7 +333,7 @@ export Pruned pruneFor(string[] paths, string[] sources, Res res, string entry) 
   }
 
   // **A specifier's form needs no file to judge**, so an import naming a path inside `core` or `std`
-  // stays to be refused whether or not anything uses it — spec/next ch02 `§wac-no-subpath-wqatc72`.
+  // stays to be refused whether or not anything uses it — spec ch02 `§wac-no-subpath-wqatc72`.
   for (i32 f = 0; f < n; f++) {
     if (!w.needed[f] || builtinKey(paths[f])) { continue; }
     Unit u = w.unit(f);
@@ -415,7 +415,7 @@ export string pruneCoreMembers(string core, string[] paths, string[] sources) {
   return blanked(u);
 }
 
-/** Core's declarations for tickets and scheduling (spec/next ch35). */
+/** Core's declarations for tickets and scheduling (spec ch35). */
 bool isTicketFamily(string nm) {
   return nm == "Ticket" || nm == "TicketBase" || nm == "Continuation" || nm == "Queue"
       || nm == "__wacMachine" || nm == "__wacResumer" || nm == "__wacScheduleTarget"

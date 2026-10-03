@@ -1,6 +1,6 @@
 // expect: refused
 // why: a field initialiser runs with no object built yet, so it cannot refer to `this`
-// from: spec/next ch12 §wac-field-initialiser-no-this-tvimw93
+// from: spec ch12 §wac-field-initialiser-no-this-tvimw93
 struct Bad {
   i32 a = 1;
   i32 b = this.a + 1;

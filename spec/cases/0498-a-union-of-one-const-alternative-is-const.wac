@@ -2,7 +2,7 @@
 // spec: §wac-const-ref-617go61, §wac-union-normalise-9awgxvb
 // why: `union<const S>` is its one alternative, `const S` — writing through it is refused like any
 //      other write through a const reference
-// from: spec/next ch17, ch18
+// from: spec ch17, ch18
 struct S { i32 v; }
 export i32 written() {
   union<const S> x = S(0);

@@ -1,6 +1,6 @@
 // expect: answers f = 1
 // why: `x is null` on a type that is never null is allowed and false — a generic has to instantiate it at a number as at a reference
-// from: spec/next ch10 §wac-nonnull-isnull-k8fn3wp
+// from: spec ch10 §wac-nonnull-isnull-k8fn3wp
 struct Slot<T> {
   T v;
   bool empty(const this) { return this.v is null; }

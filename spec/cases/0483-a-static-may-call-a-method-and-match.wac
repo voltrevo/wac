@@ -1,7 +1,7 @@
 // expect: answers computed = 42
 // spec: §wac-static-eval-ordinary-ba8c628
 // why: static evaluation runs ordinary wac — methods, with and without a receiver, and `match`
-// from: spec/next ch28
+// from: spec ch28
 import { Result } from "core";
 struct Acc {
   i32 n;

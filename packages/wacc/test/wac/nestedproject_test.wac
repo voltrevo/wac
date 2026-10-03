@@ -1,4 +1,4 @@
-// A path stays inside its project, and a nested project is entered by its directory — spec/next ch02,
+// A path stays inside its project, and a nested project is entered by its directory — spec ch02,
 // `§wac-import-within-project-vnqu28r` and `§wac-import-nested-project-sd4s5n8`.
 //
 // Through the command, in a directory of its own, because the rule is about manifests on disk: the

@@ -1,6 +1,6 @@
 // expect: answers run = 0
 // why: an attribute left out fills a nullable parameter with `null`, as core's html functions take every attribute
-// from: spec/next ch23, ch43 §wac-html-tag-functions-sb9cij9
+// from: spec ch23, ch43 §wac-html-tag-functions-sb9cij9
 import { Attr, Node, html.p } from "core";
 
 /** `note` is optional, `title` is not. */

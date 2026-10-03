@@ -1,5 +1,5 @@
 // expect: refused
 // why: `override` on a method with no parent method of that name is refused
-// from: spec/next ch12 §wac-override-spurious-p9qn5xl
+// from: spec ch12 §wac-override-spurious-p9qn5xl
 struct Base { virtual i32 aim(const this) { return 0; } }
 export struct Kid : Base { override i32 missing(const this) { return 1; } }

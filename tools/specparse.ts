@@ -576,7 +576,7 @@ function earley(
       // A literal matches its own token kind, **or an `IDENT` spelled that way**. That second half
       // is how a contextual keyword works and the grammar says outright that it has them:
       // *"`from` here is contextual: an ordinary identifier elsewhere"*. `fill` is the other, and
-      // so is every type name — `[§wac-grammar-keywords-h4mq7wn]`'s fence does not list `i32`, and
+      // so is every type name — `[§wac-keywords-reserved-w9tpxmx]`'s fence does not list `i32`, and
       // the fence is the authority, so `i32 i32 = 0;` is a program and `packages/gzip` has a method
       // called `fill`. Lexing those as keywords cost one false refusal each before this line
       // existed.

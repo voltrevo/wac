@@ -73,7 +73,7 @@ export string[] wacTestArgs(string entry, string filter) {
 }
 
 export Verdict classify(i32 code, string output) {
-  // **What the run said, before what it exited with.** spec/next ch47 makes a filter that matched
+  // **What the run said, before what it exited with.** spec ch47 makes a filter that matched
   // nothing, and a file whose every test wanted a grant or a host oracle, *not failures* — they exit
   // 0 — so the status alone would score a mutant nobody ran as survived.
   if (code == 0 && output.indexOf("matches --filter") >= 0) {

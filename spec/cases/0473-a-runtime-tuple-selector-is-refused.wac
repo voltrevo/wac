@@ -1,7 +1,7 @@
 // expect: refused
 // spec: §wac-tuple-static-index-axfrq5b
 // why: a member's type depends on its index, so the index has to be known when the program is checked
-// from: spec/next ch14
+// from: spec ch14
 export i32 f() {
   (string, i32) t = ("hello", 7);
   i32 i = 1;

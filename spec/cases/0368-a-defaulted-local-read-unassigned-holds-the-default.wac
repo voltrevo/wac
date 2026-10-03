@@ -1,6 +1,6 @@
 // expect: answers f = 10
 // why: a local of a struct type with a default, read where it may be unassigned, holds that default
-// from: spec/next ch08 §wac-assign-default-on-demand-t2bh3qh, ch12 §wac-struct-default-read-n6vdh42
+// from: spec ch08 §wac-assign-default-on-demand-t2bh3qh, ch12 §wac-struct-default-read-n6vdh42
 struct Conn { i32 retries = 3; i32[] log; }
 i32 retries(bool configured) {
   Conn c;

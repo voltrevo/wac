@@ -293,7 +293,7 @@ export i32 errAwaitNotPending() { return 212; }
  * rather than the `await` inside it.
  */
 export i32 errAsyncLambdaSlot() { return 213; }
-/** `[1, 2]` with nothing saying what its elements are — `spec/next/2-types/15-arrays.md`. */
+/** `[1, 2]` with nothing saying what its elements are — `spec/2-types/15-arrays.md`. */
 export i32 errArrayLiteralType() { return 214; }
 /** An array literal where the slot wants something that is not an array. */
 export i32 errArrayLiteralSlot() { return 215; }
@@ -321,28 +321,28 @@ export i32 errCaptureUnassigned() { return 225; }
 export i32 errNeverReturns() { return 226; }
 /** `Step.Waiting(t)` where `Waiting`'s payload is `never` — a variant with no values. */
 export i32 errNeverVariant() { return 227; }
-/** `p?.m` or `p ?? q` where `p` can never be absent — spec/next ch10. */
+/** `p?.m` or `p ?? q` where `p` can never be absent — spec ch10. */
 export i32 errAbsenceOperand() { return 228; }
-/** `for (T x in e)` where `e` is neither an array nor a `Vec` — spec/next ch25. */
+/** `for (T x in e)` where `e` is neither an array nor a `Vec` — spec ch25. */
 export i32 errForInIterable() { return 229; }
-/** `"\{x}"` where `x` has no conversion to text — spec/next ch23. */
+/** `"\{x}"` where `x` has no conversion to text — spec ch23. */
 export i32 errNoTextConversion() { return 230; }
 /**
  * A subtype method named like a parent method that is not `virtual` — which may be neither
- * overridden nor shadowed (spec/next ch12 `§wac-nonvirtual-final-7a4kz3t`).
+ * overridden nor shadowed (spec ch12 `§wac-nonvirtual-final-7a4kz3t`).
  */
 export i32 errNotVirtual() { return 231; }
-/** `try e` where `e` is not a `Result` — spec/next ch26. */
+/** `try e` where `e` is not a `Result` — spec ch26. */
 export i32 errTryNotResult() { return 233; }
-/** `try` in a function whose answer is not a `Result` — spec/next ch26 `§wac-try-needs-result-nqim9be`. */
+/** `try` in a function whose answer is not a `Result` — spec ch26 `§wac-try-needs-result-nqim9be`. */
 export i32 errTryOutsideResult() { return 234; }
-/** `try e` whose error type does not fit the function's — spec/next ch26 `§wac-try-error-in-set-44qtqmu`. */
+/** `try e` whose error type does not fit the function's — spec ch26 `§wac-try-error-in-set-44qtqmu`. */
 export i32 errTryErrorType() { return 235; }
-/** `schedule f;` where `f` is not a `fn<void(Continuation)>` — spec/next ch35. */
+/** `schedule f;` where `f` is not a `fn<void(Continuation)>` — spec ch35. */
 export i32 errScheduleTarget() { return 232; }
-/** `yield` outside a generator, or of a value it does not yield — spec/next ch36. */
+/** `yield` outside a generator, or of a value it does not yield — spec ch36. */
 export i32 errYield() { return 236; }
-/** A plain `for … in` over an async generator, or `for await` over anything else — spec/next ch36. */
+/** A plain `for … in` over an async generator, or `for await` over anything else — spec ch36. */
 export i32 errForAwait() { return 237; }
 
 /**
@@ -437,7 +437,7 @@ string forInVarType(C c, Ty? elemTy, Expr iterable) {
 
 /**
  * Whether a member name is usable: an ordinary name always is, and `[s]` when `s` is a symbol in
- * scope. Reports the one that is not, at the symbol, as a name nothing declares — spec/next ch21.
+ * scope. Reports the one that is not, at the symbol, as a name nothing declares — spec ch21.
  */
 bool checkSymbolName(C c, i32 tok) {
   if (tok < 0 || c.toks[tok * tokenStride()] != kSymName()) { return true; }
@@ -456,7 +456,7 @@ bool isInterpPlusTok(C c, i32 op) {
 /**
  * Whether a value interpolates: a string, a number or a `bool` by core's own spelling, and anything
  * else only through a method named by core's `toString` — under whatever alias it was imported
- * (spec/next ch23 `§wac-conversion-symbol-identity-4ga8txc`). Nullables, arrays and tuples have none
+ * (spec ch23 `§wac-conversion-symbol-identity-4ga8txc`). Nullables, arrays and tuples have none
  * (`§wac-conversion-none-for-compound-urda9vz`).
  */
 void checkToText(C c, Expr e) {
@@ -509,7 +509,7 @@ string operatorSymbolOf(i32 k) {
 /**
  * The method a binary operator calls, as `(method index, receiver is the right operand)`, or -1.
  *
- * spec/next ch22: a left operand whose type is a struct selects the implementation — its method named
+ * spec ch22: a left operand whose type is a struct selects the implementation — its method named
  * by the operator's symbol (`§wac-operator-dispatch-left-txsqbyi`). A built-in left with a struct on
  * the right calls the right's reverse, `opFromLeft`, so `2.0 * v` is `v.[multiplyFromLeft](2.0)`.
  */
@@ -577,11 +577,11 @@ string incrSymbolOf(i32 k, bool prefix) {
   return (prefix ? "pre" : "post") + verb;
 }
 
-/** Whether a `match` arm is `null:`, the arm an absent nullable subject takes (spec/next ch25). */
+/** Whether a `match` arm is `null:`, the arm an absent nullable subject takes (spec ch25). */
 bool isNullArm(C c, Arm a) { return a.variantTok >= 0 && tokenKind(c, a.variantTok) == kNull(); }
 
 /**
- * What one `return`'s value contributes to an `auto` result (spec/next ch34): each alternative of a
+ * What one `return`'s value contributes to an `auto` result (spec ch34): each alternative of a
  * ternary by itself, `null` as `never?`, and nothing for an unconstrained number or for a call whose
  * result the path excluded — which reaches here as unknown.
  */
@@ -691,7 +691,7 @@ string trimmedSpaces(string s) {
 }
 
 /**
- * The widening of an `auto` result's contributions (spec/next ch32, ch34): the bases joined — one
+ * The widening of an `auto` result's contributions (spec ch32, ch34): the bases joined — one
  * absorbing the other, or their closest common ancestor — at the greatest nullable depth. `""` when
  * nothing contributed, `!` when the bases share nothing, `!void` for a bare `return;`.
  */
@@ -757,7 +757,7 @@ string[] splitBar(string s) {
   return out;
 }
 
-/** Whether a written type is the placeholder `auto` (spec/next ch33). */
+/** Whether a written type is the placeholder `auto` (spec ch33). */
 bool isAutoTy(C c, Ty t) {
   match (t.kind) {
     Named(tok, typeArgs): { return typeArgs.len() == 0 && tokenText(c, tok) == "auto"; }
@@ -804,7 +804,7 @@ bool isNullLiteralExpr(Expr e) {
 
 /**
  * The type `p?.m` answers: the member's, made nullable where it is not already — `?.` merges its own
- * absence into the member's, so a chain never makes a `T??` (spec/next ch10
+ * absence into the member's, so a chain never makes a `T??` (spec ch10
  * `§wac-safe-member-merges-f7qhnij`). Unknown where `p` is not nullable or has no such field; the
  * check reports those.
  */
@@ -876,7 +876,7 @@ bool isNeverExpr(C c, Expr e) {
   return typeOfExpr(c, e) == "never";
 }
 
-// ── Definite assignment — spec/next ch08 ─────────────────────────────────────────────────────────
+// ── Definite assignment — spec ch08 ─────────────────────────────────────────────────────────
 //
 // A forward walk over one body. The state is which tracked locals may be unassigned, which fields of a
 // struct local being built field by field are assigned, and whether the path has ended. Paths join by
@@ -995,7 +995,7 @@ struct DAExit {
 
 /**
  * A `static_for`'s body, with nothing for a `break` or `continue` to leave: one whose target would be
- * the `static_for` would mean stopping the unrolling, and is refused (spec/next ch31
+ * the `static_for` would mean stopping the unrolling, and is refused (spec ch31
  * `§wac-static-for-no-break-5mdxkf7`). A loop or switch *inside* the body is still one to leave.
  */
 void checkStaticForBody(C c, Stmt[] body, Ty want) {
@@ -1024,7 +1024,7 @@ i32 liveBranch(C c, Expr cond) {
   Value v = evalExpr(ev, c.sCx!, c.sFile, cond, "bool");
   ev.tpCount = tpMark;
   ev.localCount = mark;
-  // **A condition on a type parameter is decided per instantiation** (spec/next ch31): at the
+  // **A condition on a type parameter is decided per instantiation** (spec ch31): at the
   // definition both branches are checked, and that is not a condition this checker failed to compute.
   if (!evFinished(ev.status) && ev.message.indexOf("a type parameter") >= 0) { ev.status = evOk(); return 0 - 2; }
   if (!evFinished(ev.status)) { ev.status = evOk(); return 0 - 1; }
@@ -1033,7 +1033,7 @@ i32 liveBranch(C c, Expr cond) {
 }
 
 /**
- * The member `t.[name]` selects: `name`'s static value, or -1 where it has none (spec/next ch14) —
+ * The member `t.[name]` selects: `name`'s static value, or -1 where it has none (spec ch14) —
  * a runtime local, or a file with no static evaluator.
  */
 i32 staticTupleIndexC(C c, i32 nameTok) {
@@ -1061,7 +1061,7 @@ void bindInstanceLetters(C c, Ev ev) {
 }
 
 /**
- * **Each instantiation's body, checked again with its letters bound** (spec/next ch19): `lengthOf<i32>`
+ * **Each instantiation's body, checked again with its letters bound** (spec ch19): `lengthOf<i32>`
  * asks an `i32` for a `len` that `lengthOf<T>` could not be asked about. A mistake that does not depend
  * on the letters was reported at the definition and is not reported again — the list holds one copy of
  * each position. Only this file's own templates; an instance found while checking one is queued too,
@@ -1165,7 +1165,7 @@ void ensureStaticView(C c, Program? prog) {
                          prog!.decls);
 }
 
-/** Whether `name` is a `type` declaration this file can see (spec/next ch30). */
+/** Whether `name` is a `type` declaration this file can see (spec ch30). */
 bool namesTypeDeclC(C c, string name) {
   if (c.typeDecls == 0 || c.sCx is null) { return false; }
   Decls tcx = c.sCx!;
@@ -1185,7 +1185,7 @@ bool namesTypeDeclC(C c, string name) {
 
 /**
  * A computed type as this checker spells types — `type(e)`, or a name a `type` declaration gives —
- * evaluated statically (spec/next ch30). Inside a generic its parameters are opaque, and a type that
+ * evaluated statically (spec ch30). Inside a generic its parameters are opaque, and a type that
  * depends on one is unknown here, which this checker is silent about: the instantiation decides.
  */
 string computedTypeC(C c, Ty t) {
@@ -1210,7 +1210,7 @@ string computedTypeC(C c, Ty t) {
 /**
  * What `t` unfolds to when it is a recursive type held by its name — `A` for `type A = union<i32,
  * Box<A>>`, or `A?` — or "" when it is anything else. The evaluator spells such a type by its name
- * inside a guarding layer (spec/next ch18 `§wac-union-recursive-guard-e4vnb4j`).
+ * inside a guarding layer (spec ch18 `§wac-union-recursive-guard-e4vnb4j`).
  */
 string unfoldedC(C c, string t) {
   bool nullable = isNullableName(t);
@@ -1230,14 +1230,14 @@ string unfoldedC(C c, string t) {
   return nullable ? shape + "?" : shape;
 }
 
-/** Whether a type spelling is `const T` — a `const` reference's type (spec/next ch17). */
+/** Whether a type spelling is `const T` — a `const` reference's type (spec ch17). */
 bool isConstTy(string t) { return t.len() > 6 && t.slice(0, 6) == "const "; }
 
 /** `const T` as `T`; anything else as itself. */
 string constBase(string t) { return isConstTy(t) ? t.slice(6, t.len()) : t; }
 
 /**
- * `union<const T>` as `const T` — a union of one is its alternative (spec/next ch18) — so a binding of
+ * `union<const T>` as `const T` — a union of one is its alternative (spec ch18) — so a binding of
  * that type is a `const` one; anything else as itself. The emitter keeps the union, which is where the
  * permission a value entered by is recorded.
  */
@@ -1256,7 +1256,7 @@ bool writableType(C c, string t) {
 
 /**
  * A parameter as its body sees it: `const P p` is const and fixed, `(const P) p` is const and may be
- * rebound (spec/next ch17 `§wac-const-rebindable-ri3wpfz`), and anything else is neither.
+ * rebound (spec ch17 `§wac-const-rebindable-ri3wpfz`), and anything else is neither.
  */
 void declareParam(C c, Param p) {
   string name = tokenText(c, p.nameTok);
@@ -1271,7 +1271,7 @@ void declareParam(C c, Param p) {
 
 /**
  * A parameter's type as a caller sees it: `const P p` takes a `const P` — so a `const` argument fits it —
- * where a plain `P p` does not (spec/next ch17). `t` is the written type, already spelled.
+ * where a plain `P p` does not (spec ch17). `t` is the written type, already spelled.
  */
 string paramTypeOf(C c, Param p, string t) {
   if (!p.isConst || isConstTy(t) || t == "" || t == typeNone()) { return t; }
@@ -1283,7 +1283,7 @@ string paramTypeOf(C c, Param p, string t) {
 
 /**
  * Whether passing `arg` where `want` is wanted would turn a `const` reference into a plain one — a
- * parameter of plain writable type handed a `const` (spec/next ch17 `§wac-const-no-launder-t584c4n`).
+ * parameter of plain writable type handed a `const` (spec ch17 `§wac-const-no-launder-t584c4n`).
  */
 bool constIntoPlain(C c, string want, Expr arg) {
   if (want == "" || want == typeNone() || isConstTy(want)) { return false; }
@@ -1353,7 +1353,7 @@ void checkDefiniteAssignment(C c, Stmt[] body) {
 }
 
 DA daBody(C c, Stmt[] body, DA st, DAExit loop) {
-  // **The names this block declares and has not reached yet** (spec/next ch27): an ordinary local
+  // **The names this block declares and has not reached yet** (spec ch27): an ordinary local
   // is in scope from its declaration on, so reading one earlier is reading something not there — a
   // `static` is the one kind visible before it.
   // One segment per block, innermost last: `|` opens it, `;x;` is a name still to come, `+x;` one
@@ -1728,7 +1728,7 @@ bool isNumericLiteral(C c, Expr e) {
 }
 
 /**
- * A module's export lists — spec/next ch02. An item of a list with no `from` names something the module
+ * A module's export lists — spec ch02. An item of a list with no `from` names something the module
  * can see: its own top-level declaration, or a name it imported. And a name is exported once, whether
  * by `export` on a declaration or by an item; two of them under one name are two declarations of it.
  *
@@ -1807,7 +1807,7 @@ bool seenAtTopLevel(C c, Program prog, string name) {
 }
 
 /**
- * Open a scope holding the names `cond` binds when it is true — spec/next ch25 `§wac-matches-scope-i52ba3w`.
+ * Open a scope holding the names `cond` binds when it is true — spec ch25 `§wac-matches-scope-i52ba3w`.
  *
  * The true path of a condition is its `matches` and, through `&&`, both operands' — so
  * `Ok(v) matches r && v > 0` binds `v` for whatever runs because the whole condition held. The caller
@@ -1835,7 +1835,7 @@ void declarePatternNames(C c, Pattern pat, string subjectT) {
   if (pat.type is not null) {
     if (pat.nameTok >= 0 && tokenText(c, pat.nameTok) != "_") {
       string bt = typeOfTy(c, pat.type!);
-      // `const Rect r` binds a `const` reference to a `Rect` (spec/next ch18).
+      // `const Rect r` binds a `const` reference to a `Rect` (spec ch18).
       if (startsWith(bt, "const ")) { c.declareConst(tokenText(c, pat.nameTok), bt.slice(6, bt.len()), true); }
       else { c.declare(tokenText(c, pat.nameTok), bt); }
     }
@@ -1853,7 +1853,7 @@ void declarePatternNames(C c, Pattern pat, string subjectT) {
 }
 
 /**
- * `p matches e`: whether any value of `e`'s type could match `p` — spec/next ch25.
+ * `p matches e`: whether any value of `e`'s type could match `p` — spec ch25.
  *
  * A pattern whose answer is already *true* is allowed (`Rgb p matches certain`): it is still a question.
  * One that can never be true is refused, since it is a mistake about the type and not about the value.
@@ -1867,7 +1867,7 @@ void checkMatches(C c, Expr e, Pattern pat, Expr subject) {
     string tt = typeOfTy(c, pat.type!);
     if (tt == typeNone() || tt == "") { return; }
     bool fits = tt == core || tt == st || descendsFrom(c, tt, core) || descendsFrom(c, core, tt);
-    // **A union holds one of its alternatives** (spec/next ch18): a pattern may name any of them, or a
+    // **A union holds one of its alternatives** (spec ch18): a pattern may name any of them, or a
     // type one of them descends from; `const T` accepts a value whichever permission it entered by.
     if (isUnionName(core)) {
       string want = startsWith(tt, "const ") ? tt.slice(6, tt.len()) : tt;
@@ -1877,7 +1877,7 @@ void checkMatches(C c, Expr e, Pattern pat, Expr subject) {
         if (m == want || descendsFrom(c, m, want) || descendsFrom(c, want, m)) { fits = true; }
       }
     }
-    // **`anyref` is the top of the references** (spec/next ch08), so any reference type may be what
+    // **`anyref` is the top of the references** (spec ch08), so any reference type may be what
     // one holds — `i31ref x matches items[0]` included.
     if (core == "anyref" && !isPrimitiveName(tt) && tt != "bool") { fits = true; }
     if (!fits) {
@@ -2007,23 +2007,23 @@ export i32 errNoLoop() { return 31; }
 /** A call with the wrong number of arguments. */
 export i32 errCallArity() { return 32; }
 /** A module-level `const` whose value cannot be computed at compile time. */
-/** A static whose value needs itself, however far round the loop it goes (spec/next ch29). */
+/** A static whose value needs itself, however far round the loop it goes (spec ch29). */
 export i32 errConstCycle() { return 34; }
-/** A static whose evaluation traps — the trap it executed (spec/next ch28). */
+/** A static whose evaluation traps — the trap it executed (spec ch28). */
 export i32 errStaticTrapped() { return 238; }
 /** A static the compiler stopped evaluating: the answer is unknown, which says nothing of termination. */
 export i32 errStaticLimit() { return 239; }
 /** A static that uses a construct this compiler cannot evaluate yet — a property of the compiler. */
 export i32 errStaticUnsupported() { return 240; }
-/** `static_trap` was reached: a refusal the program asked for, with its own words (spec/next ch31). */
+/** `static_trap` was reached: a refusal the program asked for, with its own words (spec ch31). */
 export i32 errStaticTrap() { return 241; }
 /** A `static_if` whose condition this compiler cannot compute statically. */
 export i32 errStaticCondition() { return 242; }
-/** A static initialiser that reads a parameter or an ordinary local (spec/next ch27). */
+/** A static initialiser that reads a parameter or an ordinary local (spec ch27). */
 export i32 errStaticRuntime() { return 243; }
-/** `type X = X?` — a type reaching itself through aliases and nullable layers alone (spec/next ch29). */
+/** `type X = X?` — a type reaching itself through aliases and nullable layers alone (spec ch29). */
 export i32 errTypeCycle() { return 244; }
-/** An ordinary local read before its declaration in the same block (spec/next ch27). */
+/** An ordinary local read before its declaration in the same block (spec ch27). */
 export i32 errUsedBeforeDeclared() { return 245; }
 /** An `auto` result that could not be inferred: returns sharing no type, or a bare `return;` (ch34). */
 export i32 errAutoUnresolved() { return 246; }
@@ -2053,7 +2053,7 @@ export i32 errJsxTagMismatch() { return 68; }
 export i32 errJsxDuplicateAttr() { return 69; }
 /**
  * A tag that cannot be called: it names no function in scope, or one that cannot take the children
- * written between its tags. A tag that is a name *is* a call (spec/next ch23
+ * written between its tags. A tag that is a name *is* a call (spec ch23
  * `§wac-markup-tag-is-function-vv4pvhq`), so this says which half of the call is missing.
  */
 export i32 errJsxNotComponent() { return 70; }
@@ -2172,7 +2172,7 @@ bool losslessCast(string from, string to) {
   // *"lossy cast not needed"*. The other direction is lossy, and takes `as!` or `as~` but not `as@`:
   // there is no raw conversion to a bool, because the bit pattern is not the question.
   if (from == "bool") { return intWidth(to) > 0 || to == "f32" || to == "f64"; }
-  // spec/next ch24's table, by width and sign: an integer widens into a wider one, signed only into
+  // spec ch24's table, by width and sign: an integer widens into a wider one, signed only into
   // signed — `i32 -> u64` is checked, since an `i32` can be negative — and into a float that holds
   // every value: `f64` for 32 bits and fewer, `f32` for 16 and fewer.
   i32 wf = intWidth(from);
@@ -2207,7 +2207,7 @@ bool intSigned(string t) { return t == "i8" || t == "i16" || t == "i32" || t == 
  */
 bool rawCast(string from, string to) {
   // Integer narrowing keeps the low bits, and a same-width signedness change reads the same bits the
-  // other way (spec/next ch24) — for the packed types as for any other.
+  // other way (spec ch24) — for the packed types as for any other.
   i32 wf = intWidth(from);
   i32 wt = intWidth(to);
   if (wf > 0 && wt > 0) { return wt < wf || (wt == wf && intSigned(to) != intSigned(from)); }
@@ -2238,7 +2238,7 @@ string normUnion(C c, string[] ms) {
   string[] flat = flattenUnion(ms);
   bool[] gone = bool[].filled(flat.len(), false);
   for (i32 i = 0; i < flat.len(); i++) {
-    // **Subsumed within its own qualification** (spec/next ch18): `const Rect` disappears into a
+    // **Subsumed within its own qualification** (spec ch18): `const Rect` disappears into a
     // `const Shape`, and never into a mutable `Shape`, nor a mutable `Rect` into a `const` one.
     bool isConst = startsWith(flat[i], "const ");
     string q = isConst ? "const " : "";
@@ -2255,7 +2255,7 @@ string normUnion(C c, string[] ms) {
 
 /**
  * The alternative of `u` a value of type `t` enters: the one it is, or else the single one it fits —
- * `""` when none does or more than one could (spec/next ch18).
+ * `""` when none does or more than one could (spec ch18).
  */
 string unionTarget(C c, string u, string t) {
   string[] ms = unionMembers(u);
@@ -2270,7 +2270,7 @@ string unionTarget(C c, string u, string t) {
 }
 
 /**
- * Whether `t` is a `Ticket<…>` — what `await` answers the value of (spec/next ch35).
+ * Whether `t` is a `Ticket<…>` — what `await` answers the value of (spec ch35).
  *
  * Keyed names are accepted too: a second file declaring `Ticket` is spelled `Ticket@<file>`, and
  * an `await` inside *that* file is asking about that one. Written once because both the type rule
@@ -2610,8 +2610,8 @@ bool unaryAccepts(C c, i32 uk, string ut) {
 
 /** Whether a type is one of the integers, which is what the bitwise operators and `~` demand. */
 bool isIntegerName(string n) {
-  // The packed types included: they are integer types like any other (spec/next ch08
-  // `§wac-packed-ordinary`), so `~`, `&`, a shift, an index and a switch take them.
+  // The packed types included: they are integer types like any other (spec ch08
+  // `§wac-packed-ordinary-kawnzqm`), so `~`, `&`, a shift, an index and a switch take them.
   return n == "i32" || n == "i64" || n == "u32" || n == "u64" || isPackedName(n);
 }
 
@@ -2681,14 +2681,14 @@ export bool assignable(C c, string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
   // **A function that takes a `const T` can stand where one taking a `T` is wanted** — it promises
-  // more, never less (spec/next ch17). Only that direction, and only on the parameters.
+  // more, never less (spec ch17). Only that direction, and only on the parameters.
   if (startsWithFn(want) && startsWithFn(got) && funcrefWithoutConstParams(got, want) == want) { return true; }
-  // A recursive type held by its name is compared by what it unfolds to (spec/next ch18).
+  // A recursive type held by its name is compared by what it unfolds to (spec ch18).
   string wantShape = unfoldedC(c, want);
   if (wantShape != "") { return assignable(c, wantShape, got); }
   string gotShape = unfoldedC(c, got);
   if (gotShape != "") { return assignable(c, want, gotShape); }
-  // **Permission** (spec/next ch18 `§wac-union-permission-no-restore-dvm5zbj`): a `const` alternative
+  // **Permission** (spec ch18 `§wac-union-permission-no-restore-dvm5zbj`): a `const` alternative
   // accepts a mutable value of its type, and a `const` one never becomes mutable.
   bool wantConst = startsWith(want, "const ");
   bool gotConst = startsWith(got, "const ");
@@ -2705,7 +2705,7 @@ export bool assignable(C c, string want, string got) {
       return true;
     }
     if (isNullableName(got)) {
-      // Only a nullable alternative can take it — `U?` in `union<i32, U?>` (spec/next ch18).
+      // Only a nullable alternative can take it — `U?` in `union<i32, U?>` (spec ch18).
       string[] nms = unionMembers(want);
       for (i32 i = 0; i < nms.len(); i++) {
         if (isNullableName(nms[i]) && assignable(c, nms[i], got)) { return true; }
@@ -2715,7 +2715,7 @@ export bool assignable(C c, string want, string got) {
     return unionTarget(c, want, got) != "";
   }
   if (isUnionName(got)) { return false; }
-  // No value of `never` ever arrives, so one may stand where any type is wanted (spec/next ch11).
+  // No value of `never` ever arrives, so one may stand where any type is wanted (spec ch11).
   if (got == "never") { return true; }
   if (withoutNull(want) == got) { return true; }
   // A nullable source is a hatch **only when its base would fit**. `P?` into a `P` is the
@@ -2811,7 +2811,7 @@ export bool nullableIntoNonNull(C c, string want, string got) {
   if (want == "" || got == "") { return false; }
   if (!isNullableName(got)) { return false; }
   // **One absence each, peeled together**: a `T??` into a `T?` is a `T?` into a `T` one layer down —
-  // the `T??` has a state the `T?` cannot hold (spec/next ch10 `§wac-nested-not-collapsed-m6cz4gb`).
+  // the `T??` has a state the `T?` cannot hold (spec ch10 `§wac-nested-not-collapsed-m6cz4gb`).
   if (isNullableName(want)) { return nullableIntoNonNull(c, withoutNull(want), withoutNull(got)); }
   // **`anyref` is already nullable**, so `anyref? into anyref` takes nothing away and the reference
   // accepts it. The old exact-name test reported it, which is the one cell of this family wacc
@@ -3372,7 +3372,7 @@ export struct C {
   }
 
   /**
-   * `Owner.name` for every `private` member — field, method or static — spec/next ch12, ch13.
+   * `Owner.name` for every `private` member — field, method or static — spec ch12, ch13.
    *
    * Keyed by the declaring type, so a subtype's lookup finds its parent's private member by walking up
    * and then refuses it: the subtype's body is not the parent's (`§wac-private-not-inherited-acpickk`).
@@ -3381,9 +3381,9 @@ export struct C {
   i32 privateCount;
   /** The struct or enum whose body is being checked, or `""` outside every body. */
   string bodyOf;
-  /** Whether each field (by index, as `fieldNames`) has an initialiser — spec/next ch12. */
+  /** Whether each field (by index, as `fieldNames`) has an initialiser — spec ch12. */
   bool[] fieldInits;
-  /** How this file spells core's `toString`, or "" when it does not import it — spec/next ch23. */
+  /** How this file spells core's `toString`, or "" when it does not import it — spec ch23. */
   string coreToString;
   /** How this file spells each core symbol it imports: `operators.add` → `operators.add` or `plus`. */
   string[] coreSymNames;
@@ -3410,19 +3410,19 @@ export struct C {
     }
     return "";
   }
-  /** The symbols in scope, as this file spells them (renames applied) — spec/next ch21. */
+  /** The symbols in scope, as this file spells them (renames applied) — spec ch21. */
   string[] symbols;
   i32 symbolCount;
   /**
    * Each function parameter's name, beside `funcParamTypes` — what a markup tag's attributes are
-   * matched against (spec/next ch23 `§wac-markup-tag-is-function-vv4pvhq`). Grown as it fills.
+   * matched against (spec ch23 `§wac-markup-tag-is-function-vv4pvhq`). Grown as it fills.
    */
   string[] funcParamNames;
   /** `Owner.method` for each method a subtype may override: declared `virtual`, or overriding one. */
   string[] virtuals;
   /**
    * What the function being checked answers — its body's type for an `async` one, the slot's for a
-   * lambda — which is what a `try` returns its error into (spec/next ch26). Saved and put back around
+   * lambda — which is what a `try` returns its error into (spec ch26). Saved and put back around
    * each body, as `lambdaReturn` is.
    */
   string tryReturn;
@@ -3433,16 +3433,16 @@ export struct C {
   string neverAt;
   /**
    * `;name;` of each struct local declared without an initialiser — the ones whose fields, `const`
-   * ones included, may be assigned one at a time before the local's first use (spec/next ch12). Whether
+   * ones included, may be assigned one at a time before the local's first use (spec ch12). Whether
    * a `const` one is assigned twice, or after that use, is the definite-assignment walk's to say.
    */
   string pendingAt;
   /** `;name;` of each local a block in the walk declares further down — see `daBody`. */
   string pendingDecls;
-  /** `;line:col=type;` for each bare `union` local: what its scope gathered (spec/next ch33). */
+  /** `;line:col=type;` for each bare `union` local: what its scope gathered (spec ch33). */
   string unionAt;
   /**
-   * The static evaluator (spec/next ch28) and what it reads — set once the declarations are in. A
+   * The static evaluator (spec ch28) and what it reads — set once the declarations are in. A
    * `static_if`'s condition is decided here rather than left to the emitter, because the branch not
    * taken is **not checked**; and a static that needs its own value is a cycle this reports.
    */
@@ -3452,10 +3452,10 @@ export struct C {
   i32 sFile;
   /** What a `yield` in the function being checked yields, or `""` outside a generator (ch36). */
   string yieldType;
-  /** How many `type` declarations the evaluator's view holds (spec/next ch30), or -1 before asked. */
+  /** How many `type` declarations the evaluator's view holds (spec ch30), or -1 before asked. */
   i32 typeDecls;
   /**
-   * **Collecting an `auto` result** (spec/next ch34): the function whose returns are wanted, or `""`
+   * **Collecting an `auto` result** (spec ch34): the function whose returns are wanted, or `""`
    * for an ordinary check, and what they contributed so far — `|`-separated, `null` for the literal
    * and `void` for a bare `return;`. Read by `lowerAutoReturns`, which writes the answer into the
    * source so nothing downstream sees `auto` at all.
@@ -3465,14 +3465,14 @@ export struct C {
   /** The `auto` results this collection assumes, `name=type` lines (empty where the path excludes one). */
   string autoAssume;
   /**
-   * **The instantiations to check again** (spec/next ch19 `§wac-generic-template-check-2wkq7nm`):
+   * **The instantiations to check again** (spec ch19 `§wac-generic-template-check-2wkq7nm`):
    * `name|T1;;T2` lines, each found where a call bound every letter, and the letters an instance check
    * has bound, `T=i32` lines, which a `static_if` inside it reads.
    */
   string instQueue;
   string instBinding;
   /**
-   * **Collecting a placeholder in a result's type** (spec/next ch19, ch33): `Template|index|V:f,…` —
+   * **Collecting a placeholder in a result's type** (spec ch19, ch33): `Template|index|V:f,…` —
    * the result's template, which of its arguments is the placeholder, and the variant fields typed by
    * that argument's letter. What each `return` and `try` gives it goes to `autoCollect`.
    */
@@ -3662,7 +3662,7 @@ export struct C {
 
   /**
    * Why `spec` resolves to nothing, when the command that gathered the files said — a package it
-   * could not resolve, deferred until a retained declaration needed it (spec/next ch04) — or "".
+   * could not resolve, deferred until a retained declaration needed it (spec ch04) — or "".
    */
   string unresolvedWhy(const this, string spec) {
     for (i32 i = 0; i < this.unresolvedCount; i++) {
@@ -4143,7 +4143,7 @@ export struct C {
   }
 
   string fieldType(this, string owner, string name) {
-    // A tuple's members are its positions (spec/next ch14).
+    // A tuple's members are its positions (spec ch14).
     string tm = tupleMemberType(owner, name);
     if (tm != "") { return tm; }
     // The table is keyed by template — `Box`, never `Box<i32>` — so an instantiation resolves to its
@@ -4558,7 +4558,7 @@ string tokenText(C c, i32 t) {
   i32 len = c.toks[t * tokenStride() + 2];
   u8[] out = u8[].filled(len, 0);
   for (i32 i = 0; i < len; i++) { out[i] = c.src[start + i]; }
-  // **A symbol-named member's name is `[key]`** (spec/next ch21), the symbol resolved the way any name
+  // **A symbol-named member's name is `[key]`** (spec ch21), the symbol resolved the way any name
   // in this file is: through the renames its importer gave it and the aliases it has itself.
   if (c.toks[t * tokenStride()] == kSymName()) {
     return "[" + c.canon(c.renamed(symbolSpelling(c, t, string.fromBytes(out)))) + "]";
@@ -4657,13 +4657,13 @@ export string typeOfTy(C c, Ty t) {
     Prim(tok): { return tokenText(c, tok); }
     TypeOf(e): { return computedTypeC(c, t); }
     Named(tok, typeArgs): {
-      // `const T` — a union's alternative entered through a `const` reference (spec/next ch18).
+      // `const T` — a union's alternative entered through a `const` reference (spec ch18).
       if (typeArgs.len() == 1 && tokenKind(c, tok) == kConst()) {
         string cinner = typeOfTy(c, typeArgs[0]);
         return cinner == "" || cinner == typeNone() ? cinner : "const " + cinner;
       }
       if (namesTypeDeclC(c, tokenText(c, tok))) { return computedTypeC(c, t); }
-      // A letter an instance check has bound is that type (spec/next ch19).
+      // A letter an instance check has bound is that type (spec ch19).
       if (typeArgs.len() == 0 && c.instBinding != "") {
         string lkey = "\n" + tokenText(c, tok) + "=";
         i32 la = c.instBinding.indexOf(lkey);
@@ -4672,7 +4672,7 @@ export string typeOfTy(C c, Ty t) {
           return lrest.slice(0, lrest.indexOf("\n"));
         }
       }
-      // `null` written as a type is the literal's type, `never?` (spec/next ch10).
+      // `null` written as a type is the literal's type, `never?` (spec ch10).
       if (typeArgs.len() == 0 && tokenKind(c, tok) == kNull()) { return "never?"; }
       // A bare `union` is what its scope gathered (`declareAll`), found by where it is written.
       if (typeArgs.len() == 0 && tokenText(c, tok) == "union") {
@@ -4700,7 +4700,7 @@ export string typeOfTy(C c, Ty t) {
       // and find none. They *are* types; what needed fixing was the hierarchy they sit in, which
       // `isReferenceType` answers.
       if (base == "anyref" || base == "i31ref" || base == "typeref") { return base; }
-      // **`union<A, B>` is its normalised set of alternatives** (spec/next ch18). A bare `union` is a
+      // **`union<A, B>` is its normalised set of alternatives** (spec ch18). A bare `union` is a
       // placeholder (ch33), which is not built yet: unknown, and silent.
       // **`gen<Y, R>` is how a generator's `gen<Y> R` is held** (ch36) — spelled, for `callerReturn`
       // and `yieldOf` to read.
@@ -4783,7 +4783,7 @@ export string typeOfTy(C c, Ty t) {
           return typeNone();
         }
         // **An `auto` result still here is one `lowerAutoReturns` could not infer** — every one it
-        // could was written into the source as its type (spec/next ch34).
+        // could was written into the source as its type (spec ch34).
         if (base == "auto") {
           c.reportTok(errAutoUnresolved(), tok, "");
           return typeNone();
@@ -4916,7 +4916,7 @@ void checkCharLiteral(C c, Expr e) {
  * measured a width"* — so a rendered diagnostic puts one caret under the first character of the
  * offending expression instead of under the whole of it. spec/spec/errors.md states the width for
  * particular programs — `span: 1` for `if (x)` under `§wac-diag-bool-r8kn4wp` and `span: 4` for
- * `3.14` under `§wac-diag-assign-j3qm7xf` — so these are clauses rather than presentation.
+ * `3.14` under `§wac-diag-literal-fraction-33zp6u3` — so these are clauses rather than presentation.
  *
  * Only the leaves carry a token: an `Ident` and the three literal kinds. A compound expression has no
  * single token and answers -1, which is honest — its width is a question about where it ends, and the
@@ -5073,7 +5073,7 @@ void reportExprHinted(C c, i32 code, Expr e, string note, string hint) {
  *
  * The help a mismatch code carries offers `as!` and `as~`, the two casts for a conversion that can
  * lose something. `i32 x = b[0];` for a `u8` loses nothing — every `u8` is an `i32` — and the
- * language refuses `as!` there (spec/next ch24). So where the pair is lossless, the help says the
+ * language refuses `as!` there (spec ch24). So where the pair is lossless, the help says the
  * one cast that is right. `before` is the error count before the report, so a report the dedup
  * swallowed does not relabel the diagnostic in front of it.
  */
@@ -5087,10 +5087,10 @@ void widenHint(C c, i32 before, string got, string want) {
 }
 
 void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
-  // A literal is a fresh value, so a `const` slot takes it as its plain type would (spec/next ch17).
+  // A literal is a fresh value, so a `const` slot takes it as its plain type would (spec ch17).
   want = constBase(want);
   checkCharLiteral(c, e);
-  // **A type that implements `[fromNumber]` is a literal's target** (spec/next ch09): the literal is
+  // **A type that implements `[fromNumber]` is a literal's target** (spec ch09): the literal is
   // converted statically, which `lowerFromNumberLiterals` arranges from the sites recorded here.
   if (fromNumberTarget(c, want, e)) {
     if (c.placeholderSpec == "@literals") {
@@ -5100,14 +5100,14 @@ void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   }
   // A codepoint above 127 is not a byte in any slot that holds one — a local, a parameter, a return
   // and a field as much as an element, now that a packed type can be each of those. 233 fits a `u8`,
-  // so the range rule below would accept `u8 x = 'é';`. spec/next ch15 `§wac-arr-byte-codepoint`.
+  // so the range rule below would accept `u8 x = 'é';`. spec ch15 `§wac-arr-byte-codepoint-v8kq3nw`.
   checkPackedLiteral(c, withoutNull(want) == "" ? want : withoutNull(want), e);
   if (literalFits(c, want, e)) { return; }
   if (!acceptsLiteral(want, litFamily(c, e))) {
     // The literal's own family is what it was found to be: `1.5` in an `i32` slot is a float where an
     // integer was wanted, and saying so is the whole of the complaint.
     // **At the literal's token where there is one**, which is what gives `3.14` a caret four wide
-    // rather than one — `§wac-diag-assign-j3qm7xf` states that width. The line and column arguments
+    // rather than one — `§wac-diag-literal-fraction-33zp6u3` states that width. The line and column arguments
     // stay for the compound case, where no single token holds the expression.
     i32 tok = tokenOfExpr(e);
     if (tok >= 0) {
@@ -5448,9 +5448,9 @@ export bool acceptsLiteral(string want, i32 lit) {
     return false;
   }
   if (lit == litInteger()) {
-    // The packed types are integer types like any other (spec/next ch08 `§wac-packed-ordinary`), so
+    // The packed types are integer types like any other (spec ch08 `§wac-packed-ordinary-kawnzqm`), so
     // a literal takes one and `integerLiteralFits` asks the range. **And a float**: an integer
-    // spelling is read as one where a float is expected — `f32 d = 2;` is `2.0` (spec/next ch09
+    // spelling is read as one where a float is expected — `f32 d = 2;` is `2.0` (spec ch09
     // `§wac-float-integer-spelled-ur9ttxq`).
     return want == "i32" || want == "i64" || want == "u32" || want == "u64" || want == "i8" ||
            want == "u8" || want == "i16" || want == "u16" || want == "f32" || want == "f64";
@@ -5512,7 +5512,7 @@ export string typeOfLvalue(C c, Lvalue lv) {
     LField(base, nameTok): {
       string owner = typeOfLvalue(c, base);
       if (owner == typeNone()) { return typeNone(); }
-      // `t.0` — a tuple's member, which may be `const T` (spec/next ch14, ch17).
+      // `t.0` — a tuple's member, which may be `const T` (spec ch14, ch17).
       string fname = tokenText(c, nameTok);
       if (isTupleName(owner) && fname.len() > 0 && fname.toBytes()[0] >= 48 && fname.toBytes()[0] <= 57) {
         string[] ms = tupleMembers(owner);
@@ -5604,7 +5604,7 @@ Ty[] typeNameArgs(Ty qual) {
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
     TypeRefOf(t): { return "typeref"; }
-    // The type of its arms, every one of which is checked here at the definition (spec/next ch31);
+    // The type of its arms, every one of which is checked here at the definition (spec ch31);
     // a `static_trap` is `never` and says nothing about it.
     StaticMatch(subject, types, values, defaultAt): {
       for (i32 i = 0; i < values.len(); i++) {
@@ -5649,7 +5649,7 @@ export string typeOfExpr(C c, Expr e) {
         return staticMethodType(c, obj, tokenText(c, nameTok));
       }
       string mem = tokenText(c, nameTok);
-      // `t.[i]` on a tuple selects by the static value of `i` (spec/next ch14).
+      // `t.[i]` on a tuple selects by the static value of `i` (spec ch14).
       if (isTupleName(owner) && tokenKind(c, nameTok) == kSymName()) {
         i32 si = staticTupleIndexC(c, nameTok);
         return si < 0 ? typeNone() : tupleMemberType(owner, countText(si));
@@ -5769,12 +5769,12 @@ export string typeOfExpr(C c, Expr e) {
           return substituteType(c, om[1] == 1 ? ort : olt, c.methodReturns[om[0]]);
         }
       }
-      // `a ?? b` — `a`'s type with its absence removed, or kept where `b` is `null` (spec/next ch10).
+      // `a ?? b` — `a`'s type with its absence removed, or kept where `b` is `null` (spec ch10).
       if (bk == kQuestion()) {
         string clt = typeOfExpr(c, left);
         if (clt == typeNone() || clt == "") { return typeNone(); }
         // `?? null` keeps one absence: a `T?` stays itself, and a `T??` collapses to `T?` — its two
-        // absences merged, said out loud (spec/next ch10 `§wac-nested-not-collapsed-m6cz4gb`).
+        // absences merged, said out loud (spec ch10 `§wac-nested-not-collapsed-m6cz4gb`).
         if (isNullLiteralExpr(right)) {
           string once = withoutNull(clt);
           return isNullableName(once) ? once : clt;
@@ -5857,7 +5857,7 @@ export string typeOfExpr(C c, Expr e) {
     }
     Unwrap(operand): {
       string whole = typeOfExpr(c, operand);
-      // **`r!` on a `Result` is its `Ok` value**, or a trap — how spec/next ch35 writes `t.wait()!`.
+      // **`r!` on a `Result` is its `Ok` value**, or a trap — how spec ch35 writes `t.wait()!`.
       if (genericBase(whole) == "Result") {
         string[] rargs = genericArgs(whole);
         return rargs.len() >= 1 ? rargs[0] : typeNone();
@@ -5884,7 +5884,7 @@ export string typeOfExpr(C c, Expr e) {
       //
       // `i32` exactly, not "some integer": the reference accepts `i32 x = b[0];` and refuses
       // `i64 x = b[0];` with *found i32*. `issues/lang/0170a`.
-      // **A packed element is its own type** — `bytes[i]` is a `u8` (spec/next ch08
+      // **A packed element is its own type** — `bytes[i]` is a `u8` (spec ch08
       // `§wac-packed-ordinary-kawnzqm`). It was widened to `i32` here while a packed type could be
       // nothing but an element.
       return elem;
@@ -6091,7 +6091,7 @@ export string typeOfExpr(C c, Expr e) {
     // would otherwise refuse it against its own slot, and the walk checks every element against it.
     ArrLit(elements): { return c.arrLitSlot(e.line, e.col); }
     // Each member's own type; unknown when one is a numeric literal, which takes its type from the slot
-    // the tuple fills — `checkExpr` gives it one (spec/next ch14).
+    // the tuple fills — `checkExpr` gives it one (spec ch14).
     TupleLit(elements): {
       string[] ms = string[].defaulted(elements.len());
       for (i32 i = 0; i < elements.len(); i++) {
@@ -6168,12 +6168,12 @@ bool leaves(C c, Stmt s) {
   match (s.kind) {
     Return(value): { return true; }
     Trap: { return true; }
-    // A call that does not return ends the path as surely as a `return` (spec/next ch11).
+    // A call that does not return ends the path as surely as a `return` (spec ch11).
     ExprStmt(expr): { return isNeverExpr(c, expr); }
     Var(type, nameTok, init, isConst): { return (init is not null) && isNeverExpr(c, init!); }
     Block(body): { return alwaysLeaves(c, body); }
     // **The live branch alone**, and there need not be another: `static_if (W) { return 1; }` with `W`
-    // true always leaves, where the same shape written `if` does not (spec/next ch31).
+    // true always leaves, where the same shape written `if` does not (spec ch31).
     StaticIf(cond, then, els): {
       i32 live = liveBranch(c, cond);
       if (live == 1) { return alwaysLeaves(c, then); }
@@ -6448,7 +6448,7 @@ void checkJsxAttrValue(C c, JsxAttr a, string want) {
 
 /**
  * A tag that is a name: the function of that name in scope, called with each attribute as the
- * parameter of that name and the children as `kids` (spec/next ch23 `§wac-markup-tag-is-function-vv4pvhq`).
+ * parameter of that name and the children as `kids` (spec ch23 `§wac-markup-tag-is-function-vv4pvhq`).
  * A parameter no attribute fills must be `kids` or nullable — absent then, as `html`'s attributes are.
  */
 void checkJsxCall(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
@@ -6504,12 +6504,12 @@ void checkJsxCall(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
 }
 
 /**
- * A `{expr}` child, converted through core's `toNode` (spec/next ch23 `§wac-markup-child-tonode-vp842rw`):
+ * A `{expr}` child, converted through core's `toNode` (spec ch23 `§wac-markup-child-tonode-vp842rw`):
  * a `Node` is itself, a string, a number or a `bool` becomes text, and anything else needs a method
  * named by core's symbol answering `Node`.
  */
 void checkJsxChild(C c, Expr kid) {
-  // A number written as a literal has no type to convert from — no fallback (spec/next ch09).
+  // A number written as a literal has no type to convert from — no fallback (spec ch09).
   i32 lit = litFamily(c, kid);
   if (lit == litInteger() || lit == litFloat()) {
     c.report(errUntypedLiteral(), kid.line, kid.col);
@@ -6580,14 +6580,14 @@ void checkExpr(C c, Expr e) {
   checkCharLiteral(c, e);
 
   match (e.kind) {
-    // Every arm, at the definition — only the instantiation chooses (spec/next ch31).
+    // Every arm, at the definition — only the instantiation chooses (spec ch31).
     StaticMatch(subject, types, values, defaultAt): {
       for (i32 i = 0; i < values.len(); i++) {
         c.expected = want;
         c.expectedUnknown = wantUnknown;
         checkExpr(c, values[i]);
       }
-      // **In an instance the arm is chosen** (spec/next ch31), and a `static_trap` there is reached.
+      // **In an instance the arm is chosen** (spec ch31), and a `static_trap` there is reached.
       if (c.instBinding != "") {
         i32 arm = staticArmC(c, subject, types, defaultAt);
         if (arm >= 0 && arm < values.len()) {
@@ -6621,13 +6621,13 @@ void checkExpr(C c, Expr e) {
         checkCoalesce(c, left, right);
         return;
       }
-      // **An interpolated value converts to text** (spec/next ch23); the `+` the lexer wrote for `\{`
+      // **An interpolated value converts to text** (spec ch23); the `+` the lexer wrote for `\{`
       // asks only that it can.
       if (k == kPlus() && isInterpPlusTok(c, op)) {
         checkToText(c, right);
         return;
       }
-      // **An operator on a struct is a method call** (spec/next ch22): the left operand's method named
+      // **An operator on a struct is a method call** (spec ch22): the left operand's method named
       // by the operator's symbol, or a struct on the right's reverse. A struct with no such method is
       // refused here rather than by the arithmetic rules below, which would say the wrong thing.
       string olt = typeOfExpr(c, left);
@@ -6646,7 +6646,7 @@ void checkExpr(C c, Expr e) {
         return;
       }
       // **Two literals compared have no type to be compared at** — `1 + 2 == 3` is `true` as an `i32`
-      // and something else as an `i8` — and there is no fallback to pick one (spec/next ch09).
+      // and something else as an `i8` — and there is no fallback to pick one (spec ch09).
       if ((k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe())
           && isNumericLiteral(c, left) && isNumericLiteral(c, right)) {
         c.report(errUntypedLiteral(), e.line, e.col);
@@ -7035,14 +7035,14 @@ void checkExpr(C c, Expr e) {
       // …and only when there *is* a target, because `f is null` on a nullable funcref is the
       // ordinary way to ask whether one was supplied, which the reference accepts. The restriction
       // is about testing a funcref's *type*, not about mentioning one.
-      // **`x is null` on a number is allowed, and false** — spec/next ch10 `§wac-nonnull-isnull-k8fn3wp`:
+      // **`x is null` on a number is allowed, and false** — spec ch10 `§wac-nonnull-isnull-k8fn3wp`:
       // `Slot<T>.empty` has to instantiate at `T = i32` as at `T = Node?`. A *type* test or an
       // identity test on a number has nothing to compare, and stays refused.
       bool nullTest = (target is null) && (other is null);
       if ((isValueType(lt3) && !nullTest) || (!(target is null) && startsWithFn(lt3))) {
         c.report(errReferenceOp(), e.line, e.col);
       }
-      // **`null is null` is `true`** — spec/next ch10 `§wac-isnull-kxsqi4g`. The literal's type is
+      // **`null is null` is `true`** — spec ch10 `§wac-isnull-kxsqi4g`. The literal's type is
       // `never?` (ch10), so a null test on it has an answer; the old spec gave it none and this was
       // refused (`issues/lang/0249a`). A type or identity test on it still compares nothing.
       if (litKindOf(left) == litNull() && !nullTest) { c.report(errReferenceOp(), e.line, e.col); }
@@ -7074,7 +7074,7 @@ void checkExpr(C c, Expr e) {
     }
     Try(operand): {
       checkExpr(c, operand);
-      // What a `try` propagates is a contribution to a placeholder in the result's type (spec/next ch26).
+      // What a `try` propagates is a contribution to a placeholder in the result's type (spec ch26).
       if (c.placeholderSpec != "" && c.autoTarget != "" && c.activeFunc == c.autoTarget && c.lambdaReturn == "") {
         string pspec = c.placeholderSpec;
         string ptmpl = pspec.slice(0, pspec.indexOf("|"));
@@ -7140,7 +7140,7 @@ void checkExpr(C c, Expr e) {
       // `!` wants a boolean; `-` wants a number; `~` wants an integer. Three different demands on the
       // one node, all reported at the operator, and all of them silent on an unknown operand.
       i32 uk = tokenKind(c, op);
-      // A struct operand calls its own method (spec/next ch22) and the rules below are not its rules.
+      // A struct operand calls its own method (spec ch22) and the rules below are not its rules.
       string sut = typeOfExpr(c, operand);
       if (isStructOperand(c, sut)) {
         checkNullaryOperator(c, sut, unarySymbolOf(uk), op);
@@ -7244,7 +7244,7 @@ void checkExpr(C c, Expr e) {
       // line in this compiler's own parser, and it was reported the moment the checker could see
       // what `Expr` is — the rule needed a size before it needed a default.
       // **A number has no default**, and neither has a `bool`: `i32[].defaulted(n)` is refused, and
-      // `i32[].filled(n, 0)` says which zero was meant — `spec/next/2-types/08-primitives.md`.
+      // `i32[].filled(n, 0)` says which zero was meant — `spec/2-types/08-primitives.md`.
       if (!(size is null) && elements.len() == 0 && (fill is null)
           && (!hasDefault(c, want, 0) || primWithoutDefault(want))) {
         c.report(errNoDefault(), e.line, e.col);
@@ -7261,7 +7261,7 @@ void checkExpr(C c, Expr e) {
     // which of the numeric types its elements are.
     TupleLit(elements): {
       // **The slot gives each member its type**, as an array's does its elements: `(i32, i32) t =
-      // (1, 2);` has nothing else to type the literals from (spec/next ch14).
+      // (1, 2);` has nothing else to type the literals from (spec ch14).
       string tslot = isNullableName(want) ? withoutNull(want) : want;
       string[] tms = tupleMembers(tslot);
       if (isTupleName(tslot) && tms.len() != elements.len()) {
@@ -7359,7 +7359,7 @@ void checkExpr(C c, Expr e) {
       // conditional answered unknown, which took the return rule with it: the function was declined
       // and `wac build` exited 0. `literalFits` is the question the typing walk above already asks
       // for the same pair, so the two now agree. `issues/lang/0170a`.
-      // **An expected union takes each branch by itself** (spec/next ch32), so two branches that share
+      // **An expected union takes each branch by itself** (spec ch32), so two branches that share
       // nothing are two of its alternatives rather than a disagreement — and a bare `union` placeholder
       // is the same slot, gathered.
       bool unionSlot = isUnionName(withoutNull(slot) == "" ? slot : withoutNull(slot));
@@ -7415,7 +7415,7 @@ void checkExpr(C c, Expr e) {
     Member(obj, nameTok): {
       checkReceiver(c, obj);
       // A tuple's members are selected by position, and the position must be known statically —
-      // `t.1` or `t.[1]` (spec/next ch14 `§wac-tuple-static-index-axfrq5b`).
+      // `t.1` or `t.[1]` (spec ch14 `§wac-tuple-static-index-axfrq5b`).
       string tupleOwner = typeOfExpr(c, obj);
       if (isTupleName(tupleOwner)) {
         i32 tk = c.toks[nameTok * tokenStride()];
@@ -7445,7 +7445,7 @@ void checkExpr(C c, Expr e) {
     // plain named call, which is why the first version of this reported nothing at all.
     Construct(ctype, args, named): {
       // The slot this call fills, before its arguments' slots replace it: a generic letter no
-      // argument binds is bound from it (spec/next ch19).
+      // argument binds is bound from it (spec ch19).
       string callSlot = want;
       bool callSlotUnknown = wantUnknown;
       // Each argument is walked with the slot it is going into, which is what lets a generic
@@ -7520,7 +7520,7 @@ void checkExpr(C c, Expr e) {
             // `Box(x, 1)` is two arguments too many in every instantiation. `Box.of` writing
             // `Box(x, 1)` inside the generic's own method was silent while the same mistake in a plain
             // struct was reported, at the same position, by the line below.
-            // **Positional construction supplies every field**, defaults included — spec/next ch12
+            // **Positional construction supplies every field**, defaults included — spec ch12
             // `§wac-struct-positional-no-defaults-e74g4rk`. `P()` with fields is a construction
             // short of all of them; `P { }` is the spelling that takes every default.
             if (named.len() == 0 && args.len() != fieldArity(c, name) && !isBraceConstruct(c, tok)) {
@@ -7529,7 +7529,7 @@ void checkExpr(C c, Expr e) {
             // **`T { }` names nothing, so every field must have a default** — the same rule as a
             // brace construction that names some of them, which `checkConstruct` asks only when
             // there is a name to start from. `S { }` for a struct holding an enum is refused, since
-            // an enum has none (spec/next ch13 `§enum-no-default`).
+            // an enum has none (spec ch13 `§enum-no-default`).
             if (named.len() == 0 && args.len() == 0 && isBraceConstruct(c, tok)) {
               for (i32 fi = 0; fi < c.fieldCount; fi++) {
                 if (c.fieldOwners[fi] != name) { continue; }
@@ -7708,7 +7708,7 @@ void checkIncr(C c, Lvalue target, i32 op, bool prefix, i32 line, i32 col) {
   checkWrite(c, target);
   checkLvalueExprs(c, target);
   string t = typeOfLvalue(c, target);
-  // On a struct, `a++` is a call to its own method (spec/next ch22), not the integer rule.
+  // On a struct, `a++` is a call to its own method (spec ch22), not the integer rule.
   if (isStructOperand(c, t)) {
     checkNullaryOperator(c, t, incrSymbolOf(tokenKind(c, op), prefix), op);
     return;
@@ -7717,15 +7717,15 @@ void checkIncr(C c, Lvalue target, i32 op, bool prefix, i32 line, i32 col) {
   // a struct, an enum, an array, a funcref and an `anyref` were all incrementable — seven of the
   // thirteen types a grid tries. Unsigned integers *are* fine despite the wording of the reference's
   // message, which is the part that has to be measured rather than read.
-  // A packed type is an integer like any other (spec/next ch08).
+  // A packed type is an integer like any other (spec ch08).
   if (t != typeNone() && t != "" && !isIntegerName(t) && !isPackedName(t)) {
     c.report(errIncrType(), line, col);
   }
 }
 
 /**
- * `void?`, wherever a type is written — spec/next ch11 `§wac-void-no-values-uieaw93`. It is the one
- * nullable refused: a packed `u8?` is an ordinary nullable since spec/next ch08.
+ * `void?`, wherever a type is written — spec ch11 `§wac-void-no-values-uieaw93`. It is the one
+ * nullable refused: a packed `u8?` is an ordinary nullable since spec ch08.
  */
 void checkVoidNullable(C c, string t, Ty at) {
   // **Every `[]`, not the outermost one** — `void?[][]` is the same fact two levels down.
@@ -8473,7 +8473,7 @@ bool onlyNumbersSay(C c, i32 at, Expr[] args, string t) {
 
 /**
  * Whether `e` is a call to a generic function with a letter only numbers say anything about — what an
- * `auto` initialiser cannot be, since nothing gives those numbers a type (spec/next ch09).
+ * `auto` initialiser cannot be, since nothing gives those numbers a type (spec ch09).
  */
 bool numbersOnlyGenericCall(C c, Expr e) {
   match (e.kind) {
@@ -8557,7 +8557,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     return;
   }
   for (i32 i = 0; i < args.len(); i++) {
-    // **A number speaks last** (spec/next ch09 `§wac-literal-constraint-scope-6anwagf`): a literal has
+    // **A number speaks last** (spec ch09 `§wac-literal-constraint-scope-6anwagf`): a literal has
     // no type of its own, so the typed arguments and then the slot the call fills say what `T` is —
     // `u8 x = echo(200)` is `echo<u8>` — and only after both does a number's natural type bind it.
     // A string or a `bool` is the one type it can be, and binds as any typed argument does.
@@ -8572,7 +8572,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     string got = foundType(c, args[i]);
     bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound, clashed);
   }
-  // **And from the type expected of the result** (spec/next ch19 `§wac-generic-infer-expected-endugbi`):
+  // **And from the type expected of the result** (spec ch19 `§wac-generic-infer-expected-endugbi`):
   // `i32 z = zero();` instantiates `zero<i32>`. Only a letter every argument for which is a number,
   // or which no argument mentions: a typed argument that failed to bind it, a `null` and a call
   // through a funcref are each still a call that does not say what `T` is (`spec/cases/0051`, 0054,
@@ -8747,7 +8747,7 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
         return;
       }
     }
-    // **A field may be left out when it has a default, and not otherwise** — spec/next ch12
+    // **A field may be left out when it has a default, and not otherwise** — spec ch12
     // `§wac-struct-named-defaults-y5em4qj`. A default is an initialiser or a type whose value means
     // "nothing yet" (`null`, an empty array, `""`); a number has none, so leaving one out with no
     // initialiser is still refused — a construction that quietly zeroed a field it forgot would be a
@@ -8899,7 +8899,7 @@ void checkWrite(C c, Lvalue lv) {
         }
         string ownerTmpl = templateOf(ownerT);
         // Writing a private field outside its body is naming it there — and the way a local is
-        // built field by field from outside, which therefore cannot set one (spec/next ch12).
+        // built field by field from outside, which therefore cannot set one (spec ch12).
         if (checkPrivateMember(c, ownerT, tokenText(c, nameTok), lv.line, lv.col)) { return; }
         if (c.isStruct(ownerTmpl) && !c.isGeneric(ownerTmpl)) {
           if (!c.hasField(ownerT, tokenText(c, nameTok)) &&
@@ -9059,7 +9059,7 @@ bool constPath(C c, Lvalue lv) {
  * zero non-ASCII character literals in the tree, so refusing them costs nothing today.
  *
  * **A plain integer literal is not this rule.** `[300] as u8[]` is refused too, but by the range rule
- * every integer type shares (spec/next ch08 `§wac-packed-ordinary-kawnzqm`); the old spec's
+ * every integer type shares (spec ch08 `§wac-packed-ordinary-kawnzqm`); the old spec's
  * truncating literal list went with packed types becoming ordinary ones. This rule is the case the
  * range cannot see: `'é'` is 233, which fits.
  */
@@ -9444,7 +9444,7 @@ bool constExpr(C c, Expr e) {
     // looks like a way to launder the constness and is not one. The receiver decides, not the return
     // type — a method called on something const returns something const.
     Call(callee, args, callTargs): {
-      // A function or method that declares a `const T` result hands back a `const T` (spec/next ch17).
+      // A function or method that declares a `const T` result hands back a `const T` (spec ch17).
       if (isConstTy(typeOfExpr(c, e))) { return true; }
       match (callee.kind) {
         Member(obj, nameTok): {
@@ -9493,10 +9493,10 @@ bool constExpr(C c, Expr e) {
 bool hasDefault(C c, string t, i32 depth) {
   if (t == typeNone() || t == "") { return true; }
   if (depth > 16) { return false; }
-  // A struct that needs itself to be built has no default — an uninhabited one (spec/next ch11).
+  // A struct that needs itself to be built has no default — an uninhabited one (spec ch11).
   if (c.isStruct(t) && !c.isGeneric(t) && depth == 0 && reachesStructThroughField(c, t)) { return false; }
   if (isNullableName(t) || isArrayName(t) || t == "string") { return true; }
-  // **A number and a `bool` have none** — zero is a number somebody might have meant (spec/next ch08
+  // **A number and a `bool` have none** — zero is a number somebody might have meant (spec ch08
   // `§wac-default-absence-8mxpz7y`).
   if (primWithoutDefault(t)) { return false; }
   // A funcref has no zero: there is no function to point at until something points it somewhere.
@@ -9883,7 +9883,7 @@ bool checkBuiltinCall(C c, Expr call, Expr recvExpr, string recv, string name, E
 string boundMethodType(C c, string recv, string name) {
   if (recv == "" || c.isGeneric(recv)) { return typeNone(); }
   // **An instantiation binds through its template**, with the receiver's arguments put in:
-  // `pending.push` on a `Vec<Continuation>` is an `fn<void(Continuation)>` (spec/next ch35's
+  // `pending.push` on a `Vec<Continuation>` is an `fn<void(Continuation)>` (spec ch35's
   // `schedule pending.push;`). A method with letters of its own is still left out.
   string tmpl = templateOf(recv);
   if (!c.isStruct(tmpl)) { return typeNone(); }
@@ -10720,7 +10720,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       return;
     }
     // **A rotation's count is a count**, as a shift's amount is: any integer, taken modulo the width
-    // (spec/next ch22 `§wacc-int-bit-methods` rotates a `u32` by an `i32`).
+    // (spec ch22 `§wacc-int-bit-methods` rotates a `u32` by an `i32`).
     for (i32 i = 0; i < args.len(); i++) {
       if (litFamily(c, args[i]) != litNone()) {
         reportLiteral(c, recv, args[i], errBuiltinArg(), args[i].line, args[i].col);
@@ -11164,7 +11164,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // does not have one to talk about. All at the operator, like every other wrong-spelling complaint.
   string castFrom = castOperandType(c, operand);
   if (castFrom == typeNone() || castFrom == "" || to == typeNone() || to == "") { return; }
-  // **A literal takes its type from its context, and `as T` is one** (spec/next ch09): `255 as u8` is
+  // **A literal takes its type from its context, and `as T` is one** (spec ch09): `255 as u8` is
   // the byte 255, not an `i32` narrowed — so plain `as` is right wherever the literal fits the target.
   if (litKindOf(operand) == litInteger() && tokenKind(c, op) == kAs() && isPrimitiveName(to)
       && to != "f32" && to != "f64" && integerLiteralFits(c, to, operand, false)) {
@@ -11308,7 +11308,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // and truncating spellings are as redundant as the plain one, which the first version of this
   // assumed the opposite of.
   // **Except a numeric literal**, which has no type of its own until something gives it one — and
-  // `1 as i32` is how a literal is given one where nothing else does (spec/next ch09, ch33).
+  // `1 as i32` is how a literal is given one where nothing else does (spec ch09, ch33).
   if (from == to && !isNumericLiteral(c, operand)) {
     c.reportTok(errRedundantCast(), op, "");
     return;
@@ -11353,7 +11353,7 @@ void checkParams(C c, Param[] params) {
     if (pt == "void") { c.report(errVoidType(), params[i].type.line, params[i].type.col); }
     checkVoidNullable(c, pt, params[i].type);
     string a = tokenText(c, params[i].nameTok);
-    // `_` names nothing, so it may be bound any number of times (spec/next ch01
+    // `_` names nothing, so it may be bound any number of times (spec ch01
     // `§wac-underscore-repeats-3bce8w9`).
     if (a == "_") { continue; }
     for (i32 j = 0; j < i; j++) {
@@ -11414,7 +11414,7 @@ void daBindingAssigned(C c, TupleBinding b, DA st) {
 
 /**
  * A pattern against the type in its position: a group needs a tuple of as many members, and a written
- * type must hold the member it receives (spec/next ch14 `§wac-tuple-destructure-gn8i48y`).
+ * type must hold the member it receives (spec ch14 `§wac-tuple-destructure-gn8i48y`).
  */
 void checkBinding(C c, TupleBinding b, string t) {
   if (t == typeNone() || t == "") { return; }
@@ -11454,7 +11454,7 @@ void declareStmt(C c, Stmt s) {
       // "reference" where it meant "writable".
       bool auto = isAutoTy(c, type);
       string vt = auto ? (init is null ? typeNone() : typeOfExpr(c, init!)) : soleAlternative(typeOfTy(c, type));
-      // **`(const T) x` is a binding of type `const T` that may be rebound** (spec/next ch17
+      // **`(const T) x` is a binding of type `const T` that may be rebound** (spec ch17
       // `§wac-const-rebindable-ri3wpfz`) — and `union<const T>` is the same type by another spelling.
       bool constTyped = isConstTy(vt);
       vt = constBase(vt);
@@ -11575,7 +11575,7 @@ void declareScoped(C c, Stmt[] body) {
 }
 
 void declareAll(C c, Stmt[] body) {
-  // **A bare `union` local is every value its scope gives it** (spec/next ch33): gathered here, where
+  // **A bare `union` local is every value its scope gives it** (spec ch33): gathered here, where
   // the whole block is in view, and fixed for that scope before any statement of it is checked.
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
@@ -11592,7 +11592,7 @@ void declareAll(C c, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) { declareStmt(c, body[i]); }
 }
 
-/** Whether a written type is the bare placeholder `union` (spec/next ch33). */
+/** Whether a written type is the bare placeholder `union` (spec ch33). */
 bool isBareUnionTy(C c, Ty t) {
   match (t.kind) {
     Named(tok, typeArgs): { return typeArgs.len() == 0 && tokenText(c, tok) == "union"; }
@@ -11620,7 +11620,7 @@ void addUnionOrigin(C c, Expr e, string[] ms, i32[] n) {
   }
   i32 lit = litFamily(c, e);
   // **A number written bare has no type to contribute, and the placeholder is no target for it**
-  // (spec/next ch32): `union d = cond ? 5 : "foo";` cannot say which number `5` is.
+  // (spec ch32): `union d = cond ? 5 : "foo";` cannot say which number `5` is.
   if (lit == litInteger() || lit == litFloat()) {
     c.reportSpanHinted(errUntypedLiteral(), e.line, e.col, "a bare `union` is no numeric target", 1,
                        "write the number's type — `5 as i32` — or the union's — `union<i32, string>`");
@@ -11799,7 +11799,7 @@ void checkScoped(C c, Stmt[] body, Ty want) {
 }
 
 void checkAll(C c, Stmt[] body, Ty want) {
-  // **The block's statics first, all of them, by dependency** (spec/next ch27): each is visible before
+  // **The block's statics first, all of them, by dependency** (spec ch27): each is visible before
   // its declaration, and `static_if` and the static's own uses read the value.
   StaticBind sb = StaticBind(string[](), i32[](), string[](), 0);
   bool bound = (c.sEv is not null) && (c.sCx is not null) && hasStaticLocal(body);
@@ -11866,7 +11866,7 @@ string runtimeNameIn(C c, string why) {
 /** Every `return` in a statement, however deeply nested, checked against `want`. */
 void checkStmt(C c, Stmt s, Ty want) {
   match (s.kind) {
-    // **The branch not taken is not checked** (spec/next ch31 `§wac-static-if-cphqxuz`): that is the
+    // **The branch not taken is not checked** (spec ch31 `§wac-static-if-cphqxuz`): that is the
     // whole difference from an `if` with a constant condition. One this checker cannot decide checks both.
     StaticIf(cond, then, els): {
       checkExpr(c, cond);
@@ -11981,7 +11981,7 @@ void checkStmt(C c, Stmt s, Ty want) {
     }
     Assign(target, op, rhs): {
       // **`a op= b` on a struct is its own operation**: the target's `opAssign` method, called on the
-      // object in place — never `a = a op b` (spec/next ch22 `§wac-operator-compound-own-u7m6y7c`).
+      // object in place — never `a = a op b` (spec ch22 `§wac-operator-compound-own-u7m6y7c`).
       string act = typeOfLvalue(c, target);
       if (tokenKind(c, op) != kAssign() && isStructOperand(c, act)) {
         checkWrite(c, target);
@@ -12106,7 +12106,7 @@ void checkStmt(C c, Stmt s, Ty want) {
     }
     // The same question one position over: a declared type, and something that has to fit it.
     Var(type, nameTok, init, isConst): {
-      // `auto x = e;` — the type is the initialiser's, and nothing else gives it one (spec/next ch33
+      // `auto x = e;` — the type is the initialiser's, and nothing else gives it one (spec ch33
       // `§wac-auto-local-59gczx4`): a number written as a literal has none to give.
       if (isAutoTy(c, type)) {
         if (init is null) {
@@ -12135,7 +12135,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       checkVoidNullable(c, wantVar, type);
       if (wantVar == typeNone()) { return; }
       // `T x;` — nothing to check against the type; whether it is read before it is written is the
-      // definite-assignment walk's question (spec/next ch08).
+      // definite-assignment walk's question (spec ch08).
       if (init is null) {
         c.setType(tokenText(c, nameTok), wantVar);
         if (c.isStruct(templateOf(wantVar))) { c.pendingAt = c.pendingAt + ";" + tokenText(c, nameTok) + ";"; }
@@ -12178,7 +12178,7 @@ void checkStmt(C c, Stmt s, Ty want) {
           reportExprHinted(c, errInitTypeMismatch(), initE, expectedFound(wantCheck, gotVar), sh);
         }
       }
-      // **A `const` reference never becomes a plain one** (spec/next ch17 `§wac-const-no-launder-t584c4n`):
+      // **A `const` reference never becomes a plain one** (spec ch17 `§wac-const-no-launder-t584c4n`):
       // a binding written `S` would let it be written through. `const S x` and `(const S) x` hold one.
       if (!wantConst && !isConst && writableType(c, wantVar) && constExpr(c, initE)) {
         reportExprHinted(c, errNonConstThroughConst(), initE, "a const " + wantVar + " cannot become a " + wantVar,
@@ -12228,7 +12228,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       // **A `never` function does not complete normally**, so nothing it returns can arrive — but
       // `return forever();` is a call that does not return either, and is how such a function recurses
-      // (spec/next ch11 `§wac-never-cannot-return-eaffw52`).
+      // (spec ch11 `§wac-never-cannot-return-eaffw52`).
       if (valueness == "never") {
         if ((value is null) || !isNeverExpr(c, value!)) { c.report(errNeverReturns(), s.line, s.col); }
         if (value is not null) { checkExpr(c, value!); }
@@ -12747,7 +12747,7 @@ string armNarrowing(C c, Expr subject, Arm arm) {
       string was = c.typeOfName(nm);
       if (was == typeNone()) { return ""; }
       string variant = tokenText(c, arm.variantTok);
-      // **A union's arm names an alternative**, and in it the subject is that type (spec/next ch18
+      // **A union's arm names an alternative**, and in it the subject is that type (spec ch18
       // `§wac-union-match-type-rj837up`).
       string ubase = isNullableName(was) ? withoutNull(was) : was;
       if (isUnionName(ubase)) {
@@ -12766,7 +12766,7 @@ string armNarrowing(C c, Expr subject, Arm arm) {
 
 /**
  * A `match` on a union: each arm names an alternative, once, and together they cover every one or
- * there is a `default` (spec/next ch18 `§wac-union-match-type-rj837up`).
+ * there is a `default` (spec ch18 `§wac-union-match-type-rj837up`).
  */
 void checkUnionArms(C c, string u, Arm[] arms, i32 mline, i32 mcol) {
   string[] ms = unionMembers(u);
@@ -13501,7 +13501,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   string t = typeOfExpr(c, subject);
   if (t == typeNone() || t == "") { return; }
   // **A nullable subject must cover `null`** — with a `null` arm or a `default` — and every other arm
-  // sees it non-null (spec/next ch25 `§wac-match-nullable-subject-zcnasbp`). Asked before the enum
+  // sees it non-null (spec ch25 `§wac-match-nullable-subject-zcnasbp`). Asked before the enum
   // question, because `Shape?` is not an enum name and the check below would bail out on it.
   bool nullArm = false;
   bool anyDefault = false;
@@ -13628,7 +13628,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   for (i32 k = 0; k < c.variantCount; k++) {
     if (c.variantOwners[k] != owner) { continue; }
     // **A variant with a `never` payload has no values**, so a `match` need not name it
-    // (spec/next ch11 `§wac-never-payload-uninhabited-c4j35nq`) — `Step<never, i32, never>` is all
+    // (spec ch11 `§wac-never-payload-uninhabited-c4j35nq`) — `Step<never, i32, never>` is all
     // `Yielded`. Asked of the payload as this subject instantiates it.
     if (variantUninhabited(c, t, c.variantNames[k], c.variantArities[k])) { continue; }
     total = total + 1;
@@ -13822,7 +13822,7 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
     // the return type — where a method's declaration starts, as with a missing return — and the
     // second at the keyword itself, which is the part that is wrong.
     //
-    // **Only a `virtual` method may be overridden** (spec/next ch12): one that is not can be neither
+    // **Only a `virtual` method may be overridden** (spec ch12): one that is not can be neither
     // overridden nor shadowed, and one that is must be overridden with `override`.
     string mname = tokenText(c, methods[mi].nameTok);
     i32 hidden = parent == "" ? -1 : c.methodAt(parent, mname);
@@ -13839,7 +13839,7 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
                    c.methodOwners[hidden] + "." + mname + " is virtual, and an implementation here must say override");
     }
     c.clearScope();
-    // Named as its key, so a collection asking for `Complex.[fromNumber]` (spec/next ch19) finds it.
+    // Named as its key, so a collection asking for `Complex.[fromNumber]` (spec ch19) finds it.
     c.activeFunc = owner + "." + mname;
     // **The function's own body is the outermost scope**, pushed before `this` and the parameters so
     // that they belong to it. `issues/lang/0122`.
@@ -13884,7 +13884,7 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
 }
 
 export void checkModule(C c, Program prog) {
-  // The evaluator's view, before anything resolves a type: a computed type (spec/next ch30) is one.
+  // The evaluator's view, before anything resolves a type: a computed type (spec ch30) is one.
   ensureStaticView(c, prog);
   checkDuplicates(c, prog);
   checkDeclarationRules(c, prog);
@@ -14036,7 +14036,7 @@ export void checkModule(C c, Program prog) {
     }
   }
 
-  // **Every static is computed, and a failure is the checker's to report** (spec/next ch28-29). A
+  // **Every static is computed, and a failure is the checker's to report** (spec ch28-29). A
   // call in an initialiser is run and the work is ordered by demand rather than by the file, so the
   // two rules that refused a call and a forward read are gone. The four ways an evaluation fails are
   // four errors: a cycle, a trap, a resource limit — which says the answer is unknown and nothing about
@@ -14049,7 +14049,7 @@ export void checkModule(C c, Program prog) {
   }
   Ev cev = c.sEv!;
   Decls ccx = c.sCx!;
-  // **A type declaration is computed too** (spec/next ch29-30), and one reaching itself through
+  // **A type declaration is computed too** (spec ch29-30), and one reaching itself through
   // aliases and nullable layers alone is refused here, at the declaration. A generic one is computed
   // at each instantiation instead.
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -14081,7 +14081,7 @@ export void checkModule(C c, Program prog) {
             : cev.status == evTrap() ? errStaticTrapped()
             : cev.status == evLimit() ? errStaticLimit()
             : cev.status == evUnsupported() && c.sFile >= 0 ? errStaticUnsupported() : 0;
-    // **A literal's conversion is reported at the literal** (spec/next ch09
+    // **A literal's conversion is reported at the literal** (spec ch09
     // `§wac-fromnumber-err-refused-e8w89yu`): the static `lowerFromNumberLiterals` made for it is named
     // `$lit_<line>_<col>` after where it was written, which is what the reader has to change.
     i32 wline = cinit!.line;
@@ -14104,18 +14104,18 @@ export void checkModule(C c, Program prog) {
         // `Box<T>`'s own parameters are in scope for its fields and for every method it declares —
         // `T v;` and `T get(const this)` are the template's, not names the file left undeclared.
         setActiveParams(c, typeParams);
-        // **A non-null field that reaches its own struct is allowed** — spec/next ch11
+        // **A non-null field that reaches its own struct is allowed** — spec ch11
         // `§wac-uninhabited-valid-2f9cxmt`. `struct Node { Node next; }` has no finite value, and is
         // still a type: it appears in nullable forms and signatures, and nothing can build one, since
-        // it has no default either (`hasDefault` says so). This was refused on sight until spec/next.
-        // A member named `[s]` needs `s` to be a symbol in scope (spec/next ch21).
+        // it has no default either (`hasDefault` says so). This was refused on sight until spec.
+        // A member named `[s]` needs `s` to be a symbol in scope (spec ch21).
         for (i32 si = 0; si < fields.len(); si++) { checkSymbolName(c, fields[si].nameTok); }
         for (i32 si = 0; si < methods.len(); si++) { checkSymbolName(c, methods[si].nameTok); }
         for (i32 fi = 0; fi < fields.len(); fi++) {
           string ft = typeOfTy(c, fields[fi].type);
           if (ft == "void") { c.report(errVoidType(), fields[fi].type.line, fields[fi].type.col); }
           // **A field initialiser is an expression of the field's type**, checked as a local's
-          // initialiser is — spec/next ch12. It runs with no object yet built, so there is no `this`
+          // initialiser is — spec ch12. It runs with no object yet built, so there is no `this`
           // and no other field in scope: neither is a name here, and the checker says so as it would
           // of any name nothing declares (`§wac-field-initialiser-no-this-tvimw93`).
           if (!(fields[fi].init is null) && ft != "void") {
@@ -14236,7 +14236,7 @@ string methodReturnFor(string written, bool isAsync) {
 string arrLitType(C c, Expr[] elements) {
   string t = typeNone();
   bool sawNull = false;
-  // **Explicit unions first, all of them** (spec/next ch32 `§wac-widen-union-39ruxmm`): their
+  // **Explicit unions first, all of them** (spec ch32 `§wac-widen-union-39ruxmm`): their
   // alternatives combine into one union, and every other element must fit it — which is what makes the
   // answer independent of the order the elements are written in.
   for (i32 i = 0; i < elements.len(); i++) {

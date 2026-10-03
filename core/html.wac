@@ -1,4 +1,4 @@
-// The HTML tag functions — spec/next ch43 `§wac-html-tag-functions-sb9cij9`.
+// The HTML tag functions — spec ch43 `§wac-html-tag-functions-sb9cij9`.
 //
 // `core.html` holds a function per HTML element, each answering `Node.Element` with its own name, one
 // `Attr` per attribute written and its children as `kids`. A tag is a call (ch23), so `<p class="hi">`

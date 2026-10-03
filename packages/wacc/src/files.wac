@@ -63,7 +63,7 @@ export string[] importSpecsOf(string path, u8[] src) {
 /**
  * The specifier token of the statement starting at `t`, or -1: an `import`, or an `export` followed
  * by `{` or `*`, whose `from` is followed by a string before its `;`. Every form reads a module that
- * way — `import { a.b as c }`, `import * as m` and `export * as m` included (spec/next ch02, ch03) —
+ * way — `import { a.b as c }`, `import * as m` and `export * as m` included (spec ch02, ch03) —
  * and namespaces are lowered away before anything parses them, so this asks the tokens.
  */
 i32 fromStringAfter(u8[] src, Lexed lexed, i32 t) {

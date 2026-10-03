@@ -266,7 +266,7 @@ export string test_a_generic_function_can_be_called_with_its_type_arguments() {
   t.isTrue(!contains(said(decl + "export i32 f() { i32 z = zero<i32>(); return z; }"), "error"),
            "writing the argument supplies what inference cannot reach");
   t.isTrue(!contains(said(decl + "export i32 f() { i32 z = zero(); return z; }"), "error"),
-           "and the declaration says it as well, from the slot the call fills (spec/next ch19)");
+           "and the declaration says it as well, from the slot the call fills (spec ch19)");
   t.isTrue(contains(said(decl + "export i32 f() { zero(); return 0; }"),
                     "nothing in the call says what T is"),
            "a call that fills no slot is still the old refusal, which is the reason the feature exists");

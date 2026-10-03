@@ -1,7 +1,7 @@
 // expect: answers realParts = 5
 // spec: §wac-fromnumber-literal-jqssasj, §wac-fromnumber-static-ah2ihmk
 // why: a literal whose target implements `[fromNumber]` is that method's answer, computed statically
-// from: spec/next ch09
+// from: spec ch09
 import { NumberLiteral, fromNumber, Result } from "core";
 struct Complex {
   f64 real;

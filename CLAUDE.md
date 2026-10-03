@@ -8,8 +8,9 @@ A C-family language for WebAssembly GC, and the systems stack written in it. See
 `wac-mono` from before then, it cannot fetch this history — see [MERGE.md](MERGE.md), which is the
 first thing to read if anything about the layout surprises you.
 
-**The language is defined by [spec/next](spec/next/README.md)**, which is being implemented
-(`design/lang/0016`); `spec/next/_drafting/STATUS.md` says which examples the compiler meets today.
+**The language is defined by [spec/](spec/README.md)**, written as examples;
+`spec/_status/STATUS.md` says which of them the compiler meets today (`design/lang/0016` is how it got
+there).
 [spec/tour.wac](spec/tour.wac) is the language as the compiler currently implements it, in one annotated file
 that compiles and self-tests.
 

@@ -1,6 +1,6 @@
 // expect: refused
 // why: a local whose type has no default, read where not every path has assigned it, is refused
-// from: definite assignment (design/lang/0016), spec/next ch08 §wac-local-unassigned-txsix97
+// from: definite assignment (design/lang/0016), spec ch08 §wac-local-unassigned-txsix97
 export i32 f(i32 n) {
   i32 s;
   if (n < 0) { s = -1; }

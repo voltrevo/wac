@@ -2,7 +2,7 @@
 
 Byte-array helpers — `slice`, `clamped`, `equal`.
 
-**`Buf` lived here and is in core now** (spec/next ch42): `import { Buf } from "core";`. What follows
+**`Buf` lived here and is in core now** (spec ch42): `import { Buf } from "core";`. What follows
 is its history, kept because the reasons for its shape still hold and now live in `core/buf.wac`.
 
 ```wac

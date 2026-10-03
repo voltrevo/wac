@@ -1,4 +1,4 @@
-// The operator symbols — spec/next ch22. `a + b` on a type that is not built in calls `a.[operators.add](b)`.
+// The operator symbols — spec ch22. `a + b` on a type that is not built in calls `a.[operators.add](b)`.
 //
 // Core exports them as the namespace `operators` (ch37), and declares each member under the name a
 // namespace member has once lowered: a verbatim name with a dot in it (`src/namespaces.wac` says

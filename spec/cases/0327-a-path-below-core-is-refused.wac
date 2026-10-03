@@ -1,5 +1,5 @@
 // expect: refused
 // why: a package is named whole — `core/vec.wac` names no package, though the file exists in the compiler's copy
-// from: subpath-free built-ins (design/lang/0016), spec/next ch02 §wac-no-subpath-wqatc72
+// from: subpath-free built-ins (design/lang/0016), spec ch02 §wac-no-subpath-wqatc72
 import { Vec } from "core/vec.wac";
 export i32 f() { return 0; }

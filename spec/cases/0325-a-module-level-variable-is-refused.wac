@@ -1,5 +1,5 @@
 // expect: refused
 // why: there is no mutable module state, so a module-level declaration without `static` is refused
-// from: the `static` flip (design/lang/0016), spec/next ch27 and ch02
+// from: the `static` flip (design/lang/0016), spec ch27 and ch02
 i32 counter = 0;
 export i32 f() { return counter; }

@@ -15,7 +15,7 @@
 // Where the bytes came from — and where `wac.json5` was found, which is D7's upward search — is
 // the caller's, because that half needs a capability and this half must stay testable without one.
 //
-// **A key is a complete package name** (spec/next ch04 `§wac-package-key-exact-rme93fh`): `acme` matches
+// **A key is a complete package name** (spec ch04 `§wac-package-key-exact-rme93fh`): `acme` matches
 // the specifier `acme` and nothing else. There are no prefix mappings, so a key ending in `/` is
 // refused, and a package's modules are reached through the one its own manifest `exports`.
 
@@ -104,12 +104,12 @@ export struct Manifest {
   string detail;
   Mapping[] imports;
   /**
-   * The module importers of this project get — spec/next ch04 `§wac-package-exports-qwtdfg5` — as
+   * The module importers of this project get — spec ch04 `§wac-package-exports-qwtdfg5` — as
    * written, relative to the manifest's directory; `""` when the manifest names none.
    */
   string exports;
   /**
-   * `check.exclude` — patterns of files `wac check` does not discover in this project (spec/next ch06
+   * `check.exclude` — patterns of files `wac check` does not discover in this project (spec ch06
    * `§wac-check-exclude-2ixx2cu`), each written with its `./`.
    */
   string[] checkExclude;
@@ -137,7 +137,7 @@ export Manifest readManifest(u8[] src) {
       default: { return failed(M_EXPORTS_KIND(), "exports"); }
     }
     if (exports == "") { return failed(M_EXPORTS_KIND(), "exports"); }
-    // **Explicitly relative** (spec/next ch04 `§wac-manifest-dot-slash-p59q7q3`), which also keeps an
+    // **Explicitly relative** (spec ch04 `§wac-manifest-dot-slash-p59q7q3`), which also keeps an
     // absolute path from being read as one inside the package.
     if (!startsWithDotSlash(exports)) { return failed(M_PATH_FORM(), "exports"); }
   }
@@ -301,7 +301,7 @@ export struct Match {
   i32 index;        // into the manifest's `imports`
 }
 
-/** The mapping `spec` names, if any: the one whose name is the whole specifier (spec/next ch04). */
+/** The mapping `spec` names, if any: the one whose name is the whole specifier (spec ch04). */
 export Match matchSpecifier(Manifest m, string spec) {
   for (i32 i = 0; i < m.imports.len(); i++) {
     if (spec == m.imports[i].name) { return Match(true, i); }
@@ -317,7 +317,7 @@ export struct Located {
 }
 
 /**
- * The package directory a `Match` names: the mapping's `subdir`, or the repository's root (spec/next
+ * The package directory a `Match` names: the mapping's `subdir`, or the repository's root (spec
  * ch04 `§wac-package-subdir-p3gfzri`). What is imported from it is the module that directory's own
  * manifest `exports` — `packageEntry` — and never a file the specifier names.
  */
@@ -329,7 +329,7 @@ export Located locate(Manifest m, Match hit) {
 }
 
 /**
- * The entry module of a package whose directory is `dir` and whose manifest says `exports` — spec/next
+ * The entry module of a package whose directory is `dir` and whose manifest says `exports` — spec
  * ch04 `§wac-package-exports-qwtdfg5`. Refused when `exports` leaves the package's directory, since
  * then the package would be offering a file that is not its own.
  */

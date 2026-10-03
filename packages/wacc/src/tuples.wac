@@ -1,4 +1,4 @@
-// Tuple types by name — spec/next ch14.
+// Tuple types by name — spec ch14.
 //
 // A tuple type is spelled with its members in parentheses: `(A, B)`, `(A,)` for one and `()` for none.
 // One spelling per type is what makes the tuple structural (`§wac-tuple-structural-wq9swfa`): two
@@ -7,7 +7,7 @@
 
 import { endsWith } from "./path.wac";
 
-/** Whether a type is a tuple, `(A, B)` — spelled with its parentheses outermost (spec/next ch14). */
+/** Whether a type is a tuple, `(A, B)` — spelled with its parentheses outermost (spec ch14). */
 export bool isTupleName(string t) {
   return t.len() >= 2 && t.toBytes()[0] == 40 && endsWith(t, ")") && tupleCloses(t);
 }

@@ -7,7 +7,7 @@
 - **Kind:** performance
 - **Symptom:** quadratic output building, worst in the compiler
 
-> **2026-10-01, agent-a:** `Buf` moved into core (`core/buf.wac`, spec/next ch42) and has `pushStr`
+> **2026-10-01, agent-a:** `Buf` moved into core (`core/buf.wac`, spec ch42) and has `pushStr`
 > now — the missing half below. The 257 sites are unchanged, and `packages/wacc`'s 142 cannot use
 > core's `Buf` at all: the compiler compiles on wac-L5, which reads no `core`.
 

@@ -1,7 +1,7 @@
 // expect: refused
 // spec: §wac-const-no-launder-t584c4n
 // why: a plain `S` binding cannot hold a `const S` — the reference would then be written through
-// from: spec/next ch17
+// from: spec ch17
 struct S { i32 v; }
 export i32 laundered() {
   const S c = S(0);

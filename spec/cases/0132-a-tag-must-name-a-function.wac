@@ -1,6 +1,6 @@
 // expect: refused
 // why: a tag that is a name is a call, so it must name a function in scope — a struct is not one
-// from: spec/next ch23 §wac-markup-tag-is-function-vv4pvhq
+// from: spec ch23 §wac-markup-tag-is-function-vv4pvhq
 import { Attr, Node } from "core";
 
 struct Card {

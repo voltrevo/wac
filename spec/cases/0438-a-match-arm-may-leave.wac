@@ -1,6 +1,6 @@
 // expect: answers skipsPoints = 13
 // why: an arm of a value-giving match may leave — `continue` here — and gives no value, so it does not take part in the arms' type
-// from: spec/next ch25 §wac-match-arm-leaves-y33uzzi
+// from: spec ch25 §wac-match-arm-leaves-y33uzzi
 enum Shape { Circle(f64 r), Rect(f64 w, f64 h), Point }
 
 i32 total(Shape[] shapes) {

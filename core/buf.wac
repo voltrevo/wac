@@ -1,4 +1,4 @@
-// Buf — a growable byte buffer. spec/next ch42.
+// Buf — a growable byte buffer. spec ch42.
 //
 // In core because the language's own text needs one — interpolation and every `toString` build a
 // string a piece at a time — and because `gzip`, `json` and a hundred-odd files besides had all

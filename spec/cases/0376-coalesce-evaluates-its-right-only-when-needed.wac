@@ -1,6 +1,6 @@
 // expect: answers f = 1
 // why: the right of `??` is a branch, run only when the left is absent
-// from: spec/next ch10
+// from: spec ch10
 struct Box { i32 v; }
 i32 boom() { trap "evaluated"; }
 export i32 f() {

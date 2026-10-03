@@ -338,7 +338,7 @@ The package selects its entry module, not you: `geometry`'s own manifest says
 `{ exports: "./src/lib.wac" }`, and that module is what `"geometry"` means. There is no way to name
 a file inside it — `"geometry/src/shapes.wac"` matches no key — and a package whose manifest names no
 `exports` cannot be imported at all. Nothing is tried in its place: no `index.wac`, no convention.
-A key is the whole package name, so `"geometry/"` is refused (spec/next ch04).
+A key is the whole package name, so `"geometry/"` is refused (spec ch04).
 
 `ref` is a branch or tag — what to resolve **when you ask**. Then:
 
@@ -513,4 +513,4 @@ and two mappings at different commits coexist.
 ## Learning the language
 
 [`spec/tour.wac`](../spec/tour.wac) is the whole of wac in one annotated file that compiles and
-self-tests, and is much faster than reading [spec/next/](../spec/next/). Start there.
+self-tests, and is much faster than reading [spec/](../spec/). Start there.

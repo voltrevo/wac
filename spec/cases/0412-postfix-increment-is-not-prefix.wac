@@ -1,6 +1,6 @@
 // expect: refused
 // why: a type implementing only `preIncrement` has no `a++` — prefix and postfix are separate operations
-// from: spec/next ch22 §wac-operator-independent-4ssj2cv
+// from: spec ch22 §wac-operator-independent-4ssj2cv
 import { operators } from "core";
 struct Counter {
   i32 value;

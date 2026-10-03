@@ -1,4 +1,4 @@
 // expect: refused
 // why: nullables, arrays, tuples, structs and enums have no built-in toString; interpolating one that does not implement the symbol is refused
-// from: spec/next ch23 §wac-conversion-none-for-compound-urda9vz
+// from: spec ch23 §wac-conversion-none-for-compound-urda9vz
 export string f(i32[] xs) { return "\{xs}"; }

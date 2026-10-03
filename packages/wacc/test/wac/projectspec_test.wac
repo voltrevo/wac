@@ -146,7 +146,7 @@ export string test_the_root_is_the_importing_files_project_not_the_entrys(Core c
   // Taking the entry's root — or the working directory, or the first manifest found from the top —
   // gives 999 + 2. Taking the importing file's gives 5 + 2.
   //
-  // `libB` was a sibling reached by a relative path into it until spec/next made a path stay inside its
+  // `libB` was a sibling reached by a relative path into it until spec made a path stay inside its
   // project (`§wac-import-within-project-vnqu28r`); nested and entered by its directory, it asks the
   // same question.
   T t = T.create();
@@ -357,12 +357,12 @@ export string test_a_project_specifier_does_not_depend_on_the_working_directory(
 }
 
 /**
- * A bare specifier that names no mapping is refused, not joined — `[§wac-import-undefined-h4mq9xk]`,
+ * A bare specifier that names no mapping is refused, not joined — `[§wac-specifier-kinds-sgmw8y4]`,
  * `issues/system/0234a`.
  *
  * **spec/spec/imports.md defines three kinds and this is none of them.** A path is relative, `@/`
  * is the project root, and a bare name **may name a mapping** the manifest declares.
- * `[§wac-import-mapped-6np2rkq]` Nothing makes a bare name fall back to path arithmetic — but every
+ * `[§wac-package-key-exact-rme93fh]` Nothing makes a bare name fall back to path arithmetic — but every
  * host did it, and `src/sub/lib.wac` is exactly the file that arithmetic finds.
  *
  * **The failure it replaces is the one that looks like success.** `wac build` compiled the program,

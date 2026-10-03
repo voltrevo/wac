@@ -1,6 +1,6 @@
 // expect: refused
 // spec: §wac-auto-empty-never-6k7ndms
 // why: a bare number contributes nothing, so the result is `never` — and `7` is then no `never`
-// from: spec/next ch34
+// from: spec ch34
 auto seven() { return 7; }
 export i32 f() { return 0; }

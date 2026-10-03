@@ -1,6 +1,6 @@
 // expect: answers f = 3
 // why: a call to a `never` function does not return, so it may stand where any type is expected, and ends its path
-// from: never (design/lang/0016), spec/next ch11 §wac-never-satisfies-any-pp3fvr6
+// from: never (design/lang/0016), spec ch11 §wac-never-satisfies-any-pp3fvr6
 never fail(string why) { trap why; }
 
 i32 pick(bool b) {

@@ -1,6 +1,6 @@
 // expect: refused
 // why: positional construction supplies every field, so outside the body of a struct with a private field it is refused
-// from: `private` (design/lang/0016), spec/next ch12 §wac-private-construction-4zbaya5
+// from: `private` (design/lang/0016), spec ch12 §wac-private-construction-4zbaya5
 struct Quota {
   i32 limit;
   private i32 used;

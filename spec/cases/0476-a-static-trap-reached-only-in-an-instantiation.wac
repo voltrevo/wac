@@ -1,7 +1,7 @@
 // expect: refused
 // spec: §wac-static-trap-37c96dy
 // why: the definition reaches no arm, and `width<f64>` reaches the one that traps
-// from: spec/next ch31
+// from: spec ch31
 i32 width<T>() {
   return static_match (T) {
     u32:     4,

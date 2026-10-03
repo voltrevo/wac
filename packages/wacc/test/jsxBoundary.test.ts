@@ -27,7 +27,7 @@ const PROGRAM = [
   '  return <div class="page" id={"top"}><h1>hello {who}</h1><br/></div>;',
   "}",
   // A tag function and a fragment, which is the pair that has no counterpart on the JavaScript side:
-  // the host never sees `pairOf`, only the `Node` it returned (spec/next ch23).
+  // the host never sees `pairOf`, only the `Node` it returned (spec ch23).
   "Node pairOf(string left, string right) {",
   '  return <><"b">{left}</"b"><"i">{right}</"i"></>;',
   "}",

@@ -1,7 +1,7 @@
 // expect: refused
 // spec: §wac-literal-constraint-scope-6anwagf
 // why: a literal has no default type, so with no slot to fill nothing says what `T` is
-// from: spec/next ch09
+// from: spec ch09
 T echo<T>(T x) { return x; }
 export i32 f() {
   auto unresolved = echo(2 * 3);

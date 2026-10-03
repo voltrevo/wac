@@ -139,7 +139,7 @@ export string test_the_resolution_entry_points_agree_with_their_modules() {
   Located via = locateIn(MANIFEST().toBytes(), spec);
   t.eqBool(via.ok, direct.ok, "locateIn agrees about ok");
   t.eqStr(via.path, direct.path, "locateIn returns the path");
-  // The package's *directory* — what `locate` answers since spec/next ch04, the entry module
+  // The package's *directory* — what `locate` answers since spec ch04, the entry module
   // being that directory's own `exports` and so not something a manifest alone can say.
   t.eqStr(via.path, "packages/acme", "which is not empty, so a constant would fail");
 

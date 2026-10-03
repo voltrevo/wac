@@ -1,4 +1,4 @@
 // expect: refused
-// why: an import names something the module has to have, and `core` has no `Bufffer` — it has a `Buf` (spec/next ch42)
+// why: an import names something the module has to have, and `core` has no `Bufffer` — it has a `Buf` (spec ch42)
 import { Bufffer } from "core";
 export i32 run() { return 0; }

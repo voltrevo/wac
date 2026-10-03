@@ -1,6 +1,6 @@
 // expect: answers f = 2
 // why: a deferred statement runs when control leaves its block, by return or by falling off the end, after the return value is computed
-// from: `defer` (design/lang/0016), spec/next ch25 §wac-defer-7tf59c7
+// from: `defer` (design/lang/0016), spec ch25 §wac-defer-7tf59c7
 struct Log { i32 releases; }
 
 i32 cleanup(Log log, i32 n) {

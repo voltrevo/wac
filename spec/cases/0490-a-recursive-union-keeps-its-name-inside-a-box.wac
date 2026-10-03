@@ -3,7 +3,7 @@
 // why: inside `Box<…>` the recursive `A` is spelled by its name, so the `Box<A>` written at a
 //      construction is the alternative of `A` — not a `Box` of `A` unfolded once — and a value read
 //      back out of `.value` is an `A` again
-// from: spec/next ch18
+// from: spec ch18
 struct Box<T> { T value; }
 type A = union<i32, Box<A>>;
 i32 depth(A a) {

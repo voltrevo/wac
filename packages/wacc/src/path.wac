@@ -119,7 +119,7 @@ export string resolveFromAt(string fromPath, string spec, string root, string ba
  * A specifier that is none of the three kinds the language defines — `issues/system/0234a`.
  *
  * spec/spec/imports.md: a path is relative (`./` or `../`), `@/` is the project root, and a bare
- * name **may name a mapping** declared in the manifest. `[§wac-import-mapped-6np2rkq]` Nothing makes
+ * name **may name a mapping** declared in the manifest. `[§wac-package-key-exact-rme93fh]` Nothing makes
  * a bare name fall back to path arithmetic — but every caller did, joining it to the importing file's
  * directory, which produces a file that is usually not there and *occasionally is*. That is the worse
  * of the two failures: `dep/lib.wac` with a `src/dep/` directory compiled a file the manifest never
@@ -240,7 +240,7 @@ export struct Res {
 
   /**
    * All five, for a host: bindgen generates a field-wise `of` only for a struct that declares none
-   * (spec/next ch48), and this one's `of` takes the roots alone.
+   * (spec ch48), and this one's `of` takes the roots alone.
    */
   Res whole(string[] roots, string[] mapFrom, string[] mapSpec, string[] mapTo, string base) {
     return Res(roots, mapFrom, mapSpec, mapTo, base);

@@ -1,4 +1,4 @@
 // expect: refused
 // why: 2^64 is one past what a u64 holds
-// from: specSingle's §wac-litctx-nofit cluster
+// from: specSingle's §wac-litctx-nofit-k3mq8wl cluster
 export u64 f() { return 18446744073709551616; }

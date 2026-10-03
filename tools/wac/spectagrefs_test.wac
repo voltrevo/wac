@@ -26,9 +26,10 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std";
+import { Vec } from "core";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
-static string DIR = "spec/spec";
+static string DIR = "spec";
 
 bool isTagChar(string c) {
   return (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "-";
@@ -50,12 +51,30 @@ string tagAt(u8[] b, i32 at) {
 
 bool endsWithDash(string s) { return s.len() > 0 && s.slice(s.len() - 1, s.len()) == "-"; }
 
+/**
+ * Every chapter under `dir`, at any depth — not the case corpus (its own runner), not `_status`, and not
+ * appendix D, whose whole content is the old specification's tags, retired or replaced and deliberately
+ * declared nowhere here.
+ */
+void chapters(Cli cli, string dir, Vec<string> out) {
+  string[]? entries = cli.readDir(dir).wait();
+  if (entries is null) { return; }
+  string[] es = entries!;
+  for (i32 i = 0; i < es.len(); i++) {
+    string name = es[i];
+    if (name == "cases" || name.slice(0, 1) == "_" || name.slice(0, 1) == "." || name == "D-tag-migration.md") { continue; }
+    string path = dir + "/" + name;
+    if (name.len() > 3 && name.slice(name.len() - 3, name.len()) == ".md") { out.push(path); continue; }
+    chapters(cli, path, out);
+  }
+}
+
 export string test_every_clause_the_spec_refers_to_is_one_it_declares(Core core, Cli cli) {
   T t = T.create();
-  string[]? entries = cli.readDir(DIR).wait();
-  t.isTrue(entries is not null, "could not read " + DIR);
-  if (entries is null) { return t.report(); }
-  string[] names = entries!;
+  Vec<string> found = Vec.create();
+  chapters(cli, DIR, found);
+  string[] names = found.toArray();
+  t.isTrue(names.len() > 0, "could not read " + DIR);
 
   // Two passes over the same files: what is declared, then what is pointed at. Declarations first,
   // because a reference may precede its declaration in reading order and across files.
@@ -68,8 +87,7 @@ export string test_every_clause_the_spec_refers_to_is_one_it_declares(Core core,
   for (i32 pass = 0; pass < 2; pass++) {
     for (i32 i = 0; i < names.len(); i++) {
       string name = names[i];
-      if (name.len() < 4 || name.slice(name.len() - 3, name.len()) != ".md") { continue; }
-      FileResult f = cli.readFile(DIR + "/" + name).wait();
+      FileResult f = cli.readFile(name).wait();
       if (!f.ok) { continue; }
       u8[] b = f.bytes;
       for (i32 k = 0; k + 1 < b.len(); k++) {

@@ -1,4 +1,4 @@
 // expect: refused
 // why: src, srcStart, dstStart, count — a copy with three of them says nothing about how much
-// from: specSingle's §wac-arr-bulk cluster
+// from: specSingle's §wac-arr-bulk-7kmq4wn cluster
 export void f() { i32[] a = i32[].filled(2, 0); a.copyFrom(a, 0, 0); }

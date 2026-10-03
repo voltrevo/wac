@@ -1,6 +1,6 @@
 // expect: answers run = name 8
 // why: an attribute whose name is a keyword or has a hyphen fills the parameter whose verbatim name is that text
-// from: spec/next ch23 §wac-markup-attr-verbatim-param-yd3farv
+// from: spec ch23 §wac-markup-attr-verbatim-param-yd3farv
 import { Node, Attr } from "core";
 
 Node label(string id, string @"for", Node[] kids) {

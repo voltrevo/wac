@@ -1,4 +1,4 @@
-// `wac.json5`, read and checked — `design/lang/0009` D6, as spec/next ch04 now has it.
+// `wac.json5`, read and checked — `design/lang/0009` D6, as spec ch04 now has it.
 //
 // **A key is a complete package name** (`§wac-package-key-exact-rme93fh`). There were prefix
 // mappings until ch04 — a key `bits/` took every specifier under it, a suffix was joined to the
@@ -59,7 +59,7 @@ export string test_each_code_has_the_number_it_has_always_had() {
 }
 
 /**
- * `exports` is one module path — spec/next ch04 `§wac-package-exports-single-c3mtr3y` — read as written,
+ * `exports` is one module path — spec ch04 `§wac-package-exports-single-c3mtr3y` — read as written,
  * and absent is valid: a project compiled from its own entry points needs none.
  */
 export string test_exports_is_one_module_path() {
@@ -435,7 +435,7 @@ export string test_every_manifest_refusal_has_its_own_sentence() {
 }
 
 /**
- * A path in a manifest is explicitly relative — spec/next ch04 `§wac-manifest-dot-slash-p59q7q3`.
+ * A path in a manifest is explicitly relative — spec ch04 `§wac-manifest-dot-slash-p59q7q3`.
  * `exports` and `subdir` both begin with `./`, which is also what keeps `/abs.wac` from being read as
  * a file inside the package.
  */
@@ -461,7 +461,7 @@ export string test_a_manifest_path_must_begin_with_dot_slash() {
 }
 
 export string test_check_exclude_is_a_list_of_dot_slash_patterns_2ixx2cu_yfwkbsg() {
-  // spec/next ch06: `check.exclude` names files `wac check` does not discover, each relative to the
+  // spec ch06: `check.exclude` names files `wac check` does not discover, each relative to the
   // project and written with its `./`.
   T t = T.create();
   Manifest ok = readManifest("{ check: { exclude: [\"./fixtures/**\", \"./gen/*.wac\"] } }".toBytes());

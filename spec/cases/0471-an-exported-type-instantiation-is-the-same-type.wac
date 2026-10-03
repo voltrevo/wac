@@ -1,7 +1,7 @@
 // expect: answers boxedValue = 5
 // spec: §wac-export-instantiation-wuh2wxp
 // why: `IntBox` is `Box<i32>` under a second name, so one constructs the other
-// from: spec/next ch02
+// from: spec ch02
 struct Box<T> {
   T value;
   T get(const this) { return this.value; }

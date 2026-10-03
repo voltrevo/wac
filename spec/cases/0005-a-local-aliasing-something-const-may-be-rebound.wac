@@ -1,6 +1,6 @@
 // expect: answers sum = 60
 // why: constness is about writing through a reference, not about rebinding a local — so a cursor over
-//      const data is `(const Node)? cur`, which may be rebound (spec/next ch17)
+//      const data is `(const Node)? cur`, which may be rebound (spec ch17)
 // from: the spec's linked-list programs, which every walk of a const method needs
 struct Node { i32 val; Node? next; }
 struct List { Node? head;

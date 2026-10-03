@@ -135,7 +135,7 @@ export function importPaths(src: string): string[] {
     if (c === ";") { toks.push({ kind: ";", text: ";" }); i++; continue; }
     // Only so `export {` can be told from `export i32 …` — a re-export reads its module too.
     if (c === "{") { toks.push({ kind: "{", text: "{" }); i++; continue; }
-    // …and `export * as m from "…"`, which reads its module the same way — spec/next ch03.
+    // …and `export * as m from "…"`, which reads its module the same way — spec ch03.
     if (c === "*") { toks.push({ kind: "*", text: "*" }); i++; continue; }
     if (/[A-Za-z_]/.test(c)) {
       let j = i;
@@ -148,7 +148,7 @@ export function importPaths(src: string): string[] {
   }
 
   for (let k = 0; k < toks.length; k++) {
-    // `export { a } from "./m.wac";` reads its module as an import does — spec/next ch02.
+    // `export { a } from "./m.wac";` reads its module as an import does — spec ch02.
     const reexport = toks[k].kind === "ident" && toks[k].text === "export" &&
       (toks[k + 1]?.kind === "{" || toks[k + 1]?.kind === "*");
     if (!(toks[k].kind === "ident" && toks[k].text === "import") && !reexport) continue;

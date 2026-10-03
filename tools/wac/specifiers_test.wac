@@ -4,7 +4,7 @@
 //
 // **spec/spec/imports.md names three kinds and there is no fourth.** A path is relative, using
 // `./` or `../`; `@/` is the project root; and a bare name may name a mapping declared in
-// `wac.json5` or one of the seven built-ins. `[§wac-import-mapped-6np2rkq]` A specifier that is
+// `wac.json5` or one of the seven built-ins. `[§wac-package-key-exact-rme93fh]` A specifier that is
 // none of those is not defined by the language.
 //
 // **It is accepted anyway, and that is `issues/system/0234a`.** Both hosts fall through to path

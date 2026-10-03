@@ -1,4 +1,4 @@
 // expect: refused
 // why: an i32 stored into a u8 element is a narrowing, and a narrowing says what to do with what does not fit — `as@` keeps the low bits
-// from: spec/next ch08 §wac-packed-no-coercion-udspvhv; a store used to truncate silently
+// from: spec ch08 §wac-packed-no-coercion-udspvhv; a store used to truncate silently
 export void f(u8[] xs, i32 n) { xs[0] = n; }

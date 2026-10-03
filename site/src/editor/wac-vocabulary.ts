@@ -8,7 +8,7 @@
 // wacc's lexer to the same fence, so the highlighter and the compiler agree by both agreeing with
 // the document.
 /**
- * wac's keywords, as `spec/next/appendices/A-grammar.md` lists them.
+ * wac's keywords, as `spec/appendices/A-grammar.md` lists them.
  *
  * **`as!`, `as~` and `as@` are deliberately absent**, though the fence has them: this tokeniser
  * matches whole identifier-shaped words, and none of those three is one — they are `as` followed

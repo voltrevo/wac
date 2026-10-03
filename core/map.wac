@@ -90,7 +90,7 @@ export struct Map<K, V> {
     return -1;
   }
 
-  /** The value for `k`, or `null` (spec/next ch39 `§wac-map-get-nww5rzz`). */
+  /** The value for `k`, or `null` (spec ch39 `§wac-map-get-nww5rzz`). */
   V? get(const this, K k) {
     MapEntry<K, V>? e = this.slots[this.slotFor(k)];
     if (e is null) { return null; }

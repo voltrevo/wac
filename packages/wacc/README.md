@@ -451,7 +451,7 @@ decimal one names a number. Checking `fill`'s value against the element type ref
 on the way in. Both corrections went in as cases *before* the code was changed — `0028`, `0029`,
 `0036` — so the rule that was briefly broken now has a program that fails if it breaks again.
 
-The six `§wac-arr-bulk` diagnostics went the same way: `copyFrom` and `fill` were listed as builtins
+The six `§wac-arr-bulk-7kmq4wn` diagnostics went the same way: `copyFrom` and `fill` were listed as builtins
 and neither was checked at all, which was the largest cluster left in `specSingle`'s named misses.
 Cases `0030` to `0035` first, then the rules — 270 of 304 refused becomes 276.
 
@@ -699,7 +699,7 @@ of roughly 210 and a threshold would be a number somebody made up.
 
     101 rejection programs, 83 rejected by the type checker, 1 of those also caught here
 
-**It found something on its first run.** `[§wac-arr-i8-noreturn-k7fn2qp]` is
+**It found something on its first run.** The old spec's `§wac-arr-i8-noreturn-k7fn2qp` (retired since — a packed type is an ordinary type) was
 `export i8 getByte() { return 0; }`, which the reference rejects and wacc did not: the packed set here
 was `u8` and `u16`, because those are the two *I* thought of when deriving the grid by hand. `i8` and
 `i16` are packed too. That is the argument for a second oracle in one line — the grid was derived from

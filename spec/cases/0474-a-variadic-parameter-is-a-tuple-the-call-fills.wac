@@ -1,7 +1,7 @@
 // expect: answers counted = 210
 // spec: §wac-variadic-tuple-sfevn82
 // why: the remaining arguments are one tuple — two, one and none of them — and its type is inferred
-// from: spec/next ch14
+// from: spec ch14
 i32 count<Ts>(Ts ...items) {
   return typeref(Ts).members().len();
 }

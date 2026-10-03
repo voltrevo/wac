@@ -1,6 +1,6 @@
 // expect: answers f = 14
 // why: a symbol-named field is supplied in named construction as `[s]: value`, and positionally in declaration order
-// from: spec/next ch21 §wac-symbol-construction-uwbvysu
+// from: spec ch21 §wac-symbol-construction-uwbvysu
 symbol metadata;
 struct Point { i32 x; i32 y; i32 [metadata]; }
 export i32 f() {

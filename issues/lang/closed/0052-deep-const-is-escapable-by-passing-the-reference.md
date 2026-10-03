@@ -244,6 +244,6 @@ is the only reason the 2 above is worth anything. The canary is in the tool's he
 
 ## Closed — 2026-10-03 (agent-a)
 
-`const` is part of the type (spec/next ch17): a `const` reference passed to a plain parameter is refused,
+`const` is part of the type (spec ch17): a `const` reference passed to a plain parameter is refused,
 and `spec/cases/0083`, which pinned this hole, now expects the refusal. The same escape through a
 generic's type argument is `issues/lang/0315a`'s remaining row.

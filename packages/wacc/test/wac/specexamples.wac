@@ -1,8 +1,8 @@
 // The specification's examples, read as programs.
 //
-// `spec/next` is written so that its examples are the definition: a ` ```wac ` fence is a whole program,
+// `spec` is written so that its examples are the definition: a ` ```wac ` fence is a whole program,
 // its first lines say what happens to it, and every `// ERROR:` line beneath is a separate claim that
-// uncommenting it, and nothing else, makes the program refused. `spec/next/README.md` states the
+// uncommenting it, and nothing else, makes the program refused. `spec/README.md` states the
 // conventions; this reads them, and nothing here is a second statement of them.
 //
 // It reads the fences, and judges each one against the compiler in this tree: compiled in this process,
@@ -352,6 +352,9 @@ void walk(Cli cli, string dir, Vec<string> out) {
   for (i32 i = 0; i < es.len(); i++) {
     string name = es[i];
     if (startsWith(name, "_") || startsWith(name, ".")) { continue; }
+    // The case corpus beside the chapters has its own runner, `cases_test.wac`, and its README is about
+    // that corpus, not the language.
+    if (name == "cases") { continue; }
     string path = dir + "/" + name;
     if (endsWith(name, ".md")) { out.push(path); continue; }
     string[]? sub = cli.readDir(path).wait();
@@ -374,7 +377,7 @@ export ExVerdict judgeExample(Cli cli, string scratch, ExFence fence, i32 n) {
     if (x.command != "" && !commandSupported(x.command)) {
       return ExVerdict(fence, "unsupported", "an expectation about `" + x.command + "`");
     }
-    // **`wac check` is run, not modelled** (spec/next ch06): its discovery and its rule that every
+    // **`wac check` is run, not modelled** (spec ch06): its discovery and its rule that every
     // import is followed are the command's, so the fence is written out and checked in place.
     if (startsWith(x.command, "wac check")) {
       string cwhy = meetsCheck(cli, scratch, fence, x, base.paths, base.sources, n * 100 + e);
@@ -446,9 +449,9 @@ string meetsCheck(Cli cli, string scratch, ExFence fence, ExExpect x, string[] p
 string meets(Cli cli, string scratch, ExFence fence, ExExpect x, string[] givenPaths, string[] givenSources,
              Res givenRes,
              i32 id) {
-  // **What a build compiles**: the graph reachability retains — spec/next ch05. A build in the
+  // **What a build compiles**: the graph reachability retains — spec ch05. A build in the
   // command does exactly this, so the probe judges the program the command would build.
-  // **Building a program** gives `main` its contract — spec/next ch07 — and its adapter. A case that
+  // **Building a program** gives `main` its contract — spec ch07 — and its adapter. A case that
   // runs or names a build is one; `answers` calls an export of a plain module.
   // **`std` as a build reads it**: `wac` gathers the carried text under the path `std`, so the checker
   // knows its types — without it `Sys` was unknown here and every rule about it went silent.
@@ -490,7 +493,7 @@ string meets(Cli cli, string scratch, ExFence fence, ExExpect x, string[] givenP
 }
 
 /**
- * **A project is the command's to resolve** (spec/next ch02): a fence with a `wac.json5` and no
+ * **A project is the command's to resolve** (spec ch02): a fence with a `wac.json5` and no
  * package checkout is written to a directory of its own and built by `wac build`, so the boundary of
  * each project, and what `@/` and a nested project's directory mean, are judged by the code a user's
  * build runs rather than by a second reading of them here.

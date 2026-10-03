@@ -1,6 +1,6 @@
 // expect: answers run = 56 66
 // why: `a++` calls `postIncrement` and `++a` calls `preIncrement`, each answering what its method returns
-// from: spec/next ch22
+// from: spec ch22
 import { operators } from "core";
 struct Counter {
   i32 value;

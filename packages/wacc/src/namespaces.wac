@@ -1,4 +1,4 @@
-// Namespaces — spec/next ch03, lowered away before anything else reads the source.
+// Namespaces — spec ch03, lowered away before anything else reads the source.
 //
 // A namespace groups names and is not a runtime object, so nothing past this file needs to know one
 // exists. Every member is a declaration with a **qualified name**, written as a verbatim name —
@@ -20,7 +20,7 @@
 // spelling — the embedded copy of core is never lowered — and be read exactly like a lowered module.
 //
 // Lines are kept, so a diagnostic names the line it always did; a column after a qualified name moves
-// by the three characters `@""` adds. Lazy loading falls out (ch05 `§wac-reach-namespace-lazy`): a
+// by the three characters `@""` adds. Lazy loading falls out (ch05 `§wac-reach-namespace-lazy-pxz4t63`): a
 // module reached only through a namespace re-export is imported directly, and the re-exporting file
 // is not needed at all.
 
@@ -268,7 +268,7 @@ string flattenInline(string text, NsLocal info) {
         t = close;
         continue;
       }
-      // A struct whose body declares a `static` field (spec/next ch27).
+      // A struct whose body declares a `static` field (spec ch27).
       i32 sh = k == kExport() ? t + 1 : t;
       if (f.kind(sh) == kConst()) { sh = sh + 1; }
       if (f.kind(sh) == kStruct() && f.kind(sh + 1) == kIdent()) {
@@ -284,7 +284,7 @@ string flattenInline(string text, NsLocal info) {
 }
 
 /**
- * A struct's `static` fields, moved out to the file's top level (spec/next ch27 `§wac-static-field-we2jbmc`).
+ * A struct's `static` fields, moved out to the file's top level (spec ch27 `§wac-static-field-we2jbmc`).
  *
  * **A static field belongs to the type, not to an instance**, so it is a static declaration named for
  * the type — `static i32 x = …;` in `Foo` becomes `static i32 @"Foo.x" = …;` after the struct — and the
@@ -308,7 +308,7 @@ i32 hoistStaticFields(NsFile f, NsEdits ed, NsLocal info, i32 structTok, bool ex
     if (depth == 0 && k == kStatic()) {
       i32 nameTok = f.declName(t);
       i32 end = f.declEnd(t);
-      // **`static i32 [size] = 7;` — a symbol-named one** (spec/next ch21), reached as `Foo.[size]`,
+      // **`static i32 [size] = 7;` — a symbol-named one** (spec ch21), reached as `Foo.[size]`,
       // which is rewritten here: the namespace walk follows names after a `.`, not brackets.
       if (nameTok > 2 && f.kind(nameTok) == kRbrack() && f.kind(nameTok - 1) == kIdent()
           && f.kind(nameTok - 2) == kLbrack()) {
@@ -346,7 +346,7 @@ i32 hoistStaticFields(NsFile f, NsEdits ed, NsLocal info, i32 structTok, bool ex
 }
 
 /**
- * **A generic struct's static fields, one per instantiation** (spec/next ch27
+ * **A generic struct's static fields, one per instantiation** (spec ch27
  * `§wac-static-per-instantiation-79mu9di`): each `Cache<i32>.marker` this file writes gets a static of
  * its own, `static Box @"Cache<i32>.marker" = …;` with the struct's letters replaced by the arguments,
  * and the use is rewritten to that name. An instantiation written nowhere has no static, which is
@@ -459,7 +459,7 @@ i32 flattenBlock(NsFile f, NsEdits ed, NsLocal info, i32 first, i32 head, string
   info.spaces.push(prefix);
   // **A top-level namespace keeps its name declared**: its header becomes `symbol name;`, private and
   // in the same columns, so a second namespace or any other declaration of that name collides as two
-  // declarations do (spec/next ch03 `§wac-namespace-once-7ar5jqz`, ch01 `§wac-dup-any-kind-ctguh44`). A
+  // declarations do (spec ch03 `§wac-namespace-once-7ar5jqz`, ch01 `§wac-dup-any-kind-ctguh44`). A
   // nested one's qualified name would not fit in its header, and it is in no file scope to collide in.
   string header = blankOf(f.src, f.start(first), f.end(open));
   if (prefix.indexOf(".") < 0) {
@@ -770,7 +770,7 @@ string rewriteUses(string[] paths, string[] flat, const Res res, NsExports[] exp
   }
 
   // Imports and re-export lines, at the top level — and where each `export { … }` list lies, since a
-  // member named in one is exported under its own name (spec/next ch02 `§wac-export-member-jruhjdw`).
+  // member named in one is exported under its own name (spec ch02 `§wac-export-member-jruhjdw`).
   i32 depth = 0;
   i32[] listOpen = i32[].filled(src.count() + 1, -1);
   i32[] listClose = i32[].filled(src.count() + 1, -1);

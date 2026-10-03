@@ -1,4 +1,4 @@
-// A program's entry, as a host starts it — spec/next ch07.
+// A program's entry, as a host starts it — spec ch07.
 //
 // To the language `main` is an ordinary name. Building a *program* is what gives it a contract: no
 // parameters or one `Sys`, answering `void`, `never`, `i32` or a `Result` of `void` or `i32`, any of them
@@ -215,7 +215,7 @@ string progText(u8[] src, Lexed lexed, i32 t) {
   return string.fromBytes(out);
 }
 
-// ---- Tests — spec/next ch47 ----
+// ---- Tests — spec ch47 ----
 
 /**
  * A test file as a test build compiles it: every exported `test*` that takes a `Sys` or is `async` is

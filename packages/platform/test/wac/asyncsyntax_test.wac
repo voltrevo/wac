@@ -192,7 +192,7 @@ async i32 ticks(Core core, i32 n, i32[] log, i32 me) {
 
 export string test_drain_alone_finishes_a_machine(Core core, Cli cli) {
   T t = T.create();
-  // `[§wac-async-drain-7cvj4bn]` — registered, so the scheduler alone can finish it.
+  // `[§wac-drain-cs2v9rf]` — registered, so the scheduler alone can finish it.
   i32[] log = i32[].filled(1, 0);
   Ticket<i32> p = ticks(core, 2, log, 1);
   t.isFalse(p.settled(), "eager stopped at the first await");

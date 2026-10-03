@@ -1,7 +1,7 @@
 // expect: answers throughType = 7
 // spec: §wac-symbol-type-member-skxmsih
 // why: a static field named by a symbol is a member of the type, read as `T.[s]`
-// from: spec/next ch21
+// from: spec ch21
 symbol size;
 struct Foo {
   static i32 [size] = 7;

@@ -1,5 +1,5 @@
 // expect: refused
 // why: `override` takes what `virtual` grants, so it is refused against a parent method that is not virtual
-// from: spec/next ch12 §wac-nonvirtual-final-7a4kz3t
+// from: spec ch12 §wac-nonvirtual-final-7a4kz3t
 struct Base { i32 fire(const this) { return 0; } }
 export struct Kid : Base { override i32 fire(const this) { return 40; } }

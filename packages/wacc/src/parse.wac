@@ -939,7 +939,7 @@ Ty[] parseTypeArgs(P p) {
 }
 
 /**
- * One type argument — or `const T`, a union's alternative entered through a `const` reference (spec/next
+ * One type argument — or `const T`, a union's alternative entered through a `const` reference (spec
  * ch18). It is held as a type named by the `const` keyword with `T` its one argument: a keyword cannot be
  * the name of a type anybody declared, so the spelling `const T` it is given is never ambiguous.
  */
@@ -967,7 +967,7 @@ i32[] parseTypeParams(P p) {
       // parameter name" and names no keyword; this names it, in the same place, consuming nothing.
       if (p.at1(kIdent())) {
         params.push(p.advance());
-        // `E = union` — a default, used where a use omits the argument (spec/next ch19). Read and left
+        // `E = union` — a default, used where a use omits the argument (spec ch19). Read and left
         // here: `lowerTypeDefaults` writes it into every such use before anything is parsed for real.
         if (p.at1(kAssign())) { p.advance(); parseType(p); }
       } else if (atKeyword(p)) {
@@ -1075,11 +1075,11 @@ export Ty parseType(P p) {
     Ty ret = parseType(p);
     p.expect(kLparen());
     TyList params = TyList.create();
-    // **`fn<i32(const S)>`**: a parameter of a funcref type may be `const` (spec/next ch17). Read and
+    // **`fn<i32(const S)>`**: a parameter of a funcref type may be `const` (spec ch17). Read and
     // not yet kept — the funcref's type says `S`, so the `const` refuses nothing here a declaration's
     // own `const` parameter would.
     if (!p.at1(kRparen())) {
-      // `const T` is a type here — a function value carries its parameters' promises (spec/next ch17).
+      // `const T` is a type here — a function value carries its parameters' promises (spec ch17).
       params.push(parseTypeArg(p));
       while (p.eat(kComma())) {
         if (p.at1(kRparen())) { break; }
@@ -1091,31 +1091,31 @@ export Ty parseType(P p) {
     if (p.at1(kShr()) || p.at1(kShrU())) { splitGt(p); } else { p.expect(kGt()); }
     node = tyFuncref(ret, params.take(), line, col);
   } else if (p.at1(kLparen())) {
-    // `(A, B)`, `(A,)`, `()` — a tuple type (spec/next ch14). A trailing comma means something only
+    // `(A, B)`, `(A,)`, `()` — a tuple type (spec ch14). A trailing comma means something only
     // at length one, so it is eaten wherever it is.
     p.advance();
     TyList members = TyList.create();
     bool sawComma = false;
     while (!p.at1(kRparen()) && !p.at1(kEof())) {
-      // A member has no binding of its own, so `const T` is its type (spec/next ch17).
+      // A member has no binding of its own, so `const T` is its type (spec ch17).
       members.push(parseTypeArg(p));
       if (!p.eat(kComma())) { break; }
       sawComma = true;
     }
     p.expect(kRparen());
     Ty[] ms = members.take();
-    // **`(T)` is `T` in parentheses**, not a tuple (spec/next ch14 `§wac-tuple-zero-one-fhcjtvh`) —
+    // **`(T)` is `T` in parentheses**, not a tuple (spec ch14 `§wac-tuple-zero-one-fhcjtvh`) —
     // and `(const T) x` is how a binding that may be rebound holds a `const T` (ch17).
     node = ms.len() == 1 && !sawComma ? ms[0] : tyTuple(ms, line, col);
   } else if (p.at1(kIdent()) && p.textAt(0) == "type" && p.kindAt(1) == kLparen()) {
-    // `type(e)` — the one expression a type position takes (spec/next ch30).
+    // `type(e)` — the one expression a type position takes (spec ch30).
     p.advance();
     p.expect(kLparen());
     Expr te = parseExpr(p);
     p.expect(kRparen());
     node = Ty(TyKind.TypeOf(te), line, col);
   } else if (p.at1(kNull())) {
-    // `null` in a type position is `never?`, the literal's own type (spec/next ch10).
+    // `null` in a type position is `never?`, the literal's own type (spec ch10).
     node = tyNamed(p.advance(), Ty[](), line, col);
   } else if (p.at1(kIdent()) || p.at1(kVoid())) {
     bool prim = identIsPrim(p, 0);
@@ -1206,7 +1206,7 @@ bool startsLower(u8[] s, i32 start, i32 len) {
 export Expr parseExpr(P p) { return parseTernary(p); }
 
 /**
- * `a ?? b` — spec/next ch10, below `||` and above the ternary, and right-associative: `a ?? b ?? c` is
+ * `a ?? b` — spec ch10, below `||` and above the ternary, and right-associative: `a ?? b ?? c` is
  * `a ?? (b ?? c)`. The operator is **two adjacent `?` tokens**, which the lexer leaves apart so that a
  * `T??` type still reads as two layers; nothing else puts two `?`s side by side in an expression.
  */
@@ -1237,7 +1237,7 @@ Expr parseTernary(P p) {
 }
 
 /**
- * `e is T`, `e is not T`, `e is null`, `e is other` — a test at comparison level (spec/next ch22), so
+ * `e is T`, `e is not T`, `e is null`, `e is other` — a test at comparison level (spec ch22), so
  * `s is null || n == 0` needs no parentheses. Called with the `is` next.
  */
 Expr parseIsTail(P p, Expr e) {
@@ -1306,7 +1306,7 @@ Expr parseIsTail(P p, Expr e) {
  * name — each followed by `matches`.
  */
 i32 patternEnd(P p) {
-  // `const Rect r` — a typed pattern that accepts either permission (spec/next ch18).
+  // `const Rect r` — a typed pattern that accepts either permission (spec ch18).
   if (p.at1(kConst()) && p.kindAt(1) == kIdent()) {
     i32 cj = 2;
     i32 cargs = afterTypeArgs(p, cj);
@@ -1457,7 +1457,7 @@ Expr parseEqExpr(P p) {
 }
 
 /**
- * Comparison level: `<` `<=` `>` `>=`, `is` and `matches` — spec/next ch22's level 7, left-associative.
+ * Comparison level: `<` `<=` `>` `>=`, `is` and `matches` — spec ch22's level 7, left-associative.
  *
  * A pattern stands only where an operand begins, so `matches` is tried there and nowhere else.
  */
@@ -1534,20 +1534,20 @@ Expr parseUnary(P p) {
   // than the receiver, because the postfix chain is parsed whole below; and `await n + 1` is
   // `(await n) + 1`, because this returns before the binary level is reached. That is Rust's and
   // JavaScript's grouping, and the one a reader assumes.
-  // `coroutine f(…)` — a word only before a name or `this` (spec/next ch36).
+  // `coroutine f(…)` — a word only before a name or `this` (spec ch36).
   if (p.at1(kIdent()) && p.textAt(0) == "coroutine" && (p.kindAt(1) == kIdent() || p.kindAt(1) == kThis())) {
     p.advance();
     return Expr(ExprKind.CoroutineOf(parseUnary(p)), line, col);
   }
   // `try e` — a word only where a unary operand starts and an expression follows it, the way
-  // `schedule` is one only at a statement's start (spec/next ch26). `try(x)` stays a call.
+  // `schedule` is one only at a statement's start (spec ch26). `try(x)` stays a call.
   if (p.at1(kIdent()) && p.textAt(0) == "try" && startsTryOperand(p.kindAt(1))) {
     p.advance();
     return Expr(ExprKind.Try(parseUnary(p)), line, col);
   }
   if (p.at1(kAwait())) {
     p.advance();
-    // `await;` — the statement form with nothing to wait on (spec/next ch35).
+    // `await;` — the statement form with nothing to wait on (spec ch35).
     if (p.at1(kSemi())) { return Expr(ExprKind.Await(null), line, col); }
     return Expr(ExprKind.Await(parseUnary(p)), line, col);
   }
@@ -1606,7 +1606,7 @@ Expr parsePostfix(P p) {
         e = Expr(ExprKind.Member(e, nameTok), line, col);
       }
     } else if (p.at1(kQuestionDot())) {
-      // `p?.m` — spec/next ch10. A field read only: a method through an absence is not in the spec.
+      // `p?.m` — spec ch10. A field read only: a method through an absence is not in the spec.
       p.advance();
       i32 safeTok = -1;
       safeTok = declName(p, perrFieldName(), "field name");
@@ -1643,7 +1643,7 @@ Expr parsePostfix(P p) {
 
 /**
  * What follows an array type in an expression: `T[]()`, `T[].filled(count, value)` or
- * `T[].defaulted(count)` — `spec/next/2-types/15-arrays.md`.
+ * `T[].defaulted(count)` — `spec/2-types/15-arrays.md`.
  *
  * All three are `ArrNew`: the empty constructor has no size, `filled` a size and a fill, and `defaulted` a
  * size alone, which is what asks every element for its default.
@@ -1807,7 +1807,7 @@ Expr parsePrimary(P p) {
   // `this` is an identifier expression, as in the reference.
   if (p.at1(kThis()))  { return Expr(ExprKind.Ident(p.advance()), line, col); }
 
-  // `static_match (T) { Type: value, …, default: value }` — spec/next ch31.
+  // `static_match (T) { Type: value, …, default: value }` — spec ch31.
   if (p.at1(kIdent()) && p.textAt(0) == "static_match" && p.kindAt(1) == kLparen()) {
     p.advance();
     p.expect(kLparen());
@@ -1834,13 +1834,13 @@ Expr parsePrimary(P p) {
     p.expect(kRbrace());
     return Expr(ExprKind.StaticMatch(subject, tys.take(), vals.take(), defaultAt), line, col);
   }
-  // `static_trap "…"` as a value — `never` (spec/next ch31).
+  // `static_trap "…"` as a value — `never` (spec ch31).
   if (p.at1(kIdent()) && p.textAt(0) == "static_trap" && p.kindAt(1) == kString()) {
     p.advance();
     return Expr(ExprKind.StaticTrapE(parsePrimary(p)), line, col);
   }
 
-  // `typeref(T)` — a type as a value (spec/next ch30). A word only before `(`.
+  // `typeref(T)` — a type as a value (spec ch30). A word only before `(`.
   if (p.at1(kIdent()) && p.textAt(0) == "typeref" && p.kindAt(1) == kLparen()) {
     p.advance();
     p.expect(kLparen());
@@ -1872,7 +1872,7 @@ Expr parsePrimary(P p) {
 
   // Grouping. The reference returns the inner expression unwrapped, so the
   // parentheses leave no trace in the tree.
-  // `(a, b)`, `(a,)` and `()` are tuples (spec/next ch14 `§wac-tuple-zero-one-fhcjtvh`): a comma is
+  // `(a, b)`, `(a,)` and `()` are tuples (spec ch14 `§wac-tuple-zero-one-fhcjtvh`): a comma is
   // what makes one, so `(a)` stays grouping.
   if (p.at1(kLparen())) {
     p.advance();
@@ -2235,7 +2235,7 @@ bool looksLikeVarDecl(P p) {
   // `coroutine f(…);` and `try f();` are expressions, not declarations of `f` (ch36, ch26).
   if (i == 0 && k == kIdent() && (p.textAt(0) == "coroutine" || p.textAt(0) == "try")
       && (p.kindAt(1) == kIdent() || p.kindAt(1) == kThis())) { return false; }
-  // `null n = nothing();` — `null` is a type as well as a value (spec/next ch10).
+  // `null n = nothing();` — `null` is a type as well as a value (spec ch10).
   if (k != kIdent() && k != kVoid() && k != kNull()) { return false; }
   i32 j = i + 1;
   // A type-argument list first: `Vec<i32> v = …` is a declaration, and without this the statement
@@ -2305,7 +2305,7 @@ export Stmt parseStatement(P p) {
     return Stmt(StmtKind.Trap(msg), line, col);
   }
   if (p.at1(kLbrace()))   { return Stmt(StmtKind.Block(parseBlock(p)), line, col); }
-  // `yield v;` and `yield;` — a word only where a statement starts (spec/next ch36).
+  // `yield v;` and `yield;` — a word only where a statement starts (spec ch36).
   if (p.at1(kIdent()) && p.textAt(0) == "yield" && (p.kindAt(1) == kSemi() || startsTryOperand(p.kindAt(1))
                                                      || p.kindAt(1) == kLparen())) {
     p.advance();
@@ -2314,14 +2314,14 @@ export Stmt parseStatement(P p) {
     p.expect(kSemi());
     return Stmt(StmtKind.Yield(yv), line, col);
   }
-  // **`static_if`, `static_for` and `static_trap`** (spec/next ch31) are words only where a statement
+  // **`static_if`, `static_for` and `static_trap`** (spec ch31) are words only where a statement
   // starts, so nothing using one as a name elsewhere stops compiling.
   if (p.at1(kStatic())) { return parseStaticLocal(p); }
   if (p.at1(kIdent()) && p.textAt(0) == "static_if") { return parseStaticIf(p); }
   if (p.at1(kIdent()) && p.textAt(0) == "static_trap") { return parseStaticTrap(p); }
   if (p.at1(kIdent()) && p.textAt(0) == "static_for") { return parseStaticFor(p); }
   // `schedule f;` — a word only where a statement starts and an expression follows it, the way
-  // `virtual` is one only before a method (spec/next ch35).
+  // `virtual` is one only before a method (spec ch35).
   if (p.at1(kIdent()) && p.textAt(0) == "schedule"
       && (p.kindAt(1) == kIdent() || p.kindAt(1) == kThis())) {
     p.advance();
@@ -2389,7 +2389,7 @@ i32 closingParenAt(P p, i32 open) {
 }
 
 /**
- * A statement that starts with a tuple — spec/next ch14 — or null when what starts with `(` is an
+ * A statement that starts with a tuple — spec ch14 — or null when what starts with `(` is an
  * expression after all. Nothing is consumed before the answer is known: the shapes are told apart by
  * what follows the closing `)`.
  *
@@ -2545,7 +2545,7 @@ Stmt parseVarDecl(P p, bool noSemi) {
   Ty t = parseType(p);
   i32 nameTok = -1;
   nameTok = declName(p, perrExpected(), "variable name");
-  // `T x;` — declared now, assigned later (spec/next ch08). A `const` one could never be.
+  // `T x;` — declared now, assigned later (spec ch08). A `const` one could never be.
   if (!noSemi && p.at1(kSemi())) {
     if (isConst) { p.fail(perrConstNoInit()); }
     p.advance();
@@ -2720,14 +2720,14 @@ Stmt parseForStmt(P p) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
   p.advance();
-  // `for await (T x in g)` — spec/next ch36. Held as a `for … in` over `await g`, which is what it
+  // `for await (T x in g)` — spec ch36. Held as a `for … in` over `await g`, which is what it
   // does each time round; the iterable itself is never a ticket.
   i32 awaitLine = p.lineAt(0);
   i32 awaitCol = p.colAt(0);
   bool awaiting = p.eat(kAwait());
   p.expect(kLparen());
 
-  // `for (T x in e)` — spec/next ch25.
+  // `for (T x in e)` — spec ch25.
   i32 at = forInNameAt(p);
   if (at >= 0) {
     Ty? elemType = null;
@@ -2842,14 +2842,14 @@ ArmHead parseArmHead(P p) {
     p.expect(kColon());
     return ArmHead(-1, defaultTok, i32[](), true);
   }
-  // `null:` — the arm a nullable subject takes when it is absent (spec/next ch25
+  // `null:` — the arm a nullable subject takes when it is absent (spec ch25
   // `§wac-match-nullable-subject-zcnasbp`). Its "variant" is the `null` token.
   if (p.at1(kNull())) {
     i32 nullTok = p.advance();
     p.expect(kColon());
     return ArmHead(nullTok, -1, i32[](), true);
   }
-  // `const Rect:` — a union's `const` alternative (spec/next ch18). The `const` token stands in the binding
+  // `const Rect:` — a union's `const` alternative (spec ch18). The `const` token stands in the binding
   // list, as an `is` does, and the alternative's type is the name after it.
   if (p.at1(kConst()) && p.kindAt(1) == kIdent()) {
     i32 constTok = p.advance();
@@ -2868,7 +2868,7 @@ ArmHead parseArmHead(P p) {
     if (!p.at1(kRparen())) {
       while (true) {
         if (p.at1(kRparen())) { break; }             // trailing comma
-        // `is V` tests that payload field's variant and binds nothing (spec/next ch13
+        // `is V` tests that payload field's variant and binds nothing (spec ch13
         // `§enum-payload-is-pattern-mec7vyh`). The `is` token stands in the binding list, and the
         // variant is the token after it.
         if (p.at1(kIs())) {
@@ -2906,7 +2906,7 @@ Expr parseMatchExpr(P p) {
     ArmHead h = parseArmHead(p);
     if (!h.ok) { continue; }
     // **An arm may leave instead of giving a value** — `continue`, `break` or `return …` — and is then
-    // a body with no value (spec/next ch25 `§wac-match-arm-leaves-y33uzzi`).
+    // a body with no value (spec ch25 `§wac-match-arm-leaves-y33uzzi`).
     Stmt? leaves = parseLeavingArm(p);
     if (!(leaves is null)) {
       arms.push(Arm(h.variantTok, h.defaultTok, h.bindings, [leaves!] as Stmt[], null));
@@ -3027,7 +3027,7 @@ void parseParams(P p, ParamList out) {
     if (p.at1(kRparen())) { return; }              // trailing comma
     bool isConst = p.eat(kConst());
     Ty t = parseType(p);
-    // `Ts ...items` — a variadic parameter (spec/next ch14): one tuple, which `lowerVariadics` has the
+    // `Ts ...items` — a variadic parameter (spec ch14): one tuple, which `lowerVariadics` has the
     // call sites fill. The marker says how a call is written, not what the parameter is.
     if (p.at1(kDot()) && p.kindAt(1) == kDot() && p.kindAt(2) == kDot()) { p.advance(); p.advance(); p.advance(); }
     i32 nameTok = -1;
@@ -3144,7 +3144,7 @@ Decl parseStructDecl(P p, bool exported) {
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
     // `private` comes first: it is about who may name the member, before anything about what it is.
     bool memberPrivate = p.eat(kPrivate());
-    // `virtual` grants a subtype the override (spec/next ch12). Reserved, and told by its spelling.
+    // `virtual` grants a subtype the override (spec ch12). Reserved, and told by its spelling.
     bool memberVirtual = p.at1(kIdent()) && p.textAt(0) == "virtual" && p.kindAt(1) == kIdent();
     if (memberVirtual) { p.advance(); }
     i32 overrideTok = p.at;
@@ -3171,7 +3171,7 @@ Decl parseStructDecl(P p, bool exported) {
       p.advance();
       fields.push(Field(memberTok, memberType, fieldConst, memberPrivate, null));
     } else if (p.at1(kAssign())) {
-      // `i32 retries = 3;` — a field initialiser, spec/next ch12.
+      // `i32 retries = 3;` — a field initialiser, spec ch12.
       p.advance();
       Expr init = parseExpr(p);
       p.expect(kSemi());
@@ -3321,7 +3321,7 @@ bool looksLikeEnumMethod(P p) {
 /**
  * A function's or a method's return type — and for a generator, `gen<Y> R`, held as the type
  * `gen<Y, R>` so a declaration keeps its shape: the checker reads it as the `Generator<Y, R>` a caller
- * gets, an `R` the body returns and a `Y` it yields (spec/next ch36). `gen` is a word only here,
+ * gets, an `R` the body returns and a `Y` it yields (spec ch36). `gen` is a word only here,
  * before a type that is not itself the declaration's name.
  */
 Ty parseReturnType(P p) {
@@ -3347,7 +3347,7 @@ Decl parseFuncDecl(P p) {
   // between the visibility and the thing. `design/lang/0014` D3: the type written is what the *body*
   // answers, and the caller receives a `Pending<T>` of it.
   bool isAsync = p.eat(kAsync());
-  // `const Box shared()` — a result the caller may not mutate (spec/next ch17). Read; the permission
+  // `const Box shared()` — a result the caller may not mutate (spec ch17). Read; the permission
   // on a returned reference is not yet carried, so the result is an ordinary one.
   p.eat(kConst());
   Ty ret = parseReturnType(p);
@@ -3452,7 +3452,7 @@ export Program parseProgram(P p) {
     } else if (k == kIdent() && p.textAt(after) == "type" && p.kindAt(after + 1) == kIdent()
                && (p.kindAt(after + 2) == kAssign() || p.kindAt(after + 2) == kLt()
                    || p.kindAt(after + 2) == kLbrace())) {
-      // `type Name = T;`, `type Name<T> = type(e);`, `type Name<T> { … }` — spec/next ch30.
+      // `type Name = T;`, `type Name<T> = type(e);`, `type Name<T> { … }` — spec ch30.
       if (exported) { p.advance(); }
       i32 tline = p.lineAt(0);
       i32 tcol = p.colAt(0);

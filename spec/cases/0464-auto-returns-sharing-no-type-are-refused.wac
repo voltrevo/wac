@@ -1,7 +1,7 @@
 // expect: refused
 // spec: §wac-auto-return-vm59825
 // why: `auto` does not make a union of an `i32` and a `string` — only an existing union absorbs them
-// from: spec/next ch34
+// from: spec ch34
 auto wrong(bool c) {
   if (c) { return 1 as i32; }
   return "s";
