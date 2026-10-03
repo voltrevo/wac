@@ -15,13 +15,14 @@ export const TREE = `${GITHUB}/tree/master`;
 export const BLOB = `${GITHUB}/blob/master`;
 
 export type Route =
-  | "home" | "start" | "language" | "run" | "stack" | "bootstrap" | "checked" | "roadmap" | "playground";
+  | "home" | "start" | "language" | "run" | "stack" | "bootstrap" | "checked" | "roadmap" | "spec" | "playground";
 
 export const PAGES: { route: Route; href: string; label: string }[] = [
   // **First, because it is the one page a reader acts on.** Everything else here answers "is this
   // real"; this answers "what do I type", and it was reachable only as a link into GitHub.
   { route: "start", href: "#/start", label: "use it" },
   { route: "language", href: "#/language", label: "the language" },
+  { route: "spec", href: "#/spec", label: "the spec" },
   { route: "run", href: "#/run", label: "run it here" },
   { route: "stack", href: "#/stack", label: "the stack" },
   { route: "bootstrap", href: "#/bootstrap", label: "the bootstrap" },
@@ -264,7 +265,7 @@ function Footer() {
   return (
     <footer style={{ borderTop: `1px solid ${c.line}`, marginTop: space.section, padding: "26px 0 60px", display: "flex", gap: 22, flexWrap: "wrap", fontSize: 13, color: c.faint, fontFamily: font.mono }}>
       <a href="#/playground" style={{ color: c.dim, textDecoration: "none" }}>playground</a>
-      <a href={`${TREE}/spec`} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>spec</a>
+      <a href="#/spec" style={{ color: c.dim, textDecoration: "none" }}>spec</a>
       <a href={GITHUB} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>source</a>
       <a href={`${TREE}/packages`} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>packages</a>
       <span style={{ marginLeft: "auto", maxWidth: "48ch", lineHeight: 1.6 }}>

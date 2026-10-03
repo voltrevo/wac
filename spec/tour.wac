@@ -3,12 +3,13 @@
 //
 // wac is a C-family surface syntax for WebAssembly GC. Every feature maps to
 // obvious wasm instructions; there is no runtime, no linear memory, no hidden
-// allocation. Structs and arrays are GC heap references. The compiler is pure
-// TypeScript (lex -> parse -> resolve -> typecheck -> emit -> .wasm binary).
+// allocation. Structs and arrays are GC heap references. The compiler is
+// written in wac (packages/wacc: lex -> parse -> check -> emit -> .wasm binary).
 //
 // This file is the fast path to knowing wac. It compiles, and `selfTest()` at
 // the bottom returns true — so what you read here is what the compiler does.
-// The full definition is in spec/spec/*.md; this is the map, not the territory.
+// The full definition is spec/ — chapters whose examples are programs with
+// their outcomes written above them; this is the map, not the territory.
 //
 // How to read it:
 //   - Declarations are the reference. Comments carry only what code can't show:
@@ -21,7 +22,7 @@
 // Three rules explain most of the language:
 //   1. No implicit conversions. Ever. Except subtype -> parent and T -> T?.
 //   2. If an operation can trap, its spelling contains `!`.
-//   3. `const` on a reference is deep, and travels with the reference.
+//   3. `const` is part of the type: deep, and it travels with the reference.
 //
 // wac is unstable by choice. Section 17 lists what it does not have, and that
 // list gets shorter — generics, enums and `match` were all on it once. Trust
@@ -130,10 +131,13 @@ export i32 fromTable(i32 i) { return TABLE[i]; }
 export i32 variables() {
   i32 x = 5;                 // mutable
   const i32 y = 10;          // immutable
-  // ERROR: i32 z;           // every variable must be initialised at declaration
+  i32 z;                     // declared now; every path assigns it before a read
+  if (x > 0) { z = 1; } else { z = 0; }
   // ERROR: y = 11;          // y is const
-  // ERROR: var x = 5;       // no inference — the type is always written out
-  x += y;
+  auto w = y;                // `auto` infers from the initialiser: i32
+  // ERROR: auto n = 7;      // ...and a bare literal gives it nothing to infer
+  // ERROR: var v = 5;       // there is no `var`
+  x += w * z;
   return x;                  // -> 15
 }
 
@@ -613,10 +617,21 @@ struct Outer {
     i32 read = this.inner.v;            // reading is always fine
   }
 }
-// Copying a const ref into a plain local IS allowed — read-only cursors like
-// `Node? cur = this.head; cur = cur!.next;` depend on it. What the copy cannot
-// do is write, call a non-const method, or get stored into a field or element
-// (either would make the object reachable as mutable).
+// No plain binding can hold a const reference: `Node? cur = head` from a
+// `const Node head` is refused, since a plain local could write. A cursor over a
+// const list puts its NAME outside the const with parentheses — `(const Node)?
+// cur` rebinds freely, and everything it holds stays const. `const Node? cur`
+// would be const all the way down and could not step.
+export i32 constWalk(const Node head) {
+  i32 total = 0;
+  (const Node)? cur = head;
+  while (cur is not null) {
+    total += cur!.val;
+    // ERROR: cur!.val = 0;            // still const: nothing written through it
+    cur = cur!.next;                   // but the name moves
+  }
+  return total;
+}
 
 // ── 12. GENERICS ────────────────────────────────────────────────────────────
 
@@ -704,8 +719,9 @@ export string describe(Step s) {
   };
 }
 // ERROR: match (s) { Stop: 0, Go(n): n }
-//        // match does not cover 'Turn' — exhaustiveness is checked, and there
-//        // is no `default` to paper over a variant added later
+//        // match does not cover 'Turn' — exhaustiveness is checked. A `default:`
+//        // arm would cover it, and every variant added later too, which is the
+//        // reason to leave it out when the cases are few
 
 // Each variant is also a TYPE, and a subtype of the enum — which is what makes
 // narrowing work and why a variant name is a file-scope name like a struct's.
@@ -731,6 +747,28 @@ export i32 maybes() {
 // would both claim `Just` and neither has a better claim. So `Just j = a;` and
 // `a is Just` are errors, while `match` is unaffected: an arm resolves its
 // variant through the subject's enum rather than through the file's scope.
+
+// A UNION holds a value of any one of its member types, with no constructor: a
+// member value IS a union value. `match` takes it apart by type, and inside
+// each arm the subject has that arm's type. `if (string t matches c) { … }`
+// tests and binds one member.
+union<i32, string, bool> cellAt(i32 k) {
+  if (k == 0) { return 7; }
+  if (k == 1) { return "seven"; }
+  return true;
+}
+export i32 unions() {
+  i32 total = 0;
+  for (i32 k = 0; k < 3; k++) {
+    union<i32, string, bool> c = cellAt(k);
+    total += match (c) {
+      i32:    c,                      // c is an i32 here
+      string: c.len(),                // ...and a string here
+      bool:   c ? 1 : 0,
+    };
+  }
+  return total;                       // -> 7 + 5 + 1 = 13
+}
 
 // An enum HAS NO DEFAULT VALUE — there is no default variant — so `Step[].defaulted(2)`
 // and a struct holding a bare `Step` cannot be default-constructed. Write the
@@ -790,10 +828,8 @@ export i32 anyrefs() {
 // typed function refs: `ref.func` to obtain, `call_ref` to invoke.
 // A bare name is the whole of the syntax — there is no `&f`.
 //
-// This said THERE ARE NO CLOSURES until 2026-09-04, in capitals, 113 lines above
-// section 17 saying wacc has them. Section 17 is right: `(i32 a) => a + 1`
-// captures by reference. The examples below use bare names because this file is
-// compiled by the seed as well, and the seed has no lambdas.
+// A lambda is a function value written in place, and it captures the locals it
+// names by reference — see `lambdas()` below.
 i32 square(i32 x) { return x * x; }
 i32 negate(i32 x) { return -x; }
 bool ascending(i32 a, i32 b) { return a < b; }
@@ -828,17 +864,8 @@ export i32 funcrefUses() {
 // are ordinary `fn<...>` values, as the two lines below show.
 //
 // A BOUND reference — `c.inc`, the method with that receiver already in it — is
-// an `fn<void()>` in wacc, `[§wacc-fnref-bound]`. It is not a closure: it
-// captures a receiver and nothing else, and `fn<...>` values still do not
-// capture locals.
-//
-// **wacc has it; the line below stays commented because the REFERENCE does not.**
-// This said "the SEED, which does not have it", and the seed is wacc: `wac run`
-// on `fn<i32()> r = s.next; r()` answers today. What compiles this file twice is
-// compiler/wacSpec.test.ts, with the reference, which refuses it as `cannot use
-// method 'inc' as a value` — so a tour that used it would stop compiling for the
-// oracle rather than for wacc. Use it in your own code; it works.
-// See spec/spec/funcrefs.md.
+// an `fn<void()>`. It captures the receiver and nothing else.
+// See spec/2-types/20-functions-and-funcrefs.md.
 struct Counter {
   i32 count;
   Counter create(i32 initial) { return Counter(initial); }
@@ -851,8 +878,16 @@ export i32 methodRefs() {
   bump(c);
   bump(c);
   (Counter.inc)(c);                          // inline form, same as c.inc()
-  // In wacc: fn<void()> f = c.inc;         // bound to c; the seed refuses it
-  return c.count;                            // -> 3
+  fn<void()> again = c.inc;                  // bound to c
+  again();
+  return c.count;                            // -> 4
+}
+
+export i32 lambdas() {
+  i32 step = 3;
+  fn<i32(i32)> add = (i32 a) => a + step;    // captures `step`...
+  step = 10;                                 // ...by reference, so this is seen
+  return add(1);                             // -> 11
 }
 
 // ── 16. IMPORTS AND NAMING  (syntax only — needs more than one file) ────────
@@ -908,28 +943,28 @@ export i32 shadowing() {
 
 // Read this before you write wac you'd expect to work. None of these exist:
 //
-//   closures                in the seed. wacc has them — `(i32 a) => a + 1`, capturing
-//                           by reference — and this file is compiled by both, so it
-//                           writes none. See spec/spec/funcrefs.md and design/lang/0002
-//   virtual dispatch        `override` is checked, then dispatch is static
 //   interfaces / traits     subtyping is single-parent struct extension only
 //   linear memory           no pointers, no mem[addr], no data segments
-//   module-level variables  constants exist; mutable globals do not
-//   host function imports   nothing is imported from JS; wasm imports are empty
-//   char type               string indexing yields a one-character string
-//   type aliases            write the type out
-//   operator overloading, exceptions, threads, varargs, default arguments,
-//   named arguments at call sites, multiple returns, tuples
+//   mutable globals         a module-level value is `static`: computed at compile
+//                           time, and const (spec chapter 27)
+//   host function imports   nothing is imported from JS; a capability is a value
+//                           the program is handed (chapter 07)
+//   exceptions              a failure is a value — `Result<T, E>` (chapter 26)
+//   char type               a character literal is a `u8`; string indexing
+//                           yields a one-character string
+//   threads, varargs, default arguments, named arguments at call sites
 //
-// `async` was on that list and ships: `async T f()` answers a `Ticket<T>` and
-// `await` unwraps one — design/lang/0014, spec/cases/0305 onward.
+// The list used to be longer. Closures (section 15), tuples and so several
+// returns (chapter 14), unions (section 13), type declarations (chapter 30),
+// virtual dispatch (section 11), operator methods (`[operators.add]`, chapter
+// 22) and `async` (chapter 35) were all on it.
 //
-// `switch` takes i32 or u32 only — not strings, not enums. Use `match` for an
+// `switch` takes integers only — not strings, not enums. Use `match` for an
 // enum, and an if-chain for a string.
 //
 // Consequences worth internalising:
-//   - No globals means every piece of state is a parameter, a local, or a field
-//     reachable from one. A wacc lambda captures locals, which does not add a
+//   - No mutable globals means every piece of state is a parameter, a local, or a field
+//     reachable from one. A lambda captures locals, which does not add a
 //     fourth place for state to live: it shares one of the three.
 //   - `void` functions taking a struct or array mutate through the reference —
 //     that is the idiomatic way to return "several" things.
@@ -959,6 +994,7 @@ export bool selfTest() {
       && grouped() == poly() && million() == 1000000
       && strictBool(3) == 1 && strictBool(0) == 0
       && variables() == 15 && constRef() == 3.0
+      && constWalk(Node(1, Node(2, Node(3, null)))) == 6
       && useConst(255) == 192 && CRC_POLY == 0xEDB88320
       && fromTable(1) == 20
       && mixTypes(1, 2.7) == 4
@@ -999,11 +1035,12 @@ export bool selfTest() {
       && anyrefs() == 49
       && funcrefs() == 26
       && funcrefUses() == 30 + 10 + 4 + 1
-      && methodRefs() == 3
+      && methodRefs() == 4 && lambdas() == 11
       && shadowing() == 1
       && cells() == 16 && inference() == 5
       && advance(Step.Go(6)) == 6 && advance(Step.Stop) == 0
       && advance(Step.Turn(90.0)) == 90
       && describe(Step.Turn(1.0)) == "turn" && describe(Step.Go(2)) == "go"
-      && maybes() == 104;
+      && maybes() == 104
+      && unions() == 13;
 }

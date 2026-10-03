@@ -21,6 +21,8 @@ import {
   EX_MATH,
   EX_ERROR,
   EX_STRUCT,
+  EX_CONST,
+  EX_UNION,
   EX_NULLABLE,
   EX_ARRAYS,
   EX_IMPORTS_MAIN,
@@ -39,6 +41,11 @@ export default function Language() {
           language being ordinary enough to write a Tor relay in and strict enough that the relay
           works, so this is the part to be skeptical about first.
         </P>
+        <P>
+          This is the short version. The long one is <A href="#/spec">the specification</A>:
+          forty-nine chapters whose examples are programs, each one compiled against the compiler in
+          the tree, with the answer it must give written above it.
+        </P>
 
         <Sub id="hello" title="Hello world">
           <P>
@@ -50,8 +57,9 @@ export default function Language() {
 
         <Sub id="primitives" title="Primitives and control flow">
           <P>
-            {m({ children: "i32 i64 f32 f64 bool string" })}, plus unsigned{" "}
-            {m({ children: "u8 u16 u32 u64" })}. Full control flow: {m({ children: "if" })}/
+            {m({ children: "i8 i16 i32 i64" })}, their unsigned twins{" "}
+            {m({ children: "u8 u16 u32 u64" })}, {m({ children: "f32 f64 bool" })}, and{" "}
+            {m({ children: "string" })} as a reference type. Full control flow: {m({ children: "if" })}/
             {m({ children: "else" })}, {m({ children: "while" })}, {m({ children: "for" })},{" "}
             {m({ children: "do" })}-{m({ children: "while" })}, {m({ children: "switch" })}, and a
             ternary.
@@ -78,10 +86,27 @@ export default function Language() {
 
         <Sub id="structs" title="Structs, methods, subtyping">
           <P>
-            Methods take an explicit receiver, and {m({ children: "const this" })} forbids mutating
-            anything reachable through it — deeply, not one level.
+            Methods take an explicit receiver and reach their fields through it —{" "}
+            {m({ children: "this.x" })}, always; a bare field name is not in scope.{" "}
+            {m({ children: "const this" })} forbids mutating anything reachable through it — deeply,
+            not one level.
           </P>
           <InlineDemo initialCode={EX_STRUCT} />
+        </Sub>
+
+        <Sub id="const" title="Const is part of the type">
+          <P>
+            {m({ children: "const" })} at the front of a declaration applies throughout: the name
+            cannot be rebound, and nothing can be written through the reference, at any depth. It
+            travels with the reference — read out of a field, returned from a method, handed to a
+            parameter — and no binding of a plain type can hold it again.
+          </P>
+          <P>
+            Parentheses move the name outside it. {m({ children: "(const Counter) latest" })} can be
+            rebound, and whatever it holds is still read-only. That is the form a cursor walking a
+            const list is written in.
+          </P>
+          <InlineDemo initialCode={EX_CONST} />
         </Sub>
 
         <Sub id="nullable" title="Nullable references">
@@ -102,6 +127,16 @@ export default function Language() {
           <InlineDemo initialCode={EX_ENUM} />
         </Sub>
 
+        <Sub id="unions" title="Unions take apart by type">
+          <P>
+            {m({ children: "union<f64, string, bool>" })} holds a value of any one of its members,
+            with no constructor to call: a member is a union value as it is. A{" "}
+            {m({ children: "match" })} on it has one arm per member type, the subject has that type
+            inside the arm, and leaving a member out is a compile error.
+          </P>
+          <InlineDemo initialCode={EX_UNION} />
+        </Sub>
+
         <Sub id="generics" title="Generics, monomorphised">
           <P>
             One instantiation per distinct set of arguments, so {m({ children: "Vec<i32>" })} costs
@@ -112,8 +147,10 @@ export default function Language() {
 
         <Sub id="arrays" title="Arrays">
           <P>
-            GC arrays, bounds-checked, with {m({ children: "i32[5]()" })} for a sized one and{" "}
-            {m({ children: "i32[](1, 2, 3)" })} for a literal.
+            GC arrays, bounds-checked, with {m({ children: "[1, 2, 3]" })} for a literal and{" "}
+            {m({ children: "i32[].filled(5, 0)" })} for a sized one. A growable one is{" "}
+            {m({ children: "Vec<T>" })}, read with {m({ children: ".get(i)" })} — indexing with
+            brackets is for arrays.
           </P>
           <InlineDemo initialCode={EX_ARRAYS} />
         </Sub>
@@ -129,8 +166,8 @@ export default function Language() {
 
         <Sub id="core" title="One import is not a file">
           <P>
-            {m({ children: "core" })} ships inside the compiler, so it is written without quotes —
-            there is no path to be right or wrong about, and it cannot be pointed anywhere else.
+            {m({ children: "core" })} ships inside the compiler, so it is a name rather than a path —
+            there is no file to be right or wrong about, and it cannot be pointed anywhere else.
           </P>
           <Pair leftLabel="main.wac" rightLabel="report.wac" left={EX_CORE_MAIN} right={EX_CORE_LIB} />
           <P>
@@ -144,8 +181,12 @@ export default function Language() {
           <P>
             Hence the rule for what goes in {m({ children: "core" })}, which is a test rather than a
             taste: <Lead>must this type cross a repository boundary through a function
-            reference?</Lead> Containers and sum types do not — they live in a package. Today{" "}
-            {m({ children: "Read" })} is the only thing that qualifies.
+            reference?</Lead> {m({ children: "Read" })} was the first thing to qualify. The markup
+            tree and the conversion symbols followed for the same reason, and the containers —{" "}
+            {m({ children: "Vec" })}, {m({ children: "Map" })}, {m({ children: "Option" })},{" "}
+            {m({ children: "Result" })} — for a weaker one: a program that wants a map should not
+            have to find a package first. Nothing in {m({ children: "core" })} holds a capability,
+            so importing it reaches nothing outside the program.
           </P>
         </Sub>
       </Section>

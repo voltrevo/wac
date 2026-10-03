@@ -21,6 +21,8 @@ output.
 | `wac validate mod.wasm…` | whether the engine accepts each module, without running it |
 | `wac covdump`, `ctcompare`, `tracestat` | coverage and trace instruments over a built module |
 | `wac sh [-c script]` | the shell, sealed unless granted |
+| `wac task [name] [-- args…]` | run a task from `tasks.json5`, or list them |
+| `wac self install --from PATH` | put that command under `$WAC_HOME` and on `PATH` |
 | `wac self uninstall [--keep-cache]` | remove an installed `wac`, and nothing else |
 
 The first argument decides the command. A name ending in `.wasm` is a module to run, whether or not the file exists —

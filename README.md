@@ -57,7 +57,7 @@ started.
 ## And this is the language it is written in
 
 ```wac
-export string main() {
+export string greet() {
   Option<string> name = Option.None;
   // Option<string> name = Option.Some("Alice and Bob");
 
@@ -77,14 +77,22 @@ enum Option<T> {
 ```
 
 Structs with methods and subtyping, monomorphised generics, enums with payloads and exhaustive
-`match`, nullable references, GC arrays, function references, and four cast modes that say what they
-cost — `as` lossless, `as!` checked, `as~` lossy, `as@` raw.
+`match`, unions taken apart by type, nullable references, GC arrays, function references, and four
+cast modes that say what they cost — `as` lossless, `as!` checked, `as~` lossy, `as@` raw.
+
+`const` is part of the type. At the front of a declaration it applies throughout — the name cannot be
+rebound and nothing can be written through the reference, at any depth — and it travels with the
+reference into fields, returns and parameters. `(const Node)? cur` moves the name outside it, which is
+how a cursor walks a list it may not change. A method reaches its fields as `this.x`, always.
 
 The collector owns the heap, so there is no allocator to write and no linear memory in the artifact.
-The compiler is about 43,000 lines of wac with no LLVM, no binaryen and nothing to install, and it
-runs in a browser as readily as on a command line. It used to be 19,000 lines of TypeScript; that
-reference was deleted on 2026-08-28 and this line described it for a day.
+The compiler is about 61,000 lines of wac with no LLVM, no binaryen and nothing to install, and it
+runs in a browser as readily as on a command line.
 
+[`spec/`](spec/) is the definition: forty-nine chapters whose examples are programs with their
+outcomes written above them, every one compiled against the compiler in the tree —
+[`spec/_status/STATUS.md`](spec/_status/STATUS.md) has the verdicts, and
+[the website](https://voltrevo.github.io/wac/#/spec) shows each beside its program.
 [`spec/tour.wac`](spec/tour.wac) is the whole language in one annotated file that compiles and
 self-tests — much faster than reading the specification, and the right starting point before writing
 any wac.
@@ -102,7 +110,7 @@ stage A   wacc, built by the ladder — by the TypeScript reference until it was
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    220 sources, 1.6 MB, identical
+B == C    one program, 2.4 MB, identical
 ```
 
 The jump from *16 sources, 968 KB* — what this said until 2026-08-25 — is `issues/system/0257c`
@@ -129,7 +137,7 @@ Every number in this section is printed by the rung that produces it, and read o
 `wac test packages/wacc/test/wac/corpusemit_test.wac` for the corpus and the emitter — it is in the
 heavy lane, thirty-three minutes when it was last run on a machine three agents share, because it
 compiles the tree — and `wac task seed` for the size, which is printed to the byte and rounded here.
-It is **1,675,320** bytes; the day the figure above was first written it moved three times, 960,310,
+It was **1,675,320** bytes then and is about 2.4 MB now; the day the figure above was first written it moved three times, 960,310,
 then 965,855, then 968,370, which is the reason it is rounded rather than quoted.
 Three days earlier they were 414 files, 411 whole, three partial and 431,705 bytes; six days before
 that, 354, 346, 8 and 266,164. The figures move because the repository does.
@@ -185,7 +193,8 @@ size and test count.
 Almost nothing here is tested against an expectation somebody typed. The applets are compared against
 GNU coreutils, the shell against bash script for script, the regex engine against GNU grep byte by
 byte, the crypto against test vectors, TLS against OpenSSL, Tor against C tor, and the wac compiler
-against the TypeScript one. Where a differential found a disagreement and *we* were right, the other
+against its own specification's examples — it was checked against a TypeScript compiler until that
+was deleted. Where a differential found a disagreement and *we* were right, the other
 side got an issue rather than us getting a workaround.
 
 ```sh

@@ -110,7 +110,7 @@ export default function Bootstrap() {
             ["the assembler that runs", "1,217 lines of Rust — turns L0 text into wasm bytes"],
             ["the L1 interpreter", "1,814 lines of hand-written L0 — the only program written in it"],
             ["the flattener", "500 lines — resolves imports, which no rung can do"],
-            ["trusted by reading", "3,531 lines, being those three"],
+            ["trusted by reading", "3,558 lines, being those three"],
             ["trusted by derivation", "everything else: four compilers and the wac compiler itself"],
             ["what it replaced", "18,203 lines of TypeScript, all of it in the first column"],
           ]}
@@ -183,7 +183,7 @@ export default function Bootstrap() {
               <span style={{ fontFamily: font.mono }}>wac-L5</span>,
               "wac itself — all of core/ and all of wacc/src",
               "wac-L4",
-              "4,126 lines",
+              "4,192 lines",
             ],
           ]}
         />

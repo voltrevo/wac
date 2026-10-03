@@ -231,11 +231,11 @@ export string demo() {
 // The reason Read exists rather than a bare u8[]: an empty array means both "finished"
 // and "failed". match is exhaustive, so this cannot forget the difference.
 export string describe(Read r) {
-  match (r) {
-    Data(bytes): return bytes.len() == 1 ? "read 1 byte" : "read some bytes";
-    End:         return "finished";
-    Failed(why): return "failed: " + why;
-  }
+  return match (r) {
+    Data(bytes): bytes.len() == 1 ? "read 1 byte" : "read some bytes",
+    End:         "finished",
+    Failed(why): "failed: " + why,
+  };
 }
 `,
     },
@@ -340,9 +340,7 @@ f64 totalArea(Shape[] shapes) {
 }
 
 export f64 run(f64 rectWidth, f64 rectHeight, f64 circleRadius) {
-  Shape[] shapes = Shape[].defaulted(2);
-  shapes[0] = Rect(0.0, 0.0, rectWidth, rectHeight);
-  shapes[1] = Circle(0.0, 0.0, circleRadius);
+  Shape[] shapes = [Rect(0.0, 0.0, rectWidth, rectHeight), Circle(0.0, 0.0, circleRadius)];
   return totalArea(shapes);
 }
 `,
@@ -723,9 +721,8 @@ export i32 countVowels(string s) {
   u8[] b = s.toBytes();
   i32 n = 0;
   for (i32 i = 0; i < b.len(); i++) {
-    // \`i32\`, not \`u8\`: a packed type is an array element, never a variable. Reading one
-    // widens it, which is why the comparisons below are ordinary integer comparisons.
-    i32 c = b[i];
+    // A character literal is a \`u8\` when it is compared with one.
+    u8 c = b[i];
     if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') { n = n + 1; }
   }
   return n;

@@ -4,6 +4,9 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   base: process.env.BASE_URL || "/",
+  // The spec pages read `spec/` and the ladder demo `bootstrap/js/`, both outside this directory;
+  // the dev server refuses files outside its root unless told the repository is fair game.
+  server: { fs: { allow: [".."] } },
   build: {
     rollupOptions: {
       // One site, and a stub where it used to be built. `next/` was the rewrite, deployed beside

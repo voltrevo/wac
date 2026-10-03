@@ -260,7 +260,7 @@ export default function Checked() {
 
       <Section id="spec" kicker="evidence, seventh kind" title="A specification that cannot drift">
         <P>
-          The language has a written specification, and <Lead>438 of its claims carry a tag</Lead>{" "}
+          The language has a written specification, and <Lead>695 of its claims carry a tag</Lead>{" "}
           like {m({ children: "[§wac-core-one-type-8fjm2wq]" })}. Every tag names a test. A claim
           without evidence beside it reads as evidence, which is the failure mode a specification
           has, so a test walks the specification and fails with the list of any tag nothing covers.
@@ -270,7 +270,7 @@ export default function Checked() {
           detail.</Lead> It proves every tag has a test. It cannot prove every rule has a tag — so a
           normative sentence written without one is invisible to exactly the check that exists to
           catch prose nobody stands behind. Sweeping{" "}
-          {m({ children: "spec/spec/*.md" })} for the phrasings a rule is written in —{" "}
+          {m({ children: "spec/**/*.md" })} for the phrasings a rule is written in —{" "}
           <em>is a compile error</em>, <em>is refused</em>, <em>is not allowed</em> — with no tag
           nearby finds rules that nothing runs, and{" "}
           <A href={`${BLOB}/issues/lang/closed/0125-eleven-stated-spec-rules-have-nothing-that-measures-them.md`} external>issue 0125</A>{" "}

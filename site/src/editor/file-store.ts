@@ -81,3 +81,33 @@ export function saveFiles(files: FileMap): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(userFiles));
 }
 
+
+const HANDOFF_KEY = "wac-open";
+
+/**
+ * Hand the playground some files to open, from another page — the spec's "run this" button.
+ *
+ * Through `sessionStorage` rather than the URL, because a multi-file example does not fit in a
+ * hash comfortably and the router reads the hash as a page. The playground takes it once and clears
+ * it, so a reload shows the reader's own files rather than reopening the example over them.
+ */
+export function handOff(files: FileMap, active: string): void {
+  try {
+    sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({ files, active }));
+  } catch { /* storage refused: the playground opens as it was */ }
+}
+
+/** What `handOff` left, merged into `files` and saved; null when nothing was handed over. */
+export function takeHandOff(files: FileMap): { files: FileMap; active: string } | null {
+  try {
+    const raw = sessionStorage.getItem(HANDOFF_KEY);
+    if (raw === null) return null;
+    sessionStorage.removeItem(HANDOFF_KEY);
+    const got = JSON.parse(raw) as { files: FileMap; active: string };
+    const next = { ...files, ...got.files };
+    saveFiles(next);
+    return { files: next, active: got.active };
+  } catch {
+    return null;
+  }
+}

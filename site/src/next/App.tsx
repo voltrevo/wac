@@ -1,7 +1,7 @@
 // Routing for the staging site. Same shape as the live one — the hash carries the page and,
 // after a slash, a heading to scroll to — because two hashes in one URL is not a thing.
 
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import Home from "./Home";
 import Start from "./Start";
 import Language from "./Language";
@@ -13,8 +13,11 @@ import Roadmap from "./Roadmap";
 import Playground from "../Playground";
 import type { Route } from "./ui";
 
+// The spec is fifty documents and a renderer for them; nobody reading the front page should fetch it.
+const Spec = lazy(() => import("./Spec"));
+
 const ROUTES: Record<string, Route> = { "": "home", start: "start", language: "language", run: "run",
-  bootstrap: "bootstrap", stack: "stack", checked: "checked", roadmap: "roadmap", playground: "playground" };
+  bootstrap: "bootstrap", stack: "stack", checked: "checked", roadmap: "roadmap", spec: "spec", playground: "playground" };
 
 /**
  * Where the site this replaces sent people, for links written before it did.
@@ -27,13 +30,19 @@ const ROUTES: Record<string, Route> = { "": "home", start: "start", language: "l
  */
 const MOVED: Record<string, Route> = { built: "stack", showcase: "stack" };
 
-function parse(): { route: Route; anchor: string | null } {
-  const [first, second] = window.location.hash.replace(/^#\/?/, "").split("/");
-  return { route: ROUTES[first] ?? MOVED[first] ?? "home", anchor: second || null };
+/**
+ * `#/<page>/<heading>`, except the spec, which has a chapter between the two:
+ * `#/spec/<chapter>/<heading>`.
+ */
+function parse(): { route: Route; chapter: string | null; anchor: string | null } {
+  const [first, second, third] = window.location.hash.replace(/^#\/?/, "").split("/");
+  const route = ROUTES[first] ?? MOVED[first] ?? "home";
+  if (route === "spec") return { route, chapter: second || null, anchor: third || null };
+  return { route, chapter: null, anchor: second || null };
 }
 
 export default function App() {
-  const [{ route, anchor }, setLocation] = useState(parse);
+  const [{ route, chapter, anchor }, setLocation] = useState(parse);
 
   useEffect(() => {
     const handle = () => setLocation(parse());
@@ -42,6 +51,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // A chapter arrives after the route does, and scrolls itself once it has.
+    if (route === "spec") return;
     if (anchor === null) { window.scrollTo(0, 0); return; }
     const id = requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView({ block: "start" }));
     return () => cancelAnimationFrame(id);
@@ -55,6 +66,7 @@ export default function App() {
     case "bootstrap": return <Bootstrap />;
     case "checked":  return <Checked />;
     case "roadmap":  return <Roadmap />;
+    case "spec":     return <Suspense fallback={null}><Spec chapter={chapter} anchor={anchor} /></Suspense>;
     // The playground is a tool rather than a page, and is carried over as it is — sending a reader
     // to the other site to use it would be a stranger seam than its styling being a step behind.
     case "playground": return <Playground />;

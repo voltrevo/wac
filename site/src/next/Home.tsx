@@ -17,6 +17,11 @@ import InlineDemo from "../editor/InlineDemo";
 import { BUILT, TOTALS } from "../data/built";
 import { TREE, A, Caveat, Code, Facts, Lead, m, P, Page, Section, Table } from "./ui";
 import { ASSETS, c, font, space } from "./tokens";
+import { statusOf } from "./specModel";
+import STATUS_TEXT from "../../../spec/_status/STATUS.md?raw";
+
+/** The spec's example verdicts, as the suite last wrote them — read, so they cannot go stale here. */
+const SPEC = statusOf(STATUS_TEXT).total;
 
 /**
  * The commands the terminal shows, and what they print.
@@ -44,7 +49,7 @@ stage A        wacc, built by wac-L5
 stage B        wacc, built by stage A
 stage C        wacc, as stage B compiles it
 
-B == C         28 sources, 1,945 KB, identical`;
+B == C         29 sources, 2,434 KB, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
@@ -55,11 +60,11 @@ export const TRANSCRIPT: [string, string][] = [
 /**
  * One program, compiled and run through `wacx` before it was put here.
  *
- * `main` first and the enum after it, because a file is a set of declarations rather than a
+ * `greet` first and the enum after it, because a file is a set of declarations rather than a
  * sequence of them — and because the point of the example is what it does, not its vocabulary. The
  * commented line is the invitation: swapping the markers gives `Hello, Alice and Bob!`.
  */
-const EX_HELLO = `export string main() {
+const EX_HELLO = `export string greet() {
   Option<string> name = Option.None;
   // Option<string> name = Option.Some("Alice and Bob");
 
@@ -255,7 +260,7 @@ export default function Home() {
         <P>
           <Lead>wac is self-hosted, and there is no seed.</Lead>{" "}
           {m({ children: "packages/wacc" })} is the compiler, written in wac —{" "}
-          <Lead>~43,000 lines</Lead> — and it is what builds everything here: the packages, the
+          <Lead>~61,000 lines</Lead> — and it is what builds everything here: the packages, the
           programs, the demos on this page. It grew out of a compiler written in TypeScript, which
           was the seed until 2026-08-28 and is deleted. What builds wacc now is a ladder of five
           rungs whose lowest is hand-written wasm assembly text, so nothing here starts from a
@@ -269,19 +274,21 @@ export default function Home() {
           sentence was written.
         </P>
         <P>
-          It is measured against the specification rather than against the other compiler. It
-          refuses <Lead>all 317</Lead> of the one-file programs the spec calls illegal, and never
-          invents a diagnostic — silent on all <Lead>371</Lead> it calls legal. The second is the
-          number that matters: a checker reporting less than the spec can be finished, while one
-          that reports what the spec does not cannot be trusted at all.
+          It is measured against the specification rather than against the other compiler. The
+          spec is written as <Lead>{SPEC.examples} example programs</Lead>, each with its outcome
+          above it, and the suite compiles every one: it meets <Lead>{SPEC.met}</Lead>, and{" "}
+          <A href="#/spec">the spec pages</A> mark each verdict beside its program. Beside them is a
+          corpus of cases in {m({ children: "spec/cases" })} — programs the language must refuse,
+          answers it must give, places it must trap — and it passes all of them, with no list of
+          known misses to hide one in.
         </P>
         <P>
-          <Lead>Both ledgers of known misses are empty</Lead>, which is the part worth saying out
-          loud. {m({ children: "specsingle_test.wac" })} keeps two lists — the illegal programs this
-          checker accepts, and the legal ones it refuses — and a program leaving either list fails
-          the test until somebody deletes the line. The second list was fourteen when the corpus was
-          recorded; eleven of those were one bug, a local aliasing something const could not be
-          rebound, which made every linked-list walk in the specification illegal.
+          <Lead>A false alarm is the number that matters.</Lead> A checker reporting less than the
+          spec can be finished; one that reports what the spec does not cannot be trusted at all.
+          The worst of these was a flag that answered both <em>may I write through this</em> and{" "}
+          <em>may I rebind this name</em>, which made every linked-list walk in the specification
+          illegal. The answer was to put {m({ children: "const" })} in the type, where a cursor is
+          written {m({ children: "(const Node)? cur" })}.
         </P>
         <Caveat title="not finished">
           Every file in the corpus compiles whole now — it was 27 short of 729 five days ago — and

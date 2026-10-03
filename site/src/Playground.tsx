@@ -2,19 +2,25 @@ import { useState, useCallback, useEffect } from "react";
 import WacEditor from "./editor/WacEditor";
 import OutputPanel from "./editor/OutputPanel";
 import FileTree from "./editor/FileTree";
-import { loadFiles, saveFiles, displayPath, absPath, DEFAULT_FILES, type FileMap } from "./editor/file-store";
+import { loadFiles, saveFiles, displayPath, absPath, takeHandOff, DEFAULT_FILES, type FileMap } from "./editor/file-store";
 import { allExampleFiles } from "./editor/examples";
 
 const EXAMPLE_FILES = allExampleFiles();
 const ORIGINALS: FileMap = { ...DEFAULT_FILES, ...EXAMPLE_FILES };
 
+/** The files to start with, and which one is open: a hand-off from another page wins. */
+function initial(): { files: FileMap; active: string } {
+  const all = loadFiles(EXAMPLE_FILES);
+  const handed = takeHandOff(all);
+  if (handed !== null && handed.active in handed.files) return handed;
+  const userFile = Object.keys(all).find((k) => !k.includes("/examples/"));
+  return { files: all, active: userFile ?? Object.keys(all)[0] };
+}
+
 export default function Playground() {
-  const [files, setFiles] = useState<FileMap>(() => loadFiles(EXAMPLE_FILES));
-  const [active, setActive] = useState(() => {
-    const all = loadFiles(EXAMPLE_FILES);
-    const userFile = Object.keys(all).find((k) => !k.includes("/examples/"));
-    return userFile ?? Object.keys(all)[0];
-  });
+  const [start] = useState(initial);
+  const [files, setFiles] = useState<FileMap>(start.files);
+  const [active, setActive] = useState(start.active);
 
   const persist = useCallback((next: FileMap) => {
     setFiles(next);
@@ -104,9 +110,7 @@ export default function Playground() {
         <a href="#/" style={{ color: "#9ca3af", textDecoration: "none" }}>&larr; home</a>
         <a href="shell.html" style={{ color: "#9ca3af", textDecoration: "none" }}>shell demo</a>
         <a
-          href="https://github.com/voltrevo/wac/tree/master/spec"
-          target="_blank"
-          rel="noopener"
+          href="#/spec"
           style={{ color: "#9ca3af", textDecoration: "none" }}
         >
           spec

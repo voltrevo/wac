@@ -97,16 +97,16 @@ the one that is wrong.
 
 ## The answer to the question
 
-**The ladder is 9,877 lines** — the five rungs at 8,160, the assembler that runs at 1,217 and the
-flattener at 500 — against the 19,499 of the reference compiler, which was deleted on 2026-08-28.
+**The ladder is 9,970 lines** — the five rungs at 8,226, the assembler that runs at 1,217 and the
+flattener at 527 — against the 19,499 of the reference compiler, which was deleted on 2026-08-28.
 The line count is the less interesting half, because the two numbers are not the same kind of thing.
 
     what a human must read to trust it                        (re-measured 2026-08-29)
       wac-L0 assembler, one of the two         1,217 lines   rust/src/lib.rs — the other is the
       wac-L1 interpreter, hand-written         1,814 lines   boot/l1.l0        check, not the trust
-      the flattener                              500 lines   rust-ladder/src/flatten.rs
+      the flattener                              527 lines   rust-ladder/src/flatten.rs
                                                -----------
-                                               3,531 lines
+                                               3,558 lines
 
     what is derived from that, and checked by running it
       wac-L2 ... wac-L5                        6,312 lines   boot/l2.l1 … boot/l5.l4
@@ -117,7 +117,7 @@ The line count is the less interesting half, because the two numbers are not the
       the tests                                1,512 lines
 
 **The flattener is in the first column and it took a while to notice.** wac-L5 ignores `import`,
-so something has to do the linking, and that something is 500 lines of Rust — `rust-ladder/src/flatten.rs`,
+so something has to do the linking, and that something is 527 lines of Rust — `rust-ladder/src/flatten.rs`,
 which `./bootstrap.sh` runs — that resolves specifiers, concatenates modules and *renames the
 colliding private declarations of two of them*. It was 191 lines of TypeScript in `ts/l5.ts` when
 this was written, and moving it did not move this paragraph.
@@ -125,7 +125,7 @@ A bug there produces a wrong program quietly, which is the definition of code th
 trusted. It is the cost of the shortcut, and leaving it out of the count was flattering.
 
 The reference's 18,203 lines were all in the first column: every one of them was trusted because
-somebody read it. Here, 3,531 are — and one of those three files is checked against a second
+somebody read it. Here, 3,558 are — and one of those three files is checked against a second
 implementation of the same written format, so even the root has a witness.
 
 That is the case for a ladder, and it is a different case from "fewer lines".
@@ -144,7 +144,7 @@ everything above it is trusted by derivation.
 | **wac-L2** | i32, memory, functions, `while`, string literals | wac-L1 | 298 lines |
 | **wac-L3** | C-family syntax, globals, scopes, shadowing | wac-L2 | 591 lines |
 | **wac-L4** | structs, arrays, `enum`/`match`, methods, `u8[]` strings, **wasm GC** | wac-L3 | 1,331 lines |
-| **wac-L5** | wac itself — *all of `core/` and all of `wacc/src`* | wac-L4 | 4,126 lines |
+| **wac-L5** | wac itself — *all of `core/` and all of `wacc/src`* | wac-L4 | 4,192 lines |
 
 Only `wac` survives as a language name; the rungs are numbered, because they look alike and are not
 alike. Writing `==` where L1 wants `=`, or `//` where it wants `;`, is a mistake the old names

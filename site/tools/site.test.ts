@@ -130,6 +130,16 @@ Deno.test("site: the pages' runnable snippets compile", async () => {
     // directory. It is the only snippet here that imports a capability, so it also checks that
     // `std/platform.wac` resolves as a built-in rather than as a file the reader has to have.
     ["EX_START_HELLO", "a.wac"],
+    // The tour's runnable snippets, every one the language page hands to an `InlineDemo`. They sat
+    // outside this list until 2026-10-03, so a tour could teach a spelling the compiler had dropped.
+    ["EX_MATH", "a.wac"],
+    ["EX_STRUCT", "a.wac"],
+    ["EX_CONST", "a.wac"],
+    ["EX_NULLABLE", "a.wac"],
+    ["EX_ENUM", "a.wac"],
+    ["EX_UNION", "a.wac"],
+    ["EX_GENERIC", "a.wac"],
+    ["EX_ARRAYS", "a.wac"],
   ] as const) {
     const r = compile({ [file]: await snippet(name) }, file);
     if (!r.ok) {
@@ -324,7 +334,7 @@ Deno.test("site: the panel runs an export that takes a string", async () => {
 
 Deno.test("site: the panel runs an export that takes and returns an array", async () => {
   const src = `export i32[] doubled(i32[] xs) {
-    i32[] out = i32[xs.len()]();
+    i32[] out = i32[].filled(xs.len(), 0);
     for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i] * 2; }
     return out;
   }`;
@@ -941,3 +951,66 @@ Deno.test("site: the editor's keyword list is the one the spec prints", async ()
   }
 });
 
+
+// ── The spec pages ─────────────────────────────────────────────────────────
+
+/**
+ * The spec section numbers examples itself, and `MET` was numbered by the probe.
+ *
+ * `#/spec` puts "met" on a fence by counting ` ```wac ` fences that are not fragments, per document,
+ * the way `packages/wacc/test/wac/specexamples.wac` does. A page that counted one fence differently —
+ * a fence in a list, a `// fragment` with a leading space — would put every later verdict on the
+ * wrong program and look perfectly fine. So: the same documents, the same counts as STATUS.md, every
+ * key in MET on a fence, and every in-spec link and anchor landing somewhere.
+ */
+Deno.test("site: the spec pages count examples as the probe does, and their links resolve", async () => {
+  const { chaptersOf, parseBlocks, parseInline, metOf, statusOf, exampleKey, routeOf } =
+    await import("../src/next/specModel.ts");
+  const root = new URL("../../spec/", import.meta.url).pathname;
+  const chapters = chaptersOf(await Deno.readTextFile(`${root}README.md`));
+  if (chapters.length < 40) throw new Error(`only ${chapters.length} chapters read from spec/README.md`);
+  const met = metOf(await Deno.readTextFile(`${root}_status/MET`));
+  const status = statusOf(await Deno.readTextFile(`${root}_status/STATUS.md`));
+
+  const keys = new Set<string>();
+  const ids = new Map<string, Set<string>>();
+  const docs = new Map<string, ReturnType<typeof parseBlocks>>();
+  const wrong: string[] = [];
+  for (const path of ["README.md", ...chapters.map((c) => c.path)]) {
+    const blocks = parseBlocks(await Deno.readTextFile(`${root}${path}`));
+    docs.set(path, blocks);
+    const here = new Set<string>();
+    let n = 0;
+    for (const b of blocks) {
+      if (b.kind === "heading") here.add(b.id);
+      if (b.kind === "fence" && b.fence.ordinal !== null) { n++; keys.add(exampleKey(path, b.fence.ordinal)); }
+    }
+    ids.set(path, here);
+    const said = status.docs.get(path)?.examples ?? 0;
+    if (said !== n) wrong.push(`${path}: the page counts ${n} examples, STATUS.md ${said}`);
+  }
+  for (const k of met) if (!keys.has(k)) wrong.push(`MET names ${k}, which is no fence the page numbers`);
+
+  // Links: every chapter link resolves to a chapter, and every anchor to a heading in it.
+  const bySlug = new Map(chapters.map((c) => [c.slug, c.path]));
+  for (const [path, blocks] of docs) {
+    const texts = blocks.flatMap((b) =>
+      b.kind === "para" ? [b.text] : b.kind === "list" ? b.items : b.kind === "table" ? [...b.head, ...b.rows.flat()] : []);
+    const walk = (nodes: ReturnType<typeof parseInline>) => {
+      for (const x of nodes) {
+        if (x.kind === "link") {
+          const r = routeOf(x.href, path, chapters, "BLOB");
+          if (!r.external) {
+            const [, , slug, anchor] = r.href.split("/");
+            const target = slug === undefined ? "README.md" : bySlug.get(slug);
+            if (target === undefined) wrong.push(`${path}: ${x.href} goes to no chapter`);
+            else if (anchor !== undefined && !ids.get(target)!.has(anchor)) wrong.push(`${path}: ${x.href} — no heading #${anchor} in ${target}`);
+          }
+        }
+        if ("children" in x) walk(x.children);
+      }
+    };
+    for (const t of texts) walk(parseInline(t));
+  }
+  if (wrong.length > 0) throw new Error(`${wrong.length}:\n  ${wrong.slice(0, 20).join("\n  ")}`);
+});
