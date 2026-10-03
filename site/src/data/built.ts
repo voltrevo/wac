@@ -21,25 +21,25 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 40,
-  lines: 147381,
+  lines: 152228,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2965,
-  programs: 83,
+  tests: 3112,
+  programs: 85,
   pages: 11,
   /**
-   * The whole repository: the packages (2965), and the compiler, harness and tooling
-   * around them (162).
+   * The whole repository: the packages (3112), and the compiler, harness and tooling
+   * around them (149).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3127,
+  testsAll: 3261,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
-  applets: 65,
+  applets: 66,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 610,
+  wacTests: 652,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -58,30 +58,30 @@ export const BUILT: BuiltPackage[] = [
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3033, tests: 72 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 14 },
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1311, tests: 46 },
-  { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 59 },
-  { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1084, tests: 28 },
+  { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1547, tests: 59 },
+  { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1099, tests: 28 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 13 },
   { name: "ts", what: "TypeScript to JavaScript, in wac.", lines: 2342, tests: 40 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4061, tests: 55 },
-  { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8456, tests: 143 },
+  { name: "box", what: "66 applets in one program, chosen by the first argument — 65 tools and help, which prints the list.", lines: 8800, tests: 187 },
   { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 7228, tests: 315 },
   { name: "ens", what: "The name a person types, turned into the node a contract is asked about.", lines: 389, tests: 24 },
   { name: "ethrpc", what: "Asking an Ethereum node a question, so the packages that verify answers have something to verify.", lines: 762, tests: 11 },
-  { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3286, tests: 42 },
+  { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3283, tests: 42 },
   { name: "git", what: "git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS.", lines: 5764, tests: 61 },
   { name: "lightclient", what: "A light client follows the beacon chain without downloading it.", lines: 642, tests: 12 },
   { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 489, tests: 33 },
-  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4401, tests: 253 },
+  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4520, tests: 293 },
   { name: "quic", what: "QUIC version 1 — RFC 9000 and RFC 9001 — in wac.", lines: 3289, tests: 98 },
-  { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7510, tests: 32 },
+  { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7514, tests: 46 },
   { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 4132, tests: 58 },
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 32 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4435, tests: 200 },
-  { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17451, tests: 324 },
-  { name: "wac", what: "The command.", lines: 5009, tests: 68 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 42621, tests: 393 },
+  { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17715, tests: 326 },
+  { name: "wac", what: "The command.", lines: 5346, tests: 72 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 45932, tests: 431 },
   { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 1816, tests: 50 },
-  { name: "wactest", what: "Assertions for tests written in wac.", lines: 2294, tests: 35 },
+  { name: "wactest", what: "Assertions for tests written in wac.", lines: 2524, tests: 40 },
   { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3754, tests: 79 },
 ];

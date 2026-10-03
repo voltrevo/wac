@@ -238,7 +238,7 @@ string quotedLine(string l) {
 }
 
 /**
- * The text as a wac expression: one quoted line per source line, concatenated.
+ * The text as wac statements: one quoted line per source line, in an array, joined by a loop.
  *
  * A line each rather than one long literal, because that is what makes a diff of the generated file
  * readable — a one-line change to `core` should be a one-line change there.
@@ -249,30 +249,26 @@ string asWac(string text) {
   if (n > 0 && lines[n - 1] == "") { n = n - 1; }
   if (n == 0) { return "  return \"\";"; }
 
-  // **In chunks, because one expression this wide overflows the compiler's stack.**
-  // `std/platform.wac` is 1,939 lines, and as a single `+` chain that is a right-nested expression
-  // 1,939 operands deep; every recursive walk over it — parse, check, emit — recurses once per
-  // operand. It compiled, but with no headroom: adding one import edge to a file that already
-  // reached this module was enough to tip it into `Maximum call stack size exceeded`, from a trap
-  // that named neither the file nor the import. `issues/lang/0165a`.
+  // **An array and a loop, because no expression may grow with the text.** This was one `+` chain
+  // until `issues/lang/0165a`: `std/platform.wac` as a single chain was an expression ~1,939
+  // operands deep, and every recursive walk over it — parse, check, emit — recursed once per
+  // operand, until one import edge tipped it into `Maximum call stack size exceeded`.
   //
-  // 64 is well under where trouble starts and still only ~30 statements for the largest file.
-  //
-  // **Not free, and not identical output**: the seed went 963,369 to 963,562 bytes, because
-  // `s = s + …` really is different code from one chain, and the concatenation is now incremental
-  // rather than one expression. 193 bytes to remove a stack overflow that struck from three files
-  // away is a trade worth stating rather than glossing.
-  i32 CHUNK = 64;
-  string out = "";
-  for (i32 i = 0; i < n; i = i + CHUNK) {
-    string head = i == 0 ? "  string s = " : "  s = s + ";
-    string pad = "";
-    for (i32 k = 0; k < head.len(); k++) { pad = pad + " "; }
-    for (i32 k = 0; k < CHUNK && i + k < n; k++) {
-      out = out + (k == 0 ? head : pad + "+ ") + quotedLine(lines[i + k]);
-      out = out + (i + k + 1 < n && k + 1 < CHUNK ? "\n" : ";\n");
-    }
+  // The fix then was chunks of 64, `s = s + …;` statements — which holds for the compiler and not
+  // for the optimiser. binaryen's local sinking folds each `s = s + …` into the next one, rebuilding
+  // the chain whole, and its binary writer recurses once per level: `--optimize` of anything that
+  // embeds wacc died in `emitBinary` with the same RangeError, the deploy's `wacc.html` first. An
+  // array literal is one flat list of operands and a loop cannot be folded into an expression, so the
+  // depth no longer depends on how long `core` is, for any consumer.
+  string out = "  string[] lines = [\n";
+  for (i32 i = 0; i < n; i++) {
+    out = out + "    " + quotedLine(lines[i]) + (i + 1 < n ? ",\n" : "\n");
   }
+  // `as string[]` because wac-L5 builds this file too, and it reads an array literal only with
+  // its type written after it.
+  out = out + "  ] as string[];\n";
+  out = out + "  string s = \"\";\n";
+  out = out + "  for (i32 i = 0; i < lines.len(); i++) { s = s + lines[i]; }\n";
   return out + "  return s;";
 }
 

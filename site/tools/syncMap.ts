@@ -119,9 +119,11 @@ async function corpusSize(root: string): Promise<number> {
  */
 async function appletCount(root: string): Promise<number> {
   const src = await Deno.readTextFile(`${root}/packages/box/src/box.wac`);
-  const body = src.match(/export string\[\] appletNames\(\) \{\s*return string\[\]\(([\s\S]*?)\);/);
+  // `[…]`, the array literal since 2026-10-01; it was `string[](…)` before, and the regex knowing
+  // only that form is what failed the deploy the day the list was rewritten.
+  const body = src.match(/export string\[\] appletNames\(\) \{\s*return (?:\[([\s\S]*?)\]|string\[\]\(([\s\S]*?)\));/);
   if (body === null) throw new Error("packages/box/src/box.wac: no appletNames — has it moved?");
-  return (body[1].match(/"/g) ?? []).length / 2;
+  return ((body[1] ?? body[2]).match(/"/g) ?? []).length / 2;
 }
 
 /**
