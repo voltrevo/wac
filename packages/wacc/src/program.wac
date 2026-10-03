@@ -107,7 +107,6 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
   string head = ex >= 0 ? text.slice(0, ex) + "      " + text.slice(ex + 6, at) : text.slice(0, at);
   string out = head + "__wacMain" + text.slice(at + 4, text.len());
 
-  bool showsErr = ret == "Result<void>" || ret == "Result<i32>" || endsWith(ret, ", string>");
   string call = "__wacMain(" + (takesSys ? "__wacSys" : "") + ")";
   string body = "";
   if (isAsync) {
@@ -120,8 +119,7 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
   else if (a == STATUS()) { body = body + "  return " + call + ";\n"; }
   else {
     string ok = a == OK_STATUS() ? "Ok(v): { return v; }" : "Ok(_): { return 0; }";
-    string err = showsErr ? "Err(e): { return __wacSys.__wacFailed(\"\\{e}\"); }"
-                          : "Err(_): { return __wacSys.__wacFailed(\"\"); }";
+    string err = errArm(ret);
     body = body + "  match (" + call + ") {\n    " + ok + "\n    " + err + "\n  }\n";
   }
 
@@ -133,6 +131,83 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
       + "export i32 main(Core __wacCore, Cli __wacCli) {\n"
       + "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n" + body + "}\n";
   return ProgramEntry("", out);
+}
+
+/**
+ * The `Err` arm of the adapter's `match`: what the program failed with, as text, and status 1.
+ *
+ * **From the error type as it is written by now**, which is after a left-out one was gathered —
+ * `Result<i32>` reaches here as `Result<i32, union<string, Malformed>>`. This said `"\{e}"` for
+ * every `Result<i32>`, from when a left-out error type meant `string`; once it meant a gathered
+ * `union`, every such `main` stopped building — *text from a union<string>, which has no
+ * `[toString]`* — and spec ch07's own `Result<i32>` example only looked met because a build that
+ * fails exits 1 too. A member that is a string or a number is shown; any other is named.
+ */
+string errArm(string ret) {
+  string e = errorTypeOf(ret);
+  if (e == "string") { return "Err(e): { return __wacSys.__wacFailed(e); }"; }
+  if (isTextPrimitive(e)) { return "Err(e): { return __wacSys.__wacFailed(\"\\{e}\"); }"; }
+  if (startsWith(e, "union<") && endsWith(e, ">")) {
+    string[] ms = topLevelParts(e.slice(6, e.len() - 1));
+    string arms = "";
+    for (i32 i = 0; i < ms.len(); i++) {
+      string m = ms[i];
+      string bare = startsWith(m, "const ") ? m.slice(6, m.len()) : m;
+      string shown = bare == "string" ? "e" : isTextPrimitive(bare) ? "\"\\{e}\"" : "\"" + bare + "\"";
+      arms = arms + m + ": " + shown + ", ";
+    }
+    if (arms == "") { return "Err(_): { return __wacSys.__wacFailed(\"\"); }"; }
+    return "Err(e): { return __wacSys.__wacFailed(match (e) { " + arms + "}); }";
+  }
+  // Not known yet — the route reached here before the default was gathered — so the emitter, which
+  // will know it, converts whatever union it turns out to be.
+  if (e == "" || e == "union") { return "Err(e): { return __wacSys.__wacFailed(\"\\{e}\"); }"; }
+  // A single written type: named, since this adapter cannot know whether it has a conversion.
+  return "Err(e): { return __wacSys.__wacFailed(\"" + e + "\"); }";
+}
+
+/** The error type of `Result<T, E>` as written, or "" when there is none. */
+string errorTypeOf(string ret) {
+  if (!startsWith(ret, "Result<") || !endsWith(ret, ">")) { return ""; }
+  string[] ps = topLevelParts(ret.slice(7, ret.len() - 1));
+  return ps.len() == 2 ? ps[1] : "";
+}
+
+bool isTextPrimitive(string t) {
+  return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "i8" || t == "i16" || t == "u8"
+      || t == "u16" || t == "f32" || t == "f64" || t == "bool";
+}
+
+/** `a, b<c, d>, e` split at the commas outside any `<…>` or `(…)`, each trimmed of its leading space. */
+string[] topLevelParts(string s) {
+  u8[] b = s.toBytes();
+  i32 n = s.len() == 0 ? 0 : 1;
+  i32 depth = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 ch = b[i] as i32;
+    if (ch == 60 || ch == 40) { depth = depth + 1; }          // `<` `(`
+    if (ch == 62 || ch == 41) { depth = depth - 1; }          // `>` `)`
+    if (ch == 44 && depth == 0) { n = n + 1; }                // `,`
+  }
+  string[] out = string[].filled(n, "");
+  i32 k = 0;
+  i32 from = 0;
+  depth = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    bool cut = i == b.len();
+    if (!cut) {
+      i32 ch = b[i] as i32;
+      if (ch == 60 || ch == 40) { depth = depth + 1; }
+      if (ch == 62 || ch == 41) { depth = depth - 1; }
+      cut = ch == 44 && depth == 0;
+    }
+    if (!cut) { continue; }
+    string part = s.slice(from, i);
+    while (part.len() > 0 && part.slice(0, 1) == " ") { part = part.slice(1, part.len()); }
+    if (k < n) { out[k] = part; k = k + 1; }
+    from = i + 1;
+  }
+  return out;
 }
 
 /** A type as written, with `, ` between arguments. */

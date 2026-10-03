@@ -249,3 +249,33 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * A `main` answering `Result<i32>` builds, runs, exits 1 on an `Err`, and says what it failed with.
+ *
+ * The adapter wrote `"\{e}"` for every `Result<i32>`, from when a left-out error type meant `string`.
+ * Gathered, it is a `union`, which has no text conversion: the build failed with *text from a
+ * union<string>, which has no `[toString]`*, and spec ch07's own `Result<i32>` example passed the spec
+ * probe anyway, because a build that fails also exits 1. So this asserts the output, not the status.
+ */
+export string test_a_result_main_with_a_gathered_error_builds_and_says_what_failed(Core core, Cli cli) {
+  T t = T.create();
+  string dir = freshScratch(t, cli, "resultmain");
+  string src =
+      "import { Sys } from \"std\";\nimport { Result } from \"core\";\n" +
+      "struct Malformed { string why; }\n" +
+      "Result<i32, Malformed> parse(i32 k) { if (k == 1) { return Result.Err(Malformed(\"bad\")); } return Result.Ok(k); }\n" +
+      "export Result<i32> main(Sys sys) {\n" +
+      "  i32 n = try parse(sys.args().len() + 1);\n" +
+      "  if (n > 5) { return Result.Err(\"too many\"); }\n" +
+      "  return Result.Ok(n);\n}\n";
+  Change wrote = cli.writeFile(dir + "/main.wac", src.toBytes()).wait();
+  t.eqI32(wrote.fault, 0, "wrote the program");
+  Exec r = cli.exec(wacBinary(cli), ["run", dir + "/main.wac"], u8[]()).wait();
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.isTrue(r.ran(), "wac ran — " + r.error);
+  t.isTrue(said.indexOf("cannot emit") < 0, "it builds — " + said);
+  t.eqI32(r.status, 1, "an Err exits 1 — " + said);
+  t.isTrue(said.indexOf("Malformed") >= 0, "and names what it failed with — " + said);
+  return t.report();
+}

@@ -1240,6 +1240,41 @@ bool isAutoTyL(Rz z, Ty t) {
   }
 }
 
+/** Whether `s` declares a local, with an initialiser, whose written type holds a `union` placeholder. */
+bool declaresPlaceholder(Rz z, Stmt s) {
+  match (s.kind) {
+    Var(type, nameTok, init, isConst): { return init is not null && placeholderInArgsL(z, type); }
+    If(cond, then, els): { return anyDeclaresPlaceholder(z, then) || anyDeclaresPlaceholder(z, els); }
+    While(cond, b): { return anyDeclaresPlaceholder(z, b); }
+    For(init, cond, update, b): { return anyDeclaresPlaceholder(z, b); }
+    Block(b): { return anyDeclaresPlaceholder(z, b); }
+    default: { return false; }
+  }
+}
+
+bool anyDeclaresPlaceholder(Rz z, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) { if (declaresPlaceholder(z, body[i])) { return true; } }
+  return false;
+}
+
+/** Whether a written type's arguments, at any depth, include the bare placeholder `union`. */
+bool placeholderInArgsL(Rz z, Ty t) {
+  match (t.kind) {
+    Named(tok, typeArgs): {
+      for (i32 i = 0; i < typeArgs.len(); i++) {
+        match (typeArgs[i].kind) {
+          Named(atok, aargs): { if (aargs.len() == 0 && rzText(z, atok) == "union") { return true; } }
+          default: { }
+        }
+        if (placeholderInArgsL(z, typeArgs[i])) { return true; }
+      }
+      return false;
+    }
+    Nullable(inner): { return placeholderInArgsL(z, inner); }
+    default: { return false; }
+  }
+}
+
 /** A local's written type, searched for at any depth outside lambdas; null when `auto` or absent. */
 Ty? localTyIn(Rz z, Stmt[] body, string nm) {
   for (i32 i = 0; i < body.len(); i++) {
@@ -1533,8 +1568,21 @@ Stmt[] splitStmt(Rz z, Stmt s) {
   Pulled p = Pulled(Stmt[](), 0, false);
   Stmt made = s;
   match (s.kind) {
-    Var(type, nameTok, init, isConst): {
+    Var(type0, nameTok, init, isConst): {
       if (init is null) { return Stmt[].filled(1, s); }
+      // **`Result<i32> r = load(k);` — a placeholder in a hoisted local's type** (spec ch33): the
+      // default wrote `Result<i32, union>`, and a hoisted local becomes a cell declared with its
+      // written type, where nothing is left to gather the `union` from. The initialiser says what it
+      // is, as it does for `auto`, so the local gets that written. Without this the cell held an
+      // unresolved type and a program trapped reading it — *requested new array is too large*.
+      Ty type = type0;
+      if (placeholderInArgsL(z, type0)) {
+        Ty? got = isAwaitL(init!) ? awaitedTy(z, innerAwait(z.c, init!)) : tyOfE(z, init!);
+        if (got is not null) {
+          type = cloneTy(got!);
+          s = Stmt(StmtKind.Var(type, nameTok, init!, isConst), s.line, s.col);
+        }
+      }
       if (isAwaitL(init!)) {
         // `auto x = await e;` — the slot needs `X`, so the local gets it written.
         if (!isAutoTyL(z, type)) { return Stmt[].filled(1, s); }
@@ -1685,7 +1733,9 @@ Stmt[] splitBody(Rz z, Stmt[] body) {
   i32 n = 0;
   Stmt[][] parts = Stmt[][].filled(body.len(), Stmt[]());
   for (i32 i = 0; i < body.len(); i++) {
-    parts[i] = awaitInStmt(body[i]) ? splitStmt(z, body[i]) : Stmt[].filled(1, body[i]);
+    // A declaration with a placeholder in its type is rewritten whether or not it awaits: it is
+    // still hoisted into a cell, which needs the type spelled.
+    parts[i] = awaitInStmt(body[i]) || declaresPlaceholder(z, body[i]) ? splitStmt(z, body[i]) : Stmt[].filled(1, body[i]);
     n = n + parts[i].len();
   }
   Stmt[] out = Stmt[].filled(n, body.len() > 0 ? body[0] : sRet(z.c, null));

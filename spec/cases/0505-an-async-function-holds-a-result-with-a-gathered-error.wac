@@ -1,0 +1,43 @@
+// expect: answers f = 22
+// why: a local inside an `async` function is hoisted into a cell declared with its written type,
+//      so `Result<i32> r = …` — a `union` placeholder after the default — left the cell's type
+//      unresolved and the program trapped; the initialiser, awaited or not, says what it is
+// from: issues/lang/0368a
+import { Result, Ticket } from "core";
+
+struct Malformed { string why; }
+
+Result<i32, string> read(i32 k) {
+  if (k == 0) { return Result.Err("not found"); }
+  return Result.Ok(k);
+}
+
+Result<i32, Malformed> parse(i32 k) {
+  if (k == 1) { return Result.Err(Malformed("bad")); }
+  return Result.Ok(k * 2);
+}
+
+Result<i32> load(i32 k) {
+  i32 a = try read(k);
+  i32 b = try parse(a);
+  return Result.Ok(b);
+}
+
+async Result<i32> loadLater(i32 k) {
+  await;
+  i32 a = try read(k);
+  return Result.Ok(a);
+}
+
+async i32 use() {
+  Result<i32> now = load(5);
+  Result<i32> later = await loadLater(3);
+  i32 which = 0;
+  if (now.orElse(0) > 0) {
+    Result<i32> bad = load(1);
+    which = match (bad) { Ok(v): 0, Err(e): match (e) { string: 1, Malformed: e.why.len() } };
+  }
+  return now.orElse(-1) + later.orElse(-1) + which * 3;
+}
+
+export i32 f() { return use().wait()!; }

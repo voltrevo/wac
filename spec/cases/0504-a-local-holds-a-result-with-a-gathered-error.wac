@@ -1,0 +1,34 @@
+// expect: answers f = 13
+// why: `Result<i32> r = load(5);` writes the default, so the local's error type is a `union`
+//      placeholder gathered from its initialiser (spec ch33) — the commonest way to hold a
+//      `Result<T>`, and the emitter declined it as a local of an unspelled type
+// from: issues/lang/0368a
+import { Result } from "core";
+
+struct Malformed { string why; }
+
+Result<i32, string> read(i32 k) {
+  if (k == 0) { return Result.Err("not found"); }
+  return Result.Ok(k);
+}
+
+Result<i32, Malformed> parse(i32 k) {
+  if (k == 1) { return Result.Err(Malformed("bad")); }
+  return Result.Ok(k * 2);
+}
+
+Result<i32> load(i32 k) {
+  i32 a = try read(k);
+  i32 b = try parse(a);
+  return Result.Ok(b);
+}
+
+export i32 f() {
+  Result<i32> good = load(5);
+  Result<i32> bad = load(1);
+  i32 which = match (bad) {
+    Ok(v): 0,
+    Err(e): match (e) { string: 1, Malformed: e.why.len() },
+  };
+  return good.orElse(-1) + which;
+}
