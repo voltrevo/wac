@@ -255,8 +255,9 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
  *
  * The adapter wrote `"\{e}"` for every `Result<i32>`, from when a left-out error type meant `string`.
  * Gathered, it is a `union`, which has no text conversion: the build failed with *text from a
- * union<string>, which has no `[toString]`*, and spec ch07's own `Result<i32>` example passed the spec
- * probe anyway, because a build that fails also exits 1. So this asserts the output, not the status.
+ * union<string>, which has no `[toString]`*, under both `wac build` and `wac run` — while
+ * `spec/_status/MET` listed spec ch07's own `Result<i32>` example as met, by a probe route that runs
+ * the adapter in-process. So this drives the command, and asserts the output as well as the status.
  */
 export string test_a_result_main_with_a_gathered_error_builds_and_says_what_failed(Core core, Cli cli) {
   T t = T.create();

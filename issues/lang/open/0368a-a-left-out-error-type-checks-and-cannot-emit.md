@@ -37,8 +37,13 @@ A function's gathered error type was always right: `lowerResultPlaceholders` ask
   or not. `spec/cases/0505`.
 - **`main`'s adapter** wrote `"\{e}"` for every `Result<i32>`, from when a left-out error type meant
   `string`. It builds the `Err` arm from the error type as written, and a union converts to text
-  through the alternative it holds. `program_test`'s new case asserts the output, because spec ch07's
-  `Result<i32>` example was counted met by a build that failed — both exit 1.
+  through the alternative it holds. `program_test`'s new case drives the command and asserts the
+  output. **Correction to this session's commit message**, which said the spec probe counted a failed
+  build as `exits 1`: it does not — `meetsByCommand` builds first and calls a failed build refused.
+  The ch07 fence takes the in-process route (`meets`), which applies the adapter itself, and that route
+  recorded it met while `wac build` and `wac run` of the same program both failed. Why the two routes
+  disagreed is not established; it is worth finding, since it is the probe saying met for a program
+  the command cannot build.
 - **`"\{e}"` on a gathered error** — the checker allowed it and the emitter declined; it converts now.
 
 **Still open, and a question rather than a bug:** `return d();` where `d` answers `Result<i32, string>`,
