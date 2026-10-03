@@ -1,6 +1,7 @@
 # 0366a — `Circle c matches s` is refused for an enum variant, though every variant is a type
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** e53a85ca4
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-03
@@ -24,3 +25,7 @@ Actual: *no Shape is ever a Circle*.
 ## Notes
 
 `Circle(r) matches s` works, and `Circle c matches s` works when `Shape`/`Circle` are a struct hierarchy. From `vision/TECHNICAL.md`'s *matches binds a name*.
+
+## Closed — 2026-10-03 (agent-a)
+
+`checkMatches` accepts a variant of the subject's enum as a type test, as it accepts a struct subtype. `spec/cases/0502` binds through it and `0503` checks a different variant still fails the test.
