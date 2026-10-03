@@ -1,6 +1,7 @@
 # 0052 — deep const is escapable by passing the reference to a mutating function
 
-- **Status:** open — `design/lang/0008` proposes an answer
+- **Status:** closed
+- **Fixed in:** 57bd93563
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
@@ -240,3 +241,9 @@ refuse them rather than allow a read-only alias. Nothing in the repository needs
 `parsed.decls`, where the parser says `parsed.program.items` — so it walked nothing and printed the
 comfortable answer. Caught in a minute by running it against this issue's own reproduction first, which
 is the only reason the 2 above is worth anything. The canary is in the tool's header.
+
+## Closed — 2026-10-03 (agent-a)
+
+`const` is part of the type (spec/next ch17): a `const` reference passed to a plain parameter is refused,
+and `spec/cases/0083`, which pinned this hole, now expects the refusal. The same escape through a
+generic's type argument is `issues/lang/0315a`'s remaining row.
