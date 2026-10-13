@@ -413,6 +413,12 @@ string declineFor(Stmt s) {
     StaticFor(init, cond, update, body): { return "an `await` inside a `static_for`"; }
     Switch(subject, cases): { return "an `await` inside a `switch`"; }
     Match(subject, arms): { return "an `await` inside a `match`"; }
+    // Over a generator the split rewrites the loop into one it can flatten; over anything else it
+    // does not yet, and saying "a larger expression" sent the reader to hoist an `await` that already
+    // stood alone on its line.
+    ForIn(elemTy, nameTok, iterable, body): {
+      return "an `await` inside a `for … in` over something that is not a generator — index it instead: `for (i32 i = 0; i < xs.len(); i++)`";
+    }
     Block(body): { return "an `await` inside a nested block"; }
     Assign(target, op, rhs): { return "an `await` on the right of an assignment"; }
     ExprStmt(expr): { return "an `await` nested inside a larger expression, on a ticket whose type this file does not write — bind it first: `T v = await e;`"; }

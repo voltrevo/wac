@@ -58,7 +58,8 @@ import {
   Arm, Case, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param,
   Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
-import { Lexed, tokenStride } from "./lex.wac";
+import { Lexed, lex, tokenStride } from "./lex.wac";
+import { P, parseType } from "./parse.wac";
 import { AsyncPlan, awaitInBody, awaitInExpr, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
 import {
   synthSource, synthTokens, synthTok, synthTextAt,
@@ -1229,6 +1230,8 @@ struct Rz {
    * the `await` left in place and names the position it is in, which sends a reader to the wrong fix.
    */
   string[] why;
+  /** `Lw.sigs`, for the types this file's declarations do not say. */
+  string sigs;
 }
 
 string rzText(Rz z, i32 tok) { return synthTextAt(z.c.src, z.c.lexed, tok); }
@@ -1351,7 +1354,7 @@ Ty callerTy(Rz z, Ty ret, bool isAsync) {
   return isAsync ? lowTicketTy(z.c, ret) : ret;
 }
 
-/** A same-file, non-generic function's return as its caller sees it. */
+/** A non-generic function's return as its caller sees it — this file's, or another's through `sigs`. */
 Ty? funcRetTy(Rz z, string nm) {
   for (i32 d = 0; d < z.prog.decls.len(); d++) {
     match (z.prog.decls[d].kind) {
@@ -1361,7 +1364,191 @@ Ty? funcRetTy(Rz z, string nm) {
       default: { }
     }
   }
-  return null;
+  return sigTy(z, nm);
+}
+
+// ── Types written in other files ───────────────────────────────────────────────
+
+/**
+ * What each non-generic function and method in a program answers its caller, when that is a ticket:
+ * `name|type` and `Owner.name|type` lines, the type spelled as written — `async T` as `Ticket<T>`.
+ *
+ * **The lowering reads one file, and a ticket's type is often written in another.** A pulled `await`
+ * becomes `T tmp = await e;` and the machine keeps the ticket in a slot of `Ticket<T>`, so `T` has to
+ * be spelled; for `try await sys.readFile(…)` it is written in std, and this file's declarations do not
+ * say it. The program's other files do, so they are read once, here, and handed to every file's
+ * lowering. Only tickets: an `await` is the one place a type the file does not write is needed.
+ */
+export string ticketSigsOf(Program?[] progs, u8[][] srcs, Lexed?[] lexeds) {
+  string out = "";
+  for (i32 f = 0; f < progs.len(); f++) {
+    if (progs[f] is null || f >= lexeds.len() || lexeds[f] is null || f >= srcs.len()) { continue; }
+    u8[] src = srcs[f];
+    Lexed lx = lexeds[f]!;
+    Program prog = progs[f]!;
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+          if (typeParams.len() == 0) { out = out + sigLine("", synthTextAt(src, lx, nameTok), returnType, isAsync, src, lx); }
+        }
+        StructDecl(snameTok, parentTok, fields, methods, sexported, isConst, stps): {
+          if (stps.len() > 0) { continue; }
+          string owner = synthTextAt(src, lx, snameTok);
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (methods[m].typeParams.len() > 0) { continue; }
+            out = out + sigLine(owner, synthTextAt(src, lx, methods[m].nameTok), methods[m].returnType,
+                                methods[m].isAsync, src, lx);
+          }
+        }
+        default: { }
+      }
+    }
+  }
+  return out;
+}
+
+string sigLine(string owner, string name, Ty ret, bool isAsync, u8[] src, Lexed lx) {
+  string rt = spellTyL(src, lx, ret);
+  if (rt == "" || rt.indexOf("type(") >= 0) { return ""; }
+  if (isAsync) { rt = "Ticket<" + rt + ">"; }
+  if (rt.len() < 7 || rt.slice(0, 7) != "Ticket<") { return ""; }
+  return (owner == "" ? "" : owner + ".") + name + "|" + rt + "\n";
+}
+
+/** A type as written, with `, ` between arguments. */
+string spellTyL(u8[] src, Lexed lx, Ty t) {
+  match (t.kind) {
+    TypeOf(e): { return "type("; }
+    Prim(tok): { return synthTextAt(src, lx, tok); }
+    Named(tok, args): {
+      string s = synthTextAt(src, lx, tok);
+      if (args.len() == 0) { return s; }
+      string inner = "";
+      for (i32 i = 0; i < args.len(); i++) { inner = inner + (i > 0 ? ", " : "") + spellTyL(src, lx, args[i]); }
+      return s + "<" + inner + ">";
+    }
+    Arr(elem): { return spellTyL(src, lx, elem) + "[]"; }
+    Nullable(inner): { return spellTyL(src, lx, inner) + "?"; }
+    Funcref(r, ps): {
+      string inner = "";
+      for (i32 i = 0; i < ps.len(); i++) { inner = inner + (i > 0 ? ", " : "") + spellTyL(src, lx, ps[i]); }
+      return "fn<" + spellTyL(src, lx, r) + "(" + inner + ")>";
+    }
+    TupleOf(ms): {
+      string inner = "";
+      for (i32 i = 0; i < ms.len(); i++) { inner = inner + (i > 0 ? ", " : "") + spellTyL(src, lx, ms[i]); }
+      return "(" + inner + ")";
+    }
+  }
+}
+
+/** The names `sigs`'s types are written with, each once. */
+string[] sigWords(string sigs) {
+  u8[] b = sigs.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == 124) { n = n + 1; } }   // one type per `|`
+  string[] out = string[].filled(n * 8 + 1, "");
+  i32 k = 0;
+  bool inType = false;
+  i32 from = 0 - 1;
+  for (i32 i = 0; i <= b.len(); i++) {
+    i32 ch = i < b.len() ? b[i] as i32 : 10;
+    if (ch == 124) { inType = true; continue; }
+    if (ch == 10) { inType = false; }
+    bool word = (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || (ch >= 48 && ch <= 57) || ch == 95 || ch == 36;
+    if (inType && word) { if (from < 0) { from = i; } continue; }
+    if (from >= 0) {
+      string w = sigs.slice(from, i);
+      bool seen = false;
+      for (i32 j = 0; j < k; j++) { if (out[j] == w) { seen = true; } }
+      if (!seen && k < out.len()) { out[k] = w; k = k + 1; }
+      from = 0 - 1;
+    }
+  }
+  string[] got = string[].filled(k, "");
+  for (i32 i = 0; i < k; i++) { got[i] = out[i]; }
+  return got;
+}
+
+string[] joinWords(string[] a, string[] b) {
+  string[] out = string[].filled(a.len() + b.len(), "");
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+/** The type `sigs` records for `key`, rebuilt from this file's tokens; null when it records none. */
+Ty? sigTy(Rz z, string key) {
+  string want = key + "|";
+  i32 at = z.sigs.indexOf(want);
+  while (at > 0 && z.sigs.slice(at - 1, at) != "\n") {
+    i32 next = z.sigs.slice(at + 1, z.sigs.len()).indexOf("\n" + want);
+    at = next < 0 ? 0 - 1 : at + 1 + next + 1;
+  }
+  if (at < 0) { return null; }
+  string rest = z.sigs.slice(at + want.len(), z.sigs.len());
+  string text = rest.slice(0, rest.indexOf("\n"));
+  u8[] b = text.toBytes();
+  Lexed lx = lex(b);
+  return relinkTy(z, b, lx, parseType(P.create(b, lx)));
+}
+
+/** `t`, parsed from text of its own, with every name pointed at a token of this file with that text. */
+Ty? relinkTy(Rz z, u8[] b, Lexed lx, Ty t) {
+  match (t.kind) {
+    Prim(tok): {
+      i32 mine = tokWithText(z, synthTextAt(b, lx, tok));
+      return mine < 0 ? null : Ty(TyKind.Prim(mine), z.c.line, z.c.col);
+    }
+    Named(tok, args): {
+      i32 mine = tokWithText(z, synthTextAt(b, lx, tok));
+      if (mine < 0) { return null; }
+      Ty[] as2 = Ty[].filled(args.len(), t);
+      for (i32 i = 0; i < args.len(); i++) {
+        Ty? a = relinkTy(z, b, lx, args[i]);
+        if (a is null) { return null; }
+        as2[i] = a!;
+      }
+      return Ty(TyKind.Named(mine, as2), z.c.line, z.c.col);
+    }
+    Arr(elem): {
+      Ty? e2 = relinkTy(z, b, lx, elem);
+      return e2 is null ? null : Ty(TyKind.Arr(e2!), z.c.line, z.c.col);
+    }
+    Nullable(inner): {
+      Ty? i2 = relinkTy(z, b, lx, inner);
+      return i2 is null ? null : Ty(TyKind.Nullable(i2!), z.c.line, z.c.col);
+    }
+    TupleOf(ms): {
+      Ty[] out = Ty[].filled(ms.len(), t);
+      for (i32 i = 0; i < ms.len(); i++) {
+        Ty? m2 = relinkTy(z, b, lx, ms[i]);
+        if (m2 is null) { return null; }
+        out[i] = m2!;
+      }
+      return Ty(TyKind.TupleOf(out), z.c.line, z.c.col);
+    }
+    Funcref(r, ps): {
+      Ty? r2 = relinkTy(z, b, lx, r);
+      if (r2 is null) { return null; }
+      Ty[] out = Ty[].filled(ps.len(), t);
+      for (i32 i = 0; i < ps.len(); i++) {
+        Ty? p2 = relinkTy(z, b, lx, ps[i]);
+        if (p2 is null) { return null; }
+        out[i] = p2!;
+      }
+      return Ty(TyKind.Funcref(r2!, out), z.c.line, z.c.col);
+    }
+    TypeOf(e): { return null; }
+  }
+}
+
+/** A token of this file whose text is `w` — the appended words guarantee one for every name `sigs` uses. */
+i32 tokWithText(Rz z, string w) {
+  for (i32 i = z.c.lexed.tokenCount - 1; i >= 0; i--) {
+    if (rzText(z, i) == w) { return i; }
+  }
+  return 0 - 1;
 }
 
 /** A field's type, or a method's return as its caller sees it, on a same-file non-generic struct. */
@@ -1399,7 +1586,9 @@ Ty? memberTy(Rz z, Ty recv, string m, bool call) {
       default: { }
     }
   }
-  return null;
+  // **Declared in another file** — `sys.readFile(…)` is `Sys`'s, which std declares. The type is
+  // written there, so it is read from there rather than refused as unwritten.
+  return call ? sigTy(z, owner + "." + m) : null;
 }
 
 /** The written type of `e`, as far as declarations in this file say it; null past that. */
@@ -1624,7 +1813,20 @@ Stmt[] splitStmt(Rz z, Stmt s) {
     }
     Block(b): { return Stmt[].filled(1, Stmt(StmtKind.Block(splitBody(z, b)), s.line, s.col)); }
     ForIn(elemTy, nameTok, iterable, b): { return splitForIn(z, s, elemTy, nameTok, iterable, b); }
-    Match(subject, arms): { return Stmt[].filled(1, splitMatch(z, s, subject, arms)); }
+    // **`match (await e)`** — the subject is pulled into a temporary like any nested `await`, now
+    // that its type can be read from the file that writes it, and the arms are split as before.
+    Match(subject, arms): {
+      Ty? st = tyOfE(z, subject);
+      match (subject.kind) {
+        Await(sop): { if (sop is not null) { st = awaitedTy(z, sop!); } }
+        default: { }
+      }
+      Expr subj = pullE(z, subject, p);
+      if (p.failed) { return Stmt[].filled(1, s); }
+      Stmt m = splitMatch(z, s, subj, arms, st);
+      if (m is s) { return Stmt[].filled(1, s); }
+      made = m;
+    }
     default: { return Stmt[].filled(1, s); }
   }
   if (p.failed) { return Stmt[].filled(1, s); }
@@ -1698,12 +1900,17 @@ Stmt[] splitForIn(Rz z, Stmt s, Ty? elemTy, i32 nameTok, Expr iterable, Stmt[] b
  * copies in the state that dispatches. Left as written when a binding's type is not one this file
  * writes, and the plan declines it.
  */
-Stmt splitMatch(Rz z, Stmt s, Expr subject, Arm[] arms) {
+Stmt splitMatch(Rz z, Stmt s, Expr subject, Arm[] arms, Ty? st) {
   Ctx c = z.c;
-  Ty? st = tyOfE(z, subject);
   Arm[] out = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0] : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
   for (i32 a = 0; a < arms.len(); a++) {
     Arm arm = arms[a];
+    // An arm that does not suspend keeps its bindings as they are: they are hoisted only so that a
+    // value bound before a suspension is still there after it, and there is none here.
+    if (!awaitInBody(arm.body)) {
+      out[a] = Arm(arm.variantTok, arm.elseTok, arm.bindingToks, arm.body, arm.value);
+      continue;
+    }
     i32 nb = arm.bindingToks.len();
     i32[] fresh = i32[].filled(nb, 0);
     Stmt[] body = splitBody(z, arm.body);
@@ -1988,6 +2195,8 @@ struct Lw {
   i32[] next;
   /** Why the first machine in the file that could not be built was declined, or empty. */
   string[] why;
+  /** What other files' functions and methods answer, when it is a ticket — `ticketSigsOf`. */
+  string sigs;
 }
 
 void noteWhy(Lw w, string why) { if (w.why[0] == "") { w.why[0] = why; } }
@@ -2030,7 +2239,7 @@ struct Site {
 Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
   Ctx c0 = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
                i32[].filled(1, at.colBase), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3));
-  Rz z = Rz(c0, at.params, body, w.prog, at.selfTok, w.next, string[].filled(1, ""));
+  Rz z = Rz(c0, at.params, body, w.prog, at.selfTok, w.next, string[].filled(1, ""), w.sigs);
   Stmt[] split = splitBody(z, body);
   AsyncPlan plan = planBody(split);
   if (!plan.ok) { noteWhy(w, z.why[0] != "" ? z.why[0] : plan.why); return null; }
@@ -2174,7 +2383,7 @@ Stmt[] coRewrite(Ctx c, Stmt[] body) {
  * idempotent and the token indices it hands out are absolute. It is sized from the file's `await`
  * tokens, which bound both the slots any one machine needs and the temporaries the whole file does.
  */
-export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
+export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed, string sigs) {
   if (!anyLowerable(prog, src, lexed) && !anyLambdaLowerable(prog, src, lexed) && !saysCoroutine(src, lexed)) {
     return Lowered(prog, src, lexed, false, "");
   }
@@ -2186,10 +2395,11 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed) {
   i32 first = lexed.tokenCount;
   Lexed lexedA = synthTokens(lexed, srcA, ups, states, args, 1, 1);
   // **The coroutine forms' names**, behind a second comment (ch36).
-  Tail tl = appendWords(srcA, lexedA, "// wac:co-synth ", coWords(prog, src, lexed));
+  // ...and every name the other files' ticket types are written with, so one can be rebuilt here.
+  Tail tl = appendWords(srcA, lexedA, "// wac:co-synth ", joinWords(coWords(prog, src, lexed), sigWords(sigs)));
   u8[] src2 = tl.src;
   Lexed lexed2 = tl.lexed;
-  Lw w = Lw(first, ups, args, src2, lexed2, prog, i32[].filled(1, 0), string[].filled(1, ""));
+  Lw w = Lw(first, ups, args, src2, lexed2, prog, i32[].filled(1, 0), string[].filled(1, ""), sigs);
 
   // A machine function becomes two: the function calling its coroutine form, where it was, and the
   // form itself after every declaration the file wrote — whose count is how the emitter tells the

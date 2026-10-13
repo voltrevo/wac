@@ -173,25 +173,48 @@ export string test_await_binds_tighter_than_a_binary_operator() {
   return t.report();
 }
 
-export string test_an_await_the_lowering_cannot_type_is_refused_by_check_as_by_a_build() {
-  // **`check` says what a build will refuse.** The lowering runs on an untyped tree, so a nested
-  // `await` on a ticket whose type no declaration *in this file* writes cannot be hoisted — and the
-  // emitter declined the function, which `check` never ran: the program checked clean and then would
-  // not build. The diagnostic names the line and the fix that works today.
+export string test_an_await_on_a_ticket_another_file_types_is_lowered() {
+  // **The type is written in another file, and that is enough.** This program was the case for the
+  // refusal below: a nested `await` on `s.read()`, whose `Ticket<i32>` is declared in lib.wac, which the
+  // lowering — reading only main.wac's declarations — could not spell for the temporary it pulls the
+  // `await` into. It reads every file's ticket-returning declarations now (`ticketSigsOf`).
   T t = T.create();
-  string lib = TICKET
+  string lib = "import { Ticket } from \"core\";\n"
     + "export struct Src {\n"
     + "  i32 n;\n"
-    + "  Ticket<i32> read(this) { return Ticket<i32>.of(this.n); }\n"
+    + "  async i32 read(this) { return this.n; }\n"
     + "}\n";
-  string main = "import { Src, Ticket } from \"./lib.wac\";\n"
+  string main = "import { Ticket } from \"core\";\n"
+    + "import { Src } from \"./lib.wac\";\n"
     + "export async i32 go(Src s) {\n"
     + "  if ((await s.read()) > 0) { return 1; }\n"
     + "  return 0;\n"
     + "}\n";
   string out = diagnoseGraph([ENTRY, "lib.wac"], [main, lib], ENTRY);
+  t.eqStr(out, "", "lowered, and nothing else said");
+  return t.report();
+}
+
+export string test_an_await_the_lowering_cannot_take_is_refused_by_check_as_by_a_build() {
+  // **`check` says what a build will refuse.** The emitter declines an `async` function the lowering
+  // cannot take, and `check` never runs the emitter — so it runs the lowering itself, and names the line
+  // and the shape. A `for … in` over an array whose body suspends is the shape left: the split rewrites a
+  // loop over a generator and not this one, and it used to be reported as an `await` *nested inside a
+  // larger expression* when the `await` stood alone on its line.
+  T t = T.create();
+  string main = "import { Ticket } from \"core\";\n"
+    + "async i32 one(i32 k) { return k; }\n"
+    + "export async i32 go(i32[] ks) {\n"
+    + "  i32 total = 0;\n"
+    + "  for (i32 k in ks) {\n"
+    + "    i32 v = await one(k);\n"
+    + "    total += v;\n"
+    + "  }\n"
+    + "  return total;\n"
+    + "}\n";
+  string out = diagnoseGraph([ENTRY], [main], ENTRY);
   t.isTrue(contains(out, "an `async` function this compiler cannot lower"), "refused — got \"" + out + "\"");
-  t.isTrue(contains(out, "main.wac\t3\t"), "at the `await`'s line — got \"" + out + "\"");
-  t.isTrue(contains(out, "await it into a local first"), "and the fix — got \"" + out + "\"");
+  t.isTrue(contains(out, "for … in"), "naming the loop — got \"" + out + "\"");
+  t.isTrue(contains(out, "index it instead"), "and the fix — got \"" + out + "\"");
   return t.report();
 }

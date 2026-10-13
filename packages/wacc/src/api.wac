@@ -5,7 +5,7 @@
 // boundary. So the surface is bytes in, text out: the caller passes source and gets
 // the canonical dump the parser's own tests read.
 
-import { Lowered, lowerProgram } from "./asynclower.wac";
+import { Lowered, lowerProgram, ticketSigsOf } from "./asynclower.wac";
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
 import { kAs, kAssign, kAsync, kComma, kDot, kEnum, kExport, kGt, kIdent, kindName, kLbrace, kLbrack, kLparen,
          kLt, kQuestion, kRbrace, kRbrack, kRparen, kSemi, kShr, kStatic, kStruct } from "./kinds.wac";
@@ -842,9 +842,12 @@ export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res
   // declined by the emitter, which `check` never runs — so a program checked clean and then would not
   // build, with the reason only in the build's message. The lowering is cheap where there is nothing
   // to lower, and its reason names the line when the reason has one.
+  u8[][] srcBytes = u8[][].filled(sources.len(), u8[]());
+  for (i32 i = 0; i < sources.len(); i++) { srcBytes[i] = sources[i].toBytes(); }
+  string sigs = ticketSigsOf(progs, srcBytes, lexes);
   for (i32 i = 0; i < paths.len(); i++) {
     if (i >= progs.len() || (progs[i] is null) || (lexes[i] is null)) { continue; }
-    Lowered lo = lowerProgram(progs[i]!, (i < sources.len() ? sources[i] : "").toBytes(), lexes[i]!);
+    Lowered lo = lowerProgram(progs[i]!, (i < sources.len() ? sources[i] : "").toBytes(), lexes[i]!, sigs);
     if (lo.why == "") { continue; }
     string why = lo.why;
     string line = "1";

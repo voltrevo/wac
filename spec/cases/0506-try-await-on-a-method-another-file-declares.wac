@@ -1,0 +1,32 @@
+// expect: f() = 23
+// why: `try await s.read(k)` nests the `await`, so the async lowering pulls it into a temporary of
+//      the awaited type — and that type is written in store.wac, not here. The lowering read only
+//      this file's declarations and refused it as a ticket whose type nothing in this file writes
+// from: issues/lang/0370a
+// ---- store.wac ----
+import { Result, Ticket } from "core";
+
+export struct Store {
+  i32 base;
+  async Result<i32, string> read(this, i32 k) {
+    if (k == 0) { return Result.Err("missing"); }
+    return Result.Ok(this.base + k);
+  }
+}
+// ---- main.wac ----
+import { Result, Ticket } from "core";
+import { Store } from "./store.wac";
+
+async Result<i32> load(Store s, i32 k) {
+  i32 v = try await s.read(k);
+  return Result.Ok(v * 2);
+}
+
+async i32 run() {
+  Store s = Store(10);
+  Result<i32> good = await load(s, 1);
+  Result<i32> bad = await load(s, 0);
+  return good.orElse(-1) + bad.orElse(1);
+}
+
+export i32 f() { return run().wait()!; }

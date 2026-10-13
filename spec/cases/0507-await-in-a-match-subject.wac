@@ -1,0 +1,32 @@
+// expect: f() = 7
+// why: `match (await e)` was refused outright — an `await` in a `match` subject — though spec ch44
+//      writes it; the subject is pulled into a temporary of the awaited type like any nested await
+// from: issues/lang/0370a
+// ---- store.wac ----
+import { Result, Ticket } from "core";
+
+export struct Store {
+  async Result<i32, string> read(this, i32 k) {
+    if (k == 0) { return Result.Err("missing"); }
+    return Result.Ok(k);
+  }
+}
+// ---- main.wac ----
+import { Result, Ticket } from "core";
+import { Store } from "./store.wac";
+
+async i32 run() {
+  Store s = Store();
+  i32 total = 0;
+  match (await s.read(5)) {
+    Ok(v):    { total += v; }
+    Err(why): { total += 100; }
+  }
+  match (await s.read(0)) {
+    Ok(v):    { total += v; }
+    Err(why): { total += why.len() - 5; }
+  }
+  return total;
+}
+
+export i32 f() { return run().wait()!; }

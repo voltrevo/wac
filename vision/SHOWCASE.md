@@ -227,4 +227,4 @@ export async Result<Config, union<NotFound, Malformed>> load(Sys sys) { … }
 
 Written out, it is checked: a body that passes on an error outside the set is refused here.
 
-**Not yet.**
+**Done.**

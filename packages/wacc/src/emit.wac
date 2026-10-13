@@ -27,7 +27,7 @@ import { blockValue, escapeValue, isBlockLiteral, isStringEscape, lex, Lexed, to
          literalBodyStart, literalBodyEnd,
          unicodeEscapeEnd, unicodeEscapeValue, utf8Into } from "./lex.wac";
 import { coreFileNames, coreFileStarts, coreSource, stdSource } from "./coretext.wac";
-import { Lowered, lowerProgram } from "./asynclower.wac";
+import { Lowered, lowerProgram, ticketSigsOf } from "./asynclower.wac";
 import { lowerNamespaces } from "./namespaces.wac";
 import { isTupleName, tupleMembers, tupleName } from "./tuples.wac";
 import { flattenUnion, isConstAlt, isUnionName, spellUnion, unionBoxes, unionMembers } from "./unions.wac";
@@ -5724,10 +5724,11 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
   // description walk funnels through this function, so rewriting once here is what keeps them all
   // seeing the same program — `design/lang/0014` step 4. A file with nothing to lower is handed back
   // untouched, including its source and tokens, so the common case pays a walk and nothing else.
+  string sigs = ticketSigsOf(progs, srcs, lexeds);
   for (i32 li = 0; li < progs.len(); li++) {
     if (progs[li] is null) { continue; }
     if (li >= lexeds.len() || (lexeds[li] is null) || li >= srcs.len()) { continue; }
-    Lowered lo = lowerProgram(progs[li]!, srcs[li], lexeds[li]!);
+    Lowered lo = lowerProgram(progs[li]!, srcs[li], lexeds[li]!, sigs);
     if (lo.why != "" && envIn.asyncWhy == "") { envIn.asyncWhy = lo.why; }
     if (!lo.changed) { continue; }
     progs[li] = lo.prog;
