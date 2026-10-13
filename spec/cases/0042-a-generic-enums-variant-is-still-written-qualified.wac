@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // why: the bare name is gone but `Option.None` is how you write one, and that has to keep working
 // from: spec/tour.wac and std's tests, which removing the bare name too eagerly refused
 enum Option<T> { Some(T v), None }

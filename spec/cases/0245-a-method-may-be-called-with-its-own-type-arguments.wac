@@ -1,4 +1,4 @@
-// expect: answers f = 12
+// expect: f() = 12
 // spec:  §wacc-method-type-args
 // why: `design/lang/0010` option C, and `fold` is the example that document leads with — the letter
 //      is the seed's type, the accumulator's, and the callback's return, so the slot written

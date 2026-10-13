@@ -1,4 +1,4 @@
-// expect: answers held = 11
+// expect: held() = 11
 // spec: §wac-union-recursive-guard-e4vnb4j
 // why: `U?` is an alternative of `union<i32, U?>`, so a nullable `U` enters the union whole rather
 //      than being refused as a nullable into a non-null slot

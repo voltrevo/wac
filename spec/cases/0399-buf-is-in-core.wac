@@ -1,4 +1,4 @@
-// expect: answers f = hi wac!
+// expect: f() = hi wac!
 // why: `Buf` is core's byte builder — `push` takes a byte, `pushStr` a string's UTF-8 bytes, and `get` reads a byte back
 // from: spec ch42 §wac-buf-push-pw83mxx
 import { Buf } from "core";

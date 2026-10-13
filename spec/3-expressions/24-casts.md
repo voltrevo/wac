@@ -20,11 +20,11 @@ If it can trap, its spelling contains `!`.
 `as` is defined exactly where no value of the source can lose information in the destination:
 
 ```wac
-// expect: answers toI64(-1) = -1
-// expect: answers toF64(42) = 42.0
-// expect: answers fromBool(true) = 1
-// expect: answers fromBool(false) = 0
-// expect: answers fromU8(200) = 200
+// expect: toI64(-1) = -1
+// expect: toF64(42) = 42.0
+// expect: fromBool(true) = 1
+// expect: fromBool(false) = 0
+// expect: fromU8(200) = 200
 export i64 toI64(i32 x) { return x as i64; }      // sign-extends
 export f64 toF64(i32 x) { return x as f64; }      // every i32 fits in an f64
 export i32 fromBool(bool b) { return b as i32; }  // false -> 0, true -> 1
@@ -58,12 +58,12 @@ narrowing into one is `as!`, `as~` or `as@`.
 `as!` answers the exact value or traps. It is defined for every numeric pair `as` is not:
 
 ```wac
-// expect: answers safeNarrow(42) = 42
+// expect: safeNarrow(42) = 42
 // expect: traps safeNarrow(1000000000000)
-// expect: answers exact(3.0) = 3
+// expect: exact(3.0) = 3
 // expect: traps exact(3.5)
 // expect: traps exact(-2.3)
-// expect: answers exactNarrow(0.5) = 0.5
+// expect: exactNarrow(0.5) = 0.5
 // expect: traps exactNarrow(0.1)
 export i32 safeNarrow(i64 big) { return big as! i32; }
 export i32 exact(f64 x) { return x as! i32; }
@@ -92,16 +92,16 @@ never traps.
 the destination's range:
 
 ```wac
-// expect: answers roundIt(3.7) = 4
-// expect: answers roundIt(-2.3) = -2
-// expect: answers roundIt(2.5) = 2
-// expect: answers roundIt(3.5) = 4
-// expect: answers saturate(1000000000000) = 2147483647
-// expect: answers saturate(-1000000000000) = -2147483648
-// expect: answers truthy(0) = false
-// expect: answers truthy(42) = true
-// expect: answers roundBig(3.7) = 4
-// expect: answers roundBig(1.0e300) = 9223372036854775807
+// expect: roundIt(3.7) = 4
+// expect: roundIt(-2.3) = -2
+// expect: roundIt(2.5) = 2
+// expect: roundIt(3.5) = 4
+// expect: saturate(1000000000000) = 2147483647
+// expect: saturate(-1000000000000) = -2147483648
+// expect: truthy(0) = false
+// expect: truthy(42) = true
+// expect: roundBig(3.7) = 4
+// expect: roundBig(1.0e300) = 9223372036854775807
 export i32 roundIt(f64 x) { return x as~ i32; }
 export i32 saturate(i64 big) { return big as~ i32; }
 export bool truthy(i32 x) { return x as~ bool; }
@@ -130,13 +130,13 @@ to an integer truncates toward zero, and a same-width signedness change reads th
 It never traps:
 
 ```wac
-// expect: answers truncBits(1000000000000) = -727379968
-// expect: answers truncFloat(3.7) = 3
-// expect: answers truncFloat(-2.3) = -2
-// expect: answers truncNaN = 0
-// expect: answers truncFloat(1.0e300) = 2147483647
-// expect: answers toUnsigned(-1) = 4294967295
-// expect: answers toSigned(4294967295) = -1
+// expect: truncBits(1000000000000) = -727379968
+// expect: truncFloat(3.7) = 3
+// expect: truncFloat(-2.3) = -2
+// expect: truncNaN() = 0
+// expect: truncFloat(1.0e300) = 2147483647
+// expect: toUnsigned(-1) = 4294967295
+// expect: toSigned(4294967295) = -1
 export i32 truncBits(i64 big) { return big as@ i32; }
 export i32 truncFloat(f64 x) { return x as@ i32; }
 
@@ -163,7 +163,7 @@ Every other narrowing — `f64 -> f32`, an integer to a float, anything to `bool
 rounding, so `as@` is refused there:
 
 ```wac
-// expect: answers narrowed(3.5, -1) = 3.5
+// expect: narrowed(3.5, -1) = 3.5
 export f32 narrowed(f64 x, i32 i) {
   // ERROR: no raw conversion for f64 -> f32, use as~
   // f32 y = x as@ f32;
@@ -180,10 +180,10 @@ export f32 narrowed(f64 x, i32 i) {
 ## Signed and unsigned
 
 ```wac
-// expect: answers bits(-1) = 4294967295
-// expect: answers check(5) = 5
+// expect: bits(-1) = 4294967295
+// expect: check(5) = 5
 // expect: traps check(-1)
-// expect: answers clamp(-5) = 0
+// expect: clamp(-5) = 0
 export u32 bits(i32 x)  { return x as@ u32; }
 export u32 check(i32 x) { return x as! u32; }
 export u32 clamp(i32 x) { return x as~ u32; }
@@ -199,7 +199,7 @@ the raw one — go through `i64` or `u32` explicitly.
 ## The wrong operator is refused
 
 ```wac
-// expect: answers widened(5, 7) = 5
+// expect: widened(5, 7) = 5
 export i64 widened(i32 x, i64 big) {
   // ERROR: i32 -> i64 is lossless, use as
   // i64 a = x as~ i64;
@@ -232,8 +232,8 @@ On references, `as` upcasts — always safe, no check — and `as!` downcasts, t
 target type:
 
 ```wac
-// expect: answers upcast = 1.0
-// expect: answers downcastToOwnType = 5.0
+// expect: upcast() = 1.0
+// expect: downcastToOwnType() = 5.0
 // expect: traps downcastToOtherType
 struct Shape { f64 x; }
 struct Rect : Shape { f64 w; }
@@ -275,8 +275,8 @@ A reference casts only to a reference. The one exception is a real conversion ra
 i32`.
 
 ```wac
-// expect: answers roundTrip(42) = 42
-// expect: answers roundTrip(-1073741824) = -1073741824
+// expect: roundTrip(42) = 42
+// expect: roundTrip(-1073741824) = -1073741824
 // expect: traps roundTrip(1073741824)
 export i32 roundTrip(i32 n) {
   i31ref small = n as! i31ref;             // checked: an i32 may not fit in 31 bits
@@ -298,7 +298,7 @@ Testing a reference's type without trapping is `is` ([12](../2-types/12-structs.
 is `!` ([10](../2-types/10-nullability.md)). An unwrap may also stand in an assignment target:
 
 ```wac
-// expect: answers throughUnwraps = 10
+// expect: throughUnwraps() = 10
 struct Node { i32 val; Node? next; }
 
 export i32 throughUnwraps() {

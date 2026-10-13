@@ -1,4 +1,4 @@
-// expect: answers f = 42
+// expect: f() = 42
 // why: `Parented<i32>` has `Base`'s field and its own, so it constructs with two arguments. The
 //      instantiation is registered after the pass that resolves parent names, so it has to resolve its
 //      own — carrying the token alone changes nothing. Reads the inherited field *and* the own field

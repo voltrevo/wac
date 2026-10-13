@@ -1,4 +1,4 @@
-// expect: answers f = 42
+// expect: f() = 42
 // why: a lambda can be handed to a method of a *generic instance*, so continuations can be stored
 // from: design/lang/0002 tier two — found building `packages/platform`'s scheduler
 //

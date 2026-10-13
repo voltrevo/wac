@@ -82,7 +82,7 @@ function Chip({ children, color, title }: { children: ReactNode; color: string; 
   );
 }
 
-/** `expect: answers f(1) = 2` → `answers f(1) = 2`; `expect (wac check): refused` → `wac check: refused`. */
+/** `expect: f(1) = 2` → `f(1) = 2`; `expect (wac check): refused` → `wac check: refused`. */
 const expectLabel = (e: string) => e.replace(/^expect\s*/, "").replace(/^\((.+?)\):\s*/, "$1: ").replace(/^:\s*/, "");
 
 function langOf(lang: string): Lang {

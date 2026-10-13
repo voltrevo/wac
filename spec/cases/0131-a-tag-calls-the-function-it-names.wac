@@ -1,4 +1,4 @@
-// expect: answers run = 0
+// expect: run() = 0
 // why: a tag that is a name calls the function of that name — its attributes are the parameters of those names, its children `kids`
 // from: spec ch23 §wac-markup-tag-is-function-vv4pvhq
 import { Attr, Node } from "core";

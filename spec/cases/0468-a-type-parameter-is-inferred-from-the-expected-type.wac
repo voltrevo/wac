@@ -1,4 +1,4 @@
-// expect: answers inferred = 200
+// expect: inferred() = 200
 // spec: §wac-generic-infer-expected-endugbi, §wac-literal-constraint-scope-6anwagf
 // why: no argument names `T` — `200` has no type of its own — so the declaration says it
 // from: spec ch19, ch09

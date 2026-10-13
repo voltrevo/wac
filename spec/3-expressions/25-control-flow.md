@@ -6,8 +6,8 @@ ternary, `match`, and `matches`, which tests a pattern and binds a name in one e
 ## `if`
 
 ```wac
-// expect: answers abs(-42) = 42
-// expect: answers abs(7) = 7
+// expect: abs(-42) = 42
+// expect: abs(7) = 7
 export i32 abs(i32 n) {
   if (n < 0) { return -n; }
   else { return n; }
@@ -22,10 +22,10 @@ Braces are required: there is no statement form without them.
 ## Loops
 
 ```wac
-// expect: answers collatz(27) = 111
-// expect: answers fib(20) = 6765
-// expect: answers digitCount(0) = 1
-// expect: answers digitCount(9999) = 4
+// expect: collatz(27) = 111
+// expect: fib(20) = 6765
+// expect: digitCount(0) = 1
+// expect: digitCount(9999) = 4
 export i32 collatz(i32 n) {
   i32 steps = 0;
   while (n != 1) {
@@ -73,7 +73,7 @@ export i32 digitCount(i32 n) {
 only to be a cursor:
 
 ```wac
-// expect: answers lengthOfNonEmpty(["ab", "", "cdef", "gh"]) = 8
+// expect: lengthOfNonEmpty(["ab", "", "cdef", "gh"]) = 8
 import { Vec } from "core";
 
 Vec<string> nonEmpty(string[] lines) {
@@ -106,10 +106,10 @@ A loop whose condition is literally `true`, or a `for` with no condition, finish
 leave it. If none can, control never reaches the end of the loop, and nothing need follow it:
 
 ```wac
-// expect: answers firstMultiple(4, 10) = 12
-// expect: answers countTo(7) = 7
-// expect: answers nestedBreak(3) = 3
-// expect: answers nestedBreak(0) = 1
+// expect: firstMultiple(4, 10) = 12
+// expect: countTo(7) = 7
+// expect: nestedBreak(3) = 3
+// expect: nestedBreak(0) = 1
 export i32 firstMultiple(i32 step, i32 floor) {
   i32 n = 0;
   while (true) {
@@ -168,9 +168,9 @@ it.
 ### `break` and `continue`
 
 ```wac
-// expect: answers findFirst([10, 20, 30], 20) = 1
-// expect: answers sumOdd([1, 2, 3, 4, 5]) = 9
-// expect: answers oddsToTen = 25
+// expect: findFirst([10, 20, 30], 20) = 1
+// expect: sumOdd([1, 2, 3, 4, 5]) = 9
+// expect: oddsToTen() = 25
 export i32 findFirst(i32[] arr, i32 target) {
   i32 result = -1;
   for (i32 i = 0; i < arr.len(); i++) {
@@ -246,10 +246,10 @@ A `match` arm counts for neither: `break` and `continue` in an arm act on the en
 fallthrough:
 
 ```wac
-// expect: answers dayType(0) = 0
-// expect: answers dayType(6) = 0
-// expect: answers dayType(3) = 1
-// expect: answers noFallthrough = 21
+// expect: dayType(0) = 0
+// expect: dayType(6) = 0
+// expect: dayType(3) = 1
+// expect: noFallthrough() = 21
 export i32 dayType(i32 day) {
   switch (day) {
     case 0:  { return 0; }                 // Sunday
@@ -312,9 +312,9 @@ depth, over the nearest common ancestor of the non-nullable forms. `anyref` is n
 allowed to reach it could refuse nothing:
 
 ```wac
-// expect: answers max(3, 7) = 7
-// expect: answers max(10, 2) = 10
-// expect: answers combined = 9
+// expect: max(3, 7) = 7
+// expect: max(10, 2) = 10
+// expect: combined() = 9
 struct Shape { i32 x; }
 struct Circle : Shape { i32 r; }
 struct Rect : Shape { i32 w; }
@@ -359,7 +359,7 @@ In a `match` that gives a value, an arm that leaves — `return`, `break`, `cont
 gives none, and is not asked to agree with the others:
 
 ```wac
-// expect: answers skipsPoints = 13
+// expect: skipsPoints() = 13
 enum Shape { Circle(f64 r), Rect(f64 w, f64 h), Point }
 
 i32 total(Shape[] shapes) {
@@ -387,9 +387,9 @@ export i32 skipsPoints() { return total([Shape.Circle(1.0), Shape.Point, Shape.R
 sees a non-null subject:
 
 ```wac
-// expect: answers area(null) = null
-// expect: answers round(null) = null
-// expect: answers squareArea = 4.0
+// expect: area(null) = null
+// expect: round(null) = null
+// expect: squareArea() = 4.0
 enum Shape { Circle(f64 r), Square(f64 side) }
 
 export f64? area(Shape? s) {
@@ -446,11 +446,11 @@ expected.
 `bool`. A pattern is a match arm's: a variant with its payload, a type with a name, `is` inside a payload:
 
 ```wac
-// expect: answers missingNotFound = true
-// expect: answers missingDenied = false
-// expect: answers configuredThree = true
-// expect: answers bindingRed = 1
-// expect: answers binding(null) = 0
+// expect: missingNotFound() = true
+// expect: missingDenied() = false
+// expect: configuredThree() = true
+// expect: bindingRed() = 1
+// expect: binding(null) = 0
 struct Rgb { i32 r; i32 g; i32 b; }
 enum Fault { NotFound, Denied }
 enum Outcome { Ok(i32 v), Err(Fault e) }
@@ -482,9 +482,9 @@ reach them: the right operand of `&&`, the then-arm of `?:`, the block of an `if
 update of a `for`. They do not outlive the statement, whether or not the match plainly succeeded:
 
 ```wac
-// expect: answers circlesOverTwo = 1
-// expect: answers radius(null) = null
-// expect: answers drained = 10
+// expect: circlesOverTwo() = 1
+// expect: radius(null) = null
+// expect: drained() = 10
 import { Vec } from "core";
 
 struct Circle { f64 r; }
@@ -524,7 +524,7 @@ and update of a `for` — and nowhere after the statement.
 A pattern whose answer is already known is still a question, so it is not refused:
 
 ```wac
-// expect: answers certainBlue = 3
+// expect: certainBlue() = 3
 struct Rgb { i32 r; i32 g; i32 b; }
 
 i32 alwaysTrue(Rgb certain) {
@@ -542,7 +542,7 @@ export i32 certainBlue() { return alwaysTrue(Rgb(1, 2, 3)); }
 `defer s;` runs `s` when the enclosing block exits, however it exits:
 
 ```wac
-// expect: answers releasesAfterTwoCalls = 2
+// expect: releasesAfterTwoCalls() = 2
 struct Log { i32 releases; }
 
 i32 cleanup(Log log, i32 n) {

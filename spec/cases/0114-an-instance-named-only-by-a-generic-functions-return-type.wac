@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // why: a generic function's return type is where an instantiation can first appear, and it needs its methods like any other
 // from: issues/lang/0086
 enum Opt<T> {

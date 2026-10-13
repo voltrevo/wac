@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // why: a generic enum's methods work on its instances, including one with two parameters
 // from: specSingle's known false alarms
 enum Option<T> {

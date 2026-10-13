@@ -1,4 +1,4 @@
-// expect: answers f = 29
+// expect: f() = 29
 // why: a constant array's elements are values, and where they came from is the compiler's business —
 // why: folded before emission or computed once at instantiation, the program cannot tell
 // from: the `constant folding` row of packages/wacc/README.md's tooling table

@@ -1,4 +1,4 @@
-// expect: answers f = 40
+// expect: f() = 40
 // why: a numeric literal has no type until something gives it one, so `40 as i32` is not a cast from a type to itself
 // from: spec ch09, ch20
 T hold<T>(T v) { return v; }

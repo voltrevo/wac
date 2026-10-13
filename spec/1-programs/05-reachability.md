@@ -22,7 +22,7 @@ Checking a whole project is a different operation, which retains everything
 ## Dropped declarations need only parse
 
 ```wac
-// expect: answers used = 0
+// expect: used() = 0
 i32 unused() { return nonexistent(); }   // dropped
 export i32 used() { return 0; }
 ```
@@ -102,7 +102,7 @@ will occur, and therefore cannot determine which struct members will be reached 
 does not prune methods by type:
 
 ```wac
-// expect: answers viaGeneric = 7
+// expect: viaGeneric() = 7
 export i32 viaGeneric() { return readValue(Widget(7)); }
 
 i32 readValue<T>(T value) { return value.read(); }
@@ -119,7 +119,7 @@ Namespaces are neither types nor values. Their member references are resolved st
 selecting one member need not retain its siblings:
 
 ```wac
-// expect: answers viaHelpers = 7
+// expect: viaHelpers() = 7
 namespace helpers {
   export i32 good() { return 7; }
   export i32 bad() { return nonexistent(); }
@@ -156,7 +156,7 @@ A static declaration nothing reaches is dropped like any other, so the same init
 error when nothing refers to it:
 
 ```wac
-// expect: answers used = 0
+// expect: used() = 0
 static i32 BROKEN = 1 / zero();    // dropped: never evaluated
 i32 zero() { return 0; }           // dropped with it
 
@@ -166,7 +166,7 @@ export i32 used() { return 0; }
 ## An import is a route, not an instruction to read immediately
 
 ```wac
-// expect: answers used = 0
+// expect: used() = 0
 // ---- main.wac ----
 import { helper } from "./optional.wac";   // this file does not exist
 
@@ -198,7 +198,7 @@ dependency routes.
 ## Namespace exports can preserve laziness
 
 ```wac
-// expect: answers viaBasic = 42
+// expect: viaBasic() = 42
 // ---- library.wac ----
 export * as basic from "./basic.wac";
 export * as optional from "./missing.wac";   // this file does not exist

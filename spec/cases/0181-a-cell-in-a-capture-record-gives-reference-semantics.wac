@@ -1,4 +1,4 @@
-// expect: answers f = 5
+// expect: f() = 5
 // why: a bound reference over a struct holding a Cell is a closure with reference semantics, written by hand
 // from: design/lang/0002 tier two — the lowering, compiled before the syntax was designed
 //

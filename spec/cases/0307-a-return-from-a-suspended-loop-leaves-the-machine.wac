@@ -1,4 +1,4 @@
-// expect: answers answer = 7
+// expect: answer() = 7
 // why: a return inside a flattened loop leaves the function, not the loop
 // from: design/lang/0014
 import { Ticket } from "core";

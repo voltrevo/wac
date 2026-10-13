@@ -8,7 +8,7 @@ with its parameters opaque and again at each instantiation.
 ## Generic structs
 
 ```wac
-// expect: answers instantiations = 30
+// expect: instantiations() = 30
 struct Vec<T> {
   T[] data;
   i32 n;
@@ -44,7 +44,7 @@ Each instantiation has its own concrete representation, which is why a type para
 **invariant** — `Vec<Rect>` is not a `Vec<Shape>`, since a mutable container cannot be covariant soundly:
 
 ```wac
-// expect: answers invariant = 1
+// expect: invariant() = 1
 struct Box<T> { T v; }
 struct Shape { i32 x; }
 struct Square : Shape { i32 side; }
@@ -64,7 +64,7 @@ export i32 invariant() {
 A construction of a generic struct takes its type arguments from where its value goes:
 
 ```wac
-// expect: answers fromSlots = 0
+// expect: fromSlots() = 0
 struct Vec<T> { T[] data; i32 n; i32 len(const this) { return this.n; } }
 struct Holder { Vec<i32> v; }
 
@@ -96,9 +96,9 @@ has no expected type, and the fix is the two statements idiomatic wac already wr
 one place that cannot be rewritten that way, so there an instantiation may be written out:
 
 ```wac
-// expect: answers just = 4
-// expect: answers absent = 7
-// expect: answers cell = 23
+// expect: just() = 4
+// expect: absent() = 7
+// expect: cell() = 23
 struct Cell<T> {
   T v;
   Cell<T> of(T v) { return Cell(v); }
@@ -131,8 +131,8 @@ name.
 whatever follows:
 
 ```wac
-// expect: answers both(1, 2, 3, 4) = 1
-// expect: answers both(1, 2, 5, 4) = 2
+// expect: both(1, 2, 3, 4) = 1
+// expect: both(1, 2, 5, 4) = 2
 i32 g(bool a, bool b) { return (a ? 1 : 0) + (b ? 1 : 0); }
 
 export i32 both(i32 a, i32 b, i32 c, i32 e) {
@@ -151,9 +151,9 @@ What decides whether it parses is whether the span between the angles can be a t
 was a comparison all along — and an angle inside parentheses or brackets closes nothing:
 
 ```wac
-// expect: answers inRange(5, 9) = 0
-// expect: answers inRange(-1, 9) = 1
-// expect: answers shifted(8) = 1
+// expect: inRange(5, 9) = 0
+// expect: inRange(-1, 9) = 1
+// expect: shifted(8) = 1
 export i32 inRange(i32 n, i32 cap) {
   if (n < 0 || n > (cap + 1)) { return 1; }   // `0 || n` is not a type
   return 0;
@@ -170,8 +170,8 @@ comparison: `inRange(5, 9)` answers `0` and `inRange(-1, 9)` answers `1`.
 ## Generic enums
 
 ```wac
-// expect: answers some = 4
-// expect: answers none = 9
+// expect: some() = 4
+// expect: none() = 9
 enum Option<T> {
   Some(T v), None
 
@@ -201,7 +201,7 @@ A generic enum's variants have no bare name. `Option<i32>` and `Option<f64>` wou
 neither has a better claim:
 
 ```wac
-// expect: answers throughSubject = 1
+// expect: throughSubject() = 1
 enum Option<T> { Some(T v), None }
 
 export i32 throughSubject() {
@@ -223,8 +223,8 @@ written as a type or tested with a bare `is`. `match` reaches it through the sub
 ## Generic functions
 
 ```wac
-// expect: answers maxInt(3, 7) = 7
-// expect: answers maxFloat(1.5, 3.0) = 3.0
+// expect: maxInt(3, 7) = 7
+// expect: maxFloat(1.5, 3.0) = 3.0
 T max<T>(T a, T b) { return a > b ? a : b; }
 
 export i32 maxInt(i32 x, i32 y) { return max(x, y); }      // T is i32
@@ -238,7 +238,7 @@ A type parameter is inferred from the arguments structurally — the parameter's
 argument's type is matched against it — and from the type expected of the result:
 
 ```wac
-// expect: answers inferred = 6
+// expect: inferred() = 6
 struct Box<T> { T v; }
 struct Vec<T> { T[] data; }
 
@@ -268,7 +268,7 @@ Constraints flow both ways within an expression ([09](09-numeric-literals.md)). 
 different types for one parameter are an error:
 
 ```wac
-// expect: answers agreeing(1, 2.0) = 1
+// expect: agreeing(1, 2.0) = 1
 T max<T>(T a, T b) { return a > b ? a : b; }
 
 export i32 agreeing(i32 x, f64 y) {
@@ -284,7 +284,7 @@ The types are compared by identity, not spelling ([01](../1-programs/01-names-an
 ### Type arguments may be written
 
 ```wac
-// expect: answers written = 9
+// expect: written() = 9
 T identity<T>(T x) { return x; }
 
 export i32 written() {
@@ -311,8 +311,8 @@ always written with its arguments.
 ### A method may take type parameters of its own
 
 ```wac
-// expect: answers total = 6
-// expect: answers wide = 6
+// expect: total() = 6
+// expect: wide() = 6
 struct Vec<T> {
   T[] items;
 
@@ -346,8 +346,8 @@ enough.
 A type parameter may have a default, used when the argument is omitted:
 
 ```wac
-// expect: answers parsed("x") = 1
-// expect: answers parsed("") = 0
+// expect: parsed("x") = 1
+// expect: parsed("") = 0
 enum Result<T, E = union> {
   Ok(T v), Err(E e)
 }
@@ -377,7 +377,7 @@ There are no constraints and no traits. A template is checked at its definition 
 opaque, and again at each instantiation with them substituted:
 
 ```wac
-// expect: answers lengths = 3
+// expect: lengths() = 3
 struct Vec<T> {
   T[] data;
 
@@ -410,7 +410,7 @@ checked at each instantiation.
 This holds for every kind of template — struct, enum, function and method alike:
 
 ```wac
-// expect: answers emptyBox = 0
+// expect: emptyBox() = 0
 enum Box<T> {
   Full(T v), Empty
 
@@ -487,7 +487,7 @@ An instantiation belongs to the template's module, and importing the template is
 instantiate `Box<i32>` share one instantiation, and a type argument need not be exported:
 
 ```wac
-// expect: answers shared = 3
+// expect: shared() = 3
 // ---- box.wac ----
 export struct Box<T> { T v; T get(const this) { return this.v; } }
 // ---- other.wac ----
@@ -515,8 +515,8 @@ have to call a name the author never wrote. A program exposes one by naming it i
 ([02](../1-programs/02-modules-and-imports.md)):
 
 ```wac
-// expect: answers maxI32(3, 7) = 7
-// expect: answers maxF64(2.5, 1.5) = 2.5
+// expect: maxI32(3, 7) = 7
+// expect: maxF64(2.5, 1.5) = 2.5
 T max<T>(T a, T b) { return a > b ? a : b; }
 
 export { max<i32> as maxI32, max<f64> as maxF64 };

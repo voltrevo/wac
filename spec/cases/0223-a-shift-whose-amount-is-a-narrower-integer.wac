@@ -1,4 +1,4 @@
-// expect: answers k = 8
+// expect: k() = 8
 // why: **a shift's amount is not an operand**, so it does not have to match the value's width. Both
 //      compilers accept `b << a` for an `i64 b` and an `i32 a` and nothing pinned it, which makes it
 //      the case a tightening breaks rather than the case a tightening catches.

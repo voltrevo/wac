@@ -10,7 +10,7 @@ returned like any other; `try` passes an error on to the caller.
 satisfies any return type:
 
 ```wac
-// expect: answers mustBePositive(5) = 5
+// expect: mustBePositive(5) = 5
 // expect: traps mustBePositive(-1)
 export i32 mustBePositive(i32 n) {
   if (n <= 0) { trap; }
@@ -26,7 +26,7 @@ A `trap` may carry a message — any `string` expression, so it can be built at 
 host is told it instead of the engine's bare report:
 
 ```wac
-// expect: answers half(8) = 4
+// expect: half(8) = 4
 // expect: traps half(7)
 export i32 half(i32 n) {
   if (n % 2 != 0) { trap "half needs an even number, not \{n}"; }
@@ -60,10 +60,10 @@ enum Result<T, E = union> {
 A function that can fail returns one, and a caller takes it apart like any enum:
 
 ```wac
-// expect: answers digitOr("3") = 3
-// expect: answers digitOr("x") = -1
-// expect: answers digitOr("42") = -1
-// expect: answers orElseZero("x") = 0
+// expect: digitOr("3") = 3
+// expect: digitOr("x") = -1
+// expect: digitOr("42") = -1
+// expect: orElseZero("x") = 0
 import { Result } from "core";
 
 Result<i32, string> parseDigit(string s) {
@@ -97,8 +97,8 @@ subject.
 enclosing function:
 
 ```wac
-// expect: answers sumOr("a", "b") = 2
-// expect: answers sumOr("", "b") = 0
+// expect: sumOr("a", "b") = 2
+// expect: sumOr("", "b") = 0
 import { Result } from "core";
 
 Result<i32, string> digit(string s) {
@@ -142,8 +142,8 @@ A function's error type may be a union, and an error passes through `try` when i
 members:
 
 ```wac
-// expect: answers loaded("data") = 1
-// expect: answers narrow("data") = 1
+// expect: loaded("data") = 1
+// expect: narrow("data") = 1
 import { Result } from "core";
 
 enum NotFound { Missing }
@@ -194,14 +194,33 @@ export async Result<Config, union<NotFound, Malformed>> load2(Sys sys) { … }
 `[§wac-try-collects-errors-6cjnatm]` In a function returning `Result<T>` with its error type omitted, every error
 passed on by `try` contributes to the error type's union.
 
+A `Result` the function returns whole contributes its error type the same way:
+
+```wac
+// expect: passedOn() = -1
+import { Result } from "core";
+
+Result<i32, string> parse(string s) {
+  if (s == "") { return Result.Err("empty"); }
+  return Result.Ok(s.len());
+}
+
+Result<i32> load(string s) { return parse(s); }   // the error type gathers string
+
+export i32 passedOn() { return load("").orElse(-1); }
+```
+
+`[§wac-result-return-collects-3vbm8tq]` A `Result<T, X>` returned from a function whose result is `Result<T>`,
+its error type omitted, contributes `X` to that error type's union.
+
 ### Matching an error
 
 An error that is a union or an enum is taken apart with `match`, and `is` in a payload tests it without binding
 ([13](../2-types/13-enums.md)):
 
 ```wac
-// expect: answers adviceForDir = "that path is a directory"
-// expect: answers adviceForMissing = "no such file"
+// expect: adviceForDir() = "that path is a directory"
+// expect: adviceForMissing() = "no such file"
 import { Result } from "core";
 
 enum Fault { NotFound, IsDir, Denied }

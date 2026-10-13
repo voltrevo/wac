@@ -1,4 +1,4 @@
-// expect: answers run = 0
+// expect: run() = 0
 // why: what sits between the angles has to be able to be a type, or the `<` was a comparison
 // from: issues/lang/0113
 

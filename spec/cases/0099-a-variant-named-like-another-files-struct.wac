@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // why: a variant belongs to its enum whatever else spells that name — another file's struct is a
 // why: different declaration and does not take the name away from it
 // from: packages/git — `Kind.Tree` where `tree.wac` also declares `struct Tree`

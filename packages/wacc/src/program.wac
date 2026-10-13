@@ -149,6 +149,9 @@ string errArm(string ret) {
   if (isTextPrimitive(e)) { return "Err(e): { return __wacSys.__wacFailed(\"\\{e}\"); }"; }
   if (startsWith(e, "union<") && endsWith(e, ">")) {
     string[] ms = topLevelParts(e.slice(6, e.len() - 1));
+    // One alternative is that alternative (spec ch18), so there is nothing to tell apart.
+    if (ms.len() == 1 && ms[0] == "string") { return "Err(e): { return __wacSys.__wacFailed(e); }"; }
+    if (ms.len() == 1 && isTextPrimitive(ms[0])) { return "Err(e): { return __wacSys.__wacFailed(\"\\{e}\"); }"; }
     string arms = "";
     for (i32 i = 0; i < ms.len(); i++) {
       string m = ms[i];

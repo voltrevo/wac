@@ -18,8 +18,8 @@ T get(const this, i32 i) {
 ```
 
 ```wac
-// expect: answers fromI32Slot = 5
-// expect: answers fromNodeSlot = 4
+// expect: fromI32Slot() = 5
+// expect: fromNodeSlot() = 4
 typeref slot(typeref t) { return t.isRef() && !t.isNullable() ? t.pushNull() : t; }
 type Slot<T> = type(slot(typeref(T)));
 
@@ -49,7 +49,7 @@ The dropped branch is checked at the definition like any generic body. Only the 
 so what a drop can hide is a type error that needed a `T` to see:
 
 ```wac
-// expect: answers pickI32 = 1
+// expect: pickI32() = 1
 i32 pick<T>() {
   static_if (typeref(T) == typeref(i32)) {
     return 1;
@@ -78,7 +78,7 @@ And a static branch that is not taken still retains what it names ([05](../1-pro
 ## A `static_` condition must be known statically
 
 ```wac
-// expect: answers f(1) = 0
+// expect: f(1) = 0
 export i32 f(i32 n) {
   // ERROR: condition is not known statically — n is a runtime value
   // static_if (n > 0) { return 1; }
@@ -108,7 +108,7 @@ same(("a", 1 as i32), ("a", 2 as i32));    // false
 `i` would leave it with no type at all.
 
 ```wac
-// expect: answers unrolledTotal = 10
+// expect: unrolledTotal() = 10
 export i32 unrolledTotal() {
   i32 total = 0;
   static_for (i32 i = 1; i <= 4; i++) {
@@ -142,8 +142,8 @@ export i32 noBreak() {
 ## `static_match` chooses an arm
 
 ```wac
-// expect: answers widthU32 = 4
-// expect: answers widthU64 = 8
+// expect: widthU32() = 4
+// expect: widthU64() = 8
 i32 width<T>() {
   return static_match (T) {
     u32:     4,
@@ -184,7 +184,7 @@ An ordinary `if` whose condition is constant is folded and its dead branch remov
 branches are checked at every instantiation:
 
 ```wac
-// expect: answers sizeOfAb = 2
+// expect: sizeOfAb() = 2
 i32 size<T>(T x) {
   if (typeref(T).isRef()) { return x.len(); }
   return 0;
@@ -209,7 +209,7 @@ A condition that is constant regardless of type parameters may warn; one that is
 instantiation does not:
 
 ```wac
-// expect: answers tagOfI32 = 1
+// expect: tagOfI32() = 1
 i32 tag<T>() {
   if (typeref(T).isRef()) { return 0; }    // constant per instantiation: no warning
   return 1;

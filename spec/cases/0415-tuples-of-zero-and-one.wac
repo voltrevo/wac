@@ -1,4 +1,4 @@
-// expect: answers oneTupleMember = 1
+// expect: oneTupleMember() = 1
 // why: `()` is the empty tuple and `(x,)` a tuple of one; `(x)` is `x` in parentheses, and a trailing comma means something only at length one
 // from: spec ch14 §wac-tuple-zero-one-fhcjtvh
 export i32 oneTupleMember() {

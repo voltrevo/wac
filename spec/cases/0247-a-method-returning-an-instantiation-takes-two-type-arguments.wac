@@ -1,4 +1,4 @@
-// expect: answers f = 9
+// expect: f() = 9
 // spec:  §wacc-method-type-args
 // why: `0246` is two instantiations of a method returning a plain letter; this is two of one whose
 //      return type *is* an instantiation, which is a different question — each call has to bring a

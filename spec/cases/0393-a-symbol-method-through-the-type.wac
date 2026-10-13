@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // why: a receiverless method named by a symbol is reached through the type as `T.[s]`
 // from: spec ch21 §wac-symbol-type-member-skxmsih
 symbol make;

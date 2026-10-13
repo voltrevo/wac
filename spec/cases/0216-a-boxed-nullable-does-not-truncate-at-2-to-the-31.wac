@@ -1,4 +1,4 @@
-// expect: answers f = 42
+// expect: f() = 42
 // why: `ref.i31` would be free and is what this used to be — it holds 31 bits, so `i32? a = 2000000000`
 //      came back as -147483648, a wrong answer with no diagnostic at exactly the values a program is
 //      careful about. `issues/lang/0045` bought the allocation to stop that. This is the case that

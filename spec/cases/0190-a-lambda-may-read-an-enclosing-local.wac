@@ -1,4 +1,4 @@
-// expect: answers f = 42
+// expect: f() = 42
 // why: a lambda reads the locals around it, carried in the environment half of its pair
 // from: design/lang/0002 tier two
 //

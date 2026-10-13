@@ -1,4 +1,4 @@
-// expect: answers f = 5
+// expect: f() = 5
 // why: the other half of `[§wac-usign-chk-p8jn3wl]` — `check(5)` returns `5`, so the trap is a range
 //      test and not a refusal of the conversion
 // from: issues/lang/0268c

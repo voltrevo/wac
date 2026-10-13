@@ -11,7 +11,7 @@ points: reachability starts from them ([05](05-reachability.md)), and its export
 the compiled module exposes to its host.
 
 ```wac
-// expect: answers test = 16
+// expect: test() = 16
 // ---- utils_a.wac ----
 export i32 compute(i32 x) { return x + 1; }
 // ---- utils_b.wac ----
@@ -60,7 +60,7 @@ To the language, `main` is an ordinary name. A function called `main` may take a
 that exports one compiles like any other:
 
 ```wac
-// expect: answers main("wac") = "hello, wac"
+// expect: main("wac") = "hello, wac"
 // expect (wac build): refused
 export string main(string who) { return "hello, \{who}"; }
 ```
@@ -122,7 +122,7 @@ without being given the means, and nothing a static initialiser can acquire
 what it can do:
 
 ```wac
-// expect: answers firstOverTwo = 3
+// expect: firstOverTwo() = 3
 /** The first element `p` accepts, or nothing. */
 T? find<T>(T[] xs, fn<bool(T)> p) {
   for (T x in xs) {

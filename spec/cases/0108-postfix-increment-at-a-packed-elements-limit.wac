@@ -1,4 +1,4 @@
-// expect: answers f = 255000
+// expect: f() = 255000
 // why: postfix `++` answers what the element held, and a packed element holds what a store-and-read leaves — 255, not -1
 // from: issues/lang/0084
 export i32 f() {

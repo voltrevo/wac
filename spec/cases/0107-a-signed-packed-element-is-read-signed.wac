@@ -1,4 +1,4 @@
-// expect: answers f = -4
+// expect: f() = -4
 // why: a compound assignment reads its element the way the element's type says — `i8` is signed, and division is where that shows
 // from: issues/lang/0084
 export i32 f() {

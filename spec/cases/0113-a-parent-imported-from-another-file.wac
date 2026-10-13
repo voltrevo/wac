@@ -1,4 +1,4 @@
-// expect: answers f = 12
+// expect: f() = 12
 // why: an imported parent is registered after the file that inherits from it, and the type section must not care
 // from: issues/lang/0083
 // ---- par.wac ----

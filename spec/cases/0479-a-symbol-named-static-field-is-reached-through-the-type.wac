@@ -1,4 +1,4 @@
-// expect: answers throughType = 7
+// expect: throughType() = 7
 // spec: §wac-symbol-type-member-skxmsih
 // why: a static field named by a symbol is a member of the type, read as `T.[s]`
 // from: spec ch21

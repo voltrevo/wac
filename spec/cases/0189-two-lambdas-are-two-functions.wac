@@ -1,4 +1,4 @@
-// expect: answers f = 12
+// expect: f() = 12
 // why: each lambda is its own function, so two of them do not collapse into one
 // from: design/lang/0002 tier two
 //

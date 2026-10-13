@@ -1,4 +1,4 @@
-// expect: answers f = 5
+// expect: f() = 5
 // why: the slot a constructor takes its arguments from can be a variant's payload, not only a local
 // from: the last of specSingle's known false alarms
 struct Box<T> { T v; }

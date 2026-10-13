@@ -1,4 +1,4 @@
-// expect: answers f = 5
+// expect: f() = 5
 // spec:  §enum-recursive-via-struct
 // why: the payload names a struct whose field is a nullable array of the enum, and neither declaration precedes the other
 // from: spec/spec/enums.md, whose only checker was the reference's suite

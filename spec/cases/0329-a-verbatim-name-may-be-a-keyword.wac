@@ -1,4 +1,4 @@
-// expect: answers f = 20
+// expect: f() = 20
 // why: `@"…"` is a name whose spelling is the quoted text — a keyword, a hyphen, or an ordinary name, which it then is
 // from: verbatim names (design/lang/0016), spec ch01 §wac-verbatim-name-jzwznre
 i32 pick(i32 @"for", i32 @"data-size") { return @"for" + @"data-size"; }

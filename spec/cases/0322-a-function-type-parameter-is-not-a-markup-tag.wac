@@ -1,4 +1,4 @@
-// expect: answers f = 42
+// expect: f() = 42
 // why: `<` straight after `fn` opens a function type's parameters, never a markup tag, wherever it appears
 // from: the fn<R(P)> spelling (design/lang/0016) — the lexer read `fn<i32(i32)> g` as a tag and the parameter vanished
 export enum Backing {

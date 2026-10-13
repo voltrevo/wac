@@ -1,4 +1,4 @@
-// expect: answers f = 4
+// expect: f() = 4
 // why: the type arguments of a generic *call* are inferred from its arguments, so only a walk with
 //      locals in scope discovers the instance. An enum method has locals like any other body — the
 //      identical call from a plain function has always built, which is what isolates the enum method

@@ -1,4 +1,4 @@
-// expect: answers rebound = 3
+// expect: rebound() = 3
 // spec: §wac-const-rebindable-ri3wpfz, §wac-const-param-2vhk7dq
 // why: `const P p` may not be reassigned; `(const P) p` may, and is still never written through
 // from: spec ch17

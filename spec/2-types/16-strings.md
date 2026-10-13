@@ -7,9 +7,9 @@ bytes.
 ## Literals
 
 ```wac
-// expect: answers hello = 5
-// expect: answers empty = 0
-// expect: answers withEmoji = 10
+// expect: hello() = 5
+// expect: empty() = 0
+// expect: withEmoji() = 10
 export i32 hello() { return "hello".len(); }
 export i32 empty() { return "".len(); }
 export i32 withEmoji() { return "hello 😀".len(); }
@@ -23,10 +23,10 @@ The escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\0` and `\u{…}`. Each is one ch
 escape is never rescanned:
 
 ```wac
-// expect: answers singles = 5
-// expect: answers mid = 3
-// expect: answers dbl = 2
-// expect: answers run = 5
+// expect: singles() = 5
+// expect: mid() = 3
+// expect: dbl() = 2
+// expect: run() = 5
 export i32 singles() { return "\n".len() + "\t".len() + "\0".len() + "\\".len() + "\"".len(); }
 export i32 mid() { return "a\\b".len(); }      // a, one backslash, b
 export i32 dbl() { return "\\\\".len(); }      // two backslashes
@@ -47,9 +47,9 @@ alone: `"[\\]^_".len()` is `5`.
 One to six hex digits, naming a Unicode scalar. In a string it is encoded as UTF-8:
 
 ```wac
-// expect: answers letter = 65
-// expect: answers emojiLen = 4
-// expect: answers maxLen = 4
+// expect: letter() = 65
+// expect: emojiLen() = 4
+// expect: maxLen() = 4
 export i32 letter() { return "\u{41}".toBytes()[0] as i32; }
 export i32 emojiLen() { return "\u{1F600}".len(); }
 
@@ -85,7 +85,7 @@ what a visible character looks like rather than where it sits, and emoji sequenc
 rendering in several scripts are built from them.
 
 ```wac
-// expect: answers spelled = 3
+// expect: spelled() = 3
 export i32 spelled() {
   string ok = "\u{202E}";                  // spelled, so visible in the source
   // A raw U+202E, U+0094, U+200B, U+FEFF, U+E000, U+2028 or U+2029 between the quotes is refused.
@@ -117,7 +117,7 @@ A literal opening with `"""` runs to the next `"""` and may hold newlines. The o
 a newline:
 
 ```wac
-// expect: answers usage = true
+// expect: usage() = true
 export bool usage() {
   string usage = """
       usage: wac build <entry.wac> -o <stem>
@@ -131,8 +131,8 @@ export bool usage() {
 is removed from each. A blank line contributes nothing to it.
 
 ```wac
-// expect: answers closedOnLastLine = "no newline at the end"
-// expect: answers closedBelow = "flush\n"
+// expect: closedOnLastLine() = "no newline at the end"
+// expect: closedBelow() = "flush\n"
 export string closedOnLastLine() {
   return """
       no newline at the end""";
@@ -155,12 +155,12 @@ refused, as anywhere in a literal, so no block string can mean two things to two
 ## Length, concatenation and comparison
 
 ```wac
-// expect: answers append = "hello world"
-// expect: answers concatLen("abc", "def") = 6
-// expect: answers equal("hello", "hel", "lo") = true
-// expect: answers equal("abc", "ab", "d") = false
-// expect: answers less("abc", "abd") = true
-// expect: answers less("b", "a") = false
+// expect: append() = "hello world"
+// expect: concatLen("abc", "def") = 6
+// expect: equal("hello", "hel", "lo") = true
+// expect: equal("abc", "ab", "d") = false
+// expect: less("abc", "abd") = true
+// expect: less("b", "a") = false
 export string append() {
   string s = "hello";
   string before = s;
@@ -192,7 +192,7 @@ export bool less(string a, string b) { return a < b && b > a && a <= b && b >= a
 `+` takes two strings and nothing else:
 
 ```wac
-// expect: answers count(5) = "count: 5"
+// expect: count(5) = "count: 5"
 export string count(i32 n) {
   // ERROR: + requires matching types — a number is not a string
   // string s = "count: " + n;
@@ -212,10 +212,10 @@ Interpolation is the way to put a value in a string, through core's `toString`
 of a sequence, or at a byte that begins none, it is `""`. Outside the string it traps:
 
 ```wac
-// expect: answers at("hello", 1) = "e"
-// expect: answers at("a😀b", 1) = "😀"
-// expect: answers at("a😀b", 2) = ""
-// expect: answers lenAt("a😀b", 2) = 0
+// expect: at("hello", 1) = "e"
+// expect: at("a😀b", 1) = "😀"
+// expect: at("a😀b", 2) = ""
+// expect: lenAt("a😀b", 2) = 0
 // expect: traps at("abc", 5)
 export string at(string s, i32 i) { return s[i]; }
 export i32 lenAt(string s, i32 i) { return s[i].len(); }
@@ -235,7 +235,7 @@ character.
 Strings cannot be written to:
 
 ```wac
-// expect: answers first = "h"
+// expect: first() = "h"
 export string first() {
   string s = "hello";
 
@@ -251,9 +251,9 @@ export string first() {
 ## Slicing and searching
 
 ```wac
-// expect: answers slice("hello world", 6, 11) = "world"
-// expect: answers indexOf("hello world", "world") = 6
-// expect: answers indexOf("hello", "xyz") = -1
+// expect: slice("hello world", 6, 11) = "world"
+// expect: indexOf("hello world", "world") = 6
+// expect: indexOf("hello", "xyz") = -1
 export string slice(string s, i32 start, i32 end) { return s.slice(start, end); }
 export i32 indexOf(string s, string t) { return s.indexOf(t); }
 ```
@@ -287,8 +287,8 @@ answer to give. A negative start does not count from the end: nothing in the lan
 character that is not already written somewhere:
 
 ```wac
-// expect: answers fromCodepoint(65) = "A"
-// expect: answers byteLen(128512) = 4
+// expect: fromCodepoint(65) = "A"
+// expect: byteLen(128512) = 4
 // expect: traps fromCodepoint(55296)
 // expect: traps fromCodepoint(-1)
 export string fromCodepoint(i32 cp) { return string.fromCodepoint(cp); }
@@ -306,8 +306,8 @@ no correct string to return, and a silent U+FFFD would hide the mistake.
 fresh array of a string's bytes:
 
 ```wac
-// expect: answers copies = true
-// expect: answers utf8 = true
+// expect: copies() = true
+// expect: utf8() = true
 export bool copies() {
   u8[] b = ['h', 'i'];
   string s = string.fromBytes(b);
@@ -342,8 +342,8 @@ two bytes.
 sequence answers `""`, as indexing the middle of one does:
 
 ```wac
-// expect: answers badLead = ""
-// expect: answers badLen = 2
+// expect: badLead() = ""
+// expect: badLen() = 2
 export string badLead() { return string.fromBytes([0xFF, 0x41])[0]; }
 export i32 badLen() { return string.fromBytes([0xFF, 0x41]).len(); }
 ```
@@ -356,10 +356,10 @@ export i32 badLen() { return string.fromBytes([0xFF, 0x41]).len(); }
 a real question, since `fromBytes` does not validate:
 
 ```wac
-// expect: answers isUtf8([0xC3, 0xA9]) = true
-// expect: answers isUtf8([0xFF, 0x41]) = false
-// expect: answers stringIsUtf8("é") = true
-// expect: answers fromBytesIsUtf8([0xFF, 0x41]) = false
+// expect: isUtf8([0xC3, 0xA9]) = true
+// expect: isUtf8([0xFF, 0x41]) = false
+// expect: stringIsUtf8("é") = true
+// expect: fromBytesIsUtf8([0xFF, 0x41]) = false
 export bool isUtf8(u8[] b) { return string.isUtf8(b); }
 export bool stringIsUtf8(string s) { return s.isUtf8(); }
 export bool fromBytesIsUtf8(u8[] b) { return string.fromBytes(b).isUtf8(); }
@@ -383,10 +383,10 @@ A validator that accepts what a decoder would reject is worse than none.
 `s.toUtf8()` does the same for a string:
 
 ```wac
-// expect: answers repairedLen([0xFF]) = 3
-// expect: answers toUtf8([0xC3, 0xA9]) = "é"
-// expect: answers stringRepairedLen([0xFF, 0x41]) = 4
-// expect: answers toUtf8([0xE1, 0x80, 0x41]) = "\u{FFFD}A"
+// expect: repairedLen([0xFF]) = 3
+// expect: toUtf8([0xC3, 0xA9]) = "é"
+// expect: stringRepairedLen([0xFF, 0x41]) = 4
+// expect: toUtf8([0xE1, 0x80, 0x41]) = "\u{FFFD}A"
 export string toUtf8(u8[] b) { return string.toUtf8(b); }
 export i32 repairedLen(u8[] b) { return string.toUtf8(b).toBytes().len(); }          // [0xFF]: one U+FFFD
 export i32 stringRepairedLen(u8[] b) { return string.fromBytes(b).toUtf8().toBytes().len(); }

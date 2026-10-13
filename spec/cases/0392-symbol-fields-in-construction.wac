@@ -1,4 +1,4 @@
-// expect: answers f = 14
+// expect: f() = 14
 // why: a symbol-named field is supplied in named construction as `[s]: value`, and positionally in declaration order
 // from: spec ch21 §wac-symbol-construction-uwbvysu
 symbol metadata;

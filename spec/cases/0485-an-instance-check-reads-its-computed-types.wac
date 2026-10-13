@@ -1,4 +1,4 @@
-// expect: answers fromSlots = 9
+// expect: fromSlots() = 9
 // spec: §wac-static-if-cphqxuz, §wac-generic-template-check-2wkq7nm
 // why: checked again at `fromSlot<i32>`, `Slot<T>` is `i32` and the `static_if` keeps the first branch —
 //      the computed type has to see the instance's letters, or the kept branch reads as a mismatch

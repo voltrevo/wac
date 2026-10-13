@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // why: a struct named like some enum's variant is still the struct — the variant is reachable only
 // why: as a variant, and one file's `Kind.Word` says nothing about another file's `struct Word`
 // from: issues/lang/0095, found emitting bind helpers for packages/sh

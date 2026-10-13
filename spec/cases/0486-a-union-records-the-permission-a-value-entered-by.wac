@@ -1,4 +1,4 @@
-// expect: answers ancestors = 1030
+// expect: ancestors() = 1030
 // spec: §wac-union-permission-recorded-d7yfbag
 // why: one object enters `union<Rect, const Rect>` twice, once through a `const` reference; a mutable
 //      pattern — its own type or an ancestor's — must see only the mutable entry, while `const Shape`

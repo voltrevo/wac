@@ -1,4 +1,4 @@
-// expect: answers f = 15
+// expect: f() = 15
 // spec:  §enum-match-else
 // why: `radiusOr(Shape.Point, 1.5)` returns 1.5 — with an `else` no variant is required
 // from: spec/spec/enums.md, whose only checker was the reference's suite

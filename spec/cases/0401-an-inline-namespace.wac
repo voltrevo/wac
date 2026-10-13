@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // why: `namespace name { … }` declares a namespace inline, and `export` marks the members visible through it
 // from: spec ch03 §wac-namespace-inline-8r8emsb
 // ---- lib.wac ----

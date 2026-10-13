@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // why: `const this` protects what the receiver can reach, and a value the method built out of copies is not that
 // from: issues/lang/0060
 struct Counter {

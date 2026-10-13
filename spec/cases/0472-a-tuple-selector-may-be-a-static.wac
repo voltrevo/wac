@@ -1,4 +1,4 @@
-// expect: answers staticSelect = 7
+// expect: staticSelect() = 7
 // spec: §wac-tuple-static-index-axfrq5b
 // why: `t.[i]` selects by the static value of `i`, which fixes the member's type when checked
 // from: spec ch14

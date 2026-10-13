@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // why: `import { Fs as FsType }` renames a type for this file, and a field written with the new
 // why: name holds the same thing the old one does
 // from: issues/lang/0097 — packages/git/src/repo.wac has `FsType fs;` and the field came out i32

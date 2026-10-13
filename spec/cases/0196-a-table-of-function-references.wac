@@ -1,4 +1,4 @@
-// expect: answers f = 42
+// expect: f() = 42
 // why: an array of `fn<…>` is an array, not a funcref, and a module holding one must still load
 // from: found building `packages/platform`'s scheduler, where a handler table is exactly this
 //

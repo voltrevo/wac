@@ -20,8 +20,8 @@ binds the type a `typeref` names, and `pushNull` adds one level of nullability r
 not flatten, so neither does the method standing for it.
 
 ```wac
-// expect: answers nodeSlotHoldsNull = true
-// expect: answers i32Slot = 5
+// expect: nodeSlotHoldsNull() = true
+// expect: i32Slot() = 5
 struct Node { i32 v; }
 
 typeref slot(typeref t) {
@@ -47,7 +47,7 @@ type that the `typeref` value `e` stands for. `e` is evaluated statically.
 `type(…)` is the only expression a type position takes:
 
 ```wac
-// expect: answers holderLength = 2
+// expect: holderLength() = 2
 typeref slot(typeref t) { return t.pushNull(); }
 
 struct Holder<T> {
@@ -71,7 +71,7 @@ is refused.
 A `typeref` supports the operations the language's own rules are written in:
 
 ```wac
-// expect: answers typerefOps = true
+// expect: typerefOps() = true
 struct Node { i32 v; }
 
 bool check() {
@@ -126,7 +126,7 @@ Both forms use the same static evaluation ([28](28-static-evaluation.md)), depen
 checking ([29](29-static-dependencies.md), [19](../2-types/19-generics.md)).
 
 ```wac
-// expect: answers sameType = true
+// expect: sameType() = true
 type Foo<T> {
   auto t = typeref(T);
   return t.pushNull();
@@ -152,7 +152,7 @@ general block expressions or implicit invocation of ordinary blocks.
 A type declaration may simply name another type:
 
 ```wac
-// expect: answers sumOfOneAndTwo = 3
+// expect: sumOfOneAndTwo() = 3
 type Pair = (i32, i32);
 
 i32 sum(Pair p) { return p.0 + p.1; }

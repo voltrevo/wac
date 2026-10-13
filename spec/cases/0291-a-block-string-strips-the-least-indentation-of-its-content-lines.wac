@@ -1,4 +1,4 @@
-// expect: answers f = 77
+// expect: f() = 77
 // spec:  §wac-str-block-margin-p9qk4nv
 // why: the margin is the least indentation of the content lines, and comes off each
 // from: design/lang/0013 D5

@@ -6,7 +6,7 @@ on the heap: assigning it, passing it or storing it shares the object rather tha
 ## A struct value is a reference
 
 ```wac
-// expect: answers sharedWrite = 99
+// expect: sharedWrite() = 99
 struct Point { i32 x; i32 y; }
 
 export i32 sharedWrite() {
@@ -29,7 +29,7 @@ an operator like any other, and a struct has it only if it implements it
 Fields are mutable unless marked `const`. A `const struct` has only `const` fields:
 
 ```wac
-// expect: answers constFields = 15
+// expect: constFields() = 15
 struct IdPoint {
   const i32 id;                            // fixed at construction
   i32 x;
@@ -63,7 +63,7 @@ export i32 constFields() {
 `export` and `const` are independent, and may be written together:
 
 ```wac
-// expect: answers frozenSum = 6
+// expect: frozenSum() = 6
 // ---- frozen.wac ----
 export const struct Frozen { i32 w; i32 h; }
 // ---- main.wac ----
@@ -91,7 +91,7 @@ Parentheses supply every field, in declaration order. Braces name fields, in any
 out the ones that have a default:
 
 ```wac
-// expect: answers constructions = true
+// expect: constructions() = true
 struct Link {
   i32 value;
   Link? next = null;
@@ -127,7 +127,7 @@ A nullable field's default is `null`, so it may always be left out of braces. `n
 positional argument:
 
 ```wac
-// expect: answers nullNext = 42
+// expect: nullNext() = 42
 struct Node { i32 val; Node? next; }
 
 export i32 nullNext() {
@@ -151,7 +151,7 @@ an array type's is empty — or when it has an initialiser. A struct has a defau
 field does:
 
 ```wac
-// expect: answers defaulted = 3
+// expect: defaulted() = 3
 struct Conn {
   i32 retries = 3;
   i32[] log;                               // empty by default
@@ -177,7 +177,7 @@ the value `T { }` constructs ([08](08-primitives.md), `wac-assign-default-on-dem
 Defaults nest. A field of struct type has a default when that struct does:
 
 ```wac
-// expect: answers nestedDefault = 0
+// expect: nestedDefault() = 0
 struct Point { i32 x = 0; i32 y = 0; }
 struct Line { Point start; Point end; }
 
@@ -195,7 +195,7 @@ A field initialiser runs at each construction, not once. It cannot read another 
 capability in scope:
 
 ```wac
-// expect: answers freshPerConstruction = true
+// expect: freshPerConstruction() = true
 struct Counter {
   i32[] seen = [0];                        // a fresh array per construction
 }
@@ -226,8 +226,8 @@ field is tracked on its own; at the first use, every field must be assigned or h
 ([08](08-primitives.md), `wac-assign-parts`):
 
 ```wac
-// expect: answers assignedLater = 7
-// expect: answers frozenPort(8080) = 8080
+// expect: assignedLater() = 7
+// expect: frozenPort(8080) = 8080
 struct Half {
   i32 retries = 3;
   i32 port;                                // no default
@@ -286,7 +286,7 @@ access that may write, `const this` for access that may not. A method with no re
 type:
 
 ```wac
-// expect: answers countAfterInc = 1
+// expect: countAfterInc() = 1
 struct Counter {
   i32 count;
   const i32 id;
@@ -340,7 +340,7 @@ export struct Foo {
 Methods work alike on fields of every kind:
 
 ```wac
-// expect: answers stackLen = 2
+// expect: stackLen() = 2
 struct Node { i32 val; Node? next; }
 
 struct Stack {
@@ -375,7 +375,7 @@ A struct may extend one other struct with `: Parent`. It inherits the parent's f
 adds fields after them. A subtype value may be used wherever its parent is expected:
 
 ```wac
-// expect: answers inheritedX = 5.0
+// expect: inheritedX() = 5.0
 struct Shape {
   f64 x;
   f64 y;
@@ -436,7 +436,7 @@ A method declared `virtual` may be overridden by a subtype, and a call to it dis
 runtime type of the receiver:
 
 ```wac
-// expect: answers dispatch = 80
+// expect: dispatch() = 80
 struct Base {
   virtual i32 fire(const this) { return 0; }
 }
@@ -500,8 +500,8 @@ allow, and it is not allowed.
 static methods and field initialisers. The rest of the module cannot name it, any more than another module can:
 
 ```wac
-// expect: answers deposited(10, 20) = 30
-// expect: answers depositCount(10, 20) = 1
+// expect: deposited(10, 20) = 30
+// expect: depositCount(10, 20) = 1
 export struct Account {
   private i32 cents;
   private i32 deposits = 0;
@@ -551,7 +551,7 @@ refused outside the body of a struct with any private field. Named construction 
 field that has a default, and may not name one:
 
 ```wac
-// expect: answers headroom = 5
+// expect: headroom() = 5
 export struct Quota {
   i32 limit;
   private i32 used = 0;
@@ -681,7 +681,7 @@ export i32 typeTest() {
 Inside the block a test guards, the tested name has the narrower type, so no cast is needed:
 
 ```wac
-// expect: answers rectArea = 200.0
+// expect: rectArea() = 200.0
 struct Shape { f64 x; f64 y; }
 struct Rect : Shape { f64 w; f64 h; }
 struct Circle : Shape { f64 radius; }
@@ -712,7 +712,7 @@ name is `matches` ([25](../3-expressions/25-control-flow.md)).
 the same object.
 
 ```wac
-// expect: answers identity = true
+// expect: identity() = true
 struct Point { i32 x; i32 y; }
 
 export bool identity() {
@@ -738,7 +738,7 @@ be a hash key carries its own ([39](../7-library/39-map-and-hash.md)).
 ## A worked example
 
 ```wac
-// expect: answers reversedEnds = 3010
+// expect: reversedEnds() = 3010
 struct Node { i32 val; Node? next; }
 
 struct LinkedList {

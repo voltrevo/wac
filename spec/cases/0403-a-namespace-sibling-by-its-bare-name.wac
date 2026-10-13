@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // why: the members of a namespace block name each other by their bare names
 // from: spec ch03 §wac-namespace-member-private-q5zj9wx
 namespace helpers {

@@ -1,4 +1,4 @@
-// expect: answers run = 0
+// expect: run() = 0
 // why: a tag function returns one Node, so several siblings need a node that is not an element
 // from: design/lang/0006
 // spec:  §jsx-fragment-is-a-node

@@ -24,7 +24,7 @@ rendered as `<>` in every renderer that had not heard of them.
 A tree is an ordinary value, built and walked like any other:
 
 ```wac
-// expect: answers textNodes = 2
+// expect: textNodes() = 2
 import { Node, Attr } from "core";
 
 i32 countText(Node n) {
@@ -56,7 +56,7 @@ struct of `name` and `value`.
 parameters, and its children are its `kids`:
 
 ```wac
-// expect: answers paragraph = true
+// expect: paragraph() = true
 import { Node, html.p } from "core";
 
 export bool paragraph() {

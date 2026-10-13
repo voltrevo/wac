@@ -1,4 +1,4 @@
-// expect: answers f = 3
+// expect: f() = 3
 // spec:  §enum-narrow
 // why: `widthOf(Shape.Rect(3.0, 4.0))` returns 3.0 — the arm shadows the subject at the variant type
 // from: spec/spec/enums.md, whose only checker was the reference's suite

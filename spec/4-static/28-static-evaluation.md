@@ -18,8 +18,8 @@ static i32 DOUBLE = SIZE * 2;   // 128
 ```
 
 ```wac
-// expect: answers size = 64
-// expect: answers doubled = 128
+// expect: size() = 64
+// expect: doubled() = 128
 i32 square(i32 x) { return x * x; }
 
 static i32 SIZE = square(8);
@@ -50,8 +50,8 @@ static i32[] TABLE = buildTable();
 ```
 
 ```wac
-// expect: answers table(3) = 9
-// expect: answers table(7) = 49
+// expect: table(3) = 9
+// expect: table(7) = 49
 i32[] buildTable() {
   i32[] out = i32[].filled(8, 0);
   for (i32 i = 0; i < out.len(); i++) {
@@ -81,14 +81,14 @@ Static evaluation computes what the program would: the same wrapping, the same r
 folded value and the same expression run at run time agree:
 
 ```wac
-// expect: answers wrap = -2147483648
-// expect: answers staticWrap = -2147483648
-// expect: answers shiftMask = 1
-// expect: answers staticShiftMask = 1
-// expect: answers divNeg = -3
-// expect: answers staticDivNeg = -3
-// expect: answers nearest = 2
-// expect: answers staticNearest = 2
+// expect: wrap() = -2147483648
+// expect: staticWrap() = -2147483648
+// expect: shiftMask() = 1
+// expect: staticShiftMask() = 1
+// expect: divNeg() = -3
+// expect: staticDivNeg() = -3
+// expect: nearest() = 2
+// expect: staticNearest() = 2
 export i32 wrap() { i32 a = 2147483647; return a + 1; }
 export i32 shiftMask() { i32 a = 1; i32 n = 32; return a << n; }   // the count is taken mod 32
 export i32 divNeg() { i32 a = -7; i32 b = 2; return a / b; }       // truncates toward zero

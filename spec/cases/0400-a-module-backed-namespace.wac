@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // why: `export * as name from "…"` exports the named module's exports as a namespace called `name`
 // from: spec ch03 §wac-namespace-module-ewetmdc
 // ---- shapes.wac ----

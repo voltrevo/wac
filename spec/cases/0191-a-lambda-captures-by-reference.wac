@@ -1,4 +1,4 @@
-// expect: answers f = 42
+// expect: f() = 42
 // why: a captured local is shared with the lambda, not copied — a write on either side is seen by both
 // spec:  §wacc-lambda-capture
 // from: design/lang/0002 tier two, the semantics chosen on 2026-08-16

@@ -1,4 +1,4 @@
-// expect: answers f = 17
+// expect: f() = 17
 // why: `import { ns.member }` binds the member, `as` renames it, and `import * as name` binds a module as a namespace — all the same declarations
 // from: spec ch03 §wac-namespace-import-member-gfyf3qj, §wac-namespace-import-all-inza3ff
 // ---- shapes.wac ----

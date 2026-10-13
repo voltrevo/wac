@@ -1,4 +1,4 @@
-// expect: answers f = 4
+// expect: f() = 4
 // why: `p?.m` is null when `p` is absent and `p!.m` otherwise, and a chain reads the member only when every link is present
 // from: spec ch10 §wac-safe-member-merges-f7qhnij
 struct Addr   { i32 zip; }

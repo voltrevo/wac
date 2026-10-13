@@ -1,4 +1,4 @@
-// expect: answers f = 8
+// expect: f() = 8
 // why: a `Vec` is walked as an array is, and `auto` takes the element type
 // from: spec ch25 §wac-for-in-qkcbmxf, ch38
 import { Vec } from "core";

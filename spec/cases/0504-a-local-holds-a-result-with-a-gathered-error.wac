@@ -1,4 +1,4 @@
-// expect: answers f = 13
+// expect: f() = 13
 // why: `Result<i32> r = load(5);` writes the default, so the local's error type is a `union`
 //      placeholder gathered from its initialiser (spec ch33) — the commonest way to hold a
 //      `Result<T>`, and the emitter declined it as a local of an unspelled type

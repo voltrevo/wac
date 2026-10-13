@@ -1,4 +1,4 @@
-// expect: answers f = 12
+// expect: f() = 12
 // spec:  §enum-match-variant-subject
 // why: a variant is an enum value, and the arms still cover the enum — including on a construction
 // from: spec/spec/enums.md, whose only checker was the reference's suite

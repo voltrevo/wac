@@ -1,4 +1,4 @@
-// expect: answers f = 0
+// expect: f() = 0
 // spec: §wac-generic-infer-expected-endugbi
 // why: no argument says what T is, and the slot the call fills does — a return is one (spec ch19,
 //      restated: the old spec refused this, since a call could not name its type arguments)

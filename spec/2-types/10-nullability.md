@@ -8,7 +8,7 @@ written down.
 ## `null` inhabits a nullable type and no other
 
 ```wac
-// expect: answers widened = true
+// expect: widened() = true
 struct Point { i32 x; i32 y; }
 
 export bool widened() {
@@ -42,8 +42,8 @@ number cannot be nullable.
 ## Every type but `void` may be nullable
 
 ```wac
-// expect: answers nullableNumbers = 2000000001
-// expect: answers pick(false) = null
+// expect: nullableNumbers() = 2000000001
+// expect: pick(false) = null
 export i32? pick(bool cond) { return cond ? 1 : null; }
 
 export i32 nullableNumbers() {
@@ -65,7 +65,7 @@ a host boundary, where it is a reference ([48](../8-tooling/48-bindgen.md)).
 ## `!` unwraps, and traps on `null`
 
 ```wac
-// expect: answers xOf(true) = 1
+// expect: xOf(true) = 1
 // expect: traps xOf(false)
 struct Point { i32 x; i32 y; }
 
@@ -79,7 +79,7 @@ export i32 xOf(bool here) {
 `[§wac-unwrap-trap-y1iep2p]` `!` on a nullable value answers the value, and traps when it is `null`.
 
 ```wac
-// expect: answers plainX = 1
+// expect: plainX() = 1
 struct Point { i32 x; i32 y; }
 
 export i32 plainX() {
@@ -100,8 +100,8 @@ Postfix `!` is unwrapping; prefix `!` is logical negation ([22](../3-expressions
 ## Testing for `null`
 
 ```wac
-// expect: answers present = true
-// expect: answers nullIsNull = true
+// expect: present() = true
+// expect: nullIsNull() = true
 struct Point { i32 x; i32 y; }
 
 export bool present() {
@@ -118,7 +118,7 @@ negation. `null is null` is `true`.
 A test against `null` on a type that is never null is allowed, and always false:
 
 ```wac
-// expect: answers boxIsNull = false
+// expect: boxIsNull() = false
 struct Box { i32 v; }
 
 export bool boxIsNull() {
@@ -142,7 +142,7 @@ subject.
 ## `T??` has three states
 
 ```wac
-// expect: answers threeStates = 4
+// expect: threeStates() = 4
 struct Node { i32 v; }
 
 export i32 threeStates() {
@@ -167,7 +167,7 @@ present `T??` may hold `null` or a `T`; and `!` removes one layer at a time.
 Widening a typed value wraps it: a `T?` assigned to a `T??` is present whatever it holds.
 
 ```wac
-// expect: answers collapsed = true
+// expect: collapsed() = true
 struct Node { i32 v; }
 
 export bool collapsed() {
@@ -203,9 +203,9 @@ widen(null, null) = null
 ```
 
 ```wac
-// expect: answers nothingIsNull = true
-// expect: answers maybePresent(true) = true
-// expect: answers maybePresent(false) = false
+// expect: nothingIsNull() = true
+// expect: maybePresent(true) = true
+// expect: maybePresent(false) = false
 auto nothing() { return null; }            // null, meaning never?
 
 auto maybe(bool c) {
@@ -230,7 +230,7 @@ position to mean it.
 ## `?.` reads through an absence
 
 ```wac
-// expect: answers safeReads = 2
+// expect: safeReads() = 2
 struct Addr   { string city; }
 struct Person { Addr here; Addr? home; Addr?? prev; }
 
@@ -257,9 +257,9 @@ A `T??` result comes only from a `T??` member. Two absences in a chain both prod
 member is read only when every link is present:
 
 ```wac
-// expect: answers cityOf(null) = null
-// expect: answers withAddress = "Oslo"
-// expect: answers withoutAddress = null
+// expect: cityOf(null) = null
+// expect: withAddress() = "Oslo"
+// expect: withoutAddress() = null
 struct Addr   { string city; }
 struct Person { Addr? home; }
 
@@ -274,7 +274,7 @@ export string? withoutAddress() { return cityOf(Person(null)); }
 `?.` stops at a `T??`, because stripping one `?` leaves a `T?`, which has no members:
 
 ```wac
-// expect: answers previousCity = null
+// expect: previousCity() = null
 struct Addr   { string city; }
 struct Person { Addr?? prev; }
 
@@ -294,7 +294,7 @@ absences must be collapsed explicitly first.
 ## `??` supplies what is absent
 
 ```wac
-// expect: answers timeoutMs(null) = 5000
+// expect: timeoutMs(null) = 5000
 struct Config { i32 timeoutMs; }
 
 export i32 timeoutMs(Config? cfg) {
@@ -316,7 +316,7 @@ one ?? null;                 // Addr?: a tautology — this is one
 ## `?.` and `??` need an operand that can be absent
 
 ```wac
-// expect: answers fallbackCity = "Oslo"
+// expect: fallbackCity() = "Oslo"
 struct Addr   { string city; }
 struct Person { Addr? home; }
 
@@ -345,7 +345,7 @@ both unreachable. Refusing it means a reader who finds one knows the operand can
 ## `?.` is not an assignment target
 
 ```wac
-// expect: answers assignedCity = "Oslo"
+// expect: assignedCity() = "Oslo"
 struct Addr   { string city; }
 struct Person { Addr? home; }
 

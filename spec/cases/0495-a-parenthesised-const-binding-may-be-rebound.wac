@@ -1,4 +1,4 @@
-// expect: answers walked = 2
+// expect: walked() = 2
 // spec: §wac-const-rebindable-ri3wpfz
 // why: `(const Node)? cur` is a cursor over const data: rebinding it walks the list, and the type is
 //      `const Node?`, so `cur = cur!.next` reads through a const reference into a const binding

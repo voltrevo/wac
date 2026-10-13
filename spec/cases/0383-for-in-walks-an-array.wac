@@ -1,4 +1,4 @@
-// expect: answers f = 8
+// expect: f() = 8
 // why: `for (T x in xs)` binds each element in turn; `continue` goes on to the next and `break` leaves
 // from: spec ch25 §wac-for-in-qkcbmxf
 export i32 f() {

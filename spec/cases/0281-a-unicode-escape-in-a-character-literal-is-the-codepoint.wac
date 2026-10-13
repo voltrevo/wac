@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // spec:  §wac-charlit-uesc-w3mk7qj
 // why: a character literal is an integer, so the escape denotes the codepoint and not its encoding
 // from: design/lang/0013 D2

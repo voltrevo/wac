@@ -1,4 +1,4 @@
-// expect: answers f = 111
+// expect: f() = 111
 // why: `p matches e` tests a match-arm pattern and binds its names; `is` inside a payload tests the payload; the right of `&&` sees the bindings
 // from: `matches` (design/lang/0016), spec ch25 §wac-matches-pattern-q76z7yq
 enum Fault { NotFound, Denied }

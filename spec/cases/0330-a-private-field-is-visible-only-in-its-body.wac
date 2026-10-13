@@ -1,4 +1,4 @@
-// expect: answers deposited = 30
+// expect: deposited() = 30
 // why: a private field and method are named freely inside the struct's own methods and statics
 // from: `private` (design/lang/0016), spec ch12 §wac-private-member-dgsxduu
 struct Account {

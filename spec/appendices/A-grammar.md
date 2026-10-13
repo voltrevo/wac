@@ -11,7 +11,7 @@ array and tuple literals, named field initialisers, enum variants, payloads, mat
 then does not touch the line above it.
 
 ```wac
-// expect: answers demo = 12
+// expect: demo() = 12
 i32 area(
   i32 width,
   i32 height,
@@ -29,7 +29,7 @@ export i32 demo() {
 and the call.
 
 ```wac
-// expect: answers trailing = 1
+// expect: trailing() = 1
 i32 f(i32 a) { return a; }
 
 export i32 trailing() {

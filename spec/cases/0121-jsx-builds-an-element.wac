@@ -1,4 +1,4 @@
-// expect: answers run = 3
+// expect: run() = 3
 // why: a quoted tag is an element by that name — an expression whose value is core's tree
 // from: design/lang/0004
 // spec: §wac-markup-quoted-tag-3dnrvxj

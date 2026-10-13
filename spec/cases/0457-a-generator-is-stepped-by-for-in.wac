@@ -1,4 +1,4 @@
-// expect: answers both = 12
+// expect: both() = 12
 // why: a generator runs nothing when called, a for-in steps it, and a generator method can walk its own recursion
 // spec: §wac-generator-mbr4wfh
 

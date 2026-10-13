@@ -6,7 +6,7 @@ amortised constant time.
 ## Making one
 
 ```wac
-// expect: answers lengths = 3
+// expect: lengths() = 3
 import { Vec } from "core";
 
 export i32 lengths() {
@@ -27,11 +27,11 @@ nothing observable has to be put there.
 ## Reading and writing
 
 ```wac
-// expect: answers getAt(1) = 25
+// expect: getAt(1) = 25
 // expect: traps getAt(7)
-// expect: answers atOrNull(1) = 25
-// expect: answers atOrNull(7) = null
-// expect: answers ends = 40
+// expect: atOrNull(1) = 25
+// expect: atOrNull(7) = null
+// expect: ends() = 40
 import { Vec } from "core";
 
 Vec<i32> sample() {
@@ -58,7 +58,7 @@ bounds.
 ## Growing and shrinking
 
 ```wac
-// expect: answers growAndShrink = true
+// expect: growAndShrink() = true
 import { Vec } from "core";
 
 export bool growAndShrink() {
@@ -85,8 +85,8 @@ elements.
 ## `pop` answers an absence rather than trapping
 
 ```wac
-// expect: answers popEmpty = true
-// expect: answers popLast = 3
+// expect: popEmpty() = true
+// expect: popLast() = 3
 import { Vec } from "core";
 
 export bool popEmpty() {
@@ -107,8 +107,8 @@ Because `pop` answers `T?` for any `T`, it separates an empty `Vec` from a `null
 `Node??`, and a popped `null` arrives present ([10](../2-types/10-nullability.md)):
 
 ```wac
-// expect: answers poppedNullElement = 1
-// expect: answers poppedEmptyVec = 0
+// expect: poppedNullElement() = 1
+// expect: poppedEmptyVec() = 0
 import { Vec } from "core";
 
 struct Node { i32 v; }
@@ -145,7 +145,7 @@ value alive.
 A `Vec` can be walked with `for … in` ([25](../3-expressions/25-control-flow.md)):
 
 ```wac
-// expect: answers sumVec = 6
+// expect: sumVec() = 6
 import { Vec } from "core";
 
 export i32 sumVec() {

@@ -1,4 +1,4 @@
-// expect: answers f = 22
+// expect: f() = 22
 // why: a local inside an `async` function is hoisted into a cell declared with its written type,
 //      so `Result<i32> r = …` — a `union` placeholder after the default — left the cell's type
 //      unresolved and the program trapped; the initialiser, awaited or not, says what it is

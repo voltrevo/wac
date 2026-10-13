@@ -1,4 +1,4 @@
-// expect: answers run = 4 111
+// expect: run() = 4 111
 // why: `T??` is absent, present holding `null`, or present holding a `T` — and `!` removes one layer at a time
 // from: spec ch10 §wac-nullable-nested-ak7583p, §wac-null-as-typed-ifyaj6m
 struct Node { i32 v; }

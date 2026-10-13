@@ -1,4 +1,4 @@
-// expect: answers both = 25
+// expect: both() = 25
 // why: try answers an Ok's value and returns an Err from the enclosing function, through defer, and in an async body settles its ticket with it
 // spec: §wac-try-propagates-8s7defi
 

@@ -1,4 +1,4 @@
-// expect: answers swapped = 21
+// expect: swapped() = 21
 // why: `(a, b) = e` with no types assigns the members of `e` to locals that already exist, in order
 // from: spec ch14 §wac-tuple-assign-vmhww2b
 (u32, u32) swap(u32 a, u32 b) { return (b, a); }

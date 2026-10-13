@@ -17,7 +17,7 @@ conflated the two produced truncated output that looked successful. `match` is e
 `Failed` does not compile:
 
 ```wac
-// expect: answers bytesUntilEnd = 3
+// expect: bytesUntilEnd() = 3
 import { Read } from "core";
 
 struct Source {

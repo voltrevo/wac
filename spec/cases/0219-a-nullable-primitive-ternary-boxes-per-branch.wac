@@ -1,4 +1,4 @@
-// expect: answers f = 15
+// expect: f() = 15
 // why: `c ? 1 : null` into an `i32?` slot cannot be boxed as a whole — that asks the `null` branch to
 //      produce a number. A ternary threads the slot's type to each arm, so each one boxes or nulls on
 //      its own. Both directions are taken here, so a compiler that boxed the whole expression fails

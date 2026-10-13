@@ -1,4 +1,4 @@
-// expect: answers spellings = 3221
+// expect: spellings() = 3221
 // why: the names may carry their types, follow the tuple's type, or take theirs from `auto` — four spellings of one declaration
 // from: spec ch14 §wac-tuple-destructure-gn8i48y
 (u32, u32) divmod(u32 n, u32 d) { return (n / d, n % d); }

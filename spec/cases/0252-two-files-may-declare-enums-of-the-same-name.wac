@@ -1,4 +1,4 @@
-// expect: answers f = 12
+// expect: f() = 12
 // spec:  §enum-name-identity
 // why: an enum is its type identity, not its name — two files' `Kind` are two types
 // from: spec/spec/enums.md, whose only checker was the reference's suite

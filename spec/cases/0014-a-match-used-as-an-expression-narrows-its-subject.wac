@@ -1,4 +1,4 @@
-// expect: answers f = 5
+// expect: f() = 5
 // why: the expression form narrows exactly as the statement form does
 enum Shape { Point, Circle(i32 radius) }
 export i32 f() {

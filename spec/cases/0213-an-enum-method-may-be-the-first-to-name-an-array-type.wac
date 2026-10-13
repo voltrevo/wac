@@ -1,4 +1,4 @@
-// expect: answers f = 10
+// expect: f() = 10
 // why: an enum method's body is a body — a type it is the first to name must be registered before
 //      emission, like a function's or a struct method's. `Q[]` appears nowhere else here, so if the
 //      declaration walk skips enum methods the array type is first named while emitting and the

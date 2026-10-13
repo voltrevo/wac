@@ -1,4 +1,4 @@
-// expect: answers total = 42
+// expect: total() = 42
 // why: an async method builds a machine like a free function, and `this` survives the suspension
 // spec: §wac-async-method-4kx7vqd
 

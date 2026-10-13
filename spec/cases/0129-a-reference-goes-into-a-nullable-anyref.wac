@@ -1,4 +1,4 @@
-// expect: answers run = 1
+// expect: run() = 1
 // why: `anyref?` is the same top type as `anyref`, so a struct goes into one
 // from: packages/ssh/src/sshd.wac, which carries its interrupt context this way
 struct Ctx { i32 n; }

@@ -37,9 +37,9 @@ void update(Point p) {
 ```
 
 ```wac
-// expect: answers fieldAfterWrite = 7
-// expect: answers described = "point"
-// expect: answers aliasIsSameMember = true
+// expect: fieldAfterWrite() = 7
+// expect: described() = "point"
+// expect: aliasIsSameMember() = true
 // ---- names.wac ----
 export symbol describe;
 export symbol metadata;
@@ -90,7 +90,7 @@ void wrong(Point p) {
 ```
 
 ```wac
-// expect: answers described = "point"
+// expect: described() = "point"
 // ---- names.wac ----
 export symbol describe;
 // ---- unrelated.wac ----
@@ -137,7 +137,7 @@ t.[i];                      // i32: selector known statically
 mutability and method receiver rules remain ordinary rules.
 
 ```wac
-// expect: answers sizeOf(7) = 7
+// expect: sizeOf(7) = 7
 symbol size;
 
 struct Box {
@@ -169,7 +169,7 @@ Point q = Point(3, 4, 7);      // positional fields follow declaration order
 ```
 
 ```wac
-// expect: answers namedPlusPositional = 14
+// expect: namedPlusPositional() = 14
 symbol metadata;
 
 struct Point {
@@ -191,7 +191,7 @@ positionally in its declaration order.
 ## Inheritance and overriding
 
 ```wac
-// expect: answers describedThroughBase = "child"
+// expect: describedThroughBase() = "child"
 symbol describe;
 
 struct Base {
@@ -240,7 +240,7 @@ at runtime or during static evaluation. Literal conversion specifically requires
 ([09](09-numeric-literals.md)).
 
 ```wac
-// expect: answers throughType = 7
+// expect: throughType() = 7
 symbol size;
 symbol make;
 

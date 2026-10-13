@@ -1,4 +1,4 @@
-// expect: answers stillConst = 10
+// expect: stillConst() = 10
 // spec: §wac-union-permission-no-restore-dvm5zbj
 // why: converting into `union<const Rect>` boxes the mutable entry as `const`; widening back to
 //      `union<Rect, const Rect>` keeps that box, so the mutable arm no longer matches

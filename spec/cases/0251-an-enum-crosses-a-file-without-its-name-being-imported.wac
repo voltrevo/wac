@@ -1,4 +1,4 @@
-// expect: answers f = 2
+// expect: f() = 2
 // spec:  §enum-cross-file
 // why: an arm resolves a variant through the enum the subject is, not through the file's scope
 // from: spec/spec/enums.md, whose only checker was the reference's suite

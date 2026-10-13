@@ -1,4 +1,4 @@
-// expect: answers test = 13
+// expect: test() = 13
 // why: an imported name enters under the name the importing file gave it
 // from: the alias half of cross-file identity — one Dup must not answer for the other
 // ---- a.wac ----

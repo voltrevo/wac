@@ -27,10 +27,10 @@ i32[] contextualEmpty = [];  // element type supplied by context
 ```
 
 ```wac
-// expect: answers third = 3
-// expect: answers adopted = 1
-// expect: answers byteCount = 3
-// expect: answers emptyLengths = 0
+// expect: third() = 3
+// expect: adopted() = 1
+// expect: byteCount() = 3
+// expect: emptyLengths() = 0
 export i32 third() {
   i32[] values = [1, 2, 3];
   return values[2];
@@ -88,7 +88,7 @@ export void sizedForms() {
 The element type may be any type, including a named one, a nullable one or another array:
 
 ```wac
-// expect: answers nestedValue = 7
+// expect: nestedValue() = 7
 struct S { i32 v; }
 
 export i32 nestedValue() {
@@ -106,7 +106,7 @@ Packed numeric elements follow their ordinary literal range rules; array syntax 
 truncate literals:
 
 ```wac
-// expect: answers firstLetter = 104
+// expect: firstLetter() = 104
 export i8 firstLetter() {
   i8[] word = [104, 101, 108, 108, 111];   // "hello"
 
@@ -139,9 +139,9 @@ zeros.fill(7, 1, 3);          // mutate three elements starting at index 1
 Arguments are evaluated once. Reference-valued elements share the supplied reference.
 
 ```wac
-// expect: answers filledAt(1) = 7
-// expect: answers filledAt(4) = 0
-// expect: answers sharedWrite = 5
+// expect: filledAt(1) = 7
+// expect: filledAt(4) = 0
+// expect: sharedWrite() = 5
 struct Point { i32 x = 0; }
 
 export i32 filledAt(i32 i) {
@@ -175,8 +175,8 @@ defaults. Counts are runtime values; their integer type and invalid-count behavi
 array length rules. Neither factory uses labelled arguments.
 
 ```wac
-// expect: answers distinct(3) = 0
-// expect: answers nullDefault = true
+// expect: distinct(3) = 0
+// expect: nullDefault() = true
 struct Point { i32 x = 0; i32 y = 0; }
 
 export i32 distinct(i32 n) {
@@ -221,7 +221,7 @@ export i32 outOfBounds() {
 `[§wac-arr-oob-7jby7f8]` Reading or writing outside an array's bounds traps.
 
 ```wac
-// expect: answers aliased = 99
+// expect: aliased() = 99
 export i32 aliased() {
   i32[] a = [1, 2, 3];
   i32[] b = a;
@@ -235,7 +235,7 @@ export i32 aliased() {
 Arrays of arrays are arrays of references, so each inner array may have its own length:
 
 ```wac
-// expect: answers ragged = 6
+// expect: ragged() = 6
 export i32 ragged() {
   i32[][] grid = [[1, 2, 3], [4, 5, 6], [7]];
   return grid[1][2];
@@ -247,7 +247,7 @@ export i32 ragged() {
 Iterating:
 
 ```wac
-// expect: answers sum([10, 20, 30]) = 60
+// expect: sum([10, 20, 30]) = 60
 export i32 sum(i32[] arr) {
   i32 total = 0;
   for (i32 i = 0; i < arr.len(); i++) {
@@ -267,10 +267,10 @@ export i32 sum(i32[] arr) {
 range:
 
 ```wac
-// expect: answers copiedAt(0) = 9
-// expect: answers copiedAt(3) = 2
-// expect: answers copiedAt(5) = 4
-// expect: answers copiedAt(7) = 0
+// expect: copiedAt(0) = 9
+// expect: copiedAt(3) = 2
+// expect: copiedAt(5) = 4
+// expect: copiedAt(7) = 0
 export i32 copiedAt(i32 i) {
   i32[] src = [1, 2, 3, 4, 5];
   i32[] dst = i32[].filled(8, 0);
@@ -294,9 +294,9 @@ An array of `u8`, `i8`, `u16` or `i16` stores each element in one or two bytes. 
 ordinary value of its packed type ([08](08-primitives.md)):
 
 ```wac
-// expect: answers unsignedByte = 255
-// expect: answers signedByte = -1
-// expect: answers short = 1000
+// expect: unsignedByte() = 255
+// expect: signedByte() = -1
+// expect: short() = 1000
 export i32 unsignedByte() {
   u8[] bytes = [255];
   return bytes[0] as i32;
@@ -319,7 +319,7 @@ same byte is `-1`.
 `[§wac-arr-i16-m8qj4xf]` A `u16[]` element written `1000` reads back `1000`.
 
 ```wac
-// expect: answers wideByte([200]) = 200
+// expect: wideByte([200]) = 200
 export i64 wideByte(u8[] bytes) { return bytes[0] as i64; }
 ```
 
@@ -329,10 +329,10 @@ export i64 wideByte(u8[] bytes) { return bytes[0] as i64; }
 Compound assignment and `++` on a packed element compute in the element's type and wrap at its width:
 
 ```wac
-// expect: answers orByte = 255
-// expect: answers wrapByte = 4
-// expect: answers orShort = 65535
-// expect: answers incremented = 2
+// expect: orByte() = 255
+// expect: wrapByte() = 4
+// expect: orShort() = 65535
+// expect: incremented() = 2
 export u8 orByte() {
   u8[] bytes = [0xF0];
   bytes[0] |= 0x0F;
@@ -375,7 +375,7 @@ refused where a byte is expected — an element, a store or a comparison — sin
 it:
 
 ```wac
-// expect: answers asciiByte = true
+// expect: asciiByte() = true
 export bool asciiByte() {
   u8[] b = ['A'];                          // 65, and a byte is 65
 

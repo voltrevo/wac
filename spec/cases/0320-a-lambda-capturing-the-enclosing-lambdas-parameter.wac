@@ -1,4 +1,4 @@
-// expect: answers f = 42
+// expect: f() = 42
 // why: a lambda's parameter captured by an inner lambda needs a cell, keyed by the lambda that owns it
 // from: issues/lang/0296c
 

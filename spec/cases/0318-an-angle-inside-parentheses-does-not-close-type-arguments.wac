@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // spec:  §wac-generic-lt-ambiguity-k8fm3wq
 // why: `<` before `(` scanned ahead for a closing `>` and took one that was *inside* the
 //      parentheses, so `a < (a >> 1)` was read as a generic call and refused with *expected a type*

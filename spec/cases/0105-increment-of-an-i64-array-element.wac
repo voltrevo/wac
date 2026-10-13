@@ -1,4 +1,4 @@
-// expect: answers f = 3
+// expect: f() = 3
 // why: the same one, added to an element rather than a field
 // from: issues/lang/0082
 export i64 f() {

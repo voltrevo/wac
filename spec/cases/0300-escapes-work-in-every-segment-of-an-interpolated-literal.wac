@@ -1,4 +1,4 @@
-// expect: answers f = 4
+// expect: f() = 4
 // why: a segment is an ordinary literal, so `\t` before the interpolation and `\u{41}` after it
 //      resolve exactly as they would without one — the second segment is the one that regressed
 //      when only `stringLiteralBytes` learned the new bounds and `knownEscapes` did not

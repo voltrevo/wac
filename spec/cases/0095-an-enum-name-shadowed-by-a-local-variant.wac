@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // why: the subject's enum is the one its own file declares — a local variant that spells that
 // why: enum's name is a different thing, and says nothing about which arms cover it
 // from: packages/git/src/repo.wac, which has `RepoAt.Opened` and imports a function returning

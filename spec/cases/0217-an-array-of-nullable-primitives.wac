@@ -1,4 +1,4 @@
-// expect: answers f = 15
+// expect: f() = 15
 // why: an array's element type needs its box registered before the type section is written, and the
 //      element of a nested array is another array — so registration recurses. Without it this was
 //      "a type this emitter names only while emitting". Reads an absent element and a present one, so

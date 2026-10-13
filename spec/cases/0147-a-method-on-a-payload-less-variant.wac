@@ -1,4 +1,4 @@
-// expect: answers run = 0
+// expect: run() = 0
 // why: a payload-less variant used as a value types as the variant, and the methods are on the enum
 // from: issues/lang/0121
 

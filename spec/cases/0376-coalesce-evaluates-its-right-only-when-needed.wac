@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // why: the right of `??` is a branch, run only when the left is absent
 // from: spec ch10
 struct Box { i32 v; }

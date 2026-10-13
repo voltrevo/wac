@@ -1,4 +1,4 @@
-// expect: answers f = 69
+// expect: f() = 69
 // spec:  §wac-str-uesc-j4kq8mv
 // why: `\u{H...H}` encodes as UTF-8 in a string — one byte for ASCII, four for an emoji
 // from: design/lang/0013 D2

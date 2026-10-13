@@ -1,4 +1,4 @@
-// expect: answers f = 6
+// expect: f() = 6
 // spec:  §wacc-written-type-args
 // why: there is no `&f` in wac, so a bare name is the whole of the syntax for a funcref — and a
 //      generic function's bare name has no type, because its signature is written in letters and a

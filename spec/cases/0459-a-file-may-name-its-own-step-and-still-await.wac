@@ -1,4 +1,4 @@
-// expect: answers run = 7
+// expect: run() = 7
 // why: what an async body lowers to names core's Step by identity, so two other files exporting a Step leave it unambiguous
 // spec: §enum-name-identity
 // ---- a.wac ----

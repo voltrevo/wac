@@ -1,4 +1,4 @@
-// expect: answers answer = 42
+// expect: answer() = 42
 // why: the declared type is what the body returns, and the caller receives a ticket for it
 // from: design/lang/0014
 // spec: §wac-async-decl-h3vq81m

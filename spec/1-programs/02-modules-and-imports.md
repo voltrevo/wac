@@ -7,7 +7,7 @@ importing file.
 ## A module holds declarations
 
 ```wac
-// expect: answers size = 64
+// expect: size() = 64
 export static i32 SIZE = square(8);
 
 i32 square(i32 x) { return x * x; }
@@ -37,7 +37,7 @@ not initialisation that happens on import.
 ## `export` decides what other modules may name
 
 ```wac
-// expect: answers visibleTotal = 15
+// expect: visibleTotal() = 15
 // ---- lib.wac ----
 export i32 visible(i32 x) { return hidden(x) + 1; }
 i32 hidden(i32 x) { return x * 2; }
@@ -80,7 +80,7 @@ is a different question, answered by its entry module ([07](07-programs.md)).
 ## Importing names
 
 ```wac
-// expect: answers diamond = 230
+// expect: diamond() = 230
 // ---- shared.wac ----
 export i32 base() { return 100; }
 // ---- left.wac ----
@@ -103,7 +103,7 @@ Importing a struct brings everything that belongs to it — its constructors, fi
 importing an enum brings its variants' construction through the enum's name:
 
 ```wac
-// expect: answers distanceSq = 25.0
+// expect: distanceSq() = 25.0
 // ---- geometry.wac ----
 export struct Point {
   f64 x;
@@ -129,7 +129,7 @@ An import is for the importing file alone. It does not make the name available t
 *that* file:
 
 ```wac
-// expect: answers throughB = 42
+// expect: throughB() = 42
 // ---- a.wac ----
 export i32 foo() { return 42; }
 // ---- b.wac ----
@@ -161,8 +161,8 @@ Re-exporting is explicit.
 `export { … } from "…"` exports names another module exports, as this module's own:
 
 ```wac
-// expect: answers area(3, 4) = 12
-// expect: answers perimeter(3, 4) = 14
+// expect: area(3, 4) = 12
+// expect: perimeter(3, 4) = 14
 // ---- shapes/rect.wac ----
 export i32 area(i32 w, i32 h) { return w * h; }
 export i32 perimeter(i32 w, i32 h) { return 2 * (w + h); }
@@ -178,8 +178,8 @@ module, under the same name. A re-exported name may be re-exported again.
 A name may be renamed on the way out, as on the way in:
 
 ```wac
-// expect: answers rectArea(3, 4) = 12
-// expect: answers fromRect(3, 4) = 12
+// expect: rectArea(3, 4) = 12
+// expect: fromRect(3, 4) = 12
 // ---- rect.wac ----
 export i32 area(i32 w, i32 h) { return w * h; }
 // ---- main.wac ----
@@ -198,7 +198,7 @@ A re-export is the declaration itself, not a copy or a wrapper: a re-exported st
 re-exported symbol the same identity, as its original ([01](01-names-and-identity.md)).
 
 ```wac
-// expect: answers sameType = 5
+// expect: sameType() = 5
 // ---- geo.wac ----
 export struct Circle { i32 r; }
 // ---- lib.wac ----
@@ -264,7 +264,7 @@ name it is re-exported as ([07](07-programs.md)).
 Modules may import each other in a cycle:
 
 ```wac
-// expect: answers pingFrom(5) = 5
+// expect: pingFrom(5) = 5
 // ---- ping.wac ----
 import { pong } from "./pong.wac";
 export i32 ping(i32 n) {
@@ -294,9 +294,9 @@ are computed in the order their computations demand, not the order modules are r
 imported:
 
 ```wac
-// expect: answers area(3, 4) = 12
-// expect: answers size(3, 4) = 12
-// expect: answers perimeter(3, 4) = 14
+// expect: area(3, 4) = 12
+// expect: size(3, 4) = 12
+// expect: perimeter(3, 4) = 14
 // ---- rect.wac ----
 export i32 perimeter(i32 w, i32 h) { return 2 * (w + h); }
 // ---- main.wac ----
@@ -331,9 +331,9 @@ A member reached through a namespace is exported under its own name, as `import 
 under another, with `as`:
 
 ```wac
-// expect: answers good = 7
-// expect: answers fine = 7
-// expect: answers lifted = 7
+// expect: good() = 7
+// expect: fine() = 7
+// expect: lifted() = 7
 namespace helpers {
   i32 base() { return 3; }
   export i32 good() { return base() + 4; }
@@ -360,8 +360,8 @@ of a namespace it does not export.
 A generic declaration's instantiation is exported the same way, under a name of its own:
 
 ```wac
-// expect: answers maxI32(3, 7) = 7
-// expect: answers boxedValue = 5
+// expect: maxI32(3, 7) = 7
+// expect: boxedValue() = 5
 T max<T>(T a, T b) { return a > b ? a : b; }
 
 struct Box<T> {
@@ -394,7 +394,7 @@ instantiation is bound under its given name ([48](../8-tooling/48-bindgen.md)).
 A specifier is always a quoted string, and it is one of three things:
 
 ```wac
-// expect: answers seven = 7
+// expect: seven() = 7
 // ---- wac.json5 ----
 {}
 // ---- src/num.wac ----
@@ -441,7 +441,7 @@ it that holds a `wac.json5`. Not the directory the compiler was started in, and 
 project — a program spans several projects through its packages, and each file's `@/` means its own:
 
 ```wac
-// expect: answers widths = 21
+// expect: widths() = 21
 // ---- wac.json5 ----
 { imports: { extras: { git: "https://example.com/extras", ref: "v1" } } }
 // ---- src/fmt.wac ----
@@ -485,7 +485,7 @@ directory below this project's root that holds a `wac.json5` of its own — is i
 directory, and the import resolves to the module its manifest `exports` ([04](04-packages.md)):
 
 ```wac
-// expect: answers vendoredWidth = 21
+// expect: vendoredWidth() = 21
 // ---- wac.json5 ----
 {}
 // ---- main.wac ----
@@ -585,7 +585,7 @@ ship with the toolchain, `core` and `std`. Its public names come from its one en
 no way to name a file inside it:
 
 ```wac
-// expect: answers product = 7
+// expect: product() = 7
 import { operators } from "core";            // the package
 import { operators.multiply } from "core";   // one member of a namespace it exports
 
@@ -622,7 +622,7 @@ A module's identity is its file. Two specifiers that reach the same file reach t
 everything in it is the same thing to both:
 
 ```wac
-// expect: answers tokenKind = 9
+// expect: tokenKind() = 9
 // ---- lib.wac ----
 export struct Token { i32 kind; }
 // ---- parse/make.wac ----
@@ -649,7 +649,7 @@ The same holds for the built-in packages, which is why their types can cross bet
 mention each other:
 
 ```wac
-// expect: answers totalOfThree = 3
+// expect: totalOfThree() = 3
 // ---- producer.wac ----
 import { Read } from "core";
 export Read three() { return Read.Data([7, 7, 7]); }
@@ -684,7 +684,7 @@ convert between them.
 them, and their version is the toolchain's:
 
 ```wac
-// expect: answers builtInRead = 1
+// expect: builtInRead() = 1
 // ---- core/lib.wac ----
 export i32 answer() { return 99; }           // dropped: an ordinary file nothing imports
 // ---- main.wac ----

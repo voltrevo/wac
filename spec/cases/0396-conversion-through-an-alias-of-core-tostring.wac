@@ -1,4 +1,4 @@
-// expect: answers f = hello
+// expect: f() = hello
 // why: a conversion is a method named by core's symbol, under whatever alias it was imported
 // from: spec ch23 §wac-conversion-symbol-identity-4ga8txc
 import { toString as text } from "core";

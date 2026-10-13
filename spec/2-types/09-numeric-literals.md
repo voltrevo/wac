@@ -19,7 +19,7 @@ u8 x = 2 * 3 * 4;            // all operations use u8; result 24
 ```
 
 ```wac
-// expect: answers twice(2147483648) = 0
+// expect: twice(2147483648) = 0
 export u32 twice(u32 x) {
   // ERROR: unresolved numeric type
   // auto unknown = 7;
@@ -42,9 +42,9 @@ Typed primitive numeric operands constrain the unresolved operands of their buil
 Already-typed operands never change type to meet a context.
 
 ```wac
-// expect: answers aboveMin(7) = true
-// expect: answers belowMin(7) = false
-// expect: answers isBig = true
+// expect: aboveMin(7) = true
+// expect: belowMin(7) = false
+// expect: isBig() = true
 i64 big() { return 1000000000000; }
 
 export bool aboveMin(i32 x) { return -2147483648 <= x; }   // the literal takes i32 from x
@@ -59,7 +59,7 @@ operand, in either order and whether or not it is negated.
 `big()` is.
 
 ```wac
-// expect: answers belowTrillion(5) = true
+// expect: belowTrillion(5) = true
 export bool belowTrillion(i64 x) { return x < 1000000000000; }
 ```
 
@@ -70,7 +70,7 @@ Arithmetic takes place in the inferred type, including its ordinary overflow beh
 by a single conversion:
 
 ```wac
-// expect: answers halveDouble = 72
+// expect: halveDouble() = 72
 export u8 halveDouble() {
   u8 x = 200 * 2 / 2;                        // 400 wraps to 144, then 144 / 2
   return x;
@@ -102,10 +102,10 @@ export void readings(i32 x) {
 takes on another type the way a literal does.
 
 ```wac
-// expect: answers int32 = 42
-// expect: answers int64 = 1000000000000
-// expect: answers float32 = 3.14
-// expect: answers float64 = 2.718281828459045
+// expect: int32() = 42
+// expect: int64() = 1000000000000
+// expect: float32() = 3.14
+// expect: float64() = 2.718281828459045
 export i32 int32() { return 42; }
 export i64 int64() { return 1000000000000; }
 export f32 float32() { return 3.14; }
@@ -126,7 +126,7 @@ inherit wrapping arithmetic semantics. Unary minus on a numeric literal is inclu
 value before range checking, so signed minima remain expressible:
 
 ```wac
-// expect: answers minInt = -2147483648
+// expect: minInt() = -2147483648
 export i32 minInt() { return -2147483648; }
 ```
 
@@ -134,7 +134,7 @@ export i32 minInt() { return -2147483648; }
 literal's value.
 
 ```wac
-// expect: answers floatContexts = 6.5
+// expect: floatContexts() = 6.5
 export f64 floatContexts() {
   f32 a = 1.5;                               // f32 by context
   f64 b = 1.5;
@@ -160,10 +160,10 @@ A decimal literal may carry an exponent, and the point is then optional. Spellin
 the type: an exponent is part of the value, and `i64 n = 1e9;` is a billion.
 
 ```wac
-// expect: answers billion = 1000000000.0
-// expect: answers tenBillion = 10000000000.0
-// expect: answers twoThousandths = 0.002
-// expect: answers fifteenBillion = 15000000000.0
+// expect: billion() = 1000000000.0
+// expect: tenBillion() = 10000000000.0
+// expect: twoThousandths() = 0.002
+// expect: fifteenBillion() = 15000000000.0
 export f64 billion() { return 1e9; }
 export f64 tenBillion() { return 1E10; }
 export f64 twoThousandths() { return 2e-3; }
@@ -177,7 +177,7 @@ exponents, with or without a point. A bare `e` with no digits after it is not an
 Underscores may separate digits anywhere after the first, and carry no meaning:
 
 ```wac
-// expect: answers million = 1000000
+// expect: million() = 1000000
 export i32 million() { return 1_000_000; }
 ```
 
@@ -186,8 +186,8 @@ export i32 million() { return 1_000_000; }
 A literal may be written in hex:
 
 ```wac
-// expect: answers mask = 255
-// expect: answers color = 16711935
+// expect: mask() = 255
+// expect: color() = 16711935
 export i32 mask() { return 0xFF; }
 export i32 color() { return 0xFF00FF; }
 ```
@@ -203,11 +203,11 @@ mathematical value — is open; see the end of this chapter.
 numeric literal it takes its type from its context:
 
 ```wac
-// expect: answers letterA = 97
-// expect: answers newline = 10
-// expect: answers quote = 39
-// expect: answers emoji = 128512
-// expect: answers emojiEscaped = 128512
+// expect: letterA() = 97
+// expect: newline() = 10
+// expect: quote() = 39
+// expect: emoji() = 128512
+// expect: emojiEscaped() = 128512
 export i32 letterA() {
   // ERROR: an empty character literal
   // i32 e = '';
@@ -265,7 +265,7 @@ participate in the collection rules of [32](../5-inference/32-widening.md) to
 its later uses cannot repair it.
 
 ```wac
-// expect: answers echoes = 72
+// expect: echoes() = 72
 T echo<T>(T x) { return x; }
 
 export i32 echoes() {
@@ -320,7 +320,7 @@ Intrinsic numeric types provide this same operation. No ordinary name is reserve
 implementations are introduced.
 
 ```wac
-// expect: answers realParts = 5.0
+// expect: realParts() = 5.0
 import { NumberLiteral, fromNumber, Result } from "core";
 
 struct Complex {

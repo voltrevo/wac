@@ -1,4 +1,4 @@
-// expect: answers f = 41
+// expect: f() = 41
 // why: a capitalised name on the right of `is` may be a *const* as well as a local — the parser cannot
 //      tell a value from a type and only the scopes can. A const with identity lives in a global, so
 //      the test is `ref.eq` against it. `B` holds the same elements as `A` and is a different array, so

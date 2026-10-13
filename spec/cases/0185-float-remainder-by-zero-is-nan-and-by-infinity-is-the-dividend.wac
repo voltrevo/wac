@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // why: `x % 0` is NaN and `x % inf` is x — the two cases with no finite quotient to truncate
 // spec:  §wac-fmod-zero-f9hnqhr
 // from: issues/lang/0135 — the edges the scale-and-subtract loop has to be steered around

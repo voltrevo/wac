@@ -1,4 +1,4 @@
-// expect: answers total = 21
+// expect: total() = 21
 // why: an async body links core whether or not its file imports anything, because its lowering builds core's tickets
 // spec: §wac-async-decl-h3vq81m
 

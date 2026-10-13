@@ -1,4 +1,4 @@
-// expect: answers deep = 703
+// expect: deep() = 703
 // spec: §wac-union-recursive-guard-e4vnb4j
 // why: inside `Box<…>` the recursive `A` is spelled by its name, so the `Box<A>` written at a
 //      construction is the alternative of `A` — not a `Box` of `A` unfolded once — and a value read

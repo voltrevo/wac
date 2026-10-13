@@ -216,7 +216,7 @@ void addErrorVariants(string[] paths, string[] sources, i32 f, i32 firstLine, Ve
   }
 }
 
-/** `// expect: answers f(1, 2) = 3`, `// expect (wac build): refused`, … — or null. */
+/** `// expect: f(1, 2) = 3`, `// expect (wac build): refused`, … — or null. */
 export ExExpect? exParseExpect(string line, string[] printed) {
   string rest = trimmed(line.slice(9, line.len()));      // after "// expect"
   string command = "";
@@ -238,12 +238,13 @@ export ExExpect? exParseExpect(string line, string[] printed) {
     string c = trimmed(rest.slice(6, rest.len()));
     return ExExpect("traps", callName(c), exCallArgs(c), "", none, command);
   }
-  if (startsWith(rest, "answers ")) {
-    string c = trimmed(rest.slice(8, rest.len()));
-    i32 eq = topLevelEquals(c);
-    if (eq < 0) { return null; }
-    string lhs = trimmed(c.slice(0, eq));
-    return ExExpect("answers", callName(lhs), exCallArgs(lhs), trimmed(c.slice(eq + 1, c.len())), none,
+  // `f(1, 2) = 3` — a call, written as one, and what it answers. The parentheses are required, so
+  // a zero-argument call reads `f() = 3` and never looks like a variable.
+  i32 eq = topLevelEquals(rest);
+  if (eq > 0) {
+    string lhs = trimmed(rest.slice(0, eq));
+    if (!endsWith(lhs, ")") || lhs.indexOf("(") <= 0) { return null; }
+    return ExExpect("answers", callName(lhs), exCallArgs(lhs), trimmed(rest.slice(eq + 1, rest.len())), none,
                        command);
   }
   return null;

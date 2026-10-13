@@ -1,4 +1,4 @@
-// expect: answers both = 173
+// expect: both() = 173
 // why: a member value is a union value as it is, entering its most specific alternative, and a match takes it apart by type
 // spec: §wac-union-member-is-value-86cfwkp
 

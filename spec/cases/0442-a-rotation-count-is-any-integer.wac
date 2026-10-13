@@ -1,4 +1,4 @@
-// expect: answers run = 15 15 9223372036854775808
+// expect: run() = 15 15 9223372036854775808
 // why: a rotation's count is a count, as a shift's amount is: any integer, taken modulo the receiver's width
 // from: spec ch22 §wacc-int-bit-methods
 export u32 rotateLeft(u32 x, i32 n) { return x.rotateLeft(n); }

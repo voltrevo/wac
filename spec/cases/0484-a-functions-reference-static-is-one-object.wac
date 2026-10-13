@@ -1,4 +1,4 @@
-// expect: answers oneValueForEveryCall = true
+// expect: oneValueForEveryCall() = true
 // spec: §wac-modconst-ref-9jvq2mt
 // why: a static in a function is one value however often the function runs — for a reference, one object
 // from: spec ch27

@@ -1,4 +1,4 @@
-// expect: answers f = 10
+// expect: f() = 10
 // why: an `auto` local's type is its initialiser's, and nothing else gives it one
 // from: spec ch33 §wac-auto-local-59gczx4
 struct P { i32 x; }

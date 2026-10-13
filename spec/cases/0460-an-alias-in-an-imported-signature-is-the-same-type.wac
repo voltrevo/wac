@@ -1,4 +1,4 @@
-// expect: answers test = 3
+// expect: test() = 3
 // why: a file's own import alias names the declaration it imported, so its signatures hand the importer that type under the importer's spelling
 // spec: §wac-generic-instantiation-identity-6pnq4wj
 // ---- lib.wac ----

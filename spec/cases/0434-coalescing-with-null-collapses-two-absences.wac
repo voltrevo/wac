@@ -1,4 +1,4 @@
-// expect: answers collapsed = true
+// expect: collapsed() = true
 // why: `t ?? null` on a `T??` merges its two absences into the one a `T?` has
 // from: spec ch10 §wac-nested-not-collapsed-m6cz4gb
 struct Node { i32 v; }

@@ -1,4 +1,4 @@
-// expect: answers f = 6
+// expect: f() = 6
 // why: a funcref passed and called inside wac is an ordinary call — the module still declares
 // why: the dispatcher a host *could* hand one in through, and never reaches it
 // from: the control for issues/lang/0094 — what needs an import is a callback the *host* supplies

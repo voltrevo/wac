@@ -28,7 +28,7 @@ There is no parallel construct and nothing to join: two tickets started one afte
 ticket made directly is settled by calling `resolve`:
 
 ```wac
-// expect: answers doubledTen = 20
+// expect: doubledTen() = 20
 import { Ticket } from "core";
 
 async i32 doubled(Ticket<i32> t) {
@@ -49,7 +49,7 @@ call returns one that its body settles.
 ## Declaring an `async` function
 
 ```wac
-// expect: answers sizeOfAbc = 3
+// expect: sizeOfAbc() = 3
 import { Ticket } from "core";
 
 async i32 size(Ticket<string> name) {
@@ -75,7 +75,7 @@ Ticket<i32>` declares a body that hands back a ticket, not a second spelling of 
 `override`, before the return type. The receiver crosses a suspension the way any other parameter does.
 
 ```wac
-// expect: answers runsToFirstAwait = 1
+// expect: runsToFirstAwait() = 1
 import { Ticket } from "core";
 
 struct Slot {
@@ -158,7 +158,7 @@ A lambda writes no return type, so its slot is both the permission and the type:
 is `fn<Ticket<R>(…)>`, and `R` is what the body is checked against:
 
 ```wac
-// expect: answers capturedAcrossAwait = 4
+// expect: capturedAcrossAwait() = 4
 import { Ticket } from "core";
 
 export i32 capturedAcrossAwait() {
@@ -224,7 +224,7 @@ An unawaited call runs to its first suspension and hands its **continuation** to
 `schedule` statement sets the target, from that point to the end of its block:
 
 ```wac
-// expect: answers scheduledToTarget = true
+// expect: scheduledToTarget() = true
 import { Continuation, Vec } from "core";
 
 struct Slot {
@@ -256,7 +256,7 @@ suspended call was made.
 one `sys.drain()` runs, and the one a program's exit inspects for work left over ([07](../1-programs/07-programs.md)).
 
 ```wac
-// expect: answers targetEndsWithBlock = true
+// expect: targetEndsWithBlock() = true
 import { Continuation, Vec } from "core";
 
 struct Slot {
@@ -286,7 +286,7 @@ The target belongs to the suspended scope, not to whoever resumes it. A coroutin
 in force where it suspended, and it is restored when the coroutine resumes:
 
 ```wac
-// expect: answers targetRestoredOnResume = true
+// expect: targetRestoredOnResume() = true
 import { Continuation, Generator, Vec } from "core";
 
 struct Slot {
@@ -333,7 +333,7 @@ struct Continuation {
 ```
 
 ```wac
-// expect: answers continuationResumes = 20
+// expect: continuationResumes() = 20
 import { Continuation, Ticket, Vec } from "core";
 
 async i32 doubled(Ticket<i32> t) {
@@ -438,8 +438,8 @@ A program does not end while work it started remains ([07](../1-programs/07-prog
 because unlike `await` it can be refused:
 
 ```wac
-// expect: answers viaWait = 2
-// expect: answers orphanRefused = -1
+// expect: viaWait() = 2
+// expect: orphanRefused() = -1
 import { Ticket } from "core";
 
 async i32 job(Ticket<i32> t) { return (await t) + 1; }
@@ -527,7 +527,7 @@ siblings where they are.
 `Ticket.all` answers a tuple when every ticket has, so two reads cost one wait and the results keep their own types:
 
 ```wac
-// expect: answers allSettled = 5
+// expect: allSettled() = 5
 import { Ticket } from "core";
 
 export i32 allSettled() {

@@ -210,6 +210,7 @@ spec/2-types/13-enums.md#22
 spec/2-types/13-enums.md#23
 spec/2-types/13-enums.md#24
 spec/2-types/13-enums.md#25
+spec/2-types/13-enums.md#26
 spec/2-types/14-tuples.md#1
 spec/2-types/14-tuples.md#2
 spec/2-types/14-tuples.md#3
@@ -268,6 +269,7 @@ spec/2-types/18-unions.md#5
 spec/2-types/18-unions.md#6
 spec/2-types/18-unions.md#7
 spec/2-types/18-unions.md#8
+spec/2-types/18-unions.md#9
 spec/2-types/19-generics.md#1
 spec/2-types/19-generics.md#2
 spec/2-types/19-generics.md#3
@@ -373,6 +375,7 @@ spec/3-expressions/26-errors-and-results.md#4
 spec/3-expressions/26-errors-and-results.md#5
 spec/3-expressions/26-errors-and-results.md#6
 spec/3-expressions/26-errors-and-results.md#7
+spec/3-expressions/26-errors-and-results.md#8
 spec/4-static/27-static-declarations.md#1
 spec/4-static/27-static-declarations.md#2
 spec/4-static/27-static-declarations.md#3

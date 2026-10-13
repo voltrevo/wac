@@ -1,4 +1,4 @@
-// expect: answers f = 6
+// expect: f() = 6
 // spec:  §enum-no-default
 // why: a literal, a fill, a nullable element and positional construction each supply a value
 // from: spec/spec/enums.md, whose only checker was the reference's suite

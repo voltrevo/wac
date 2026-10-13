@@ -1,4 +1,4 @@
-// expect: answers both = 24
+// expect: both() = 24
 // why: demand orders the work, not the file — an array static built from one declared after it
 // spec: §wac-static-dep-order-free-au43dhv
 static i32[] AFTER = tail(BEFORE);

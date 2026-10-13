@@ -1,4 +1,4 @@
-// expect: answers sharedTuple = 5
+// expect: sharedTuple() = 5
 // why: a tuple is a reference — assigning one shares it, and its members can be written
 // from: spec ch14 §wac-tuple-reference-qvgasjf
 export i32 sharedTuple() {

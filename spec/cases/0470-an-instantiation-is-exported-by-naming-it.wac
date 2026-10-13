@@ -1,4 +1,4 @@
-// expect: answers larger = 7
+// expect: larger() = 7
 // spec: §wac-export-instantiation-wuh2wxp
 // why: the export list names an instance, and the name is a function of the program like any other
 // from: spec ch02, ch19

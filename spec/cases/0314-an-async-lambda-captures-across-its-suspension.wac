@@ -1,4 +1,4 @@
-// expect: answers answer = 30
+// expect: answer() = 30
 // why: a captured name and a parameter both survive a suspension, which is why a lambda is wanted
 // from: issues/lang/0294c
 // spec: §wac-async-lambda-captures-5mtj28r

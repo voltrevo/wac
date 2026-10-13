@@ -10,8 +10,8 @@ A coroutine is a function that can stop partway and be resumed. wac has three co
 nothing, and answers a `Generator<Y, R>`; `for … in` steps one:
 
 ```wac
-// expect: answers sumUpTo(3) = 6
-// expect: answers sumUpTo(0) = 0
+// expect: sumUpTo(3) = 6
+// expect: sumUpTo(0) = 0
 gen<i32> void upTo(i32 n) {
   for (i32 i = 1; i <= n; i++) { yield i; }
 }
@@ -32,7 +32,7 @@ discards its return value.
 Writing an iterator is writing a loop:
 
 ```wac
-// expect: answers sumOfTree = 6
+// expect: sumOfTree() = 6
 enum Tree {
   Leaf(i32 value),
   Node(Tree left, Tree right)
@@ -130,7 +130,7 @@ completion and gives a payload-free `Done`.
 ## `coroutine` answers the machine and runs nothing
 
 ```wac
-// expect: answers runsWhenStepped = true
+// expect: runsWhenStepped() = true
 import { Coroutine, TicketBase } from "core";
 
 struct Slot {
@@ -162,7 +162,7 @@ or to its end.
 ticket, and the next step continues:
 
 ```wac
-// expect: answers bareAwaitIsOneStep = true
+// expect: bareAwaitIsOneStep() = true
 import { Coroutine, TicketBase } from "core";
 
 async void tick() {
@@ -206,7 +206,7 @@ nothing to its type.
 An `await` is a boundary because it is written:
 
 ```wac
-// expect: answers settledAwaitStillSteps = 42
+// expect: settledAwaitStillSteps() = 42
 import { Coroutine, Ticket, TicketBase } from "core";
 
 async i32 doubled(Ticket<i32> t) {
@@ -235,7 +235,7 @@ A step after `Done` does nothing, and answers `Done` again. A scheduler may stil
 somebody else drove to completion, and there is no way to withdraw a registration:
 
 ```wac
-// expect: answers doneAgain = true
+// expect: doneAgain() = true
 gen<i32> void one() { yield 1; }
 
 export bool doneAgain() {
@@ -256,7 +256,7 @@ export bool doneAgain() {
 An async generator yields and waits:
 
 ```wac
-// expect: answers yieldsAndWaits = true
+// expect: yieldsAndWaits() = true
 import { Coroutine, Ticket, TicketBase } from "core";
 
 async gen<i32> void counter(Ticket<i32> t) {
@@ -280,7 +280,7 @@ export bool yieldsAndWaits() {
 `for await` iterates one — awaiting on `Waiting`, binding on `Yielded`, stopping on `Done`:
 
 ```wac
-// expect: answers forAwaitTotal = 3
+// expect: forAwaitTotal() = 3
 import { Ticket } from "core";
 
 async gen<i32> void counter(Ticket<i32> t) {

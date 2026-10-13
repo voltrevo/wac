@@ -1,4 +1,4 @@
-// expect: answers f = 42
+// expect: f() = 42
 // why: `this` is a local like any other, so a lambda captures it by reference too
 // spec:  §wacc-lambda-capture-this
 // from: found building a scheduler, where a method hands back a funcref registering on itself

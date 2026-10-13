@@ -10,7 +10,7 @@ runs, like any other. A value computed at compile time is `static`
 ## A const binding cannot be rebound
 
 ```wac
-// expect: answers rebinding = 12
+// expect: rebinding() = 12
 export i32 rebinding() {
   i32 x = 1;
   x = 2;
@@ -28,7 +28,7 @@ export i32 rebinding() {
 ## Const on a reference is deep
 
 ```wac
-// expect: answers rootVal = 1
+// expect: rootVal() = 1
 struct Tree {
   i32 val;
   Tree? left;
@@ -109,7 +109,7 @@ reassigned, holding a `const T`. That is how a read-only cursor is written:
 writes and `this`-taking calls through it are refused like those through any `const` reference.
 
 ```wac
-// expect: answers twoNodes = 2
+// expect: twoNodes() = 2
 struct Node { i32 v; Node? next; }
 
 i32 length(const Node head) {
@@ -129,7 +129,7 @@ A method that hands back what it holds hands back the real thing, not a copy, so
 Reading it is allowed; writing is where it is caught:
 
 ```wac
-// expect: answers twoRoutes = 2
+// expect: twoRoutes() = 2
 struct Route { string path; }
 
 struct Server {
@@ -155,7 +155,7 @@ export i32 twoRoutes() { return count(Server([Route("/a"), Route("/b")])); }
 const: an object the method allocates is new, and the caller may write to it:
 
 ```wac
-// expect: answers freshResults = 8
+// expect: freshResults() = 8
 struct Point { i32 x; }
 
 struct Holder {
@@ -197,7 +197,7 @@ becomes a `T`. Where a type is written without a binding — a type argument, a 
 function type — `const T` needs no parentheses: `Vec<const S>`, `(const S, i32)`, `fn<i32(const S)>`.
 
 ```wac
-// expect: answers widening = 1
+// expect: widening() = 1
 struct S { i32 v; }
 
 void mutate(S s) { s.v = 1; }
@@ -235,7 +235,7 @@ making arrays covariant, and a union records the permission each value arrived w
 A parameter may be `const`, which forbids reassigning it and, for a reference, writing through it:
 
 ```wac
-// expect: answers twoParams = 2
+// expect: twoParams() = 2
 struct P { i32 v; }
 
 i32 peek(const P p) { return p.v; }

@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // spec:  §enum-arm-payload-struct-array
 // why: the variant structs are generated in the resolver, so `P[]` interned twice and failed validation
 // from: spec/spec/enums.md, whose only checker was the reference's suite

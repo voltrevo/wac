@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // spec:  §enum-match-nopayload
 // why: `area(Shape.Point)` returns 0.0 — a payloadless variant needs no binding list
 // from: spec/spec/enums.md, whose only checker was the reference's suite

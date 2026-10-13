@@ -1,4 +1,4 @@
-// expect: answers f = 20
+// expect: f() = 20
 // spec:  §enum-ternary-variants
 // why: the base struct is the closest common ancestor of every variant
 // from: spec/spec/enums.md, whose only checker was the reference's suite

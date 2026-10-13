@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // why: the arm that matches is the only one that runs, whatever follows it
 export i32 f() {
   i32 n = 0;

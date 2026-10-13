@@ -6,10 +6,10 @@ union value as it is. A union is taken apart by matching on its members' types.
 ## A member is a union value as itself
 
 ```wac
-// expect: answers renderText("true") = "yes"
-// expect: answers renderText("false") = "no"
-// expect: answers renderText("pi") = "number"
-// expect: answers renderText("abc") = "abc"
+// expect: renderText("true") = "yes"
+// expect: renderText("false") = "no"
+// expect: renderText("pi") = "number"
+// expect: renderText("abc") = "abc"
 union<f64, string, bool> parseCell(string text) {
   if (text == "true")  { return true; }
   if (text == "false") { return false; }
@@ -57,7 +57,7 @@ union<const Rect, Shape>       // keep both
 ```
 
 ```wac
-// expect: answers normalised = 1
+// expect: normalised() = 1
 struct Shape { i32 x; }
 struct Rect : Shape { i32 w; }
 
@@ -84,6 +84,25 @@ possible ([below](#explicit-recursive-types)).
 
 Singleton union wrappers remain significant during inference, even when their resolved value
 representation is identical to that of their sole alternative ([32](../5-inference/32-widening.md)).
+Everywhere else a union of one alternative is that alternative:
+
+```wac
+// expect: sameType() = 4
+import { Result } from "core";
+
+i32 count(string s) { return s.len(); }
+
+export i32 sameType() {
+  union<string> u = "ab";
+  string s = u;                            // no conversion: union<string> is string
+  Result<i32, string> r = Result.Ok(count(u));
+  Result<i32, union<string>> w = r;        // and at any depth
+  return w.orElse(0) + s.len();
+}
+```
+
+`[§wac-union-singleton-is-member-6tq2kfd]` Outside inference, `union<T>` is `T`: a value of either stands where
+the other is wanted, at any depth, and nothing converts it.
 
 ## Insertion selects the most specific alternative
 
@@ -91,7 +110,7 @@ For concrete alternatives, insertion selects the unique most specific compatible
 source's static type. If none or more than one best candidate exists, reject:
 
 ```wac
-// expect: answers enteredAsShape = 1
+// expect: enteredAsShape() = 1
 struct Shape { i32 x; }
 struct Rect : Shape { i32 w; }
 
@@ -125,7 +144,7 @@ union<i32, string>? f = null;  // OK: the outer nullable layer.
 ```
 
 ```wac
-// expect: answers literalTargets = true
+// expect: literalTargets() = true
 export bool literalTargets() {
   // ERROR: ambiguous — two numeric alternatives, even though 300 does not fit u8
   // union<u8, u64> a = 300;
@@ -165,7 +184,7 @@ element by element. This also limits which concrete generic instantiations can b
 inference; collecting a union does not itself establish that such an assignment is valid.
 
 ```wac
-// expect: answers viewLen = 1
+// expect: viewLen() = 1
 struct Shape { i32 x; }
 struct Rect : Shape { i32 w; }
 
@@ -234,7 +253,7 @@ type U = union<i32, U?>; // Valid: the union remains a recursive aggregate.
 ```
 
 ```wac
-// expect: answers recursive = true
+// expect: recursive() = true
 struct Box<T> { T value; }
 type A = union<i32, Box<A>>;
 type U = union<i32, U?>;
@@ -345,7 +364,7 @@ The runtime object's mutability does not grant permission. The reference used to
 the recorded permission. An ordinary const reference cannot be tested back into mutable access.
 
 ```wac
-// expect: answers byPermission = 1
+// expect: byPermission() = 1
 struct Rect { i32 w; void grow(this) { this.w += 1; } }
 
 i32 tryGrow(union<Rect, const Rect> value) {
@@ -420,7 +439,7 @@ All possible source cases must fit the destination, even if this initializer hap
 accepted conversion to `union<const Rect, const Circle>` discards mutable permission where needed.
 
 ```wac
-// expect: answers stillConst = 0
+// expect: stillConst() = 0
 struct Rect { i32 w; }
 struct Circle { i32 r; }
 

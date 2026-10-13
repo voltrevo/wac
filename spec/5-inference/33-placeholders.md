@@ -25,8 +25,8 @@ alternatives and normalises them; it does not use ordinary widening to reject in
 placeholder changes type at runtime.
 
 ```wac
-// expect: answers placeholders(true) = 2
-// expect: answers placeholders(false) = 0
+// expect: placeholders(true) = 2
+// expect: placeholders(false) = 0
 struct Shape { i32 x; }
 struct Rect : Shape { i32 w; }
 struct Circle : Shape { i32 r; }
@@ -67,8 +67,8 @@ void example(bool cond) {
 ```
 
 ```wac
-// expect: answers gathered(true) = 1
-// expect: answers gathered(false) = 0
+// expect: gathered(true) = 1
+// expect: gathered(false) = 0
 export i32 gathered(bool cond) {
   union value = 1 as i32;
   if (cond) {

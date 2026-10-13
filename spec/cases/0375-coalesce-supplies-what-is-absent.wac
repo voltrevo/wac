@@ -1,4 +1,4 @@
-// expect: answers f = 5007
+// expect: f() = 5007
 // why: `a ?? b` answers `a!` when `a` is present and `b` otherwise, with the type of `a` made non-null
 // from: spec ch10 §wac-coalesce-type-uqe5ae9
 struct Config { i32 timeoutMs; }

@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // spec:  §enum-match-ignore
 // why: `isRound(Shape.Circle(1.0))` is true — omitted parentheses ignore all, `_` ignores one
 // from: spec/spec/enums.md, whose only checker was the reference's suite

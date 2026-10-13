@@ -1,4 +1,4 @@
-// expect: answers answer = -1
+// expect: answer() = -1
 // why: a wait drives only what its ticket depends on, so a ticket nothing will resolve is refused at once rather than waited on for ever
 // from: design/lang/0014 D7
 // spec: §wac-wait-refuses-jj8u2ie

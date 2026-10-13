@@ -11,8 +11,8 @@ syntax.
 converted once through core's `toString` symbol, and the result is concatenated with the text around it:
 
 ```wac
-// expect: answers converted = "hello"
-// expect: answers interpolated = "label: hello"
+// expect: converted() = "hello"
+// expect: interpolated() = "label: hello"
 import { toString } from "core";
 
 struct Label {
@@ -34,9 +34,9 @@ the result with the surrounding text. The conversion used must return `string`.
 For a string value the conversion is the string itself, so interpolating strings means exactly what `+` does:
 
 ```wac
-// expect: answers around = "axyb"
-// expect: answers alone = "xy"
-// expect: answers nested = "xyxy"
+// expect: around() = "axyb"
+// expect: alone() = "xy"
+// expect: nested() = "xyxy"
 string two() { return "xy"; }
 
 export string around() { return "a\{two()}b"; }           // "a" + "xy" + "b"
@@ -58,7 +58,7 @@ an ordinary `{`.
 A method merely spelled `toString` does not implement the conversion:
 
 ```wac
-// expect: answers named = "hello"
+// expect: named() = "hello"
 struct Other {
   string toString(const this) { return "hello"; }
 }
@@ -100,8 +100,8 @@ its children are its `kids` parameter. So nothing here is a thing the language k
 ([43](../7-library/43-markup-types.md)).
 
 ```wac
-// expect: answers pageTag = "div"
-// expect: answers pageChildren = 1
+// expect: pageTag() = "div"
+// expect: pageChildren() = 1
 import { Node, html.div, html.p } from "core";
 
 Node greeting(string who, Node[] kids) {
@@ -139,10 +139,10 @@ A tag written as a string is not looked up: it builds `Node.Element` with that n
 name, which is how a custom element or a namespaced one is written:
 
 ```wac
-// expect: answers icon = "my-widget"
-// expect: answers one = "label"
-// expect: answers two = "label"
-// expect: answers three = "caption"
+// expect: icon() = "my-widget"
+// expect: one() = "label"
+// expect: two() = "label"
+// expect: three() = "caption"
 import { Node } from "core";
 
 string tagOf(Node n) {
@@ -172,8 +172,8 @@ escaping. A name a parameter could not otherwise have — a keyword, a hyphenate
 written as a verbatim name ([01](../1-programs/01-names-and-identity.md)):
 
 ```wac
-// expect: answers labelFor = "name"
-// expect: answers widgetSize = "8"
+// expect: labelFor() = "name"
+// expect: widgetSize() = "8"
 import { Node, Attr } from "core";
 
 Node label(string id, string @"for", Node[] kids) {
@@ -249,7 +249,7 @@ void example() {
 ```
 
 ```wac
-// expect: answers childCount = 4
+// expect: childCount() = 4
 import { Node, toNode, html.div } from "core";
 
 struct Label {
@@ -282,7 +282,7 @@ An element nests wherever an expression does, and inside `{…}` the text is wac
 means there:
 
 ```wac
-// expect: answers asArgument = 2
+// expect: asArgument() = 2
 import { Node } from "core";
 
 i32 kidCount(Node n) {
@@ -324,8 +324,8 @@ Between an element's tags the lexer reads text, so nothing there starts a string
 or an operator. A run ends at `{`, or at a `<` that begins a tag:
 
 ```wac
-// expect: answers quotes = "it's here, a \" b, see http://x"
-// expect: answers lessThan = "1 < 2 and 3 > 2"
+// expect: quotes() = "it's here, a \" b, see http://x"
+// expect: lessThan() = "1 < 2 and 3 > 2"
 import { Node } from "core";
 
 string text(Node n) {
@@ -351,8 +351,8 @@ A run of text is trimmed at an end only where the whitespace there contains a ne
 several lines loses its indentation, and a space within a line is kept, because it is part of the sentence:
 
 ```wac
-// expect: answers sameLine = 3
-// expect: answers twoLines = 2
+// expect: sameLine() = 3
+// expect: twoLines() = 2
 import { Node } from "core";
 
 i32 count(Node n) {
@@ -384,7 +384,7 @@ a newline.
 `<>…</>` is an element with no tag. It evaluates to `Node.Fragment(kids)` — several nodes where one is wanted:
 
 ```wac
-// expect: answers pairSize = 2
+// expect: pairSize() = 2
 import { Node } from "core";
 
 Node pair(Node a, Node b) { return <>{a}{b}</>; }
@@ -425,7 +425,7 @@ struct Label {
 ```
 
 ```wac
-// expect: answers interpolated = "hello"
+// expect: interpolated() = "hello"
 import { toString as text } from "core";
 
 struct Label {
@@ -460,8 +460,8 @@ implementations from the compiler and core; no external implementation mechanism
 Float special spellings are `"NaN"`, `"Infinity"`, `"-Infinity"`, and `"-0"`.
 
 ```wac
-// expect: answers spelled = "answer: 42 -7 false 0.5 -0"
-// expect: answers childText = "42"
+// expect: spelled() = "answer: 42 -7 false 0.5 -0"
+// expect: childText() = "42"
 import { Node, html.div } from "core";
 
 export string spelled() {

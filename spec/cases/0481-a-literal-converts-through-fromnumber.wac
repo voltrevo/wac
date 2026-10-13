@@ -1,4 +1,4 @@
-// expect: answers realParts = 5
+// expect: realParts() = 5
 // spec: §wac-fromnumber-literal-jqssasj, §wac-fromnumber-static-ah2ihmk
 // why: a literal whose target implements `[fromNumber]` is that method's answer, computed statically
 // from: spec ch09

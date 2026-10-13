@@ -1,4 +1,4 @@
-// expect: answers f = 192
+// expect: f() = 192
 // why: a module-level `static` is its value wherever it is read, and may read another static
 // from: the `static` flip (design/lang/0016), spec ch27
 static i32 BLOCK = 64;

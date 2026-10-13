@@ -33,7 +33,7 @@ A call whose type is `never` does not return to its caller. Since no value ever 
 expression may stand where any type is expected:
 
 ```wac
-// expect: answers pick(true) = 1
+// expect: pick(true) = 1
 export i32 pick(bool b) {
   if (b) { return 1; }
   return spin();                           // never satisfies i32
@@ -101,7 +101,7 @@ checked against the function's type ([34](../5-inference/34-recursive-inference.
 A recursive type can be such that no finite value inhabits it. That does not make it invalid:
 
 ```wac
-// expect: answers emptyIsNull = true
+// expect: emptyIsNull() = true
 struct X { Y y; }
 struct Y { X x; }
 
@@ -111,7 +111,7 @@ export bool emptyIsNull() { return EMPTY is null; }
 ```
 
 ```wac
-// expect: answers none = null
+// expect: none() = null
 struct Node { Node next; }                 // a mandatory field of its own type
 
 export Node? none() { return null; }
@@ -128,7 +128,7 @@ Nothing manufactures a value of an uninhabited type. In particular there is no d
 one from:
 
 ```wac
-// expect: answers emptyNodes = 0
+// expect: emptyNodes() = 0
 struct Node { Node next; }
 
 export i32 emptyNodes() {
@@ -150,7 +150,7 @@ collection, or another variant is such an end; a mandatory field of the type its
 Recursion through a nullable field, a tuple or an enum is allowed precisely because it provides one:
 
 ```wac
-// expect: answers secondHead = 2
+// expect: secondHead() = 2
 struct List { i32 head; List? tail; }      // ends at null
 
 export i32 secondHead() {
@@ -174,7 +174,7 @@ A variant with a required `never` payload is uninhabited. This is a general enum
 exception, and an exhaustive `match` need not cover such a variant:
 
 ```wac
-// expect: answers yieldedFour = 4
+// expect: yieldedFour() = 4
 import { Step } from "core";
 
 i32 value(Step<never, i32, never> s) {

@@ -9,9 +9,9 @@ and the single-byte `push` checks for exactly one byte of room.
 ## Building bytes
 
 ```wac
-// expect: answers built = "hi wac!"
-// expect: answers builtLen = 7
-// expect: answers byteAt(0) = 'h'
+// expect: built() = "hi wac!"
+// expect: builtLen() = 7
+// expect: byteAt(0) = 'h'
 // expect: traps byteAt(7)
 import { Buf } from "core";
 
@@ -42,7 +42,7 @@ known.
 ## Text
 
 ```wac
-// expect: answers text = "-2147483648 é\u{FFFD}"
+// expect: text() = "-2147483648 é\u{FFFD}"
 import { Buf } from "core";
 
 export string text() {
@@ -67,7 +67,7 @@ and `toStr()` is the linear way.
 ## Taking the result
 
 ```wac
-// expect: answers takeEmpties = true
+// expect: takeEmpties() = true
 import { Buf } from "core";
 
 export bool takeEmpties() {
@@ -87,7 +87,7 @@ own storage when it is exactly full — and empties the buffer, so nothing can w
 ## Back-references and dropping
 
 ```wac
-// expect: answers backReference = "cabcab"
+// expect: backReference() = "cabcab"
 import { Buf } from "core";
 
 export string backReference() {

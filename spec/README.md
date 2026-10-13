@@ -104,8 +104,8 @@ Unless its first line says otherwise, a ` ```wac ` fence is a complete program t
 as written. Its first lines state what happens to it:
 
 ```wac
-// expect: answers gcd(48, 18) = 6
-// expect: answers gcd(7, 0) = 7
+// expect: gcd(48, 18) = 6
+// expect: gcd(7, 0) = 7
 export i32 gcd(i32 a, i32 b) {
   while (b != 0) {
     i32 t = b;
@@ -120,12 +120,12 @@ export i32 gcd(i32 a, i32 b) {
 |---|---|
 | `// expect: emits` | It compiles. |
 | `// expect: refused` | It does not compile. Which phase refuses it is not the language's business. |
-| `// expect: answers f(args) = v` | It compiles, the export `f` called with `args` returns `v`. `f = v` is `f() = v`. |
+| `// expect: f(args) = v` | It compiles, and the export `f` called with `args` returns `v`. A call with no arguments is written `f() = v`. |
 | `// expect: traps f(args)` | It compiles, and calling the export `f` with `args` traps. |
 | `// expect: exits n` | It compiles, runs as a program from its `main` ([07](1-programs/07-programs.md)), and exits with status `n`. |
 | `// expect: prints …` | As `exits`, and what follows is what it writes to its output, one line per `// …` line beneath. |
 
-A fence may carry several `answers` and `traps` lines, each a separate call. Arguments and results
+A fence may carry several call and `traps` lines, each a separate call. Arguments and results
 are written as wac literals — `true`, `"text"`, `2.5` — taking their types from the export's
 signature.
 
@@ -161,7 +161,7 @@ export i32 used() { return 0; }
 A program of several files marks each one, and its entry is `main.wac`:
 
 ```wac
-// expect: answers six = 6
+// expect: six() = 6
 // ---- lib.wac ----
 export i32 twice(i32 x) { return x * 2; }
 // ---- main.wac ----
@@ -173,7 +173,7 @@ A program may include its manifest, `wac.json5`, and paths may name directories.
 comments, so the same marker works there:
 
 ```wac
-// expect: answers eight = 8
+// expect: eight() = 8
 // ---- wac.json5 ----
 {}
 // ---- src/lib.wac ----
@@ -188,7 +188,7 @@ is the root of the checkout that the manifest's `geometry` entry resolves to —
 ref and lock entry that takes, which a test supplies rather than the example:
 
 ```wac
-// expect: answers twoViaGeometry = 2
+// expect: twoViaGeometry() = 2
 // ---- wac.json5 ----
 { imports: { geometry: { git: "https://example.com/geometry", ref: "v1" } } }
 // ---- <geometry>/wac.json5 ----
@@ -237,7 +237,7 @@ refused** — that is the claim the line makes, and each is checkable on its own
 A tag names one behaviour that a test can check:
 
 ```wac
-// expect: answers outer = 1
+// expect: outer() = 1
 export i32 outer() {
   i32 x = 1;
   { i32 x = 2; }

@@ -6,7 +6,7 @@ is made, so a caller can hash a key case-insensitively, or on one field of a str
 ## Making one
 
 ```wac
-// expect: answers startEmpty = true
+// expect: startEmpty() = true
 import { Map, hashString, stringEq } from "core";
 
 export bool startEmpty() {
@@ -24,13 +24,13 @@ The two functions must agree: keys that `eq` calls equal must have equal hashes.
 ## Reading and writing
 
 ```wac
-// expect: answers setTwice = true
-// expect: answers getOf("a") = 2
-// expect: answers getOf("z") = null
-// expect: answers getOrOf("z") = -1
-// expect: answers hasOf("b") = true
-// expect: answers removeOf("b") = true
-// expect: answers removeOf("z") = false
+// expect: setTwice() = true
+// expect: getOf("a") = 2
+// expect: getOf("z") = null
+// expect: getOrOf("z") = -1
+// expect: hasOf("b") = true
+// expect: removeOf("b") = true
+// expect: removeOf("z") = false
 import { Map, hashString, stringEq } from "core";
 
 Map<string, i32> sample() {                // {"a": 2, "b": 3}
@@ -75,7 +75,7 @@ calls on an unchanged map. `clear()` empties it.
 `core` provides the common pairs:
 
 ```wac
-// expect: answers consistentPairs = true
+// expect: consistentPairs() = true
 import { hashBytes, bytesEq, hashString, stringEq, hashI32, i32Eq, hashI64, i64Eq } from "core";
 
 export bool consistentPairs() {
@@ -101,7 +101,7 @@ object.
 A type that wants to be a key carries that field itself:
 
 ```wac
-// expect: answers keyedByIdentity = 7
+// expect: keyedByIdentity() = 7
 import { Map } from "core";
 
 struct Keyed {

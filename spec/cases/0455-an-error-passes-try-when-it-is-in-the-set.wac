@@ -1,4 +1,4 @@
-// expect: answers why3 = 7103
+// expect: why3() = 7103
 // why: try accepts an error that is one of the function's error union's alternatives, and a number enters it boxed
 // spec: §wac-try-error-in-set-44qtqmu
 

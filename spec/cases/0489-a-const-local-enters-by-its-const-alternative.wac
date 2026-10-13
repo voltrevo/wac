@@ -1,4 +1,4 @@
-// expect: answers byPermission = 1
+// expect: byPermission() = 1
 // spec: §wac-union-permission-recorded-d7yfbag
 // why: the permission recorded is the reference's, not the object's — `r` and `c` name one object
 // from: spec ch18

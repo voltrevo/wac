@@ -1,4 +1,4 @@
-// expect: answers onePerInstantiation = true
+// expect: onePerInstantiation() = true
 // spec: §wac-static-per-instantiation-79mu9di
 // why: `Cache<i32>.marker` and `Cache<string>.marker` are two statics, each one object however read
 // from: spec ch27

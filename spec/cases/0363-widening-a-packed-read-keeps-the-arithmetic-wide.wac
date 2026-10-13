@@ -1,4 +1,4 @@
-// expect: answers f = 4660
+// expect: f() = 4660
 // why: widening each byte before the shift does the shift in i32; shifting the u8 first would wrap at 8 bits and lose them
 // from: the packed-types migration, where `(b[0] << 8) | b[1]` had to become `(b[0] as i32 << 8) | b[1] as i32`
 export i32 f() {

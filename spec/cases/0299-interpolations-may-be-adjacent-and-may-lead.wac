@@ -1,4 +1,4 @@
-// expect: answers f = 4
+// expect: f() = 4
 // why: two in a row with an empty segment between them, and one at the very start — the shapes
 //      where a scanner that assumes a segment has content goes wrong
 // from: design/lang/0013 D7

@@ -125,8 +125,8 @@ for (const name of files) {
   // `only: wacc` marks a case the reference implementation is not expected to share.
   // A number, and only a number: this harness reads an export's answer as a JavaScript value, and a
   // string answer is a wasm reference it cannot read — `42 -7 false …` is not the answer `42`.
-  const answers = expect.match(/^answers\s+(\w+)\s*=\s*(-?\d+)\s*$/);
-  const kind = answers !== null ? "answers" : expect.split(/\s+/)[0];
+  const answers = expect.match(/^(\w+)\(\)\s*=\s*(-?\d+)\s*$/);
+  const kind = answers !== null ? "answers" : /^\w+\(\)\s*=/.test(expect) ? "answers" : expect.split(/\s+/)[0];
 
   let outcome: Outcome = "ok";
   let detail = "";

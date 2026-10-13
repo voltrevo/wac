@@ -1,4 +1,4 @@
-// expect: answers f = 12
+// expect: f() = 12
 // why: two modules may each declare an `S`, and the helpers a host reaches them through must not be one name
 // from: issues/lang/0080
 // ---- a.wac ----

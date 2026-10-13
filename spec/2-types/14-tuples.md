@@ -6,7 +6,7 @@ its member types, written in parentheses.
 ## A tuple is a fixed-length heterogeneous type
 
 ```wac
-// expect: answers secondMember = 1
+// expect: secondMember() = 1
 export i32 secondMember() {
   (string, i32) pair = ("a", 1);
   string first = pair.0;                   // "a"
@@ -21,7 +21,7 @@ read its members by position, each at its own type.
 Identity is the ordered list of member types, so a tuple type written in two places is one type:
 
 ```wac
-// expect: answers totalOfMade = 3
+// expect: totalOfMade() = 3
 (i32, i32) make() { return (1, 2); }
 i32 total((i32, i32) t) { return t.0 + t.1; }
 
@@ -37,7 +37,7 @@ anonymous struct would add names, and with them width and order.
 ## Tuples of zero and one
 
 ```wac
-// expect: answers oneTupleMember = 1
+// expect: oneTupleMember() = 1
 export i32 oneTupleMember() {
   ()         unit = ();
   (i32,)     one  = (1,);
@@ -57,7 +57,7 @@ accepted wherever a list is, and carries meaning only at length one.
 ## A member index must be known statically
 
 ```wac
-// expect: answers staticSelect = 7
+// expect: staticSelect() = 7
 export i32 staticSelect() {
   (string, i32) t = ("hello", 7);
   static i32 i = 1;
@@ -82,8 +82,8 @@ The member's type depends on the index, so the index has to be known when the pr
 ([31](../4-static/31-static-control.md)):
 
 ```wac
-// expect: answers sameAsLiteral = true
-// expect: answers sameAsOther = false
+// expect: sameAsLiteral() = true
+// expect: sameAsOther() = false
 bool same<Ts>(Ts a, Ts b) {
   static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
     if (a.[i] != b.[i]) { return false; }  // a string at 0, an i32 at 1
@@ -109,7 +109,7 @@ member, a symbol selects a symbol-named member.
 ## A tuple is a reference
 
 ```wac
-// expect: answers sharedTuple = 5
+// expect: sharedTuple() = 5
 export i32 sharedTuple() {
   (i32, i32) a = (1, 2);
   (i32, i32) b = a;
@@ -124,8 +124,8 @@ written.
 `==` compares members; `is` compares objects:
 
 ```wac
-// expect: answers membersEqual = true
-// expect: answers sameObject = false
+// expect: membersEqual() = true
+// expect: sameObject() = false
 export bool membersEqual() {
   (i32, i32) a = (1, 2);
   (i32, i32) b = (1, 2);
@@ -155,7 +155,7 @@ auto (q, r)       = divmod(n, d);
 ```
 
 ```wac
-// expect: answers quotient = 3
+// expect: quotient() = 3
 (u32, u32) divmod(u32 n, u32 d) { return (n / d, n % d); }
 
 export i32 quotient() {
@@ -171,7 +171,7 @@ pattern may nest.
 Without types, the same shape assigns to locals that already exist — the form a round function wants:
 
 ```wac
-// expect: answers swapped = 21
+// expect: swapped() = 21
 (u32, u32) swap(u32 a, u32 b) { return (b, a); }
 
 export i32 swapped() {
@@ -212,9 +212,9 @@ time has a different one at every step. Computed tuple types are
 ## A variadic parameter is a tuple the call site fills
 
 ```wac
-// expect: answers countTwo = 2
-// expect: answers countOne = 1
-// expect: answers countZero = 0
+// expect: countTwo() = 2
+// expect: countOne() = 1
+// expect: countZero() = 0
 i32 count<Ts>(Ts ...items) {
   return typeref(Ts).members().len();
 }

@@ -1,4 +1,4 @@
-// expect: answers f = 3
+// expect: f() = 3
 // why: a static array's length may come from a call, because the whole initialiser is evaluated
 // spec: §wac-static-call-66kaqx5
 i32 n() { return 3; }

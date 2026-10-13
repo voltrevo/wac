@@ -19,8 +19,8 @@ Module-level variables require `static`. Mutable module state is unavailable
 ([02](../1-programs/02-modules-and-imports.md)).
 
 ```wac
-// expect: answers twoBlocks = 128
-// expect: answers squareOfEight = 64
+// expect: twoBlocks() = 128
+// expect: squareOfEight() = 64
 static i32 BLOCK = 64;
 static i32 TWO_BLOCKS = BLOCK * 2;         // a static may read another
 static i32 SIZE = square(8);               // and call a function
@@ -41,7 +41,7 @@ export i32 squareOfEight() { return SIZE; }
 ([28](28-static-evaluation.md)).
 
 ```wac
-// expect: answers limit = 100
+// expect: limit() = 100
 // ---- limits.wac ----
 static i32 PRIVATE = 1;
 export static i32 LIMIT = 100 * PRIVATE;
@@ -91,7 +91,7 @@ evaluation order; ordinary locals retain statement ordering. Placing a static de
 not make its initialisation depend on runtime execution reaching that statement.
 
 ```wac
-// expect: answers example(5) = 7
+// expect: example(5) = 7
 export i32 example(i32 input) {
   static i32 TWO = ONE + ONE;              // a forward reference within the scope
   static i32 ONE = 1;
@@ -140,7 +140,7 @@ belongs to the type and does not participate in instance construction. Type atta
 meaning of `static`.
 
 ```wac
-// expect: answers offsetPlusY = 16
+// expect: offsetPlusY() = 16
 struct Foo {
   static i32 x = calculateX();
   i32 y;
@@ -169,7 +169,7 @@ A static field may be named by a symbol: `static i32 [size] = 7;`, read as `Foo.
 ## Static values are const, deeply
 
 ```wac
-// expect: answers second = 2
+// expect: second() = 2
 static i32[] T = [1, 2];
 
 export i32 second() {
@@ -236,9 +236,9 @@ Materialising static values preserves observable allocation identity and aliasin
 merge distinct allocations.
 
 ```wac
-// expect: answers oneValueForEveryCall = true
-// expect: answers onePerInstantiation = true
-// expect: answers allocationsStayDistinct = true
+// expect: oneValueForEveryCall() = true
+// expect: onePerInstantiation() = true
+// expect: allocationsStayDistinct() = true
 struct Box { i32 value; }
 
 struct Cache<T> {

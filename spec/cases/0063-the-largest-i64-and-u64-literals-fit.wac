@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // why: the twins of 0061 and 0062 — one less is inside the range and must be accepted
 export i32 f() {
   i64 a = 9223372036854775807;

@@ -1,4 +1,4 @@
-// expect: answers run = 0
+// expect: run() = 0
 // why: a literal takes its type from the slot, and a cast's slot is its own target
 // from: issues/lang/0117
 

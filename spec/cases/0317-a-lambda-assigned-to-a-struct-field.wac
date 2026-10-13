@@ -1,4 +1,4 @@
-// expect: answers f = 3
+// expect: f() = 3
 // why: the walk types a lambda on the right of a field assignment, not only an identifier one
 //
 /**

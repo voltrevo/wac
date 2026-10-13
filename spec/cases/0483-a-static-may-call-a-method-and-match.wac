@@ -1,4 +1,4 @@
-// expect: answers computed = 42
+// expect: computed() = 42
 // spec: §wac-static-eval-ordinary-ba8c628
 // why: static evaluation runs ordinary wac — methods, with and without a receiver, and `match`
 // from: spec ch28

@@ -1,4 +1,4 @@
-// expect: answers interpAlone = 2
+// expect: interpAlone() = 2
 // spec:  §wac-str-interp-alone-d8mf2xq
 // why: the empty segments each side of the expression contribute nothing, which is the case that
 //      fails if a segment's bounds are computed as though a quote were always there

@@ -2689,6 +2689,45 @@ bool isReferenceName(C c, string t) {
   return isArrayName(t) || c.isStruct(t) || c.isEnum(t) || startsWithFn(t);
 }
 
+/** `t` with every `union<X>` of one alternative written as `X`, at any depth. */
+string withoutSingletonUnions(string t) {
+  i32 at = t.indexOf("union<");
+  if (at < 0) { return t; }
+  string out = "";
+  string rest = t;
+  while (true) {
+    i32 u = rest.indexOf("union<");
+    if (u < 0) { return out + rest; }
+    // A name ending in `union<` — `myunion<` — is not the keyword.
+    bool word = u > 0 && isIdentByte(rest.toBytes()[u - 1] as i32);
+    i32 open = u + 6;
+    i32 depth = 1;
+    i32 i = open;
+    bool comma = false;
+    u8[] b = rest.toBytes();
+    while (i < b.len() && depth > 0) {
+      i32 ch = b[i] as i32;
+      if (ch == 60 || ch == 40) { depth = depth + 1; }
+      if (ch == 62 || ch == 41) { depth = depth - 1; }
+      if (ch == 44 && depth == 1) { comma = true; }
+      i = i + 1;
+    }
+    string inner = rest.slice(open, i - 1);
+    if (word || comma || inner == "") {
+      out = out + rest.slice(0, open);
+      rest = rest.slice(open, rest.len());
+      continue;
+    }
+    out = out + rest.slice(0, u) + withoutSingletonUnions(inner);
+    rest = rest.slice(i, rest.len());
+  }
+  return out;
+}
+
+bool isIdentByte(i32 ch) {
+  return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || (ch >= 48 && ch <= 57) || ch == 95 || ch == 36;
+}
+
 /**
  * Whether a value of type `got` may be where a `want` is expected.
  *
@@ -2701,6 +2740,11 @@ bool isReferenceName(C c, string t) {
 export bool assignable(C c, string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
+  // **A union of one alternative is that alternative** once inference is done (spec ch18): the
+  // wrapper counts while a placeholder is collected or a widening is taken, and a value of either
+  // spelling stands where the other is wanted — at any depth, so `Result<i32, string>` is a
+  // `Result<i32, union<string>>`.
+  if (withoutSingletonUnions(want) == withoutSingletonUnions(got)) { return true; }
   // **A function that takes a `const T` can stand where one taking a `T` is wanted** — it promises
   // more, never less (spec ch17). Only that direction, and only on the parameters.
   if (startsWithFn(want) && startsWithFn(got) && funcrefWithoutConstParams(got, want) == want) { return true; }

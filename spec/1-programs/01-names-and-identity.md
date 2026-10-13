@@ -16,7 +16,7 @@ Allocations have identity too, which is what `is` compares; that is
 ## A name is resolved in the file that writes it
 
 ```wac
-// expect: answers bothHelpers = 111222
+// expect: bothHelpers() = 111222
 // ---- a.wac ----
 i32 helper() { return 111; }
 export i32 fromA() { return helper(); }
@@ -34,7 +34,7 @@ export i32 bothHelpers() { return fromA() * 1000 + fromB(); }
 They are two declarations, and each file's uses of the name reach its own.
 
 ```wac
-// expect: answers threeComputes(5) = 31
+// expect: threeComputes(5) = 31
 // ---- utils_a.wac ----
 export i32 compute(i32 x) { return x + 1; }
 // ---- utils_b.wac ----
@@ -59,7 +59,7 @@ file it merely imports from: `main.wac`'s own `compute` coexists with both.
 A function value is a use like any other, and reaches the function the writing file means:
 
 ```wac
-// expect: answers twoHelpers = 12
+// expect: twoHelpers() = 12
 // ---- a.wac ----
 i32 helper() { return 10; }
 export fn<i32()> pickA() {
@@ -87,7 +87,7 @@ Structs are no different. Two files may each declare a `Box`, and each keeps its
 methods:
 
 ```wac
-// expect: answers fieldOrders = 103
+// expect: fieldOrders() = 103
 // ---- a.wac ----
 export struct Box { i32 x; i32 y; }
 // ---- b.wac ----
@@ -110,7 +110,7 @@ The case that matters in practice is the one where the reader sees only one of t
 other arrives through a function:
 
 ```wac
-// expect: answers boxes = 15
+// expect: boxes() = 15
 // ---- a.wac ----
 export struct Box { i32 v; }
 export Box makeA() { return Box(1); }
@@ -137,7 +137,7 @@ other an enum.
 Nothing about this depends on file names being unique:
 
 ```wac
-// expect: answers pairs = 12
+// expect: pairs() = 12
 // ---- left/util.wac ----
 export struct Pair { i32 a; i32 b; }
 export i32 left() {
@@ -166,7 +166,7 @@ from it.
 The converse: an alias is a new name, not a new thing.
 
 ```wac
-// expect: answers viaAlias = 7
+// expect: viaAlias() = 7
 // ---- lib.wac ----
 export struct Box {
   i32 v;
@@ -183,7 +183,7 @@ export i32 viaAlias() {
 ```
 
 ```wac
-// expect: answers aliasSum = 3
+// expect: aliasSum() = 3
 // ---- p.wac ----
 export struct Point { i32 x; i32 y; }
 // ---- main.wac ----
@@ -297,7 +297,7 @@ An imported name occupies the importing file's top-level scope like any declarat
 like one — and `as` is how a collision is resolved:
 
 ```wac
-// expect: answers collisions = 13
+// expect: collisions() = 13
 // ---- a.wac ----
 export i32 foo() { return 1; }
 export struct Point { i32 x; }
@@ -335,7 +335,7 @@ Importing one member of a namespace binds the member's own name — `import { op
 ## Scopes nest, and an inner name may shadow an outer one
 
 ```wac
-// expect: answers outer = 1
+// expect: outer() = 1
 export i32 outer() {
   i32 x = 1;
   {
@@ -350,8 +350,8 @@ export i32 outer() {
 is a separate variable, and the outer one is untouched.
 
 ```wac
-// expect: answers shadowParam(7) = 7
-// expect: answers loopShadow = 99
+// expect: shadowParam(7) = 7
+// expect: loopShadow() = 99
 export i32 shadowParam(i32 x) {
   { i32 x = 99; }
   return x;                              // the parameter
@@ -393,7 +393,7 @@ A local or parameter shadows a top-level name in the same way — including a fu
 is itself something that can be called:
 
 ```wac
-// expect: answers pumpCount = 2
+// expect: pumpCount() = 2
 export i32 write(u8[] bytes) { return 99; }
 
 i32 pump(fn<i32(u8[])> write) {
@@ -411,7 +411,7 @@ function type before any top-level function.
 A local that cannot be called does not hide a function from a call:
 
 ```wac
-// expect: answers resolution(100) = 6
+// expect: resolution(100) = 6
 i32 twice(i32 x) { return x * 2; }
 
 export i32 resolution(i32 twice) {
@@ -428,7 +428,7 @@ Every type name a file writes must be declared or imported by that file. A type 
 only as the result of a call has no name there:
 
 ```wac
-// expect: answers matchWithoutImport = 1
+// expect: matchWithoutImport() = 1
 // ---- k.wac ----
 export enum K { A(i32 n), B }
 export K mk() { return K.A(1); }
@@ -459,7 +459,7 @@ matched, not through the file's scope ([25](../3-expressions/25-control-flow.md)
 ## Keywords are not names
 
 ```wac
-// expect: answers go(4) = 4
+// expect: go(4) = 4
 // ERROR: 'match' is a keyword and cannot be a parameter name
 // export i32 echo(i32 match) { return match; }
 
@@ -485,8 +485,8 @@ position.
 `@"…"` writes a name verbatim. It may hold anything, including a keyword, a hyphen or a space:
 
 ```wac
-// expect: answers double(5) = 10
-// expect: answers pick(1, 3) = 4
+// expect: double(5) = 10
+// expect: pick(1, 3) = 4
 export i32 double(i32 @"n") {                   // may warn: `@"n"` is just `n`
   return n * 2;
 }
@@ -519,8 +519,8 @@ export void @"test: an empty read returns End"() {
 more than once, because it names nothing. Reading it is an error:
 
 ```wac
-// expect: answers first(1, 2, 3) = 1
-// expect: answers discards = 1
+// expect: first(1, 2, 3) = 1
+// expect: discards() = 1
 i32 sideEffect() { return 3; }
 
 export i32 first(i32 a, i32 _, i32 _) { return a; }

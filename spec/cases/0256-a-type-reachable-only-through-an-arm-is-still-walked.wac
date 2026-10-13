@@ -1,4 +1,4 @@
-// expect: answers f = 9
+// expect: f() = 9
 // spec:  §enum-arm-walks-kubc3rt
 // why: five walks over statements had no `match` case, so an arm-only reference was invisible
 // from: spec/spec/enums.md, whose only checker was the reference's suite

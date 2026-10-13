@@ -1,4 +1,4 @@
-// expect: answers answer = 6
+// expect: answer() = 6
 // why: a local that outlives a suspension survives it, including a loop's induction variable
 // from: design/lang/0014
 import { Ticket } from "core";

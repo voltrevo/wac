@@ -1,4 +1,4 @@
-// expect: answers f = 506
+// expect: f() = 506
 // why: `++` as a value reads the element it is incrementing, and a packed element is read with a sign
 // from: issues/lang/0084
 export i32 f() {

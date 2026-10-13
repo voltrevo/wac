@@ -1,4 +1,4 @@
-// expect: answers f = 101
+// expect: f() = 101
 // why: `p is Other` where `Other` is a local holding a value is an identity test, not a type test —
 //      the parser reads an upper-case name followed by `)` as a type, so only something holding the
 //      scopes can tell. `Diff` has equal contents and is a different object, so a compiler answering

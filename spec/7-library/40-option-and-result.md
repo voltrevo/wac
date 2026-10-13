@@ -14,11 +14,11 @@ enum Option<T> {
 ```
 
 ```wac
-// expect: answers isSomeOf(true) = true
-// expect: answers isSomeOf(false) = false
-// expect: answers orElseOf(true) = 4
-// expect: answers orElseOf(false) = 9
-// expect: answers mappedOf(true) = 8
+// expect: isSomeOf(true) = true
+// expect: isSomeOf(false) = false
+// expect: orElseOf(true) = 4
+// expect: orElseOf(false) = 9
+// expect: mappedOf(true) = 8
 // expect: traps mappedOf(false)
 import { Option, mapOption } from "core";
 
@@ -46,15 +46,15 @@ enum Result<T, E = union> {
 ```
 
 ```wac
-// expect: answers isOkOf(true) = true
-// expect: answers isOkOf(false) = false
-// expect: answers orElseOf(true) = 3
-// expect: answers orElseOf(false) = 0
-// expect: answers unwrapOf(true) = 3
+// expect: isOkOf(true) = true
+// expect: isOkOf(false) = false
+// expect: orElseOf(true) = 3
+// expect: orElseOf(false) = 0
+// expect: unwrapOf(true) = 3
 // expect: traps unwrapOf(false)
-// expect: answers okIsSome(true) = true
-// expect: answers okIsSome(false) = false
-// expect: answers theError = "no"
+// expect: okIsSome(true) = true
+// expect: okIsSome(false) = false
+// expect: theError() = "no"
 import { Result, Option } from "core";
 
 Result<i32, string> parsed(bool good) { return good ? Result.Ok(3) : Result.Err("no"); }

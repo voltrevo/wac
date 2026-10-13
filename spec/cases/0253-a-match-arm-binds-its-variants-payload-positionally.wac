@@ -1,4 +1,4 @@
-// expect: answers f = 12
+// expect: f() = 12
 // spec:  §enum-match-basic
 // why: bindings are positional and take their types from the declaration
 // from: spec/spec/enums.md, whose only checker was the reference's suite

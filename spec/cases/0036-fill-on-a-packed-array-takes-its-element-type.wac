@@ -1,4 +1,4 @@
-// expect: answers f = 7
+// expect: f() = 7
 // why: `fill` takes the element type, so an i32 fills a u8[] through a cast that says what to keep
 // from: packages/zstd/src/block.wac, which an over-strict element check refused
 export i32 f() {

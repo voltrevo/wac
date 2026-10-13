@@ -61,7 +61,7 @@ by identity rather than by name ([01](../1-programs/01-names-and-identity.md)).
 A variant is built through its enum. A variant with no payload is a value, not a call:
 
 ```wac
-// expect: answers built = 3
+// expect: built() = 3
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -97,8 +97,8 @@ missing payload.
 ## Matching
 
 ```wac
-// expect: answers rectArea = 12.0
-// expect: answers pointArea = 0.0
+// expect: rectArea() = 12.0
+// expect: pointArea() = 0.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -128,7 +128,7 @@ runs, with its payload bound.
 `match` is also an expression. Its arms give a value after the colon and are comma-separated:
 
 ```wac
-// expect: answers rectArea = 12.0
+// expect: rectArea() = 12.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -158,8 +158,8 @@ control flow are [25](../3-expressions/25-control-flow.md)'s subject.
 Omit the parentheses to ignore every payload field, or bind `_` to ignore one:
 
 ```wac
-// expect: answers circleIsRound = true
-// expect: answers squareIsRound = false
+// expect: circleIsRound() = true
+// expect: squareIsRound() = false
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -183,7 +183,7 @@ export bool squareIsRound() { return isRound(Shape.Rect(1.0, 1.0)); }
 A pattern binds all of a variant's payload or none of it:
 
 ```wac
-// expect: answers rectWidth = 2.0
+// expect: rectWidth() = 2.0
 enum Shape {
   Point,
   Rect(f64 width, f64 height),
@@ -213,8 +213,8 @@ refused. A name in the wrong position would silently be a different field.
 In a payload position, `is Variant` tests the payload's variant instead of binding it:
 
 ```wac
-// expect: answers denied = 2
-// expect: answers notFound = 1
+// expect: denied() = 2
+// expect: notFound() = 1
 enum Fault { NotFound, IsDir, Denied }
 enum Outcome { Ok(i32 v), Err(Fault e) }
 
@@ -243,7 +243,7 @@ A `match` must cover every variant. This is the point of the feature: the compil
 was forgotten when a variant is added.
 
 ```wac
-// expect: answers pointValue = 0.0
+// expect: pointValue() = 0.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -268,7 +268,7 @@ the diagnostic names a missing variant.
 A `default` arm covers every variant not named:
 
 ```wac
-// expect: answers pointRadius = 1.5
+// expect: pointRadius() = 1.5
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -293,7 +293,7 @@ naming*, and `Err(_)` and `default` sit one bracket apart in the same match mean
 A `default` that can never be reached, and a variant named twice, are errors rather than dead code:
 
 ```wac
-// expect: answers pointCovered = 0.0
+// expect: pointCovered() = 0.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -327,7 +327,7 @@ A variant whose payload has no values need not be covered ([11](11-never-and-uni
 `is` accepts a variant, bare or qualified by its enum:
 
 ```wac
-// expect: answers circleTests = 2
+// expect: circleTests() = 2
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -355,8 +355,8 @@ Inside an arm, the subject has the arm's variant type, so its payload fields are
 directly:
 
 ```wac
-// expect: answers rectWidth = 3.0
-// expect: answers circleWidth = 4.0
+// expect: rectWidth() = 3.0
+// expect: circleWidth() = 4.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -386,8 +386,8 @@ variant type, for exactly the arm's extent ([01](../1-programs/01-names-and-iden
 follow from it being a binding:
 
 ```wac
-// expect: answers firstRadius = 2.0
-// expect: answers pointReassigned = 0.0
+// expect: firstRadius() = 2.0
+// expect: pointReassigned() = 0.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -432,7 +432,7 @@ Outside `match`, `if (x is V)` narrows in the same way ([12](12-structs.md)).
 A variant value is an enum value, so it can be matched directly; the arms still cover the enum:
 
 ```wac
-// expect: answers circleRadius = 2.5
+// expect: circleRadius() = 2.5
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -453,13 +453,49 @@ still cover the whole enum.
 Narrowing the requirement to what the static type admits would need flow analysis, and an arm that is
 never selected costs nothing.
 
+## An enum value shares its variant
+
+A variant is an object, as a struct is: two enum values made by assignment hold the same one, and a write
+through a binding of it is seen through both. A variable holds an enum value and nothing more, so giving
+one variable a new value leaves every other variable holding what it held:
+
+```wac
+// expect: shared() = 5
+// expect: rebound() = 2
+enum Shape { Circle(f64 r), Square(f64 side) }
+
+f64 radius(Shape s) { return match (s) { Circle(r): r, Square(x): 0.0 }; }
+
+export f64 shared() {
+  Shape s = Shape.Circle(2.0);
+  Shape t = s;
+  fn<void()> grow = () => { if (Circle c matches t) { c.r = 5.0; } };
+  grow();
+  return radius(s);                        // 5: s and t hold one Circle
+}
+
+export f64 rebound() {
+  Shape s = Shape.Circle(2.0);
+  Shape t = s;
+  fn<void()> replace = () => { s = Shape.Circle(9.0); };
+  replace();
+  return radius(t);                        // 2: s holds a new Circle, and t the one it held
+}
+```
+
+`[§wac-enum-variant-shared-n4k8wqz]` Assigning an enum value shares its variant: a write through a binding of
+that variant is seen through every value holding it.
+
+`[§wac-enum-variable-own-value-7pdc2hv]` Assigning a new value to a variable changes that variable only. An enum
+value adds no shared layer of its own — a lambda captures the variable, and a copy made before is unaffected.
+
 ## An arm is an ordinary block
 
 Anything legal in a block is legal in an arm — locals, constructions, nested control flow — and a `break`
 or `continue` in an arm acts on the enclosing loop:
 
 ```wac
-// expect: answers totalBeforeDone = 3
+// expect: totalBeforeDone() = 3
 enum Step { Work(i32 n), Done }
 
 export i32 totalBeforeDone() {
@@ -487,7 +523,7 @@ such a `break` is not infinite for the purpose of checking that a function retur
 A payload may name the enum being declared, which makes trees expressible:
 
 ```wac
-// expect: answers treeSum = 3
+// expect: treeSum() = 3
 enum Tree {
   Leaf(i32 value),
   Node(Tree left, Tree right),
@@ -509,7 +545,7 @@ Tree.Leaf(2)))` answers `3`.
 Recursion may also go through a struct, which is what a container with methods needs:
 
 ```wac
-// expect: answers nestedDepth = 2
+// expect: nestedDepth() = 2
 enum Val { Nil, Num(f64 v), Arr(ArrData a) }
 
 struct ArrData {
@@ -545,7 +581,7 @@ whose every variant requires itself is uninhabited, and still valid ([11](11-nev
 There is no default variant, so an enum value cannot be produced without saying which variant it is:
 
 ```wac
-// expect: answers withoutDefaults = 6
+// expect: withoutDefaults() = 6
 enum E { A(i32 n), B }
 struct S { E e; }
 
@@ -575,7 +611,7 @@ Two variants of one enum combine to the enum, so a ternary or array literal of v
 type:
 
 ```wac
-// expect: answers combined = 2
+// expect: combined() = 2
 enum E { A(i32 n), B }
 
 export i32 combined() {
@@ -592,7 +628,7 @@ including when both are the same variant.
 Variants may appear in every position a struct may:
 
 ```wac
-// expect: answers oneRect = 1
+// expect: oneRect() = 1
 enum Shape {
   Point,
   Rect(f64 width, f64 height),
@@ -620,7 +656,7 @@ An enum may declare methods after its variants. `this` is the enum, and `match (
 variant:
 
 ```wac
-// expect: answers twiceRect = 24.0
+// expect: twiceRect() = 24.0
 enum Shape {
   Point,
   Circle(f64 radius),
@@ -654,7 +690,7 @@ variant is constructed, so that spelling has to keep meaning one thing.
 A method may be `private`, visible only inside the enum's body ([12](12-structs.md)):
 
 ```wac
-// expect: answers rectLabel = "rect 12"
+// expect: rectLabel() = "rect 12"
 export enum Shape {
   Circle(f64 radius),
   Rect(f64 width, f64 height),
@@ -685,7 +721,7 @@ fields cannot be `private`: `match` binds them wherever the enum is matched.
 ## Across files
 
 ```wac
-// expect: answers kindOf = 1
+// expect: kindOf() = 1
 // ---- k.wac ----
 export enum Kind { A, B }
 export struct Holder { Kind kind; }

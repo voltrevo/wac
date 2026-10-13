@@ -1,4 +1,4 @@
-// expect: answers all = true
+// expect: all() = true
 // why: coroutine f() builds the machine without running it, each step runs to the next suspension, every await is a step, and an async generator both yields and waits
 // spec: §wac-coroutine-runs-nothing-zumpwje
 

@@ -1,4 +1,4 @@
-// expect: answers answer = 42
+// expect: answer() = 42
 // why: a lambda writes no return type, so `fn<Ticket<R>(…)>` is what permits `async` and names `R`
 // from: issues/lang/0294c
 // spec: §wac-async-lambda-slot-9wq4nkz

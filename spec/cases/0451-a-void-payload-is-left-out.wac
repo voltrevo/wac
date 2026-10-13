@@ -1,4 +1,4 @@
-// expect: answers f = 12
+// expect: f() = 12
 // why: a void type argument makes a payload-free variant, so Ok() takes nothing and a Ticket<void> can be waited on
 // spec: §wac-ticket-value-9iqsfzw
 

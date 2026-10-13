@@ -24,7 +24,7 @@ These alternatives expose the same API shape. Inside an inline namespace, `expor
 members. A re-export preserves the original declaration's identity.
 
 ```wac
-// expect: answers areaPlusFour = 7
+// expect: areaPlusFour() = 7
 // ---- shapes.wac ----
 export struct Circle { i32 r; }
 export i32 area(Circle c) { return 3 * c.r * c.r; }
@@ -43,7 +43,7 @@ export i32 areaPlusFour() {
 namespace called `name`.
 
 ```wac
-// expect: answers areaPlusFour = 7
+// expect: areaPlusFour() = 7
 // ---- lib.wac ----
 export namespace shapes {
   export struct Circle { i32 r; }
@@ -67,7 +67,7 @@ exports give their importers the same API: `main.wac` is identical in the two pr
 A namespace without `export` is private to its module, like any other declaration:
 
 ```wac
-// expect: answers viaHelpers = 7
+// expect: viaHelpers() = 7
 namespace helpers {
   export i32 good() { return 7; }
 }
@@ -84,7 +84,7 @@ A member without `export` belongs to the namespace block alone. The members arou
 name; the rest of the file cannot reach it, qualified or not:
 
 ```wac
-// expect: answers viaHelpers = 7
+// expect: viaHelpers() = 7
 namespace helpers {
   i32 base() { return 3; }                 // the block's own
   export i32 good() { return base() + 4; }
@@ -140,7 +140,7 @@ import * as core from "core";
 ```
 
 ```wac
-// expect: answers areas = 17
+// expect: areas() = 17
 // ---- shapes.wac ----
 export struct Circle { i32 r; }
 export i32 area(Circle c) { return 3 * c.r * c.r; }
@@ -180,7 +180,7 @@ Namespace qualification also selects exported types, functions, static declarati
 namespaces:
 
 ```wac
-// expect: answers qualified = 15
+// expect: qualified() = 15
 // ---- geometry.wac ----
 export struct Point { i32 x; i32 y; }
 export Point origin() { return Point(0, 0); }
@@ -229,7 +229,7 @@ cannot be stored, passed, returned or compared.
 ## A re-export preserves identity
 
 ```wac
-// expect: answers radiusBothRoutes = 4
+// expect: radiusBothRoutes() = 4
 // ---- shapes.wac ----
 export struct Circle { i32 r; }
 // ---- lib.wac ----

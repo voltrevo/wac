@@ -1,4 +1,4 @@
-// expect: answers f = 0
+// expect: f() = 0
 // why: a field initialiser is evaluated once for each construction that uses it, so two defaults share nothing
 // from: spec ch12 §wac-field-initialiser-each-8upxvn7
 struct Counter { i32[] seen = [0]; }

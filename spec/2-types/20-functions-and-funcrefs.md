@@ -7,8 +7,8 @@ value, of type `fn<R(A, B, …)>`, and a lambda writes one inline.
 ## Declaring and returning
 
 ```wac
-// expect: answers pointX = 1.0
-// expect: answers arrayLength(5) = 5
+// expect: pointX() = 1.0
+// expect: arrayLength(5) = 5
 struct Point { f64 x; f64 y; }
 
 export void greet() { }                    // void: no return statement needed
@@ -28,9 +28,9 @@ export i32 arrayLength(i32 n) { return makeArray(n).len(); }
 A function may call one declared after it, and functions may call each other:
 
 ```wac
-// expect: answers factorial(10) = 3628800
-// expect: answers isEven(42) = 1
-// expect: answers isEven(17) = 0
+// expect: factorial(10) = 3628800
+// expect: isEven(42) = 1
+// expect: isEven(17) = 0
 export i32 factorial(i32 n) {
   if (n <= 1) { return 1; }
   return n * factorial(n - 1);
@@ -58,7 +58,7 @@ A `void` function may return early with `return;`, or fall off its end. Any othe
 value on every path:
 
 ```wac
-// expect: answers ok(true) = 1
+// expect: ok(true) = 1
 export void earlyReturn(bool flag) {
   if (flag) { return; }
 }
@@ -90,7 +90,7 @@ An argument's type must be the parameter's type. There is no widening at a call 
 else:
 
 ```wac
-// expect: answers taken = 2
+// expect: taken() = 2
 struct A { i32 x; }
 struct B { i32 y; }
 struct P { i32 take(const this, A a) { return a.x; } }
@@ -129,8 +129,8 @@ parameters hand it ([07](../1-programs/07-programs.md)).
 value position is a value of that type, and calling a value calls the function:
 
 ```wac
-// expect: answers compared = false
-// expect: answers doubled(5) = 10
+// expect: compared() = false
+// expect: doubled(5) = 10
 bool ascending(i32 a, i32 b) { return a < b; }
 bool descending(i32 a, i32 b) { return a > b; }
 i32 double(i32 x) { return x * 2; }
@@ -155,11 +155,11 @@ function of that type.
 Function values go everywhere values go — parameters, returns, fields, arrays, nullables:
 
 ```wac
-// expect: answers applied = 35
-// expect: answers reversed = false
-// expect: answers throughField = 10
-// expect: answers throughArray = 30
-// expect: answers absentNotCalled = true
+// expect: applied() = 35
+// expect: reversed() = false
+// expect: throughField() = 10
+// expect: throughArray() = 30
+// expect: absentNotCalled() = true
 i32 double(i32 x) { return x * 2; }
 i32 square(i32 x) { return x * x; }
 i32 negate(i32 x) { return -x; }
@@ -214,7 +214,7 @@ negate]` to `5` sums to `30`.
 `[§wac-fnref-null-w3qn5jk]` A function type may be nullable, and absent is not a function that does nothing.
 
 ```wac
-// expect: answers doubledThenSummed = 30
+// expect: doubledThenSummed() = 30
 i32 double(i32 x) { return x * 2; }
 i32 add(i32 a, i32 b) { return a + b; }
 
@@ -239,7 +239,7 @@ export i32 doubledThenSummed() { return reduce(map([1, 2, 3, 4, 5], double), 0, 
 A generic function may take a function parameter whose type mentions its type parameters:
 
 ```wac
-// expect: answers firstBig = 3
+// expect: firstBig() = 3
 T? find<T>(T[] xs, fn<bool(T)> p) {
   for (T x in xs) {
     if (p(x)) { return x; }
@@ -264,7 +264,7 @@ A method is a value too. Through the type, its receiver is its first parameter; 
 receiver is bound and the value takes the remaining parameters:
 
 ```wac
-// expect: answers incrementedThreeWays = 10
+// expect: incrementedThreeWays() = 10
 struct Counter {
   i32 count;
 
@@ -304,9 +304,9 @@ A lambda writes a function value inline. Its parameters carry their types; its r
 function type it is written into. An expression body is sugar for a block that returns it:
 
 ```wac
-// expect: answers answer = 42
-// expect: answers sum(1, 1) = 2
-// expect: answers absolute(-3) = 3
+// expect: answer() = 42
+// expect: sum(1, 1) = 2
+// expect: absolute(-3) = 3
 export i32 answer() {
   fn<i32()> f = () => 42;
   return f();
@@ -333,7 +333,7 @@ A lambda captures by reference, primitives included: a captured local is shared 
 so a write on either side is seen by the other:
 
 ```wac
-// expect: answers bumpedTwice = 2
+// expect: bumpedTwice() = 2
 export i32 bumpedTwice() {
   i32 n = 0;
   fn<void()> bump = () => { n = n + 1; };
@@ -347,7 +347,7 @@ export i32 bumpedTwice() {
 through nesting, and two lambdas capturing one local share it.
 
 ```wac
-// expect: answers addedThroughReceiver = 5
+// expect: addedThroughReceiver() = 5
 struct Counter {
   i32 n;
   void bump(this, i32 by) { this.n = this.n + by; }
@@ -369,7 +369,7 @@ hands back still acts on the receiver its caller holds.
 A lambda may be written inside a generic, and closes over that instantiation's types:
 
 ```wac
-// expect: answers heldTwice = 42
+// expect: heldTwice() = 42
 T hold<T>(T v) {
   fn<T()> get = () => v;
   return get();
@@ -389,7 +389,7 @@ A lambda passed as an argument takes its type from the parameter it fills, howev
 through a method, or through a function value held in a field:
 
 ```wac
-// expect: answers fetchThenDouble(3) = 6
+// expect: fetchThenDouble(3) = 6
 struct Pending { i32 v; i32 then(const this, fn<i32(i32)> k) { return k(this.v); } }
 struct Source { fn<Pending(i32)> fetch; }
 

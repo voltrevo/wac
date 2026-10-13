@@ -1,4 +1,4 @@
-// expect: answers f = 3
+// expect: f() = 3
 // why: `??` binds below `||` and above the ternary, and `a ?? b ?? c` is `a ?? (b ?? c)`
 // from: spec ch22 precedence table, level 14
 export i32 f() {

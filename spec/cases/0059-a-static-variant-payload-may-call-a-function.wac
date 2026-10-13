@@ -1,4 +1,4 @@
-// expect: answers g = 1
+// expect: g() = 1
 // why: and inside a variant's payload, which is the same rule one node along
 // spec: §wac-static-call-66kaqx5
 enum E { A(i32 v), B }

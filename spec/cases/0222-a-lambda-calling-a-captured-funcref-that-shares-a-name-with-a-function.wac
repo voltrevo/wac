@@ -1,4 +1,4 @@
-// expect: answers f2 = 3
+// expect: f2() = 3
 // why: inside a hoisted lambda, a captured `fn<void(i32)> f` is called while a *file-level* function
 //      of the same name exists with a different type and arity. Which `f` the call means decides
 //      whether the module is valid at all: the emitter reads the capture and emits `call_ref`, which

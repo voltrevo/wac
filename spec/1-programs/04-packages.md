@@ -6,7 +6,7 @@ package selects its entry module.
 ## The consumer selects the package; the package selects its entry module
 
 ```wac
-// expect: answers circleArea = 12
+// expect: circleArea() = 12
 // ---- wac.json5 ----
 {
   imports: {
@@ -141,7 +141,7 @@ An import dropped by reachability need not load or validate the target package
 ([05](05-reachability.md)):
 
 ```wac
-// expect: answers zero = 0
+// expect: zero() = 0
 // ---- wac.json5 ----
 { imports: { geometry: { git: "https://example.com/geometry", ref: "v1" } } }
 // ---- <geometry>/wac.json5 ----
@@ -207,7 +207,7 @@ and lazy loading provide selective access through the single public entry. The f
 this chapter compiles even if `transforms.wac` is missing:
 
 ```wac
-// expect: answers circleArea = 12
+// expect: circleArea() = 12
 // ---- wac.json5 ----
 { imports: { geometry: { git: "https://example.com/geometry", ref: "v1" } } }
 // ---- <geometry>/wac.json5 ----
@@ -233,7 +233,7 @@ Two manifest entries naming one repository at one commit reach one module; two c
 ([46](../8-tooling/46-manifest-and-lock.md)).
 
 ```wac
-// expect: answers oneCircle = 5
+// expect: oneCircle() = 5
 // ---- wac.json5 ----
 {
   imports: {

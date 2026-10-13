@@ -1,4 +1,4 @@
-// expect: answers run = 0
+// expect: run() = 0
 // why: a shift's amount may be a different width from the value, and `<<=` forgot to convert it
 // from: issues/lang/0117
 

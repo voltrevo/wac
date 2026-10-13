@@ -1,4 +1,4 @@
-// expect: answers f = 3
+// expect: f() = 3
 // why: a generic struct whose method only reads — not what 0092 was about
 // from: issues/lang/0092
 struct Box<T> { T v;

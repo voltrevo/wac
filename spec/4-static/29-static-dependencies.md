@@ -29,7 +29,7 @@ Completion is shallow: a type can contain references to incomplete types. Comple
 during other type computations; it does not recursively complete every referenced type.
 
 ```wac
-// expect: answers secondValue = 2
+// expect: secondValue() = 2
 type Optional<T> {
   return typeref(T).pushNull();
 }
@@ -180,8 +180,8 @@ i32 example() {
 ```
 
 ```wac
-// expect: answers copy = 42
-// expect: answers two = 2
+// expect: copy() = 42
+// expect: two() = 2
 static i32 COPY = getAnswer();             // 42, though ANSWER is declared below
 
 i32 getAnswer() { return ANSWER; }
@@ -253,8 +253,8 @@ i32 choose(bool first) {
 Checking `choose` needs `B`'s type; this invocation never reads `B`'s value.
 
 ```wac
-// expect: answers a = 7
-// expect: answers b = 8
+// expect: a() = 7
+// expect: b() = 8
 static i32 A = choose(true);
 static i32 B = A + 1;
 

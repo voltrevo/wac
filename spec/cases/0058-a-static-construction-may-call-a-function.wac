@@ -1,4 +1,4 @@
-// expect: answers g = 1
+// expect: g() = 1
 // why: the call is inside a construction, and it is still run at compile time
 // spec: §wac-static-call-66kaqx5
 struct P { i32 x; }

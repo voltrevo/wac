@@ -5298,8 +5298,23 @@ string parentOfE(Env env, string name) {
   return "";
 }
 
-/** The normalised union of `ms`, as `normUnion` in the checker spells it. */
+/**
+ * The normalised union of `ms`, as `normUnion` in the checker spells it — except that **a union of one
+ * alternative is that alternative.** The wrapper is significant only while types are being inferred
+ * (spec ch18, ch32), which the checker has finished by now; to the emitter `union<string>` *is*
+ * `string`, laid out as one and passed where one is wanted with nothing in between.
+ */
 string normUnionE(Env env, string[] ms) {
+  string n = normUnionWrapped(env, ms);
+  string[] left = unionMembers(n);
+  // **Not a `const` alternative**: `union<const Rect>` carries the record of which permission a value
+  // entered by (spec ch18), held as a box beside the object, and a conversion back into
+  // `union<Rect, const Rect>` reads that record. Collapsed, the record was gone and spec ch18's
+  // `stillConst` stopped answering.
+  return left.len() == 1 && !isConstAlt(left[0]) ? left[0] : n;
+}
+
+string normUnionWrapped(Env env, string[] ms) {
   string[] flat = flattenUnion(ms);
   bool[] gone = bool[].filled(flat.len(), false);
   for (i32 i = 0; i < flat.len(); i++) {
@@ -8868,7 +8883,7 @@ void retireFrom(Env env, i32 from) {
  * three arms deep branches to the wrong place — and validates while doing it.
  */
 void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms) {
-  string en = env.canonType(typeOfE(src, lexed, env, subject));
+  string en = matchSubjectE(src, lexed, env, subject, arms);
   if (isUnionName(en)) { emitUnionMatch(fb, src, lexed, env, subject, arms, en, "void", false); return; }
   if (!env.isEnumName(en)) { return; }
   env.addLocal(" match", en);
@@ -8969,7 +8984,7 @@ void emitArmResult(B fb, u8[] src, Lexed lexed, Env env, Arm arm, string rt) {
  * is already known, and without it there is nowhere to put the value.
  */
 void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms, string want) {
-  string en = env.canonType(typeOfE(src, lexed, env, subject));
+  string en = matchSubjectE(src, lexed, env, subject, arms);
   if (isUnionName(en) && arms.len() > 0) {
     emitUnionMatch(fb, src, lexed, env, subject, arms, en, unionMatchType(src, lexed, env, subject, arms, want), true);
     return;
@@ -14902,6 +14917,29 @@ string unsupportedIn(u8[] src, Lexed lexed, Env env, Stmt[] body) {
 }
 
 /**
+ * The type a `match` takes its subject apart as: its own, or — for a subject that is neither an enum nor
+ * a union, matched by type — the union of that one type.
+ *
+ * `match (e) { string: … }` on a gathered error that was `union<string>` is a match on a `string` here,
+ * because a union of one alternative is that alternative once the checker is done (spec ch18). The
+ * test still has to be written somewhere, and the union path is where type arms are written, so the
+ * subject enters a `union<string>` spelled out — not normalised — for the length of the match.
+ */
+string matchSubjectE(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms) {
+  string en = env.canonType(typeOfE(src, lexed, env, subject));
+  if (en == "" || isUnionName(en) || env.isEnumName(en)) { return en; }
+  // Only when every arm that names something names exactly this type: an enum this emitter knows
+  // under another key has arms naming its variants, and those must not be read as types.
+  bool any = false;
+  for (i32 a = 0; a < arms.len(); a++) {
+    if (arms[a].variantTok < 0) { continue; }
+    if (env.canonType(armWrittenE(src, lexed, arms[a])) != en) { return en; }
+    any = true;
+  }
+  return any ? "union<" + en + ">" : en;
+}
+
+/**
  * What stops a `match` — the subject, the arms' variants, or the enum itself.
  *
  * Shared by the statement and the expression form, which differ only in what an arm holds.
@@ -14909,7 +14947,7 @@ string unsupportedIn(u8[] src, Lexed lexed, Env env, Stmt[] body) {
 string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms) {
   string sv = unsupportedValue(src, lexed, env, subject);
   if (sv != "") { return sv; }
-  string en = env.canonType(typeOfE(src, lexed, env, subject));
+  string en = matchSubjectE(src, lexed, env, subject, arms);
   if (isUnionName(en)) {
     for (i32 a = 0; a < arms.len(); a++) {
       if (arms[a].variantTok < 0) { continue; }

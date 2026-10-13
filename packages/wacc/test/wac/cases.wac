@@ -8,7 +8,7 @@
 //
 // The format, and every part of it is load-bearing:
 //
-//     // expect: refused | declined | emits | traps <fn> | answers <fn> = <value>
+//     // expect: refused | declined | emits | traps <fn> | <fn>() = <value>
 //     // why: what the case is about — a case that cannot say is a puzzle
 //     // from: optional provenance
 //     // ---- name.wac ----  — optional file marks; the entry is `main.wac` when there are several
@@ -172,13 +172,14 @@ Expect parseExpect(string spec) {
     string name = trim(s.slice(6, s.len()));
     return name == "" ? Expect("", "", "") : Expect("traps", name, "");
   }
-  if (startsWith(s, "answers ")) {
-    string rest = s.slice(8, s.len());
-    i32 eq = rest.indexOf("=");
-    if (eq < 0) { return Expect("", "", ""); }
-    string name = trim(rest.slice(0, eq));
-    string value = trim(rest.slice(eq + 1, rest.len()));
-    return name == "" || value == "" ? Expect("", "", "") : Expect("answers", name, value);
+  // `f() = value` — the call, written as a call, and what it answers.
+  i32 eq = s.indexOf("=");
+  if (eq > 0) {
+    string call = trim(s.slice(0, eq));
+    string value = trim(s.slice(eq + 1, s.len()));
+    if (!endsWith(call, "()") || value == "") { return Expect("", "", ""); }
+    string name = call.slice(0, call.len() - 2);
+    return name == "" ? Expect("", "", "") : Expect("answers", name, value);
   }
   return Expect("", "", "");
 }

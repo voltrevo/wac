@@ -1,4 +1,4 @@
-// expect: answers f = 5
+// expect: f() = 5
 // why: a variant's payload is a slot like any other, so a bare constructor can take its arguments from it
 // from: the non-generic half of the last known false alarm — the generic half is still open
 struct Box<T> { T v; }

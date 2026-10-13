@@ -1,4 +1,4 @@
-// expect: answers f = 3
+// expect: f() = 3
 // why: the arm binds a payload of the enum being matched, not of a local enum that spells a
 // why: variant the same way — the name is scoped to its own file, and this one is imported
 // from: issues/lang/0096, found writing packages/git

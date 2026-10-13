@@ -1,4 +1,4 @@
-// expect: answers f = 10
+// expect: f() = 10
 // spec:  §wac-str-uesc-bounds-q7nw2fk
 // why: a rule with three edges needs the good side of each, or refusing everything would pass
 // from: design/lang/0013 D2

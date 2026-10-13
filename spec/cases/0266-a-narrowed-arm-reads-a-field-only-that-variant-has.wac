@@ -1,4 +1,4 @@
-// expect: answers f = 4
+// expect: f() = 4
 // spec:  §enum-narrow-field
 // why: `widthOf(Shape.Circle(2.0))` returns 4.0 — `radius` exists on Circle alone
 // from: spec/spec/enums.md, whose only checker was the reference's suite

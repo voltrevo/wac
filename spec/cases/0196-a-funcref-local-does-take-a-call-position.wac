@@ -1,4 +1,4 @@
-// expect: answers f = 3
+// expect: f() = 3
 // why: the other half of the same rule — a local *of funcref type* shadows the function, and the
 // why: call goes to the local rather than to the import it hides
 // from: issues/lang/0143

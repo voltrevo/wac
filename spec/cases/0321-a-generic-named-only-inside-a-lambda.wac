@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // why: the walk that discovers instantiations has to enter a lambda body, or a generic used only there is never monomorphised
 // from: issues/lang/0295c
 

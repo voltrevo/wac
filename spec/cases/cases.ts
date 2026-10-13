@@ -70,7 +70,7 @@ export function parseCase(name: string, text: string): Case {
       else {
         const t = /^traps\s+(\S+)$/.exec(spec);
         if (t) { expect = { kind: "traps", fn: t[1] }; continue; }
-        const m = /^answers\s+(\S+)\s*=\s*(.+)$/.exec(spec);
+        const m = /^(\w+)\(\)\s*=\s*(.+)$/.exec(spec);
         if (!m) throw new Error(`${name}: cannot read expectation ${JSON.stringify(spec)}`);
         expect = { kind: "answers", fn: m[1], value: m[2].trim() };
       }

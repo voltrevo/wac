@@ -22,8 +22,8 @@ widen(union<Rect>, anyref) = anyref
 ```
 
 ```wac
-// expect: answers widened(true) = 3
-// expect: answers widened(false) = 4
+// expect: widened(true) = 3
+// expect: widened(false) = 4
 struct Shape { i32 x; }
 struct Rect : Shape { i32 w; }
 struct Circle : Shape { i32 r; }
@@ -53,7 +53,7 @@ their order, and a combination that succeeds as a whole is not refused because s
 widen.
 
 ```wac
-// expect: answers absorbed = 3
+// expect: absorbed() = 3
 export i32 absorbed() {
   i32 a = 1;
   string b = "s";
@@ -103,8 +103,8 @@ independently inferred helper is checked in its own context; a caller's union do
 body.
 
 ```wac
-// expect: answers expectedUnion(true) = true
-// expect: answers expectedUnion(false) = false
+// expect: expectedUnion(true) = true
+// expect: expectedUnion(false) = false
 i32 makeI32() { return 4; }
 
 export bool expectedUnion(bool cond) {
@@ -148,7 +148,7 @@ auto nothing() { return null; } // null, meaning never?
 ```
 
 ```wac
-// expect: answers widenedNull(false) = true
+// expect: widenedNull(false) = true
 struct Shape { i32 x; }
 struct Square : Shape { i32 s; }
 struct Circle : Shape { i32 r; }

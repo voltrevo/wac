@@ -1,4 +1,4 @@
-// expect: answers f = 5
+// expect: f() = 5
 // spec:  §enum-dup-payload-field
 // why: `enum E { A(i32 x), B(i32 x) }` is fine — they are different structs
 // from: spec/spec/enums.md, whose only checker was the reference's suite

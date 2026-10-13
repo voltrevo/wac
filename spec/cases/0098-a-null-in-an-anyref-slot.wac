@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // why: `anyref?` is a slot like any other, and `null` goes into it
 // from: packages/sh/src/exec.wac's `Shell.interruptCtx`, which declined the whole file
 struct Holder { anyref? ctx; i32 n; }

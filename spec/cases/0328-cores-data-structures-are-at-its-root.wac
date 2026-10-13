@@ -1,4 +1,4 @@
-// expect: answers f = 12
+// expect: f() = 12
 // why: `core` is one module, and its data structures are exported at its root beside `Read`
 // from: subpath-free built-ins (design/lang/0016), spec ch37
 import { Vec, Map, Option, Result, hashString, stringEq } from "core";

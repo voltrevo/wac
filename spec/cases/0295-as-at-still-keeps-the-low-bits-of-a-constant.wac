@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // spec:  §wac-cast-matrix-6hkq4wz
 // why: `as@` keeps the low bits by definition, and fixing `as~`'s constant path must not change it —
 //      the two share the fold that narrows a literal ahead of the cast

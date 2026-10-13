@@ -1,4 +1,4 @@
-// expect: answers g = 1
+// expect: g() = 1
 // why: the other half of 0502 — accepting a variant pattern must not make it always true; a
 //      `Square` is not a `Circle`, so the test fails and nothing is bound
 // from: issues/lang/0366a

@@ -37,8 +37,8 @@ does with them. They differ only where the sign bit changes the answer:
 | `+` `-` `*` `&` `\|` `^` `<<` `==` `!=` | identical — the same bits either way |
 
 ```wac
-// expect: answers half(4294967295) = 2147483647
-// expect: answers halfSigned(-1) = 0
+// expect: half(4294967295) = 2147483647
+// expect: halfSigned(-1) = 0
 export u32 half(u32 x) { return x / 2; }
 export i32 halfSigned(i32 x) { return x / 2; }   // the same 32 bits, divided signed
 ```
@@ -51,7 +51,7 @@ There are no implicit conversions between signed and unsigned, in either directi
 ## Integer arithmetic wraps
 
 ```wac
-// expect: answers next(2147483647) = -2147483648
+// expect: next(2147483647) = -2147483648
 export i32 next(i32 x) { return x + 1; }
 ```
 
@@ -62,8 +62,8 @@ Every width wraps at its own width, and nothing promotes — not a `u8` to an `i
 to an `i64`:
 
 ```wac
-// expect: answers addBytes(200, 100) = 44
-// expect: answers addWidened(200, 100) = 300
+// expect: addBytes(200, 100) = 44
+// expect: addWidened(200, 100) = 300
 export u8 addBytes(u8 a, u8 b) { return a + b; }                     // wraps at 8 bits
 export i32 addWidened(u8 a, u8 b) { return a as i32 + b as i32; }    // widened first, then added
 ```
@@ -83,9 +83,9 @@ There is no checked arithmetic operator. Two idioms detect overflow instead.
 the checked cast catch it:
 
 ```wac
-// expect: answers sum(2000000000, 100) = 2000000100
+// expect: sum(2000000000, 100) = 2000000100
 // expect: traps sum(2147483647, 1)
-// expect: answers mul(65535, 65537) = 4294967295
+// expect: mul(65535, 65537) = 4294967295
 // expect: traps mul(65536, 65536)
 export i32 sum(i32 a, i32 b) { return (a as i64 + b as i64) as! i32; }   // traps if it would not fit
 export u32 mul(u32 a, u32 b) { return (a as u64 * b as u64) as! u32; }
@@ -96,10 +96,10 @@ the result going backwards, and signed overflow by the sign test — the operand
 result does not:
 
 ```wac
-// expect: answers addWraps(18446744073709551615, 1) = true
-// expect: answers addWraps(1, 2) = false
-// expect: answers addOverflows(9223372036854775807, 1) = true
-// expect: answers addOverflows(-1, 1) = false
+// expect: addWraps(18446744073709551615, 1) = true
+// expect: addWraps(1, 2) = false
+// expect: addOverflows(9223372036854775807, 1) = true
+// expect: addOverflows(-1, 1) = false
 export bool addWraps(u64 a, u64 b) { return a + b < a; }
 
 export bool addOverflows(i64 a, i64 b) {
@@ -119,9 +119,9 @@ overflowed.
 zero answers an infinity or NaN; it does not trap.
 
 ```wac
-// expect: answers infinite = true
-// expect: answers nanUnequal = true
-// expect: answers zerosEqual = true
+// expect: infinite() = true
+// expect: nanUnequal() = true
+// expect: zerosEqual() = true
 export bool infinite() {
   f64 inf = 1.0 / 0.0;
   return inf > 1.0e308;
@@ -148,8 +148,8 @@ infinity or NaN rather than trapping.
 or trapped. Each float pairs only with the unsigned integer of its own width.
 
 ```wac
-// expect: answers bitsOf(1.0) = 0x3FF0000000000000
-// expect: answers floatOf(0x3FF0000000000000) = 1.0
+// expect: bitsOf(1.0) = 0x3FF0000000000000
+// expect: floatOf(0x3FF0000000000000) = 1.0
 export u64 bitsOf(f64 x) { return f64.toBits(x); }
 export f64 floatOf(u64 b) { return f64.fromBits(b); }
 ```
@@ -164,7 +164,7 @@ round-trip a NaN's payload bits unchanged.
 though `-0.0 == 0.0`.
 
 ```wac
-// expect: answers bitsOf32(1.0) = 1065353216
+// expect: bitsOf32(1.0) = 1065353216
 export u32 bitsOf32(f32 x) { return f32.toBits(x); }   // 0x3F800000 for 1.0
 ```
 
@@ -180,8 +180,8 @@ shortest round-trip formatting, classification, hashing a float by value — cou
 answer `bool`; a condition must be one.
 
 ```wac
-// expect: answers whenFlag(true) = 5
-// expect: answers whenFlag(false) = 0
+// expect: whenFlag(true) = 5
+// expect: whenFlag(false) = 0
 export i32 whenFlag(bool flag) {
   i32 x = 5;
   if (flag) { return x; }
@@ -192,8 +192,8 @@ export i32 whenFlag(bool flag) {
 `[§wac-strict-tr8nhbk]` A `bool` is a condition: `whenFlag(true)` answers `5`.
 
 ```wac
-// expect: answers nonZero(5) = 1
-// expect: answers nonZero(0) = 0
+// expect: nonZero(5) = 1
+// expect: nonZero(0) = 0
 export i32 nonZero(i32 x) {
   // ERROR: a condition must be bool, not i32
   // if (x) { return 1; }
@@ -213,7 +213,7 @@ a return, a nullable, and the answer of indexing an array of them. The width is 
 not a restriction on use.
 
 ```wac
-// expect: answers brightestOfThree = 200
+// expect: brightestOfThree() = 200
 struct Pixel { u8 r; u8 g; u8 b; }
 
 u8 brightest(Pixel p) {
@@ -238,7 +238,7 @@ A packed type converts like any other number — widening with `as`, narrowing w
 what to do with what does not fit ([24](../3-expressions/24-casts.md)):
 
 ```wac
-// expect: answers lowByte(511) = 255
+// expect: lowByte(511) = 255
 export i32 lowByte(i32 n) {
   u8[] xs = [0];
 
@@ -269,7 +269,7 @@ A reference is non-null unless its type says otherwise: `T` is never null, `T?` 
 - `i31ref` is a 31-bit integer held as a reference, with no allocation.
 
 ```wac
-// expect: answers throughAnyref = 42
+// expect: throughAnyref() = 42
 struct Point { i32 x; i32 y; }
 
 export i32 throughAnyref() {
@@ -294,7 +294,7 @@ A type has a default value only if there is a value that means "nothing yet". `T
 meant.
 
 ```wac
-// expect: answers assignedLater = 1
+// expect: assignedLater() = 1
 struct Rgb { u8 r; u8 g; u8 b; }
 
 export i32 assignedLater() {
@@ -323,9 +323,9 @@ Whether a local is assigned is decided by the paths that reach each use of it. A
 assigned** at a point when every path from its declaration to that point assigns it:
 
 ```wac
-// expect: answers sign(-5) = -1
-// expect: answers sign(0) = 0
-// expect: answers sign(3) = 1
+// expect: sign(-5) = -1
+// expect: sign(0) = 0
+// expect: sign(3) = 1
 export i32 sign(i32 n) {
   i32 s;
   if (n < 0) { s = -1; } else if (n == 0) { s = 0; } else { s = 1; }
@@ -353,9 +353,9 @@ it ends in `return`, `trap`, `break` or `continue`, or in an expression of type 
 ([11](11-never-and-uninhabited.md)) — reaches nothing after it, and so constrains nothing:
 
 ```wac
-// expect: answers checked(4) = 4
+// expect: checked(4) = 4
 // expect: traps checked(-1)
-// expect: answers firstOver([1, 5, 9], 4) = 5
+// expect: firstOver([1, 5, 9], 4) = 5
 export i32 checked(i32 n) {
   i32 v;
   if (n >= 0) { v = n; } else { trap "negative"; }
@@ -395,8 +395,8 @@ A local whose type has a default need not be assigned before it is read. Where a
 holds the default:
 
 ```wac
-// expect: answers retries(true) = 7
-// expect: answers retries(false) = 3
+// expect: retries(true) = 7
+// expect: retries(false) = 3
 struct Conn {
   i32 retries = 3;
   i32[] log;
@@ -422,7 +422,7 @@ A lambda captures by reference ([20](20-functions-and-funcrefs.md)), and the ana
 run. So a lambda may capture a local only where the local is definitely assigned:
 
 ```wac
-// expect: answers capturedLater(5) = 5
+// expect: capturedLater(5) = 5
 export i32 capturedLater(i32 n) {
   i32 k;
 

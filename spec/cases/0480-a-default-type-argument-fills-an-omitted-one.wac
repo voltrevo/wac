@@ -1,4 +1,4 @@
-// expect: answers parsed = 1
+// expect: parsed() = 1
 // spec: §wac-generic-default-arg-p6xzn68
 // why: `Result<i32>` omits `E`, which defaults to a fresh placeholder gathered from what `parse` returns
 // from: spec ch19

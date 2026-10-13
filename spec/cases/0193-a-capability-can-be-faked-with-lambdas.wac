@@ -1,4 +1,4 @@
-// expect: answers f = 5
+// expect: f() = 5
 // why: a struct of lambdas is a working substitute for a capability, collecting into a captured local
 // from: design/lang/0002 tier two — the shape the closure workarounds in this repo were built around
 //

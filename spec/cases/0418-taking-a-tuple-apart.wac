@@ -1,4 +1,4 @@
-// expect: answers run = 3 3
+// expect: run() = 3 3
 // why: `(T a, U b) = e` declares one local per member of the tuple `e`, and the pattern may nest
 // from: spec ch14 §wac-tuple-destructure-gn8i48y
 (u32, u32) divmod(u32 n, u32 d) { return (n / d, n % d); }

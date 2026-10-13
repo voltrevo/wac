@@ -1,4 +1,4 @@
-// expect: answers f = 11
+// expect: f() = 11
 // spec:  §enum-is-qualified-8jkq4wp
 // why: both spellings are the same test, for a variant with a payload as readily as one without
 // from: spec/spec/enums.md, whose only checker was the reference's suite

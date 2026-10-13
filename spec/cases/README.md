@@ -14,7 +14,7 @@ nothing to run once found.
 
 A case is one `.wac` file. Its first lines are comments:
 
-    // expect: emits | refused | traps <fn> | answers <fn> = <value>
+    // expect: emits | refused | traps <fn> | <fn>() = <value>
     // why: one line, in the language of the rule rather than the bug
     // from: issues/lang/0092        (optional — where it came from)
     // spec: §tag                    (optional — the clause this case holds)

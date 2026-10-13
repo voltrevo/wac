@@ -1,4 +1,4 @@
-// expect: answers f = 1
+// expect: f() = 1
 // why: `is` binds as `<` does, so a test combines with another condition without parentheses
 // from: `is` precedence (design/lang/0016), spec ch22 §wac-precedence-tests-78cupm3
 struct Rgb { i32 r; }

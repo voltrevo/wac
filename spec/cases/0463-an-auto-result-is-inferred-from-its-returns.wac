@@ -1,4 +1,4 @@
-// expect: answers total = 128
+// expect: total() = 128
 // spec: §wac-auto-return-vm59825, §wac-auto-path-exclusion-ffs3tt5
 // why: each `auto` widens its own returns, and a path back to itself contributes nothing
 // from: spec ch34

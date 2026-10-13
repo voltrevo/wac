@@ -1,4 +1,4 @@
-// expect: answers f = label: hello
+// expect: f() = label: hello
 // why: `"…\{e}…"` converts `e` once through core's `toString` symbol and concatenates the result
 // from: spec ch23 §wac-interp-tostring-2qpb4rs
 import { toString } from "core";

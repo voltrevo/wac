@@ -1,4 +1,4 @@
-// expect: answers f = 3
+// expect: f() = 3
 // spec:  §enum-match-break-loop
 // why: arms have no fallthrough, so `break` in one can only mean the loop
 // from: spec/spec/enums.md, whose only checker was the reference's suite
