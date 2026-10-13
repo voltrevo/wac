@@ -1,0 +1,13 @@
+// expect: f() = 3
+// why: `Vec<T>` builds its empty backing array as `T[]()`, and whether that defaults each slot or
+//      leaves it null was asked of the written `T`; at `T = i32?` the element is a box, and an `i32`
+//      zero was built for it — the engine refused the module
+// from: core/test/vec_test.wac, when `Option` left core and the test took `Vec<i32?>` instead
+import { Vec } from "core";
+
+export i32 f() {
+  Vec<i32?> v = Vec.create();
+  v.push(3);
+  v.push(null);
+  return (v.get(0) ?? -1) + (v.get(1) is null ? 0 : 100);
+}

@@ -451,8 +451,7 @@ spec/7-library/39-map-and-hash.md#1
 spec/7-library/39-map-and-hash.md#2
 spec/7-library/39-map-and-hash.md#3
 spec/7-library/39-map-and-hash.md#4
-spec/7-library/40-option-and-result.md#1
-spec/7-library/40-option-and-result.md#2
+spec/7-library/40-result.md#1
 spec/7-library/41-read.md#1
 spec/7-library/42-buf.md#1
 spec/7-library/42-buf.md#2

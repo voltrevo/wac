@@ -165,7 +165,7 @@
 // signal to do so.
 //
 import { CallResult, Cli, Core, LoadedModule, Sys } from "std";
-import { Map, Option, Vec, hashString, stringEq } from "core";
+import { Map, Vec, hashString, stringEq } from "core";
 import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
 import { Rng } from "../../packages/wactest/src/rng.wac";
 import { Built, buildLinked } from "../../packages/wacc/src/emit.wac";

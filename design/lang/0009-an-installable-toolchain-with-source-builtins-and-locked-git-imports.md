@@ -157,7 +157,7 @@ whole mechanism exercised by anyone who uses it at all.
 
 **0001's D5 said `core` is unquoted**, on the argument that *"a quoted specifier says a file lives at
 this path, and there is no path here to be right or wrong about"*. Under D6 there is now a path:
-`core/option.wac` names a file inside an embedded tree, and the tree has a manifest at its root like
+core/option.wac names a file inside an embedded tree, and the tree has a manifest at its root like
 any other. The argument held while `core` was one module with no interior; it does not once `core` is
 a package.
 
@@ -210,7 +210,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | 1. fixpoint in the command (D2) | **done for the production path.** `tools/seed.sh` compares the compiler the binary produces against the one a binary containing it produces, and restores the previous seed rather than keep a mismatch. `wac:build` and `wac:install` do not exist yet (D1) and inherit it when they do |
 | 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `wac task gen:core` writes compiler/wacCore.ts and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
 | 3. `core` and `std` as embedded trees (D3, D4) | **done** (2026-08-19). `core/` holds `read.wac`, `jsx.wac` and the five collections; `std/` holds `platform.wac`, embedded in wacc and refused by name in the reference, which has no lambdas. The sweep was 515 edges across 512 files. **+107,419 bytes of seed for 105,318 of source — 1.02x, against the 384 KB this was costed at** before `issues/lang/0162` made a string literal a data segment. `frame.wac` and `stream.wac` stay packages: both import `packages/bytes`, and a built-in cannot import a package. |
-| 4. quoted specifiers (D5) | **done** (2026-08-19). Every specifier is a quoted path, `core` included: both compilers accept `"core"` and `"core/option.wac"`, the 54 files using the bare form were swept, and the bare form is now an error — `core` gets its own message telling you to quote it, anything else is `unknown module`. `§wac-core-unquoted-3nqk7vd` states the removal and `§wac-core-one-key-5jm2qhx` keeps the property the old clause was really about: however the root is reached it is one module, which nominal types make load-bearing. spec/spec/grammar.md's `source` is `STRING` now. wapy is untouched — a Python-shaped `from X import` names its module bare whatever X is, so the two surfaces still agree about the module and differ only in syntax each already had. |
+| 4. quoted specifiers (D5) | **done** (2026-08-19). Every specifier is a quoted path, `core` included: both compilers accept `"core"` and "core/option.wac", the 54 files using the bare form were swept, and the bare form is now an error — `core` gets its own message telling you to quote it, anything else is `unknown module`. `§wac-core-unquoted-3nqk7vd` states the removal and `§wac-core-one-key-5jm2qhx` keeps the property the old clause was really about: however the root is reached it is one module, which nominal types make load-bearing. spec/spec/grammar.md's `source` is `STRING` now. wapy is untouched — a Python-shaped `from X import` names its module bare whatever X is, so the two surfaces still agree about the module and differ only in syntax each already had. |
 | 5. `wac.json5` and `@/` (D6, D7) | **`@/` works, in both compilers** (2026-08-19), with `§wac-import-project-4hq7mnv` and a differential that compiles every fixture with each of them. The upward search for `wac.json5` lives with whichever caller already reads files — `harness/wacFiles.ts` and `gather` — and finds a manifest without reading one, so the JSON parser stays out of the compiler's graph. What is left of D6 is the manifest's *contents*: mappings are D9-D11. The shape was decided first — see *How `@/` gets its root* below. The consolidation this step was waiting on is done: two resolver bodies, one per language, and the change was additive rather than a 22-signature sweep because the hundred-plus call sites have no root to give. **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
 | 6. canonical identity (D8) | **done** (2026-08-20). All four spellings the note asks for. `§wac-core-one-key-5jm2qhx` for the built-in trees; `projectspec_test.wac` for `./foo.wac` against `@/src/foo.wac`, with an absolute and a relative entry so normalisation is exercised; `mappedspec_test.wac` for a whole-repository mapping against a `subdir` one, the pair that does *different* suffix arithmetic and must meet at one path; and **two mappings at different commits asserted to be two modules**, which is the negative half and the only one that can fail for D8's own reason — canaried by pointing both at one commit, where the program compiles and answers 4. Asking the question of the first two is what found `issues/lang/0163`. |
 | 7. Git mappings and `wac.lock` (D9, D10, D11) | **done** (2026-08-19). `packages/wacpkg` enforces D9's non-overlap, reads and canonicalises the manifest, and fetches over the real network; a mapped import resolves from lock plus cache, and a commit that is not cached is a compile error naming `wac update`. `wac update` is a command — a third embedded payload — demonstrated end to end against `github.com/voltrevo/wac`: fetched 8 MB and 2725 objects, `wac run` answered 3 through the mapping, and a second `wac update` said *nothing to fetch; 1 mapping(s) already locked*, which is D10's rule shown rather than asserted. `§wac-import-mapped-6np2rkq`, `§wac-cli-update-2rq7knp`. |
@@ -322,7 +322,7 @@ interface as the filesystem and Git", and that interface does not exist to be re
 
 **Step 3's work is that interface, not moving five files.** `packages/std` is
 `hash, map, option, result, vec` and moves whole; the part that does not move whole is
-`core/option.wac` needing to be a *separately nameable module*, which one key cannot express. That
+core/option.wac needing to be a *separately nameable module*, which one key cannot express. That
 means a per-file key, per-file name mangling (`core$Read` is keyed on the single core today), and
 both compilers' walkers calling the same thing.
 
@@ -369,7 +369,7 @@ depends on an unbuilt language feature:
   program importing `Read` embeds `Vec`, `Map` and the hashing, in a built-in that is compiled into
   every binary.
 - **A root module, with the collections as siblings** — `"core"` is the file at the root of the
-  tree, `"core/option.wac"` is a file in it, and neither is reachable through the other. This is
+  tree, "core/option.wac" is a file in it, and neither is reachable through the other. This is
   what D4's two lines actually show: `Option` is fetched by path *because* it is not in `"core"`.
 
 **The third.** It needs nothing that does not exist, it keeps the built-in small for the program
@@ -472,7 +472,7 @@ So `option` + `result` are the pair to move first — eight files touched includ
 sibling resolving a sibling inside the tree is proved by the first move rather than the last.
 
 **One decision that move forces: where a built-in tree's tests live.** `option_test.wac` is under
-`packages/std/test/wac/` and its subject would be `core/option.wac`. Either the tests move with the
+`packages/std/test/wac/` and its subject would be core/option.wac. Either the tests move with the
 source — `core/test/` — or a package keeps tests for code it no longer contains. The first is
 tidier and makes `core/` a package like any other, which is what D3 says it becomes; the second
 avoids inventing a test root inside a tree whose whole point is to be embedded. Not settled here,
@@ -481,11 +481,11 @@ because it is cheap to settle when somebody is holding the files.
 ### Ordering
 
 The note's stated reason for 3 before 4 is that the migration is mechanical only once the trees are
-real. That holds for `packages/std`'s 73 importers. It does not address that `core/option.wac` is
+real. That holds for `packages/std`'s 73 importers. It does not address that core/option.wac is
 **unspellable** until 4 — unquoted `core/read.wac` is a parse error, and quoted means the
 filesystem. So step 3 can make the trees real and multi-keyed while the only specifier that reaches
 them is still the bare `core`; step 4 then adds the spelling. Worth stating in the plan, because
-"make `core/option.wac` importable" reads like one step and is two.
+"make core/option.wac importable" reads like one step and is two.
 
 ## Two things that make a byte comparison lie, found building step 1
 

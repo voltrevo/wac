@@ -88,7 +88,7 @@ other.
 
 `E` defaults to a fresh `union` placeholder, so `Result<T>` collects the error types its function passes on
 ([19](../2-types/19-generics.md), [33](../5-inference/33-placeholders.md)). There is nothing special about
-`Result` beyond what a default type argument gives it. Its methods are [40](../7-library/40-option-and-result.md)'s
+`Result` beyond what a default type argument gives it. Its methods are [40](../7-library/40-result.md)'s
 subject.
 
 ## `try` passes an error on

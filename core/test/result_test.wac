@@ -1,0 +1,36 @@
+// Result. Written in wac because the values never need to cross the wasm boundary.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Result } from "core";
+
+export string test_result_basics() {
+  T t = T.create();
+  Result<i32, string> ok = Result.Ok(3);
+  Result<i32, string> bad = Result.Err("nope");
+
+  t.isTrue(ok.isOk(), "Ok is ok");
+  t.isTrue(!ok.isErr(), "Ok is not err");
+  t.isTrue(bad.isErr(), "Err is err");
+  t.isTrue(!bad.isOk(), "and is not ok");
+  t.eqI32(ok.orElse(-1), 3, "orElse on Ok");
+  t.eqI32(bad.orElse(-1), -1, "orElse on Err");
+  t.eqI32(ok.unwrap(), 3, "unwrap on Ok");
+
+  t.isTrue(ok.ok() is not null, "ok() on Ok");
+  t.isTrue(ok.err() is null, "err() on Ok");
+  t.eqStr(bad.err() ?? "", "nope", "err() carries the error");
+  t.isTrue(bad.ok() is null, "ok() on Err");
+  return t.report();
+}
+
+export string test_result_error_type_varies() {
+  T t = T.create();
+  // E is a parameter because the useful error differs. A caller that only branches wants
+  // nothing but the fact of failure.
+  Result<f64, i32> coded = Result.Err(404);
+  Result<i32, bool> plain = Result.Err(true);
+  t.eqI32(coded.err() ?? 0, 404, "an i32 error code");
+  t.isTrue(plain.isErr(), "a bool error, which is just the fact of failure");
+  t.eqF64(coded.orElse(2.5), 2.5, "and the value type is independent of it");
+  return t.report();
+}

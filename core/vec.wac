@@ -30,7 +30,7 @@ export struct Vec<T> {
   Vec<T> create() {
     // The array *literal* form with no elements, not `T[]()`: a sized array needs a default
     // value for T and an enum or a struct has none, whereas a literal with no elements needs
-    // nothing. That is what makes an empty `Vec<Option<i32>>` possible at all.
+    // nothing. That is what makes an empty `Vec<Result<i32, string>>` possible at all.
     return Vec(T[](), 0, 0);
   }
 

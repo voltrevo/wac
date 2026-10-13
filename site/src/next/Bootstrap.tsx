@@ -51,10 +51,10 @@ const EX_L4 = `struct Tok { i32 kind; i32 start; i32 len; i32 val; }
 
 Tok[] toks;`;
 
-const EX_L5 = `enum Option {
-  Some(i32 v), None
-  bool isSome(const this) {
-    return match (this) { Some(_): true, None: false };
+const EX_L5 = `enum Result {
+  Ok(i32 v), Err(string e)
+  bool isOk(const this) {
+    return match (this) { Ok(_): true, Err(_): false };
   }
 }`;
 
@@ -242,7 +242,7 @@ export default function Bootstrap() {
         </Sub>
 
         <Sub id="top" title="The top rung compiles the language this site is about">
-          <Code label="wac-L5 — the shape core/option.wac is actually written in" code={EX_L5} />
+          <Code label="wac-L5 — the shape core/result.wac is actually written in" code={EX_L5} />
           <P>
             Real wac: structs with {m({ children: "const this" })} methods, enums with
             comma-separated variants, {m({ children: "match" })} as both a statement and an

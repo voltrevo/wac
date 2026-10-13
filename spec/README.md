@@ -75,7 +75,7 @@ reference says so, and links.
 - 37 [Core](7-library/37-core.md)
 - 38 [Vec](7-library/38-vec.md)
 - 39 [Map and hash](7-library/39-map-and-hash.md)
-- 40 [Option and Result](7-library/40-option-and-result.md)
+- 40 [Result](7-library/40-result.md)
 - 41 [Read](7-library/41-read.md)
 - 42 [Buf](7-library/42-buf.md)
 - 43 [Markup types](7-library/43-markup-types.md)

@@ -12,7 +12,7 @@
 // could not read, which is right, because a key standing for less than it claims is a stale hit
 // waiting to happen. The embedded trees have no files to read, so they are skipped instead: their
 // content is inside the seed and the key already hashes the seed. Only `std/` was skipped, so a file
-// importing `core/option.wac` sent the scan looking for `packages/<pkg>/src/core/option.wac`, the
+// importing `core/result.wac` sent the scan looking for `packages/<pkg>/src/core/result.wac`, the
 // closure went incomplete, and the directory recompiled on every run — silently, because a cache
 // that is never consulted looks exactly like one that always misses.
 //

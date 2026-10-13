@@ -170,26 +170,26 @@ comparison: `inRange(5, 9)` answers `0` and `inRange(-1, 9)` answers `1`.
 ## Generic enums
 
 ```wac
-// expect: some() = 4
-// expect: none() = 9
-enum Option<T> {
-  Some(T v), None
+// expect: full() = 4
+// expect: empty() = 9
+enum Slot<T> {
+  Full(T v), Empty
 
   T orElse(const this, T d) {
     return match (this) {
-      Some(v): v,
-      None:    d,
+      Full(v): v,
+      Empty:   d,
     };
   }
 }
 
-export i32 some() {
-  Option<i32> a = Option.Some(4);
+export i32 full() {
+  Slot<i32> a = Slot.Full(4);
   return a.orElse(0);
 }
 
-export i32 none() {
-  Option<i32> b = Option.None;
+export i32 empty() {
+  Slot<i32> b = Slot.Empty;
   return b.orElse(9);
 }
 ```
@@ -197,22 +197,22 @@ export i32 none() {
 `[§wac-generic-enum-7dkq2mv]` An enum may take type parameters. A variant construction takes the enum's
 arguments from the expected type, as a struct construction does, or from a written instantiation.
 
-A generic enum's variants have no bare name. `Option<i32>` and `Option<f64>` would both claim `Some`, and
+A generic enum's variants have no bare name. `Slot<i32>` and `Slot<f64>` would both claim `Full`, and
 neither has a better claim:
 
 ```wac
 // expect: throughSubject() = 1
-enum Option<T> { Some(T v), None }
+enum Slot<T> { Full(T v), Empty }
 
 export i32 throughSubject() {
-  Option<i32> a = Option.Some(1);
+  Slot<i32> a = Slot.Full(1);
 
-  // ERROR: Some is a variant of the generic Option, and has no name of its own
-  // Some s = a;
+  // ERROR: Full is a variant of the generic Slot, and has no name of its own
+  // Full s = a;
 
   return match (a) {                       // match resolves it through the subject
-    Some(v): v,
-    None:    0,
+    Full(v): v,
+    Empty:   0,
   };
 }
 ```

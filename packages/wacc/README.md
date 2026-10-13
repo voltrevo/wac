@@ -2603,7 +2603,7 @@ matching the reference would mean a new error code. The spec asks for the check 
 
 > This rule had a second half until `design/lang/0009` D5: a quoted `"core"` was *also* an error,
 > because a quoted specifier claims a path and there was no path here to be right about. D4 made
-> `core` a source tree, so `core/option.wac` is a path and is right, and both spellings of the root
+> `core` a source tree, so `core/result.wac` is a path and is right, and both spellings of the root
 > now resolve to one module. The half that survives is the one above. Worth keeping the story,
 > because the two compilers disagreed while it stood — wacc answered `unknown module` where the
 > reference answered `` `core` is not a file `` — and the corpus differential could not see it: it
@@ -2919,7 +2919,7 @@ could be written between them. It is embedded rather than fetched for the same r
 diamond in it would be unresolvable rather than awkward.
 
 > **Dated: this describes `core` as it stood then.** `design/lang/0009` D3/D4 made it a *tree* —
-> `Option`, `Result`, `Vec`, `Map` and hashing are files in it, imported as `"core/option.wac"` — and
+> `Option`, `Result`, `Vec`, `Map` and hashing are files in it, imported as `"core/result.wac"` — and
 > D5 made the root take either spelling. What the section below explains still holds and is still
 > where to read how the mechanism works; the count of what is in there is the part that has moved.
 

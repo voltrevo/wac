@@ -162,14 +162,14 @@ and enough of the surface that **wacc** compiles. Structs with `const this` meth
 enums with comma-separated variants, `match` as both a statement and an expression, arrays, `u8[]`,
 reference globals — compiled through six languages and two interpreters.
 
-    enum Option {
-      Some(i32 v), None
-      bool isSome(const this) {
-        return match (this) { Some(_): true, None: false };
+    enum Result {
+      Ok(i32 v), Err(string e)
+      bool isOk(const this) {
+        return match (this) { Ok(_): true, Err(_): false };
       }
     }
 
-which is the shape `core/option.wac` is actually written in. `bootstrap/spec/l5.md` has the four stages and
+which is the shape `core/result.wac` is actually written in. `bootstrap/spec/l5.md` has the four stages and
 what each is measured to cost.
 
 **Generics belong to L5's compiler, not to L4's language.** They are the most expensive feature to

@@ -32,7 +32,7 @@
 // ## The eleven trap cases
 //
 // `core/test/traps_test.wac` is the package's bounds-checking half, and every one of its tests expects
-// a trap — a `Vec` indexed past its length, an `Option` unwrapped when it is `None`. A trap in `main`
+// a trap — a `Vec` indexed past its length, a null unwrapped with `!`. A trap in `main`
 // ends the run, so they go through `trapCase`, which `covdump` calls one at a time with the trap
 // caught (spec/cli/wac.md, `[§wac-cli-covdump-sweep-4tn8mr6]`).
 //

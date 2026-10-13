@@ -9,8 +9,6 @@
 // a parser wants a message and a position, an arithmetic routine wants a code, and a
 // caller that only branches wants nothing but the fact of failure — `Result<T, bool>`.
 
-import { Option } from "./option.wac";
-
 export enum Result<T, E = union> {
   Ok(T v), Err(E e)
 
@@ -36,18 +34,18 @@ export enum Result<T, E = union> {
   }
 
   /** The value if there is one, discarding the error — for when only presence matters. */
-  Option<T> ok(const this) {
+  T? ok(const this) {
     return match (this) {
-      Ok(v): Option.Some(v),
-      Err(_): Option.None,
+      Ok(v): v,
+      Err(_): null,
     };
   }
 
   /** The error if there is one. */
-  Option<E> err(const this) {
+  E? err(const this) {
     return match (this) {
-      Ok(_): Option.None,
-      Err(e): Option.Some(e),
+      Ok(_): null,
+      Err(e): e,
     };
   }
 }

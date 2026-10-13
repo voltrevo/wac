@@ -47,7 +47,7 @@ function resolveSpecifier(from: string, spec: string, root: string | undefined, 
  */
 export function resolveFrom(fromPath: string, spec: string): string {
   // A built-in is already the key it is looked up by. Joining it to the importing file's directory
-  // would make `core/option.wac` into packages/json/src/core/option.wac — a path, and a missing one.
+  // would make `core/result.wac` into packages/json/src/core/result.wac — a path, and a missing one.
   if (isBuiltinSpecifier(spec)) return spec;
   // **The compiler's own, rather than a copy that matches it.** This had its own body until
   // 2026-08-19, and the two agreed: over the 4232 real import specifiers in the repository, and over

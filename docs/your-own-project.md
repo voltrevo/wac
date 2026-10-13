@@ -246,11 +246,11 @@ your own with these names does not shadow them.
 
 ```wac
 import { Read } from "core";                 // the pure half — no capability needed
-import { Option } from "core";    // …and its siblings, by path
+import { Result } from "core";               // …and its siblings
 import { Cli, Core } from "std";// the capability half
 ```
 
-`core` holds `Read`, `Option`, `Result`, `Vec`, `Map`, hashing and equality, plus the JSX node types.
+`core` holds `Read`, `Result`, `Vec`, `Map`, hashing and equality, plus the JSX node types.
 `std/platform.wac` holds the world: `Core`, `Cli`, the filesystem, the network, processes, the
 environment, the terminal, clocks, randomness, the page.
 

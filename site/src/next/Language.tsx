@@ -183,7 +183,7 @@ export default function Language() {
             taste: <Lead>must this type cross a repository boundary through a function
             reference?</Lead> {m({ children: "Read" })} was the first thing to qualify. The markup
             tree and the conversion symbols followed for the same reason, and the containers —{" "}
-            {m({ children: "Vec" })}, {m({ children: "Map" })}, {m({ children: "Option" })},{" "}
+            {m({ children: "Vec" })}, {m({ children: "Map" })} and{" "}
             {m({ children: "Result" })} — for a weaker one: a program that wants a map should not
             have to find a package first. Nothing in {m({ children: "core" })} holds a capability,
             so importing it reaches nothing outside the program.

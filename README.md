@@ -58,21 +58,10 @@ started.
 
 ```wac
 export string greet() {
-  Option<string> name = Option.None;
-  // Option<string> name = Option.Some("Alice and Bob");
+  string? name = null;
+  // string? name = "Alice and Bob";
 
-  return "Hello, " + match (name) {
-    Some(v): v,
-    None: "world"
-  } + "!";
-}
-
-/// A value that might not be there. Declared after it is used — wac has no
-/// forward declarations, because a file is a set of declarations rather than
-/// a sequence of them.
-enum Option<T> {
-  Some(T value),
-  None
+  return "Hello, \{name ?? "world"}!";
 }
 ```
 

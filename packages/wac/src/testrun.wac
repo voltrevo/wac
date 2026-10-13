@@ -877,8 +877,8 @@ void sayTally(Core core, Tally t, i64 began) {
  * The `WAC_PROFILE` file name for an entry: the path with every separator flattened to `_`.
  *
  * A profile directory holds one document per entry and the entries are paths, so the name has to be
- * something a directory can hold — `core/test/option_test.wac` becomes
- * `core_test_option_test_wac.json`. `harness/wacProfile.ts` derives the same name from its own side
+ * something a directory can hold — `core/test/result_test.wac` becomes
+ * `core_test_result_test_wac.json`. `harness/wacProfile.ts` derives the same name from its own side
  * and opens the file by it, so this is a shared spelling rather than a local choice; the `.` goes too,
  * which is why the `.wac` reads as part of the stem.
  */

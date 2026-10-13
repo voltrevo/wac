@@ -3,7 +3,7 @@
 //   wac task coverage:core
 //   wac task coverage:core --verbose
 //
-// **It exists because a move would otherwise have turned coverage off.** `option.wac` and `result.wac`
+// **It exists because a move would otherwise have turned coverage off.** `result.wac`
 // came from `packages/std`, where `coverage:std` measured them; they are `core/`'s now, and the report
 // filters by prefix, so without this the two files would be measured by nothing and `coverage:std`
 // would read a *higher* number for having lost them.
@@ -26,15 +26,15 @@
 
 import { Core, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { test_option_basics as option__option_basics, test_option_holds_any_type as option__option_holds_any_type, test_option_match_is_exhaustive as option__option_match_is_exhaustive, test_map_option as option__map_option, test_result_basics as option__result_basics, test_result_error_type_varies as option__result_error_type_varies }
-  from "./option_test.wac";
+import { test_result_basics as result__result_basics, test_result_error_type_varies as result__result_error_type_varies }
+  from "./result_test.wac";
 import { test_i32_hash_is_injective_over_a_sample as hash__i32_hash_is_injective_over_a_sample, test_aligned_keys_spread_across_buckets as hash__aligned_keys_spread_across_buckets, test_i32_hash_avalanches as hash__i32_hash_avalanches, test_i64_hash_is_injective_and_spreads as hash__i64_hash_is_injective_and_spreads, test_byte_hash_separates_near_neighbours as hash__byte_hash_separates_near_neighbours }
   from "./hash_test.wac";
 import { test_basics as map__basics, test_growth_keeps_every_entry as map__growth_keeps_every_entry, test_load_factor_bounds_the_table as map__load_factor_bounds_the_table, test_collisions as map__collisions, test_remove as map__remove, test_remove_keeps_probe_runs_contiguous as map__remove_keeps_probe_runs_contiguous, test_fill_and_empty_repeatedly as map__fill_and_empty_repeatedly, test_clear as map__clear, test_keys_and_values as map__keys_and_values, test_hash_bytes_and_string_agree as map__hash_bytes_and_string_agree, test_bytes_keyed_map as map__bytes_keyed_map, test_key_types as map__key_types, test_with_capacity as map__with_capacity, test_differential_good_hash as map__differential_good_hash, test_differential_all_collide as map__differential_all_collide, test_differential_weak_hash as map__differential_weak_hash }
   from "./map_test.wac";
 import { test_growth_from_empty as vec__growth_from_empty, test_every_element_survives_growth as vec__every_element_survives_growth, test_index_bounds as vec__index_bounds, test_pop_and_ends as vec__pop_and_ends, test_remove_insert_and_swap as vec__remove_insert_and_swap, test_insert_at_capacity_boundary as vec__insert_at_capacity_boundary, test_clear_and_reuse as vec__clear_and_reuse, test_to_array_and_from_array as vec__to_array_and_from_array, test_extend as vec__extend, test_extend_with_itself as vec__extend_with_itself, test_element_types as vec__element_types, test_with_capacity as vec__with_capacity, test_fold as vec__fold }
   from "./vec_test.wac";
-import { test_traps_getting_past_the_end as traps__traps_getting_past_the_end, test_traps_getting_a_negative_index as traps__traps_getting_a_negative_index, test_traps_getting_at_capacity_not_length as traps__traps_getting_at_capacity_not_length, test_traps_setting_past_the_end as traps__traps_setting_past_the_end, test_traps_removing_past_the_end as traps__traps_removing_past_the_end, test_traps_swap_removing_past_the_end as traps__traps_swap_removing_past_the_end, test_traps_inserting_past_the_end as traps__traps_inserting_past_the_end, test_traps_on_a_negative_capacity as traps__traps_on_a_negative_capacity, test_traps_unwrapping_a_none as traps__traps_unwrapping_a_none, test_traps_unwrapping_an_err as traps__traps_unwrapping_an_err, test_the_in_range_operations_return_rather_than_trapping as traps__the_in_range_operations_return_rather_than_trapping }
+import { test_traps_getting_past_the_end as traps__traps_getting_past_the_end, test_traps_getting_a_negative_index as traps__traps_getting_a_negative_index, test_traps_getting_at_capacity_not_length as traps__traps_getting_at_capacity_not_length, test_traps_setting_past_the_end as traps__traps_setting_past_the_end, test_traps_removing_past_the_end as traps__traps_removing_past_the_end, test_traps_swap_removing_past_the_end as traps__traps_swap_removing_past_the_end, test_traps_inserting_past_the_end as traps__traps_inserting_past_the_end, test_traps_on_a_negative_capacity as traps__traps_on_a_negative_capacity, test_traps_unwrapping_a_null as traps__traps_unwrapping_a_null, test_traps_unwrapping_an_err as traps__traps_unwrapping_an_err, test_the_in_range_operations_return_rather_than_trapping as traps__the_in_range_operations_return_rather_than_trapping }
   from "./traps_test.wac";
 
 /** The four returning test files. A test that fails here measured a broken tree.
@@ -44,12 +44,8 @@ import { test_traps_getting_past_the_end as traps__traps_getting_past_the_end, t
 export i32 main(Sys sys) {
   Core core = sys.core;
   i32 bad = 0;
-  if (option__option_basics().len() > 0) { core.warn("error: FAILED option_test test_option_basics"); bad = bad + 1; }
-  if (option__option_holds_any_type().len() > 0) { core.warn("error: FAILED option_test test_option_holds_any_type"); bad = bad + 1; }
-  if (option__option_match_is_exhaustive().len() > 0) { core.warn("error: FAILED option_test test_option_match_is_exhaustive"); bad = bad + 1; }
-  if (option__map_option().len() > 0) { core.warn("error: FAILED option_test test_map_option"); bad = bad + 1; }
-  if (option__result_basics().len() > 0) { core.warn("error: FAILED option_test test_result_basics"); bad = bad + 1; }
-  if (option__result_error_type_varies().len() > 0) { core.warn("error: FAILED option_test test_result_error_type_varies"); bad = bad + 1; }
+  if (result__result_basics().len() > 0) { core.warn("error: FAILED result_test test_result_basics"); bad = bad + 1; }
+  if (result__result_error_type_varies().len() > 0) { core.warn("error: FAILED result_test test_result_error_type_varies"); bad = bad + 1; }
   if (hash__i32_hash_is_injective_over_a_sample().len() > 0) { core.warn("error: FAILED hash_test test_i32_hash_is_injective_over_a_sample"); bad = bad + 1; }
   if (hash__aligned_keys_spread_across_buckets().len() > 0) { core.warn("error: FAILED hash_test test_aligned_keys_spread_across_buckets"); bad = bad + 1; }
   if (hash__i32_hash_avalanches().len() > 0) { core.warn("error: FAILED hash_test test_i32_hash_avalanches"); bad = bad + 1; }
@@ -101,7 +97,7 @@ export void trapCase(i32 i) {
   if (i == 5) { traps__traps_swap_removing_past_the_end(); return; }
   if (i == 6) { traps__traps_inserting_past_the_end(); return; }
   if (i == 7) { traps__traps_on_a_negative_capacity(); return; }
-  if (i == 8) { traps__traps_unwrapping_a_none(); return; }
+  if (i == 8) { traps__traps_unwrapping_a_null(); return; }
   if (i == 9) { traps__traps_unwrapping_an_err(); return; }
   if (i == 10) { traps__the_in_range_operations_return_rather_than_trapping(); return; }
 }

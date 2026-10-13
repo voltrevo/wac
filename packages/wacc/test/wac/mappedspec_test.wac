@@ -520,18 +520,19 @@ export string test_a_mapped_dependency_may_import_the_builtins(Core core, Cli cl
 
   // **And the one built-in whose own import is relative**, which the two rows above cannot reach.
   // Skipping the containment test for a built-in *specifier* is only half of it: the built-in file
-  // then inherits the importer's confinement, and `core/result.wac` imports `./option.wac` from
-  // inside the embedded text — so the refusal reappears one file along, as *"./option.wac leaves the
-  // mapped subdirectory"*. Every import in `core/map.wac` is itself a built-in specifier, which is
+  // then inherits the importer's confinement, and `core/ticket.wac` imports `./result.wac` from
+  // inside the embedded text — so the refusal reappears one file along, as *"./result.wac leaves the
+  // mapped subdirectory"*. (It was `core/result.wac` importing `./option.wac` until `Option` left
+  // `core`; the row needs some built-in file with a relative import, and this is one.) Every import in `core/map.wac` is itself a built-in specifier, which is
   // why the reported case is silent about this and why this row is here.
   t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
-                        "import { Result } from \"core\";\n" +
-                        "export i32 two() { Result<i32, bool> r = Result.Ok(2); return r.orElse(0); }\n"),
-           "lib importing core/result.wac, whose own import is relative");
+                        "import { Ticket } from \"core\";\n" +
+                        "export i32 two() { Ticket<i32> t; t.resolve(2); return t.value(); }\n"),
+           "lib importing core/ticket.wac, whose own imports are relative");
   Exec rel = wacc(cli, home, dir, "run", "src/main.wac");
   t.isTrue(rel.ran(), "wac did not run — " + rel.error);
   if (rel.ran()) {
-    t.eqI32(rel.status, 7, "a mapped file could not import `core/result.wac`, whose own import is " +
+    t.eqI32(rel.status, 7, "a mapped file could not import `core/ticket.wac`, whose own imports are " +
                            "relative: " + string.fromBytes(rel.stderr) + string.fromBytes(rel.stdout));
   }
   cli.remove(dir, true).wait();

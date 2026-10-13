@@ -60,26 +60,14 @@ export const TRANSCRIPT: [string, string][] = [
 /**
  * One program, compiled and run through `wacx` before it was put here.
  *
- * `greet` first and the enum after it, because a file is a set of declarations rather than a
- * sequence of them — and because the point of the example is what it does, not its vocabulary. The
- * commented line is the invitation: swapping the markers gives `Hello, Alice and Bob!`.
+ * A name that may be absent, and what to say when it is: `string?` and `??`. The commented line is
+ * the invitation — swapping the markers gives `Hello, Alice and Bob!`.
  */
 const EX_HELLO = `export string greet() {
-  Option<string> name = Option.None;
-  // Option<string> name = Option.Some("Alice and Bob");
+  string? name = null;
+  // string? name = "Alice and Bob";
 
-  return "Hello, " + match (name) {
-    Some(v): v,
-    None: "world"
-  } + "!";
-}
-
-/// A value that might not be there. Declared after it is used — wac has no
-/// forward declarations, because a file is a set of declarations rather than
-/// a sequence of them.
-enum Option<T> {
-  Some(T value),
-  None
+  return "Hello, \\{name ?? "world"}!";
 }`;
 
 

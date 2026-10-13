@@ -1,4 +1,4 @@
-// The traps in Vec, Option and Result.
+// The traps in Vec, a nullable and Result.
 //
 // **The one that matters is `at_capacity_not_length`**: an index inside the allocated array but past
 // `len`, in a Vec built with `withCapacity(16)`, whose first push fills the slots with valid values. A bounds
@@ -16,7 +16,7 @@
 // check the first. That is why these are thirteen functions rather than one with thirteen lines.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Vec, Option, Result } from "core";
+import { Vec, Result } from "core";
 
 Vec<i32> oneElement() {
   Vec<i32> v = Vec.create();
@@ -57,9 +57,9 @@ export string test_traps_on_a_negative_capacity() {
   return "";
 }
 
-export string test_traps_unwrapping_a_none() {
-  Option<i32> o = Option.None;
-  o.unwrap();
+export string test_traps_unwrapping_a_null() {
+  i32? o = null;
+  i32 v = o!;
   return "";
 }
 
@@ -86,8 +86,8 @@ export string test_the_in_range_operations_return_rather_than_trapping() {
   i.insert(1, 9);
   t.eqI32(i.get(1), 9, "insert at len");
 
-  Option<i32> some = Option.Some(5);
-  t.eqI32(some.unwrap(), 5, "unwrap a Some");
+  i32? some = 5;
+  t.eqI32(some!, 5, "unwrap a present value");
   Result<i32, i32> ok = Result.Ok(6);
   t.eqI32(ok.unwrap(), 6, "unwrap an Ok");
   return t.report();

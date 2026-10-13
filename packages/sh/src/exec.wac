@@ -16,7 +16,7 @@
 // nothing matches, which is bash's default; the last path component is the only one patterned, and the
 // README says so under what this does not do.
 
-import { Vec, Map, Option, hashString, stringEq, Read } from "core";
+import { Vec, Map, hashString, stringEq, Read } from "core";
 import { Buf } from "core";
 import { Change, Child, Cli, Core, FAULT_NONE, FAULT_UNSUPPORTED, faultWords, FileResult,
   GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_IN, INHERIT_NONE, Pending, Stat, readReason, reasonOf }

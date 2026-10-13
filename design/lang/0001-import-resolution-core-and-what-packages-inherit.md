@@ -86,7 +86,7 @@ free to be a whackage package later. That would be a good first one: it demonstr
 is real rather than special-cased.
 
 > **Superseded by 0009 D5.** Specifiers are quoted, `core` included. The argument below holds
-> while `core` is one module with no interior; `core/option.wac` names a file in an embedded
+> while `core` is one module with no interior; core/option.wac names a file in an embedded
 > tree with a manifest at its root, so there is a path to be right or wrong about.
 
 **D5 — `core` is syntax, not a reserved string** (operator's lean, and I agree):

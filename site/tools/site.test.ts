@@ -121,7 +121,7 @@ Deno.test("site: the pages' runnable snippets compile", async () => {
     // embarrassing snippet on the site to have broken. `EX_FRONT` was its counterpart on the page
     // this replaced and went with it.
     ["EX_HELLO", "a.wac"],
-    // The bootstrap page says this is "the shape `core/option.wac` is actually written in", which
+    // The bootstrap page says this is "the shape `core/result.wac` is actually written in", which
     // is a claim about real source and therefore one this can check. The rungs' own snippets on
     // that page are not wac and are not here: L0 is wasm assembly text and L1 is s-expressions,
     // and a compiler that accepted either would be the thing going wrong.

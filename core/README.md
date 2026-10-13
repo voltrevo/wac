@@ -51,17 +51,16 @@ directory, reached only by a relative path; `"core"` names the built-in whatever
 ## The collections
 
 **This section was packages/std/README.md, and the package it described is gone.** D4 says `core`
-holds "the whole of today's packages/std" — `Option`, `Result`, `Vec`, `Map`, hashing, equality —
+holds "the whole of today's packages/std" — `Result`, `Vec`, `Map`, hashing, equality —
 and it does now, so the argument moves here rather than being deleted with the directory. What D4
 means by `std` from here on is the *capability* half: `Core`, `Cli`, filesystem, network, processes.
 That tree does not exist yet.
 
-Containers and the two sum types every program ends up wanting.
+Containers, and the sum type every program ends up wanting.
 
 ```wac
 import { Vec } from "core";
 import { Map } from "core";
-import { Option } from "core";
 import { Result } from "core";
 import { hashString, stringEq } from "core";
 ```
@@ -70,7 +69,6 @@ import { hashString, stringEq } from "core";
 |---|---|
 | `Vec<T>` | growable array; `push`/`pop`/`get`/`insert`/`remove`, amortised O(1) append |
 | `Map<K, V>` | hash map, open-addressed with linear probing; hash and equality as funcrefs |
-| `Option<T>` | a value or nothing, taken apart with `match` |
 | `Result<T, E = union>` | a value or an error; `Result<T>` gathers its error type from what is returned |
 | `number.wac` | `NumberLiteral` and the `fromNumber` symbol a type implements to be a literal's target |
 | `hash.wac` | ready-made hash and equality for `string`, `i32` and `i64` |
@@ -86,8 +84,8 @@ Vec<i32> v = Vec.create();
 v.push(10);
 v.push(20);
 i32 first = v.get(0);              // traps if out of range
-i32 safe = v.at(5).orElse(-1);     // None instead of a trap
-Option<i32> last = v.pop();
+i32 safe = v.at(5) ?? -1;          // null instead of a trap
+i32? last = v.pop();
 ```
 
 `create()` allocates nothing; the first push allocates four slots and capacity doubles from
@@ -109,7 +107,7 @@ is pushed over it. It matters only for a long-lived Vec of large elements.
 Map<string, i32> counts = Map.create(hashString, stringEq);
 counts.set("apple", 1);
 bool existed = counts.set("apple", 2);      // true — it overwrote
-Option<i32> got = counts.get("apple");
+i32? got = counts.get("apple");
 i32 orZero = counts.getOr("pear", 0);
 counts.remove("apple");
 ```
@@ -144,36 +142,14 @@ table no larger than 32 slots.
 it depends on the hash, the capacity and the insertion history. They correspond to each
 other index by index.
 
-## Option and Result
+## Absence, and Result
 
-```wac
-Option<i32> found = m.get(k);
-match (found) {
-  Some(v): { return v; }
-  None: { return 0; }
-}
-```
-
-`T?` works for every type, primitives included ([wac issue
-0045](../issues/lang/closed/0045-nullable-primitives-are-not-boxed.md)), and for a
-*reference* it is cheaper — one word, no allocation. So `Point?` is the right thing to write and
-`Option<Point>` is not.
-
-`Option` earns its place on two narrower grounds. **A nested absence:** `T??` does not exist, so
-a container of nullables cannot distinguish "no entry" from "an entry holding null" — which is
-why `Map.get` returns an Option rather than a `V?`, since `Map<string, JsonValue?>` is a real
-shape. **An absent case that is a compile error to forget:** `match` is exhaustive, and a
-missing null check is not.
-
-A nullable primitive is boxed and so is an Option, so between `i32?` and `Option<i32>` there is
-nothing to choose on cost. Pick by which of those two reasons applies.
-
-`mapOption(o, f)` is a free function rather than a method because a method cannot introduce a
-type parameter of its own — `U` is not the enum's:
-
-```wac
-Option<string> described = mapOption(count, describe);   // T from the Option, U from describe
-```
+A value that may be absent is `T?`, for every type, primitives included ([wac issue
+0045](../issues/lang/closed/0045-nullable-primitives-are-not-boxed.md)): `Vec.pop`, `Vec.at` and
+`Map.get` answer one. `T?` does not flatten, so `T??` holds three states and a `Map<string, JsonValue?>`
+still tells "no entry" from "an entry holding null"; and a nullable must be checked before it is used,
+so forgetting the absent case is refused like a missing `match` arm. That left nothing for an
+`Option<T>` enum to do, and `core` no longer has one.
 
 `Result<T, E>` leaves the error type to the caller, because the useful error differs: a
 parser wants a message and a position, an arithmetic routine wants a code, and a caller that

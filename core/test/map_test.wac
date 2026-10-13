@@ -10,7 +10,7 @@
 // backward-shift deletion all have to agree with each other.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Map, Vec, Option, hashString, stringEq, hashI32, i32Eq, hashI64, i64Eq, hashBytes, bytesEq } from "core";
+import { Map, Vec, hashString, stringEq, hashI32, i32Eq, hashI64, i64Eq, hashBytes, bytesEq } from "core";
 
 /** Every key in one slot. Legal, and the worst case a hash may be. */
 i32 badHash(i32 k) { return 0; }
@@ -305,9 +305,10 @@ struct Naive {
     return true;
   }
 
-  Option<i32> get(const this, i32 k) {
+  i32? get(const this, i32 k) {
     i32 at = this.find(k);
-    return at < 0 ? Option.None : Option.Some(this.vals.get(at));
+    if (at < 0) { return null; }
+    return this.vals.get(at);
   }
 
   i32 len(const this) { return this.keys.len(); }
@@ -352,13 +353,13 @@ string differential(fn<i32(i32)> hash, i32 keySpace, i32 steps, u32 seed0) {
     // wrong answer at the operation that caused it.
     for (i32 probe = 0; probe < keySpace; probe++) {
       i32? got = m.get(probe);
-      Option<i32> want = naive.get(probe);
-      if ((got is not null) != want.isSome()) {
+      i32? want = naive.get(probe);
+      if ((got is not null) != (want is not null)) {
         t.failNow("presence disagreed at step " + itoaLocal(step) +
                   " for key " + itoaLocal(probe));
         return t.report();
       }
-      if ((got ?? 0) != want.orElse(0)) {
+      if ((got ?? 0) != (want ?? 0)) {
         t.failNow("value disagreed at step " + itoaLocal(step) +
                   " for key " + itoaLocal(probe));
         return t.report();

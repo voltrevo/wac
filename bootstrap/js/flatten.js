@@ -251,7 +251,7 @@ function topLevelDecls(text) {
 }
 
 /**
- * `"./m.wac"` is relative to the importing file and `"core/option.wac"` is a path from a package
+ * `"./m.wac"` is relative to the importing file and `"core/result.wac"` is a path from a package
  * root — and nothing here knows where the root is, so it is found by walking up until the spec
  * resolves. A real compiler reads it from the manifest; this is a flattener, and the answer is
  * the same one for every layout the corpus uses.

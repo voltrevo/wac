@@ -231,7 +231,7 @@ fn as_alias(item: &str) -> Option<(String, String)> {
     if ok(orig) && ok(alias) { Some((orig.to_string(), alias.to_string())) } else { None }
 }
 
-/// `"./m.wac"` is relative to the importing file, and a bare `"core/option.wac"` is a path from a
+/// `"./m.wac"` is relative to the importing file, and a bare `"core/result.wac"` is a path from a
 /// package root — found by walking up until it resolves, because nothing here knows where the root
 /// is.
 ///

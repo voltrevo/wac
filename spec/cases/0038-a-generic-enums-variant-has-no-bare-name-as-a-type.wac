@@ -1,8 +1,8 @@
 // expect: refused
 // why: the same name in a declaration — an instance's variant is not a type of its own
 // from: specSingle's generic cluster
-enum Option<T> {
-  Some(T v), None
-  bool isSome(const this) { return match (this) { Some(_): true, None: false }; }
+enum Slot<T> {
+  Full(T v), Empty
+  bool isFull(const this) { return match (this) { Full(_): true, Empty: false }; }
 }
-export i32 f() { Option<i32> a = Option.Some(1); Some s = a; return s.v; }
+export i32 f() { Slot<i32> a = Slot.Full(1); Full s = a; return s.v; }

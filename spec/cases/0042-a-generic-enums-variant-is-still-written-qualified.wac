@@ -1,9 +1,9 @@
 // expect: f() = 1
-// why: the bare name is gone but `Option.None` is how you write one, and that has to keep working
+// why: the bare name is gone but `Slot.Empty` is how you write one, and that has to keep working
 // from: spec/tour.wac and std's tests, which removing the bare name too eagerly refused
-enum Option<T> { Some(T v), None }
+enum Slot<T> { Full(T v), Empty }
 export i32 f() {
-  Option<i32> a = Option.Some(1);
-  Option<i32> b = Option.None;
-  return match (a) { Some(v): v, None: 0 };
+  Slot<i32> a = Slot.Full(1);
+  Slot<i32> b = Slot.Empty;
+  return match (a) { Full(v): v, Empty: 0 };
 }

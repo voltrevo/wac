@@ -617,37 +617,27 @@ export bool pointIsFlat() { return Shape.Point.isFlat(); }
     },
   },
   {
-    name: 'Option<T>',
-    category: 'Enums',
-    entry: p('option.wac'),
+    name: 'A value that may be absent',
+    category: "Nullable Refs",
+    entry: p('absent.wac'),
     files: {
-      [p('option.wac')]: `// \`Option<T>\` is an ordinary generic enum — nothing built in. This is what \`std\` gives you,
-// and the reason a missing value does not have to be a null.
+      [p('absent.wac')]: `// \`T?\` is a value that may be absent, for any T — a number included. There is no Option type:
+// a nullable nests (\`T??\` has three states), and one must be checked before it is used.
 
-enum Option<T> {
-  Some(T v), None
-
-  T orElse(const this, T fallback) {
-    return match (this) { Some(v): v, None: fallback };
-  }
-
-  bool isSome(const this) {
-    return match (this) { Some(_): true, None: false };
-  }
-}
-
-/** Search, without a sentinel index or a nullable return. */
-Option<i32> find(i32[] xs, i32 want) {
+/** Search, without a sentinel index. */
+i32? find(i32[] xs, i32 want) {
   for (i32 i = 0; i < xs.len(); i++) {
-    if (xs[i] == want) { return Option.Some(i); }
+    if (xs[i] == want) { return i; }
   }
-  return Option.None;
+  return null;
 }
 
 export i32 indexOf(i32 want) {
   i32[] xs = [4, 8, 15, 16, 23, 42];
-  Option<i32> at = find(xs, want);
-  return at.orElse(-1);
+  i32? at = find(xs, want);
+  // ERROR: a nullable value must be unwrapped before it is used
+  // return at + 1;
+  return at ?? -1;
 }
 `,
     },

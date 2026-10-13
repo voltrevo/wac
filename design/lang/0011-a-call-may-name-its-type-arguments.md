@@ -280,7 +280,7 @@ way — when it is done.
 4. `Option<i32>.None.orElse(7)` compiles — receiver position, no slot. Today `undefined variable`.
 5. `Result<i32, string>.Err("no")` compiles as an argument, where neither variant determines both
    letters.
-6. `core/test/option_test.wac`'s workaround locals — `Option<i32> none = Option.None;` and
+6. core/test/option_test.wac's workaround locals — `Option<i32> none = Option.None;` and
    `Result<i32, string> ok = Result.Ok(3);` — can be **deleted and written inline**. A real file gets
    shorter, which is the readable proof that this fixed something.
 
@@ -341,7 +341,7 @@ rather than stylistic, so they are recorded there and repeated here:
 | 3 | `fn[i32(i32)] g = id<i32>;` | **yes** — `spec/cases/0242`, answers 6. Needed `typeOfE` an answer as well as the emission: the emitter could write the value and could not say what it was, and declined the module as *untyped a type used as a value* |
 | 4 | `Option<i32>.None.orElse(7)` | **yes** |
 | 5 | `Result<i32, string>.Err("no")` as an argument | **yes** |
-| 6 | `core/test/option_test.wac`'s workaround locals | **partly** — one of the three was single-use and is now written inline. The other two are used more than once, so inlining them would make the file *longer*; the criterion's "a real file gets shorter" held for one local rather than three, and what actually changed is that the workaround is no longer forced |
+| 6 | core/test/option_test.wac's workaround locals | **partly** — one of the three was single-use and is now written inline. The other two are used more than once, so inlining them would make the file *longer*; the criterion's "a real file gets shorter" held for one local rather than three, and what actually changed is that the workaround is no longer forced |
 | 7 | `Cell<i32>()`, `Cell<Cell<i32>>()`, receiver position included | **yes** |
 | 8 | `count < list.len() > 0` still a comparison | **yes** — `spec/cases/0238` |
 | 9 | `Cell<Typoo>()` says unknown type `Typoo` | **yes** |

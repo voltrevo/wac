@@ -144,7 +144,7 @@ const programs: [string, string, number][] = [
     }
     i32 main() { return area(Circle(2)) * 10000 + area(Rect(3, 4)) * 100 + area(Empty); }`, 121200],
 
-  // The shape `core/option.wac` is actually written in: match as an *expression*, `_` for a payload
+  // The shape `core/result.wac` is actually written in: match as an *expression*, `_` for a payload
   // that is not read, and methods on the enum itself.
   ["match as an expression, with `_`", `
     enum Option {

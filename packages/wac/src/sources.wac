@@ -469,8 +469,8 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
     // **A built-in is served from inside the compiler, never read.** This walk is the whole of the
     // I/O, so a built-in that reached `readFile` is a built-in that needs a `core/` directory in the
     // current working directory to exist — and one does, here, which is exactly why nothing caught
-    // it: `core/option.wac` resolved off the repository's own tree for every test in the suite and
-    // answered *`wacc: cannot read core/option.wac`* from any other directory. That is the property
+    // it: `core/result.wac` resolved off the repository's own tree for every test in the suite and
+    // answered *`wacc: cannot read core/result.wac`* from any other directory. That is the property
     // the tree was moved inside the compiler to have (`design/lang/0009` D3/D4), so it is worth
     // saying plainly: the CLI has no path to read these from, and the playground has no filesystem.
     string builtin = path == "core" ? coreSource() : path == "std" ? stdSource() : "";

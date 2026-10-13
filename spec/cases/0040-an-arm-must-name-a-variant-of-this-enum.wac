@@ -1,8 +1,8 @@
 // expect: refused
 // why: belonging to some enum is not the question — the arm has to belong to the subject's
 // from: specSingle's generic cluster
-enum Option<T> {
-  Some(T v), None
-  bool isSome(const this) { return match (this) { Some(_): true, None: false }; }
+enum Slot<T> {
+  Full(T v), Empty
+  bool isFull(const this) { return match (this) { Full(_): true, Empty: false }; }
 }
-export i32 f() { Option<i32> a = Option.Some(1); return match (a) { Nope(v): v, None: 0 }; }
+export i32 f() { Slot<i32> a = Slot.Full(1); return match (a) { Nope(v): v, Empty: 0 }; }

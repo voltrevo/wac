@@ -2,7 +2,7 @@
 //
 // **This is the property the tree exists for.** `design/lang/0009` D3/D4 put `core` inside the
 // compiler so that the CLI has no path to read it from and the playground, which has no filesystem
-// at all, can still compile a program that uses `Option`. A spelling that only works because the
+// at all, can still compile a program that uses `Result`. A spelling that only works because the
 // repository happens to have a `core/` directory under the current working directory has none of
 // that: it works here and fails everywhere else, and nothing in the suite would say so, because the
 // suite runs from the repository root.
@@ -12,7 +12,7 @@
 // is the failure this test is for.
 //
 // **Each built-in is named whole** — `from "core"`, `from "std"` — and a path below either is refused
-// (`§wac-no-subpath-wqatc72`). `core`'s files are concatenated into its one module, so `Option` is at
+// (`§wac-no-subpath-wqatc72`). `core`'s files are concatenated into its one module, so `Result` is at
 // its root beside `Read`.
 
 import { T } from "../../../wactest/src/assert.wac";
@@ -33,10 +33,10 @@ string[] rootUsing(string importLine) {
   ];
 }
 
-/** A program that uses `Option` — one of `core`'s data structures, which are at its root too. */
+/** A program that uses `Result` — one of `core`'s data structures, which are at its root too. */
 string[] siblingUsing(string importLine) {
   return [
-                  importLine + "\nexport i32 main() { Option<i32> o = Option.Some(7); " +
+                  importLine + "\nexport i32 main() { Result<i32, bool> o = Result.Ok(7); " +
                   "return o.orElse(0); }\n"
   ];
 }
@@ -65,12 +65,12 @@ export string test_the_root_is_reachable_without_a_filesystem() {
 }
 
 export string test_cores_data_structures_are_at_its_root() {
-  // `core/option.wac` is a file of `core`, not a module anyone imports: its declarations are in the one
+  // `core/result.wac` is a file of `core`, not a module anyone imports: its declarations are in the one
   // module `"core"` reaches. Nothing here supplies it, and from any directory but this repository's own
   // root there would be nothing to supply.
   T t = T.create();
-  string why = refusal(siblingUsing("import { Option } from \"core\";"));
-  t.isTrue(why == "", "Option was not served from core's root: " + why);
+  string why = refusal(siblingUsing("import { Result } from \"core\";"));
+  t.isTrue(why == "", "Result was not served from core's root: " + why);
   return t.report();
 }
 
@@ -79,7 +79,7 @@ export string test_a_path_below_a_builtin_is_refused() {
   // every case above. The file exists on disk and in the compiler's copy, and the specifier is still
   // refused, because a package is named whole.
   T t = T.create();
-  string why = blockedFiles(paths(), siblingUsing("import { Option } from \"core/option.wac\";"),
+  string why = blockedFiles(paths(), siblingUsing("import { Result } from \"core/result.wac\";"),
                             "main.wac");
   t.isTrue(why != "", "a path below core was accepted");
   return t.report();
@@ -96,10 +96,10 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   // **The three cases above go through the compiler, which does no I/O; this one goes through the
   // command, which is all of it.** The distinction is the whole point of the test: the file-reading
   // walk in `example/wacc.wac` used to hand a built-in specifier to `readFile` like any other, and
-  // a relative read resolves against the working directory — so `core/option.wac` was found, in
+  // a relative read resolves against the working directory — so `core/result.wac` was found, in
   // this repository, because this repository has that file at that path. Every test in the suite
   // runs from the root and every one of them agreed. From anywhere else the command answered
-  // *`wacc: cannot read core/option.wac`*, which is the opposite of what an embedded tree is for.
+  // *`wacc: cannot read core/result.wac`*, which is the opposite of what an embedded tree is for.
   T t = T.create();
   string dir = scratch(cli, "builtinspec");
   Change made = cli.mkdir(dir, true).wait();
@@ -118,8 +118,8 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   string[] progs = [
     "import { Read } from \"core\";\n" +
     "export i32 main() { Read r = Read.End; return match (r) { End: 0, default: 1 }; }\n",
-    "import { Option } from \"core\";\n" +
-    "export i32 main() { Option<i32> o = Option.Some(7); return o.orElse(0); }\n",
+    "import { Result } from \"core\";\n" +
+    "export i32 main() { Result<i32, bool> o = Result.Ok(7); return o.orElse(0); }\n",
     "import { Core, Cli, Sys } from \"std\";\n" +
     "export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return 0; }\n"
   ];
@@ -231,7 +231,7 @@ export string test_the_builtin_test_answers_for_the_two_names() {
   t.isTrue(isBuiltinSpec("core"), "core");
   t.isTrue(isBuiltinSpec("std"), "std");
   string[] near = [
-    "core/option.wac", "std/platform.wac", "core/nope.wac", "./core/option.wac", "option.wac",
+    "core/result.wac", "std/platform.wac", "core/nope.wac", "./core/result.wac", "result.wac",
     "core/", "cores", "std.wac"
   ];
   for (i32 i = 0; i < near.len(); i++) {
@@ -253,14 +253,14 @@ export string test_a_path_below_a_builtin_names_the_package_to_import(Core core,
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
   Change w = cli.writeFile(dir + "/m.wac",
-      ("import { Option } from \"core/option.wac\";\nexport i32 main() { return 0; }\n").toBytes()).wait();
+      ("import { Result } from \"core/result.wac\";\nexport i32 main() { return 0; }\n").toBytes()).wait();
   t.isTrue(w.ok(), "wrote the program — " + w.message);
 
   Exec r = cli.exec(binaryPath(cli), ["check", dir + "/m.wac"], u8[]()).wait();
   t.isTrue(r.ran(), "wac did not run — " + r.error);
   if (r.ran()) {
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
-    t.isTrue(r.status != 0, "core/option.wac was accepted: " + said);
+    t.isTrue(r.status != 0, "core/result.wac was accepted: " + said);
     t.isTrue(contains(said, "import from \"core\""),
              "the refusal did not name the package to import: " + said);
     t.isTrue(!contains(said, "names no mapping"),

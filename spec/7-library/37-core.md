@@ -16,7 +16,7 @@ It is reached like any package — by its name, through its entry module — and
 | `fromNumber`, `NumberLiteral` | literal conversion for a type of the program's own | [09](../2-types/09-numeric-literals.md) |
 | `Vec<T>` | a growable array | [38](38-vec.md) |
 | `Map<K, V>`, the hash and equality functions | a hash map | [39](39-map-and-hash.md) |
-| `Option<T>`, `Result<T, E>` | presence, and success or failure | [40](40-option-and-result.md) |
+| `Result<T, E>` | success or failure | [40](40-result.md) |
 | `Read` | the answer of a read that can end or fail | [41](41-read.md) |
 | `Buf` | a growable byte buffer | [42](42-buf.md) |
 | `Node`, `Attr`, `html` | the markup tree, and the HTML tag functions | [43](43-markup-types.md) |

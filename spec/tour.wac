@@ -727,7 +727,7 @@ export string describe(Step s) {
 // narrowing work and why a variant name is a file-scope name like a struct's.
 // Two enums in one file therefore cannot share a variant name.
 
-// Enums take type parameters, which is what `Option<T>` and `Result<T, E>` are.
+// Enums take type parameters, which is what `Result<T, E>` is.
 // A generic enum may carry methods, and `match` inside one sees `this`.
 enum Maybe<T> {
   Just(T v),

@@ -10842,7 +10842,10 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // **A reference element is defaulted, not nulled.** `string[].defaulted(3)` is three empty strings, so
       // the element's default is built and `array.new` repeats it — `array.new_default` would put
       // a null in every slot, which typechecks and traps on the first `.len()`.
-      if (isRefType(env, et) && !isNullableTy(elem)) {
+      // Nullable by the *substituted* type as well as the written one: in `Vec<T>` the element is
+      // written `T`, and at `T = i32?` it is a box whose default is null — taking this branch built an
+      // `i32` zero for it and the engine refused the module.
+      if (isRefType(env, et) && !isNullableTy(elem) && !endsWith(et, "?")) {
         // **A struct element is a fresh struct per slot.** `array.new` repeats *one* reference, and
         // the spec says `P[].defaulted(2)` gives two: writing `a[0].v` must not be visible in `a[1]`. An
         // empty string or an empty array has nothing to write, so sharing one is unobservable and
@@ -15445,6 +15448,10 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     NullLit: {
       if (isRefType(env, want)) { return ""; }
+      // **Where nothing is wanted, a `null` is nothing.** `T?` at `T = void` is spelled `void` here:
+      // `Result<void, E>.ok()` answers one, and its `Err` arm's `null` has no value to stand for. The
+      // emitter writes nothing for it, as for any value of a `void` slot.
+      if (want == "void") { return ""; }
       // Named, not categorised: which slot it is, is the whole of what a reader needs — and where
       // the slot has no type at all, that is a different problem wearing the same message.
       return want == "" ? "a null in a slot of no known type" : "a null in a " + want + " slot";

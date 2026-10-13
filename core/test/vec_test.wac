@@ -6,7 +6,7 @@
 // — because monomorphisation makes those four different pieces of generated code.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Vec, Option } from "core";
+import { Vec, Result } from "core";
 
 struct P { i32 v; }
 
@@ -189,11 +189,17 @@ export string test_element_types() {
   for (i32 i = 0; i < 10; i++) { structs.push(P(i)); }
   t.eqI32(structs.get(7).v, 7, "a struct element type");
 
-  Vec<Option<i32>> opts = Vec.create();
-  opts.push(Option.Some(3));
-  opts.push(Option.None);
-  t.eqI32(opts.get(0).orElse(-1), 3, "a generic enum element type");
-  t.isTrue(opts.get(1).isNone(), "including its absent case");
+  Vec<Result<i32, string>> rs = Vec.create();
+  rs.push(Result.Ok(3));
+  rs.push(Result.Err("no"));
+  t.eqI32(rs.get(0).orElse(-1), 3, "a generic enum element type");
+  t.isTrue(rs.get(1).isErr(), "including its other variant");
+
+  Vec<i32?> maybes = Vec.create();
+  maybes.push(3);
+  maybes.push(null);
+  t.eqI32(maybes.get(0) ?? -1, 3, "a nullable element type");
+  t.isTrue(maybes.get(1) is null, "including its absent case");
 
   Vec<Vec<i32>> nested = Vec.create();
   Vec<i32> inner = Vec.create();

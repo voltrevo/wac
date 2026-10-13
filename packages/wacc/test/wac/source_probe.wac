@@ -62,7 +62,7 @@ export i32 indexOfPath(string[] paths, string path) {
  * "an import of a file that was not supplied" about a file it thought it had supplied. Callers pass
  * `"/" + path`; `coverage_test.wac` did not, and its `>= 20` assertion is what noticed.
  *
- * **A built-in is not in it, and that is right.** `"core/option.wac"` names a module inside the
+ * **A built-in is not in it, and that is right.** `"core/result.wac"` names a module inside the
  * compiler (`design/lang/0009` D4), so it resolves against nothing here and is skipped — and the
  * compiler injects it, so the closure being without it is correct rather than short. What is *not*
  * safe is treating the size of the answer as "how many packages this program pulls in": a caller

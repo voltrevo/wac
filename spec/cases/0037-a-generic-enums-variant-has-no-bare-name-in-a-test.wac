@@ -1,8 +1,8 @@
 // expect: refused
-// why: a generic enum's variants belong to its instances, so `Some` alone names no type
+// why: a generic enum's variants belong to its instances, so `Full` alone names no type
 // from: specSingle's generic cluster
-enum Option<T> {
-  Some(T v), None
-  bool isSome(const this) { return match (this) { Some(_): true, None: false }; }
+enum Slot<T> {
+  Full(T v), Empty
+  bool isFull(const this) { return match (this) { Full(_): true, Empty: false }; }
 }
-export i32 f() { Option<i32> a = Option.Some(1); return a is Some ? 1 : 0; }
+export i32 f() { Slot<i32> a = Slot.Full(1); return a is Full ? 1 : 0; }
