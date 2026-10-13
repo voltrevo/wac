@@ -1,6 +1,7 @@
 # 0368a — `Result<T>` with its error type left out passes check and then cannot be built
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** a55274313
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-03
@@ -52,3 +53,10 @@ ch33 reads as agreeing — *"candidate inference does not invent conversions bet
 instantiations"*, and `union<string>` is not `string` — so the spelling today is
 `return Result.Ok(try d());`. Whether a returned `Result` should contribute its error type and convert is
 for the spec to say.
+
+## Closed — 2026-10-13 (agent-a)
+
+The question above was not one. A bare `union` collects what flows into it, so a returned
+`Result<i32, string>` contributes `string`; and once inference is done `union<string>` *is* `string`
+(spec ch18 `§wac-union-singleton-is-member-6tq2kfd`), so there is nothing to convert. `return parse(s);`
+in a `Result<T>` function is ch26's `§wac-result-return-collects-3vbm8tq`, met. Fixed in a55274313.

@@ -7,7 +7,7 @@ has been fixed and why.
 |---|---|---|---|
 | [0370a](open/0370a-await-is-refused-in-a-match-subject-and-a-for-in-loop.md) | `await` in a `match` subject, inside a larger expression, or in a `for (x in xs)` body is refused, and the spec writes all three | missing feature | compile error |
 | [0369a](open/0369a-ticket-all-and-ticket-any-pass-check-and-are-not-in-the-program.md) | `Ticket.all` and `Ticket.any` pass `wac check` and are not in the program the emitter builds | missing feature | check clean, build exit 1 |
-| [0368a](open/0368a-a-left-out-error-type-checks-and-cannot-emit.md) | `Result<T>` with its error type left out passes check and then cannot be built | bug | check clean, build exit 1 |
+| [0368a](closed/0368a-a-left-out-error-type-checks-and-cannot-emit.md) | `Result<T>` with its error type left out passes check and then cannot be built | bug | check clean, build exit 1 |
 | [0367a](closed/0367a-a-tuple-literal-of-unannotated-numbers-checks-and-cannot-emit.md) | A tuple literal whose members are bare numeric literals passes check and stops the emitter | bug | check clean, build exit 1 |
 | [0366a](closed/0366a-a-variant-name-binds-in-matches-only-with-its-payload.md) | `Circle c matches s` is refused for an enum variant, though every variant is a type | bug | compile error |
 | [0365a](open/0365a-a-program-declaring-continuation-gets-an-invalid-module.md) | A file that declares its own `struct Continuation` and does async work compiles to a module the engine rejects | bug | invalid wasm |
@@ -97,7 +97,7 @@ has been fixed and why.
 
 ## Closed
 
-284 issues, 226 closed.
+284 issues, 227 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
