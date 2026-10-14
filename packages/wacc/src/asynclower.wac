@@ -2392,7 +2392,8 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed, string sigs) {
   i32 args = argsNeeded(prog, src, lexed);
 
   u8[] srcA = synthSource(src, ups, states, args);
-  i32 first = lexed.tokenCount;
+  // Where the words start: after the parser's own appended tokens, which `synthTokens` keeps (a `.[i]`).
+  i32 first = lexed.tokenCount + lexed.synthCount;
   Lexed lexedA = synthTokens(lexed, srcA, ups, states, args, 1, 1);
   // **The coroutine forms' names**, behind a second comment (ch36).
   // ...and every name the other files' ticket types are written with, so one can be rebuilt here.

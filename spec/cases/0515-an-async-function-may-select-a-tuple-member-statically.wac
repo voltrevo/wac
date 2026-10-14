@@ -1,0 +1,18 @@
+// expect: f() = 5
+// spec: §wac-variadic-tuple-sfevn82
+// why: a `.[i]` selector in an async file leaves the names the async lowering adds where it put them
+// from: spec ch14, ch35
+import { Ticket } from "core";
+
+async Ts copied<Ts>(Ts ...ts) {
+  Ts out;
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
+    out.[i] = ts.[i];
+  }
+  return out;
+}
+
+export i32 f() {
+  (i32, string) r = copied(3 as i32, "xy").wait()!;
+  return r.0 + r.1.len();
+}
