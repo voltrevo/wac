@@ -1,0 +1,19 @@
+// expect: f() = 3
+// spec: §wac-wait-refuses-jj8u2ie §wac-ticket-any-v8nr3r9 §wac-ticket-all-2h6iwfr
+// why: a wait on Ticket.any or Ticket.all answers Err when none of the tickets it may drive can advance, and settles once one can
+// from: issues/lang/0369a
+import { Ticket } from "core";
+
+export i32 f() {
+  Ticket<i32> a;
+  Ticket<string> b;
+  Ticket<union<i32, string>> one = Ticket.any(a, b);
+  Ticket<(i32, string)> both = Ticket.all(a, b);
+  i32 n = 0;
+  if (one.wait().isErr()) { n = n + 1; }
+  a.resolve(4);
+  if (one.wait().isOk() && both.wait().isErr()) { n = n + 1; }
+  b.resolve("x");
+  if (both.wait().isOk()) { n = n + 1; }
+  return n;
+}

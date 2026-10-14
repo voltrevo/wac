@@ -1,0 +1,14 @@
+// expect: f() = 17
+// spec: §wac-ticket-any-with-index-q2v7hcn
+// why: Ticket.anyWithIndex answers the winner's index beside its value, which a union of equal types cannot say
+// from: issues/lang/0369a
+import { Ticket } from "core";
+
+export i32 f() {
+  Ticket<i32> a;
+  Ticket<i32> b;
+  Ticket<i32> c;
+  c.resolve(5);
+  (i32, i32) won = Ticket.anyWithIndex(a, b, c).wait()!;
+  return won.0 * 10 + won.1 - 8;           // index 2, value 5
+}

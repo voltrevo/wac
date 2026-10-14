@@ -24,6 +24,7 @@ It is reached like any package — by its name, through its entry module — and
 | `Step`, `Coroutine`, `Generator`, `AsyncGenerator` | the machine under `async` and `gen` | [36](../6-concurrency/36-coroutines-and-generators.md) |
 | `hypothetical<T>()` | an expression of type `T` for `typeof`, which traps if run | [30](../4-static/30-computed-types.md) |
 | `Values<Ts>` | the tuple of what each of a tuple of tickets answers | [30](../4-static/30-computed-types.md), [35](../6-concurrency/35-tickets-and-await.md) |
+| `AnyValue<Ts>` | the union of what each of a tuple of tickets answers | [30](../4-static/30-computed-types.md), [35](../6-concurrency/35-tickets-and-await.md) |
 
 ```wac
 // expect: fromCoreRoot() = 2

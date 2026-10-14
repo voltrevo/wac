@@ -431,7 +431,9 @@ spec/6-concurrency/35-tickets-and-await.md#11
 spec/6-concurrency/35-tickets-and-await.md#12
 spec/6-concurrency/35-tickets-and-await.md#13
 spec/6-concurrency/35-tickets-and-await.md#14
+spec/6-concurrency/35-tickets-and-await.md#15
 spec/6-concurrency/35-tickets-and-await.md#16
+spec/6-concurrency/35-tickets-and-await.md#17
 spec/6-concurrency/36-coroutines-and-generators.md#1
 spec/6-concurrency/36-coroutines-and-generators.md#2
 spec/6-concurrency/36-coroutines-and-generators.md#3

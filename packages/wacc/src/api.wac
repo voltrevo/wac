@@ -2425,14 +2425,21 @@ bool isScalarSpelling(string t) {
 string[] lowerVariadics(string[] sources) {
   bool any = false;
   for (i32 i = 0; i < sources.len(); i++) { if (hasVariadicMarker(sources[i])) { any = true; } }
-  if (!any) { return sources; }
+  // **And `core`'s, which a build adds after this runs** — `Ticket.all(a, b)` is packed although no
+  // file here declares `all`. Parsing `core` costs every compile, so it is read only when a file
+  // writes a call one of its variadic methods could be, found by a scan of its text.
+  bool coreToo = callsCoreVariadic(sources);
+  if (!any && !coreToo) { return sources; }
   string names = "|";
   string fixed = "|";
   // Where each file's markers are, as `file:offset;` — blanked once read, so lowering is idempotent.
+  // `core`'s, at index `sources.len()`, are read for their names and never written back.
   string markers = ";";
-  for (i32 f = 0; f < sources.len(); f++) {
-    if (!hasVariadicMarker(sources[f])) { continue; }
-    u8[] src = sources[f].toBytes();
+  i32 scanned = sources.len() + (coreToo ? 1 : 0);
+  for (i32 f = 0; f < scanned; f++) {
+    string text = f < sources.len() ? sources[f] : coreSource();
+    if (!hasVariadicMarker(text)) { continue; }
+    u8[] src = text.toBytes();
     Lexed lx = lex(src);
     Program prog = parseProgram(P.create(src, lx));
     i32 st = tokenStride();
@@ -2487,6 +2494,63 @@ i32 decimalOfApi(string s) {
   return n;
 }
 
+/**
+ * Whether any of `sources` writes `.name(` for a method of `core`'s with a variadic parameter. The names
+ * are read off `core`'s text — the identifier before the `(` (or `<`) that opens the list holding each
+ * ` ...name` — which is a scan rather than a parse, so a program that calls none pays almost nothing.
+ */
+bool callsCoreVariadic(string[] sources) {
+  string core = coreSource();
+  string rest = core;
+  i32 base = 0;
+  while (rest.indexOf(" ...") >= 0) {
+    i32 at = base + rest.indexOf(" ...");
+    rest = rest.slice(rest.indexOf(" ...") + 4, rest.len());
+    base = at + 4;
+    string nm = calleeBefore(core, at);
+    if (nm == "") { continue; }
+    for (i32 i = 0; i < sources.len(); i++) {
+      if (sources[i].indexOf("." + nm + "(") >= 0) { return true; }
+    }
+  }
+  return false;
+}
+
+/** The name of the function whose parameter list holds offset `at` of `text`, read backwards, or "". */
+string calleeBefore(string text, i32 at) {
+  u8[] b = text.toBytes();
+  i32 i = at;
+  i32 depth = 0;
+  while (i > 0) {
+    i = i - 1;
+    if (b[i] == ')') { depth = depth + 1; }
+    if (b[i] == '(') {
+      if (depth == 0) { break; }
+      depth = depth - 1;
+    }
+    if (b[i] == ';' || b[i] == '{' || b[i] == '}') { return ""; }
+  }
+  // Past the method's own `<…>`, if it has one.
+  if (i > 0 && b[i - 1] == '>') {
+    i32 angle = 0;
+    while (i > 0) {
+      i = i - 1;
+      if (b[i] == '>') { angle = angle + 1; }
+      if (b[i] == '<') {
+        angle = angle - 1;
+        if (angle == 0) { break; }
+      }
+    }
+  }
+  i32 end = i;
+  while (i > 0 && isNameByte(b[i - 1] as i32)) { i = i - 1; }
+  return end > i ? text.slice(i, end) : "";
+}
+
+bool isNameByte(i32 c) {
+  return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95;
+}
+
 /** Whether `text` has a ` ...name` — a variadic parameter's marker, not prose's ellipsis. */
 bool hasVariadicMarker(string text) {
   string rest = text;
@@ -2512,6 +2576,14 @@ i32 variadicFixed(string names, string fixed, string name) {
   i32 n = 0;
   for (i32 i = 0; i < digits.len(); i++) { n = n * 10 + (digits.toBytes()[i] as i32 - 48); }
   return n;
+}
+
+/** Whether `src` holds `text` at offset `at`. */
+bool startsWithAt(u8[] src, i32 at, string text) {
+  u8[] t = text.toBytes();
+  if (at < 0 || at + t.len() > src.len()) { return false; }
+  for (i32 i = 0; i < t.len(); i++) { if (src[at + i] != t[i]) { return false; } }
+  return true;
 }
 
 /**
@@ -2556,6 +2628,12 @@ string variadicCallsOf(string text, string names, string fixed) {
     }
     i32 fx = variadicFixed(names, fixed, callee);
     if (fx < 0) { continue; }
+    // **Packed once.** A packed call carries `/*...*/` just inside its `(`, which the lexer drops and
+    // this pass reads: a free function's second lowering finds no `...` left on its declaration, but
+    // `core`'s are read from `core`'s own text every time, and a build lowers more than once —
+    // `Ticket.all(a, b)` became `Ticket.all(((a, b),))`.
+    i32 openAt = lx.tokens[(t + 1) * st + 1];
+    if (startsWithAt(src, openAt + 1, "/*...*/")) { continue; }
     // A declaration is a name after a type, and a call is not: `i32 count<Ts>(…)` has `<` next, so
     // only a non-generic declaration reaches here, and its parameters are typed — a `...` among them.
     i32 depth = 0;
@@ -2590,6 +2668,7 @@ string variadicCallsOf(string text, string names, string fixed) {
     i32 args = argIndex + 1;
     if (isDecl || u >= n) { continue; }
     i32 closeAt = lx.tokens[u * st + 1];
+    at[count] = openAt + 1; what[count] = "/*...*/"; count++;
     i32 packed = args - fx;
     if (packed <= 0) {
       at[count] = closeAt; what[count] = fx == 0 ? "()" : ", ()"; count++;

@@ -420,7 +420,9 @@ bool isTicketFamily(string nm) {
   return nm == "Ticket" || nm == "TicketBase" || nm == "Continuation" || nm == "Queue"
       || nm == "__wacMachine" || nm == "__wacResumer" || nm == "__wacScheduleTarget"
       || nm == "__wacSetScheduleTarget" || nm == "Step" || nm == "Coroutine" || nm == "Generator"
-      || nm == "AsyncGenerator" || nm == "__wacReadyTicket" || nm == "__wacOrReady";
+      || nm == "AsyncGenerator" || nm == "__wacReadyTicket" || nm == "__wacOrReady"
+      // `Ticket.all` and `Ticket.any`'s helpers, which read `TicketBase` and so cannot outlive it.
+      || nm == "stepEvery" || nm == "stepFirst" || nm == "watchFirst" || nm == "watchOne";
 }
 
 /**

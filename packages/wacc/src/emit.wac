@@ -16986,9 +16986,24 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.fieldCount = env.fieldCount + 1;
             }
             for (i32 m = 0; m < methods.len(); m++) {
+              // **A method with its own letters may not be able to say its types here.** Its entry is
+              // declined, below, and only its method instances are called — which read these types
+              // with both substitutions in force. Read here, with only the owner's, `Values<Ts>` is a
+              // computed type of a letter nobody bound, and the decline that records declined the whole
+              // module: core's `Ticket.all`. So what reading them records is put back.
+              bool ownLetters = methods[m].typeParams.len() > 0;
+              bool wasFull = env.full;
+              string wasWhy = env.fullWhy;
               string[] mpts = string[].defaulted(methods[m].params.len());
               for (i32 a = 0; a < methods[m].params.len(); a++) {
                 mpts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
+              }
+              string mret = typeOfTyName(env, src, lexed, methods[m].returnType);
+              if (ownLetters) {
+                env.full = wasFull;
+                env.fullWhy = wasWhy;
+                for (i32 a = 0; a < mpts.len(); a++) { if (mpts[a] == "") { mpts[a] = "i32"; } }
+                if (mret == "") { mret = "void"; }
               }
               // **The body too, under this substitution.** A template's method names types that
               // exist only once its arguments are known — `Vec<i32>.push` names `i32[]` — and a
@@ -17002,8 +17017,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               if (methods[m].typeParams.len() == 0) {
                 collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
               }
-              env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
-                          typeOfTyName(env, src, lexed, methods[m].returnType), mpts);
+              env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok), mret, mpts);
               // **The receiver, which this site did not record.** `addFunc` keeps only the declared
               // parameters and `funcRecv` holds the receiver, so a generic instance's method looked
               // like a free function to everything reading those tables — including `signatureOf`,

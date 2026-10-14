@@ -1,6 +1,6 @@
 # 0369a — `Ticket.all` and `Ticket.any` pass `wac check` and are not in the program the emitter builds
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-10-03
@@ -70,3 +70,15 @@ and async faults the body hit (136eb8e0f, b72d76f05). `all`'s body runs as a fun
   types cannot say which won. Both need `typeref.union(ts)` beside `typeref.tuple(ts)`.
 
 Order: 0371a (done, 4eea044cd), the unused-`T` rule, `typeref.union`, then `all`, `any`, `anyWithIndex` in `core`.
+
+## Done, 2026-10-14
+
+`Ticket.all`, `Ticket.any` and `Ticket.anyWithIndex` are static methods of `Ticket<T>` in `core/ticket.wac`
+that write no `T`, called on the bare template (ch19 `§wac-generic-unused-param-unbound-k4p2xqz`, d71c39dab).
+`any` answers `AnyValue<Ts>`, the union of what the tickets answer, built with `typeref.union` (08ac7843c).
+
+They are **driven rather than `async`**: each answers a ticket whose `drive` steps the tickets not yet
+settled, so a `wait` refuses exactly when none can move. `any` learns which settled first from a
+`whenSettled` hook on `TicketBase`, called by `settleWith`; driving later cannot tell the order. An `async`
+static is not lowered at all (0375a), which is what prompted the change. Cases 0524–0526; ch35's `allSettled`
+example is met.

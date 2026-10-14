@@ -1,0 +1,25 @@
+// expect: f() = 13
+// spec: §wac-ticket-any-v8nr3r9
+// why: Ticket.any answers what the first of its tickets to settle answers, as the union of what they answer
+// from: issues/lang/0369a
+import { Ticket } from "core";
+
+i32 score(union<string, i32> v) {
+  return match (v) {
+    string: v.len(),
+    i32:    v,
+  };
+}
+
+export i32 f() {
+  Ticket<string> a;
+  Ticket<i32> b;
+  Ticket<union<string, i32>> first = Ticket.any(a, b);
+  b.resolve(10);
+  a.resolve("abc");                        // too late: b settled first
+  Ticket<i32> c;
+  Ticket<i32> d;
+  d.resolve(3);
+  i32 same = Ticket.any(c, d).wait()!;     // union<i32, i32> is i32
+  return score(first.wait()!) + same;
+}

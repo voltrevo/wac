@@ -39,6 +39,20 @@ export struct TicketBase {
   fn<bool()>? drive = null;
   /** Set while this ticket's own `advance` is following what it is parked on. */
   bool following = false;
+  /** Called once when the ticket settles — every watcher `whenSettled` added, in the order added. */
+  fn<void()>? onSettle = null;
+
+  /**
+   * Have `f` called when this ticket settles, beside whatever else is watching it. How `Ticket.any`
+   * knows which of its tickets settled first, which driving them later cannot tell.
+   */
+  void whenSettled(this, fn<void()> f) {
+    fn<void()>? before = this.onSettle;
+    this.onSettle = () => {
+      if (before is not null) { before!(); }
+      f();
+    };
+  }
 
   bool settled(const this) { return this.done; }
 
@@ -88,6 +102,8 @@ export struct Ticket<T> : TicketBase {
     if (this.done) { trap; }
     this.answer = f;
     this.done = true;
+    fn<void()>? watchers = this.onSettle;
+    if (watchers is not null) { watchers!(); }
   }
 
   /** The answer. Traps if the ticket has not settled. */
@@ -110,6 +126,80 @@ export struct Ticket<T> : TicketBase {
     }
     return Result.Ok(this.answer!());
   }
+
+  /**
+   * A ticket of the tuple of what each of `tickets` answers, settled when every one is (spec ch35
+   * `§wac-ticket-all-2h6iwfr`). It writes no `T`, so it is called on the bare template —
+   * `Ticket.all(a, b)` — and is one function however `Ticket` is spelled (ch19).
+   *
+   * **Driven, not `async`.** The answer is a ticket whose `drive` steps every ticket not yet settled,
+   * so whoever drives it — a `wait`, or a scheduler asking `advance` — drives them, and a `wait` that
+   * nothing can help refuses (`§wac-wait-refuses-jj8u2ie`) rather than parking on one of them.
+   */
+  Ticket<Values<Ts>> all<Ts>(Ts ...tickets) {
+    TicketBase[] parts = TicketBase[].defaulted(typeref(Ts).tupleMembers().len());
+    static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) { parts[i] = tickets.[i]; }
+    Ticket<Values<Ts>> out;
+    out.drive = () => {
+      i32 s = stepEvery(parts);
+      if (s < 0) { return false; }
+      if (s == 0) { return true; }
+      Values<Ts> v;
+      static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) { v.[i] = tickets.[i].value(); }
+      out.resolve(v);
+      return true;
+    };
+    return out;
+  }
+
+  /**
+   * A ticket of what the first of `tickets` to settle answers, as the union of what they answer (spec
+   * ch35 `§wac-ticket-any-v8nr3r9`): `Ticket.any(a, b)` over two `Ticket<i32>`s answers an `i32`. The
+   * others are not cancelled. Driven as `all` is.
+   */
+  Ticket<AnyValue<Ts>> any<Ts>(Ts ...tickets) {
+    TicketBase[] parts = TicketBase[].defaulted(typeref(Ts).tupleMembers().len());
+    static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) { parts[i] = tickets.[i]; }
+    i32[] first = watchFirst(parts);
+    Ticket<AnyValue<Ts>> out;
+    out.drive = () => {
+      i32 k = stepFirst(parts, first);
+      if (k == -2) { return false; }
+      if (k == -1) { return true; }
+      static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
+        if (i == k) {
+          AnyValue<Ts> v = tickets.[i].value();
+          out.resolve(v);
+        }
+      }
+      return true;
+    };
+    return out;
+  }
+
+  /**
+   * `any`, with the winner's index beside its value (spec ch35 `§wac-ticket-any-with-index-q2v7hcn`) —
+   * what says which one won when two of them answer the same type.
+   */
+  Ticket<(i32, AnyValue<Ts>)> anyWithIndex<Ts>(Ts ...tickets) {
+    TicketBase[] parts = TicketBase[].defaulted(typeref(Ts).tupleMembers().len());
+    static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) { parts[i] = tickets.[i]; }
+    i32[] first = watchFirst(parts);
+    Ticket<(i32, AnyValue<Ts>)> out;
+    out.drive = () => {
+      i32 k = stepFirst(parts, first);
+      if (k == -2) { return false; }
+      if (k == -1) { return true; }
+      static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
+        if (i == k) {
+          AnyValue<Ts> v = tickets.[i].value();
+          out.resolve((k, v));
+        }
+      }
+      return true;
+    };
+    return out;
+  }
 }
 
 /**
@@ -124,6 +214,66 @@ export type Values<Ts> {
     out[i] = typeref(typeof(hypothetical<type(ts[i])>().value()));
   }
   return typeref.tuple(out);
+}
+
+/**
+ * The union of what each of a tuple of tickets answers: `AnyValue<(Ticket<A>, Ticket<B>)>` is
+ * `union<A, B>` — what `Ticket.any` answers (spec ch35), normalised as any union is, so two tickets of
+ * one type answer that type.
+ */
+export type AnyValue<Ts> {
+  return typeref.union(typeref(Values<Ts>).tupleMembers());
+}
+
+/**
+ * One step towards every one of `parts` settling: 1 when all have, 0 when one not yet settled moved, -1
+ * when none of them could — which is when a `wait` on `Ticket.all` refuses.
+ */
+i32 stepEvery(TicketBase[] parts) {
+  bool moved = false;
+  bool every = true;
+  for (i32 k = 0; k < parts.len(); k++) {
+    if (parts[k].done) { continue; }
+    if (parts[k].advance()) { moved = true; }
+    if (!parts[k].done) { every = false; }
+  }
+  if (every) { return 1; }
+  return moved ? 0 : -1;
+}
+
+/**
+ * Which of `parts` settles first, as a cell `Ticket.any` reads: one already settled when it is called —
+ * the first of those in argument order — or else whichever's `whenSettled` fires first. -1 until then.
+ */
+i32[] watchFirst(TicketBase[] parts) {
+  i32[] first = [-1];
+  for (i32 k = 0; k < parts.len(); k++) {
+    if (parts[k].done && first[0] < 0) { first[0] = k; }
+  }
+  for (i32 k = 0; k < parts.len(); k++) { watchOne(parts[k], first, k); }
+  return first;
+}
+
+/** Record `k` in `first` when `t` settles, unless another settled before it. */
+void watchOne(TicketBase t, i32[] first, i32 k) {
+  t.whenSettled(() => {
+    if (first[0] < 0) { first[0] = k; }
+  });
+}
+
+/**
+ * The index of the first of `parts` to settle, after driving each one step if none has; -1 when none
+ * has settled but one moved, -2 when none could move.
+ */
+i32 stepFirst(TicketBase[] parts, i32[] first) {
+  if (first[0] >= 0) { return first[0]; }
+  bool moved = false;
+  for (i32 k = 0; k < parts.len(); k++) {
+    if (parts[k].done) { continue; }
+    if (parts[k].advance()) { moved = true; }
+    if (first[0] >= 0) { return first[0]; }
+  }
+  return moved ? -1 : -2;
 }
 
 /** First in, first out — what a program's pending continuations are kept in. */

@@ -543,26 +543,35 @@ export i32 allSettled() {
 `[§wac-ticket-all-2h6iwfr]` `Ticket.all(t1, …, tn)` is a ticket of the tuple of their answers, settled when every one is.
 It is variadic, and the tuple is as long as the call ([14](../2-types/14-tuples.md)).
 
-It is ordinary wac in `core` — a variadic parameter, a tuple filled member by member, and `Values`, the tuple of
+It is ordinary wac in `core` — a method of `Ticket` that writes no `T`, so it is called on the bare template
+([19](../2-types/19-generics.md)); a variadic parameter; a tuple filled member by member; and `Values`, the tuple of
 what each ticket answers ([30](../4-static/30-computed-types.md)):
 
 ```wac
-// fragment — the body of core's Ticket.all
-async Values<Ts> all<Ts>(Ts ...tickets) {
+// fragment — core's Ticket.all
+Ticket<Values<Ts>> all<Ts>(Ts ...tickets) {
   TicketBase[] parts = TicketBase[].defaulted(typeref(Ts).tupleMembers().len());
   static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) { parts[i] = tickets.[i]; }
-  for (i32 k = 0; k < parts.len(); k++) { await parts[k]; }
-
-  Values<Ts> out;
-  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) { out.[i] = tickets.[i].value(); }
+  Ticket<Values<Ts>> out;
+  out.drive = () => {
+    i32 s = stepEvery(parts);              // 1: all settled, 0: one moved, -1: none could
+    if (s < 0) { return false; }
+    if (s == 0) { return true; }
+    Values<Ts> v;
+    static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) { v.[i] = tickets.[i].value(); }
+    out.resolve(v);
+    return true;
+  };
   return out;
 }
 ```
 
-Awaiting them in order is enough: the tuple is finished when the last of them settles, whichever that is. Each is
-awaited as a `TicketBase`, which every ticket is whatever it answers, so the loop that waits needs no static index.
+The answer is driven rather than `async`: whatever drives it — a `wait`, or a scheduler asking `advance` — steps
+each ticket not yet settled, as a `TicketBase`, which every ticket is whatever it answers. So a `wait` on it refuses
+exactly when none of them can move (`§wac-wait-refuses-jj8u2ie`), rather than parking on one and missing another.
 
-`Ticket.any` answers with the first to settle. The others keep running — a ticket is work already started:
+`Ticket.any` answers with the first to settle, as the union of what its tickets answer — `core`'s `AnyValue<Ts>`, so
+two tickets of one type answer that type. The others keep running — a ticket is work already started:
 
 ```wac
 // fragment
@@ -588,8 +597,30 @@ async i32 add(Slot s, Ticket<i32> t) {
 }
 ```
 
-`[§wac-ticket-any-v8nr3r9]` `Ticket.any(t1, …)` settles with the first of its tickets to settle. The others are not
-cancelled.
+`[§wac-ticket-any-v8nr3r9]` `Ticket.any(t1, …)` settles with the first of its tickets to settle, and answers
+`union<A1, …>` of what they answer. The others are not cancelled. A ticket settled before the call counts as first,
+the earliest in argument order among those.
+
+When two tickets answer the same type, the union cannot say which one won. `Ticket.anyWithIndex` answers its index
+beside its value:
+
+```wac
+// expect: whichWon() = 2
+import { Ticket } from "core";
+
+export i32 whichWon() {
+  Ticket<i32> a;
+  Ticket<i32> b;
+  Ticket<i32> c;
+  Ticket<(i32, i32)> won = Ticket.anyWithIndex(a, b, c);
+  c.resolve(7);
+  b.resolve(7);
+  return won.wait()!.0;
+}
+```
+
+`[§wac-ticket-any-with-index-q2v7hcn]` `Ticket.anyWithIndex(t1, …)` is `Ticket.any` answering `(i32, union<A1, …>)`:
+the index of the first to settle, counting from 0, and what it answered.
 
 ## `void` as a type argument
 
