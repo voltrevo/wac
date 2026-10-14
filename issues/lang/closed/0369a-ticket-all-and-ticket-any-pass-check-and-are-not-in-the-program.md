@@ -1,6 +1,7 @@
 # 0369a — `Ticket.all` and `Ticket.any` pass `wac check` and are not in the program the emitter builds
 
 - **Status:** closed
+- **Fixed in:** a82df655c
 - **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-10-03
