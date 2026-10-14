@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0372a](open/0372a-an-await-inside-a-static-for-is-refused.md) | An `await` inside a `static_for` is refused by the async lowering | missing feature | compile error |
 | [0371a](open/0371a-a-missing-method-on-a-generic-named-by-its-template-passes-check.md) | A call to a method a generic does not declare passes `wac check` when the receiver is the generic itself or `this` inside it | diagnostic | check clean, build exit 1 |
 | [0370a](open/0370a-await-is-refused-in-a-match-subject-and-a-for-in-loop.md) | `await` in a `match` subject, inside a larger expression, or in a `for (x in xs)` body is refused, and the spec writes all three | missing feature | compile error |
 | [0369a](open/0369a-ticket-all-and-ticket-any-pass-check-and-are-not-in-the-program.md) | `Ticket.all` and `Ticket.any` pass `wac check` and are not in the program the emitter builds | missing feature | check clean, build exit 1 |
@@ -98,7 +99,7 @@ has been fixed and why.
 
 ## Closed
 
-285 issues, 227 closed.
+286 issues, 227 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
