@@ -26,3 +26,5 @@ Actual: `wac check` is clean; the build says *no static Ticket<i32>.any* — `co
 ## Notes
 
 From `vision/IDIOMS.md`'s `Ticket.all` idiom and `vision/TECHNICAL.md`'s *`Ticket.any`'s losers keep running*.
+
+Why check is clean: any missing method named through a generic's template passes the checker — 0371a.
