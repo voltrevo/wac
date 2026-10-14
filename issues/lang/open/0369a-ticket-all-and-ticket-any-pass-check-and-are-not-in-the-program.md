@@ -1,7 +1,7 @@
 # 0369a — `Ticket.all` and `Ticket.any` pass `wac check` and are not in the program the emitter builds
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-10-03
 - **Kind:** missing feature
@@ -57,3 +57,16 @@ Done: `typeref.tuple`, `tupleMembers`, `typeof`, `hypothetical`, `Values` (c41cb
 and async faults the body hit (136eb8e0f, b72d76f05). `all`'s body runs as a function in a program, awaiting
 `TicketBase`s rather than awaiting inside a `static_for` (0372a). Left: where `all` lives in `core`, and
 `Ticket.any`'s type — both the operator's call.
+
+## Decided, 2026-10-14
+
+- **Where `all` lives:** a method with no receiver on `Ticket<T>` that does not use `T`. The rule is a
+  loosening of inference: a type parameter that nothing uses needs no binding, so `Ticket.all(a, b)` works for
+  the reason `Map.create(hashString, stringEq)` does. Using `T` means the signature, `T` written in the body
+  (`Ticket<T>.x()` included), `typeref(T)`/`typeof`, or a `static` local. wac has no unqualified sibling calls,
+  so there is no hidden use.
+- **`any`** answers `union<A, B, …>` of the tickets' answer types, the value of the first to settle.
+  **`anyWithIndex`** answers `(i32, union<…>)`, the winner's index and value, since a union of two equal
+  types cannot say which won. Both need `typeref.union(ts)` beside `typeref.tuple(ts)`.
+
+Order: 0371a (done, 4eea044cd), the unused-`T` rule, `typeref.union`, then `all`, `any`, `anyWithIndex` in `core`.

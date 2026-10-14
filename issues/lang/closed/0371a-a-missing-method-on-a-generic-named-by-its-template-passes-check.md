@@ -1,7 +1,8 @@
 # 0371a — A call to a method a generic does not declare passes `wac check` when the receiver is the generic itself or `this` inside it
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** 4eea044cd
+- **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-10-14
 - **Kind:** diagnostic
@@ -34,3 +35,10 @@ A concrete receiver (`Vec<i32> v; v.nosuch()`) is refused already; it does not t
 
 `Ticket.any(a, b)` passes check this way (0369a). The comment's own example, `this.hash(k)` inside `Map<K, V>`,
 is the case to check for a false alarm, along with a repository-wide `wac check` run after the change.
+
+## Fixed
+
+The generic arm reports *no such static method* / *no such method* when the template declares no method
+of that name and has no field of that name (a field may hold a funcref). Cases a38 and a39 in
+`illtyped_test.wac`. The repository-wide sweep (`corpuscheck_test`) stays clean, so `this.hash(k)` in
+`Map<K, V>` is not a false alarm.
