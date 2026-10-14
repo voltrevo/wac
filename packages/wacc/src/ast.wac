@@ -52,6 +52,8 @@ export enum TyKind {
   TupleOf(Ty[] members),
   /** `type(e)` — the type a `typeref` value stands for, `e` evaluated statically (spec ch30). */
   TypeOf(Expr e),
+  /** `typeof(e)` — the static type of the expression `e`, which is checked and never evaluated (spec ch30). */
+  TypeofExpr(Expr e),
 }
 
 export Ty tyPrim(i32 tok, i32 line, i32 col) {

@@ -549,15 +549,18 @@ what each ticket answers ([30](../4-static/30-computed-types.md)):
 ```wac
 // fragment — the body of core's Ticket.all
 async Values<Ts> all<Ts>(Ts ...tickets) {
+  TicketBase[] parts = TicketBase[].defaulted(typeref(Ts).tupleMembers().len());
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) { parts[i] = tickets.[i]; }
+  for (i32 k = 0; k < parts.len(); k++) { await parts[k]; }
+
   Values<Ts> out;
-  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
-    out.[i] = await tickets.[i];
-  }
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) { out.[i] = tickets.[i].value(); }
   return out;
 }
 ```
 
-Awaiting them in order is enough: the tuple is finished when the last of them settles, whichever that is.
+Awaiting them in order is enough: the tuple is finished when the last of them settles, whichever that is. Each is
+awaited as a `TicketBase`, which every ticket is whatever it answers, so the loop that waits needs no static index.
 
 `Ticket.any` answers with the first to settle. The others keep running — a ticket is work already started:
 

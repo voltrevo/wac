@@ -17,6 +17,7 @@
 // and an `async` body restores the one it suspended under each time it resumes. Nothing else may
 // call them; the names begin `__wac` so no program does by accident.
 
+import { hypothetical } from "./hypothetical.wac";
 import { Result } from "./result.wac";
 import { Vec } from "./vec.wac";
 
@@ -109,6 +110,20 @@ export struct Ticket<T> : TicketBase {
     }
     return Result.Ok(this.answer!());
   }
+}
+
+/**
+ * The tuple of what each of a tuple of tickets answers: `Values<(Ticket<A>, Ticket<B>)>` is `(A, B)` —
+ * what `Ticket.all` returns (spec ch30, ch35). Read from each ticket's `value()` through `typeof`, so it
+ * follows the type and not how the type was spelled.
+ */
+export type Values<Ts> {
+  typeref[] ts = typeref(Ts).tupleMembers();
+  typeref[] out = typeref[].filled(ts.len(), typeref(void));
+  for (i32 i = 0; i < ts.len(); i++) {
+    out[i] = typeref(typeof(hypothetical<type(ts[i])>().value()));
+  }
+  return typeref.tuple(out);
 }
 
 /** First in, first out — what a program's pending continuations are kept in. */

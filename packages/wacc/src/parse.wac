@@ -1114,6 +1114,13 @@ export Ty parseType(P p) {
     Expr te = parseExpr(p);
     p.expect(kRparen());
     node = Ty(TyKind.TypeOf(te), line, col);
+  } else if (p.at1(kIdent()) && p.textAt(0) == "typeof" && p.kindAt(1) == kLparen()) {
+    // `typeof(e)` — the static type of `e`, which is checked and never run (spec ch30).
+    p.advance();
+    p.expect(kLparen());
+    Expr oe = parseExpr(p);
+    p.expect(kRparen());
+    node = Ty(TyKind.TypeofExpr(oe), line, col);
   } else if (p.at1(kNull())) {
     // `null` in a type position is `never?`, the literal's own type (spec ch10).
     node = tyNamed(p.advance(), Ty[](), line, col);
@@ -2231,6 +2238,20 @@ bool atCompoundOp(P p) {
  * reference resolves it by scanning past type suffixes and checking for a name, and
  * this does the same.
  */
+/** The offset just past the `)` matching the `(` at offset `from`, or -1 when it is not closed. */
+i32 afterParens(P p, i32 from) {
+  i32 depth = 0;
+  for (i32 j = from; p.kindAt(j) != kEof(); j++) {
+    i32 k = p.kindAt(j);
+    if (k == kLparen()) { depth++; }
+    if (k == kRparen()) {
+      depth--;
+      if (depth == 0) { return j + 1; }
+    }
+  }
+  return 0 - 1;
+}
+
 bool looksLikeVarDecl(P p) {
   i32 i = 0;
   // `const` starts a declaration, unless it is the `const this` of a method.
@@ -2244,6 +2265,12 @@ bool looksLikeVarDecl(P p) {
   // `null n = nothing();` — `null` is a type as well as a value (spec ch10).
   if (k != kIdent() && k != kVoid() && k != kNull()) { return false; }
   i32 j = i + 1;
+  // `type(e) x` and `typeof(e) x` (spec ch30): the parenthesised head is the whole of the type's name.
+  if (k == kIdent() && (p.textAt(i) == "type" || p.textAt(i) == "typeof") && p.kindAt(i + 1) == kLparen()) {
+    i32 close = afterParens(p, i + 1);
+    if (close < 0) { return false; }
+    j = close;
+  }
   // A type-argument list first: `Vec<i32> v = …` is a declaration, and without this the statement
   // parsed as the expression `Vec < i32` and failed at the `=`. This is where the classic C++
   // ambiguity would live, and wac gets off lightly — the scan wants a *balanced* `<…>` followed by a

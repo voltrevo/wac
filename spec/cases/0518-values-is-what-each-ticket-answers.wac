@@ -1,0 +1,12 @@
+// expect: f() = 5
+// spec: §wac-typeof-cxgjqjz §wac-hypothetical-irymyyf
+// why: core's `Values` maps each ticket in a tuple to what it answers, through `typeof`, whatever spelled the ticket
+// from: spec ch30, ch37
+import { Ticket, Values } from "core";
+
+type Later<A> = Ticket<A>;
+
+export i32 f() {
+  Values<(Ticket<string>, Later<i32>)> v = ("abc", 2);
+  return v.0.len() + v.1;
+}

@@ -35,13 +35,14 @@
 import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
          stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt, unfoldTypeName, intOf,
-         vNum } from "./consteval.wac";
+         vNum, declsOfFiles } from "./consteval.wac";
+import { P, parseProgram } from "./parse.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
-import { coreExports, isBuiltinSpec } from "./coretext.wac";
+import { coreExports, isBuiltinSpec, stdSource } from "./coretext.wac";
 import { endsWith, startsWith } from "./path.wac";
 import { flattenUnion, isUnionName, spellUnion, unionMembers } from "./unions.wac";
-import { isTupleName, tupleMembers, tupleName } from "./tuples.wac";
+import { genericArgs, genericBase, isTupleName, tupleMembers, tupleName } from "./tuples.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
@@ -1175,8 +1176,80 @@ void ensureStaticView(C c, Program? prog) {
                          prog!.decls);
 }
 
+/** What the evaluator's view of every file is built from (spec ch28): the graph, and which is the entry. */
+export struct ViewInputs {
+  string[] paths;
+  string[] sources;
+  Lexed?[] lexes;
+  Program?[] progs;
+  u8[] esrc;
+  Lexed elexed;
+  Program eprog;
+  i32 entry;
+}
+
+/**
+ * **The evaluator's view of every file** (spec ch28): a static calling an imported function is computed,
+ * a `static_if` reading an imported static is decided, and an imported `type` is resolved, only with all
+ * of them. It parses every file it reaches, `std` included, so it is built when something asks.
+ */
+export void buildStaticView(C c, ViewInputs v) {
+  string[] paths = v.paths;
+  string[] sources = v.sources;
+  // **And `std`, which a caller need not supply** — it is carried, and a static reading one of its
+  // statics (`CALL_SLOTS / 4`) has nothing to read without it. Only the evaluator's view grows.
+  bool hasStd = false;
+  for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == "std") { hasStd = true; } }
+  if (!hasStd) {
+    string[] p2 = string[].filled(paths.len() + 1, "std");
+    string[] s2 = string[].filled(paths.len() + 1, stdSource());
+    for (i32 i = 0; i < paths.len(); i++) { p2[i] = paths[i]; s2[i] = sources[i]; }
+    paths = p2;
+    sources = s2;
+  }
+  Lexed?[] alx = Lexed?[].filled(paths.len() < 1 ? 1 : paths.len(), null);
+  Program?[] apg = Program?[].filled(paths.len() < 1 ? 1 : paths.len(), null);
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (i < v.lexes.len() && (v.lexes[i] is not null) && i < v.progs.len() && (v.progs[i] is not null)) {
+      alx[i] = v.lexes[i];
+      apg[i] = v.progs[i];
+      continue;
+    }
+    if (i == v.entry) { alx[i] = v.elexed; apg[i] = v.eprog; continue; }
+    u8[] fb = sources[i].toBytes();
+    Lexed fl = lex(fb);
+    alx[i] = fl;
+    apg[i] = parseProgram(P.create(fb, fl));
+  }
+  c.sEv = Ev.create();
+  c.sCx = declsOfFiles(paths, sources, alx, apg, v.esrc, v.elexed);
+  c.sFile = v.entry;
+  c.typeDecls = 0 - 1;
+}
+
+/** Whether some file of the graph `v` declares `export type <name>` — asked of the text, before parsing it. */
+bool exportsTypeNamed(ViewInputs v, string name) {
+  string decl = "export type " + name;
+  for (i32 i = 0; i < v.sources.len(); i++) {
+    string rest = v.sources[i];
+    while (rest.indexOf(decl) >= 0) {
+      rest = rest.slice(rest.indexOf(decl) + decl.len(), rest.len());
+      if (rest.len() == 0 || !isIdentByte(rest.toBytes()[0] as i32)) { return true; }
+    }
+  }
+  return false;
+}
+
 /** Whether `name` is a `type` declaration this file can see (spec ch30). */
 bool namesTypeDeclC(C c, string name) {
+  // **An imported `type`, met before the view that knows it was built.** Upgrading is done once, and only
+  // for a name some file really declares so — this is asked of every named type.
+  if (c.viewLater is not null && exportsTypeNamed(c.viewLater!, name)
+      && (c.sCx is null || typeDeclAt(c.sCx!, name, c.sFile) < 0)) {
+    ViewInputs later = c.viewLater!;
+    c.viewLater = null;
+    buildStaticView(c, later);
+  }
   if (c.typeDecls == 0 || c.sCx is null) { return false; }
   Decls tcx = c.sCx!;
   if (c.typeDecls < 0) {
@@ -2377,62 +2450,6 @@ string tupleMemberType(string owner, string name) {
   return index < ms.len() ? ms[index] : typeNone();
 }
 
-string genericBase(string t) {
-  if (!endsWith(t, ">")) { return ""; }
-  u8[] a = t.toBytes();
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] == 60) {
-      u8[] out = u8[].filled(i, 0);
-      for (i32 j = 0; j < i; j++) { out[j] = a[j]; }
-      return string.fromBytes(out);
-    }
-  }
-  return "";
-}
-
-/**
- * The type arguments of an instantiation, split at the commas that are not inside another one.
- *
- * `Pair<Vec<i32>, f64>` has two arguments and four commas' worth of temptation to get this wrong, so
- * the split counts `<` and `>` depth rather than looking for a separator.
- */
-string[] genericArgs(string t) {
-  string base = genericBase(t);
-  if (base == "") { return string[](); }
-  u8[] a = t.toBytes();
-  i32 start = base.toBytes().len() + 1;
-  i32 end = a.len() - 1;
-  i32 n = 1;
-  i32 depth = 0;
-  // Parentheses count as depth too: a tuple or funcref argument has commas of its own.
-  for (i32 i = start; i < end; i++) {
-    if (a[i] == 60 || a[i] == 40) { depth = depth + 1; }
-    else if (a[i] == 62 || a[i] == 41) { depth = depth - 1; }
-    else if (a[i] == 44 && depth == 0) { n = n + 1; }
-  }
-  string[] out = string[].defaulted(n);
-  i32 at = 0;
-  i32 from = start;
-  depth = 0;
-  for (i32 i = start; i <= end; i++) {
-    bool cut = i == end;
-    if (i < end) {
-      if (a[i] == 60 || a[i] == 40) { depth = depth + 1; }
-      else if (a[i] == 62 || a[i] == 41) { depth = depth - 1; }
-      else if (a[i] == 44 && depth == 0) { cut = true; }
-    }
-    if (!cut) { continue; }
-    i32 lo = from;
-    while (lo < i && a[lo] == 32) { lo = lo + 1; }
-    u8[] piece = u8[].filled(i - lo, 0);
-    for (i32 j = 0; j < piece.len(); j++) { piece[j] = a[lo + j]; }
-    out[at] = string.fromBytes(piece);
-    at = at + 1;
-    from = i + 1;
-  }
-  return out;
-}
-
 /** The template an instantiation is of — `Box` for `Box<i32>` — or the type itself when it is not one. */
 string templateOf(string t) {
   string base = genericBase(t);
@@ -3591,6 +3608,12 @@ export struct C {
    * union's two or more alternatives, a tuple's member — which a recursive type's name needs (ch18).
    */
   i32 tyGuards;
+  /**
+   * What the evaluator's view of every file would be built from, when it was not built up front: an
+   * entry that writes no `static` or `type` of its own may still name a type another file declares,
+   * and finds out only when it meets one (`namesTypeDeclC`).
+   */
+  ViewInputs? viewLater;
 
   void noteVirtual(this, string key) {
     string[] more = string[].defaulted(this.virtuals.len() + 1);
@@ -3699,7 +3722,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0);
+             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0, null);
   }
 
   /**
@@ -4765,6 +4788,8 @@ export string typeOfTy(C c, Ty t) {
   match (t.kind) {
     Prim(tok): { return tokenText(c, tok); }
     TypeOf(e): { return computedTypeC(c, t); }
+    // `typeof(e)`: `e`'s static type, `e` never run (spec ch30 `§wac-typeof-cxgjqjz`).
+    TypeofExpr(e): { return typeOfExpr(c, e); }
     Named(tok, typeArgs): {
       // `const T` — a union's alternative entered through a `const` reference (spec ch18).
       if (typeArgs.len() == 1 && tokenKind(c, tok) == kConst()) {
@@ -8467,6 +8492,7 @@ string writtenTy(C c, Ty t) {
   match (t.kind) {
     Prim(tok): { return tokenText(c, tok); }
     TypeOf(e): { return computedTypeC(c, t); }
+    TypeofExpr(e): { return typeOfExpr(c, e); }
     Named(tok, typeArgs): {
       string base = c.canon(c.renamed(tokenText(c, tok)));
       if (typeArgs.len() == 0) { return base; }
@@ -12232,6 +12258,11 @@ void checkStmt(C c, Stmt s, Ty want) {
     }
     // The same question one position over: a declared type, and something that has to fit it.
     Var(type, nameTok, init, isConst): {
+      // `typeof(e) x` — `e` is checked though never run (spec ch30 `§wac-typeof-unevaluated-driz39r`).
+      match (type.kind) {
+        TypeofExpr(te): { checkExpr(c, te); }
+        default: { }
+      }
       // `auto x = e;` — the type is the initialiser's, and nothing else gives it one (spec ch33
       // `§wac-auto-local-59gczx4`): a number written as a literal has none to give.
       if (isAutoTy(c, type)) {

@@ -46,7 +46,7 @@ export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) 
                             "std/platform.wac", "std/README.md"
   ];
   string[] holds = [
-                            "export enum Read", "export enum Node", "which file a",
+                            "export enum Read", "export enum Node", "| `hash.wac` |",
                             "export struct Cli", "A capability, or the type of one"
   ];
   for (i32 i = 0; i < files.len(); i++) {

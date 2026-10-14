@@ -154,16 +154,17 @@ tickets answers, which `Ticket.all` returns ([35](../6-concurrency/35-tickets-an
 
 ```wac
 // fragment — from core
-type Values<Ts> {
-  Vec<typeref> out;
-  for (typeref t in typeref(Ts).tupleMembers()) {
-    out.push(typeref(typeof(hypothetical<type(t)>().value())));
+export type Values<Ts> {
+  typeref[] ts = typeref(Ts).tupleMembers();
+  typeref[] out = typeref[].filled(ts.len(), typeref(void));
+  for (i32 i = 0; i < ts.len(); i++) {
+    out[i] = typeref(typeof(hypothetical<type(ts[i])>().value()));
   }
-  return typeref.tuple(out.toArray());
+  return typeref.tuple(out);
 }
 ```
 
-A type body is all static evaluation, so an ordinary `for` over the members is enough, and `type(t)` reads a value
+A type body is all static evaluation, so an ordinary loop over the members is enough, and `type(ts[i])` reads a value
 that is static there.
 
 ## Computed type declaration bodies

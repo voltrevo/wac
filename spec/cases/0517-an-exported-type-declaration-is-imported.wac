@@ -1,0 +1,14 @@
+// expect: test() = 3
+// spec: §wac-module-declarations-only-6ac43nm
+// why: a `type` declaration is exported and imported like any other declaration, alias or computed
+// from: spec ch02, ch30
+// ---- lib.wac ----
+export type Pair = (i32, i32);
+export type Maybe<T> = type(typeref(T).pushNull());
+// ---- main.wac ----
+import { Pair, Maybe } from "./lib.wac";
+export i32 test() {
+  Pair p = (1, 2);
+  Maybe<i32> m = null;
+  return p.0 + p.1 + (m ?? 0);
+}

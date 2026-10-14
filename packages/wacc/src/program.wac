@@ -217,6 +217,7 @@ string[] topLevelParts(string s) {
 string spell(u8[] src, Lexed lexed, Ty t) {
   match (t.kind) {
     TypeOf(e): { return "type(…)"; }
+    TypeofExpr(e): { return "typeof(…)"; }
     Prim(tok): { return progText(src, lexed, tok); }
     Named(tok, args): {
       string s = progText(src, lexed, tok);

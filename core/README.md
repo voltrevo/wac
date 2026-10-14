@@ -72,6 +72,7 @@ import { hashString, stringEq } from "core";
 | `Result<T, E = union>` | a value or an error; `Result<T>` gathers its error type from what is returned |
 | `number.wac` | `NumberLiteral` and the `fromNumber` symbol a type implements to be a literal's target |
 | `hash.wac` | ready-made hash and equality for `string`, `i32` and `i64` |
+| `hypothetical.wac` | `hypothetical<T>()`, an expression of any type for `typeof` to read, which traps if run |
 
 This package exists because wac gained generics ([wac issue
 0034](../issues/lang/closed/0034-generics.md)). Before that a container could only be

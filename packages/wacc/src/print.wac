@@ -245,6 +245,11 @@ void printTy(Pr w, Ty t) {
       w.sp(); printExpr(w, e);
       w.close();
     }
+    TypeofExpr(e): {
+      w.open("typeof", t.line, t.col);
+      w.sp(); printExpr(w, e);
+      w.close();
+    }
     Prim(tok): {
       w.open("prim", t.line, t.col);
       w.sp();

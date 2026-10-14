@@ -1,0 +1,12 @@
+// expect: f() = 5
+// spec: §wac-typeof-cxgjqjz §wac-typeof-unevaluated-driz39r
+// why: `typeof(e)` is `e`'s static type, and `e` is checked but never run
+// from: spec ch30
+struct Count { i32 n = 0; }
+i32 bump(Count c) { c.n++; return c.n; }
+
+export i32 f() {
+  Count c;
+  typeof(bump(c)) n = 5;
+  return c.n + n;
+}

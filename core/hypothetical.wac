@@ -1,0 +1,8 @@
+// `hypothetical<T>()` — an expression of any type, for `typeof` to read (spec ch30, ch37).
+
+/**
+ * A `T` that is never produced: it traps when called. It exists to be written inside `typeof`, which
+ * checks its operand and never runs it, so a computed type can ask what an expression of type `T` would
+ * give without having one — `typeof(hypothetical<Ticket<A>>().value())` is `A`.
+ */
+export T hypothetical<T>() { trap; }

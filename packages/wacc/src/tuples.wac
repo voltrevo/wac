@@ -72,3 +72,65 @@ export string tupleName(string[] members) {
 
 /** Whether the `>` at `i` is the end of a funcref's `->`, which closes nothing. */
 bool isArrow(u8[] a, i32 i) { return i > 0 && a[i - 1] == 45; }
+
+// ── Instantiations, by name ──────────────────────────────────────────────────
+//
+// Beside the tuples because both are a type's spelling read apart, and the checker and the static
+// evaluator both need it.
+
+/** The template of an instantiation, `Box` for `Box<i32>`, or "" when `t` is not one. */
+export string genericBase(string t) {
+  if (!endsWith(t, ">")) { return ""; }
+  u8[] a = t.toBytes();
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] == 60) {
+      u8[] out = u8[].filled(i, 0);
+      for (i32 j = 0; j < i; j++) { out[j] = a[j]; }
+      return string.fromBytes(out);
+    }
+  }
+  return "";
+}
+
+/**
+ * The type arguments of an instantiation, split at the commas that are not inside another one.
+ *
+ * `Pair<Vec<i32>, f64>` has two arguments and four commas' worth of temptation to get this wrong, so
+ * the split counts `<` and `>` depth rather than looking for a separator.
+ */
+export string[] genericArgs(string t) {
+  string base = genericBase(t);
+  if (base == "") { return string[](); }
+  u8[] a = t.toBytes();
+  i32 start = base.toBytes().len() + 1;
+  i32 end = a.len() - 1;
+  i32 n = 1;
+  i32 depth = 0;
+  // Parentheses count as depth too: a tuple or funcref argument has commas of its own.
+  for (i32 i = start; i < end; i++) {
+    if (a[i] == 60 || a[i] == 40) { depth = depth + 1; }
+    else if (a[i] == 62 || a[i] == 41) { depth = depth - 1; }
+    else if (a[i] == 44 && depth == 0) { n = n + 1; }
+  }
+  string[] out = string[].defaulted(n);
+  i32 at = 0;
+  i32 from = start;
+  depth = 0;
+  for (i32 i = start; i <= end; i++) {
+    bool cut = i == end;
+    if (i < end) {
+      if (a[i] == 60 || a[i] == 40) { depth = depth + 1; }
+      else if (a[i] == 62 || a[i] == 41) { depth = depth - 1; }
+      else if (a[i] == 44 && depth == 0) { cut = true; }
+    }
+    if (!cut) { continue; }
+    i32 lo = from;
+    while (lo < i && a[lo] == 32) { lo = lo + 1; }
+    u8[] piece = u8[].filled(i - lo, 0);
+    for (i32 j = 0; j < piece.len(); j++) { piece[j] = a[lo + j]; }
+    out[at] = string.fromBytes(piece);
+    at = at + 1;
+    from = i + 1;
+  }
+  return out;
+}

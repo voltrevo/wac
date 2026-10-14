@@ -704,6 +704,7 @@ bool matchTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] 
     Prim(tok): { return true; }
     // A computed type binds nothing: what it is follows from the parameters, not the other way.
     TypeOf(e): { return true; }
+    TypeofExpr(e): { return true; }
     TupleOf(members): {
       string[] ams = tupleMembers(actual);
       if (!isTupleName(actual) || ams.len() != members.len()) { return false; }
@@ -7702,6 +7703,8 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       return tokenTextOf(src, lexed, tok);
     }
     TypeOf(e): { return computedTypeE(env, src, lexed, t); }
+    // `typeof(e)`: what `e` would be, which it never is — nothing is emitted for it (spec ch30).
+    TypeofExpr(e): { return typeOfE(src, lexed, env, e); }
     Named(tok, typeArgs): {
       string raw = tokenTextOf(src, lexed, tok);
       // `const T` — a union's alternative entered through a `const` reference (spec ch18).

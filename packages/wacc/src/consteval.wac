@@ -26,7 +26,7 @@ import { Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { stringLiteralBytes } from "./strlit.wac";
 import { endsWith, resolveFrom } from "./path.wac";
-import { tupleMembers, tupleName } from "./tuples.wac";
+import { genericArgs, genericBase, isTupleName, tupleMembers, tupleName } from "./tuples.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde,
@@ -2438,6 +2438,9 @@ export Value typerefMethod(Ev ev, string t, string m) {
     return typeValue(ev, t.slice(0, t.len() - 1));
   }
   if (m == "tupleMembers") {
+    // Of a tuple only. A name with nothing bound to it reaches here as itself — `Ts` while a generic's
+    // signature is read — and answering it no members made every computation over it a `()`.
+    if (!isTupleName(t)) { ev.unsupported("`tupleMembers()` of " + t + ", which is not a tuple"); return noneValue(); }
     string[] ms = tupleMembers(t);
     i32 id = ev.alloc("typeref[]", true, ms.len());
     if (id < 0) { return noneValue(); }
@@ -2527,11 +2530,149 @@ export string evTyName(Ev ev, Decls cx, i32 fi, Ty t) {
       if (v.kind != vType()) { ev.unsupported("`type(…)` of something that is not a `typeref`"); return ""; }
       return typeOfTyperef(ev, v);
     }
+    TypeofExpr(e): { return evTypeOfExpr(ev, cx, fi, e); }
     default: {
       ev.unsupported("this kind of type inside a computed type");
       return "";
     }
   }
+}
+
+/**
+ * The static type of `e` where static evaluation meets `typeof(e)` (spec ch30): the type, spelled as
+ * this evaluator spells types, and `e` not run.
+ *
+ * **The shapes a type computation asks about, and no more**: a static local, a call to a function —
+ * `hypothetical<T>()` is the one that matters, with its type arguments written — and a method or field
+ * of a value whose type is known. Each declared type is read through `evTyName` with the owner's and
+ * the function's letters bound, which is the substitution a generic's instance gets everywhere else.
+ * Anything else is unsupported, saying what it was, rather than guessed.
+ */
+string evTypeOfExpr(Ev ev, Decls cx, i32 fi, Expr e) {
+  u8[] src = cx.srcOf(fi);
+  Lexed lx = cx.lexOf(fi);
+  match (e.kind) {
+    Ident(tok): {
+      i32 li = ev.localAt(tokText(src, lx, tok), ev.frameBase);
+      if (li >= 0) { return ev.localTypes[li]; }
+    }
+    Construct(ctype, args, named): {
+      match (ctype.kind) {
+        Named(ntok, typeArgs): {
+          string spelled = tokText(src, lx, ntok);
+          i32 d = funcDeclAt(cx, spelled, fi);
+          if (d < 0) { return evTyName(ev, cx, fi, ctype); }
+          i32 dfi = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+          match (cx.decls[d].kind) {
+            Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+              if (typeParams.len() != typeArgs.len()) {
+                ev.unsupported("`typeof` of a call to `" + spelled + "` without its type arguments written");
+                return "";
+              }
+              if (isAsync) {
+                ev.unsupported("`typeof` of a call to `" + spelled + "`, which is async");
+                return "";
+              }
+              return typeInWorld(ev, cx, fi, dfi, typeParams, typeArgs, "", returnType);
+            }
+            default: { }
+          }
+        }
+        default: { }
+      }
+    }
+    Call(callee, args, callTargs): {
+      match (callee.kind) {
+        Member(obj, mtok): {
+          string ot = evTypeOfExpr(ev, cx, fi, obj);
+          if (!evFinished(ev.status) || ot == "") { return ""; }
+          string owner = genericBase(ot) == "" ? ot : genericBase(ot);
+          i32 d = typeDeclIndex(cx, owner);
+          i32 dfi = d >= 0 && d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+          string mname = tokText(src, lx, mtok);
+          if (d >= 0) {
+            match (cx.decls[d].kind) {
+              StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+                for (i32 m = 0; m < methods.len(); m++) {
+                  if (tokText(cx.srcOf(dfi), cx.lexOf(dfi), methods[m].nameTok) != mname) { continue; }
+                  if (methods[m].typeParams.len() != callTargs.len()) {
+                    ev.unsupported("`typeof` of `" + mname + "` without its type arguments written");
+                    return "";
+                  }
+                  return typeInWorld(ev, cx, fi, dfi, methods[m].typeParams, callTargs,
+                                     ownerWorld(cx, dfi, typeParams, ot), methods[m].returnType);
+                }
+              }
+              default: { }
+            }
+          }
+          ev.unsupported("`typeof` of the method `" + ot + "." + mname + "`");
+          return "";
+        }
+        default: { }
+      }
+    }
+    Member(obj, ftok): {
+      string ot = evTypeOfExpr(ev, cx, fi, obj);
+      if (!evFinished(ev.status) || ot == "") { return ""; }
+      string owner = genericBase(ot) == "" ? ot : genericBase(ot);
+      i32 d = typeDeclIndex(cx, owner);
+      i32 dfi = d >= 0 && d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+      string fname = tokText(src, lx, ftok);
+      if (d >= 0) {
+        match (cx.decls[d].kind) {
+          StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+            for (i32 f = 0; f < fields.len(); f++) {
+              if (tokText(cx.srcOf(dfi), cx.lexOf(dfi), fields[f].nameTok) != fname) { continue; }
+              return typeInWorld(ev, cx, fi, dfi, i32[](), Ty[](), ownerWorld(cx, dfi, typeParams, ot), fields[f].type);
+            }
+          }
+          default: { }
+        }
+      }
+      ev.unsupported("`typeof` of the field `" + ot + "." + fname + "`");
+      return "";
+    }
+    default: { }
+  }
+  ev.unsupported("this expression inside `typeof`, in static evaluation");
+  return "";
+}
+
+/** `T=i32` per line: an owner's letters bound to the arguments of the instance `ot`. */
+string ownerWorld(Decls cx, i32 dfi, i32[] typeParams, string ot) {
+  string[] args = genericArgs(ot);
+  string out = "";
+  for (i32 i = 0; i < typeParams.len() && i < args.len(); i++) {
+    out = out + tokText(cx.srcOf(dfi), cx.lexOf(dfi), typeParams[i]) + "=" + args[i] + "\n";
+  }
+  return out;
+}
+
+/**
+ * Declared type `t`, from file `dfi`, with `world`'s letters (`T=i32` per line) and `letters` bound to
+ * the written `typeArgs` (read in file `fi`, where they were written).
+ */
+string typeInWorld(Ev ev, Decls cx, i32 fi, i32 dfi, i32[] letters, Ty[] typeArgs, string world, Ty t) {
+  string[] bound = string[].filled(typeArgs.len(), "");
+  for (i32 i = 0; i < typeArgs.len(); i++) {
+    bound[i] = evTyName(ev, cx, fi, typeArgs[i]);
+    if (!evFinished(ev.status)) { return ""; }
+  }
+  i32 mark = ev.tpCount;
+  string rest = world;
+  while (rest.indexOf("\n") >= 0) {
+    string line = rest.slice(0, rest.indexOf("\n"));
+    rest = rest.slice(rest.indexOf("\n") + 1, rest.len());
+    i32 eq = line.indexOf("=");
+    if (eq > 0) { ev.bindType(line.slice(0, eq), line.slice(eq + 1, line.len())); }
+  }
+  for (i32 i = 0; i < letters.len(); i++) {
+    ev.bindType(tokText(cx.srcOf(dfi), cx.lexOf(dfi), letters[i]), bound[i]);
+  }
+  string out = evTyName(ev, cx, dfi, t);
+  ev.tpCount = mark;
+  return out;
 }
 
 /** Whether written type `t` is `null`. */

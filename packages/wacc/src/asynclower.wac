@@ -257,6 +257,7 @@ Stmt sSet(Ctx c, i32 nameTok, Expr v) {
 Ty cloneTy(Ty t) {
   match (t.kind) {
     TypeOf(e): { return Ty(TyKind.TypeOf(e), t.line, t.col); }
+    TypeofExpr(e): { return Ty(TyKind.TypeofExpr(e), t.line, t.col); }
     Prim(tok): { return Ty(TyKind.Prim(tok), t.line, t.col); }
     Named(tok, typeArgs): {
       Ty[] args = Ty[].filled(typeArgs.len(), t);
@@ -1419,6 +1420,7 @@ string sigLine(string owner, string name, Ty ret, bool isAsync, u8[] src, Lexed 
 string spellTyL(u8[] src, Lexed lx, Ty t) {
   match (t.kind) {
     TypeOf(e): { return "type("; }
+    TypeofExpr(e): { return "typeof("; }
     Prim(tok): { return synthTextAt(src, lx, tok); }
     Named(tok, args): {
       string s = synthTextAt(src, lx, tok);
@@ -1540,6 +1542,7 @@ Ty? relinkTy(Rz z, u8[] b, Lexed lx, Ty t) {
       return Ty(TyKind.Funcref(r2!, out), z.c.line, z.c.col);
     }
     TypeOf(e): { return null; }
+    TypeofExpr(e): { return null; }
   }
 }
 
