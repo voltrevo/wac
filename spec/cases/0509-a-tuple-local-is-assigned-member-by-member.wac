@@ -1,0 +1,12 @@
+// expect: f() = 4
+// spec: §wac-tuple-member-assign-once-cwgrkf2
+// why: a tuple local declared without an initialiser has its members tracked separately until its first use
+// from: spec ch14, ch08 §wac-assign-parts-usxj6ha
+(i32, string) mk() {
+  (i32, string) out;
+  out.0 = 3;
+  out.1 = "x";
+  return out;
+}
+
+export i32 f() { return mk().0 + mk().1.len(); }

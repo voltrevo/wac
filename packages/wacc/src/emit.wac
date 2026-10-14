@@ -8133,12 +8133,39 @@ void emitDefault(B fb, Env env, string t) {
     return;
   }
   if (isFuncrefType(t)) { fb.byte(208); fb.i32leb(env.pairType(t)); return; }
+  if (isTupleName(t)) { emitTupleDefault(fb, env, t, null); return; }
   i32 v = valType(t);
   if (v == 126) { fb.byte(66); fb.i64leb(0); return; }
   if (v == 125) { fb.byte(67); fb.f32bits(0.0); return; }
   if (v == 124) { fb.byte(68); fb.f64bits(0.0); return; }
   fb.byte(65);
   fb.i32leb(0);
+}
+
+/**
+ * A tuple whose members hold their types' defaults — the storage `(A, B) t;` is assigned into member by
+ * member (spec ch14 `§wac-tuple-member-assign-once-cwgrkf2`). A member with no default is refused if read
+ * before it is assigned, so its value here is never seen.
+ *
+ * **A nullable reference member defaults to null**, and this spelling cannot say which members are
+ * nullable: the emitter drops a reference's own `?`. `written` can, where the tuple is spelled out; a
+ * tuple reached through a type parameter defaults such a member to its type's default instead.
+ */
+void emitTupleDefault(B fb, Env env, string t, Ty? written) {
+  string[] ms = tupleMembers(t);
+  Ty[] wm = Ty[]();
+  if (written is not null) {
+    match (written!.kind) {
+      TupleOf(members): { wm = members; }
+      default: { }
+    }
+  }
+  for (i32 i = 0; i < ms.len(); i++) {
+    bool nullable = isBoxedName(ms[i]) || (wm.len() == ms.len() && tyIsNullable(wm[i]));
+    if (nullable) { emitNull(fb, env, isBoxedName(ms[i]) ? ms[i] : refCore(env, ms[i])); } else { emitDefault(fb, env, ms[i]); }
+  }
+  fb.byte(251); fb.u32leb(0);   // struct.new
+  fb.u32leb(env.tupleType(t));
 }
 
 /** Records field `at`'s initialiser, if it has one, with the text it came from. */
@@ -9393,7 +9420,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
         // reaching it unassigned sees; for one without — a number, a `bool`, a struct with a field that
         // has none — the checker refuses every such read, so the value is storage and nothing more,
         // and for a struct it is what field-by-field assignment writes into.
-        emitDefault(fb, env, vt);
+        if (isTupleName(vt)) { emitTupleDefault(fb, env, vt, type); } else { emitDefault(fb, env, vt); }
       }
       // **A captured local is born in a cell.** The walk recorded which declarations are captured, by
       // position — so the value just emitted goes straight into a one-field struct and the slot holds

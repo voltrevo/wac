@@ -1,0 +1,9 @@
+// expect: f() = 6
+// spec: §wac-tuple-static-index-axfrq5b
+// why: `t.[e]` selects a member to write as well as to read
+// from: spec ch14
+export i32 f() {
+  (i32, string) t = (3, "x");
+  t.[0] = 5;
+  return t.[0] + t.[1].len();
+}

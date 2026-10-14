@@ -1,0 +1,16 @@
+// expect: f() = 4
+// spec: §wac-tuple-member-assign-once-cwgrkf2
+// why: an unrolled loop assigns each member of a tuple of the instance's type once
+// from: spec ch14, ch31 §wac-static-for-8sn4iuq
+Ts copy<Ts>(Ts ts) {
+  Ts out;
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
+    out.[i] = ts.[i];
+  }
+  return out;
+}
+
+export i32 f() {
+  (i32, string) r = copy((3 as i32, "x"));
+  return r.0 + r.1.len();
+}

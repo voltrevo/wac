@@ -2190,6 +2190,12 @@ export Lvalue parseLvalue(P p) {
       p.advance();
       i32 fieldTok = p.symbolMemberName();       // `p.[metadata] = 7;` (ch21)
       if (fieldTok < 0 && p.at1(kInt())) { fieldTok = p.advance(); }   // `t.0 = 5;` (ch14)
+      // `t.[0] = 5;`, as `parsePostfix` reads it (ch14).
+      if (fieldTok < 0 && p.at1(kLbrack()) && p.kindAt(1) == kInt() && p.kindAt(2) == kRbrack()) {
+        p.advance();
+        fieldTok = p.advance();
+        p.advance();
+      }
       if (fieldTok < 0) { fieldTok = declName(p, perrFieldName(), "field name"); }
       lv = Lvalue(LvalueKind.LField(lv, fieldTok), pLine, pCol);
     } else if (p.at1(kLbrack())) {

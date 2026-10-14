@@ -1,0 +1,13 @@
+// expect: refused
+// spec: §wac-tuple-member-assign-once-cwgrkf2
+// why: an unrolled loop that assigns only some members leaves the rest unassigned at the tuple's first use
+// from: spec ch14, ch08 §wac-assign-parts-usxj6ha
+(i32, i32) half((i32, i32) src) {
+  (i32, i32) out;
+  static_for (i32 i = 0; i < 1; i++) {
+    out.[i] = src.[i];
+  }
+  return out;
+}
+
+export i32 f() { return half((1, 2)).0; }

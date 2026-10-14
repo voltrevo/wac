@@ -1036,6 +1036,16 @@ i32 liveBranch(C c, Expr cond) {
  * The member `t.[name]` selects: `name`'s static value, or -1 where it has none (spec ch14) —
  * a runtime local, or a file with no static evaluator.
  */
+/**
+ * The member a written selector names: `t.[i]` names the member at `i`'s static value, spelled as
+ * `t.0` would spell it, and every other selector names itself (spec ch14).
+ */
+string memberKeyC(C c, i32 nameTok) {
+  if (nameTok < 0 || c.toks[nameTok * tokenStride()] != kSymName()) { return tokenText(c, nameTok); }
+  i32 si = staticTupleIndexC(c, nameTok);
+  return si < 0 ? tokenText(c, nameTok) : countText(si);
+}
+
 i32 staticTupleIndexC(C c, i32 nameTok) {
   if ((c.sEv is null) || (c.sCx is null)) { return 0 - 1; }
   Ev ev = c.sEv!;
@@ -1387,11 +1397,29 @@ DA daStmt(C c, Stmt s, DA st, DAExit loop) {
     StaticTrap(message): { st.dead = true; return st; }
     // A static is assigned before anything in its block runs.
     StaticLocal(type, nameTok, init): { st.remove(tokenText(c, nameTok)); return st; }
-    // As a `for`: the body may run no times.
     StaticFor(init, cond, update, body): {
       if (init is not null) { st = daStmt(c, init!, st, loop); }
       DAExit hereSF = DAExit(DA.fresh());
       hereSF.breaks.dead = true;
+      // **Turn by turn where the turns are known**: the unrolled copies run straight through, one after
+      // another, with the variable static in each — so `out.[i] = …` assigns `out.0`, then `out.1`
+      // (spec ch14 `§wac-tuple-member-assign-once-cwgrkf2`). Nothing can leave a `static_for` early.
+      if ((c.sEv is not null) && (c.sCx is not null)) {
+        Ev ev = c.sEv!;
+        i64[] vals = staticForValues(ev, c.sCx!, c.sFile, init, cond, update, staticForCap());
+        if (vals.len() > 0 && vals.len() < staticForCap()) {
+          string nm = staticForName(c.sCx!, c.sFile, init);
+          string ty = staticForType(c.sCx!, c.sFile, init);
+          for (i32 k = 0; k < vals.len() && !st.dead; k++) {
+            i32 mark = ev.localCount;
+            if (nm != "") { ev.declare(nm, ty, numValue(ty, vals[k])); }
+            st = daBody(c, body, st, hereSF);
+            ev.localCount = mark;
+          }
+          return st;
+        }
+      }
+      // Otherwise as a `for`: the body may run no times.
       daBody(c, body, st.copy(), hereSF);
       return daJoin(st, hereSF.breaks);
     }
@@ -1540,7 +1568,7 @@ void daAssignTarget(C c, Lvalue target, bool alsoReads, DA st) {
       match (base.kind) {
         LIdent(btok): {
           string bname = tokenText(c, btok);
-          string fname = tokenText(c, nameTok);
+          string fname = memberKeyC(c, nameTok);
           bool constF = c.isConstField(c.typeOfName(bname), fname);
           if (st.has(bname) && !alsoReads) {
             if (constF && st.hasPart(bname + "." + fname)) {
@@ -1635,6 +1663,22 @@ void daRead(C c, string name, i32 line, i32 col, DA st) {
         if (missing == "") { missing = c.fieldNames[i]; }
       }
       at = c.parentOf(at);
+    }
+    if (missing == "") { st.remove(name); return; }
+    c.reportWith(errReadUnassigned(), line, col,
+                 "'" + name + "." + missing + "' may be unassigned when '" + name + "' is first used");
+    st.remove(name);
+    return;
+  }
+  // A tuple's members are its parts in the same way, named by position (`§wac-assign-parts-usxj6ha`).
+  if (isTupleName(t)) {
+    string[] ms = tupleMembers(t);
+    string missing = "";
+    for (i32 i = 0; i < ms.len() && missing == ""; i++) {
+      string k = "\{i}";
+      if (st.hasPart(name + "." + k)) { continue; }
+      if (hasDefaultValue(c, ms[i], 0)) { continue; }
+      missing = k;
     }
     if (missing == "") { st.remove(name); return; }
     c.reportWith(errReadUnassigned(), line, col,
@@ -5578,7 +5622,7 @@ export string typeOfLvalue(C c, Lvalue lv) {
       string owner = typeOfLvalue(c, base);
       if (owner == typeNone()) { return typeNone(); }
       // `t.0` — a tuple's member, which may be `const T` (spec ch14, ch17).
-      string fname = tokenText(c, nameTok);
+      string fname = memberKeyC(c, nameTok);
       if (isTupleName(owner) && fname.len() > 0 && fname.toBytes()[0] >= 48 && fname.toBytes()[0] <= 57) {
         string[] ms = tupleMembers(owner);
         i32 k = 0;
@@ -7501,6 +7545,13 @@ void checkExpr(C c, Expr e) {
         }
         if (tupleMemberType(tupleOwner, tokenText(c, nameTok)) != "") { return; }
       }
+      // **A static integer selects a member of a tuple nobody can name yet** — `ts.[i]` in a generic
+      // body, where `Ts` is opaque until an instance binds it. Only a tuple is selected by an integer,
+      // so it is no symbol, and the instance check decides it (spec ch14, ch31).
+      if (tupleOwner == typeNone() && c.toks[nameTok * tokenStride()] == kSymName()
+          && staticTupleIndexC(c, nameTok) >= 0) {
+        return;
+      }
       if (!checkSymbolName(c, nameTok)) { return; }
       checkMember(c, e, obj, tokenText(c, nameTok));
     }
@@ -8964,7 +9015,7 @@ void checkWrite(C c, Lvalue lv) {
         }
         // A tuple member by position; past the end there is nothing to write. Whether the path is
         // const is asked below, as for a field.
-        string tupleMember = isTupleName(ownerT) ? tupleMemberType(ownerT, tokenText(c, nameTok)) : "";
+        string tupleMember = isTupleName(ownerT) ? tupleMemberType(ownerT, memberKeyC(c, nameTok)) : "";
         if (isTupleName(ownerT) && (tupleMember == typeNone() || tupleMember == "")) {
           c.report(errNoSuchField(), lv.line, lv.col);
           return;

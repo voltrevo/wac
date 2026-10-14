@@ -1,0 +1,16 @@
+// expect: f() = 4
+// spec: §wac-tuple-static-index-axfrq5b
+// why: `ts.[i]` in a generic body is judged against the instance's tuple, not refused as an unknown symbol
+// from: spec ch14, ch31 §wac-static-for-8sn4iuq
+Ts swapless<Ts>(Ts ts) {
+  Ts out = ts;
+  static_for (i32 i = 0; i < 2; i++) {
+    out.[i] = ts.[i];
+  }
+  return out;
+}
+
+export i32 f() {
+  (i32, string) r = swapless((3 as i32, "x"));
+  return r.0 + r.1.len();
+}

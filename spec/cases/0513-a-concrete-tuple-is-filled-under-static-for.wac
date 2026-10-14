@@ -1,0 +1,16 @@
+// expect: f() = 4
+// spec: §wac-tuple-member-assign-once-cwgrkf2
+// why: each unrolled turn assigns the member its static index names, so every member is assigned by the end
+// from: spec ch14, ch08 §wac-assign-parts-usxj6ha, ch31 §wac-static-for-8sn4iuq
+(i32, string) copied((i32, string) src) {
+  (i32, string) out;
+  static_for (i32 i = 0; i < 2; i++) {
+    out.[i] = src.[i];
+  }
+  return out;
+}
+
+export i32 f() {
+  (i32, string) r = copied((3, "x"));
+  return r.0 + r.1.len();
+}
