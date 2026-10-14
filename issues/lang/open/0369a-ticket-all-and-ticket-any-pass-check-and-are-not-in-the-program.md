@@ -50,3 +50,10 @@ What that needs, in order:
 
 `Ticket.any`'s type is open: ch35 says it settles with the first; `vision/vibes/QUESTIONS.md` has it answer
 `(i32, union<A, B>)`, the winner's index and value.
+
+## Progress, 2026-10-14
+
+Done: `typeref.tuple`, `tupleMembers`, `typeof`, `hypothetical`, `Values` (c41cbed20, 6d0bb8e79), and the tuple
+and async faults the body hit (136eb8e0f, b72d76f05). `all`'s body runs as a function in a program, awaiting
+`TicketBase`s rather than awaiting inside a `static_for` (0372a). Left: where `all` lives in `core`, and
+`Ticket.any`'s type — both the operator's call.
