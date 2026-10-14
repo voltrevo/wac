@@ -15,6 +15,7 @@
 import { binaryPath } from "../../packages/wactest/src/host.wac";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
+import { coreFileNames } from "../../packages/wacc/src/coretext.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 
 export string test_the_embeddings_are_in_step_with_the_core_tree(Core core, Cli cli) {
@@ -69,5 +70,29 @@ export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) 
     t.isTrue(contains(text, "export enum Read"), "and it carries Read");
     t.isTrue(contains(text, "export enum Node"), "and Node as well");
   }
+  return t.report();
+}
+
+/**
+ * `core`'s files pass `wac check`.
+ *
+ * Nothing else asks. A program that imports `core` is checked and `core` is not, so `core/ticket.wac`
+ * read four nullable values without `!` — which the tour says narrowing does not excuse — and built
+ * fine, because the emitter does not ask either. `std/platform.wac` is checked through the import it
+ * makes of `"core"`, which is the same text.
+ */
+export string test_core_passes_the_checker(Core core, Cli cli) {
+  T t = T.create();
+  string[] files = coreFileNames();
+  string[] args = string[].filled(files.len() + 2, "check");
+  for (i32 i = 0; i < files.len(); i++) { args[i + 1] = files[i]; }
+  args[files.len() + 1] = "std/platform.wac";
+  Exec r = cli.exec(binaryPath(cli), args, u8[]()).wait();
+  t.isTrue(r.ran(), "wac check ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.eqI32(r.status, 0, "`wac check` on core:\n" + said);
+  // So a check that read nothing is not a pass: it names how many files it took.
+  t.isTrue(contains(said, "no diagnostics"), "and it says so — got \"" + said + "\"");
   return t.report();
 }

@@ -11082,7 +11082,19 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // seven of the nine diagnostics this checker still missed on the repository's own code, all of
   // them a `Pending<…>` from the platform. Types stay unmodelled; arity does not need them.
   if (c.isGeneric(recv)) {
-    i32 gm = c.methodAt(genericBase(recv) == "" ? recv : genericBase(recv), name);
+    string gbase = genericBase(recv) == "" ? recv : genericBase(recv);
+    i32 gm = c.methodAt(gbase, name);
+    // **A method the template does not declare is not there.** This returned in silence when the
+    // lookup came back empty, on the grounds that a generic's methods were not recorded — true when
+    // it was written and not since: they are recorded under the template, which is where the lookup
+    // above finds them. So `S.nosuch(1)` and `this.nosuch()` checked clean and the build failed in
+    // the emitter. A field of that name may hold a funcref, which is not a missing method.
+    // `issues/lang/0371a`.
+    if (gm < 0 && !c.hasField(gbase, name)) {
+      c.reportWith(isStatic ? errNoStaticMethod() : errNoMethod(), callee.line, callee.col,
+                   "no " + gbase + "." + name);
+      return;
+    }
     if (gm >= 0 && args.len() != c.methodParamCount[gm]) {
       c.report(errCallArity(), call.line, call.col);
       return;

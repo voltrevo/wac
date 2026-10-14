@@ -55,18 +55,18 @@ export struct TicketBase {
     if (this.following) { return true; }
     Continuation? p = this.parked;
     if (p is not null) {
-      TicketBase? up = p.t;
-      if (up is not null && !up.done) {
+      TicketBase? up = p!.t;
+      if (up is not null && !up!.done) {
         this.following = true;
-        bool moved = up.advance();
+        bool moved = up!.advance();
         this.following = false;
         return moved;
       }
-      p.call();
+      p!.call();
       return true;
     }
     fn<bool()>? d = this.drive;
-    if (d is not null) { return d(); }
+    if (d is not null) { return d!(); }
     return false;
   }
 }

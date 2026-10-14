@@ -1,4 +1,4 @@
-// The negative half of the corpus: 41 ill-typed programs that must all be refused — 34 single-file,
+// The negative half of the corpus: 43 ill-typed programs that must all be refused — 36 single-file,
 // and 7 that are only ill-typed across an import boundary.
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/illtyped_test.wac
@@ -62,7 +62,11 @@ string[] names() {
     // `>` and `==` are separate arms of the rule and only `>` was in the reproduction.
     // `issues/lang/0272b`.
     "a35 (x < 2) > 0 (bool vs literal)", "a36 (x < 2) == 1 (bool vs literal)",
-    "a37 0 > (x < 2) (the literal first)"
+    "a37 0 > (x < 2) (the literal first)",
+    // A method a **generic** does not declare, named through the template or through `this`. The arm
+    // for a generic receiver checked arity when the method was found and said nothing when it was
+    // not, so both checked clean and the build failed in the emitter. `issues/lang/0371a`.
+    "a38 S.nosuch(1) on a generic", "a39 this.nosuch() in a generic"
   ];
 }
 
@@ -101,7 +105,9 @@ string[] programs() {
     "export i32 f() { return null!; }\n",
     "export i32 f(i32 x) { return (x < 2) > 0 ? 1 : 0; }\n",
     "export i32 f(i32 x) { return (x < 2) == 1 ? 1 : 0; }\n",
-    "export i32 f(i32 x) { return 0 > (x < 2) ? 1 : 0; }\n"
+    "export i32 f(i32 x) { return 0 > (x < 2) ? 1 : 0; }\n",
+    "struct S<T> { T v; i32 g() { return 1; } }\nexport i32 f() { i32 x = S.nosuch(1); return x; }\n",
+    "struct S<T> { T v; i32 g(this) { return this.nosuch(); } }\nexport i32 f() { return S<i32>(1).g(); }\n"
   ];
 }
 
