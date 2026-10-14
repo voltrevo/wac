@@ -1,4 +1,4 @@
-// The negative half of the corpus: 43 ill-typed programs that must all be refused — 36 single-file,
+// The negative half of the corpus: 45 ill-typed programs that must all be refused — 38 single-file,
 // and 7 that are only ill-typed across an import boundary.
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/illtyped_test.wac
@@ -66,7 +66,13 @@ string[] names() {
     // A method a **generic** does not declare, named through the template or through `this`. The arm
     // for a generic receiver checked arity when the method was found and said nothing when it was
     // not, so both checked clean and the build failed in the emitter. `issues/lang/0371a`.
-    "a38 S.nosuch(1) on a generic", "a39 this.nosuch() in a generic"
+    "a38 S.nosuch(1) on a generic", "a39 this.nosuch() in a generic",
+    // A static that uses its owner's letters, called on the **bare template** with no slot to say what
+    // they are. Only a static that uses none of them may be (spec ch19
+    // `§wac-generic-unused-param-unbound-k4p2xqz`); these checked clean and the emitter answered
+    // *unresolved name Box*. The second has an argument that would bind `T`, which the language does
+    // not read: the slot is where a template's static takes its instantiation.
+    "a40 Box.size() using T, no slot", "a41 Box.make(3).v, no slot"
   ];
 }
 
@@ -107,7 +113,9 @@ string[] programs() {
     "export i32 f(i32 x) { return (x < 2) == 1 ? 1 : 0; }\n",
     "export i32 f(i32 x) { return 0 > (x < 2) ? 1 : 0; }\n",
     "struct S<T> { T v; i32 g() { return 1; } }\nexport i32 f() { i32 x = S.nosuch(1); return x; }\n",
-    "struct S<T> { T v; i32 g(this) { return this.nosuch(); } }\nexport i32 f() { return S<i32>(1).g(); }\n"
+    "struct S<T> { T v; i32 g(this) { return this.nosuch(); } }\nexport i32 f() { return S<i32>(1).g(); }\n",
+    "struct Box<T> { T v; i32 size() { return typeref(T).tupleMembers().len(); } }\nexport i32 f() { return Box.size(); }\n",
+    "struct Box<T> { T v; Box<T> make(T x) { return Box(x); } }\nexport i32 f() { i32 n = Box.make(3 as i32).v; return n; }\n"
   ];
 }
 

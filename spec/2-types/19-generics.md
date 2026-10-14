@@ -341,6 +341,40 @@ function.
 A lambda has no type of its own to contribute, but saying nothing is not a refusal: the seed beside it is
 enough.
 
+### A static that uses none of its owner's type parameters
+
+```wac
+// expect: seven() = 14
+// expect: three() = 3
+// expect: made() = 4
+struct Box<T> {
+  T v;
+
+  i32 tagged() { return 7; }
+  i32 count<Ts>(Ts ...xs) { return typeref(Ts).tupleMembers().len(); }
+  Box<T> of(T x) { return Box(x); }
+}
+
+export i32 seven() { return Box.tagged() + Box<string>.tagged(); }   // one function
+export i32 three() { return Box.count(1 as i32, "a", true); }
+
+export i32 made() {
+  Box<i32> b = Box.of(4 as i32);           // T from the slot
+  // ERROR: Box.of writes T, and nothing here says what it is
+  // i32 n = Box.of(4 as i32).v;
+  return b.v;
+}
+```
+
+`[§wac-generic-unused-param-unbound-k4p2xqz]` A method with no receiver that writes none of its owner's type
+parameters — in its signature or its body — needs no binding for them. It is called on the template's bare
+name, and every instantiation's spelling of it names the same function: `Box.tagged()` and
+`Box<string>.tagged()` are one call. A method with no receiver that writes any of them takes the
+instantiation from a written `Box<…>` or from the slot, and is refused without either.
+
+This is not a second kind of method. A type parameter nothing uses is one nothing has to infer, which is the
+same reason `Map.create(hashString, stringEq)` needs only its slot to say what its values are.
+
 ## Default type arguments
 
 A type parameter may have a default, used when the argument is omitted:
@@ -523,4 +557,5 @@ export { max<i32> as maxI32, max<f64> as maxF64 };
 ```
 
 Methods that declare no receiver of a generic struct, generic static declarations, and static locals are
-evaluated once per instantiation ([27](../4-static/27-static-declarations.md)).
+evaluated once per instantiation ([27](../4-static/27-static-declarations.md)) — except a method with no
+receiver that writes none of the owner's type parameters, which is one function for all of them.

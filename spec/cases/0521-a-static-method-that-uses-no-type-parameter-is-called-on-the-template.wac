@@ -1,0 +1,12 @@
+// expect: f() = 21
+// spec: §wac-generic-unused-param-unbound-k4p2xqz
+// why: a type parameter nothing in the method uses needs no binding, so the template's bare name is enough
+// from: issues/lang/0369a
+struct Box<T> {
+  T v;
+  i32 seven() { return 7; }
+}
+
+export i32 f() {
+  return Box.seven() + Box<string>.seven() + Box<i32>.seven();
+}

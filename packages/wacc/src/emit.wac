@@ -30,6 +30,7 @@ import { coreFileNames, coreFileStarts, coreSource, stdSource } from "./coretext
 import { Lowered, lowerProgram, ticketSigsOf } from "./asynclower.wac";
 import { lowerNamespaces } from "./namespaces.wac";
 import { isTupleName, tupleMembers, tupleName } from "./tuples.wac";
+import { methodUsesOwnerLetters } from "./ownerletters.wac";
 import { flattenUnion, isConstAlt, isUnionName, spellUnion, unionBoxes, unionMembers } from "./unions.wac";
 import { pruneCoreMembers } from "./reach.wac";
 import { floatLit, parseInt } from "./lit.wac";
@@ -1022,6 +1023,109 @@ string templateNameOf(string inst) {
 }
 
 /**
+ * The template a method instance's owner is: `Box` for `Box<i32>`, and `Box` itself when the owner is
+ * the bare template.
+ *
+ * **A bare-template owner is a static that uses none of the owner's letters** — spec ch19
+ * `§wac-generic-unused-param-unbound-k4p2xqz`. `Box.seven` is one function whatever `T` is, so it is a
+ * method instance with no owner substitution, and every walk that handles method instances emits it
+ * without learning anything new. `Box.count<(i32, string)>` is the same with letters of its own.
+ */
+string ownerTemplateOf(string ownerInst) {
+  string t = templateNameOf(ownerInst);
+  return t == "" ? ownerInst : t;
+}
+
+/** Whether method `m` is what a method instance owned by `ownerInst` compiles. */
+bool inMethodInstance(Method m, string ownerInst) {
+  return m.typeParams.len() > 0 || templateNameOf(ownerInst) == "";
+}
+
+/**
+ * What a static call `obj.mn(args)` reaches when that is a **method instance** — `Box.seven` for a
+ * static on a template that uses none of its owner's letters, `Box<i32>.pick<i32>` or
+ * `Box.count<(i32, string)>` for one with letters of its own — and naming it is what creates it.
+ * Empty for every other static, whose `Owner.name` entry the callers already find.
+ *
+ * `want` is the slot, for `Box.pick(…)` whose owner comes from it; `typeOfE` has none and passes "".
+ */
+string staticMethodInstance(Env env, u8[] src, Lexed lexed, Expr obj, string mn, Ty[] targs,
+                            Expr[] args, string want) {
+  string owner = templateStatic(env, src, lexed, obj, want);
+  if (owner == "") { owner = staticOwner(src, lexed, env, obj); }
+  string tmpl = owner == "" ? bareTemplateName(env, src, lexed, obj) : ownerTemplateOf(owner);
+  if (tmpl == "") { return ""; }
+  i32 shape = templateStaticShape(env, src, lexed, tmpl, mn);
+  if (shape < 0) { return ""; }
+  bool usesOwner = (shape & 1) != 0;
+  bool ownLetters = (shape & 2) != 0;
+  if (usesOwner && !ownLetters) { return ""; }
+  string key = usesOwner ? owner : tmpl;
+  if (key == "") { return ""; }
+  if (ownLetters) {
+    return targs.len() > 0 ? methodInstance(env, src, lexed, key, mn, targs)
+                           : methodInstanceInferred(env, src, lexed, key, mn, args);
+  }
+  string inst = tmpl + "." + mn;
+  env.instantiate(inst, inst);
+  return inst;
+}
+
+/** `obj` as a generic struct's bare template name — `Box` in `Box.seven()` — or "". */
+string bareTemplateName(Env env, u8[] src, Lexed lexed, Expr obj) {
+  match (obj.kind) {
+    Ident(tok): {
+      string raw = tokenTextOf(src, lexed, tok);
+      if (env.localAt(raw) >= 0 || env.isStructName(raw)) { return ""; }
+      return raw;
+    }
+    default: { return ""; }
+  }
+}
+
+/**
+ * The shape of static `mn` on generic struct template `tmpl`: -1 when there is no such method with no
+ * receiver, otherwise bit 1 set when it uses the owner's letters and bit 2 when it has letters of its own.
+ */
+i32 templateStaticShape(Env env, u8[] src, Lexed lexed, string tmpl, string mn) {
+  if (env.prog is null) { return -1; }
+  Program pg = env.prog!;
+  Decl[] md = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
+  for (i32 d = 0; d < md.len(); d++) {
+    u8[] ms = srcFor(env.fileSrcs, src, env.declFile(d));
+    Lexed ml = lexFor(env.fileLexeds, lexed, env.declFile(d));
+    match (md[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() == 0) { continue; }
+        if (tokenTextOf(ms, ml, nameTok) != tmpl) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) {
+          if (methods[m].hasThis) { continue; }
+          if (tokenTextOf(ms, ml, methods[m].nameTok) != mn) { continue; }
+          i32 shape = methods[m].typeParams.len() > 0 ? 2 : 0;
+          if (methodUsesOwnerLetters(ms, ml, methods[m], typeParams)) { shape = shape + 1; }
+          return shape;
+        }
+        return -1;
+      }
+      default: { }
+    }
+  }
+  return -1;
+}
+
+/** The owner's substitution for a method instance — none for a bare-template owner. */
+i32 pushOwnerSub(Env env, u8[] src, Lexed lexed, i32[] typeParams, string ownerInst, string tmpl) {
+  if (ownerInst == tmpl) { return 0; }
+  return pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
+}
+
+/** The method's own substitution for a method instance — none for a method with no letters. */
+i32 pushOwnSub(Env env, u8[] src, Lexed lexed, Method m, string inst, string of, string mname) {
+  if (m.typeParams.len() == 0) { return 0; }
+  return pushSubstitutionInner(env, src, lexed, m.typeParams, methodInstTail(inst, of, mname));
+}
+
+/**
  * The owner a static call means when it is written on a **template**: `Vec.create()`.
  *
  * The instantiation is not in the call — it is in the slot the answer goes into, which is the
@@ -1150,8 +1254,7 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
                               Expr[] args) {
   if (env.prog is null) { return ""; }
   if (ownerInst == "") { return ""; }
-  string tmpl = templateNameOf(ownerInst);
-  if (tmpl == "") { return ""; }
+  string tmpl = ownerTemplateOf(ownerInst);
   Program pg = env.prog!;
   // The template, its method and that method's parameter types are read against the file that
   // declares them; `args` are written here.
@@ -1167,7 +1270,7 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
           if (tokenTextOf(ms, ml, methods[m].nameTok) != mname) { continue; }
           if (methods[m].typeParams.len() == 0) { continue; }
           if (methods[m].params.len() != args.len()) { return ""; }
-          i32 opushed = pushSubstitution(env, ms, ml, typeParams, ownerInst, tmpl);
+          i32 opushed = pushOwnerSub(env, ms, ml, typeParams, ownerInst, tmpl);
           string[] bound = string[].defaulted(methods[m].typeParams.len());
           bool ok = true;
           for (i32 i = 0; i < args.len(); i++) {
@@ -6819,7 +6922,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       i32 mdot = mof.indexOf(".");
       string mowner = mof.slice(0, mdot);
       string mnm = mof.slice(mdot + 1, mof.len());
-      string mtmpl = templateNameOf(mowner);
+      string mtmpl = ownerTemplateOf(mowner);
       Decl[] pd7 = decls;
       for (i32 md = 0; md < pd7.len(); md++) {
         env.curFile = env.declFile(md);
@@ -6831,10 +6934,9 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
             if (tokenTextOf(src, lexed, nameTok) != mtmpl) { continue; }
             for (i32 m = 0; m < methods.len(); m++) {
               if (tokenTextOf(src, lexed, methods[m].nameTok) != mnm) { continue; }
-              if (methods[m].typeParams.len() == 0) { continue; }
-              i32 op2 = pushSubstitution(env, src, lexed, typeParams, mowner, mtmpl);
-              i32 mp2 = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
-                                              methodInstTail(env.instName[ii], mof, mnm));
+              if (!inMethodInstance(methods[m], mowner)) { continue; }
+              i32 op2 = pushOwnerSub(env, src, lexed, typeParams, mowner, mtmpl);
+              i32 mp2 = pushOwnSub(env, src, lexed, methods[m], env.instName[ii], mof, mnm);
               // **The method instance names `curInst`**, because it is the key the lambda table is
               // recorded and looked up under: `pick<i32>` and `pick<i64>` are two copies of one
               // written lambda, and the owner's name cannot tell them apart. `issues/lang/0277b`.
@@ -11034,6 +11136,17 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
               return;
             }
           }
+          string smi = staticMethodInstance(env, src, lexed, obj, mname, callTargs, args, want);
+          if (smi != "") {
+            i32 sma = env.funcAt(smi);
+            if (!haveRequired(env, sma, smi)) { return; }
+            for (i32 i = 0; i < args.len(); i++) {
+              emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(sma, i));
+            }
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[sma]);
+            return;
+          }
           string towner = templateStatic(env, src, lexed, obj, want);
           if (towner != "") {
             i32 ta = env.funcAt(towner + "." + mname);
@@ -11580,6 +11693,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (isStringTypeName(src, lexed, env, obj) && mn == "isUtf8") { return "bool"; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "toUtf8") { return "string"; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromCodepoint") { return "string"; }
+          string smt = staticMethodInstance(env, src, lexed, obj, mn, callTargs, args, "");
+          if (smt != "") {
+            i32 smti = env.funcAt(smt);
+            return smti < 0 ? "" : env.funcReturns[smti];
+          }
           string sown = staticOwner(src, lexed, env, obj);
           if (sown != "") {
             i32 si = env.funcAt(sown + "." + mn);
@@ -12963,7 +13081,7 @@ i32 pushMethodInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, i32
   if (dot <= 0) { return 0; }
   string ownerInst = of.slice(0, dot);
   string mname = of.slice(dot + 1, of.len());
-  string tmpl = templateNameOf(ownerInst);
+  string tmpl = ownerTemplateOf(ownerInst);
   if (tmpl == "") { return 0; }
   Decl[] w2d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
   u8[] w2s = src; Lexed w2l = lexed; i32 w2f = env.curFile;
@@ -12977,10 +13095,9 @@ i32 pushMethodInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, i32
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
-          if (methods[m].typeParams.len() == 0) { continue; }
-          i32 opushed = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
-          i32 mpushed = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
-                                              methodInstTail(env.instName[i], of, mname));
+          if (!inMethodInstance(methods[m], ownerInst)) { continue; }
+          i32 opushed = pushOwnerSub(env, src, lexed, typeParams, ownerInst, tmpl);
+          i32 mpushed = pushOwnSub(env, src, lexed, methods[m], env.instName[i], of, mname);
           env.curInst = env.instName[i];
           env.curFile = w2f;
           return opushed + mpushed;
@@ -13085,7 +13202,7 @@ void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i
   if (dot <= 0) { return; }
   string ownerInst = of.slice(0, dot);
   string mname = of.slice(dot + 1, of.len());
-  string tmpl = templateNameOf(ownerInst);
+  string tmpl = ownerTemplateOf(ownerInst);
   if (tmpl == "") { return; }
   Decl[] w4d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
   u8[] w4s = src; Lexed w4l = lexed; i32 w4f = env.curFile;
@@ -13099,10 +13216,9 @@ void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
-          if (methods[m].typeParams.len() == 0) { continue; }
-          i32 opushed = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
-          i32 mpushed = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
-                                              methodInstTail(env.instName[i], of, mname));
+          if (!inMethodInstance(methods[m], ownerInst)) { continue; }
+          i32 opushed = pushOwnerSub(env, src, lexed, typeParams, ownerInst, tmpl);
+          i32 mpushed = pushOwnSub(env, src, lexed, methods[m], env.instName[i], of, mname);
           env.curInst = env.instName[i];
           env.walkCount = 0;
           env.assignedCount = 0;
@@ -15424,9 +15540,24 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
             }
             return "";
           }
+          string tn = tokenTextOf(src, lexed, nameTok);
+          // **A static that is a method instance** — one that ignores its owner's letters, or has its
+          // own. Naming it here is what creates it, and like an instance method's call this must not
+          // decline while the instance is not registered yet: the rounds are still running.
+          string smw = staticMethodInstance(env, src, lexed, obj, tn, callTargs, args, want);
+          if (smw != "") {
+            i32 smwAt = env.funcAt(smw);
+            if (smwAt < 0) { return ""; }
+            if (!env.funcOk[smwAt]) { return declinedBecause("a static " + smw, env, smwAt); }
+            if (env.funcParamCount[smwAt] != args.len()) { return "a static with the wrong count"; }
+            for (i32 i = 0; i < args.len(); i++) {
+              string smwArg = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(smwAt, i));
+              if (smwArg != "") { return smwArg; }
+            }
+            return "";
+          }
           string tw = templateStatic(env, src, lexed, obj, want);
           if (tw == "") { return unsupportedValue(src, lexed, env, e); }
-          string tn = tokenTextOf(src, lexed, nameTok);
           i32 ta = env.funcAt(tw + "." + tn);
           if (ta < 0) { return "no static " + tw + "." + tn; }
           if (!env.funcOk[ta]) { return declinedBecause("a static " + tw + "." + tn, env, ta); }
@@ -16055,6 +16186,21 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (isStringTypeName(src, lexed, env, obj) && mn == "toUtf8" && args.len() == 1) {
             return unsupportedValueAt(src, lexed, env, args[0], "u8[]");
           }
+          // **A static that is a method instance** — one that ignores its owner's letters, or has its
+          // own. Naming it here is what creates it, and like an instance method's call this must not
+          // decline while the instance is not registered yet: the rounds are still running.
+          string smc = staticMethodInstance(env, src, lexed, obj, mn, callTargs, args, "");
+          if (smc != "") {
+            i32 smcAt = env.funcAt(smc);
+            if (smcAt < 0) { return ""; }
+            if (!env.funcOk[smcAt]) { return declinedBecause("a static " + smc, env, smcAt); }
+            if (env.funcParamCount[smcAt] != args.len()) { return "a static with the wrong count"; }
+            for (i32 i = 0; i < args.len(); i++) {
+              string smcArg = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(smcAt, i));
+              if (smcArg != "") { return smcArg; }
+            }
+            return "";
+          }
           string owner = staticOwner(src, lexed, env, obj);
           if (owner != "") {
             i32 sa = env.funcAt(owner + "." + mn);
@@ -16603,7 +16749,7 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
     if (dot <= 0) { return; }
     string ownerInst = of.slice(0, dot);
     string mname = of.slice(dot + 1, of.len());
-    string tmpl = templateNameOf(ownerInst);
+    string tmpl = ownerTemplateOf(ownerInst);
     if (tmpl == "") { return; }
     Decl[] w6d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
     u8[] w6s = src; Lexed w6l = lexed; i32 w6f = env.curFile;
@@ -16617,7 +16763,7 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
           if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
           for (i32 m = 0; m < methods.len(); m++) {
             if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
-            if (methods[m].typeParams.len() == 0) { continue; }
+            if (!inMethodInstance(methods[m], ownerInst)) { continue; }
             // **Its lambdas, before the verdict that reads them.** A method instance is discovered
             // *here*, inside the fixpoint, so the pre-pass that records generic instances' lambdas
             // has already run and the one after the fixpoint is too late: `canEmit` below asks the
@@ -16631,9 +16777,8 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
             // **Both substitutions**: the owner's letters from `Box<i32>`, then the method's from the
             // `map<i64>` tail. The inner pair leaves `curInst` alone, which is right — this function
             // belongs to the owner's instantiation.
-            i32 opushed = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
-            i32 mpushed = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
-                                                methodInstTail(env.instName[i], of, mname));
+            i32 opushed = pushOwnerSub(env, src, lexed, typeParams, ownerInst, tmpl);
+            i32 mpushed = pushOwnSub(env, src, lexed, methods[m], env.instName[i], of, mname);
             // **The method instance names `curInst`**, because it is the key the lambda table is
             // recorded and looked up under: `pick<i32>` and `pick<i64>` are two copies of one
             // written lambda, and the owner's name cannot tell them apart. `issues/lang/0277b`.
@@ -16663,6 +16808,12 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
                                  methods[m].hasThis ? ownerInst : "",
                                  typeOfTyName(env, src, lexed, methods[m].returnType));
             env.blocked = savedI;
+            // **A question about a type is answered per instance**, as a generic function's is:
+            // `typeref(Ts).tupleMembers().len()` in `count<(i32, string)>` is written as 2 by the
+            // emission (`emitTypeRefScalar`), so the walk's *"a `typeref` at run time"* is not a reason
+            // to leave the instance out. A generic function's instance never had its verdict kept,
+            // which is why `count(1 as i32, "a")` worked and `Box.count(1 as i32, "a")` did not.
+            if (!okNow && staticOnlyWhy(env.lastWhy)) { okNow = true; }
             if (slot < env.funcOk.len()) {
               if (env.funcOk[slot] != okNow) { env.instBuilt = true; }
               env.funcOk[slot] = okNow;
@@ -16686,7 +16837,7 @@ void registerMethodInstanceTypes(Env env, u8[] src, Lexed lexed, Program prog, i
   if (dot <= 0) { return; }
   string ownerInst = of.slice(0, dot);
   string mname = of.slice(dot + 1, of.len());
-  string tmpl = templateNameOf(ownerInst);
+  string tmpl = ownerTemplateOf(ownerInst);
   if (tmpl == "") { return; }
   Decl[] w7d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
   u8[] w7s = src; Lexed w7l = lexed; i32 w7f = env.curFile;
@@ -16700,10 +16851,9 @@ void registerMethodInstanceTypes(Env env, u8[] src, Lexed lexed, Program prog, i
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
-          if (methods[m].typeParams.len() == 0) { continue; }
-          i32 op = pushSubstitution(env, src, lexed, typeParams, ownerInst, tmpl);
-          i32 mp = pushSubstitutionInner(env, src, lexed, methods[m].typeParams,
-                                         methodInstTail(env.instName[i], of, mname));
+          if (!inMethodInstance(methods[m], ownerInst)) { continue; }
+          i32 op = pushOwnerSub(env, src, lexed, typeParams, ownerInst, tmpl);
+          i32 mp = pushOwnSub(env, src, lexed, methods[m], env.instName[i], of, mname);
           // **The method instance names `curInst`**, because it is the key the lambda table is
           // recorded and looked up under: `pick<i32>` and `pick<i64>` are two copies of one
           // written lambda, and the owner's name cannot tell them apart. `issues/lang/0277b`.

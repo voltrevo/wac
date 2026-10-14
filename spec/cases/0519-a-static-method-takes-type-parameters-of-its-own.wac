@@ -1,0 +1,14 @@
+// expect: f() = 12
+// spec: §wacc-method-type-args
+// why: a method with no receiver infers its own type parameters from its arguments, as an instance method does
+// from: issues/lang/0369a
+struct Box<T> {
+  T v;
+  U pick<U>(U a, U b, bool first) { return first ? a : b; }
+}
+
+export i32 f() {
+  i32 n = Box<string>.pick(5 as i32, 9 as i32, true);
+  string s = Box<i32>.pick("ab", "abcdefg", false);
+  return n + s.len();
+}

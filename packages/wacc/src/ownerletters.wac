@@ -1,0 +1,87 @@
+// Whether a method of a generic uses its owner's type parameters — spec ch19
+// `§wac-generic-unused-param-unbound-k4p2xqz`.
+//
+// A method with no receiver that names none of its owner's letters needs no binding for them, so
+// `Ticket.all(a, b)` is a call although nothing says what `Ticket`'s `T` is. The checker and the emitter
+// both ask, so both read it here.
+//
+// **By token, not by tree.** The question is whether the letter is written anywhere in the method —
+// its return type, its parameters, its body, a `Box<T>.x()` inside it, a `typeref(T)` — and the
+// method's tokens are one contiguous run from its return type to the brace that closes its body. A walk
+// of the tree would need an arm for every node that can hold a type, and a missed arm answers "unused"
+// for a method that uses the letter: the wrong direction to fail in. A token that merely spells the
+// letter — a local named `T` — answers "used", which only declines the shortcut.
+
+import { Method, Ty } from "./ast.wac";
+import { Lexed, tokenStride } from "./lex.wac";
+import { kIdent, kLbrace, kLparen, kRbrace, kRparen } from "./kinds.wac";
+
+/** Whether method `m` writes any of `letters` (the owner's type-parameter tokens). */
+export bool methodUsesOwnerLetters(u8[] src, Lexed lexed, Method m, i32[] letters) {
+  if (letters.len() == 0) { return false; }
+  i32 first = firstTokenAt(lexed, m.nameTok, m.returnType);
+  i32 last = bodyEnd(lexed, m.nameTok);
+  if (last < 0) { return true; }
+  for (i32 t = first; t <= last; t++) {
+    if (lexed.tokens[t * tokenStride()] != kIdent()) { continue; }
+    for (i32 k = 0; k < letters.len(); k++) {
+      if (sameText(src, lexed, t, letters[k])) { return true; }
+    }
+  }
+  return false;
+}
+
+/** The token the return type starts at: walked back from the name to the type's line and column. */
+i32 firstTokenAt(Lexed lexed, i32 nameTok, Ty rt) {
+  i32 t = nameTok;
+  while (t > 0) {
+    i32 line = lexed.tokens[(t - 1) * tokenStride() + 3];
+    i32 col = lexed.tokens[(t - 1) * tokenStride() + 4];
+    if (line < rt.line || (line == rt.line && col < rt.col)) { return t; }
+    t = t - 1;
+  }
+  return t;
+}
+
+/**
+ * The `}` that closes the method's body, or -1. The parameter list is skipped first, so a brace inside
+ * it — a lambda's — is not taken for the body's.
+ */
+i32 bodyEnd(Lexed lexed, i32 nameTok) {
+  i32 t = nameTok;
+  while (t < lexed.tokenCount && lexed.tokens[t * tokenStride()] != kLparen()) { t = t + 1; }
+  i32 parens = 0;
+  while (t < lexed.tokenCount) {
+    i32 k = lexed.tokens[t * tokenStride()];
+    if (k == kLparen()) { parens = parens + 1; }
+    if (k == kRparen()) {
+      parens = parens - 1;
+      if (parens == 0) { break; }
+    }
+    t = t + 1;
+  }
+  i32 depth = 0;
+  while (t < lexed.tokenCount) {
+    i32 k = lexed.tokens[t * tokenStride()];
+    if (k == kLbrace()) { depth = depth + 1; }
+    if (k == kRbrace()) {
+      depth = depth - 1;
+      if (depth == 0) { return t; }
+      if (depth < 0) { return -1; }
+    }
+    t = t + 1;
+  }
+  return -1;
+}
+
+bool sameText(u8[] src, Lexed lexed, i32 a, i32 b) {
+  i32 aStart = lexed.tokens[a * tokenStride() + 1];
+  i32 al = lexed.tokens[a * tokenStride() + 2];
+  i32 bs = lexed.tokens[b * tokenStride() + 1];
+  i32 bl = lexed.tokens[b * tokenStride() + 2];
+  if (al != bl) { return false; }
+  for (i32 i = 0; i < al; i++) {
+    if (src[aStart + i] != src[bs + i]) { return false; }
+  }
+  return true;
+}

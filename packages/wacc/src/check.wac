@@ -43,6 +43,7 @@ import { coreExports, isBuiltinSpec, stdSource } from "./coretext.wac";
 import { endsWith, startsWith } from "./path.wac";
 import { flattenUnion, isUnionName, spellUnion, unionMembers } from "./unions.wac";
 import { genericArgs, genericBase, isTupleName, tupleMembers, tupleName } from "./tuples.wac";
+import { methodUsesOwnerLetters } from "./ownerletters.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
@@ -3614,6 +3615,13 @@ export struct C {
    * and finds out only when it meets one (`namesTypeDeclC`).
    */
   ViewInputs? viewLater;
+  /**
+   * The statics of generic structs that use none of their owner's letters, as `|Owner.name|` — spec
+   * ch19 `§wac-generic-unused-param-unbound-k4p2xqz`. Such a static is called on the bare template with
+   * nothing binding the owner's letters; any other static called that way needs its instantiation from
+   * the slot, and is refused without one.
+   */
+  string ownerFree;
 
   void noteVirtual(this, string key) {
     string[] more = string[].defaulted(this.virtuals.len() + 1);
@@ -3722,7 +3730,7 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0, null);
+             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0, null, "|");
   }
 
   /**
@@ -11099,6 +11107,17 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       c.report(errCallArity(), call.line, call.col);
       return;
     }
+    // **A static on the bare template needs its instantiation from somewhere** — the slot, since
+    // nothing in `Box.size()` names one — unless it uses none of the owner's letters, which is spec
+    // ch19 `§wac-generic-unused-param-unbound-k4p2xqz`. This was silent, and the emitter answered
+    // *unresolved name Box*.
+    if (isStatic && gm >= 0 && c.methodStatics[gm] && genericBase(recv) == "" && inst == ""
+        && c.ownerFree.indexOf("|" + gbase + "." + name + "|") < 0) {
+      c.reportWith(errInferType(), callee.line, callee.col,
+                   gbase + "." + name + " uses " + gbase + "'s type parameters and nothing here says what they are — "
+                   + "write " + gbase + "<…>." + name + "(…), or put the result where its type is written");
+      return;
+    }
     // **And the types, when the slot says which instantiation this is.** `Box.of` is a static on the
     // *template* — the receiver is a bare name, so nothing about it binds `T` — and the wanted type of
     // the call does: `Box<i32> b = Box.of("no", …)` says `T` is `i32`. That is `issues/lang/0141`'s
@@ -13568,6 +13587,11 @@ export void declareModule(C c, Program prog, string[] only) {
                                           methods[i].isAsync), mps,
                           methods[i].body, ownParamNames(c, methods[i].typeParams));
           if (methods[i].isPrivate) { c.notePrivate(name, tokenText(c, methods[i].nameTok)); }
+          if (typeParams.len() > 0 && !methods[i].hasThis
+              && !methodUsesOwnerLetters(c.src, Lexed(c.toks, c.toks.len() / tokenStride(), i32[](), 0, 0, true),
+                                         methods[i], typeParams)) {
+            c.ownerFree = c.ownerFree + name + "." + tokenText(c, methods[i].nameTok) + "|";
+          }
           // An override is virtual in turn, so a grandchild may override it again.
           if (methods[i].isVirtual || methods[i].isOverride) {
             c.noteVirtual(name + "." + tokenText(c, methods[i].nameTok));

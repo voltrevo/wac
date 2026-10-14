@@ -1,0 +1,10 @@
+// expect: f() = 3
+// spec: §wac-generic-unused-param-unbound-k4p2xqz §wacc-method-type-args
+// why: the shape of core's Ticket.all — a static on a generic template that ignores the owner's parameter and takes its own from a variadic
+// from: issues/lang/0369a
+struct Box<T> {
+  T v;
+  i32 count<Ts>(Ts ...xs) { return typeref(Ts).tupleMembers().len(); }
+}
+
+export i32 f() { return Box.count(1 as i32, "a", true); }

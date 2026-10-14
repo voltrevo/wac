@@ -1,0 +1,12 @@
+// expect: f() = 5
+// spec: §wac-variadic-tuple-sfevn82 §wacc-method-type-args
+// why: a method with no receiver may take a variadic parameter, and its tuple type is one of the method's own type parameters
+// from: issues/lang/0369a
+struct Box<T> {
+  T v;
+  i32 count<Ts>(Ts ...xs) { return typeref(Ts).tupleMembers().len(); }
+}
+
+export i32 f() {
+  return Box<i32>.count(1 as i32, "a", true) + Box<string>.count("x", false);
+}

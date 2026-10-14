@@ -13,7 +13,7 @@ import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHint
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
 import { declsOfFiles, declsOfProgram, evalAllConsts } from "./consteval.wac";
-import { Program, Ty } from "./ast.wac";
+import { Param, Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
          warningsOf, widthsOf, errNoSuchExport, errStaleBuiltinEmbedding, isBuiltinSubpath,
@@ -2416,6 +2416,11 @@ bool isScalarSpelling(string t) {
  * so the call is written `count((1 as i32, "a"))` — `(x,)` for one and `()` for none — and the
  * declaration is an ordinary function with a tuple parameter whose type `Ts` is inferred from it.
  * A free function named with no receiver; the names are gathered across every file supplied.
+ *
+ * **And a method with no receiver**, gathered as `Owner.name` and packed where a call writes the owner —
+ * `Box.count(…)` or `Box<i32>.count(…)`. That is the shape of core's `Ticket.all`. A method with a
+ * receiver is not lowered: which `count` `x.count(…)` calls depends on `x`'s type, and this works on
+ * text. `issues/lang/0373a`.
  */
 string[] lowerVariadics(string[] sources) {
   bool any = false;
@@ -2441,6 +2446,18 @@ string[] lowerVariadics(string[] sources) {
           names = names + tokenTextOf(src, lx, nameTok) + "|";
           fixed = fixed + numText(params.len() - 1) + "|";
           markers = markers + numText(f) + ":" + numText(lx.tokens[(last - 3) * st + 1]) + ";";
+        }
+        StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          for (i32 m = 0; m < methods.len(); m++) {
+            Param[] mps = methods[m].params;
+            if (methods[m].hasThis || mps.len() == 0) { continue; }
+            i32 mlast = mps[mps.len() - 1].nameTok;
+            if (mlast < 3 || lx.tokens[(mlast - 1) * st] != kDot() || lx.tokens[(mlast - 2) * st] != kDot()
+                || lx.tokens[(mlast - 3) * st] != kDot()) { continue; }
+            names = names + tokenTextOf(src, lx, nameTok) + "." + tokenTextOf(src, lx, methods[m].nameTok) + "|";
+            fixed = fixed + numText(mps.len() - 1) + "|";
+            markers = markers + numText(f) + ":" + numText(lx.tokens[(mlast - 3) * st + 1]) + ";";
+          }
         }
         default: { }
       }
@@ -2497,6 +2514,29 @@ i32 variadicFixed(string names, string fixed, string name) {
   return n;
 }
 
+/**
+ * The type a static call's receiver names, read back from the token before the dot: `Box` in
+ * `Box.count(` and in `Box<i32, string>.count(`. Empty for anything else.
+ */
+string staticOwnerText(u8[] src, Lexed lx, i32 t) {
+  i32 st = tokenStride();
+  if (t < 0) { return ""; }
+  if (lx.tokens[t * st] == kIdent()) { return tokenTextOf(src, lx, t); }
+  if (lx.tokens[t * st] != kGt()) { return ""; }
+  i32 depth = 0;
+  while (t >= 0) {
+    i32 k = lx.tokens[t * st];
+    if (k == kGt()) { depth++; }
+    if (k == kLt()) {
+      depth--;
+      if (depth == 0) { break; }
+    }
+    t--;
+  }
+  if (t < 1 || lx.tokens[(t - 1) * st] != kIdent()) { return ""; }
+  return tokenTextOf(src, lx, t - 1);
+}
+
 string variadicCallsOf(string text, string names, string fixed) {
   u8[] src = text.toBytes();
   Lexed lx = lex(src);
@@ -2508,8 +2548,13 @@ string variadicCallsOf(string text, string names, string fixed) {
   i32 count = 0;
   for (i32 t = 0; t + 1 < n; t++) {
     if (lx.tokens[t * st] != kIdent() || lx.tokens[(t + 1) * st] != kLparen()) { continue; }
-    if (t > 0 && lx.tokens[(t - 1) * st] == kDot()) { continue; }
-    i32 fx = variadicFixed(names, fixed, tokenTextOf(src, lx, t));
+    string callee = tokenTextOf(src, lx, t);
+    if (t > 0 && lx.tokens[(t - 1) * st] == kDot()) {
+      string owner = staticOwnerText(src, lx, t - 2);
+      if (owner == "") { continue; }
+      callee = owner + "." + callee;
+    }
+    i32 fx = variadicFixed(names, fixed, callee);
     if (fx < 0) { continue; }
     // A declaration is a name after a type, and a call is not: `i32 count<Ts>(…)` has `<` next, so
     // only a non-generic declaration reaches here, and its parameters are typed — a `...` among them.
