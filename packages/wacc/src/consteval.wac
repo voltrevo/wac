@@ -27,6 +27,7 @@ import { floatLit, parseInt } from "./lit.wac";
 import { stringLiteralBytes } from "./strlit.wac";
 import { endsWith, resolveFrom } from "./path.wac";
 import { genericArgs, genericBase, isTupleName, tupleMembers, tupleName } from "./tuples.wac";
+import { flattenUnion, spellUnion } from "./unions.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde,
@@ -1419,6 +1420,10 @@ export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
           if (on == "typeref" && nm == "tuple" && ev.localAt(on, ev.frameBase) < 0) {
             return typerefTuple(ev, cx, fi, args);
           }
+          // `typeref.union(ts)`, the union of the types in `ts` (spec ch30).
+          if (on == "typeref" && nm == "union" && ev.localAt(on, ev.frameBase) < 0) {
+            return typerefUnion(ev, cx, fi, args);
+          }
           if (ev.localAt(on, ev.frameBase) < 0 && cx.constAt(on, fi) < 0 && typeDeclIndex(cx, on) >= 0) {
             return callMethod(ev, cx, fi, on, nm, false, noneValue(), args);
           }
@@ -2467,6 +2472,84 @@ Value typerefTuple(Ev ev, Decls cx, i32 fi, Expr[] args) {
   return typeValue(ev, tupleName(ms));
 }
 
+/** `typeref.union(ts)`: the union of the types in `ts`, normalised as a written one is (spec ch18, ch30). */
+Value typerefUnion(Ev ev, Decls cx, i32 fi, Expr[] args) {
+  if (args.len() != 1) { ev.raise("`typeref.union` takes one `typeref[]`"); return noneValue(); }
+  Value a = evalExpr(ev, cx, fi, args[0], "typeref[]");
+  if (!evFinished(ev.status)) { return noneValue(); }
+  i32 id = refOf(a);
+  if (id < 0) { ev.raise("`typeref.union` of null"); return noneValue(); }
+  if (ev.heap[id].count == 0) { ev.raise("`typeref.union` of no types: a union has at least one"); return noneValue(); }
+  string[] ms = string[].filled(ev.heap[id].count, "");
+  for (i32 i = 0; i < ms.len(); i++) {
+    string t = typeOfTyperef(ev, ev.heap[id].slots[i]);
+    if (t == "") { ev.raise("`typeref.union` of an array holding something other than a `typeref`"); return noneValue(); }
+    ms[i] = t;
+  }
+  return typeValue(ev, unionOfIn(cx, ms));
+}
+
+/**
+ * The union of `alts` as one type — spec ch18 `§wac-union-normalise-9awgxvb`: nested unions flattened,
+ * duplicates removed, an alternative removed when another of the same qualification is its ancestor,
+ * the rest in one order; and a union of one is that one (`§wac-union-singleton-is-member-6tq2kfd`).
+ *
+ * **One spelling per type is what `==` on two `typeref`s compares**, and a written union was spelled as
+ * written: `typeref(union<string, i32>) == typeref(union<i32, string>)` was false, and so was
+ * `typeref(union<i32, i32>) == typeref(i32)`.
+ */
+string unionOfIn(Decls cx, string[] alts) {
+  string[] flat = flattenUnion(alts);
+  bool[] gone = bool[].filled(flat.len(), false);
+  i32 kept = flat.len();
+  // `null` is no alternative of its own beside a nullable one: `union<null, U?>` is `U?`.
+  bool nullable = false;
+  for (i32 i = 0; i < flat.len(); i++) { if (endsWith(flat[i], "?")) { nullable = true; } }
+  for (i32 i = 0; i < flat.len(); i++) {
+    if (nullable && flat[i] == "null") { gone[i] = true; kept = kept - 1; }
+  }
+  for (i32 i = 0; i < flat.len(); i++) {
+    for (i32 j = 0; j < flat.len(); j++) {
+      if (i == j || gone[j] || gone[i]) { continue; }
+      if (isAncestorIn(cx, flat[j], flat[i])) { gone[i] = true; kept = kept - 1; }
+    }
+  }
+  if (kept == 1) {
+    for (i32 i = 0; i < flat.len(); i++) { if (!gone[i]) { return flat[i]; } }
+  }
+  return spellUnion(flat, gone);
+}
+
+/** Whether struct `anc` is a proper ancestor of struct `t`, both spelled as canonical keys. */
+bool isAncestorIn(Decls cx, string anc, string t) {
+  string at = t;
+  for (i32 hop = 0; hop < cx.decls.len(); hop++) {
+    string up = structParentIn(cx, at);
+    if (up == "") { return false; }
+    if (up == anc) { return true; }
+    at = up;
+  }
+  return false;
+}
+
+/** The parent of the struct whose key is `key`, as a key, or "". */
+string structParentIn(Decls cx, string key) {
+  for (i32 d = 0; d < cx.decls.len(); d++) {
+    if (cx.keys[d] != key) { continue; }
+    match (cx.decls[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (parentTok < 0) { return ""; }
+        i32 pf = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;
+        string pn = tokText(cx.srcOf(pf), cx.lexOf(pf), parentTok);
+        string pk = cx.keyAt(pn, pf);
+        return pk == "" ? pn : pk;
+      }
+      default: { return ""; }
+    }
+  }
+  return "";
+}
+
 /**
  * A written type as the spelling this evaluator holds types in — with the type parameters in force
  * substituted, `type(e)` evaluated, and a `type` declaration's computation run (spec ch30).
@@ -2499,6 +2582,7 @@ export string evTyName(Ev ev, Decls cx, i32 fi, Ty t) {
       if (guards) { ev.guards = ev.guards - 1; }
       i32 td = typeDeclAt(cx, spelled, fi);
       if (td >= 0) { return evalTypeDecl(ev, cx, td, args); }
+      if (spelled == "union" && args.len() > 0) { return unionOfIn(cx, args); }
       string key = cx.keyAt(spelled, fi);
       string base = key == "" ? spelled : key;
       if (args.len() == 0) { return base; }

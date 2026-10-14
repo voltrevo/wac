@@ -1,0 +1,17 @@
+// expect: f() = 6
+// spec: §wac-union-normalise-9awgxvb §wac-union-singleton-is-member-6tq2kfd §wac-typeref-union-r3m8dqa
+// why: a typeref stands for a type, and a union type is its normalised set of alternatives — order, repeats, nesting and a parent beside its child do not make a different one
+// from: issues/lang/0369a
+struct Shape { i32 x; }
+struct Rect : Shape { i32 w; }
+
+static bool order = typeref(union<string, i32>) == typeref(union<i32, string>);
+static bool repeat = typeref(union<i32, i32>) == typeref(i32);
+static bool nested = typeref(union<union<i32, bool>, string>) == typeref(union<bool, i32, string>);
+static bool parent = typeref(union<Rect, Shape, i32>) == typeref(union<Shape, i32>);
+static bool built = typeref.union([typeref(string), typeref(i32), typeref(string)]) == typeref(union<i32, string>);
+static bool single = typeref.union([typeref(i32)]) == typeref(i32);
+
+i32 one(bool b) { return b ? 1 : 0; }
+
+export i32 f() { return one(order) + one(repeat) + one(nested) + one(parent) + one(built) + one(single); }

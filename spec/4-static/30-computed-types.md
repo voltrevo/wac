@@ -84,7 +84,8 @@ bool check() {
   bool members = typeref((i32, string)).tupleMembers().len() == 2;
   bool same = typeref(Node) == b && typeref(Node?) == b.pushNull();
   bool built = typeref.tuple([a, b]) == typeref((i32, Node));
-  return refs && nulls && roundTrip && members && same && built;
+  bool either = typeref.union([b, a, b]) == typeref(union<i32, Node>);
+  return refs && nulls && roundTrip && members && same && built && either;
 }
 
 static bool OK = check();                  // evaluated by the compiler
@@ -97,6 +98,10 @@ export bool typerefOps() { return OK; }
 
 `[§wac-typeref-tuple-68c06fi]` `typeref.tuple(ts)` is the tuple type whose members are the types in `ts`, in order:
 the inverse of `tupleMembers()`.
+
+`[§wac-typeref-union-r3m8dqa]` `typeref.union(ts)` is the union of the types in `ts`, normalised as a written union
+is ([18](../2-types/18-unions.md) `§wac-union-normalise-9awgxvb`): `ts` of one type is that type, and an empty `ts`
+is an error. Two `typeref`s of one union are equal however its alternatives were ordered or repeated.
 
 `tupleMembers` names its subject because a struct's fields are members too, and asking a type for those is not
 decided (Open, below). `typeref.tuple` is called on `typeref` itself, as `string.fromBytes` is called on `string`, so
