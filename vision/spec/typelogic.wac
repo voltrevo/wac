@@ -67,18 +67,18 @@ export void warnings(Sys sys) {
 
 /** `static_for` unrolls, so each iteration is checked at its own types. */
 export bool same<Ts>(Ts a, Ts b) {
-  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
     if (a.(i) != b.(i)) { return false; }
   }
   return true;
 }
 
 /** A tuple is built member by member, against the definite-assignment rule. */
-export type Unwrapped<Ts> = type(tupleOf(popEach(typeref(Ts).members())));
+export type Unwrapped<Ts> = type(typeref.tuple(popEach(typeref(Ts).tupleMembers())));
 
 export Unwrapped<Ts> unwrapAll<Ts>(Ts t) {
   Unwrapped<Ts> out;
-  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
     out.(i) = t.(i)!;
   }
   return out;

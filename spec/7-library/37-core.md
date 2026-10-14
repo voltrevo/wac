@@ -22,6 +22,8 @@ It is reached like any package — by its name, through its entry module — and
 | `Node`, `Attr`, `html` | the markup tree, and the HTML tag functions | [43](43-markup-types.md) |
 | `Ticket<T>`, `TicketBase`, `Continuation`, `Queue<T>` | tickets and the scheduling they need | [35](../6-concurrency/35-tickets-and-await.md) |
 | `Step`, `Coroutine`, `Generator`, `AsyncGenerator` | the machine under `async` and `gen` | [36](../6-concurrency/36-coroutines-and-generators.md) |
+| `hypothetical<T>()` | an expression of type `T` for `typeof`, which traps if run | [30](../4-static/30-computed-types.md) |
+| `Values<Ts>` | the tuple of what each of a tuple of tickets answers | [30](../4-static/30-computed-types.md), [35](../6-concurrency/35-tickets-and-await.md) |
 
 ```wac
 // expect: fromCoreRoot() = 2
@@ -42,6 +44,14 @@ export i32 fromCoreRoot() {
 
 Families of related names are namespaces — the operator symbols, the HTML tag functions — and everything else is at
 the root.
+
+```wac
+// fragment — from core
+export T hypothetical<T>() { trap; }
+```
+
+`[§wac-hypothetical-irymyyf]` `hypothetical<T>()` has type `T` and traps when called. It exists to be written inside
+`typeof` ([30](../4-static/30-computed-types.md)), where it is checked and never run.
 
 ## Why these are in `core`
 

@@ -68,7 +68,7 @@ export (u32, u32) swap(u32 a, u32 b) {
 
 /** A variadic parameter is a tuple the call site fills, at most one, and last. */
 export i32 count<Ts>(Ts ...items) {
-  return typeref(Ts).members().len();
+  return typeref(Ts).tupleMembers().len();
 }
 
 export void variadic() {

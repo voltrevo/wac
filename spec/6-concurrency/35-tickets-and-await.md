@@ -543,6 +543,22 @@ export i32 allSettled() {
 `[§wac-ticket-all-2h6iwfr]` `Ticket.all(t1, …, tn)` is a ticket of the tuple of their answers, settled when every one is.
 It is variadic, and the tuple is as long as the call ([14](../2-types/14-tuples.md)).
 
+It is ordinary wac in `core` — a variadic parameter, a tuple filled member by member, and `Values`, the tuple of
+what each ticket answers ([30](../4-static/30-computed-types.md)):
+
+```wac
+// fragment — the body of core's Ticket.all
+async Values<Ts> all<Ts>(Ts ...tickets) {
+  Values<Ts> out;
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
+    out.[i] = await tickets.[i];
+  }
+  return out;
+}
+```
+
+Awaiting them in order is enough: the tuple is finished when the last of them settles, whichever that is.
+
 `Ticket.any` answers with the first to settle. The others keep running — a ticket is work already started:
 
 ```wac

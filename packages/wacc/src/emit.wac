@@ -10288,7 +10288,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     fb.u32leb(env.boxType(inner));
     return;
   }
-  // **A question about a type answers a constant** (spec ch30): `typeref(Ts).members().len()`
+  // **A question about a type answers a constant** (spec ch30): `typeref(Ts).tupleMembers().len()`
   // in `count<(i32, string)>` is 2, decided per instance by the evaluator and written as a literal.
   if (isStaticScalarType(want) && mentionsTypeRefE(e) && emitTypeRefScalar(fb, env, src, lexed, e, want)) { return; }
   match (e.kind) {

@@ -1415,6 +1415,10 @@ export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
       match (obj.kind) {
         Ident(otok): {
           string on = tokText(src, lx, otok);
+          // `typeref.tuple(ts)`, the inverse of `tupleMembers()` (spec ch30).
+          if (on == "typeref" && nm == "tuple" && ev.localAt(on, ev.frameBase) < 0) {
+            return typerefTuple(ev, cx, fi, args);
+          }
           if (ev.localAt(on, ev.frameBase) < 0 && cx.constAt(on, fi) < 0 && typeDeclIndex(cx, on) >= 0) {
             return callMethod(ev, cx, fi, on, nm, false, noneValue(), args);
           }
@@ -2433,7 +2437,7 @@ export Value typerefMethod(Ev ev, string t, string m) {
     if (!nullable) { ev.raise("`popNull` on " + t + ", which has no nullable layer"); return noneValue(); }
     return typeValue(ev, t.slice(0, t.len() - 1));
   }
-  if (m == "members") {
+  if (m == "tupleMembers") {
     string[] ms = tupleMembers(t);
     i32 id = ev.alloc("typeref[]", true, ms.len());
     if (id < 0) { return noneValue(); }
@@ -2442,6 +2446,22 @@ export Value typerefMethod(Ev ev, string t, string m) {
   }
   ev.unsupported("the `typeref` operation `" + m + "`");
   return noneValue();
+}
+
+/** `typeref.tuple(ts)`: the tuple type of the types in the `typeref[]` `ts`, in order. */
+Value typerefTuple(Ev ev, Decls cx, i32 fi, Expr[] args) {
+  if (args.len() != 1) { ev.raise("`typeref.tuple` takes one `typeref[]`"); return noneValue(); }
+  Value a = evalExpr(ev, cx, fi, args[0], "typeref[]");
+  if (!evFinished(ev.status)) { return noneValue(); }
+  i32 id = refOf(a);
+  if (id < 0) { ev.raise("`typeref.tuple` of null"); return noneValue(); }
+  string[] ms = string[].filled(ev.heap[id].count, "");
+  for (i32 i = 0; i < ms.len(); i++) {
+    string t = typeOfTyperef(ev, ev.heap[id].slots[i]);
+    if (t == "") { ev.raise("`typeref.tuple` of an array holding something other than a `typeref`"); return noneValue(); }
+    ms[i] = t;
+  }
+  return typeValue(ev, tupleName(ms));
 }
 
 /**

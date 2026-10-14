@@ -7854,7 +7854,7 @@ bool nameExists(C c, string n) {
   // `isPrimitiveName` already covers `string` and `bool`; naming them again here read as though it
   // did not, which is the same doubt `isValueType`'s comment exists to settle. `anyref` is the only
   // one it does not list.
-  return isPrimitiveName(n) || n == "anyref";
+  return isPrimitiveName(n) || n == "anyref" || n == "typeref";
 }
 
 /** Whether an expression is known not to be a boolean. Unknown is `false`: silence, as everywhere. */
@@ -9875,6 +9875,8 @@ string builtinParamType(string recv, string name) {
     if (name == "fromBytes" || name == "isUtf8" || name == "toUtf8") { return "u8[]"; }
     if (name == "fromCodepoint") { return "i32"; }
   }
+  // `typeref.tuple(ts)`, the inverse of `tupleMembers()` (spec ch30 `§wac-typeref-tuple-68c06fi`).
+  if (recv == "typeref" && name == "tuple") { return "typeref[]"; }
   return "";
 }
 
@@ -9901,7 +9903,7 @@ bool checkBuiltinCall(C c, Expr call, Expr recvExpr, string recv, string name, E
   // `fromBytes` does not validate — `[§wac-str-frombytes-utf8-m9fj2xr]`, deliberately — so `isUtf8`
   // and `toUtf8` are what a caller reaches for when it needs the answer that constructor does not give.
   string want = builtinParamType(recv, name);
-  if (recv == "f64" || recv == "f32" || recv == "string") {
+  if (recv == "f64" || recv == "f32" || recv == "string" || recv == "typeref") {
     if (want == "") {
       c.reportWith(errNoStaticMethod(), call.line, call.col, "no " + recv + "." + name);
       return true;
@@ -10020,6 +10022,7 @@ string staticMethodType(C c, Expr obj, string name) {
  * Kept beside `receiverType` because that is where a type-name receiver stops being a value.
  */
 string builtinStaticReturn(string recv, string name) {
+  if (recv == "typeref") { return name == "tuple" ? "typeref" : ""; }
   if (recv == "string") {
     if (name == "fromBytes" || name == "fromCodepoint") { return "string"; }
     if (name == "isUtf8") { return "bool"; }

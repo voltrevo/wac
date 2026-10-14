@@ -94,7 +94,7 @@ cannot be evaluated statically is refused. There is no run-time fallback for cho
 ```wac
 // fragment
 bool same<Ts>(Ts a, Ts b) {
-  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
     if (a.[i] != b.[i]) { return false; }
   }
   return true;

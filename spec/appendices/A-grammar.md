@@ -258,7 +258,8 @@ base_type      = name , [ type_args ]                         (* primitive, stru
                | "(" , elem_type , ")"                        (* grouping; `(const T) x` may be rebound: 17 *)
                | "union" , [ "<" , elem_type , { "," , elem_type } , [ "," ] , ">" ]          (* 18, 33 *)
                | "auto"                                                                       (* 33 *)
-               | "type" , "(" , expr , ")" ;                                                 (* 30 *)
+               | "type" , "(" , expr , ")"                                                  (* 30 *)
+               | "typeof" , "(" , expr , ")" ;                                               (* 30 *)
 
 type_args      = "<" , elem_type , { "," , elem_type } , [ "," ] , ">" ;
 elem_type      = [ "const" ] , type ;                         (* a type with no binding of its own: 17 *)
@@ -317,7 +318,7 @@ as  as!  as~  as@  async  auto  await  break  case  const  continue  coroutine
 default  defer  do  else  enum  export  false  fn  for  gen  if  import  is
 match  matches  namespace  not  null  override  private  return  static  static_for
 static_if  static_match  static_trap  struct  switch  symbol  this  trap  true
-type  typeref  union  virtual  void  while  yield
+type  typeof  typeref  union  virtual  void  while  yield
 ```
 
 `[§wac-keywords-reserved-w9tpxmx]` The words above are reserved: none of them is a name unless written verbatim — `@"match"`

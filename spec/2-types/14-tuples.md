@@ -85,7 +85,7 @@ The member's type depends on the index, so the index has to be known when the pr
 // expect: sameAsLiteral() = true
 // expect: sameAsOther() = false
 bool same<Ts>(Ts a, Ts b) {
-  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
     if (a.[i] != b.[i]) { return false; }  // a string at 0, an i32 at 1
   }
   return true;
@@ -193,7 +193,7 @@ tuple of computed type is filled:
 // fragment — Unwrapped<Ts> is a computed type; see 30
 Unwrapped<Ts> unwrapAll<Ts>(Ts t) {
   Unwrapped<Ts> out;                       // members unassigned
-  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
     out.[i] = t.[i]!;
   }
   return out;
@@ -216,7 +216,7 @@ time has a different one at every step. Computed tuple types are
 // expect: countOne() = 1
 // expect: countZero() = 0
 i32 count<Ts>(Ts ...items) {
-  return typeref(Ts).members().len();
+  return typeref(Ts).tupleMembers().len();
 }
 
 export i32 countTwo() { return count(1 as i32, "a"); }    // Ts is (i32, string)

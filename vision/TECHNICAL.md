@@ -1723,7 +1723,7 @@ in the first and could not in the second.
 
 ```wac
 bool same<Ts>(Ts a, Ts b) {
-  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
     if (a.(i) != b.(i)) { return false; }
   }
   return true;
@@ -1750,11 +1750,11 @@ typeref[] popEach(typeref[] ts) {
   return out.toArray();
 }
 
-type Unwrapped<Ts> = type(tupleOf(popEach(typeref(Ts).members())));
+type Unwrapped<Ts> = type(typeref.tuple(popEach(typeref(Ts).tupleMembers())));
 
 Unwrapped<Ts> unwrapAll<Ts>(Ts t) {
   Unwrapped<Ts> out;                                   // no default at arbitrary members
-  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
     out.(i) = t.(i)!;
   }
   return out;
@@ -1774,9 +1774,17 @@ tuple built a member at a time has a different one at every step.
 ## A variadic parameter is a tuple the call site fills
 
 ```wac
+type Values<Ts> {
+  Vec<typeref> out;
+  for (typeref t in typeref(Ts).tupleMembers()) {
+    out.push(typeref(typeof(hypothetical<type(t)>().value())));
+  }
+  return typeref.tuple(out.toArray());
+}
+
 async Values<Ts> all<Ts>(Ts ...tickets) {
   Values<Ts> out;
-  static_for (i32 i = 0; i < typeref(Ts).members().len(); i++) {
+  static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
     out.(i) = await tickets.(i);
   }
   return out;
