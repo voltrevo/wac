@@ -7,7 +7,6 @@
 // and the window arithmetic are exercised rather than described.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Circuit, Received, gotData, gotEnd, gotConnected, gotBroken, gotDestroyed,
          gotNothing } from "../../src/circuit.wac";
 import { Hop, encryptRelay, decryptRelay, relayRecognized, relayPayload, relayCommand,
@@ -93,7 +92,7 @@ export string test_three_layers_go_on_and_come_off() {
     u8[] atR2 = decryptRelay(r2, atR1);
     t.isTrue(!relayRecognized(r2, atR2), "nor does hop 2");
     u8[] atR3 = decryptRelay(r3, atR2);
-    t.isTrue(relayRecognized(r3, atR3), "hop 3 does, on round " + itoa64(i as i64));
+    t.isTrue(relayRecognized(r3, atR3), "hop 3 does, on round \{i as i64}");
     t.eqBytes(relayPayload(atR3), data, "and reads the data");
   }
   return t.report();
@@ -138,7 +137,7 @@ export string test_a_sendme_arrives_after_a_hundred_data_cells() {
   u8[] expected = u8[]();
   for (i32 i = 0; i < 120; i++) {
     Received r = c.receive(fromRelay(relay, 4, relayData(), sid, fill(10, i)));
-    t.eqI32(r.kind, gotData(), "cell " + itoa64(i as i64) + " is data");
+    t.eqI32(r.kind, gotData(), "cell \{i as i64} is data");
     if (i == 99) { expected = relay.forwardDigest.peek(); }
 
     // Anything owed comes back as whole cells; peel them with the relay's key.

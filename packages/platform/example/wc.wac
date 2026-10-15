@@ -22,7 +22,7 @@ export i32 main(Sys sys) {
     label = string.fromBytes(cli.arg(0).wait());
     FileResult f = cli.readFile(label).wait();
     if (!f.ok) {
-      core.warn("wc: " + label + ": " + f.error);
+      core.warn("wc: \{label}: \{f.error}");
       return 1;
     }
     data = f.bytes;
@@ -32,14 +32,14 @@ export i32 main(Sys sys) {
   Counts c = count(data);
   i64 tookNanos = core.monotonicNanos().wait() - startedAt;
 
-  string line = itoa(c.lines) + " " + itoa(c.words) + " " + itoa(c.bytes);
-  core.log(label == "" ? line : line + " " + label);
+  string line = "\{c.lines} \{c.words} \{c.bytes}";
+  core.log(label == "" ? line : "\{line} \{label}");
 
   // Unset and empty are different things, which is why the capability returns `string?`.
   u8[]? verboseRaw = cli.env("WC_VERBOSE").wait();
   string? verbose = verboseRaw is null ? null : string.fromBytes(verboseRaw!);
   if (verbose is null) { return 0; }
-  core.log("counted in " + itoa((tookNanos / 1000) as~ i32) + "us");
+  core.log("counted in \{(tookNanos / 1000) as~ i32}us");
   return 0;
 }
 
@@ -60,15 +60,3 @@ Counts count(u8[] data) {
   return Counts(lines, words, data.len());
 }
 
-/** Decimal, without pulling `fmt` in for a demonstration. */
-string itoa(i32 n) {
-  if (n == 0) { return "0"; }
-  i32 v = n < 0 ? 0 - n : n;
-  u8[] digits = u8[].filled(12, 0);
-  i32 at = 12;
-  // An array element takes an i32 and truncates at the store; there is no u8 value form.
-  while (v > 0) { at--; digits[at] = ('0' + (v % 10)) as@ u8; v = v / 10; }
-  u8[] used = u8[].filled(12 - at, 0);
-  used.copyFrom(digits, at, 0, 12 - at);
-  return n < 0 ? "-" + string.fromBytes(used) : string.fromBytes(used);
-}

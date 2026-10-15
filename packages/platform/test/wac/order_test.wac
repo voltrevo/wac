@@ -24,7 +24,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 
 string sourceOf(Cli cli, string path) {
@@ -124,7 +123,7 @@ string trailingName(string part) {
 
 /** The parameter names of `<Struct> of(...)` in platform.wac, in order. */
 string[] wacOrder(string src, string name) {
-  i32 at = src.indexOf("  " + name + " of(");
+  i32 at = src.indexOf("  \{name} of(");
   if (at < 0) { trap; }
   Split s = splitArgs(src, src.slice(at, src.len()).indexOf("(") + at);
   string[] out = string[].filled(s.parts.len(), "");
@@ -227,9 +226,9 @@ string[] straysOutside(string src, i32 from, i32 to) {
  * fails instead of quietly still matching.
  */
 string[] providerOrder(T t, string src, string name) {
-  string call = "return cls." + name + ".of(";
+  string call = "return cls.\{name}.of(";
   i32 at = src.indexOf(call);
-  t.isTrue(at >= 0, "no cls." + name + ".of in provider.ts");
+  t.isTrue(at >= 0, "no cls.\{name}.of in provider.ts");
   if (at < 0) { return string[].filled(0, ""); }
   Split s = splitArgs(src, src.slice(at, src.len()).indexOf("(") + at);
 
@@ -241,7 +240,7 @@ string[] providerOrder(T t, string src, string name) {
   for (i32 i = 0; i < s.parts.len(); i++) {
     string marker = headMarker(s.parts[i]);
     if (marker == "") {
-      t.fail(name + " argument " + itoa(i) + " has no marker at its head: " +
+      t.fail(name + " argument \{i} has no marker at its head: " +
              trimmed(s.parts[i]).slice(0, 90) +
              (strays.len() > 0 ? " | markers found outside the call: " + joined(strays, ", ") : ""));
       continue;
@@ -254,7 +253,7 @@ string[] providerOrder(T t, string src, string name) {
     if (ops.len() == 1) {
       string expected = nameOfOp(ops[0]);
       t.eqStr(expected, marker,
-              name + " argument " + itoa(i) + " is marked " + marker + " but submits OP." + ops[0]);
+              "\{name} argument \{i} is marked \{marker} but submits OP.\{ops[0]}");
     }
     out[i] = marker;
   }
@@ -277,7 +276,7 @@ export string test_clis_fields_and_the_providers_arguments_are_in_the_same_order
     // A guard against the parser silently finding nothing and the comparison passing on two empty
     // lists. Core has six capabilities, Page seven, Cli twenty-five.
     t.isTrue(declared.len() >= 5,
-             "only " + itoa(declared.len()) + " parsed for " + structs[i]);
+             "only \{declared.len()} parsed for \{structs[i]}");
   }
   return t.report();
 }

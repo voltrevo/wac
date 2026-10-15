@@ -18,7 +18,6 @@
 import { Cli, Core, GRANT_ALL, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { main } from "../../src/box.wac";
 
 export string test_yes_stops_when_the_sink_stops_taking(Core core, Cli cli) {
@@ -38,7 +37,7 @@ export string test_yes_stops_when_the_sink_stops_taking(Core core, Cli cli) {
   // than inferred precisely so this is askable: a child that stops cleanly leaves nothing in the bytes
   // themselves to say they are short.
   t.isTrue(f.overflowed, "yes stopped because the buffer filled, not for some other reason");
-  t.isTrue(out.len() > 1000000, "and it filled it: " + itoa(out.len()) + " bytes");
+  t.isTrue(out.len() > 1000000, "and it filled it: \{out.len()} bytes");
 
   // Every byte is the operand repeated — a `yes` that stopped early for a *different* reason could
   // still have written a plausible prefix, so the length above and the shape here are two claims.

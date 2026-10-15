@@ -25,7 +25,7 @@ export i32 base64(Core core, Cli cli, Fs fs, Args a) {
     u8[]? out = unb64(withoutSpace(in.bytes));
     if (out is null) {
       // GNU's own sentence, and its status: a decode that cannot be done is not an empty result.
-      core.warn(a.name + ": invalid input");
+      core.warn("\{a.name}: invalid input");
       return 1;
     }
     cli.write(out!);

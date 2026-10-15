@@ -19,13 +19,13 @@ void put(Cli cli, string path, string text) {
 
 /** `wac check <args>` run from `dir`. */
 Exec checkIn(Cli cli, string dir, string args) {
-  return cli.exec("/bin/sh", ["-c", "cd " + dir + " && exec " + binaryPath(cli) + " check " + args], u8[]()).wait();
+  return cli.exec("/bin/sh", ["-c", "cd \{dir} && exec \{binaryPath(cli)} check \{args}"], u8[]()).wait();
 }
 
 string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
 
 string fresh(Cli cli, string name) {
-  string dir = cli.cwd().wait() + "/.cache/" + name;
+  string dir = "\{cli.cwd().wait()}/.cache/\{name}";
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   return dir;
@@ -34,19 +34,19 @@ string fresh(Cli cli, string name) {
 export string test_alone_it_checks_every_project_file_less_its_exclusions_x9xt4fg_2ixx2cu(Core core, Cli cli) {
   T t = T.create();
   string dir = fresh(cli, "checkproject-project");
-  put(cli, dir + "/wac.json5", "{ check: { exclude: [\"./fixtures/**\"] } }\n");
-  put(cli, dir + "/main.wac", "export i32 zero() { return 0; }\n");
-  put(cli, dir + "/src/unused.wac", "export i32 one() { return 1; }\n");
-  put(cli, dir + "/fixtures/invalid.wac", "i32 broken() { return nonexistent(); }\n");
+  put(cli, "\{dir}/wac.json5", "{ check: { exclude: [\"./fixtures/**\"] } }\n");
+  put(cli, "\{dir}/main.wac", "export i32 zero() { return 0; }\n");
+  put(cli, "\{dir}/src/unused.wac", "export i32 one() { return 1; }\n");
+  put(cli, "\{dir}/fixtures/invalid.wac", "i32 broken() { return nonexistent(); }\n");
   Exec clean = checkIn(cli, dir, "");
-  t.eqI32(clean.status, 0, "the excluded fixture is not discovered — " + said(clean));
-  t.isTrue(contains(said(clean), ".: 2 file(s), no diagnostics"), "and the two project files are — " + said(clean));
+  t.eqI32(clean.status, 0, "the excluded fixture is not discovered — \{said(clean)}");
+  t.isTrue(contains(said(clean), ".: 2 file(s), no diagnostics"), "and the two project files are — \{said(clean)}");
 
   // An unreached file outside the exclusion is checked, which is what makes it a project check.
-  put(cli, dir + "/src/unused.wac", "i32 broken() { return nonexistent(); }\n");
+  put(cli, "\{dir}/src/unused.wac", "i32 broken() { return nonexistent(); }\n");
   Exec bad = checkIn(cli, dir, "");
-  t.eqI32(bad.status, 1, "an unreached broken file is diagnosed — " + said(bad));
-  t.isTrue(contains(said(bad), "1 error(s)"), "and counted — " + said(bad));
+  t.eqI32(bad.status, 1, "an unreached broken file is diagnosed — \{said(bad)}");
+  t.isTrue(contains(said(bad), "1 error(s)"), "and counted — \{said(bad)}");
   cli.remove(dir, true).wait();
   return t.report();
 }
@@ -54,13 +54,13 @@ export string test_alone_it_checks_every_project_file_less_its_exclusions_x9xt4f
 export string test_files_are_roots_and_turn_discovery_off_2ncb9c8_km2e8t2(Core core, Cli cli) {
   T t = T.create();
   string dir = fresh(cli, "checkproject-files");
-  put(cli, dir + "/wac.json5", "{}\n");
-  put(cli, dir + "/src/lib.wac", "export i32 answer() { return 42; }\n");
-  put(cli, dir + "/src/other.wac", "export i32 other() { return 1; }\n");
-  put(cli, dir + "/src/neighbour.wac", "i32 broken() { return nonexistent(); }\n");
+  put(cli, "\{dir}/wac.json5", "{}\n");
+  put(cli, "\{dir}/src/lib.wac", "export i32 answer() { return 42; }\n");
+  put(cli, "\{dir}/src/other.wac", "export i32 other() { return 1; }\n");
+  put(cli, "\{dir}/src/neighbour.wac", "i32 broken() { return nonexistent(); }\n");
   Exec two = checkIn(cli, dir, "src/lib.wac src/other.wac");
-  t.eqI32(two.status, 0, "two roots, and the broken neighbour is not discovered — " + said(two));
-  t.isTrue(contains(said(two), "2 file(s), no diagnostics"), "both roots counted — " + said(two));
+  t.eqI32(two.status, 0, "two roots, and the broken neighbour is not discovered — \{said(two)}");
+  t.isTrue(contains(said(two), "2 file(s), no diagnostics"), "both roots counted — \{said(two)}");
   cli.remove(dir, true).wait();
   return t.report();
 }
@@ -69,10 +69,10 @@ export string test_with_no_manifest_the_directory_is_the_project(Core core, Cli 
   // The README's own example runs `wac check` over a lone file with no `wac.json5`.
   T t = T.create();
   string dir = fresh(cli, "checkproject-bare");
-  put(cli, dir + "/main.wac", "i32 unused() { return nonexistent(); }\nexport i32 used() { return 0; }\n");
+  put(cli, "\{dir}/main.wac", "i32 unused() { return nonexistent(); }\nexport i32 used() { return 0; }\n");
   Exec r = checkIn(cli, dir, "");
-  t.eqI32(r.status, 1, "diagnosed, not a usage error — " + said(r));
-  t.isTrue(contains(said(r), "1 file(s), 1 error(s)"), "and it says what it read — " + said(r));
+  t.eqI32(r.status, 1, "diagnosed, not a usage error — \{said(r)}");
+  t.isTrue(contains(said(r), "1 file(s), 1 error(s)"), "and it says what it read — \{said(r)}");
   cli.remove(dir, true).wait();
   return t.report();
 }

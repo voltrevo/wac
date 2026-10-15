@@ -7,7 +7,6 @@
 // separately would be a control they could disagree about silently.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Core, Cli } from "std";
 import {
@@ -35,7 +34,7 @@ export string test_the_controls_are_what_the_tests_assume(Core core, Cli cli) {
   T t = T.create();
   JsonObject top = publishTop(cli);
   string source = strOf(top, "source");
-  t.isTrue(source.indexOf("hs_cache_store_as_dir") >= 0, "the verdicts must be tor's — source is " + source);
+  t.isTrue(source.indexOf("hs_cache_store_as_dir") >= 0, "the verdicts must be tor's — source is \{source}");
   t.eqI32(numOf(top, "descriptorLength"), descriptorText(cli).len(),
           "the generated descriptor has changed since the controls were captured");
 
@@ -67,8 +66,8 @@ export string test_the_controls_are_what_the_tests_assume(Core core, Cli cli) {
     if (ev is null) { trap; }
     if (strOf(objectOf(ev!), "kind") != "replace") { continue; }
     u8[] built = controlBytes(cli, i);
-    t.eqI32(built.len(), whole.len(), "control " + itoa(i) + " changed the descriptor's length");
-    t.isFalse(equal(built, whole), "control " + itoa(i) + " edits nothing");
+    t.eqI32(built.len(), whole.len(), "control \{i} changed the descriptor's length");
+    t.isFalse(equal(built, whole), "control \{i} edits nothing");
   }
   return t.report();
 }

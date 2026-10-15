@@ -26,7 +26,6 @@
 import { Buf } from "core";
 import { decode, encode } from "../../codec/src/hex.wac";
 import { Vec } from "core";
-import { itoa64 } from "../../fmt/src/itoa.wac";
 
 /** Who did something, and when. */
 export struct Who {
@@ -259,16 +258,16 @@ export ParsedTag parseTag(u8[] content) {
  */
 export u8[] formatCommit(u8[] tree, Vec<u8[]> parents, Who author, Who committer, string message) {
   Buf out = Buf.create();
-  out.pushAll(("tree " + string.fromBytes(encode(tree)) + "\n").toBytes());
+  out.pushAll("tree \{string.fromBytes(encode(tree))}\n".toBytes());
   for (i32 i = 0; i < parents.len(); i++) {
-    out.pushAll(("parent " + string.fromBytes(encode(parents.get(i))) + "\n").toBytes());
+    out.pushAll("parent \{string.fromBytes(encode(parents.get(i)))}\n".toBytes());
   }
-  out.pushAll(("author " + line(author) + "\n").toBytes());
-  out.pushAll(("committer " + line(committer) + "\n").toBytes());
+  out.pushAll("author \{line(author)}\n".toBytes());
+  out.pushAll("committer \{line(committer)}\n".toBytes());
   out.push(10);
   out.pushAll(message.toBytes());
   return out.take();
 }
 
 /** `Name <email> 1700000000 +0000`, which is what `who` reads back. */
-string line(Who w) { return w.name + " " + itoa64(w.when) + " " + w.zone; }
+string line(Who w) { return "\{w.name} \{w.when} \{w.zone}"; }

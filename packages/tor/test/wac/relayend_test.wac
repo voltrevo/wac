@@ -98,7 +98,7 @@ export string test_every_reason_we_send_has_a_name() {
   for (i32 i = 0; i < ours.len(); i++) {
     t.eqBool(ours[i].len() == 1, true, "a RELAY_END body is one byte");
     string name = endReasonName(ours[i]);
-    t.eqBool(name != "", true, "reason " + name + " renders as a name rather than a number");
+    t.eqBool(name != "", true, "reason \{name} renders as a name rather than a number");
   }
   return t.report();
 }
@@ -144,7 +144,7 @@ export string test_no_failure_path_sends_done(Core core, Cli cli) {
   if (!f.ok) {
     // Read from the repository root, as every other source-reading guard here is. Said rather than
     // skipped: a guard that cannot find its subject has checked nothing.
-    t.fail("could not read " + path + " — this guard runs from the repository root");
+    t.fail("could not read \{path} — this guard runs from the repository root");
     return t.report();
   }
   string src = string.fromBytes(f.bytes);

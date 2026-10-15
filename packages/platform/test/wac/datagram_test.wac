@@ -35,13 +35,13 @@ static string WANT = "bound: yes yes distinct-ports yes\n"
   + "got: ping from 127.0.0.1 sender-is-a yes error ''\n";
 
 string ranOut(Exec r) {
-  if (!r.ran()) { return "(did not run: " + r.error + ")"; }
+  if (!r.ran()) { return "(did not run: \{r.error})"; }
   return string.fromBytes(r.stdout);
 }
 
 export string test_the_datagram_capabilities_agree_across_hosts(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/datagram";
+  string dir = "\{cli.cwd().wait()}/.cache/datagram";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   if (why != "") { return t.report(); }
@@ -49,21 +49,21 @@ export string test_the_datagram_capabilities_agree_across_hosts(Core core, Cli c
   // The Deno host, built the way every other two-host test builds one.
   Exec bd = cli.exec("deno", [
                                       "run", "-A", "packages/platform/build.ts", PROBE,
-                                      "--target", "deno", "--allow-net", "-o", dir + "/deno"
+                                      "--target", "deno", "--allow-net", "-o", "\{dir}/deno"
   ],
                      u8[]()).wait();
   t.isTrue(bd.ran() && bd.status == 0,
-           "the probe built for deno — " + string.fromBytes(bd.stderr));
+           "the probe built for deno — \{string.fromBytes(bd.stderr)}");
   if (!bd.ran() || bd.status != 0) { return t.report(); }
 
   // The V8 native host, through a plain module rather than an app: `wac run` is the shortest route
   // and needs no `wac` on PATH the way a `wac app` wrapper does.
   Exec bn = cli.exec(wacBinary(cli),
-                     ["build", PROBE, "-o", dir + "/mod", "--allow-net"], u8[]()).wait();
-  t.isTrue(bn.ran() && bn.status == 0, "the probe built — " + string.fromBytes(bn.stderr));
+                     ["build", PROBE, "-o", "\{dir}/mod", "--allow-net"], u8[]()).wait();
+  t.isTrue(bn.ran() && bn.status == 0, "the probe built — \{string.fromBytes(bn.stderr)}");
   if (!bn.ran() || bn.status != 0) { return t.report(); }
 
-  string denoSaid = ranOut(cli.exec(dir + "/deno", string[].filled(0, ""), u8[]()).wait());
+  string denoSaid = ranOut(cli.exec("\{dir}/deno", string[].filled(0, ""), u8[]()).wait());
   string v8Said = ranOut(cli.exec(wacBinary(cli),
                                   ["run", "--allow-net", PROBE], u8[]()).wait());
 
@@ -74,10 +74,10 @@ export string test_the_datagram_capabilities_agree_across_hosts(Core core, Cli c
   // per `issues/system/0208`: a checkout without it is not quietly short of coverage — it says so.
   string whyNot = nativeHostWhyNot(cli);
   if (whyNot != "") {
-    core.warn("datagram: the wasmtime half is skipped — " + whyNot
+    core.warn("datagram: the wasmtime half is skipped — \{whyNot}"
               + ". That is the host issues/lang/0109 refused on, so it is the one worth having.");
   } else {
-    string wlSaid = ranOut(cli.exec(nativeHost(cli), [dir + "/mod.wasm"], u8[]()).wait());
+    string wlSaid = ranOut(cli.exec(nativeHost(cli), ["\{dir}/mod.wasm"], u8[]()).wait());
     t.eqStr(wlSaid, WANT, "the wasmtime host's transcript");
   }
 

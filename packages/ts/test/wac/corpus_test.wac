@@ -12,7 +12,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Core, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Stripped, strip } from "../../src/strip.wac";
 
 /** The bridge, in the order `wc -l` puts them: the biggest first, so a failure surfaces early. */
@@ -47,26 +46,26 @@ export string test_the_bridge_strips(Core core, Cli cli) {
   for (i32 i = 0; i < files.len(); i++) {
     FileResult f = cli.readFile(files[i]).wait();
     if (!f.ok) {
-      failures = failures + "\n  " + files[i] + ": cannot read — " + f.error;
+      failures = failures + "\n  \{files[i]}: cannot read — \{f.error}";
       continue;
     }
     Stripped s = strip(f.bytes);
     if (s.error != "") {
-      failures = failures + "\n  " + files[i] + ":" + itoa(s.line) + ":" + itoa(s.col)
-               + ": " + s.error;
+      failures = failures + "\n  \{files[i]}:\{s.line}:\{s.col}"
+               + ": \{s.error}";
       continue;
     }
     // D1: the output occupies the input's bytes, so every position still points at the source.
     if (s.out.len() != f.bytes.len()) {
-      failures = failures + "\n  " + files[i] + ": output is " + itoa(s.out.len())
-               + " bytes against " + itoa(f.bytes.len()) + " in — positions have moved";
+      failures = failures + "\n  \{files[i]}: output is \{s.out.len()}"
+               + " bytes against \{f.bytes.len()} in — positions have moved";
       continue;
     }
     ok = ok + 1;
     bytes = bytes + f.bytes.len();
   }
-  core.log("   stripped " + itoa(ok) + " of " + itoa(files.len()) + " files, "
-           + itoa(bytes / 1024) + " KB");
+  core.log("   stripped \{ok} of \{files.len()} files, "
+           + "\{bytes / 1024} KB");
   t.eqStr(failures, "",
           "these are the constructs left to handle, or the places the extent scan is wrong");
   return t.report();

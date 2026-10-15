@@ -35,7 +35,7 @@ export i32 main(Sys sys) {
     prefix = string.fromBytes(cli.arg(1).wait());
     fs = Fs.onHost(cli, 0);
   } else if (kind != "mem") {
-    core.warn("ops: unknown backing '" + kind + "'");
+    core.warn("ops: unknown backing '\{kind}'");
     return 2;
   }
 
@@ -67,24 +67,24 @@ string answer(Fs fs, string prefix, string line) {
   if (op == "write") {
     // The rest of the line is the content, so a file can hold a space.
     string body = words.len() > 2 ? rest(line, words.get(0).len() + 1 + words.get(1).len() + 1) : "";
-    return "write " + itoa(fs.writeFile(a, body.toBytes()).fault);
+    return "write \{fs.writeFile(a, body.toBytes()).fault}";
   }
   if (op == "read") {
-    if (!fs.readFile(a).ok) { return "read fault " + itoa(fs.readFile(a).fault); }
-    return "read [" + string.fromBytes(fs.readFile(a).bytes) + "]";
+    if (!fs.readFile(a).ok) { return "read fault \{fs.readFile(a).fault}"; }
+    return "read [\{string.fromBytes(fs.readFile(a).bytes)}]";
   }
-  if (op == "mkdir") { return "mkdir " + itoa(fs.mkdir(a, false).fault); }
-  if (op == "mkdirp") { return "mkdirp " + itoa(fs.mkdir(a, true).fault); }
-  if (op == "rm") { return "rm " + itoa(fs.remove(a, false).fault); }
-  if (op == "rmr") { return "rmr " + itoa(fs.remove(a, true).fault); }
-  if (op == "mv") { return "mv " + itoa(fs.rename(a, b).fault); }
+  if (op == "mkdir") { return "mkdir \{fs.mkdir(a, false).fault}"; }
+  if (op == "mkdirp") { return "mkdirp \{fs.mkdir(a, true).fault}"; }
+  if (op == "rm") { return "rm \{fs.remove(a, false).fault}"; }
+  if (op == "rmr") { return "rmr \{fs.remove(a, true).fault}"; }
+  if (op == "mv") { return "mv \{fs.rename(a, b).fault}"; }
   if (op == "stat") {
     if (!fs.stat(a).exists) { return "stat absent"; }
     // A *file's* size is a fact; a directory's is the host's block size — 4096 on the ext4 under this
     // container, and something else elsewhere. Imitating that number would be cargo-culting a detail no
     // program should read, so it is left out of the transcript rather than matched.
     if (fs.stat(a).isDir) { return "stat dir"; }
-    return "stat file " + itoa(fs.stat(a).size as~ i32);
+    return "stat file \{fs.stat(a).size as~ i32}";
   }
   if (op == "ls") {
     string[]? names = fs.readDir(a);
@@ -93,9 +93,9 @@ string answer(Fs fs, string prefix, string line) {
     for (i32 i = 0; i < names!.len(); i++) {
       joined = joined + (i == 0 ? "" : " ") + names![i];
     }
-    return "ls [" + joined + "]";
+    return "ls [\{joined}]";
   }
-  return "unknown " + op;
+  return "unknown \{op}";
 }
 
 /** The line from `at` on. */
@@ -129,13 +129,3 @@ Vec<string> splitSpaces(string text) {
   return out;
 }
 
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  string out = "";
-  i32 x = v < 0 ? 0 - v : v;
-  while (x > 0) {
-    out = string.fromCodepoint('0' + (x % 10)) + out;
-    x = x / 10;
-  }
-  return (v < 0 ? "-" : "") + out;
-}

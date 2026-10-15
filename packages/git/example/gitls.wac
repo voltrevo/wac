@@ -7,7 +7,6 @@
 // diff rather than an interpretation, and `test/wac/lsremote_test.wac` diffs it against the real thing.
 
 import { Cli, Core, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { Ad, AdRef, Advertised, parseAdvertisement } from "../src/fetch.wac";
 import { Store } from "../../tls/src/roots.wac";
@@ -24,7 +23,7 @@ export i32 main(Sys sys) {
   string url = string.fromBytes(cli.arg(0).wait());
   Remote r = parseRemote(url);
   if (!r.ok) {
-    core.warn("gitls: " + url + " is not an https URL with a path");
+    core.warn("gitls: \{url} is not an https URL with a path");
     return 2;
   }
 
@@ -36,30 +35,30 @@ export i32 main(Sys sys) {
   if (store.refused > 0) {
     // Said rather than swallowed: a root that did not parse cannot verify a chain, and the chain it
     // would have verified fails later blaming the server.
-    core.warn("gitls: " + itoa(store.refused) + " certificate(s) in the bundle did not decode");
+    core.warn("gitls: \{store.refused} certificate(s) in the bundle did not decode");
   }
 
-  string target = r.path + "/info/refs?service=git-upload-pack";
+  string target = "\{r.path}/info/refs?service=git-upload-pack";
   Answer a = request(core, cli, store, r.host, target, u8[](), "");
   if (!a.ok) {
-    core.warn("gitls: " + a.error);
+    core.warn("gitls: \{a.error}");
     return 1;
   }
   if (a.status != 200) {
     // A 401 is a private repository and a 404 is often the same thing, so the number is worth saying
     // rather than calling it a protocol error.
-    core.warn("gitls: " + r.host + " answered " + itoa(a.status) + " for " + target);
+    core.warn("gitls: \{r.host} answered \{a.status} for \{target}");
     return 1;
   }
   match (parseAdvertisement(a.body)) {
     Garbled(why): {
-      core.warn("gitls: the advertisement did not parse: " + why);
+      core.warn("gitls: the advertisement did not parse: \{why}");
       return 1;
     }
     Said(ad): {
       for (i32 i = 0; i < ad.refs.len(); i++) {
         AdRef one = ad.refs.get(i);
-        core.log(string.fromBytes(encode(one.target)) + "\t" + one.name);
+        core.log("\{string.fromBytes(encode(one.target))}\t\{one.name}");
       }
       return 0;
     }

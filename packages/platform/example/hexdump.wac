@@ -21,14 +21,14 @@ export i32 main(Sys sys) {
     string path = string.fromBytes(cli.arg(0).wait());
     Stat st = cli.stat(path).wait();
     if (!st.exists) {
-      core.warn("hexdump: " + path + ": not found");
+      core.warn("hexdump: \{path}: not found");
       return 1;
     }
     if (st.isDir) {
       // A directory is not bytes, so list it instead — and prove `readDir` works.
       string[]? names = cli.readDir(path).wait();
       if (names is null) {
-        core.warn("hexdump: " + path + ": cannot list");
+        core.warn("hexdump: \{path}: cannot list");
         return 1;
       }
       string[] found = names!;
@@ -37,7 +37,7 @@ export i32 main(Sys sys) {
     }
     FileResult f = cli.readFile(path).wait();
     if (!f.ok) {
-      core.warn("hexdump: " + path + ": " + f.error);
+      core.warn("hexdump: \{path}: \{f.error}");
       return 1;
     }
     data = f.bytes;

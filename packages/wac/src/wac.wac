@@ -34,7 +34,7 @@
 import { CallResult, Change, Child, Cli, Core, Exec, FileResult, GRANT_ENV, GRANT_NET, GRANT_READ,
          GRANT_RUN, GRANT_WRITE, INHERIT_IN, INHERIT_OUT, LoadedModule, Pending, Stat, faultWords, Sys } from "std";
 import { Read, Vec } from "core";
-import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
+import { atoi } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,
          capReachFiles,
@@ -196,7 +196,7 @@ void sweepBuildCache(Cli cli, string dir) {
   // Ages in the same order as the names, so the two can be sorted together.
   i64[] when = i64[].filled(n, 0);
   for (i32 i = 0; i < n; i++) {
-    Stat s = cli.stat(dir + "/" + names![i]).wait();
+    Stat s = cli.stat("\{dir}/\{names![i]}").wait();
     when[i] = s.exists ? s.modifiedMillis : (0 as i64);
   }
   // Selection sort, newest first: `n` is bounded by the entries in one directory and this runs only
@@ -209,7 +209,7 @@ void sweepBuildCache(Cli cli, string dir) {
       string tn = names![i]; names![i] = names![best]; names![best] = tn;
     }
   }
-  for (i32 i = keep; i < n; i++) { cli.remove(dir + "/" + names![i], false).wait(); }
+  for (i32 i = keep; i < n; i++) { cli.remove("\{dir}/\{names![i]}", false).wait(); }
 }
 
 /**
@@ -300,14 +300,14 @@ string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] path
   h.eat(string.fromBytes(id!));
   h.eat(cmd);
   h.eat(cmd == "test" ? target : entry);
-  h.eat(cmd == "build" ? baseName(stem) + ".wasm" : "");
+  h.eat(cmd == "build" ? "\{baseName(stem)}.wasm" : "");
   // A bitmask, not a list — `grantsIn` answers the five bits that go into the manifest.
   //
   // **`run` counts only the grants written before the entry**, because that is what it obeys: a
   // `--allow-read` after the entry is one of the program's own arguments (`grantAfterEntry` refuses the
   // ambiguous spelling, and after `--` it is deliberate). Keying on `grantsIn` would let
   // `wac run p.wac -- --allow-net` and `wac run --allow-net p.wac` share an entry, and they must not.
-  h.eat(itoa(cmd == "run" ? grantsBefore(cli, argc, entry) : grantsIn(cli, argc)));
+  h.eat("\{cmd == "run" ? grantsBefore(cli, argc, entry) : grantsIn(cli, argc)}");
   for (i32 i = 0; i < paths.len(); i++) {
     // **The aggregate's path is replaced, its text is not.** It is `.cache/wac-aggregate-<clock>`,
     // different on every run and the same file every time; hashing the name would make the key
@@ -315,7 +315,7 @@ string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] path
     h.eat(paths[i] == entry && cmd == "test" ? "<entry>" : paths[i]);
     h.eat(texts[i]);
   }
-  return home + "/cache/build/" + h.hex() + ".wasm";
+  return "\{home}/cache/build/\{h.hex()}.wasm";
 }
 
 /**
@@ -336,7 +336,7 @@ string positionedMissingImport(string parts, string[] paths, string[] texts) {
   if (at < 0) { return ""; }
   string src = texts[at];
   // Quoted, so `./b.wac` written in a comment above the import does not win the search.
-  i32 hit = src.indexOf("\"" + spec + "\"");
+  i32 hit = src.indexOf("\"\{spec}\"");
   if (hit < 0) { return ""; }
   i32 line = 1;
   i32 col = 1;
@@ -344,10 +344,10 @@ string positionedMissingImport(string parts, string[] paths, string[] texts) {
     if (src.slice(i, i + 1) == "\n") { line = line + 1; col = 1; } else { col = col + 1; }
   }
   // The wire `render.wac` reads: file, line, col, phase, message, note, hint, width.
-  string wire = from + "\t" + itoa(line) + "\t" + itoa(col) + "\tlink\t"
-      + "no file was supplied at that path\t" + key + "\t"
+  string wire = "\{from}\t\{line}\t\{col}\tlink\t"
+      + "no file was supplied at that path\t\{key}\t"
       + "supply the file, or check the path — `core` and `std` are the only trees that need none\t"
-      + itoa(spec.len() + 2) + "\n";
+      + "\{spec.len() + 2}\n";
   return renderDiagnostics(wire, paths, texts);
 }
 
@@ -680,9 +680,9 @@ string unknownFlagFor(Cli cli, i32 argc, string cmd) {
  */
 string flagRefusal(string cmd, string flag) {
   if (flag.len() > 8 && flag.slice(0, 8) == "--allow-" && !isGrantWord(flag)) {
-    return "wac: '" + flag + "' is not a grant — read, write, net, env, run";
+    return "wac: '\{flag}' is not a grant — read, write, net, env, run";
   }
-  return "wac: unknown flag '" + flag + "' — " + flagsWord(cmd);
+  return "wac: unknown flag '\{flag}' — \{flagsWord(cmd)}";
 }
 
 /** Whether this is one of the five grants, whatever command it was written on. */
@@ -694,10 +694,10 @@ bool isGrantWord(string flag) {
 /** What to print after naming a flag a command does not take. */
 string flagsWord(string cmd) {
   string[] ok = flagsFor(cmd);
-  if (ok.len() == 0) { return "`wac " + cmd + "` takes no flags"; }
+  if (ok.len() == 0) { return "`wac \{cmd}` takes no flags"; }
   string list = "";
   for (i32 i = 0; i < ok.len(); i++) { list = list + (list == "" ? "" : ", ") + ok[i]; }
-  return "`wac " + cmd + "` takes " + list;
+  return "`wac \{cmd}` takes \{list}";
 }
 
 /**
@@ -766,8 +766,8 @@ string oneLine(string text) {
 /** `path.wac` becomes `path.wasm`; anything else gains `.wasm`. */
 string wasmBeside(string entry) {
   i32 n = entry.len();
-  if (n > 4 && entry.slice(n - 4, n) == ".wac") { return entry.slice(0, n - 4) + ".wasm"; }
-  return entry + ".wasm";
+  if (n > 4 && entry.slice(n - 4, n) == ".wac") { return "\{entry.slice(0, n - 4)}.wasm"; }
+  return "\{entry}.wasm";
 }
 
 /**
@@ -793,7 +793,7 @@ void rememberBuild(Cli cli, string cachePath, u8[] whole, string distinct) {
   cli.mkdir(cacheDir, true).wait();
   Fnv u = Fnv.start();
   u.eat(distinct);
-  string tmp = cachePath + ".tmp" + u.hex();
+  string tmp = "\{cachePath}.tmp\{u.hex()}";
   Change wroteTmp = cli.writeFile(tmp, whole).wait();
   if (wroteTmp.ok()) {
     Change moved = cli.rename(tmp, cachePath).wait();
@@ -878,11 +878,11 @@ export i32 main(Sys sys) {
       }
       string why = cli.validated(f.bytes);
       if (why != "") {
-        core.log("rejected " + path);
+        core.log("rejected \{path}");
         bad = bad + 1;
       }
     }
-    core.log(itoa(argc - 1) + " module(s): " + itoa(bad) + " rejected");
+    core.log("\{argc - 1} module(s): \{bad} rejected");
     return bad > 0 ? 1 : 0;
   }
 
@@ -921,7 +921,7 @@ export i32 main(Sys sys) {
     string[] argv = allArgs(cli, argc);
     Parsed p = askedFrom(argv, 1);
     if (p.bad != "") {
-      core.warn("wac: " + p.bad + " is not a grant — read, write, net, env, run");
+      core.warn("wac: \{p.bad} is not a grant — read, write, net, env, run");
       return 2;
     }
     Cli inner = narrowed(cli, p.asked);
@@ -984,9 +984,9 @@ export i32 main(Sys sys) {
     // stated where it is decided — `emitCoverageHelpers` in `packages/wacc/src/emit.wac`. Every
     // *divergence* is still read out slot by slot below, which is the half a caller acts on.
     Digest da = digest(core, cli, both[0]);
-    if (da.error != "") { core.warn("wac: " + da.error); return 1; }
+    if (da.error != "") { core.warn("wac: \{da.error}"); return 1; }
     Digest db = digest(core, cli, both[1]);
-    if (db.error != "") { core.warn("wac: " + db.error); return 1; }
+    if (db.error != "") { core.warn("wac: \{db.error}"); return 1; }
     if (da.used == db.used && da.want == db.want && da.hash == db.hash) {
       core.log(agreeLine(da.used, da.want, db.used, db.want));
       return 0;
@@ -994,12 +994,12 @@ export i32 main(Sys sys) {
 
     Exercise[] none = Exercise[].filled(0, Exercise("", 0 - 1));
     Counters ca = read(core, cli, both[0], none, true);
-    if (ca.error != "") { core.warn("wac: " + ca.error); return 1; }
+    if (ca.error != "") { core.warn("wac: \{ca.error}"); return 1; }
     Counters cb = read(core, cli, both[1], none, true);
-    if (cb.error != "") { core.warn("wac: " + cb.error); return 1; }
+    if (cb.error != "") { core.warn("wac: \{cb.error}"); return 1; }
     if (ca.values.len() < 2 || cb.values.len() < 2) {
-      core.warn("wac: a journal is at least two slots; got " + itoa(ca.values.len()) +
-                " and " + itoa(cb.values.len()));
+      core.warn("wac: a journal is at least two slots; got \{ca.values.len()}" +
+                " and \{cb.values.len()}");
       return 1;
     }
     string[] lines = compareJournals(ca.values, cb.values, all);
@@ -1035,7 +1035,7 @@ export i32 main(Sys sys) {
       // `atoi` answers 0 for anything it cannot read, and 0 is also a count nobody can mean — a sweep
       // of no cases calls nothing — so one test covers both.
       if (cases <= 0) {
-        core.warn("wac: " + a + " — `" + count + "` is not a case count; a sweep is " +
+        core.warn("wac: \{a} — `\{count}` is not a case count; a sweep is " +
                   "`name:<n>` for some n above zero");
         return 2;
       }
@@ -1046,16 +1046,16 @@ export i32 main(Sys sys) {
     for (i32 i = 0; i < n; i++) { asked[i] = also[i]; }
 
     Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()), asked, false);
-    if (c.error != "") { core.warn("wac: " + c.error); return 1; }
+    if (c.error != "") { core.warn("wac: \{c.error}"); return 1; }
     for (i32 i = 0; i < c.values.len(); i++) {
-      core.log(itoa(i) + "\t" + itoa(c.values.get(i)));
+      core.log("\{i}\t\{c.values.get(i)}");
     }
-    core.log(itoa(c.values.len()) + " counter(s)");
+    core.log("\{c.values.len()} counter(s)");
     // **After the table, and it does not change the status.** A mistyped export is worth saying and
     // the counters that were collected are still the answer; the run printed a table, which is what
     // this command was asked for.
     for (i32 i = 0; i < c.missing.len(); i++) {
-      core.warn("wac: the module exports no " + c.missing.get(i));
+      core.warn("wac: the module exports no \{c.missing.get(i)}");
     }
     return 0;
   }
@@ -1076,15 +1076,15 @@ export i32 main(Sys sys) {
     }
     Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()),
                       Exercise[].filled(0, Exercise("", 0 - 1)), false);
-    if (c.error != "") { core.warn("wac: " + c.error); return 1; }
+    if (c.error != "") { core.warn("wac: \{c.error}"); return 1; }
     if (c.values.len() < 2) {
-      core.warn("wac: a journal is at least two slots; got " + itoa(c.values.len()));
+      core.warn("wac: a journal is at least two slots; got \{c.values.len()}");
       return 1;
     }
     i32 cursor = c.values.get(0);
-    core.log("events " + itoa((cursor > 0 ? cursor : 0) / 2) +
-             " wanted " + itoa(c.values.get(c.values.len() - 1)) +
-             " slots " + itoa(c.values.len()));
+    core.log("events \{(cursor > 0 ? cursor : 0) / 2}" +
+             " wanted \{c.values.get(c.values.len() - 1)}" +
+             " slots \{c.values.len()}");
     return 0;
   }
 
@@ -1095,33 +1095,33 @@ export i32 main(Sys sys) {
     Cli tcli = narrowed(cli, forCommand("task"));
     FileResult f = tcli.readFile(tasksFile()).wait();
     if (!f.ok) {
-      core.warn("wac: no " + tasksFile() + " here — `wac task` runs the named commands a project "
+      core.warn("wac: no \{tasksFile()} here — `wac task` runs the named commands a project "
                 + "keeps in one, and this directory has none");
       return 1;
     }
     Task[] tasks = tasksIn(f.bytes);
     if (tasks.len() == 0) {
-      core.warn("wac: " + tasksFile() + " has no tasks in it, or does not parse");
+      core.warn("wac: \{tasksFile()} has no tasks in it, or does not parse");
       return 1;
     }
     // **No name lists them**, which is what `deno task` did and what 942 references in this tree have
     // trained everyone to expect.
     if (argc < 2) {
-      core.log("usage: wac task <name>\n\n" + listing(tasks));
+      core.log("usage: wac task <name>\n\n\{listing(tasks)}");
       return 0;
     }
     string want = string.fromBytes(cli.arg(1).wait());
     if (!hasTask(tasks, want)) {
       string near = nearest(tasks, want);
       core.warn("wac: no task `" + want + "` in " + tasksFile()
-                + (near == "" ? " — `wac task` lists them" : " — did you mean `" + near + "`?"));
+                + (near == "" ? " — `wac task` lists them" : " — did you mean `\{near}`?"));
       return 1;
     }
     // Handed to the shell this program already carries, with the arguments after the name appended so
     // `wac task test packages/json` reaches the runner the way `wac task test packages/json` did.
     string line = commandOf(tasks, want);
     for (i32 i = 2; i < argc; i++) {
-      line = line + " '" + string.fromBytes(cli.arg(i).wait()) + "'";
+      line = line + " '\{string.fromBytes(cli.arg(i).wait())}'";
     }
     // **`execWith(..., inherit)` rather than `exec`.** A task's output belongs on the terminal as it
     // happens: `wac task test` is a four-minute suite, and `exec` buffers, so the first version of
@@ -1130,7 +1130,7 @@ export i32 main(Sys sys) {
     // for; the status is what it reports on.
     Exec r = tcli.execWith("/bin/sh", ["-c", line], u8[](), string[](), false, true).wait();
     if (!r.ran()) {
-      core.warn("wac: task `" + want + "` did not start — " + r.error);
+      core.warn("wac: task `\{want}` did not start — \{r.error}");
       return 1;
     }
     return r.status;
@@ -1225,8 +1225,8 @@ export i32 main(Sys sys) {
   // old silent wrong answer loud, which was worth doing, but the answer it should give is every path.
   // `testTargets` is where the list becomes a walk.
   if ((cmd == "build" || cmd == "audit") && pos.len() > 1) {
-    core.warn("wac " + cmd + ": takes one path, given " + itoa(pos.len()) + " — `" + pos[0]
-              + "` and `" + pos[1] + "`. Run it once per path, or name a directory.");
+    core.warn("wac \{cmd}: takes one path, given \{pos.len()} — `\{pos[0]}"
+              + "` and `\{pos[1]}`. Run it once per path, or name a directory.");
     return 2;
   }
 
@@ -1295,10 +1295,10 @@ export i32 main(Sys sys) {
       // answer when there were some and this run excluded every one, and it sends the reader looking
       // for a naming mistake that is not there. The native command's distinction, and its wording.
       if (ignoredCount > 0) {
-        core.warn("wac: --ignore excluded all " + itoa(ignoredCount) + " test file(s) under " + entry);
+        core.warn("wac: --ignore excluded all \{ignoredCount} test file(s) under \{entry}");
       } else {
         core.warn("wac: no tests under "
-                  + (pos.len() == 1 ? entry : itoa(pos.len()) + " path(s), the first being " + entry)
+                  + (pos.len() == 1 ? entry : "\{pos.len()} path(s), the first being \{entry}")
                   + " — a test file is named `*_test.wac` and exports "
                   + "`test*()` answering a string, empty for a pass");
       }
@@ -1316,7 +1316,7 @@ export i32 main(Sys sys) {
     for (i32 i = 0; i < walked.len(); i++) {
       FileResult one = cli.readFile(walked[i]).wait();
       if (!one.ok) {
-        core.warn("wac: cannot read " + walked[i] + " — " + one.error);
+        core.warn("wac: cannot read \{walked[i]} — \{one.error}");
         return 1;
       }
       texts[i] = string.fromBytes(one.bytes);
@@ -1346,7 +1346,7 @@ export i32 main(Sys sys) {
       }
       imports = beside(dir, walked);
       up = "";
-      aggregate = dir + "/" + baseName(aggregatePath(core, cli));
+      aggregate = "\{dir}/\{baseName(aggregatePath(core, cli))}";
     } else {
       // **`.cache/` is made, not assumed.** A fresh project has never built anything, so the directory
       // the aggregate goes in does not exist and `writeFile` answered "No such file or directory" —
@@ -1354,14 +1354,14 @@ export i32 main(Sys sys) {
       // an external project on 2026-08-25.
       Change made = cli.mkdir(".cache", true).wait();
       if (!made.ok()) {
-        core.warn("wac: cannot make .cache for the test aggregate — " + made.message);
+        core.warn("wac: cannot make .cache for the test aggregate — \{made.message}");
         return 1;
       }
       aggregate = aggregatePath(core, cli);
     }
     Change wrote = cli.writeFile(aggregate, aggregateSource(imports, texts, up).toBytes()).wait();
     if (!wrote.ok()) {
-      core.warn("wac: cannot write the aggregate " + aggregate + " — " + wrote.message);
+      core.warn("wac: cannot write the aggregate \{aggregate} — \{wrote.message}");
       return 1;
     }
     entry = aggregate;
@@ -1383,10 +1383,10 @@ export i32 main(Sys sys) {
   // outlived it, and a message about failing to delete scratch would be noise over the test report.
   if (generated != "" && !keepAggregate(cli)) { cli.remove(generated, false).wait(); }
   if (generated != "" && keepAggregate(cli)) {
-    core.warn("wac: kept the generated aggregate at " + generated + " (WAC_KEEP_AGGREGATE)");
+    core.warn("wac: kept the generated aggregate at \{generated} (WAC_KEEP_AGGREGATE)");
   }
   if (src.missing != "" || src.why != "") {
-    core.warn(src.why != "" ? "wacc: " + src.why : "wacc: cannot read " + src.missing);
+    core.warn(src.why != "" ? "wacc: \{src.why}" : "wacc: cannot read \{src.missing}");
     return 1;
   }
   string[] paths = exactly(src.paths, src.n);
@@ -1405,7 +1405,7 @@ export i32 main(Sys sys) {
   if (cmd == "build" || cmd == "run") {
     ProgramGraph pg = programGraph(paths, texts, entry);
     if (pg.why != "") {
-      core.warn("wacc: cannot build " + entry + " as a program — " + pg.why);
+      core.warn("wacc: cannot build \{entry} as a program — \{pg.why}");
       return 1;
     }
     texts = pg.sources;
@@ -1445,8 +1445,8 @@ export i32 main(Sys sys) {
       }
       string misplacedRun = grantAfterEntry(cli, argc, entry);
       if (misplacedRun != "") {
-        core.warn("wac: " + misplacedRun + " after the entry is a program argument, not a grant — write "
-                  + "it before " + entry + ", or after `--` if the program wants the string");
+        core.warn("wac: \{misplacedRun} after the entry is a program argument, not a grant — write "
+                  + "it before \{entry}, or after `--` if the program wants the string");
         return 2;
       }
       Child cached = cli.spawn(hit.bytes, programArgs(cli, argc, entry),
@@ -1492,9 +1492,9 @@ export i32 main(Sys sys) {
     }
     if (hit.ok && hit.bytes.len() > 8 && cmd != "test" && cmd != "app") {
       string stemHit = outStem(cli, argc);
-      Change wroteHit = fs.writeFile(stemHit + ".wasm", hit.bytes);
+      Change wroteHit = fs.writeFile("\{stemHit}.wasm", hit.bytes);
       if (!wroteHit.ok()) {
-        core.warn("wacc: cannot write " + stemHit + ".wasm — " + wroteHit.message);
+        core.warn("wacc: cannot write \{stemHit}.wasm — \{wroteHit.message}");
         return 1;
       }
       // **A hit says so.** This printed the line a real build prints, so nothing downstream could tell
@@ -1502,8 +1502,8 @@ export i32 main(Sys sys) {
       // anything. `--no-cache` is the way to refuse one; naming it here is what lets a caller *check*
       // that it worked, rather than trusting that it did.
       if (!hasFlag(cli, argc, "--quiet")) {
-        core.log(stemHit + ".wasm: " + itoa(hit.bytes.len()) + " bytes from cache, "
-                 + itoa(src.n) + " file(s) unchanged");
+        core.log("\{stemHit}.wasm: \{hit.bytes.len()} bytes from cache, "
+                 + "\{src.n} file(s) unchanged");
       }
       return 0;
     }
@@ -1624,7 +1624,7 @@ export i32 main(Sys sys) {
       string shown = positionedMissingImport(parts, paths, texts);
       if (shown != "") { core.warn(shown); return 1; }
     }
-    core.warn("wacc: cannot emit " + entry + " — " + blocked);
+    core.warn("wacc: cannot emit \{entry} — \{blocked}");
     return 1;
   }
 
@@ -1636,7 +1636,7 @@ export i32 main(Sys sys) {
   //
   // So: nothing written, and a non-zero exit. `issues/lang/0155`.
   if (wasm.len() <= 8) {
-    core.warn("wacc: the emitter produced no code for " + entry + " — " + itoa(wasm.len()) +
+    core.warn("wacc: the emitter produced no code for \{entry} — \{wasm.len()}" +
               " bytes is the wasm header and no sections at all, so nothing was written. Nothing was " +
               "declined either, which is what makes this a defect in the emitter rather than in the " +
               "program: issues/lang/0154 is the one known way to reach it.");
@@ -1651,7 +1651,7 @@ export i32 main(Sys sys) {
     bool js = hasFlag(cli, argc, "--js");
     string declined = bindgenDeclinedFilesIn(paths, texts, res, entry);
     if (declined != "") {
-      core.warn("wacc bindgen: not bound yet — " + oneLine(declined));
+      core.warn("wacc bindgen: not bound yet — \{oneLine(declined)}");
     }
     // From the metadata already in hand: `bindgenFiles` would build two more front ends to derive
     // exactly these two strings.
@@ -1677,16 +1677,16 @@ export i32 main(Sys sys) {
       string rest = ln.slice(2, ln.len());
       i32 tab = rest.indexOf("\t");
       if (tab < 0) { continue; }
-      core.warn("warning: " + rest.slice(0, tab) + " is exported but generic, so it is not in " + out
-                + "\n  = help: export an instantiation by name: export { " + rest.slice(tab + 1, rest.len()) + " };");
+      core.warn("warning: \{rest.slice(0, tab)} is exported but generic, so it is not in \{out}"
+                + "\n  = help: export an instantiation by name: export { \{rest.slice(tab + 1, rest.len())} };");
     }
     Change wroteGlue = fs.writeFile(out, glue.toBytes());
     if (!wroteGlue.ok()) {
-      core.warn("wacc: cannot write " + out + " — " + wroteGlue.message);
+      core.warn("wacc: cannot write \{out} — \{wroteGlue.message}");
       return 1;
     }
     if (!hasFlag(cli, argc, "--quiet")) {
-      core.log(out + ": " + bindSummary(glue));
+      core.log("\{out}: \{bindSummary(glue)}");
     }
     return 0;
   }
@@ -1724,7 +1724,7 @@ export i32 main(Sys sys) {
     // of them. That path needs a build per file, which this command does not do yet.
     i32 grants = grantsIn(cli, argc);
     string manifest = manifestWire(wasm, types, sigsWithCounters(sigs, covered || traced), entry,
-                                  baseName(stem(entry)) + ".wasm", grants);
+                                  "\{baseName(stem(entry))}.wasm", grants);
     u8[] wholeTest = withManifestSection(wasm, manifest);
     // **Remembered before the tests run, not after.** What is cached is the *build*, and whether the
     // tests pass is not a property of it — a failing suite recompiled from scratch on every run would
@@ -1765,8 +1765,8 @@ export i32 main(Sys sys) {
     }
     string misplaced = grantAfterEntry(cli, argc, entry);
     if (misplaced != "") {
-      core.warn("wac: " + misplaced + " after the entry is a program argument, not a grant — write it "
-                + "before " + entry + ", or after `--` if the program wants the string");
+      core.warn("wac: \{misplaced} after the entry is a program argument, not a grant — write it "
+                + "before \{entry}, or after `--` if the program wants the string");
       return 2;
     }
     i32 grants = grantsBefore(cli, argc, entry);
@@ -1775,7 +1775,7 @@ export i32 main(Sys sys) {
     // it to be wrong about, and a program that reports its own name should not report a temporary one.
     u8[] whole = withManifestSection(
       wasm, manifestWire(wasm, types, sigsWithCounters(sigs, covered || traced), entry,
-                         baseName(stem(entry)) + ".wasm", grants));
+                         "\{baseName(stem(entry))}.wasm", grants));
 
     // `true` for the input, so the program reads the terminal or the pipe this command was given —
     // which is what the native `run` does by instantiating in its own process. `false` for the
@@ -1792,7 +1792,7 @@ export i32 main(Sys sys) {
       return 1;
     }
     if (kid.handle < 0) {
-      core.warn("wac: cannot run " + entry + " — " + kid.error);
+      core.warn("wac: cannot run \{entry} — \{kid.error}");
       return 1;
     }
     // The child writes the real streams, so there is nothing to relay and the status is all this
@@ -1824,7 +1824,7 @@ export i32 main(Sys sys) {
       // generic refusal would list what `app` takes and leave them to guess that the answer is a
       // different command; this names it.
       if (bad == "--coverage" || bad == "--trace" || bad == "--trace-slots") {
-        core.warn("wac: `wac app` does not take '" + bad + "' — it writes an executable, and the "
+        core.warn("wac: `wac app` does not take '\{bad}' — it writes an executable, and the "
                   + "table that flag's counters need is written by `wac build --coverage`");
       } else {
         core.warn(flagRefusal("app", bad));
@@ -1852,7 +1852,7 @@ export i32 main(Sys sys) {
     // Storing the finished file instead would put the preamble in the cache, and the preamble is the
     // one part that costs nothing. `issues/system/0283c`.
     u8[] sealed = withManifestSection(wasm, manifestWire(wasm, types, sigs, entry,
-                                                        baseName(stem(entry)) + ".wasm",
+                                                        "\{baseName(stem(entry))}.wasm",
                                                         appGrants));
     rememberBuild(cli, cachePath, sealed, dest);
     return writeApp(core, cli, sealed, dest, words);
@@ -1869,7 +1869,7 @@ export i32 main(Sys sys) {
       core.warn("usage: wac build <entry.wac> -o <stem> [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]");
       return 2;
     }
-    string wasmName = baseName(stem) + ".wasm";
+    string wasmName = "\{baseName(stem)}.wasm";
     // Two more front ends, if this were `manifestFiles`: it derives `bindTypes` and `exportSigs`
     // from the sources, and both are already here.
     //
@@ -1905,14 +1905,14 @@ export i32 main(Sys sys) {
     for (i32 i = 0; i < sigs.len(); i++) { if (sigs.slice(i, i + 1) == "\n") { promised = promised + 1; } }
     string hollow = hollowWhy(whole, promised);
     if (hollow != "") {
-      core.warn("wacc: cannot build " + entry + " — " + hollow +
+      core.warn("wacc: cannot build \{entry} — \{hollow}" +
                 ". This is a compiler fault rather than a fault in the program: please report it with " +
                 "the entry that produced it.");
       return 1;
     }
-    Change wroteWasm = fs.writeFile(stem + ".wasm", whole);
+    Change wroteWasm = fs.writeFile("\{stem}.wasm", whole);
     if (!wroteWasm.ok()) {
-      core.warn("wacc: cannot write " + stem + ".wasm — " + wroteWasm.message);
+      core.warn("wacc: cannot write \{stem}.wasm — \{wroteWasm.message}");
       return 1;
     }
     // Remembered under the key computed before the compile. A failure to write the cache is not a
@@ -1936,19 +1936,19 @@ export i32 main(Sys sys) {
     // `index\tline\tcol\tkind\tfile` per counter, in counter order — what turns a count into a
     // position. Beside the module because whoever runs it is who needs it.
     if (covered) {
-      Change wroteCov = fs.writeFile(stem + ".cov", covTableFilesIn(paths, texts, res, entry).toBytes());
+      Change wroteCov = fs.writeFile("\{stem}.cov", covTableFilesIn(paths, texts, res, entry).toBytes());
       if (!wroteCov.ok()) {
-        core.warn("wacc: cannot write " + stem + ".cov — " + wroteCov.message);
+        core.warn("wacc: cannot write \{stem}.cov — \{wroteCov.message}");
         return 1;
       }
     }
     // The same table for a traced build, under its own suffix. Both or neither, for the reason above:
     // a table without the module it describes names positions in a program that was not built.
     if (traced) {
-      Change wroteTrace = fs.writeFile(stem + ".trace",
+      Change wroteTrace = fs.writeFile("\{stem}.trace",
                                        traceTableFiles(paths, texts, entry).toBytes());
       if (!wroteTrace.ok()) {
-        core.warn("wacc: cannot write " + stem + ".trace — " + wroteTrace.message);
+        core.warn("wacc: cannot write \{stem}.trace — \{wroteTrace.message}");
         return 1;
       }
     }
@@ -1956,7 +1956,7 @@ export i32 main(Sys sys) {
     // caller reads for that — `wac run` compiles into a temporary file and then runs the program,
     // and a compiler announcing the file it wrote would land in the middle of that program's output.
     if (!hasFlag(cli, argc, "--quiet")) {
-      core.log(stem + ".wasm: " + itoa(whole.len()) + " bytes from " + itoa(src.n) + " file(s)");
+      core.log("\{stem}.wasm: \{whole.len()} bytes from \{src.n} file(s)");
     }
     return 0;
   }
@@ -1964,10 +1964,10 @@ export i32 main(Sys sys) {
   string out = pos.len() > 1 ? pos[1] : wasmBeside(entry);
   Change wrote = fs.writeFile(out, wasm);
   if (!wrote.ok()) {
-    core.warn("wacc: cannot write " + out + " — " + wrote.message);
+    core.warn("wacc: cannot write \{out} — \{wrote.message}");
     return 1;
   }
-  core.log(out + ": " + itoa(wasm.len()) + " bytes from " + itoa(src.n) + " file(s)");
+  core.log("\{out}: \{wasm.len()} bytes from \{src.n} file(s)");
   return 0;
 }
 
@@ -2048,18 +2048,18 @@ i32 auditReport(Core core, const Sources src, string entry, bool verbose) {
     }
     // A file is named from where its group starts: a dependency's directory, or the entry's own.
     string from = dir != "" ? dir : entryDir;
-    string shown = from != "" && path.len() > from.len() + 1 && path.slice(0, from.len() + 1) == from + "/"
+    string shown = from != "" && path.len() > from.len() + 1 && path.slice(0, from.len() + 1) == "\{from}/"
       ? path.slice(from.len() + 1, path.len()) : path;
     gFiles[g] = gFiles[g] + 1;
     read = read + 1;
-    string why = via == "" ? "" : via + (rootType != "" && rootType != via ? ", via " + rootType : "");
+    string why = via == "" ? "" : via + (rootType != "" && rootType != via ? ", via \{rootType}" : "");
     if (status == "reaches") {
       gReach[g] = gReach[g] + 1;
       reaches = reaches + 1;
       gList[g] = gList[g] + (gList[g] == "" ? "" : ", ") + shown + " (" + why + ")";
     }
     if (verbose) {
-      core.log((status == "reaches" ? "  reaches  " : "  sealed   ") + path + (why == "" ? "" : "   (" + why + ")"));
+      core.log((status == "reaches" ? "  reaches  " : "  sealed   ") + path + (why == "" ? "" : "   (\{why})"));
     }
   }
   if (verbose) { core.log(""); }
@@ -2072,17 +2072,17 @@ i32 auditReport(Core core, const Sources src, string entry, bool verbose) {
       if ((gKey[g] == "") != (pass == 1)) { continue; }
       string name = gName[g];
       while (name.len() < width) { name = name + " "; }
-      core.log(name + " (" + itoa(gFiles[g]) + (gFiles[g] == 1 ? " file" : " files") + "): "
-               + (gReach[g] == 0 ? "sealed" : "reaches — " + gList[g]));
+      core.log(name + " (\{gFiles[g]}" + (gFiles[g] == 1 ? " file" : " files") + "): "
+               + (gReach[g] == 0 ? "sealed" : "reaches — \{gList[g]}"));
     }
   }
   // **The denominator, and it is the point** (`§wac-cli-audit-denominator-2wq7knx`): every report
   // says how much it read, including when nothing reaches — and a bound that was hit is said too,
   // because a table cut short that says `sealed` is the one failure this must not have.
-  core.log(itoa(read) + (read == 1 ? " file" : " files") + " read, " + itoa(reaches) + " reach, "
-           + itoa(read - reaches) + " sealed");
+  core.log("\{read}" + (read == 1 ? " file" : " files") + " read, \{reaches} reach, "
+           + "\{read - reaches} sealed");
   if (truncated != "") {
-    core.warn("wac audit: " + truncated);
+    core.warn("wac audit: \{truncated}");
     return 1;
   }
   return 0;
@@ -2106,7 +2106,7 @@ string confineOf(const Sources src, string path) {
 string packageNamed(const Sources src, string dir) {
   for (i32 m = 0; m < src.mapN; m++) {
     string to = src.mapTo[m];
-    if (to.len() > dir.len() && to.slice(0, dir.len() + 1) == dir + "/") { return src.mapSpec[m]; }
+    if (to.len() > dir.len() && to.slice(0, dir.len() + 1) == "\{dir}/") { return src.mapSpec[m]; }
   }
   return dir;
 }
@@ -2130,7 +2130,7 @@ i32 selfCommand(Core core, Cli cli, i32 argc) {
   if (sub == "uninstall") { return uninstallCommand(core, cli, argc); }
   core.warn("usage: wac self install --from PATH");
   core.warn("       wac self uninstall [--keep-cache]");
-  if (sub != "") { core.warn("wac: unknown subcommand " + sub); }
+  if (sub != "") { core.warn("wac: unknown subcommand \{sub}"); }
   return 2;
 }
 
@@ -2156,7 +2156,7 @@ i32 installCommand(Core core, Cli cli, i32 argc) {
     else if (a == "--from" && i + 1 < argc) { from = string.fromBytes(cli.arg(i + 1).wait()); i++; }
     else {
       core.warn("usage: wac self install --from PATH [--no-profile]");
-      core.warn("wac: unknown argument " + a);
+      core.warn("wac: unknown argument \{a}");
       return 2;
     }
   }
@@ -2174,37 +2174,37 @@ i32 installCommand(Core core, Cli cli, i32 argc) {
 
   FileResult got = cli.readFile(from).wait();
   if (!got.ok) {
-    core.warn("wac: cannot read " + from);
+    core.warn("wac: cannot read \{from}");
     return 1;
   }
 
   // **The directories first**, because writing a file into a directory that is not there fails in a
   // way that names the file rather than the directory.
-  cli.mkdir(home + "/bin", true).wait();
-  cli.mkdir(home + "/cache/git", true).wait();
+  cli.mkdir("\{home}/bin", true).wait();
+  cli.mkdir("\{home}/cache/git", true).wait();
 
-  Change put = cli.writeFile(home + "/bin/wac", got.bytes).wait();
+  Change put = cli.writeFile("\{home}/bin/wac", got.bytes).wait();
   if (!put.ok()) {
-    core.warn("wac: cannot write " + home + "/bin/wac");
+    core.warn("wac: cannot write \{home}/bin/wac");
     return 1;
   }
-  cli.setExecutable(home + "/bin/wac", true).wait();
+  cli.setExecutable("\{home}/bin/wac", true).wait();
 
   // Sourced from a shell profile. Guarded so that sourcing it twice does not put the directory on
   // `PATH` twice.
-  cli.writeFile(home + "/env",
+  cli.writeFile("\{home}/env",
     ("# Written by `wac self install`. Sourced from a shell profile.\n"
      + "case \":${PATH}:\" in\n"
-     + "  *\":" + home + "/bin:\"*) ;;\n"
-     + "  *) PATH=\"" + home + "/bin:${PATH}\" ; export PATH ;;\n"
+     + "  *\":\{home}/bin:\"*) ;;\n"
+     + "  *) PATH=\"\{home}/bin:${PATH}\" ; export PATH ;;\n"
      + "esac\n").toBytes()).wait();
 
-  cli.writeFile(home + "/install.json5",
+  cli.writeFile("\{home}/install.json5",
     ("{\n"
      + "  // Written by `wac self install`.\n"
-     + "  home: \"" + home + "\",\n"
-     + "  from: \"" + from + "\",\n"
-     + "  bytes: " + itoa(got.bytes.len()) + ",\n"
+     + "  home: \"\{home}\",\n"
+     + "  from: \"\{from}\",\n"
+     + "  bytes: \{got.bytes.len()},\n"
      + "}\n").toBytes()).wait();
 
   i32 lines = 0;
@@ -2216,11 +2216,11 @@ i32 installCommand(Core core, Cli cli, i32 argc) {
     }
   }
 
-  core.log("wac: installed " + itoa(got.bytes.len()) + " bytes at " + home + "/bin/wac");
+  core.log("wac: installed \{got.bytes.len()} bytes at \{home}/bin/wac");
   if (lines > 0) {
-    core.log("     and a line in your shell profile — open a new shell, or `. " + home + "/env`");
+    core.log("     and a line in your shell profile — open a new shell, or `. \{home}/env`");
   } else {
-    core.log("     put " + home + "/bin on PATH, or `. " + home + "/env`");
+    core.log("     put \{home}/bin on PATH, or `. \{home}/env`");
   }
   return 0;
 }
@@ -2232,7 +2232,7 @@ i32 installCommand(Core core, Cli cli, i32 argc) {
  * carrying `# wac`. Answers 1 if it wrote one and 0 if it did not, so the caller can say which.
  */
 i32 ensureProfileLine(Cli cli, string hd, string home) {
-  string[] profiles = [hd + "/.bashrc", hd + "/.zshrc", hd + "/.profile"];
+  string[] profiles = ["\{hd}/.bashrc", "\{hd}/.zshrc", "\{hd}/.profile"];
   for (i32 i = 0; i < profiles.len(); i++) {
     FileResult got = cli.readFile(profiles[i]).wait();
     if (!got.ok) { continue; }
@@ -2240,7 +2240,7 @@ i32 ensureProfileLine(Cli cli, string hd, string home) {
     if (holds(text, "# wac")) { return 0; }
     string sep = text.len() > 0 && text.slice(text.len() - 1, text.len()) != "\n" ? "\n" : "";
     Change put = cli.writeFile(profiles[i],
-      (text + sep + ". \"" + home + "/env\"    # wac\n").toBytes()).wait();
+      "\{text}\{sep}. \"\{home}/env\"    # wac\n".toBytes()).wait();
     if (put.ok()) { return 1; }
   }
   return 0;
@@ -2255,7 +2255,7 @@ i32 uninstallCommand(Core core, Cli cli, i32 argc) {
     if (a == "--keep-cache") { keepCache = true; }
     else {
       core.warn("usage: wac self uninstall [--keep-cache]");
-      core.warn("wac: unknown argument " + a);
+      core.warn("wac: unknown argument \{a}");
       return 2;
     }
   }
@@ -2271,27 +2271,27 @@ i32 uninstallCommand(Core core, Cli cli, i32 argc) {
   if (!(h is null) && h!.len() > 0) {
     string hd = string.fromBytes(h!);
     i32 lines = 0;
-    string[] profiles = [hd + "/.bashrc", hd + "/.zshrc", hd + "/.profile"];
+    string[] profiles = ["\{hd}/.bashrc", "\{hd}/.zshrc", "\{hd}/.profile"];
     for (i32 i = 0; i < profiles.len(); i++) { lines = lines + removeProfileLine(cli, profiles[i]); }
-    if (lines > 0) { went = went + (wentN > 0 ? ", " : "") + itoa(lines) + " profile line(s)"; wentN++; }
+    if (lines > 0) { went = went + (wentN > 0 ? ", " : "") + "\{lines} profile line(s)"; wentN++; }
   }
 
   string[] named = ["bin/wac", "env", "install.json5"];
   for (i32 i = 0; i < named.len(); i++) {
-    Change gone = cli.remove(home + "/" + named[i], false).wait();
+    Change gone = cli.remove("\{home}/\{named[i]}", false).wait();
     if (gone.ok()) { went = went + (wentN > 0 ? ", " : "") + named[i]; wentN++; }
   }
   // Only when it empties, which is what we want — a `bin` holding anything else is not ours.
-  cli.remove(home + "/bin", false).wait();
+  cli.remove("\{home}/bin", false).wait();
   if (!keepCache) {
-    Change gone = cli.remove(home + "/cache", true).wait();
+    Change gone = cli.remove("\{home}/cache", true).wait();
     if (gone.ok()) { went = went + (wentN > 0 ? ", " : "") + "cache"; wentN++; }
   }
   string[]? left = cli.readDir(home).wait();
   if (!(left is null)) {
     if (left!.len() == 0) { cli.remove(home, false).wait(); }
     else {
-      went = went + (wentN > 0 ? ", " : "") + "(" + itoa(left!.len()) + " other entr"
+      went = went + (wentN > 0 ? ", " : "") + "(\{left!.len()} other entr"
            + (left!.len() == 1 ? "y" : "ies") + " left in " + home + ")";
       wentN++;
     }
@@ -2355,8 +2355,8 @@ string bindSummary(string glue) {
     if (nl < 0) { break; }
     at = at + nl + 1;
   }
-  return itoa(classes) + (classes == 1 ? " class, " : " classes, ")
-       + itoa(functions) + (functions == 1 ? " function" : " functions");
+  return "\{classes}" + (classes == 1 ? " class, " : " classes, ")
+       + "\{functions}" + (functions == 1 ? " function" : " functions");
 }
 
 /**
@@ -2364,7 +2364,7 @@ string bindSummary(string glue) {
  * the whole list, so the one a reader meant is in it whichever it was.
  */
 string unknownCommand(string cmd) {
-  return "wac: unknown command '" + cmd + "' — the commands are check, compile, build, run, test, app, "
+  return "wac: unknown command '\{cmd}' — the commands are check, compile, build, run, test, app, "
        + "bindgen, audit, update, sh, task, self, validate, covdump, ctcompare, tracestat and app-run, "
        + "or a module `name.wasm` to run";
 }
@@ -2382,9 +2382,9 @@ string diagnosticCount(string wire) {
     if (ln.len() >= 8 && ln.slice(ln.len() - 8, ln.len()) == "\twarning") { warnings++; } else { errors++; }
   }
   if (errors == 0 && warnings == 0) { return "no diagnostics"; }
-  if (warnings == 0) { return itoa(errors) + " error(s)"; }
-  if (errors == 0) { return itoa(warnings) + " warning(s)"; }
-  return itoa(errors) + " error(s), " + itoa(warnings) + " warning(s)";
+  if (warnings == 0) { return "\{errors} error(s)"; }
+  if (errors == 0) { return "\{warnings} warning(s)"; }
+  return "\{errors} error(s), \{warnings} warning(s)";
 }
 
 /**
@@ -2398,23 +2398,23 @@ i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
   // **It always says what it read** (spec ch45 `§wac-cli-check-4mkq8wp`) — after errors and
   // warnings as much as after nothing, since the count is the part that cannot otherwise be seen.
   string[] roots = given;
-  string label = given.len() == 1 ? given[0] : (given.len() > 1 ? given[0] + " and " + itoa(given.len() - 1) + " more" : "");
+  string label = given.len() == 1 ? given[0] : (given.len() > 1 ? "\{given[0]} and \{given.len() - 1} more" : "");
   if (given.len() == 0) {
     // **The project this is run in**: the nearest `wac.json5` at or above the working directory.
     string dir = ".";
     bool found = false;
     for (i32 up = 0; up < 32 && !found; up++) {
-      if (fs.stat(dir + "/" + MANIFEST_NAME()).exists) { found = true; } else { dir = dir == "." ? ".." : dir + "/.."; }
+      if (fs.stat("\{dir}/\{MANIFEST_NAME()}").exists) { found = true; } else { dir = dir == "." ? ".." : "\{dir}/.."; }
     }
     // **No manifest anywhere above: the working directory is the project.** The README's own example
     // runs `wac check` over a lone file with no `wac.json5`, and expects it checked; refusing for want
     // of one would answer a question about source with a usage error.
     if (!found) { dir = "."; }
-    FileResult mf = cli.readFile(dir + "/" + MANIFEST_NAME()).wait();
+    FileResult mf = cli.readFile("\{dir}/\{MANIFEST_NAME()}").wait();
     Manifest m = readManifest(found && mf.ok ? mf.bytes : "{}".toBytes());
     if (!m.ok) {
       core.warn("wac check: " + dir + "/" + MANIFEST_NAME() + " — " + manifestWhy(m.code)
-                + (m.detail == "" ? "" : " (" + m.detail + ")"));
+                + (m.detail == "" ? "" : " (\{m.detail})"));
       return 1;
     }
     Vec<string> found2 = Vec.create();
@@ -2422,7 +2422,7 @@ i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
     roots = found2.toArray();
     label = dir;
     if (roots.len() == 0) {
-      core.log(label + ": 0 file(s), no diagnostics");
+      core.log("\{label}: 0 file(s), no diagnostics");
       return 0;
     }
   }
@@ -2433,7 +2433,7 @@ i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
   for (i32 r = 0; r < roots.len(); r++) {
     Sources s = r == 0 ? first : gather(fs, cli, normalisePath(roots[r]), false);
     if (s.missing != "" || s.why != "") {
-      core.warn(s.why != "" ? "wacc: " + s.why : "wacc: cannot read " + s.missing);
+      core.warn(s.why != "" ? "wacc: \{s.why}" : "wacc: cannot read \{s.missing}");
       return 1;
     }
     for (i32 i = 0; i < s.n; i++) {
@@ -2448,7 +2448,7 @@ i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
   string wire = diagnoseGraphIn(paths, texts, res, normalisePath(roots[0]));
   string diags = renderDiagnostics(wire, paths, texts);
   if (diags != "") { core.warn(diags); }
-  core.log(label + ": " + itoa(paths.len()) + " file(s), " + diagnosticCount(wire));
+  core.log("\{label}: \{paths.len()} file(s), \{diagnosticCount(wire)}");
   return wireHasErrors(wire) ? 1 : 0;
 }
 
@@ -2459,7 +2459,7 @@ i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
  * against.
  */
 void discoverWac(Cli cli, string dir, string rel, string[] exclude, Vec<string> out) {
-  string here = rel == "" ? dir : dir + "/" + rel;
+  string here = rel == "" ? dir : "\{dir}/\{rel}";
   string[]? names = cli.readDir(here).wait();
   if (names is null) { return; }
   string[] sorted = names!;
@@ -2472,11 +2472,11 @@ void discoverWac(Cli cli, string dir, string rel, string[] exclude, Vec<string> 
   for (i32 i = 0; i < sorted.len(); i++) {
     string name = sorted[i];
     if (name == "" || name.slice(0, 1) == "." || name == "node_modules" || name == "target") { continue; }
-    string sub = rel == "" ? name : rel + "/" + name;
-    string full = dir + "/" + sub;
+    string sub = rel == "" ? name : "\{rel}/\{name}";
+    string full = "\{dir}/\{sub}";
     Stat st = cli.stat(full).wait();
     if (st.isDir) {
-      if (cli.stat(full + "/" + MANIFEST_NAME()).wait().exists) { continue; }
+      if (cli.stat("\{full}/\{MANIFEST_NAME()}").wait().exists) { continue; }
       discoverWac(cli, dir, sub, exclude, out);
       continue;
     }

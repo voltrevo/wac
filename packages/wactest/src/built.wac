@@ -62,7 +62,7 @@ export i64 newestUnderExcept(const Cli cli, string dir, string[] skip) {
     bool skipped = false;
     for (i32 k = 0; k < skip.len(); k++) { if (here[i] == skip[k]) { skipped = true; } }
     if (skipped) { continue; }
-    string path = dir + "/" + here[i];
+    string path = "\{dir}/\{here[i]}";
     Stat s = cli.stat(path).wait();
     if (!s.exists) { continue; }
     if (s.isDir) {
@@ -113,7 +113,7 @@ string dirOfPath(string path) {
  * `packages/crypto/src/sha256.wac` was touched.
  */
 string resolvedFrom(string fromPath, string spec) {
-  string joinedPath = dirOfPath(fromPath) + "/" + spec;
+  string joinedPath = "\{dirOfPath(fromPath)}/\{spec}";
   bool rooted = joinedPath.len() > 0 && joinedPath.slice(0, 1) == "/";
   string[] parts = string[].filled(64, "");
   i32 n = 0;
@@ -129,8 +129,8 @@ string resolvedFrom(string fromPath, string spec) {
     n = n + 1;
   }
   string out = "";
-  for (i32 i = 0; i < n; i++) { out = (i == 0 ? parts[i] : out + "/" + parts[i]); }
-  return rooted ? "/" + out : out;
+  for (i32 i = 0; i < n; i++) { out = (i == 0 ? parts[i] : "\{out}/\{parts[i]}"); }
+  return rooted ? "/\{out}" : out;
 }
 
 /** How many files one program's closure is allowed to reach. `sshd` is the largest here at 190. */
@@ -296,7 +296,7 @@ i64 nowMillis(const Cli cli) {
 }
 
 /** The path of the `wac` binary these tests build and run with. */
-export string wacBinary(const Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+export string wacBinary(const Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 /**
  * The newest mtime of `path`, whether it is a file or a directory.
@@ -320,7 +320,7 @@ export i64 newestOf(Cli cli, string path) {
  * the one component underneath it. Both crates produce a binary called `wac`, because the command
  * is `packages/wac/src/wac.wac` and each host carries it as its seed; the engine is the difference.
  */
-export string nativeHost(Cli cli) { return cli.cwd().wait() + "/native/target/release/wac"; }
+export string nativeHost(Cli cli) { return "\{cli.cwd().wait()}/native/target/release/wac"; }
 
 /**
  * `""` when the wasmtime host is built and not older than `native/`, otherwise why not.
@@ -352,8 +352,8 @@ export string nativeHostWhyNot(Cli cli) {
                              "native/Cargo.lock", "native/build.rs"
   ];
   for (i32 i = 0; i < inputs.len(); i++) {
-    if (host.modifiedMillis < newestOf(cli, root + "/" + inputs[i])) {
-      return "native/target/release/wac is older than " + inputs[i]
+    if (host.modifiedMillis < newestOf(cli, "\{root}/\{inputs[i]}")) {
+      return "native/target/release/wac is older than \{inputs[i]}"
           + " — `./bootstrap.sh --host wasmtime` rebuilds it";
     }
   }
@@ -364,7 +364,7 @@ export string nativeHostWhyNot(Cli cli) {
   // decide whether to skip were told nothing was wrong and compared answers from it.
   // `issues/system/0316b`.
   string stale = seedStale(cli, WASMTIME_SEED());
-  if (stale != "") { return stale + " — `./bootstrap.sh --host wasmtime` rebuilds it"; }
+  if (stale != "") { return "\{stale} — `./bootstrap.sh --host wasmtime` rebuilds it"; }
   return "";
 }
 
@@ -393,7 +393,7 @@ export string seedStale(Cli cli, string seed) {
   // A graph of one file is a walk that did not resolve, and would make this answer "fresh" for ever.
   if (c.count < 10) { return ""; }
   if (s.modifiedMillis >= c.newest) { return ""; }
-  return seed + " is older than " + c.what;
+  return "\{seed} is older than \{c.what}";
 }
 
 /**
@@ -424,20 +424,20 @@ export string seedStale(Cli cli, string seed) {
  */
 export string builtProgram(const Cli cli, string entry, string name, string[] grants) {
   string wac = wacBinary(cli);
-  string dir = cli.cwd().wait() + "/.cache/built-" + name;
+  string dir = "\{cli.cwd().wait()}/.cache/built-\{name}";
   cli.mkdir(dir, true).wait();
-  string stem = dir + "/" + name;
-  Stat have = cli.stat(stem + ".wasm").wait();
+  string stem = "\{dir}/\{name}";
+  Stat have = cli.stat("\{stem}.wasm").wait();
 
   string want = "";
-  for (i32 i = 0; i < grants.len(); i++) { want = want + grants[i] + "\n"; }
-  FileResult had = cli.readFile(stem + ".flags").wait();
+  for (i32 i = 0; i < grants.len(); i++) { want = want + "\{grants[i]}\n"; }
+  FileResult had = cli.readFile("\{stem}.flags").wait();
   bool sameFlags = had.ok && string.fromBytes(had.bytes) == want;
 
   i64 newest = newestInClosure(cli, entry);
   Stat bin = cli.stat(wac).wait();
   if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
-  if (have.exists && sameFlags && have.modifiedMillis > newest) { return stem + ".wasm"; }
+  if (have.exists && sameFlags && have.modifiedMillis > newest) { return "\{stem}.wasm"; }
 
   string[] args = string[].filled(4 + grants.len(), "");
   args[0] = "build";
@@ -459,12 +459,12 @@ export string builtProgram(const Cli cli, string entry, string name, string[] gr
   // or a later build with the same grants would find a sidecar agreeing with it and no module.
   (const Exec) built = cli.exec(wac, args, u8[]()).wait();
   if (!built.ran() || built.status != 0) {
-    cli.remove(stem + ".wasm", false).wait();
-    cli.remove(stem + ".flags", false).wait();
-    return stem + ".wasm";
+    cli.remove("\{stem}.wasm", false).wait();
+    cli.remove("\{stem}.flags", false).wait();
+    return "\{stem}.wasm";
   }
-  cli.writeFile(stem + ".flags", want.toBytes()).wait();
-  return stem + ".wasm";
+  cli.writeFile("\{stem}.flags", want.toBytes()).wait();
+  return "\{stem}.wasm";
 }
 
 /**
@@ -509,13 +509,13 @@ export string builtProgram(const Cli cli, string entry, string name, string[] gr
  */
 export string builtApp(Cli cli, string entry, string name, string[] grants) {
   string wac = wacBinary(cli);
-  string dir = cli.cwd().wait() + "/.cache/built-" + name;
+  string dir = "\{cli.cwd().wait()}/.cache/built-\{name}";
   cli.mkdir(dir, true).wait();
-  string out = dir + "/" + name;
+  string out = "\{dir}/\{name}";
 
   string want = "";
-  for (i32 i = 0; i < grants.len(); i++) { want = want + grants[i] + "\n"; }
-  FileResult had = cli.readFile(out + ".flags").wait();
+  for (i32 i = 0; i < grants.len(); i++) { want = want + "\{grants[i]}\n"; }
+  FileResult had = cli.readFile("\{out}.flags").wait();
   bool sameFlags = had.ok && string.fromBytes(had.bytes) == want;
 
   Stat have = cli.stat(out).wait();
@@ -535,10 +535,10 @@ export string builtApp(Cli cli, string entry, string name, string[] grants) {
   Exec built = cli.exec(wac, args, u8[]()).wait();
   if (!built.ran() || built.status != 0) {
     cli.remove(out, false).wait();
-    cli.remove(out + ".flags", false).wait();
+    cli.remove("\{out}.flags", false).wait();
     return out;
   }
-  cli.writeFile(out + ".flags", want.toBytes()).wait();
+  cli.writeFile("\{out}.flags", want.toBytes()).wait();
   return out;
 }
 
@@ -559,7 +559,7 @@ export string builtApp(Cli cli, string entry, string name, string[] grants) {
  */
 export string builtByDeno(Cli cli, string entry, string name, string[] grants, string target,
                           bool worker) {
-  string dir = cli.cwd().wait() + "/.cache/built-" + name;
+  string dir = "\{cli.cwd().wait()}/.cache/built-\{name}";
   cli.mkdir(dir, true).wait();
   string out = dir + "/" + name + (worker ? ".worker.js" : "");
   Stat have = cli.stat(out).wait();
@@ -582,11 +582,11 @@ export string builtByDeno(Cli cli, string entry, string name, string[] grants, s
   if (host > newest) { newest = host; }
   if (have.exists && have.modifiedMillis > newest) { return out; }
 
-  string line = "exec env -u WAC_PROFILE deno run -A packages/platform/build.ts \"" + entry + "\"";
-  for (i32 i = 0; i < grants.len(); i++) { line = line + " " + grants[i]; }
-  line = line + " --target " + target;
+  string line = "exec env -u WAC_PROFILE deno run -A packages/platform/build.ts \"\{entry}\"";
+  for (i32 i = 0; i < grants.len(); i++) { line = line + " \{grants[i]}"; }
+  line = line + " --target \{target}";
   if (worker) { line = line + " --worker"; }
-  line = line + " -o \"" + out + "\"";
+  line = line + " -o \"\{out}\"";
   Exec r = cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
   if (!r.ran() || r.status != 0) { return ""; }
   return out;

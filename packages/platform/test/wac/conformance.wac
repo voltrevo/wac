@@ -124,7 +124,7 @@ export string[] nativeCapabilities(Cli cli) {
  */
 export string[] declaredFields(Cli cli, string name) {
   string src = sourceOf(cli, "std/platform.wac");
-  i32 from = src.indexOf("export struct " + name + " {");
+  i32 from = src.indexOf("export struct \{name} {");
   if (from < 0) { trap; }
   i32 to = src.slice(from, src.len()).indexOf("\n}");
   if (to < 0) { trap; }

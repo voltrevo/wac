@@ -29,7 +29,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -74,16 +73,16 @@ u8[][] memberBytes(JsonValue v, string key) {
 
 /** A vendored fixture file as a name-keyed object, or `null`. */
 JsonObject? load(T t, Cli cli, string name) {
-  string path = "packages/bls/test/vendor/" + name + ".json";
+  string path = "packages/bls/test/vendor/\{name}.json";
   FileResult f = cli.readFile(path).wait();
-  t.isTrue(f.ok, path + " could not be read: " + f.error);
+  t.isTrue(f.ok, "\{path} could not be read: \{f.error}");
   if (!f.ok) { return null; }
   JsonValue? doc = parse(f.bytes);
-  t.isTrue(!(doc is null), path + " did not parse");
+  t.isTrue(!(doc is null), "\{path} did not parse");
   if (doc is null) { return null; }
   match (doc!) {
     Object(members): { return members; }
-    default: { t.fail(path + " is not an object"); return null; }
+    default: { t.fail("\{path} is not an object"); return null; }
   }
 }
 
@@ -112,7 +111,7 @@ export string test_every_ethereum_fast_aggregate_verify_fixture_agrees(Core core
     bool got = blsFastAggregateVerify(pks, un(memberText(input!, "message")),
                                       un(memberText(input!, "signature")));
     t.eqBool(got, memberBool(c, "output"),
-             name + " (" + itoa(pks.len()) + " pubkeys)");
+             "\{name} (\{pks.len()} pubkeys)");
     ran = ran + 1;
   }
   t.eqI32(ran, 12, "fast_aggregate_verify fixtures run");
@@ -132,7 +131,7 @@ export string test_every_ethereum_aggregate_verify_fixture_agrees(Core core, Cli
     u8[][] pks = memberBytes(input!, "pubkeys");
     bool got = blsAggregateVerify(pks, memberBytes(input!, "messages"),
                                   un(memberText(input!, "signature")));
-    t.eqBool(got, memberBool(c, "output"), name + " (" + itoa(pks.len()) + " pubkeys)");
+    t.eqBool(got, memberBool(c, "output"), "\{name} (\{pks.len()} pubkeys)");
     ran = ran + 1;
   }
   t.eqI32(ran, 5, "aggregate_verify fixtures run");
@@ -153,7 +152,7 @@ export string test_every_ethereum_batch_verify_fixture_agrees(Core core, Cli cli
     u8[][] pks = memberBytes(input!, "pubkeys");
     bool got = blsBatchVerify(pks, memberBytes(input!, "messages"),
                               memberBytes(input!, "signatures"), noEntropy());
-    t.eqBool(got, memberBool(c, "output"), name + " (" + itoa(pks.len()) + " signatures)");
+    t.eqBool(got, memberBool(c, "output"), "\{name} (\{pks.len()} signatures)");
     if (contains(name, "forged")) { forged = forged + 1; }
     ran = ran + 1;
   }
@@ -223,7 +222,7 @@ export string test_entropy_changes_the_weights_but_not_the_verdict(Core core, Cl
     u8[][] sigs = memberBytes(input!, "signatures");
     for (i32 e = 0; e < entropies.len(); e++) {
       t.eqBool(blsBatchVerify(pks, msgs, sigs, entropies[e]), memberBool(c, "output"),
-               name + ": entropy " + hex(entropies[e]) + " changed the verdict");
+               "\{name}: entropy \{hex(entropies[e])} changed the verdict");
     }
   }
   return t.report();
@@ -268,7 +267,7 @@ u8[][] flipped(u8[][] list, i32 at) {
 string weight(u8[][] pks, u8[][] msgs, u8[][] sigs, u8[] entropy, i32 i) {
   u32[] w = blsBatchScalar(pks, msgs, sigs, entropy, i);
   string out = "";
-  for (i32 k = 0; k < w.len(); k++) { out = out + (k == 0 ? "" : ",") + itoa(w[k] as~ i32); }
+  for (i32 k = 0; k < w.len(); k++) { out = out + (k == 0 ? "" : ",") + "\{w[k] as~ i32}"; }
   return out;
 }
 
@@ -313,7 +312,7 @@ export string test_a_batch_weight_depends_on_the_whole_batch_not_just_its_positi
   ];
   for (i32 i = 0; i < what.len(); i++) {
     t.isFalse(moved[i] == base,
-              "changing " + what[i] + " left the weight unchanged — the batch is not bound into " +
+              "changing \{what[i]} left the weight unchanged — the batch is not bound into " +
               "it, so the weights are predictable and the forgery defence is gone");
   }
   // Distinct weights per term, too: identical weights would collapse the batch to an unweighted sum.

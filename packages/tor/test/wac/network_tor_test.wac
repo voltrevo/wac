@@ -39,7 +39,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
@@ -60,11 +59,11 @@ string loadNow(Cli cli) {
   if (!f.ok) { return "load unknown"; }
   string text = string.fromBytes(f.bytes);
   i32 nl = text.indexOf("\n");
-  return "load " + (nl < 0 ? text : text.slice(0, nl));
+  return "load \{(nl < 0 ? text : text.slice(0, nl))}";
 }
 
 string freshScratch(T t, Cli cli, string name) {
-  string dir = root(cli) + "/.cache/tornet-" + name;
+  string dir = "\{root(cli)}/.cache/tornet-\{name}";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   return dir;
@@ -80,7 +79,7 @@ string build(Cli cli, string entry, string out, string[] grants, bool worker) {
   for (i32 i = 0; i < tail.len(); i++) { args[at] = tail[i]; at = at + 1; }
   Exec r = cli.exec("deno", args, u8[]()).wait();
   if (!r.ran() || r.status != 0) {
-    return entry + " did not build: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    return "\{entry} did not build: \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}";
   }
   return "";
 }
@@ -89,10 +88,10 @@ string[] none() { return string[].filled(0, ""); }
 
 /** The launcher, the three relays and whatever else a case names — built into one directory. */
 string common(Cli cli, string dir) {
-  return build(cli, "packages/tor/src/network.wac", dir + "/network",
+  return build(cli, "packages/tor/src/network.wac", "\{dir}/network",
                ["--allow-read", "--allow-write", "--allow-net"], false) +
-         build(cli, "packages/tor/src/relayd.wac", dir + "/relayd.worker.js", none(), true) +
-         build(cli, "packages/tor/src/gendesc.wac", dir + "/gendesc.worker.js", none(), true);
+         build(cli, "packages/tor/src/relayd.wac", "\{dir}/relayd.worker.js", none(), true) +
+         build(cli, "packages/tor/src/gendesc.wac", "\{dir}/gendesc.worker.js", none(), true);
 }
 
 /**
@@ -103,7 +102,7 @@ string common(Cli cli, string dir) {
  */
 void seeds(Core core, Cli cli, string dir, string[] names) {
   for (i32 i = 0; i < names.len(); i++) {
-    cli.writeFile(dir + "/" + names[i], core.randomBytes(32).wait()).wait();
+    cli.writeFile("\{dir}/\{names[i]}", core.randomBytes(32).wait()).wait();
   }
 }
 
@@ -123,9 +122,9 @@ struct Ran {
  */
 Ran runNetwork(Cli cli, string dir) {
   Exec r = cli.exec("/bin/sh",
-    ["-c", "cd " + quoted(dir) + " && exec timeout " + itoa(BOUND_SECONDS) + " ./network net.txt"],
+    ["-c", "cd \{quoted(dir)} && exec timeout \{BOUND_SECONDS} ./network net.txt"],
     u8[]()).wait();
-  if (!r.ran()) { return Ran(-1, "", "the shell did not run — " + r.error, false); }
+  if (!r.ran()) { return Ran(-1, "", "the shell did not run — \{r.error}", false); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status == 124);
 }
 
@@ -144,8 +143,8 @@ string tail(string text, i32 n) {
 
 /** What a wedged or failed network had reached, which is the whole diagnosis. */
 string report(Cli cli, Ran r) {
-  return (r.wedged ? "the network did not finish within " + itoa(BOUND_SECONDS) + "s" :
-                     "the network exited " + itoa(r.code)) +
+  return (r.wedged ? "the network did not finish within \{BOUND_SECONDS}s" :
+                     "the network exited \{r.code}") +
          " (" + loadNow(cli) + "). What it had said:\n--- stderr ---\n" + tail(r.err, 25) +
          "\n--- stdout ---\n" + tail(r.out, 25);
 }
@@ -161,21 +160,21 @@ static string DOCS = "-C v.consensus -K cert.cert -D r1.desc -D r2.desc -D r3.de
  * did not exist yet.
  */
 string relay(i32 n, string net, string extra) {
-  return "node relay" + itoa(n) + " | -byte descriptor for port | relayd.worker.js s" + itoa(n) +
-         " -p 0 -n " + net + itoa(n) + " --descriptor r" + itoa(n) + ".desc " + extra + DOCS;
+  return "node relay\{n} | -byte descriptor for port | relayd.worker.js s\{n}" +
+         " -p 0 -n \{net}\{n} --descriptor r\{n}.desc \{extra}\{DOCS}";
 }
 
 void describe(Cli cli, string dir, string[] lines) {
   string text = "";
-  for (i32 i = 0; i < lines.len(); i++) { text = text + lines[i] + "\n"; }
-  cli.writeFile(dir + "/net.txt", text.toBytes()).wait();
+  for (i32 i = 0; i < lines.len(); i++) { text = text + "\{lines[i]}\n"; }
+  cli.writeFile("\{dir}/net.txt", text.toBytes()).wait();
 }
 
 export string test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(Core core, Cli cli) {
   T t = T.create();
   string dir = freshScratch(t, cli, "network");
   string why = common(cli, dir) +
-               build(cli, "packages/tor/src/app.wac", dir + "/torapp.worker.js", none(), true);
+               build(cli, "packages/tor/src/app.wac", "\{dir}/torapp.worker.js", none(), true);
   t.eqStr(why, "", "the network's programs built");
   if (why != "") { return t.report(); }
   seeds(core, cli, dir, ["s1", "s2", "s3"]);
@@ -195,7 +194,7 @@ export string test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(Core 
   ]);
 
   Ran r = runNetwork(cli, dir);
-  t.eqI32(r.code, 0, "the network did not come up or the fetch failed — " + report(cli, r));
+  t.eqI32(r.code, 0, "the network did not come up or the fetch failed — \{report(cli, r)}");
   if (r.code != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
   // Each stage was seen, by name. The launcher's whole claim is that none of these was assumed.
@@ -229,9 +228,9 @@ export string test_an_onion_service_published_on_that_network_and_a_page_fetched
   T t = T.create();
   string dir = freshScratch(t, cli, "onion");
   string why = common(cli, dir) +
-               build(cli, "packages/tor/src/hsserviced.wac", dir + "/hsserviced.worker.js",
+               build(cli, "packages/tor/src/hsserviced.wac", "\{dir}/hsserviced.worker.js",
                      none(), true) +
-               build(cli, "packages/tor/src/hsconnect.wac", dir + "/hsconnect.worker.js",
+               build(cli, "packages/tor/src/hsconnect.wac", "\{dir}/hsconnect.worker.js",
                      none(), true);
   t.eqStr(why, "", "the onion service's programs built");
   if (why != "") { return t.report(); }
@@ -258,7 +257,7 @@ export string test_an_onion_service_published_on_that_network_and_a_page_fetched
   ]);
 
   Ran r = runNetwork(cli, dir);
-  t.eqI32(r.code, 0, "the onion service run failed — " + report(cli, r));
+  t.eqI32(r.code, 0, "the onion service run failed — \{report(cli, r)}");
   if (r.code != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
   t.isTrue(contains(r.err, "service had already said \"introduction point established\""),

@@ -19,7 +19,6 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { inflate, gunzipBytes } from "../../src/inflate.wac";
 import { Bits, ClOp, clCode, dynamic, fillZeros, one, then, storedBlock,
          withBytes } from "./streams.wac";

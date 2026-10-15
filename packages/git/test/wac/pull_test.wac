@@ -16,7 +16,6 @@
 // variables the fixture set are gone with the environment, and nothing here reads a commit's date.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std";
 import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
 import { agentDir, madeDir } from "../../../wactest/src/host.wac";
@@ -103,13 +102,13 @@ Ran gitpull(Cli cli, string[] args) {
 export string test_a_thin_pack_completed_from_the_local_store_and_written(Core core, Cli cli) {
   T t = T.create();
   string who = agentDir(cli);
-  string dir = "/tmp/wac-git-pull" + (who == "" ? "" : "-" + who);
+  string dir = "/tmp/wac-git-pull" + (who == "" ? "" : "-\{who}");
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   if (!made.ok()) { return t.report(); }
-  string src = dir + "/src";
-  string mine = dir + "/mine";
+  string src = "\{dir}/src";
+  string mine = "\{dir}/mine";
   string whyDir1 = madeDir(cli, src);
   t.isTrue(whyDir1 == "", whyDir1);
 
@@ -118,16 +117,16 @@ export string test_a_thin_pack_completed_from_the_local_store_and_written(Core c
   string body = "";
   for (i32 i = 0; i < 400; i++) { body = body + "x"; }
   for (i32 i = 1; i <= 5; i++) {
-    cli.writeFile(src + "/f.txt", ("line " + itoa64(i as i64) + "\n" + body + "\n").toBytes()).wait();
+    cli.writeFile("\{src}/f.txt", "line \{i as i64}\n\{body}\n".toBytes()).wait();
     git(cli, src, ["add", "-A"]);
-    git(cli, src, ["commit", "-qm", "c" + itoa64(i as i64)]);
+    git(cli, src, ["commit", "-qm", "c\{i as i64}"]);
   }
   string tip = gitText(cli, src, ["rev-parse", "HEAD"]);
   string behind = gitText(cli, src, ["rev-parse", "HEAD~2"]);
 
   // Our repository: the same history minus the last two commits.
   Exec cloned = cli.exec("git", ["clone", "-q", "--no-local", src, mine], u8[]()).wait();
-  t.eqI32(cloned.status, 0, "clone: " + string.fromBytes(cloned.stderr));
+  t.eqI32(cloned.status, 0, "clone: \{string.fromBytes(cloned.stderr)}");
   git(cli, mine, ["reset", "-q", "--hard", behind]);
   // **The reflog keeps the discarded commits reachable**, so `gc --prune=now` alone prunes nothing
   // and the repository still holds the tip it is about to fetch. Found by the assertion below, which
@@ -138,38 +137,38 @@ export string test_a_thin_pack_completed_from_the_local_store_and_written(Core c
   git(cli, mine, ["gc", "-q", "--prune=now", "--aggressive"]);
   t.eqStr(gitText(cli, mine, ["rev-parse", "HEAD"]), behind,
           "our repository is two commits behind");
-  t.isTrue(git(cli, mine, ["cat-file", "-e", tip + "^{commit}"]).status != 0,
+  t.isTrue(git(cli, mine, ["cat-file", "-e", "\{tip}^{commit}"]).status != 0,
            "our repository does not already hold the commit it is about to fetch");
 
   // The advertisement, from real `git upload-pack`.
   Exec adv = cli.exec("git", ["upload-pack", "--advertise-refs", src], u8[]()).wait();
-  t.eqI32(adv.status, 0, "upload-pack --advertise-refs: " + string.fromBytes(adv.stderr));
-  cli.writeFile(dir + "/adv.bin", adv.stdout).wait();
+  t.eqI32(adv.status, 0, "upload-pack --advertise-refs: \{string.fromBytes(adv.stderr)}");
+  cli.writeFile("\{dir}/adv.bin", adv.stdout).wait();
 
   // Phase one: our request, with a `have`.
-  Ran req = gitpull(cli, ["request", mine, "refs/heads/main", dir + "/adv.bin"]);
-  t.eqI32(req.status, 0, "gitpull request: " + req.err);
+  Ran req = gitpull(cli, ["request", mine, "refs/heads/main", "\{dir}/adv.bin"]);
+  t.eqI32(req.status, 0, "gitpull request: \{req.err}");
   if (req.status != 0) { return t.report(); }
   string asText = string.fromBytes(req.out);
   // **The `have` is the point of the request**, so it is checked rather than assumed: without one the
   // server sends whole objects and the rest of this test would prove nothing.
-  t.isTrue(contains(asText, "have " + behind), "the request carries a have for what we hold");
-  t.isTrue(contains(asText, "want " + tip), "the request wants the tip");
+  t.isTrue(contains(asText, "have \{behind}"), "the request carries a have for what we hold");
+  t.isTrue(contains(asText, "want \{tip}"), "the request wants the tip");
   t.isTrue(contains(asText, "thin-pack"), "the request asks for a thin pack");
 
   // Phase two: real `git upload-pack` answers it.
   Exec up = cli.exec("git", ["upload-pack", "--stateless-rpc", src], req.out).wait();
-  t.eqI32(up.status, 0, "upload-pack: " + string.fromBytes(up.stderr));
-  cli.writeFile(dir + "/reply.bin", up.stdout).wait();
+  t.eqI32(up.status, 0, "upload-pack: \{string.fromBytes(up.stderr)}");
+  cli.writeFile("\{dir}/reply.bin", up.stdout).wait();
 
   // **The fixture's hard shape, asserted in git's own answer before ours is judged.**
   i32 at = packAt(up.stdout);
   t.isTrue(at >= 0, "there is a packfile in the reply");
   if (at < 0) { return t.report(); }
-  string rawDir = dir + "/raw";
+  string rawDir = "\{dir}/raw";
   string whyDir2 = madeDir(cli, rawDir);
   t.isTrue(whyDir2 == "", whyDir2);
-  cli.writeFile(rawDir + "/got.pack", from(up.stdout, at)).wait();
+  cli.writeFile("\{rawDir}/got.pack", from(up.stdout, at)).wait();
   Exec refused = git(cli, rawDir, ["index-pack", "got.pack"]);
   t.isTrue(refused.status != 0 && contains(string.fromBytes(refused.stderr), "unresolved delta"),
            "git cannot resolve the pack on its own, so it is thin: " +
@@ -177,24 +176,24 @@ export string test_a_thin_pack_completed_from_the_local_store_and_written(Core c
 
   // Ours: complete it from the local store and write it in.
   Ran applied = gitpull(cli, [
-                                      "apply", mine, "refs/heads/main", dir + "/adv.bin",
-                                      dir + "/reply.bin"
+                                      "apply", mine, "refs/heads/main", "\{dir}/adv.bin",
+                                      "\{dir}/reply.bin"
   ]);
-  t.eqI32(applied.status, 0, "gitpull apply: " + applied.err);
+  t.eqI32(applied.status, 0, "gitpull apply: \{applied.err}");
   string said = trimmed(string.fromBytes(applied.out));
   t.isTrue(numberBefore(said, " base(s) appended") > 0,
-           "the program appended bases, so the repair ran: " + said);
+           "the program appended bases, so the repair ran: \{said}");
 
   // **git's verdict on what we wrote.** A pack completed wrongly still writes a file with a
   // plausible name; `fsck` is what refuses it.
   Exec fsck = git(cli, mine, ["fsck", "--strict"]);
-  t.eqI32(fsck.status, 0, "fsck after our fetch: " + string.fromBytes(fsck.stderr));
+  t.eqI32(fsck.status, 0, "fsck after our fetch: \{string.fromBytes(fsck.stderr)}");
 
   // And the objects are really there and readable — the commit we asked for, and its tree.
-  t.eqI32(git(cli, mine, ["cat-file", "-e", tip + "^{commit}"]).status, 0,
+  t.eqI32(git(cli, mine, ["cat-file", "-e", "\{tip}^{commit}"]).status, 0,
           "the commit we fetched is in the repository");
   t.eqStr(gitText(cli, mine, ["cat-file", "-t", tip]), "commit", "and it is a commit");
-  t.isTrue(contains(gitText(cli, mine, ["cat-file", "-p", tip + ":f.txt"]), "line 5"),
+  t.isTrue(contains(gitText(cli, mine, ["cat-file", "-p", "\{tip}:f.txt"]), "line 5"),
            "the fetched tree holds the tip's file");
 
   // **`FETCH_HEAD` is what makes this a fetch**, and git reads the file we wrote: `rev-parse`
@@ -211,30 +210,30 @@ export string test_a_thin_pack_completed_from_the_local_store_and_written(Core c
 export string test_a_fetch_of_what_we_already_have_is_refused(Core core, Cli cli) {
   T t = T.create();
   string who = agentDir(cli);
-  string dir = "/tmp/wac-git-pull-up" + (who == "" ? "" : "-" + who);
+  string dir = "/tmp/wac-git-pull-up" + (who == "" ? "" : "-\{who}");
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   if (!made.ok()) { return t.report(); }
-  string src = dir + "/src";
-  string mine = dir + "/mine";
+  string src = "\{dir}/src";
+  string mine = "\{dir}/mine";
   string whyDir3 = madeDir(cli, src);
   t.isTrue(whyDir3 == "", whyDir3);
 
   git(cli, src, ["init", "-q", "-b", "main", "."]);
-  cli.writeFile(src + "/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile("\{src}/a.txt", "one\n".toBytes()).wait();
   git(cli, src, ["add", "-A"]);
   git(cli, src, ["commit", "-qm", "one"]);
   Exec cloned = cli.exec("git", ["clone", "-q", "--no-local", src, mine], u8[]()).wait();
-  t.eqI32(cloned.status, 0, "clone: " + string.fromBytes(cloned.stderr));
+  t.eqI32(cloned.status, 0, "clone: \{string.fromBytes(cloned.stderr)}");
 
   Exec adv = cli.exec("git", ["upload-pack", "--advertise-refs", src], u8[]()).wait();
-  cli.writeFile(dir + "/adv.bin", adv.stdout).wait();
+  cli.writeFile("\{dir}/adv.bin", adv.stdout).wait();
 
-  Ran r = gitpull(cli, ["request", mine, "refs/heads/main", dir + "/adv.bin"]);
+  Ran r = gitpull(cli, ["request", mine, "refs/heads/main", "\{dir}/adv.bin"]);
   // Its own exit code, not a failure and not a fetch: asking for what we hold would make the server
   // answer with a pack of nothing, which every layer below would then have to treat as damage.
-  t.eqI32(r.status, 3, "the up-to-date code: " + r.err);
+  t.eqI32(r.status, 3, "the up-to-date code: \{r.err}");
   t.eqI32(r.out.len(), 0, "no request was written for a fetch that has nothing to ask");
 
   cli.remove(dir, true).wait();

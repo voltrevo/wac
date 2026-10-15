@@ -48,7 +48,7 @@ export Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string path) {
         if (!cli.write(bytes)) {
           copying = false;
           broke = cli.outputError().wait();
-          if (broke == "") { broke = "could not write " + tmp; }
+          if (broke == "") { broke = "could not write \{tmp}"; }
         }
       }
       End: { copying = false; }
@@ -87,5 +87,5 @@ string tempName(Core core, string path) {
     out[i * 2] = digits[(r[i] as i32 >> 4) & 15];
     out[i * 2 + 1] = digits[r[i] as i32 & 15];
   }
-  return path + ".tmp" + string.fromBytes(out);
+  return "\{path}.tmp\{string.fromBytes(out)}";
 }

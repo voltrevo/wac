@@ -22,7 +22,6 @@
 // TypeScript compared the numbers it returned. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 static i32 W = 200;
 static i32 H = 150;
@@ -104,8 +103,8 @@ export string test_the_wave_decays_rather_than_growing() {
   t.isTrue(peaks[0] > 0, "the splash left no height at all, so nothing was simulated");
   for (i32 i = 1; i < 4; i++) {
     t.isTrue(peaks[i] < peaks[i - 1],
-             "the peak grew between " + itoa(steps[i - 1]) + " and " + itoa(steps[i]) +
-             " steps (" + itoa(peaks[i - 1]) + " -> " + itoa(peaks[i]) + "), so the scheme is unstable");
+             "the peak grew between \{steps[i - 1]} and \{steps[i]}" +
+             " steps (\{peaks[i - 1]} -> \{peaks[i]}), so the scheme is unstable");
   }
   return t.report();
 }
@@ -115,9 +114,9 @@ export string test_the_wave_propagates_rather_than_fading_in_place() {
   i32 near = spreadAfter(10);
   i32 far = spreadAfter(200);
   t.isTrue(near > 25,
-           "after ten steps only " + itoa(near) + " cells are moving, which is barely the splash itself");
+           "after ten steps only \{near} cells are moving, which is barely the splash itself");
   t.isTrue(far > near * 10,
-           "the disturbance reached " + itoa(far) + " cells after 200 steps against " + itoa(near) +
+           "the disturbance reached \{far} cells after 200 steps against \{near}" +
            " after ten — it is decaying in place rather than spreading");
   return t.report();
 }

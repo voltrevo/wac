@@ -23,7 +23,6 @@ import { recordOf, Record } from "../../ens/src/verified.wac";
 import { ownerSlot, resolverSlot } from "../../ens/src/registry.wac";
 import { namehash } from "../../ens/src/ens.wac";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** The ENS registry, at the address it has had since 2017. */
 string REGISTRY() { return "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e"; }
@@ -53,23 +52,23 @@ export i32 main(Sys sys) {
     "0x" + string.fromBytes(hexEncode(resolverSlot(node)))
   ];
   Proof p = proofOfSlots(cli, host, port, registry, slots, expected);
-  if (!p.ok) { core.warn("ensowner: " + p.error); return 1; }
+  if (!p.ok) { core.warn("ensowner: \{p.error}"); return 1; }
 
   u8[] registryBytes = hexOf(registry);
   if (registryBytes.len() != 20) { core.warn("ensowner: the registry address is not 20 bytes"); return 2; }
 
   Record r = recordOf(p.stateRoot, registryBytes, name, p.accountNodes, p.slots[0], p.slots[1]);
-  if (!r.ok) { core.warn("ensowner: " + r.error); return 1; }
+  if (!r.ok) { core.warn("ensowner: \{r.error}"); return 1; }
   if (!r.present) {
     core.log("no owner");
     // Absence is an answer and the exit code says so: 0, because the question was answered.
     core.warn(anchorNote(expected));
     return 0;
   }
-  core.log("0x" + string.fromBytes(hexEncode(r.owner)));
+  core.log("0x\{string.fromBytes(hexEncode(r.owner))}");
   // The resolver, when the name has one — proved from the same account and the same block as the owner.
   if (r.resolver.len() == 20) {
-    core.log("resolver 0x" + string.fromBytes(hexEncode(r.resolver)));
+    core.log("resolver 0x\{string.fromBytes(hexEncode(r.resolver))}");
   }
   core.warn(anchorNote(expected));
   return 0;

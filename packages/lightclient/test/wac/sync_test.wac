@@ -33,7 +33,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
-import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { Store, initializeStore, processUpdate, forceUpdate, headerSlot, headerBeaconRoot,
@@ -115,10 +114,10 @@ u8[] copyOf(u8[] a) {
 
 /** The store's two headers, in the `slot@0xroot` form the vectors' checks state them in. */
 string finalizedOf(Store s) {
-  return itoa64(headerSlot(s.finalizedHeader)) + "@0x" + hex(headerBeaconRoot(s.finalizedHeader));
+  return "\{headerSlot(s.finalizedHeader)}@0x\{hex(headerBeaconRoot(s.finalizedHeader))}";
 }
 string optimisticOf(Store s) {
-  return itoa64(headerSlot(s.optimisticHeader)) + "@0x" + hex(headerBeaconRoot(s.optimisticHeader));
+  return "\{headerSlot(s.optimisticHeader)}@0x" + hex(headerBeaconRoot(s.optimisticHeader));
 }
 
 /** What a step's checks say the two headers must be, in the same form. */
@@ -153,12 +152,12 @@ export string test_every_light_client_sync_vector_step_agrees_header_for_header(
     JsonValue? meta = member(c, "meta");
     JsonArray? steps = memberArray(c, "steps");
     JsonObject? updates = memberObject(c, "updates");
-    t.isTrue(!(meta is null) && !(steps is null) && !(updates is null), name + ": incomplete case");
+    t.isTrue(!(meta is null) && !(steps is null) && !(updates is null), "\{name}: incomplete case");
     if ((meta is null) || (steps is null) || (updates is null)) { continue; }
 
     Store? store = initializeStore(un(memberText(meta!, "trusted_block_root")),
                                    decoded(memberText(c, "bootstrap")));
-    t.isTrue(!(store is null), name + ": the bootstrap did not initialize a store");
+    t.isTrue(!(store is null), "\{name}: the bootstrap did not initialize a store");
     if (store is null) { continue; }
     u8[] gvr = un(memberText(meta!, "genesis_validators_root"));
 
@@ -166,26 +165,26 @@ export string test_every_light_client_sync_vector_step_agrees_header_for_header(
       JsonValue s = steps!.get(j);
       string kind = memberText(s, "kind");
       i64 slot = slotOf(memberText(s, "current_slot"));
-      string at = name + " step " + itoa(j) + " (" + kind + ", current_slot " +
+      string at = name + " step \{j} (" + kind + ", current_slot " +
                   memberText(s, "current_slot") + ")";
       if (kind == "process_update") {
         string which = memberText(s, "update");
         string updateHex = textAt(updates!, which);
-        t.isTrue(updateHex.len() > 0, at + ": no update " + which);
+        t.isTrue(updateHex.len() > 0, "\{at}: no update \{which}");
         if (updateHex.len() == 0) { continue; }
         // A vector's `process_update` steps are all expected to be *accepted*: upstream's invalid
         // updates live in separate test suites. So a false here is a failure, not a datum.
         t.isTrue(processUpdate(store!, decoded(updateHex), slot, gvr),
-                 at + ": the client rejected a valid update (" + which + ")");
+                 "\{at}: the client rejected a valid update (\{which})");
       } else if (kind == "force_update") {
         forceUpdate(store!, slot);
         forced = forced + 1;
       } else {
-        t.fail(at + ": unhandled step kind " + kind);
+        t.fail("\{at}: unhandled step kind \{kind}");
         continue;
       }
-      t.eqStr(finalizedOf(store!), checkOf(s, "finalized_header"), at + ": finalized");
-      t.eqStr(optimisticOf(store!), checkOf(s, "optimistic_header"), at + ": optimistic");
+      t.eqStr(finalizedOf(store!), checkOf(s, "finalized_header"), "\{at}: finalized");
+      t.eqStr(optimisticOf(store!), checkOf(s, "optimistic_header"), "\{at}: optimistic");
       stepsRun = stepsRun + 1;
     }
   }
@@ -246,8 +245,8 @@ export string test_the_store_rejects_an_update_whose_signature_is_not_by_its_com
   if (!b.ok) { return t.report(); }
   t.eqI32(b.update.len(), UPDATE_SIZE(), "update size: the offsets below are wrong");
   if (b.update.len() != UPDATE_SIZE()) { return t.report(); }
-  t.eqStr(itoa64(readU64(b.update, SIGNATURE_SLOT_AT())), itoa64(b.currentSlot),
-          "the bytes at " + itoa(SIGNATURE_SLOT_AT()) + " are not the signature slot, and a " +
+  t.eqStr("\{readU64(b.update, SIGNATURE_SLOT_AT())}", "\{b.currentSlot}",
+          "the bytes at \{SIGNATURE_SLOT_AT()} are not the signature slot, and a " +
           "signature slot is at most the current one — the layout has moved");
 
   Store? store = freshStore(b);
@@ -266,10 +265,10 @@ export string test_the_store_rejects_an_update_whose_signature_is_not_by_its_com
     Store? untouched = freshStore(b);
     if ((s2 is null) || (untouched is null)) { continue; }
     t.isFalse(processUpdate(s2!, bad, b.currentSlot, b.gvr),
-              "an update with signature byte " + itoa(offsets[i] - SIGNATURE_AT()) +
+              "an update with signature byte \{offsets[i] - SIGNATURE_AT()}" +
               " corrupted was accepted");
-    t.eqStr(itoa64(headerSlot(s2!.finalizedHeader)),
-            itoa64(headerSlot(untouched!.finalizedHeader)),
+    t.eqStr("\{headerSlot(s2!.finalizedHeader)}",
+            "\{headerSlot(untouched!.finalizedHeader)}",
             "a rejected update advanced the finalized header");
   }
   return t.report();
@@ -297,7 +296,7 @@ export string test_the_two_participation_thresholds_are_what_the_spec_says_not_w
   bool[] wants = [true, true, false, false, false, false];
   for (i32 i = 0; i < counts.len(); i++) {
     t.eqBool(hasSupermajority(bitsOf(counts[i]), counts[i]), wants[i],
-             itoa(counts[i]) + "/32 participants: supermajority");
+             "\{counts[i]}/32 participants: supermajority");
   }
   // The boundary explicitly, since off-by-one here is the whole risk: 2*32 = 64, 21*3 = 63 < 64.
   t.isFalse(hasSupermajority(bitsOf(21), 21), "21 of 32 counted as a supermajority");
@@ -316,7 +315,7 @@ export string test_the_two_participation_thresholds_are_what_the_spec_says_not_w
   t.eqI32(safetyThreshold(store!), 0, "a fresh store has a non-zero threshold");
   processUpdate(store!, b.update, b.currentSlot, b.gvr);
   t.eqI32(safetyThreshold(store!), active / 2,
-          "after one update with " + itoa(active) + " participants the threshold");
+          "after one update with \{active} participants the threshold");
   return t.report();
 }
 
@@ -335,7 +334,7 @@ export string test_is_better_update_prefers_the_earlier_of_two_otherwise_identic
   i64 attested = readU64(older, ATTESTED_SLOT_AT());
   i64 signature = readU64(older, SIGNATURE_SLOT_AT());
   // Stay inside the same sync-committee period (64 slots) so only the tiebreakers differ.
-  t.eqStr(itoa64((attested + (1 as i64)) / (64 as i64)), itoa64(attested / (64 as i64)),
+  t.eqStr("\{(attested + (1 as i64)) / (64 as i64)}", "\{attested / (64 as i64)}",
           "the chosen update sits on a period boundary; pick another");
 
   u8[] newerAttested = copyOf(older);
@@ -403,7 +402,7 @@ export string test_the_store_rejects_an_update_whose_branches_do_not_prove_what_
     Store? s = freshStore(b);
     if (s is null) { continue; }
     t.isFalse(processUpdate(s!, bad, b.currentSlot, b.gvr),
-              "an update with " + what[i] + " corrupted (byte " + itoa(at[i]) + ") was accepted — " +
+              "an update with \{what[i]} corrupted (byte \{at[i]}) was accepted — " +
               "the signature does not cover it, so the branch that should have caught it is not " +
               "being verified");
   }
@@ -437,7 +436,7 @@ export string test_a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_
     u8[] bad = copyOf(b.bootstrap);
     bad[at[i]] = bad[at[i]] ^ 0x01;
     t.isTrue(initializeStore(b.trustedRoot, bad) is null,
-             "a bootstrap with " + what[i] + " corrupted produced a store — the branch is not " +
+             "a bootstrap with \{what[i]} corrupted produced a store — the branch is not " +
              "checked");
   }
   // And a bootstrap for the wrong block is refused even though it is internally consistent.

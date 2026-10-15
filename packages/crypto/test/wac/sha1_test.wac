@@ -20,7 +20,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli } from "std";
 import { sha1, Sha1 } from "../../src/sha1.wac";
 import { slice } from "../../../bytes/src/slice.wac";
@@ -35,7 +34,7 @@ void checkSha1(T t, Cli cli, Lines lines, string what) {
 
 /** A `sha1` line: the message, and what we say its digest is. */
 void claim(Lines lines, u8[] msg, u8[] digest) {
-  lines.add("sha1 " + hex(msg) + " " + hex(digest));
+  lines.add("sha1 \{hex(msg)} \{hex(digest)}");
 }
 u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[].filled(n, 0);

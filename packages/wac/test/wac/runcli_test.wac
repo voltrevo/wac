@@ -61,8 +61,8 @@ string programIn(Cli cli, T t, string name, string src) {
   string dir = scratch(cli, name);
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  Change w = cli.writeFile(dir + "/p.wac", src.toBytes()).wait();
-  t.isTrue(w.ok(), "could not write the program — " + w.message);
+  Change w = cli.writeFile("\{dir}/p.wac", src.toBytes()).wait();
+  t.isTrue(w.ok(), "could not write the program — \{w.message}");
   return dir;
 }
 
@@ -70,10 +70,10 @@ export string test_wac_run_takes_a_main_with_no_capabilities_and_returns_its_ans
   T t = T.create();
   string dir = programIn(cli, t, "runcli-nocaps", NOCAPS);
 
-  Exec r = wac(cli, ["run", dir + "/p.wac"]);
+  Exec r = wac(cli, ["run", "\{dir}/p.wac"]);
   t.isTrue(!contains(said(r), "manifest"),
-           "a program that declares nothing is not a bookkeeping problem: " + said(r));
-  t.eqI32(r.status, 3, "and its answer is the exit status: " + said(r));
+           "a program that declares nothing is not a bookkeeping problem: \{said(r)}");
+  t.eqI32(r.status, 3, "and its answer is the exit status: \{said(r)}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -85,13 +85,13 @@ export string test_the_wasmtime_host_takes_one_too(Core core, Cli cli) {
   if (wacland == "") { return t.report(); }
 
   string dir = programIn(cli, t, "runcli-native", NOCAPS);
-  Exec built = wac(cli, ["build", dir + "/p.wac", "-o", dir + "/p", "--quiet"]);
-  t.eqI32(built.status, 0, "could not build the module — " + said(built));
+  Exec built = wac(cli, ["build", "\{dir}/p.wac", "-o", "\{dir}/p", "--quiet"]);
+  t.eqI32(built.status, 0, "could not build the module — \{said(built)}");
   if (built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
-  Exec r = cli.exec(wacland, [dir + "/p.wasm"], u8[]()).wait();
-  t.isTrue(!contains(said(r), "manifest"), "the same on the second host: " + said(r));
-  t.eqI32(r.status, 3, "and the same answer: " + said(r));
+  Exec r = cli.exec(wacland, ["\{dir}/p.wasm"], u8[]()).wait();
+  t.isTrue(!contains(said(r), "manifest"), "the same on the second host: \{said(r)}");
+  t.eqI32(r.status, 3, "and the same answer: \{said(r)}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -103,10 +103,10 @@ export string test_a_main_naming_a_capability_this_host_cannot_build_still_says_
     "import { Page } from \"std\";\n" +
     "export i32 main(Page page) { return 0; }\n");
 
-  Exec r = wac(cli, ["run", dir + "/p.wac"]);
-  t.isTrue(r.status != 0, "a capability no host binary builds is not a success: " + said(r));
+  Exec r = wac(cli, ["run", "\{dir}/p.wac"]);
+  t.isTrue(r.status != 0, "a capability no host binary builds is not a success: \{said(r)}");
   // Names the capability, rather than reporting a missing manifest struct or trapping inside.
-  t.isTrue(contains(said(r), "Page"), "and says which one: " + said(r));
+  t.isTrue(contains(said(r), "Page"), "and says which one: \{said(r)}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -126,18 +126,18 @@ export string test_a_built_deno_app_whose_main_takes_no_capabilities_runs(Core c
   T t = T.create();
   string dir = programIn(cli, t, "runcli-app", NOCAPS);
 
-  string made = builtByDeno(cli, dir + "/p.wac", "runcli-nocaps-app", string[].filled(0, ""),
+  string made = builtByDeno(cli, "\{dir}/p.wac", "runcli-nocaps-app", string[].filled(0, ""),
                             "deno", false);
   t.isTrue(made != "", "the app built");
   if (made == "") { cli.remove(dir, true).wait(); return t.report(); }
-  string app = dir + "/p";
-  t.isTrue(copyBuilt(cli, made, app, true), "the build copied to " + app);
+  string app = "\{dir}/p";
+  t.isTrue(copyBuilt(cli, made, app, true), "the build copied to \{app}");
 
   Exec r = cli.exec(app, string[].filled(0, ""), u8[]()).wait();
-  t.isTrue(r.ran(), "the app did not run — " + r.error);
+  t.isTrue(r.ran(), "the app did not run — \{r.error}");
   t.isTrue(!contains(said(r), "reading 'of'"),
-           "a program that declares nothing must not die in `worldFor`: " + said(r));
-  t.eqI32(r.status, 3, "and its answer is the exit status: " + said(r));
+           "a program that declares nothing must not die in `worldFor`: \{said(r)}");
+  t.eqI32(r.status, 3, "and its answer is the exit status: \{said(r)}");
 
   cli.remove(dir, true).wait();
   return t.report();

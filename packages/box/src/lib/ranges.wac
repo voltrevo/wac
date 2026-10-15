@@ -49,7 +49,7 @@ export struct Ranges {
 /** Read a `cut` list. `who` is the program name, for the error. */
 export Ranges parseRanges(string who, string text) {
   u8[] b = text.toBytes();
-  if (b.len() == 0) { return Ranges(false, who + ": you must specify a list of bytes, characters, or fields", i32[]()); }
+  if (b.len() == 0) { return Ranges(false, "\{who}: you must specify a list of bytes, characters, or fields", i32[]()); }
   // Counted first, then filled: a position can be any i32, so there is nothing byte-shaped to collect
   // it in on the way past, and the syntax is short enough to read twice.
   i32 count = 0;
@@ -65,23 +65,23 @@ export Ranges parseRanges(string who, string text) {
       bool sawHi = false;
       while (i < b.len() && b[i] >= '0' && b[i] <= '9') { upper = upper * 10 + (b[i] as i32 - '0'); sawHi = true; i++; }
       // `-N` is "from the first", `N-` is "to the last", and `-` alone is neither.
-      if (!sawLo && !sawHi) { return Ranges(false, who + ": invalid range with no endpoint: -", i32[]()); }
+      if (!sawLo && !sawHi) { return Ranges(false, "\{who}: invalid range with no endpoint: -", i32[]()); }
       if (!sawLo) { lo = 1; }
       hi = sawHi ? upper : 0;
       if (hi != 0 && hi < lo) {
-        return Ranges(false, who + ": invalid decreasing range", i32[]());
+        return Ranges(false, "\{who}: invalid decreasing range", i32[]());
       }
     } else if (!sawLo) {
-      return Ranges(false, who + ": invalid byte, character or field list", i32[]());
+      return Ranges(false, "\{who}: invalid byte, character or field list", i32[]());
     }
     if (lo == 0) {
       // GNU's own sentence, and it is about the *numbering* rather than about this list: positions
       // count from one, so a zero is not a position that happens to be out of range.
-      return Ranges(false, who + ": fields are numbered from 1", i32[]());
+      return Ranges(false, "\{who}: fields are numbered from 1", i32[]());
     }
     count++;
     if (i < b.len() && b[i] == ',') { i++; continue; }
-    if (i < b.len()) { return Ranges(false, who + ": invalid byte, character or field list", i32[]()); }
+    if (i < b.len()) { return Ranges(false, "\{who}: invalid byte, character or field list", i32[]()); }
   }
 
   // The second pass. Everything it could refuse has been refused above, so it only reads.

@@ -23,7 +23,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { withEnv, quoted } from "../../../wactest/src/childenv.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
@@ -39,7 +38,7 @@ string agentSuffix(Cli cli) {
     if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
     i32 end = i + 7;
     while (end < b.len() && b[end] != '/') { end = end + 1; }
-    return "-" + cwd.slice(i + 1, end);
+    return "-\{cwd.slice(i + 1, end)}";
   }
   return "";
 }
@@ -138,7 +137,7 @@ struct Repo {
    * config files, which is the thing being tested.
    */
   Exec commit(const this, string message) {
-    string wac = this.cli.cwd().wait() + "/native/v8/target/release/wac";
+    string wac = "\{this.cli.cwd().wait()}/native/v8/target/release/wac";
     return withEnv(this.cli, ["GIT_AUTHOR_DATE"], [DATE], wac,
                    [
                                          builtProgram(this.cli, "packages/git/example/gitci.wac", "gitci",
@@ -157,12 +156,12 @@ struct Repo {
 }
 
 Repo repo(T t, Cli cli, string name) {
-  string dir = "/tmp/wac-git-" + name + agentSuffix(cli);
+  string dir = "/tmp/wac-git-\{name}\{agentSuffix(cli)}";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
   Repo r = Repo(cli, dir);
   Exec init = r.git(["init", "-q", "-b", "main"]);
-  t.eqI32(init.status, 0, "git init — " + string.fromBytes(init.stderr));
+  t.eqI32(init.status, 0, "git init — \{string.fromBytes(init.stderr)}");
   // **`gitci` reads `user.name` and `user.email` and refuses without them**, as git does — so the
   // fixture has to configure an identity rather than relying on a built-in one.
   r.git(["config", "user.name", "Ada Lovelace"]);
@@ -172,14 +171,14 @@ Repo repo(T t, Cli cli, string name) {
 
 /** The tree that holds the sort trap, nested directories and bytes a text encoder would not survive. */
 string[] populate(Cli cli, string dir) {
-  cli.mkdir(dir + "/sub/deep", true).wait();
-  cli.mkdir(dir + "/a", true).wait();
-  cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
-  cli.writeFile(dir + "/a.b", "dot\n".toBytes()).wait();
-  cli.writeFile(dir + "/a/inner", "nested\n".toBytes()).wait();
-  cli.writeFile(dir + "/sub/b.txt", "two\n".toBytes()).wait();
-  cli.writeFile(dir + "/sub/deep/c.txt", "three\n".toBytes()).wait();
-  cli.writeFile(dir + "/blob.bin", [0, 1, 255, 254, 10] as u8[]).wait();
+  cli.mkdir("\{dir}/sub/deep", true).wait();
+  cli.mkdir("\{dir}/a", true).wait();
+  cli.writeFile("\{dir}/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile("\{dir}/a.b", "dot\n".toBytes()).wait();
+  cli.writeFile("\{dir}/a/inner", "nested\n".toBytes()).wait();
+  cli.writeFile("\{dir}/sub/b.txt", "two\n".toBytes()).wait();
+  cli.writeFile("\{dir}/sub/deep/c.txt", "three\n".toBytes()).wait();
+  cli.writeFile("\{dir}/blob.bin", [0, 1, 255, 254, 10] as u8[]).wait();
   // git's own order for these, which is what `ls-tree -r` will print.
   return ["a.b", "a.txt", "a/inner", "blob.bin", "sub/b.txt", "sub/deep/c.txt"];
 }
@@ -190,16 +189,16 @@ export string test_a_commit_we_made_passes_fsck_and_log_shows_it_with_its_parent
   Repo r = repo(t, cli, "ci");
 
   // A first commit by git, so ours has a parent to point at.
-  cli.writeFile(r.dir + "/a.txt", "before\n".toBytes()).wait();
+  cli.writeFile("\{r.dir}/a.txt", "before\n".toBytes()).wait();
   r.git(["add", "-A"]);
   r.git(["commit", "-qm", "first, by git"]);
   string parent = r.said(["rev-parse", "HEAD"]);
 
   string[] paths = populate(cli, r.dir);
   Exec made = r.commit("second, by wac\n");
-  t.eqI32(made.status, 0, "gitci failed: " + string.fromBytes(made.stderr));
+  t.eqI32(made.status, 0, "gitci failed: \{string.fromBytes(made.stderr)}");
   string name = trimmedEnd(string.fromBytes(made.stdout));
-  t.isTrue(isCommitName(name), "gitci printed \"" + name + "\", expected a commit name");
+  t.isTrue(isCommitName(name), "gitci printed \"\{name}\", expected a commit name");
   if (made.status != 0) { return t.report(); }
 
   // The criterion, both halves.
@@ -223,11 +222,11 @@ export string test_a_commit_we_made_passes_fsck_and_log_shows_it_with_its_parent
 
   // What git reads back out of the commit is what we wrote into it.
   string body = r.said(["cat-file", "commit", name]);
-  t.isTrue(body.indexOf("author Ada Lovelace <ada@example.com> " + DATE) >= 0,
-           "the author line is not the configured identity at the pinned time:\n" + body);
+  t.isTrue(body.indexOf("author Ada Lovelace <ada@example.com> \{DATE}") >= 0,
+           "the author line is not the configured identity at the pinned time:\n\{body}");
   t.isTrue(body.len() >= "second, by wac".len() &&
            body.slice(body.len() - "second, by wac".len(), body.len()) == "second, by wac",
-           "the message is not at the end of:\n" + body);
+           "the message is not at the end of:\n\{body}");
   t.eqStr(r.said(["log", "-1", "--format=%s"]), "second, by wac",
           "git shows a different subject");
 
@@ -242,7 +241,7 @@ export string test_a_first_commit_has_no_parent_header_and_git_accepts_it_as_a_r
   populate(cli, r.dir);
   Exec made = r.commit("the only commit\n");
   t.eqI32(made.status, 0,
-          "gitci failed on an empty repository: " + string.fromBytes(made.stderr));
+          "gitci failed on an empty repository: \{string.fromBytes(made.stderr)}");
   if (made.status != 0) { return t.report(); }
 
   t.eqI32(r.git(["fsck", "--strict"]).status, 0,
@@ -293,13 +292,13 @@ export string test_an_unset_identity_is_refused_and_no_commit_is_made(Core core,
   Repo r = repo(t, cli, "cinoid");
   r.git(["config", "--unset", "user.name"]);
   r.git(["config", "--unset", "user.email"]);
-  cli.writeFile(r.dir + "/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile("\{r.dir}/a.txt", "one\n".toBytes()).wait();
 
   Exec made = r.commit("no author");
   t.isTrue(made.status != 0,
-           "gitci committed without an identity: " + string.fromBytes(made.stdout));
+           "gitci committed without an identity: \{string.fromBytes(made.stdout)}");
   t.isTrue(string.fromBytes(made.stderr).indexOf("user.name") >= 0,
-           "the refusal does not name what is missing: " + string.fromBytes(made.stderr));
+           "the refusal does not name what is missing: \{string.fromBytes(made.stderr)}");
   t.isTrue(r.git(["log", "--oneline"]).status != 0,
            "a commit was made anyway: " + r.said(["log", "--oneline"]));
 
@@ -324,18 +323,18 @@ export string test_a_tree_built_from_a_working_tree_records_100755_for_an_execut
     Core core, Cli cli) {
   T t = T.create();
   Repo r = repo(t, cli, "ciexec");
-  cli.writeFile(r.dir + "/run.sh", "#!/bin/sh\necho hi\n".toBytes()).wait();
-  r.sh("chmod 755 " + quoted(r.dir + "/run.sh"));
-  cli.writeFile(r.dir + "/plain.txt", "not executable\n".toBytes()).wait();
+  cli.writeFile("\{r.dir}/run.sh", "#!/bin/sh\necho hi\n".toBytes()).wait();
+  r.sh("chmod 755 " + quoted("\{r.dir}/run.sh"));
+  cli.writeFile("\{r.dir}/plain.txt", "not executable\n".toBytes()).wait();
 
   // The fixture's own shape: the two files must differ on disk before anything else is asked.
-  t.eqI32(r.sh("test -x " + quoted(r.dir + "/run.sh")).status, 0,
+  t.eqI32(r.sh("test -x " + quoted("\{r.dir}/run.sh")).status, 0,
           "the fixture's run.sh is not executable");
-  t.isTrue(r.sh("test -x " + quoted(r.dir + "/plain.txt")).status != 0,
+  t.isTrue(r.sh("test -x " + quoted("\{r.dir}/plain.txt")).status != 0,
            "the fixture's plain.txt is executable");
 
   Exec made = r.commit("an executable\n");
-  t.eqI32(made.status, 0, "gitci failed: " + string.fromBytes(made.stderr));
+  t.eqI32(made.status, 0, "gitci failed: \{string.fromBytes(made.stderr)}");
   if (made.status != 0) { return t.report(); }
 
   // **`git ls-tree` is the adjudicator**: it prints the mode the tree stores, not the mode on disk.

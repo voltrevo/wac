@@ -15,7 +15,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 static string GENERATED = "packages/bls/src/fpkernel.wac";
 static string GENERATOR = "packages/bls/tools/genfpkernel.py";
@@ -44,14 +43,14 @@ i32 lineCount(string text) {
 export string test_src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel(Core core, Cli cli) {
   T t = T.create();
   Exec r = cli.exec("python3", [GENERATOR, "--stdout"], u8[]()).wait();
-  t.isTrue(r.ran(), "genfpkernel.py could not be run: " + r.error);
+  t.isTrue(r.ran(), "genfpkernel.py could not be run: \{r.error}");
   if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "genfpkernel.py failed:\n" + string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "genfpkernel.py failed:\n\{string.fromBytes(r.stderr)}");
   if (r.status != 0) { return t.report(); }
 
   string want = string.fromBytes(r.stdout);
   FileResult f = cli.readFile(GENERATED).wait();
-  t.isTrue(f.ok, GENERATED + " could not be read: " + f.error);
+  t.isTrue(f.ok, "\{GENERATED} could not be read: \{f.error}");
   if (!f.ok) { return t.report(); }
   string have = string.fromBytes(f.bytes);
   if (have == want) { return t.report(); }
@@ -65,10 +64,10 @@ export string test_src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel(Co
     if (lineAt(have, i) != lineAt(want, i)) { at = i; }
   }
   string where = at < 0
-    ? "identical for " + itoa(most) + " lines, then one is longer (checked in " + itoa(haveLines) +
-      ", generated " + itoa(wantLines) + ")"
-    : "first difference at line " + itoa(at + 1) + ":\n  checked in: " + lineAt(have, at) +
+    ? "identical for \{most} lines, then one is longer (checked in \{haveLines}" +
+      ", generated \{wantLines})"
+    : "first difference at line \{at + 1}:\n  checked in: " + lineAt(have, at) +
       "\n  generated:  " + (at < wantLines ? lineAt(want, at) : "(end of file)");
-  t.fail(GENERATED + " is not what " + GENERATOR + " produces.\n" + where);
+  t.fail("\{GENERATED} is not what \{GENERATOR} produces.\n\{where}");
   return t.report();
 }

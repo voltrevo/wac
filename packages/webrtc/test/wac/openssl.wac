@@ -32,7 +32,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, Exec, Pending, Socket } from "std";
 import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
 /** A running `s_server`, or `ok` false with the reason. */
@@ -70,18 +69,18 @@ static string REAP =
 
 /** Whether the reaper's pattern would match one `ps` line — the discrimination half. */
 export bool wouldReap(Cli cli, string line) {
-  Exec r = cli.exec("/bin/sh", ["-c", ARMS + "ours \"$1\"", "sh", line], u8[]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "\{ARMS}ours \"$1\"", "sh", line], u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
 /** Which pids the reaper would kill — for the test that the pattern is not inert. */
 export string reapSelects(Cli cli) {
-  Exec r = cli.exec("/bin/sh", ["-c", REAP + "echo \"$pid\"; done"], u8[]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "\{REAP}echo \"$pid\"; done"], u8[]()).wait();
   return string.fromBytes(r.stdout);
 }
 
 void reapAbandoned(Cli cli) {
-  cli.exec("/bin/sh", ["-c", REAP + "kill \"$pid\" 2>/dev/null; done; true"],
+  cli.exec("/bin/sh", ["-c", "\{REAP}kill \"$pid\" 2>/dev/null; done; true"],
            u8[]()).wait();
 }
 
@@ -94,20 +93,20 @@ void reapAbandoned(Cli cli) {
  */
 export Dtls startServer(T t, Cli cli, string name) {
   reapAbandoned(cli);
-  string dir = cli.cwd().wait() + "/.cache/dtls";
+  string dir = "\{cli.cwd().wait()}/.cache/dtls";
   string whyDir1 = madeDir(cli, dir);
   t.isTrue(whyDir1 == "", whyDir1);
   Held held = Held.take(cli);
   if (held.port < 0) { return Dtls(false, "no port could be bound", -1, Daemon(-1, "", "")); }
   i32 port = held.port;
-  string log = dir + "/" + name + "-" + itoa(port) + ".log";
+  string log = "\{dir}/\{name}-\{port}.log";
 
   held.release(cli);
   Daemon d = start(cli,
-    "openssl s_server -dtls1_2 -quiet -accept 127.0.0.1:" + itoa(port) +
+    "openssl s_server -dtls1_2 -quiet -accept 127.0.0.1:\{port}" +
     " -cert packages/tls/test/data/ec_leaf.pem -key packages/tls/test/data/ec_leaf.key" +
     " < /dev/null", log);
-  if (!d.ok()) { return Dtls(false, "openssl did not start — " + d.error, port, d); }
+  if (!d.ok()) { return Dtls(false, "openssl did not start — \{d.error}", port, d); }
   return Dtls(true, "", port, d);
 }
 
@@ -128,7 +127,7 @@ export bool waitForBind(Cli cli, Dtls s, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
     Exec r = cli.exec("/bin/sh", [
       "-c",
-      "ss -lun 2>/dev/null | grep -q ':" + itoa(s.port) + " ' && exit 0; sleep 0.05; exit 1"
+      "ss -lun 2>/dev/null | grep -q ':\{s.port} ' && exit 0; sleep 0.05; exit 1"
     ],
       u8[]()).wait();
     if (r.ran() && r.status == 0) { return true; }
@@ -169,13 +168,13 @@ export struct SClient {
  * a diagnostic without them is the failure mode this package has hit three times.
  */
 export SClient startClient(Cli cli, string name, i32 port) {
-  string dir = cli.cwd().wait() + "/.cache/dtls";
+  string dir = "\{cli.cwd().wait()}/.cache/dtls";
   cli.mkdir(dir, true).wait();
   Daemon d = start(cli,
     "openssl s_client -dtls1_2 -ign_eof -cert packages/tls/test/data/ec_leaf.pem" +
-    " -key packages/tls/test/data/ec_leaf.key -connect 127.0.0.1:" + itoa(port) + " < /dev/null",
-    dir + "/" + name + "-client-" + itoa(port) + ".log");
-  if (!d.ok()) { return SClient(false, "s_client did not start — " + d.error, d); }
+    " -key packages/tls/test/data/ec_leaf.key -connect 127.0.0.1:\{port} < /dev/null",
+    "\{dir}/\{name}-client-\{port}.log");
+  if (!d.ok()) { return SClient(false, "s_client did not start — \{d.error}", d); }
   return SClient(true, "", d);
 }
 

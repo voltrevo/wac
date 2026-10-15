@@ -59,7 +59,7 @@ export i32 chmod(Core core, Cli cli, Fs fs, Args a) {
   if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
   // GNU: "chmod: missing operand after 'MODE'". The mode alone is not an invocation.
   if (a.rest.len() < 2) {
-    core.warn(a.name + ": missing operand after '" + a.rest[0] + "'");
+    core.warn("\{a.name}: missing operand after '\{a.rest[0]}'");
     return 1;
   }
   Mode m = parseMode(a.rest[0]);
@@ -67,10 +67,10 @@ export i32 chmod(Core core, Cli cli, Fs fs, Args a) {
     if (m.symbolic) {
       // Named as unwritten rather than invalid: `u+x` is a real mode and this is our gap, and saying
       // "invalid mode" about it would blame the caller for something they spelled correctly.
-      core.warn(a.name + ": symbolic modes are not implemented: '" + a.rest[0] + "'");
-      core.warn(a.name + ": a mode cannot be read back on this filesystem, so `+` and `-` have nothing to start from");
+      core.warn("\{a.name}: symbolic modes are not implemented: '\{a.rest[0]}'");
+      core.warn("\{a.name}: a mode cannot be read back on this filesystem, so `+` and `-` have nothing to start from");
     } else {
-      core.warn(a.name + ": invalid mode: '" + a.rest[0] + "'");
+      core.warn("\{a.name}: invalid mode: '\{a.rest[0]}'");
     }
     return 1;
   }
@@ -78,7 +78,7 @@ export i32 chmod(Core core, Cli cli, Fs fs, Args a) {
   for (i32 i = 1; i < a.rest.len(); i++) {
     Change c = fs.chmod(a.rest[i], m.bits);
     if (c.ok()) { continue; }
-    core.warn(a.name + ": changing permissions of '" + a.rest[i] + "': " + reasonOf(c));
+    core.warn("\{a.name}: changing permissions of '\{a.rest[i]}': \{reasonOf(c)}");
     code = 1;
   }
   return code;

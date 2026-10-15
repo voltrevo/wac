@@ -36,7 +36,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { toLower, toUpper, fold, lowerAll, upperAll, foldAll, foldEqual } from "../../src/case.wac";
 import { isPrintable } from "../../src/printable.wac";
 import { Scalar, decode, encodedLength, encode, isValid, count } from "../../src/utf8.wac";
@@ -74,10 +73,10 @@ export string test_simple_case_mapping_agrees_with_the_host(Core core, Cli cli) 
     i32 lo = toLower(cp);
     i32 up = toUpper(cp);
     if (lo != cp || up != cp) {
-      lines.add("case " + itoa(cp) + " " + itoa(lo) + " " + itoa(up));
+      lines.add("case \{cp} \{lo} \{up}");
     }
   }
-  t.isTrue(lines.n > 2000, "the mapping moves a few thousand code points — " + itoa(lines.n));
+  t.isTrue(lines.n > 2000, "the mapping moves a few thousand code points — \{lines.n}");
   lines.add("sweep case");
   checkDeno(t, cli, ORACLE, lines, "case mapping");
   return t.report();
@@ -123,15 +122,15 @@ export string test_fold_is_an_equivalence(Core core, Cli cli) {
     moved = moved + 1;
     // Idempotent: folding a folded code point changes nothing. A table with a two-step chain in it —
     // x to y to z — would break this and nothing else here would notice.
-    t.eqI32(fold(f), f, "U+" + itoa(cp) + " folds to " + itoa(f) + ", which folds again");
-    lines.add("fold " + itoa(cp) + " " + itoa(f));
+    t.eqI32(fold(f), f, "U+\{cp} folds to \{f}, which folds again");
+    lines.add("fold \{cp} \{f}");
     // The case mappings too, so the oracle can check that a code point and its case mapping fold
     // together exactly when the host says they are the same letter.
     i32 lo = toLower(cp);
     i32 up = toUpper(cp);
-    if (lo != cp || up != cp) { lines.add("case " + itoa(cp) + " " + itoa(lo) + " " + itoa(up)); }
+    if (lo != cp || up != cp) { lines.add("case \{cp} \{lo} \{up}"); }
   }
-  t.isTrue(moved >= 1000, "only " + itoa(moved) + " code points fold to anything, which is too few");
+  t.isTrue(moved >= 1000, "only \{moved} code points fold to anything, which is too few");
   // The case lines above are context, not a second case sweep: the fold rules ask whether a code
   // point folds with its own case mapping, and they need the mapping to do it.
   lines.add("sweep fold");
@@ -156,7 +155,7 @@ export string test_the_fold_classes() {
     i32 first = fold(classes[g][0]);
     for (i32 i = 0; i < classes[g].len(); i++) {
       t.eqI32(fold(classes[g][i]), first,
-              "U+" + itoa(classes[g][i]) + " should fold with the rest of its class");
+              "U+\{classes[g][i]} should fold with the rest of its class");
     }
   }
   t.eqI32(fold(0x131), 0x131,
@@ -180,17 +179,17 @@ export string test_fold_all_matches_fold_equal() {
   ];
   for (i32 i = 0; i < strings.len(); i++) {
     u8[]? folded = foldAll(b(strings[i]));
-    t.isTrue(!(folded is null), "\"" + strings[i] + "\" is valid UTF-8");
+    t.isTrue(!(folded is null), "\"\{strings[i]}\" is valid UTF-8");
     if (folded is null) { continue; }
     u8[]? twice = foldAll(folded!);
     t.isTrue(!(twice is null) && string.fromBytes(twice!) == string.fromBytes(folded!),
-             "\"" + strings[i] + "\": folding twice differs from folding once");
+             "\"\{strings[i]}\": folding twice differs from folding once");
     for (i32 k = 0; k < strings.len(); k++) {
       u8[]? other = foldAll(b(strings[k]));
       bool bothFolded = other is null ? false
                                       : string.fromBytes(other!) == string.fromBytes(folded!);
       t.isTrue(foldEqual(b(strings[i]), b(strings[k])) == bothFolded,
-               "\"" + strings[i] + "\" vs \"" + strings[k] +
+               "\"\{strings[i]}\" vs \"\{strings[k]}" +
                "\": foldEqual and the folded forms disagree");
     }
   }
@@ -258,8 +257,8 @@ export string test_mapping_whole_strings_agrees_with_the_host(Core core, Cli cli
   i32[] lowerPoints = casedPoints(0x20, 0x2FFFF, 200000, false);
   i32[] upperPoints = casedPoints(0x20, 0x2FFFF, 200000, true);
   t.isTrue(lowerPoints.len() > 1000 && upperPoints.len() > 1000,
-           "a wide spread rather than a Latin sample — " + itoa(lowerPoints.len()) + " lowercase, " +
-           itoa(upperPoints.len()) + " uppercase");
+           "a wide spread rather than a Latin sample — \{lowerPoints.len()} lowercase, " +
+           "\{upperPoints.len()} uppercase");
   Rng rng = Rng(0x1F2E3D4C);
   i32 sent = 0;
   for (i32 trial = 0; trial < 3000; trial++) {
@@ -297,7 +296,7 @@ export string test_fold_equal_on_named_pairs() {
   ];
   for (i32 i = 0; i < a.len(); i++) {
     t.isTrue(foldEqual(b(a[i]), b(c[i])) == want[i],
-             "\"" + a[i] + "\" vs \"" + c[i] + "\"");
+             "\"\{a[i]}\" vs \"\{c[i]}\"");
   }
   return t.report();
 }
@@ -364,17 +363,17 @@ export string test_utf8_encoding_matches_the_host_at_every_code_point(Core core,
   for (i32 cp = 0; cp <= MAX; cp++) {
     if (isSurrogate(cp)) { continue; }
     u8[] bytes = encodeOne(cp);
-    lines.add("utf8 " + itoa(cp) + " " + hex(bytes));
+    lines.add("utf8 \{cp} \{hex(bytes)}");
     Scalar got = decode(bytes, 0);
     if (got.code != cp || got.size != bytes.len() || bytes.len() != encodedLength(cp)) {
-      t.fail("U+" + itoa(cp) + ": encoded " + itoa(bytes.len()) + " bytes, decoded " +
-             itoa(got.code) + " over " + itoa(got.size) + ", encodedLength says " +
-             itoa(encodedLength(cp)));
+      t.fail("U+\{cp}: encoded \{bytes.len()} bytes, decoded " +
+             "\{got.code} over \{got.size}, encodedLength says " +
+             "\{encodedLength(cp)}");
       return t.report();
     }
     checked = checked + 1;
   }
-  t.isTrue(checked >= 1000000, "only checked " + itoa(checked) + " code points");
+  t.isTrue(checked >= 1000000, "only checked \{checked} code points");
   checkDeno(t, cli, ORACLE, lines, "utf8");
   return t.report();
 }
@@ -410,12 +409,12 @@ export string test_invalid_utf8_is_rejected(Core core, Cli cli) {
   cases[18] = [0xE0, 0xA0, 0x41] as u8[];
   cases[19] = [0x61, 0x80, 0x62] as u8[];             // a stray continuation inside text
   for (i32 i = 0; i < cases.len(); i++) {
-    t.isFalse(isValid(cases[i]), "accepted an invalid sequence at index " + itoa(i));
+    t.isFalse(isValid(cases[i]), "accepted an invalid sequence at index \{i}");
     lines.add("valid " + hex(cases[i]) + " " + (isValid(cases[i]) ? "1" : "0"));
   }
   string[] good = ["", "a", "café", "日本", "😀", "a b"];
   for (i32 i = 0; i < good.len(); i++) {
-    t.isTrue(isValid(b(good[i])), "rejected valid \"" + good[i] + "\"");
+    t.isTrue(isValid(b(good[i])), "rejected valid \"\{good[i]}\"");
     lines.add("valid " + hex(b(good[i])) + " " + (isValid(b(good[i])) ? "1" : "0"));
   }
   checkDeno(t, cli, ORACLE, lines, "validity");
@@ -430,10 +429,10 @@ export string test_scalar_counting_matches_the_host(Core core, Cli cli) {
                               "a😀b"
   ];
   for (i32 i = 0; i < strings.len(); i++) {
-    lines.add("count " + hex(b(strings[i])) + " " + itoa(count(b(strings[i]))));
+    lines.add("count \{hex(b(strings[i]))} \{count(b(strings[i]))}");
   }
   t.eqI32(count([0xFF] as u8[]), -1, "invalid input counts as -1");
-  lines.add("count ff " + itoa(count([0xFF] as u8[])));
+  lines.add("count ff \{count([0xFF] as u8[])}");
   checkDeno(t, cli, ORACLE, lines, "scalar count");
   return t.report();
 }
@@ -474,11 +473,11 @@ export string test_is_printable_agrees_with_the_host(Core core, Cli cli) {
   for (i32 cp = 0; cp <= MAX; cp++) {
     bool here = isPrintable(cp);
     if (cp == 0 ? here : here != previous) {
-      lines.add("print " + itoa(cp) + " " + (here ? "1" : "0"));
+      lines.add("print \{cp} " + (here ? "1" : "0"));
     }
     previous = here;
   }
-  t.isTrue(lines.n > 100, "the table has hundreds of ranges — " + itoa(lines.n) + " transitions");
+  t.isTrue(lines.n > 100, "the table has hundreds of ranges — \{lines.n} transitions");
   lines.add("sweep print");
   checkDeno(t, cli, ORACLE, lines, "printability");
 
@@ -486,7 +485,7 @@ export string test_is_printable_agrees_with_the_host(Core core, Cli cli) {
   // what `decode` answers with on an invalid sequence, and `box`'s `wc` passes it straight in.
   i32[] outside = [-2, -1, MAX + 1, 0x7FFFFFFF];
   for (i32 i = 0; i < outside.len(); i++) {
-    t.isFalse(isPrintable(outside[i]), "isPrintable(" + itoa(outside[i]) + ") should be false");
+    t.isFalse(isPrintable(outside[i]), "isPrintable(\{outside[i]}) should be false");
   }
   return t.report();
 }

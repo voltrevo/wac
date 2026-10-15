@@ -60,7 +60,7 @@ export i32 main(Sys sys) {
 
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
-    core.warn("handshake: cannot bind: " + sock.error);
+    core.warn("handshake: cannot bind: \{sock.error}");
     return 1;
   }
 
@@ -69,16 +69,16 @@ export i32 main(Sys sys) {
     cli.closeSocket(sock.handle);
     return 1;
   }
-  core.log("sent an Initial: ClientHello, padded to " + itoa(c.initial().len()) + " bytes");
+  core.log("sent an Initial: ClientHello, padded to \{c.initial().len()} bytes");
 
   Datagram reply = cli.receiveFrom(sock.handle).wait();
   if (reply.error != "") {
-    core.warn("handshake: " + reply.error);
+    core.warn("handshake: \{reply.error}");
     cli.closeSocket(sock.handle);
     return 1;
   }
-  core.log("the server answered with " + itoa(reply.bytes.len()) + " bytes from " +
-           reply.peer + ":" + itoa(reply.port));
+  core.log("the server answered with \{reply.bytes.len()} bytes from " +
+           "\{reply.peer}:\{reply.port}");
 
   // Read what came back before answering it. A server that asked for a different group, or that is not
   // speaking TLS 1.3, is not a server this client can continue with — and saying which is the whole
@@ -118,7 +118,7 @@ export i32 main(Sys sys) {
     cli.closeSocket(sock.handle);
     return 1;
   }
-  core.log("sent a Handshake packet carrying our Finished: " + itoa(finished.len()) + " bytes");
+  core.log("sent a Handshake packet carrying our Finished: \{finished.len()} bytes");
 
   // Having completed, a server moves to the application epoch, whose packets have **short headers** —
   // no version, no source id. Seeing one is the server saying the handshake is behind it, and it is
@@ -126,7 +126,7 @@ export i32 main(Sys sys) {
   Datagram after = cli.receiveFrom(sock.handle).wait();
   cli.closeSocket(sock.handle);
   if (after.error != "") {
-    core.warn("handshake: sent, but the server said nothing after: " + after.error);
+    core.warn("handshake: sent, but the server said nothing after: \{after.error}");
     return 1;
   }
   if (after.bytes.len() == 0 || (after.bytes[0] & 128) != 0) {
@@ -135,18 +135,6 @@ export i32 main(Sys sys) {
   }
   core.log("the server replied with a short header: the handshake is complete");
   return 0;
-}
-
-/** An i32 as text. As `platform/example/greet.wac` — a port and a length are all this needs. */
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  string out = "";
-  i32 x = v;
-  while (x > 0) {
-    out = string.fromCodepoint('0' + (x % 10)) + out;
-    x = x / 10;
-  }
-  return out;
 }
 
 /** Digits to an i32, and 0 for anything else. */

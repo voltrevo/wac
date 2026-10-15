@@ -27,7 +27,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Outcome, oracle } from "./nodeoracle.wac";
 import { Parsed, Request, parseRequest } from "../../src/request.wac";
 
@@ -217,7 +216,7 @@ string describe(u8[] input) {
       out = out + string.fromBytes(one);
     }
   }
-  return "\"" + out + "\"";
+  return "\"\{out}\"";
 }
 
 void sweep(T t, Core core, Cli cli, i32 seedValue, i32 rounds) {
@@ -254,7 +253,7 @@ void sweep(T t, Core core, Cli cli, i32 seedValue, i32 rounds) {
       Ok(_, _, version, _, _, _): { oracleOutcome = "ok"; oracleVersion = version; }
       Refused(_): { oracleOutcome = "error"; }
       Incomplete: { oracleOutcome = "incomplete"; }
-      Broken(why): { t.fail(describe(cases[i]) + ": " + why); continue; }
+      Broken(why): { t.fail("\{describe(cases[i])}: \{why}"); continue; }
     }
 
     // The oracle is a *server*: it reads the whole stream and reports the first thing that went
@@ -292,12 +291,12 @@ void sweep(T t, Core core, Cli cli, i32 seedValue, i32 rounds) {
       disagreed = disagreed + 1;
       if (shown < 12) {
         shown = shown + 1;
-        t.fail("seed " + itoa(seedValue) + ": " + describe(cases[i]) + ": llhttp said " +
-               oracleOutcome + ", wac said " + got.outcome);
+        t.fail("seed \{seedValue}: \{describe(cases[i])}: llhttp said " +
+               "\{oracleOutcome}, wac said \{got.outcome}");
       }
     }
   }
-  t.eqI32(disagreed, 0, "seed " + itoa(seedValue) + ": cases disagreeing on acceptance");
+  t.eqI32(disagreed, 0, "seed \{seedValue}: cases disagreeing on acceptance");
 
   // Two guards, because a sweep that compares nothing passes. `compared` is how many cases
   // reached the comparison at all; `acceptedByLlhttp` is how many of those were messages llhttp
@@ -306,16 +305,16 @@ void sweep(T t, Core core, Cli cli, i32 seedValue, i32 rounds) {
   // Every skip is a known, named difference. Counted together, because a change that pushed most
   // cases into one of these buckets would leave the sweep green while comparing almost nothing.
   t.isTrue(compared * 2 >= rounds,
-           "seed " + itoa(seedValue) + ": only " + itoa(compared) + "/" + itoa(rounds) +
+           "seed \{seedValue}: only \{compared}/\{rounds}" +
            " cases were compared, the rest skipped as known differences — pipelined " +
-           itoa(skippedPipelined) + ", no Host " + itoa(skippedNoHost) + ", 0.9 " + itoa(skipped09) +
-           ", unknown method " + itoa(skippedMethod));
+           "\{skippedPipelined}, no Host \{skippedNoHost}, 0.9 \{skipped09}" +
+           ", unknown method \{skippedMethod}");
   t.isTrue(acceptedByLlhttp * 20 >= compared,
-           "seed " + itoa(seedValue) + ": of " + itoa(compared) + " compared, only " +
-           itoa(acceptedByLlhttp) + " were accepted by llhttp — a corpus of rejections agrees " +
+           "seed \{seedValue}: of \{compared} compared, only " +
+           "\{acceptedByLlhttp} were accepted by llhttp — a corpus of rejections agrees " +
            "trivially");
-  core.log("  seed " + itoa(seedValue) + ": " + itoa(compared) + " compared, " +
-           itoa(acceptedByLlhttp) + " accepted by llhttp");
+  core.log("  seed \{seedValue}: \{compared} compared, " +
+           "\{acceptedByLlhttp} accepted by llhttp");
 }
 
 export string test_fuzz_neither_parser_accepts_what_the_other_refuses(Core core, Cli cli) {

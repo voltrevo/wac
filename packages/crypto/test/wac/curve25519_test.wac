@@ -23,7 +23,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { x25519, x25519Base, x25519Shared } from "../../src/x25519.wac";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify, ed25519ExpandedSecret,
          ed25519PublicKeyExpanded, ed25519SignExpanded, ed25519SignBit,
@@ -90,14 +89,14 @@ export string test_x25519_agrees_with_the_host(Core core, Cli cli) {
   for (i32 i = 0; i < 12; i++) {
     u8[] priv = fill(32, i);
     u8[] pub = x25519Base(priv);
-    lines.add("xbase " + hex(priv) + " " + hex(pub));
+    lines.add("xbase \{hex(priv)} \{hex(pub)}");
 
     u8[] other = fill(32, i + 100);
     u8[] otherPub = x25519Base(other);
     u8[] ours = x25519(priv, otherPub);
-    lines.add("xdh " + hex(priv) + " " + hex(otherPub) + " " + hex(ours));
+    lines.add("xdh \{hex(priv)} \{hex(otherPub)} \{hex(ours)}");
     // Both ends must land on it, which no single-sided vector can say.
-    t.eqBytes(ours, x25519(other, pub), "both ends agree at round " + itoa64(i as i64));
+    t.eqBytes(ours, x25519(other, pub), "both ends agree at round \{i as i64}");
   }
   t.eqI32(lines.n, 24, "a base point and a shared secret per round");
   checkCurve(t, cli, lines, "x25519");
@@ -134,13 +133,13 @@ export string test_ed25519_is_byte_identical_to_the_host(Core core, Cli cli) {
   for (i32 i = 0; i < 8; i++) {
     u8[] seed = fill(32, i + 20);
     u8[] pub = ed25519PublicKey(seed);
-    lines.add("edpub " + hex(seed) + " " + hex(pub));
+    lines.add("edpub \{hex(seed)} \{hex(pub)}");
     u8[] msg = fill(i * 17, i);
     u8[] sig = ed25519Sign(seed, msg);
-    lines.add("edsign " + hex(seed) + " " + hex(msg) + " " + hex(sig));
-    t.isTrue(ed25519Verify(pub, msg, sig), "we verify our own at round " + itoa64(i as i64));
+    lines.add("edsign \{hex(seed)} \{hex(msg)} \{hex(sig)}");
+    t.isTrue(ed25519Verify(pub, msg, sig), "we verify our own at round \{i as i64}");
     // And the host verifies ours, which is a different code path from producing it.
-    lines.add("edverify " + hex(pub) + " " + hex(sig) + " " + hex(msg) + " 1");
+    lines.add("edverify \{hex(pub)} \{hex(sig)} \{hex(msg)} 1");
   }
   t.eqI32(lines.n, 24, "a key, a signature and a verification per round");
   checkCurve(t, cli, lines, "ed25519");
@@ -163,7 +162,7 @@ export string test_ed25519_rejects_what_it_should(Core core, Cli cli) {
     for (i32 j = 0; j < 64; j++) { bad[j] = sig[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
     t.isFalse(ed25519Verify(pub, msg, bad),
-              "a signature altered at byte " + itoa64(spots[i] as i64) + " is refused");
+              "a signature altered at byte \{spots[i] as i64} is refused");
   }
   u8[] otherMsg = "a message worth signing!".toBytes();
   t.isFalse(ed25519Verify(pub, otherMsg, sig), "a different message is refused");
@@ -173,15 +172,15 @@ export string test_ed25519_rejects_what_it_should(Core core, Cli cli) {
   // And the host refuses the same tamperings, so "refused" is the scheme's answer rather than
   // this implementation's opinion. Its verdicts are claimed here the same way its signatures are.
   Lines lines = Lines.create();
-  lines.add("edverify " + hex(pub) + " " + hex(sig) + " " + hex(msg) + " 1");
+  lines.add("edverify \{hex(pub)} \{hex(sig)} \{hex(msg)} 1");
   for (i32 i = 0; i < spots.len(); i++) {
     u8[] bad = u8[].filled(64, 0);
     for (i32 j = 0; j < 64; j++) { bad[j] = sig[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
-    lines.add("edverify " + hex(pub) + " " + hex(bad) + " " + hex(msg) + " 0");
+    lines.add("edverify \{hex(pub)} \{hex(bad)} \{hex(msg)} 0");
   }
-  lines.add("edverify " + hex(pub) + " " + hex(sig) + " " + hex(otherMsg) + " 0");
-  lines.add("edverify " + hex(otherPub) + " " + hex(sig) + " " + hex(msg) + " 0");
+  lines.add("edverify \{hex(pub)} \{hex(sig)} \{hex(otherMsg)} 0");
+  lines.add("edverify \{hex(otherPub)} \{hex(sig)} \{hex(msg)} 0");
   checkCurve(t, cli, lines, "the tamperings");
   return t.report();
 }
@@ -206,7 +205,7 @@ export string test_low_order_points_give_an_all_zero_secret() {
   for (i32 i = 0; i < 32; i++) { scalar[i] = ((i * 29 + 3) & 0xFF) as@ u8; }
   for (i32 i = 0; i < lowOrder.len(); i++) {
     t.eqBytes(x25519(scalar, decoded(lowOrder[i])), u8[].filled(32, 0),
-              "low-order point " + itoa64(i as i64) + " gives an all-zero secret");
+              "low-order point \{i as i64} gives an all-zero secret");
   }
   return t.report();
 }
@@ -445,12 +444,12 @@ export string test_a_malformed_key_or_signature_is_refused() {
   i32[] keyLens = [0, 31, 33, 64];
   for (i32 i = 0; i < keyLens.len(); i++) {
     t.isFalse(ed25519Verify(u8[].filled(keyLens[i], 0), msg, sig),
-              "a " + itoa64(keyLens[i] as i64) + "-byte key is not a key");
+              "a \{keyLens[i] as i64}-byte key is not a key");
   }
   i32[] sigLens = [0, 32, 63, 65];
   for (i32 i = 0; i < sigLens.len(); i++) {
     t.isFalse(ed25519Verify(pub, msg, u8[].filled(sigLens[i], 0)),
-              "a " + itoa64(sigLens[i] as i64) + "-byte signature is not a signature");
+              "a \{sigLens[i] as i64}-byte signature is not a signature");
   }
 
   // A y-coordinate with no corresponding x is not a point. 2 is such a y: `y^2 - 1` over
@@ -510,10 +509,10 @@ export string test_a_small_order_point_has_no_shared_secret() {
   ];
   for (i32 i = 0; i < lowOrder.len(); i++) {
     t.isTrue(x25519Shared(mineScalar, decoded(lowOrder[i])) is null,
-             "low-order point " + itoa64(i as i64) + " produced a shared secret");
+             "low-order point \{i as i64} produced a shared secret");
     // With a second scalar too, because the property is that the private key does not matter.
     t.isTrue(x25519Shared(theirScalar, decoded(lowOrder[i])) is null,
-             "low-order point " + itoa64(i as i64) + " produced a secret for another scalar");
+             "low-order point \{i as i64} produced a secret for another scalar");
   }
 
   // Widths, so a caller cannot get a secret out of the wrong shape.

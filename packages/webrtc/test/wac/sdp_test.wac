@@ -17,7 +17,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
 import { Lines, Answers, ask, check, word } from "../../../wactest/src/oracle.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { attr, candidateLine, colons, hasChannel, offer, printOf } from "./sdp_probe.wac";
 
@@ -38,8 +37,8 @@ export string test_aiortc_parses_our_offer_and_gets_everything_it_needs(Core cor
   // in one token; `auto` is how aiortc reports `actpass`, meaning either end may start DTLS. The
   // fingerprint is the whole identity of a WebRTC peer — there is no PKI.
   Lines lines = Lines.create();
-  lines.add("parse " + hexOf(sdp) + " application UDP/DTLS/SCTP wacUF wac-password-0123456789 " +
-            "sha-256 " + FINGERPRINT + " auto 65536 5000 1");
+  lines.add("parse \{hexOf(sdp)} application UDP/DTLS/SCTP wacUF wac-password-0123456789 " +
+            "sha-256 \{FINGERPRINT} auto 65536 5000 1");
   check(t, cli, "python3", [ORACLE], lines, "aiortc parsing our offer");
   return t.report();
 }
@@ -58,14 +57,14 @@ export string test_and_we_parse_the_sdp_a_real_rtcpeerconnection_generates(Core 
 
   t.isTrue(hasChannel(sdp), "aiortc's offer has a data channel section");
   string ufrag = attr(sdp, "ice-ufrag");
-  t.isTrue(ufrag.len() > 0, "no ice-ufrag found in:\n" + sdp);
+  t.isTrue(ufrag.len() > 0, "no ice-ufrag found in:\n\{sdp}");
   t.isTrue(attr(sdp, "ice-pwd").len() > 0, "and no ice-pwd");
   t.isFalse(contains(ufrag, " "), "a value stops at the end of its line");
 
   string fp = printOf(sdp);
   t.eqI32(fp.len(), 95,
           "a SHA-256 fingerprint is 32 bytes as colon-separated hex — 95 characters — and we read " +
-          itoa(fp.len()) + ": " + fp);
+          "\{fp.len()}: \{fp}");
   t.isTrue(contains(fp, ":"), "colon separated");
   t.eqStr(upper(fp), fp, "and upper case, as every implementation writes it");
   t.eqStr(attr(sdp, "setup"), "actpass", "an offer leaves the DTLS role open");

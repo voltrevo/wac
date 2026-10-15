@@ -29,7 +29,7 @@ import { Args } from "./args.wac";
  * coreutils. `usageOf` handles that one; nothing else needs to.
  */
 export void tryHelp(Core core, string name) {
-  core.warn("Try '" + name + " --help' for more information.");
+  core.warn("Try '\{name} --help' for more information.");
 }
 
 /**
@@ -40,14 +40,14 @@ export void tryHelp(Core core, string name) {
  * is why they are measured per tool rather than guessed.
  */
 export i32 missingOperand(Core core, string name, string what) {
-  core.warn(name + ": missing " + (what == "" ? "" : what + " ") + "operand");
+  core.warn(name + ": missing " + (what == "" ? "" : "\{what} ") + "operand");
   tryHelp(core, name);
   return 1;
 }
 
 /** `name: missing destination file operand after 'src'` — `cp` and `mv`, given only one. */
 export i32 missingAfter(Core core, string name, string what, string after) {
-  core.warn(name + ": missing " + what + " after '" + after + "'");
+  core.warn("\{name}: missing \{what} after '\{after}'");
   tryHelp(core, name);
   return 1;
 }
@@ -60,14 +60,14 @@ export i32 missingAfter(Core core, string name, string what, string after) {
  */
 export bool extraOperand(Core core, Args a, i32 most) {
   if (a.rest.len() <= most) { return false; }
-  core.warn(a.name + ": extra operand '" + a.rest[most] + "'");
+  core.warn("\{a.name}: extra operand '\{a.rest[most]}'");
   tryHelp(core, a.name);
   return true;
 }
 
 /** `name: option requires an argument -- 'c'` — a flag that takes a value and was given none. */
 export i32 needsValue(Core core, string name, string letter) {
-  core.warn(name + ": option requires an argument -- '" + letter + "'");
+  core.warn("\{name}: option requires an argument -- '\{letter}'");
   tryHelp(core, name);
   return 1;
 }

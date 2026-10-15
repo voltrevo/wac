@@ -104,7 +104,7 @@ string spawningScript(string dir) {
     // The first version of this case read `MERGE.md`, whose size and hash are another agent's to
     // change: an assertion that has to be re-typed when an unrelated file grows is one that will
     // eventually be re-typed wrongly.
-    "cd " + dir + "\n" +
+    "cd \{dir}\n" +
     "wc -c f.txt\n" +
     "sha256sum f.txt\n" +
     "echo done\n";
@@ -116,12 +116,12 @@ static string FIXTURE_SHA =
 
 /** The V8 host binary, or "" with the reason said out loud. */
 string v8Host(Core core, Cli cli) {
-  string path = root(cli) + "/native/v8/target/release/wac";
+  string path = "\{root(cli)}/native/v8/target/release/wac";
   Exec r = cli.exec("/bin/sh",
     [
       "-c",
-      "if [ -x '" + path + "' ] && " +
-      "[ -z \"$(find native/v8 -name '*.rs' -o -name Cargo.toml -newer '" + path +
+      "if [ -x '\{path}' ] && " +
+      "[ -z \"$(find native/v8 -name '*.rs' -o -name Cargo.toml -newer '\{path}" +
       "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
       "cd native/v8 && cargo build --release --quiet"
     ], u8[]()).wait();
@@ -141,7 +141,7 @@ struct Ran {
 
 Ran run(Cli cli, string bin, string[] args, string stdin) {
   Exec r = cli.exec(bin, args, stdin.toBytes()).wait();
-  if (!r.ran()) { return Ran(-1, "", "did not run — " + r.error); }
+  if (!r.ran()) { return Ran(-1, "", "did not run — \{r.error}"); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
 
@@ -153,9 +153,9 @@ string buildOne(Cli cli, bool native, string entry, string out, string[] grants)
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
-    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[]()).wait();
+    Exec r = cli.exec("\{root(cli)}/native/v8/target/release/wac", args, u8[]()).wait();
     if (!r.ran() || r.status != 0) {
-      return "wac build " + entry + ": " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+      return "wac build \{entry}: \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}";
     }
     return "";
   }
@@ -166,12 +166,12 @@ string buildOne(Cli cli, bool native, string entry, string out, string[] grants)
   args[head.len() + grants.len()] = "-o";
   args[head.len() + grants.len() + 1] = out;
   Exec r = cli.exec("deno", args, u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return "build.ts " + entry + ": " + string.fromBytes(r.stderr); }
+  if (!r.ran() || r.status != 0) { return "build.ts \{entry}: \{string.fromBytes(r.stderr)}"; }
   return "";
 }
 
 string freshScratch(T t, Cli cli, string name) {
-  string dir = root(cli) + "/.cache/v8host-" + name;
+  string dir = "\{root(cli)}/.cache/v8host-\{name}";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   return dir;
@@ -199,12 +199,12 @@ struct Programs {
 }
 
 Programs programs(Cli cli) {
-  string dir = root(cli) + "/.cache/v8host";
+  string dir = "\{root(cli)}/.cache/v8host";
   cli.mkdir(dir, true).wait();
   Programs p = Programs(true, "",
-                        dir + "/boxsh-deno", dir + "/boxsh",
-                        dir + "/spawnsh-deno", dir + "/spawnsh",
-                        dir + "/imaged-deno", dir + "/imaged");
+                        "\{dir}/boxsh-deno", "\{dir}/boxsh",
+                        "\{dir}/spawnsh-deno", "\{dir}/spawnsh",
+                        "\{dir}/imaged-deno", "\{dir}/imaged");
   string[] rw = ["--allow-read", "--allow-write"];
   string[] rwen = ["--allow-read", "--allow-write", "--allow-env", "--allow-net"];
   string why = "";
@@ -212,13 +212,13 @@ Programs programs(Cli cli) {
   i64 spawnshNewest = newestFor(cli, SPAWNSH);
   i64 imagedNewest = newestFor(cli, IMAGED);
   if (stale(cli, p.boxshDeno, boxshNewest)) { why = why + buildOne(cli, false, BOXSH, p.boxshDeno, rw); }
-  if (stale(cli, p.boxshStem + ".wasm", boxshNewest)) { why = why + buildOne(cli, true, BOXSH, p.boxshStem, rw); }
+  if (stale(cli, "\{p.boxshStem}.wasm", boxshNewest)) { why = why + buildOne(cli, true, BOXSH, p.boxshStem, rw); }
   if (stale(cli, p.spawnshDeno, spawnshNewest)) { why = why + buildOne(cli, false, SPAWNSH, p.spawnshDeno, rw); }
-  if (stale(cli, p.spawnshStem + ".wasm", spawnshNewest)) {
+  if (stale(cli, "\{p.spawnshStem}.wasm", spawnshNewest)) {
     why = why + buildOne(cli, true, SPAWNSH, p.spawnshStem, rw);
   }
   if (stale(cli, p.imagedDeno, imagedNewest)) { why = why + buildOne(cli, false, IMAGED, p.imagedDeno, rwen); }
-  if (stale(cli, p.imagedStem + ".wasm", imagedNewest)) {
+  if (stale(cli, "\{p.imagedStem}.wasm", imagedNewest)) {
     why = why + buildOne(cli, true, IMAGED, p.imagedStem, rwen);
   }
   if (why != "") { p.ok = false; p.error = why; }
@@ -271,17 +271,17 @@ export string test_boxs_shell_answers_the_same_on_deno_and_on_the_rust_host_on_v
   // **Asserted, not merely captured.** If the two hosts were compared and nothing else, a shell that
   // printed nothing on both would pass.
   string[] lines = trimmedLines(onDeno.out);
-  t.eqI32(lines.len(), 6, "expected six answers, got: " + onDeno.out + onDeno.err);
+  t.eqI32(lines.len(), 6, "expected six answers, got: \{onDeno.out}\{onDeno.err}");
   if (lines.len() != 6) { return t.report(); }
   t.eqStr(lines[0], "2", "the pipeline's count");
   t.eqStr(lines[1], "42", "the arithmetic");
-  t.eqI32(firstWord(lines[2]).len(), 64, "a sha256 is 64 hex digits: " + lines[2]);
+  t.eqI32(firstWord(lines[2]).len(), 64, "a sha256 is 64 hex digits: \{lines[2]}");
   t.eqStr(lines[4], "code 127", "an unfound command is 127");
   t.eqStr(lines[5], "done", "and the shell got to the end");
 
   string v8 = v8Host(core, cli);
   if (v8 == "") { return t.report(); }
-  Ran onV8 = run(cli, v8, [p.boxshStem + ".wasm"], SCRIPT);
+  Ran onV8 = run(cli, v8, ["\{p.boxshStem}.wasm"], SCRIPT);
 
   t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
   t.eqStr(onV8.err, onDeno.err, "the two hosts disagree about what the shell warned");
@@ -296,7 +296,7 @@ export string test_the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_h
   t.eqStr(p.error, "", "the programs built");
   if (!p.ok) { return t.report(); }
   string dir = freshScratch(t, cli, "spawnfile");
-  cli.writeFile(dir + "/f.txt", "hello\n".toBytes()).wait();
+  cli.writeFile("\{dir}/f.txt", "hello\n".toBytes()).wait();
   string script = spawningScript(dir);
   Ran onDeno = run(cli, p.spawnshDeno, string[].filled(0, ""), script);
 
@@ -306,13 +306,13 @@ export string test_the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_h
   t.eqStrArray(trimmedLines(onDeno.out),
                [
                         "1", "2", "3", "5", "spawned ok", "6 f.txt",
-                        FIXTURE_SHA + "  f.txt", "done"
+                        "\{FIXTURE_SHA}  f.txt", "done"
                ],
-               "the Deno half: " + onDeno.err);
+               "the Deno half: \{onDeno.err}");
 
   string v8 = v8Host(core, cli);
   if (v8 == "") { return t.report(); }
-  Ran onV8 = run(cli, v8, [p.spawnshStem + ".wasm"], script);
+  Ran onV8 = run(cli, v8, ["\{p.spawnshStem}.wasm"], script);
 
   t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
   t.eqI32(onV8.code, onDeno.code, "the two hosts disagree about the exit code");
@@ -344,19 +344,19 @@ export string test_an_image_survives_a_process_and_is_readable_by_a_spawned_chil
   t.eqStr(p.error, "", "the programs built");
   if (!p.ok) { return t.report(); }
   string denoBin = p.imagedDeno;
-  string denoImg = dir + "/deno.wacimg";
+  string denoImg = "\{dir}/deno.wacimg";
   run(cli, denoBin, [denoImg], "mkdir /data; seq 1 5 > /data/n\n");
   Ran onDeno = run(cli, denoBin, [denoImg], READ);
 
   // Asserted before it is compared: two hosts that both fail to read the file agree perfectly.
-  t.eqStr(trimmed(onDeno.out), "5", "the Deno half did not read the image back: " + onDeno.err);
+  t.eqStr(trimmed(onDeno.out), "5", "the Deno half did not read the image back: \{onDeno.err}");
 
   string v8 = v8Host(core, cli);
   if (v8 == "") { cli.remove(dir, true).wait(); return t.report(); }
   string stem = p.imagedStem;
-  string v8Img = dir + "/v8.wacimg";
-  run(cli, v8, [stem + ".wasm", v8Img], "mkdir /data; seq 1 5 > /data/n\n");
-  Ran onV8 = run(cli, v8, [stem + ".wasm", v8Img], READ);
+  string v8Img = "\{dir}/v8.wacimg";
+  run(cli, v8, ["\{stem}.wasm", v8Img], "mkdir /data; seq 1 5 > /data/n\n");
+  Ran onV8 = run(cli, v8, ["\{stem}.wasm", v8Img], READ);
 
   t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the image held");
 
@@ -366,7 +366,7 @@ export string test_an_image_survives_a_process_and_is_readable_by_a_spawned_chil
   // an image is not byte-reproducible: two runs of the *same* host differ in ten bytes, three pairs of
   // timestamps and a trailer, so byte equality would fail for a reason that has nothing to do with
   // hosts.
-  t.eqStr(trimmed(run(cli, v8, [stem + ".wasm", denoImg], READ).out), "5",
+  t.eqStr(trimmed(run(cli, v8, ["\{stem}.wasm", denoImg], READ).out), "5",
           "the V8 host could not read an image Deno wrote");
   t.eqStr(trimmed(run(cli, denoBin, [v8Img], READ).out), "5",
           "Deno could not read an image the V8 host wrote");

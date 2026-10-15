@@ -32,7 +32,7 @@ export i32 main(Sys sys) {
   Fs fs = Fs.onHost(cli, 1754500000000);
   fs.mountMemory("/home");
 
-  fs.writeFile(hostDir + "/on-the-host", "this lives on a real disk\n".toBytes());
+  fs.writeFile("\{hostDir}/on-the-host", "this lives on a real disk\n".toBytes());
   fs.mkdir("/home/claude", true);
   fs.writeFile("/home/claude/notes", "this lives in memory\n".toBytes());
   fs.chmod("/home/claude/notes", 384);   // 0600
@@ -40,7 +40,7 @@ export i32 main(Sys sys) {
 
   Written w = write(fs);
   Sink out = Sink.toOutput(cli);
-  for (i32 i = 0; i < w.skipped.len(); i++) { out.line("skipped " + w.skipped[i]); }
+  for (i32 i = 0; i < w.skipped.len(); i++) { out.line("skipped \{w.skipped[i]}"); }
   out.line(dump(w.bytes));
   out.flush();
 

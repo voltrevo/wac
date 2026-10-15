@@ -14,7 +14,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { firstCryptoHandshakeType, hp, iv, key, open, secret } from "./initial_probe.wac";
 import { anInitial } from "./minted.wac";

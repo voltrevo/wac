@@ -32,13 +32,13 @@ export i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   Socket srv = cli.listen("127.0.0.1", 0).wait();
-  if (srv.error != "") { core.warn("listen: " + srv.error); return 1; }
+  if (srv.error != "") { core.warn("listen: \{srv.error}"); return 1; }
   Pending<Socket> accepting = cli.accept(srv.handle);
 
   Socket c = cli.connect("127.0.0.1", srv.port).wait();
-  if (c.error != "") { core.warn("connect: " + c.error); return 1; }
+  if (c.error != "") { core.warn("connect: \{c.error}"); return 1; }
   Socket a = accepting.wait();
-  if (a.error != "") { core.warn("accept: " + a.error); return 1; }
+  if (a.error != "") { core.warn("accept: \{a.error}"); return 1; }
 
   cli.send(c.handle, "hello".toBytes()).wait();
   cli.closeSend(c.handle);
@@ -50,10 +50,10 @@ export i32 main(Sys sys) {
     match (cli.recv(a.handle).wait()) {
       Data(b): { got = got + string.fromBytes(b); }
       End: { reading = false; }
-      Failed(e): { core.warn("server recv: " + e); return 1; }
+      Failed(e): { core.warn("server recv: \{e}"); return 1; }
     }
   }
-  core.log("server saw \"" + got + "\" then End");
+  core.log("server saw \"\{got}\" then End");
 
   // And the answer travels the direction that was left open.
   cli.send(a.handle, "world".toBytes()).wait();
@@ -64,10 +64,10 @@ export i32 main(Sys sys) {
     match (cli.recv(c.handle).wait()) {
       Data(b): { back = back + string.fromBytes(b); }
       End: { reading = false; }
-      Failed(e): { core.warn("client recv: " + e); return 1; }
+      Failed(e): { core.warn("client recv: \{e}"); return 1; }
     }
   }
-  core.log("client read back \"" + back + "\"");
+  core.log("client read back \"\{back}\"");
 
   cli.closeSocket(c.handle);
   cli.closeSocket(srv.handle);

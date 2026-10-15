@@ -31,14 +31,14 @@ static string BROKEN = "import { Core, Cli, Sys } from \"std\";\n"
 
 export string test_a_program_that_stopped_compiling_is_not_served_from_before(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/built-probe-src";
+  string dir = "\{cli.cwd().wait()}/.cache/built-probe-src";
   t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
-  string entry = dir + "/p.wac";
+  string entry = "\{dir}/p.wac";
   t.isTrue(putFile(cli, entry, GOOD) == "", "could not write the program");
 
   string built = builtProgram(cli, entry, "builtprobe", string[].filled(0, ""));
   Stat first = cli.stat(built).wait();
-  t.isTrue(first.exists && first.size > 8, "the first build wrote nothing to " + built);
+  t.isTrue(first.exists && first.size > 8, "the first build wrote nothing to \{built}");
   if (!first.exists) { return t.report(); }
 
   // Break it. The mtime moves, so the cache knows it must rebuild; the rebuild then fails.
@@ -55,7 +55,7 @@ export string test_a_program_that_stopped_compiling_is_not_served_from_before(Co
   t.isTrue(fixed.exists && fixed.size > 8, "a fixed program did not build again");
 
   cli.remove(dir, true).wait();
-  cli.remove(cli.cwd().wait() + "/.cache/built-builtprobe", true).wait();
+  cli.remove("\{cli.cwd().wait()}/.cache/built-builtprobe", true).wait();
   return t.report();
 }
 
@@ -73,9 +73,9 @@ export string test_a_program_that_stopped_compiling_is_not_served_from_before(Co
  */
 export string test_a_built_app_runs_and_answers_its_own_exit_status(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/built-appprobe-src";
+  string dir = "\{cli.cwd().wait()}/.cache/built-appprobe-src";
   t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
-  string entry = dir + "/p.wac";
+  string entry = "\{dir}/p.wac";
   // Exit 7, so the assertion cannot pass by accident on a 0 that means "did nothing".
   t.isTrue(putFile(cli, entry,
       "import { Core, Cli, Sys } from \"std\";\n"
@@ -84,17 +84,17 @@ export string test_a_built_app_runs_and_answers_its_own_exit_status(Core core, C
 
   string app = builtApp(cli, entry, "appprobe", string[].filled(0, ""));
   Stat made = cli.stat(app).wait();
-  t.isTrue(made.exists && made.size > 8, "builtApp wrote nothing to " + app);
+  t.isTrue(made.exists && made.size > 8, "builtApp wrote nothing to \{app}");
   if (!made.exists) { return t.report(); }
 
-  string binDir = cli.cwd().wait() + "/native/v8/target/release";
+  string binDir = "\{cli.cwd().wait()}/native/v8/target/release";
   Exec ran = cli.execWithIn(app, string[].filled(0, ""), u8[](),
-                            ["PATH=" + binDir], true, false, dir).wait();
-  t.isTrue(ran.ran(), "the artefact did not run at all — " + ran.error);
+                            ["PATH=\{binDir}"], true, false, dir).wait();
+  t.isTrue(ran.ran(), "the artefact did not run at all — \{ran.error}");
   t.eqI32(ran.status, 7, "the program's own status did not come back: "
                          + string.fromBytes(ran.stderr));
   t.isTrue(contains(string.fromBytes(ran.stdout), "from the app"),
-           "the program's output did not come back: " + string.fromBytes(ran.stdout));
+           "the program's output did not come back: \{string.fromBytes(ran.stdout)}");
 
   // The same failure rule as `builtProgram`: a build that fails must not leave the one before it,
   // because an executable that runs is even easier to pass against than a module that loads.
@@ -103,7 +103,7 @@ export string test_a_built_app_runs_and_answers_its_own_exit_status(Core core, C
   t.isTrue(!after.exists, "a failed `wac app` left the artefact from before it broke");
 
   cli.remove(dir, true).wait();
-  cli.remove(cli.cwd().wait() + "/.cache/built-appprobe", true).wait();
+  cli.remove("\{cli.cwd().wait()}/.cache/built-appprobe", true).wait();
   return t.report();
 }
 
@@ -132,8 +132,8 @@ export string test_sourcesof_reads_a_whole_closure_and_reports_a_hole(Core core,
   t.isTrue(many.paths.len() >= 1, "the entry at least");
   for (i32 i = 0; i < many.paths.len(); i++) {
     t.isFalse(startsWith(many.paths[i], "std/") || startsWith(many.paths[i], "core/"),
-              "on disk only, not " + many.paths[i]);
-    t.isTrue(many.texts[i].len() > 0, many.paths[i] + " has text");
+              "on disk only, not \{many.paths[i]}");
+    t.isTrue(many.texts[i].len() > 0, "\{many.paths[i]} has text");
   }
 
   // **A hole is named, not skipped.** Compiling a program with a file missing from it reports

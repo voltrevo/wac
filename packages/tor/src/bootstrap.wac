@@ -20,7 +20,7 @@ import { encodeCreate2, decodeCreated2, cellCommand, cellPayload, handshakeNtor,
 import { ntorClientRequest, ntorClientFinish } from "./ntor.wac";
 import { consensusPath, certificatePath, microdescPath, microdescBatches } from "./dirclient.wac";
 import { Link, connectRelay, handshakeTls, linkHandshake, createCircuit, extendTo,
-         fetchOverCircuit, sendCells, nextCell, ipv4Of, itoa, lines, words, fromHex,
+         fetchOverCircuit, sendCells, nextCell, ipv4Of, lines, words, fromHex,
          randomI64 } from "./link.wac";
 
 /** A verified view of the network: who is out there, and how to weight them. */
@@ -103,13 +103,13 @@ export Network bootstrap(Core core, Cli cli, u8[] seedBytes, u8[] authBytes, boo
   AuthorityCert[] checked = parseCertificates(certs, trusted);
   Verdict v = verifyConsensus(consensus, checked, trusted, core.nowMillis().wait() / 1000);
   if (!v.ok) {
-    core.warn("tor: the consensus is not acceptable — " + itoa(v.goodSignatures) +
-              " of " + itoa(v.needed) + " signatures" +
-              (v.stale == "" ? "" : ", " + v.stale));
+    core.warn("tor: the consensus is not acceptable — \{v.goodSignatures}" +
+              " of \{v.needed} signatures" +
+              (v.stale == "" ? "" : ", \{v.stale}"));
     cli.closeSocket(l.sock);
     return bad;
   }
-  core.warn("consensus verified: " + itoa(v.goodSignatures) + " of " + itoa(trusted.len()) +
+  core.warn("consensus verified: \{v.goodSignatures} of \{trusted.len()}" +
            " authorities signed");
 
   Relay[] relays = parseConsensus(consensus);
@@ -153,8 +153,8 @@ export Session buildCircuit(Core core, Cli cli, Network n, i32 port, i32 circId)
                     n.sameSubnetOk, randomI64(core));
   if (middle < 0) { core.warn("tor: no usable middle relay"); return bad; }
 
-  string desc = n.relays[guard].nickname + " -> " + n.relays[middle].nickname +
-                " -> " + n.relays[exit].nickname;
+  string desc = "\{n.relays[guard].nickname} -> \{n.relays[middle].nickname}" +
+                " -> \{n.relays[exit].nickname}";
 
   Link l = connectRelay(core, cli, n.relays[guard].address, n.relays[guard].orPort);
   if (l.dead) { return bad; }
@@ -210,8 +210,8 @@ export Session buildCircuitTo(Core core, Cli cli, Network n, i32 target, i32 cir
                     n.sameSubnetOk, randomI64(core));
   if (middle < 0) { core.warn("tor: no usable middle relay"); return bad; }
 
-  string desc = n.relays[guard].nickname + " -> " + n.relays[middle].nickname +
-                " -> " + n.relays[target].nickname;
+  string desc = "\{n.relays[guard].nickname} -> \{n.relays[middle].nickname}" +
+                " -> \{n.relays[target].nickname}";
 
   Link l = connectRelay(core, cli, n.relays[guard].address, n.relays[guard].orPort);
   if (l.dead) { return bad; }
@@ -306,7 +306,7 @@ export Guard connectGuard(Core core, Cli cli, Network n) {
     if (anotherExitExists) {
       g = cand;
     } else {
-      core.warn("tor: " + n.relays[cand].nickname +
+      core.warn("tor: \{n.relays[cand].nickname}" +
                 " would leave no exit to build through; trying another guard");
     }
   }
@@ -337,7 +337,7 @@ export Building startCircuit(Core core, Network n, Guard g, i32 port, i32 circId
   i32 exit = pick(n.relays, n.weights, n.families, positionExit(), [g.index], port,
                   n.sameSubnetOk, randomI64(core));
   if (exit < 0) {
-    core.warn("tor: no exit will carry port " + itoa(port));
+    core.warn("tor: no exit will carry port \{port}");
     return bad;
   }
   i32 middle = pick(n.relays, n.weights, n.families, positionMiddle(), [g.index, exit], 0,
@@ -349,7 +349,7 @@ export Building startCircuit(Core core, Network n, Guard g, i32 port, i32 circId
                                   ntorClientRequest(n.relays[g.index].identity,
                                                     n.relays[g.index].ntorOnionKey, eph)));
   return Building(circId, Circuit.create(circId, u8[].filled(72, 0)), port, 0, middle, exit, eph,
-                  g.nickname + " -> " + n.relays[middle].nickname + " -> " +
+                  "\{g.nickname} -> \{n.relays[middle].nickname} -> " +
                   n.relays[exit].nickname);
 }
 
@@ -394,7 +394,7 @@ export i32 advanceCircuit(Core core, Network n, Guard g, Building b, u8[] cell) 
   // An empty return is how ntor reports failure: the party at the other end does not hold
   // the key the consensus named, so there is nothing to negotiate.
   if (keys.len() == 0) {
-    core.warn("tor: " + r.nickname + " did not authenticate");
+    core.warn("tor: \{r.nickname} did not authenticate");
     b.state = -1;
     return b.state;
   }

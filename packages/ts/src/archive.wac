@@ -51,7 +51,7 @@ export Archive read(u8[] b) {
     i32 method = u16At(b, at + 8);
     if (method != 0) {
       return Archive(Entry[].filled(0, Entry("", u8[]())),
-                     "the archive is compressed (method " + itoa32(method)
+                     "the archive is compressed (method \{method}"
                      + "); this reads store-only zips");
     }
     i32 size = u32At(b, at + 18);
@@ -150,14 +150,3 @@ void put32(Vec<i32> out, i32 v) {
   out.push((v >> 24) & 255);
 }
 
-/** `itoa` without the dependency, for the one message that needs a number. */
-string itoa32(i32 n) {
-  if (n == 0) { return "0"; }
-  string s = "";
-  i32 v = n;
-  while (v > 0) {
-    s = string.fromCodepoint(48 + (v % 10)) + s;
-    v = v / 10;
-  }
-  return s;
-}

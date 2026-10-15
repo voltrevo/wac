@@ -5,7 +5,6 @@ import { Args, badNumberMessage } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";
 import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
@@ -17,7 +16,7 @@ export i32 fold(Core core, Cli cli, Fs fs, Args a) {
   // emits an empty line for ever — on a pipe that is an out-of-memory kill rather than a hang, which is
   // how it was found. A negative width folded nothing at all, silently. GNU refuses both, in these words.
   if (width <= 0) {
-    core.warn(a.name + ": invalid number of columns: '" + itoa(width) + "'");
+    core.warn("\{a.name}: invalid number of columns: '\{width}'");
     return 1;
   }
 

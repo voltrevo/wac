@@ -40,7 +40,6 @@
 //     socket, where a test had no way to reach inside it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Store } from "../../src/roots.wac";
 import { selfSignedEd25519 } from "../../src/x509gen.wac";
 import {
@@ -142,7 +141,7 @@ Conversation converse(u8[] cState, u8[] sState, u8[] request) {
     if (ss.appData.len() > 0) { serverSaw = ss.appData; }
     if (tlsPhase(sState) == phaseFailed()) {
       return Conversation(cs.state, sState, serverSaw, clientSaw, round,
-                          "the server refused at round " + itoa(round));
+                          "the server refused at round \{round}");
     }
 
     // Once the client is established it has nothing further to send unless we give it something, so
@@ -166,8 +165,8 @@ Conversation converse(u8[] cState, u8[] sState, u8[] request) {
     if (cs.appData.len() > 0) { clientSaw = cs.appData; }
     if (tlsClientPhase(cs.state) == 4) {
       return Conversation(cs.state, sState, serverSaw, clientSaw, round,
-                          "the client refused at round " + itoa(round) + " with code " +
-                          itoa(tlsClientFailure(cs.state)));
+                          "the client refused at round \{round} with code " +
+                          "\{tlsClientFailure(cs.state)}");
     }
   }
   return Conversation(cs.state, sState, serverSaw, clientSaw, round, "");
@@ -187,16 +186,16 @@ export string test_our_client_and_our_server_complete_a_handshake_in_one_process
   T t = T.create();
 
   u8[] cert = certificate();
-  t.isTrue(cert.len() > 100, "the self-signed certificate came out too short: " + itoa(cert.len()));
+  t.isTrue(cert.len() > 100, "the self-signed certificate came out too short: \{cert.len()}");
 
-  string request = "GET / HTTP/1.1\r\nhost: " + HOST + "\r\n\r\n";
+  string request = "GET / HTTP/1.1\r\nhost: \{HOST}\r\n\r\n";
   Conversation c = converse(freshClient(noTrustStore()), freshServer(), request.toBytes());
 
   t.eqStr(c.error, "", "the handshake did not complete");
   if (c.error.len() > 0) { return t.report(); }
 
   t.eqI32(tlsClientPhase(c.clientState), 3,
-          "the client did not reach established; failure code " + itoa(tlsClientFailure(c.clientState)));
+          "the client did not reach established; failure code \{tlsClientFailure(c.clientState)}");
   t.eqI32(tlsPhase(c.serverState), phaseEstablished(), "the server did not reach established");
   t.eqI32(tlsClientFailure(c.clientState), 0, "the client completed but recorded a failure");
 
@@ -205,7 +204,7 @@ export string test_our_client_and_our_server_complete_a_handshake_in_one_process
 
   // And it took a bounded number of rounds — a TLS 1.3 handshake is one round trip, so anything
   // near the loop's limit means the two are talking past each other rather than to each other.
-  t.isTrue(c.rounds < 8, "the handshake took " + itoa(c.rounds) + " rounds, which is too many");
+  t.isTrue(c.rounds < 8, "the handshake took \{c.rounds} rounds, which is too many");
   return t.report();
 }
 
@@ -239,7 +238,7 @@ export string test_the_server_answers_and_closes_in_an_orderly_way() {
   t.isTrue(bye.toSend.len() > 0, "closing the server produced no close_notify");
   ClientStep after = clientStep(tlsClientFeed(got.state, bye.toSend));
   t.eqI32(tlsClientFailure(after.state), 0,
-          "an orderly close was recorded as a failure, code " + itoa(tlsClientFailure(after.state)));
+          "an orderly close was recorded as a failure, code \{tlsClientFailure(after.state)}");
 
   // The client's own close, which is the half `tlsserved.wac` never exercises because the server is
   // always the one that closes first. Taken from a *live* client rather than `after.state`: a client
@@ -295,9 +294,9 @@ export string test_a_corrupted_server_flight_is_refused_at_every_position() {
     ClientStep after = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
                                                 tampered));
     t.eqI32(tlsClientPhase(after.state), 4,
-            "the client accepted a server flight with byte " + itoa(spots[k]) + " flipped");
+            "the client accepted a server flight with byte \{spots[k]} flipped");
     t.isTrue(after.appData.len() == 0,
-             "a tampered flight produced application data at byte " + itoa(spots[k]));
+             "a tampered flight produced application data at byte \{spots[k]}");
     if (tlsClientPhase(after.state) == 4) { refused = refused + 1; }
   }
   t.eqI32(refused, spots.len(), "not every corrupted position was refused");
@@ -563,17 +562,17 @@ export string test_a_hybrid_share_that_is_not_an_encapsulation_key_is_refused() 
         clientHello(random, u8[](), 0x1301, groupHybrid(), u8[].filled(widths[i], 0x11),
                     HOST.toBytes(), u8[](), u8[]()))));
     t.eqI32(tlsPhase(h.state), phaseFailed(),
-            "a hybrid share of " + itoa(widths[i]) + " bytes was accepted");
+            "a hybrid share of \{widths[i]} bytes was accepted");
     ClientStep x = clientStep(tlsServerFeed(freshServer(), inRecord(
         clientHello(random, u8[](), 0x1301, groupX25519(), u8[].filled(widths[i], 0x09),
                     HOST.toBytes(), u8[](), u8[]()))));
     t.eqI32(tlsPhase(x.state), phaseFailed(),
-            "an x25519 share of " + itoa(widths[i]) + " bytes was accepted");
+            "an x25519 share of \{widths[i]} bytes was accepted");
     ClientStep p = clientStep(tlsServerFeed(freshServer(), inRecord(
         clientHello(random, u8[](), 0x1301, groupP256(), u8[].filled(widths[i], 0x04),
                     HOST.toBytes(), u8[](), u8[]()))));
     t.eqI32(tlsPhase(p.state), phaseFailed(),
-            "a P-256 share of " + itoa(widths[i]) + " bytes was accepted");
+            "a P-256 share of \{widths[i]} bytes was accepted");
   }
 
   // x25519 at its right width is still accepted, so the sweep above is about the widths and not
@@ -772,7 +771,7 @@ export string test_a_key_share_that_forces_a_zero_secret_is_refused() {
         clientHello(random, u8[](), 0x1301, groupX25519(), lowOrder[i], HOST.toBytes(),
                     u8[](), u8[]()))));
     t.eqI32(tlsPhase(no.state), phaseFailed(),
-            "the server accepted " + names[i] + " as a key share, so the session's secret is zero");
+            "the server accepted \{names[i]} as a key share, so the session's secret is zero");
   }
 
   // And an honest x25519 share is still accepted, so the three above are about the points rather
@@ -787,7 +786,7 @@ export string test_a_key_share_that_forces_a_zero_secret_is_refused() {
     ClientStep no = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
         inRecord(serverHello(random, u8[](), 0x1301, groupX25519(), lowOrder[i]))));
     t.eqI32(tlsClientPhase(no.state), 4,
-            "the client accepted " + names[i] + " from a server, so the session's secret is zero");
+            "the client accepted \{names[i]} from a server, so the session's secret is zero");
   }
   return t.report();
 }
@@ -841,7 +840,7 @@ export string test_a_hybrid_share_with_a_dead_x25519_half_is_refused() {
         clientHello(random, u8[](), 0x1301, groupHybrid(), dead, HOST.toBytes(),
                     u8[](), u8[]()))));
     t.eqI32(tlsPhase(no.state), phaseFailed(),
-            "the server accepted a hybrid share whose X25519 half is " + names[i] +
+            "the server accepted a hybrid share whose X25519 half is \{names[i]}" +
             ", reducing the hybrid to ML-KEM alone");
   }
 
@@ -859,9 +858,9 @@ export string test_a_hybrid_share_with_a_dead_x25519_half_is_refused() {
     ClientStep no = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
         inRecord(serverHello(random, u8[](), 0x1301, groupHybrid(), share))));
     t.eqI32(tlsClientPhase(no.state), 4,
-            "the client accepted a hybrid share whose X25519 half is " + names[i]);
+            "the client accepted a hybrid share whose X25519 half is \{names[i]}");
     t.eqI32(tlsClientFailure(no.state), 16,
-            "the wrong code for a server hybrid share whose X25519 half is " + names[i]);
+            "the wrong code for a server hybrid share whose X25519 half is \{names[i]}");
   }
 
   // The control for those three: the same arbitrary ciphertext with an honest X25519 half is *not*
@@ -922,9 +921,9 @@ export string test_the_first_record_back_is_refused_on_its_framing() {
         inRecordTyped(outers[i], serverHello(u8[].filled(32, 0x41), u8[](), 0x1301, groupHybrid(),
                                              u8[].filled(1120, 0x22)))));
     t.eqI32(tlsClientPhase(r.state), 4,
-            "a first record of outer type " + itoa(outers[i]) + " was accepted");
+            "a first record of outer type \{outers[i]} was accepted");
     t.eqI32(tlsClientFailure(r.state), 10,
-            "the wrong code for a first record of outer type " + itoa(outers[i]));
+            "the wrong code for a first record of outer type \{outers[i]}");
   }
 
   // The control: the same body under the right outer type is *not* refused at that check. It fails
@@ -956,9 +955,9 @@ export string test_the_first_record_back_is_refused_on_its_framing() {
     ClientStep r = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
                                             inRecord(lying)));
     t.eqI32(tlsClientPhase(r.state), 4,
-            "a ServerHello claiming length " + itoa(claims[i]) + " was accepted");
+            "a ServerHello claiming length \{claims[i]} was accepted");
     t.eqI32(tlsClientFailure(r.state), 11,
-            "the wrong code for a ServerHello claiming length " + itoa(claims[i]));
+            "the wrong code for a ServerHello claiming length \{claims[i]}");
   }
 
   // And the honest length is not refused there, so case 11 is about the disagreement.

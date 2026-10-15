@@ -27,7 +27,6 @@
 
 import { Buf } from "core";
 import { encode } from "../../codec/src/hex.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { sha1 } from "../../crypto/src/sha1.wac";
 
 /** Where every object in a pack is, and what it is called. */
@@ -82,7 +81,7 @@ export Index parseIdx(u8[] b) {
     return Index.Rejected("not a version-2 index: the magic is missing");
   }
   i64 version = be32(b, 4);
-  if (version != 2) { return Index.Rejected("index version " + itoa(version as~ i32) + " is not 2"); }
+  if (version != 2) { return Index.Rejected("index version \{version as~ i32} is not 2"); }
 
   i32 fanout = 8;
   i64 n64 = be32(b, fanout + 255 * 4);
@@ -126,7 +125,7 @@ export Index parseIdx(u8[] b) {
       i32 c = names[i * 20 + k] as i32;
       if (a != c) { cmp = a < c ? -1 : 1; break; }
     }
-    if (cmp >= 0) { return Index.Rejected("object names are not in ascending order at " + itoa(i)); }
+    if (cmp >= 0) { return Index.Rejected("object names are not in ascending order at \{i}"); }
   }
 
   return Index.Loaded(PackIndex(n, names, offsets, crcs));

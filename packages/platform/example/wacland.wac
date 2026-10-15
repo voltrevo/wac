@@ -62,9 +62,9 @@ export i32 main(Sys sys) {
   // Stage 2 onwards need a `Pending<T>`, which is the ticket table. A host without one traps here with
   // the name of the capability it has not got — see the native runtime's `NotImplemented`.
   i32 n = cli.argCount().wait();
-  core.log("wacland: stage 2 argCount " + itoa(n));
+  core.log("wacland: stage 2 argCount \{n}");
   for (i32 i = 0; i < n; i++) {
-    core.log("wacland: stage 2 arg " + itoa(i) + " " + string.fromBytes(cli.arg(i).wait()));
+    core.log("wacland: stage 2 arg \{i} \{string.fromBytes(cli.arg(i).wait())}");
   }
 
   // Stage 3. **Two requests in flight, completing out of the order they were asked for.**
@@ -76,16 +76,16 @@ export i32 main(Sys sys) {
   Pending<i64> slow = core.sleepMillis(120);
   Pending<i64> quick = core.sleepMillis(10);
   i32 first = core.waitAny([slow.id, quick.id], -1);
-  core.log("wacland: stage 3 first " + itoa(first));
+  core.log("wacland: stage 3 first \{first}");
   // And each resolves its *own* value, which is what says the two tickets are separate rather than one
   // completion arriving twice.
-  core.log("wacland: stage 3 quick " + itoa64(quick.wait()));
-  core.log("wacland: stage 3 slow " + itoa64(slow.wait()));
+  core.log("wacland: stage 3 quick \{quick.wait()}");
+  core.log("wacland: stage 3 slow \{slow.wait()}");
 
   // Stage 4. A deadline with nothing ready, which must come back rather than hang.
   Pending<i64> sleeper = core.sleepMillis(10000);
   i32 late = core.waitAny([sleeper.id], 30);
-  core.log("wacland: stage 4 timeout " + itoa(late));
+  core.log("wacland: stage 4 timeout \{late}");
   // Cancelling says "discard the answer", not "stop trying" — so the sleep is still running and this
   // program is about to end anyway. Said here because the difference is the whole of what `cancel` is.
   sleeper.cancel();
@@ -108,7 +108,7 @@ export i32 main(Sys sys) {
     return 0;
   }
   if (kid.handle < 0) {
-    core.warn("wacland: stage 5 could not spawn: " + kid.error);
+    core.warn("wacland: stage 5 could not spawn: \{kid.error}");
     return 1;
   }
   // The child's output, read back through its handle — bytes crossing between two instances.
@@ -117,13 +117,13 @@ export i32 main(Sys sys) {
   Pending<i64> tick = core.sleepMillis(1000);
   // Both kinds in one list. The child finishes long before the second, so this must answer 0.
   i32 which = core.waitAny([over.id, tick.id], -1);
-  core.log("wacland: stage 5 first " + itoa(which));
+  core.log("wacland: stage 5 first \{which}");
   match (said.wait()) {
-    Data(bytes): { core.log("wacland: stage 5 heard " + string.fromBytes(bytes)); }
+    Data(bytes): { core.log("wacland: stage 5 heard \{string.fromBytes(bytes)}"); }
     End: { core.log("wacland: stage 5 heard nothing"); }
-    Failed(why): { core.log("wacland: stage 5 read failed " + why); }
+    Failed(why): { core.log("wacland: stage 5 read failed \{why}"); }
   }
-  core.log("wacland: stage 5 status " + itoa(over.wait()));
+  core.log("wacland: stage 5 status \{over.wait()}");
   tick.cancel();
 
   // Stage 6. **A child gets what its parent granted, and no more.**
@@ -132,14 +132,14 @@ export i32 main(Sys sys) {
   // by the host rather than trusted". Asked twice, because one answer proves nothing: a child refused
   // when its parent had nothing to give is not evidence of an intersection. This program is built
   // *with* reading, so the two answers must differ.
-  core.log("wacland: stage 6 withheld " + childSays(core, cli, GRANT_NONE));
-  core.log("wacland: stage 6 granted " + childSays(core, cli, GRANT_READ));
+  core.log("wacland: stage 6 withheld \{childSays(core, cli, GRANT_NONE)}");
+  core.log("wacland: stage 6 granted \{childSays(core, cli, GRANT_READ)}");
 
   // **And the same claim about a different grant.** Reading is bit 1 and every encoding of these
   // flags agrees about bit 1, so asking only about reading cannot tell a host that decodes the
   // higher bits differently from one that does not. `GRANT_ENV` is bit 8.
-  core.log("wacland: stage 6 env withheld " + childEnv(core, cli, GRANT_NONE));
-  core.log("wacland: stage 6 env granted " + childEnv(core, cli, GRANT_ENV));
+  core.log("wacland: stage 6 env withheld \{childEnv(core, cli, GRANT_NONE)}");
+  core.log("wacland: stage 6 env granted \{childEnv(core, cli, GRANT_ENV)}");
 
   core.log("wacland: reached the end of what is implemented");
   return 0;
@@ -202,30 +202,3 @@ bool contains(string haystack, string needle) {
   return false;
 }
 
-/** An i64 as text. Separate from `itoa` because wac has no overloading and this needs both. */
-string itoa64(i64 v) {
-  if (v == 0 as i64) { return "0"; }
-  string out = "";
-  i64 x = v;
-  bool negative = x < 0 as i64;
-  if (negative) { x = 0 as i64 - x; }
-  while (x > 0 as i64) {
-    out = string.fromCodepoint('0' + (x % 10 as i64) as! i32) + out;
-    x = x / 10 as i64;
-  }
-  return negative ? "-" + out : out;
-}
-
-/** Decimal, without pulling `fmt` in for a conformance program that must build everywhere. */
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  string out = "";
-  i32 x = v;
-  bool negative = x < 0;
-  if (negative) { x = 0 - x; }
-  while (x > 0) {
-    out = string.fromCodepoint('0' + (x % 10)) + out;
-    x = x / 10;
-  }
-  return negative ? "-" + out : out;
-}

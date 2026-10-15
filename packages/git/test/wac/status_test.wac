@@ -86,7 +86,7 @@ string[] splitLines(string s) {
 
 string joined(string[] all) {
   string out = "";
-  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + "\n" + all[i]; }
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : "\{out}\n\{all[i]}"; }
   return out;
 }
 
@@ -121,16 +121,16 @@ string gitst(T t, Cli cli, string dir) {
                     ],
                     u8[]()).wait();
   t.eqStr(r.error, "", "the wac binary could be started");
-  t.eqI32(r.status, 0, "gitst exited zero: " + string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "gitst exited zero: \{string.fromBytes(r.stderr)}");
   return withoutTrailingNewline(string.fromBytes(r.stdout));
 }
 
 Git repo(T t, Cli cli, string name) {
   string who = agentDir(cli);
-  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   Git g = Git(cli, dir);
   if (made.ok()) { g.run(["init", "-q", "-b", "main"]); }
   return g;
@@ -141,63 +141,63 @@ export string test_all_three_of_gits_answers_in_gits_order(Core core, Cli cli) {
   Git g = repo(t, cli, "st");
   string d = g.dir;
 
-  string whyDir1 = madeDir(cli, d + "/sub");
+  string whyDir1 = madeDir(cli, "\{d}/sub");
   t.isTrue(whyDir1 == "", whyDir1);
-  cli.writeFile(d + "/a.txt", "one\n".toBytes()).wait();
-  cli.writeFile(d + "/sub/b.txt", "two\n".toBytes()).wait();
-  cli.writeFile(d + "/gone.txt", "three\n".toBytes()).wait();
-  cli.writeFile(d + "/same.txt", "unchanged\n".toBytes()).wait();
-  cli.writeFile(d + "/both.txt", "first\n".toBytes()).wait();
-  cli.writeFile(d + "/blob.bin", [0, 1, 2, 255, 254, 10] as u8[]).wait();
+  cli.writeFile("\{d}/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile("\{d}/sub/b.txt", "two\n".toBytes()).wait();
+  cli.writeFile("\{d}/gone.txt", "three\n".toBytes()).wait();
+  cli.writeFile("\{d}/same.txt", "unchanged\n".toBytes()).wait();
+  cli.writeFile("\{d}/both.txt", "first\n".toBytes()).wait();
+  cli.writeFile("\{d}/blob.bin", [0, 1, 2, 255, 254, 10] as u8[]).wait();
   g.run(["add", "-A"]);
   g.run(["commit", "-qm", "one"]);
 
   // Every shape porcelain can put in either column, plus two files that must appear in neither.
-  cli.writeFile(d + "/a.txt", "staged\n".toBytes()).wait();
+  cli.writeFile("\{d}/a.txt", "staged\n".toBytes()).wait();
   g.run(["add", "a.txt"]);                                 // M  — staged only
-  cli.writeFile(d + "/sub/b.txt", "unstaged\n".toBytes()).wait();   //  M — unstaged only, nested
+  cli.writeFile("\{d}/sub/b.txt", "unstaged\n".toBytes()).wait();   //  M — unstaged only, nested
   g.run(["rm", "-q", "gone.txt"]);                         // D  — staged deletion
-  cli.writeFile(d + "/added.txt", "new\n".toBytes()).wait();
+  cli.writeFile("\{d}/added.txt", "new\n".toBytes()).wait();
   g.run(["add", "added.txt"]);                             // A  — staged addition
-  cli.writeFile(d + "/both.txt", "staged then\n".toBytes()).wait();
+  cli.writeFile("\{d}/both.txt", "staged then\n".toBytes()).wait();
   g.run(["add", "both.txt"]);
-  cli.writeFile(d + "/both.txt", "edited again\n".toBytes()).wait(); // MM — both columns at once
-  cli.writeFile(d + "/untracked.txt", "new\n".toBytes()).wait();     // ?? — untracked
+  cli.writeFile("\{d}/both.txt", "edited again\n".toBytes()).wait(); // MM — both columns at once
+  cli.writeFile("\{d}/untracked.txt", "new\n".toBytes()).wait();     // ?? — untracked
 
   // An entirely untracked directory, which git collapses to one line; a directory with a tracked
   // file in it, whose untracked contents are listed individually; and files an ignore rule covers.
-  string whyDir2 = madeDir(cli, d + "/fresh");
+  string whyDir2 = madeDir(cli, "\{d}/fresh");
   t.isTrue(whyDir2 == "", whyDir2);
-  cli.writeFile(d + "/fresh/one.txt", "x\n".toBytes()).wait();
-  cli.writeFile(d + "/fresh/two.txt", "y\n".toBytes()).wait();
-  cli.writeFile(d + "/sub/alsonew.txt", "z\n".toBytes()).wait();
-  cli.writeFile(d + "/.gitignore", "*.tmp\n!keep.tmp\nbuilt/\n".toBytes()).wait();
-  cli.writeFile(d + "/junk.tmp", "ignored\n".toBytes()).wait();
-  cli.writeFile(d + "/keep.tmp", "negated back\n".toBytes()).wait();
+  cli.writeFile("\{d}/fresh/one.txt", "x\n".toBytes()).wait();
+  cli.writeFile("\{d}/fresh/two.txt", "y\n".toBytes()).wait();
+  cli.writeFile("\{d}/sub/alsonew.txt", "z\n".toBytes()).wait();
+  cli.writeFile("\{d}/.gitignore", "*.tmp\n!keep.tmp\nbuilt/\n".toBytes()).wait();
+  cli.writeFile("\{d}/junk.tmp", "ignored\n".toBytes()).wait();
+  cli.writeFile("\{d}/keep.tmp", "negated back\n".toBytes()).wait();
   // **A nested `.gitignore`, which only works if a deeper file's rules are applied after a
   // shallower one's.** `sub/` holds a tracked file, so the walk descends into it rather than
   // collapsing it. The same name at the root proves the nested rule does not reach outside its own
   // directory.
-  cli.writeFile(d + "/sub/.gitignore", "!inner.tmp\nscoped\n".toBytes()).wait();
-  cli.writeFile(d + "/sub/inner.tmp", "brought back by sub/.gitignore\n".toBytes()).wait();
-  cli.writeFile(d + "/sub/scoped", "ignored only under sub\n".toBytes()).wait();
-  cli.writeFile(d + "/inner.tmp", "still ignored at the root\n".toBytes()).wait();
-  string whyDir3 = madeDir(cli, d + "/built");
+  cli.writeFile("\{d}/sub/.gitignore", "!inner.tmp\nscoped\n".toBytes()).wait();
+  cli.writeFile("\{d}/sub/inner.tmp", "brought back by sub/.gitignore\n".toBytes()).wait();
+  cli.writeFile("\{d}/sub/scoped", "ignored only under sub\n".toBytes()).wait();
+  cli.writeFile("\{d}/inner.tmp", "still ignored at the root\n".toBytes()).wait();
+  string whyDir3 = madeDir(cli, "\{d}/built");
   t.isTrue(whyDir3 == "", whyDir3);
-  cli.writeFile(d + "/built/out", "ignored\n".toBytes()).wait();
+  cli.writeFile("\{d}/built/out", "ignored\n".toBytes()).wait();
 
   string[] theirs = splitLines(g.status());
 
   // **The fixture's own shape, asserted.** `MM` is the one that matters most: it is the only line
   // that proves the two columns are computed separately rather than one derived from the other.
-  t.isTrue(has(theirs, "M  a.txt"), "a staged-only change: " + joined(theirs));
+  t.isTrue(has(theirs, "M  a.txt"), "a staged-only change: \{joined(theirs)}");
   t.isTrue(has(theirs, " M sub/b.txt"), "an unstaged-only change in a subdirectory");
   t.isTrue(has(theirs, "MM both.txt"), "a file staged and then edited again");
   t.isTrue(has(theirs, "A  added.txt"), "a staged addition");
   t.isTrue(has(theirs, "D  gone.txt"), "a staged deletion");
   t.isTrue(has(theirs, "?? untracked.txt"), "an untracked file");
   // **The shapes untracked reporting is easy to get wrong**, each asserted in git's own answer first.
-  t.isTrue(has(theirs, "?? fresh/"), "git collapses an untracked directory: " + joined(theirs));
+  t.isTrue(has(theirs, "?? fresh/"), "git collapses an untracked directory: \{joined(theirs)}");
   t.isTrue(has(theirs, "?? sub/alsonew.txt"), "git lists inside a directory holding a tracked file");
   t.isTrue(has(theirs, "?? keep.tmp"), "the negated ignore rule brings keep.tmp back");
   t.isFalse(anyContains(theirs, "junk.tmp"), "git ignores junk.tmp");
@@ -221,9 +221,9 @@ export string test_all_three_of_gits_answers_in_gits_order(Core core, Cli cli) {
                            "sub/alsonew.txt", "sub/.gitignore", "sub/inner.tmp", "sub/scoped",
                            "inner.tmp"
   ];
-  for (i32 i = 0; i < junk.len(); i++) { cli.remove(d + "/" + junk[i], false).wait(); }
-  cli.remove(d + "/fresh", true).wait();
-  cli.remove(d + "/built", true).wait();
+  for (i32 i = 0; i < junk.len(); i++) { cli.remove("\{d}/\{junk[i]}", false).wait(); }
+  cli.remove("\{d}/fresh", true).wait();
+  cli.remove("\{d}/built", true).wait();
   t.eqStr(g.status(), "", "git sees nothing after a reset");
   t.eqStr(gitst(t, cli, d), "", "and neither do we");
 
@@ -247,21 +247,21 @@ export string test_a_mode_change_with_no_content_change_is_reported_both_directi
   Git g = repo(t, cli, "mode");
   string d = g.dir;
 
-  cli.writeFile(d + "/plain.txt", "same bytes throughout\n".toBytes()).wait();
-  cli.writeFile(d + "/exec.sh", "#!/bin/sh\n".toBytes()).wait();
-  cli.setExecutable(d + "/exec.sh", true).wait();
+  cli.writeFile("\{d}/plain.txt", "same bytes throughout\n".toBytes()).wait();
+  cli.writeFile("\{d}/exec.sh", "#!/bin/sh\n".toBytes()).wait();
+  cli.setExecutable("\{d}/exec.sh", true).wait();
   g.run(["add", "-A"]);
   g.run(["commit", "-qm", "one"]);
   t.eqStr(g.status(), "", "the fixture starts clean");
 
   // Gaining the bit, with the bytes untouched.
-  cli.setExecutable(d + "/plain.txt", true).wait();
+  cli.setExecutable("\{d}/plain.txt", true).wait();
   t.eqStr(g.status(), " M plain.txt", "git reports the gained bit");
   t.eqStr(gitst(t, cli, d), " M plain.txt", "and so do we");
 
   // And losing it — the direction a check written only for the first case would miss.
-  cli.setExecutable(d + "/plain.txt", false).wait();
-  cli.setExecutable(d + "/exec.sh", false).wait();
+  cli.setExecutable("\{d}/plain.txt", false).wait();
+  cli.setExecutable("\{d}/exec.sh", false).wait();
   t.eqStr(g.status(), " M exec.sh", "git reports the lost bit");
   t.eqStr(gitst(t, cli, d), " M exec.sh", "and so do we");
 
@@ -310,9 +310,9 @@ export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_inf
     Core core, Cli cli) {
   T t = T.create();
   string who = agentDir(cli);
-  string suffix = who == "" ? "" : "-" + who;
-  string d = "/tmp/wac-git-ex" + suffix;
-  string home = "/tmp/wac-git-home" + suffix;
+  string suffix = who == "" ? "" : "-\{who}";
+  string d = "/tmp/wac-git-ex\{suffix}";
+  string home = "/tmp/wac-git-home\{suffix}";
   cli.remove(d, true).wait();
   cli.remove(home, true).wait();
   string whyDir4 = madeDir(cli, d);
@@ -321,23 +321,23 @@ export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_inf
   t.isTrue(whyDir5 == "", whyDir5);
 
   Exec init = gitAt(cli, home, d, ["init", "-q", "-b", "main", "."]);
-  t.eqI32(init.status, 0, "git init — " + string.fromBytes(init.stderr));
+  t.eqI32(init.status, 0, "git init — \{string.fromBytes(init.stderr)}");
   if (init.status != 0) { return t.report(); }
 
-  cli.writeFile(home + "/.gitignore_global", "drop.txt\n!kept.txt\nboth.txt\n".toBytes()).wait();
+  cli.writeFile("\{home}/.gitignore_global", "drop.txt\n!kept.txt\nboth.txt\n".toBytes()).wait();
   // In the repository's own config, so ours and git's read the setting from the same file. Quoted so
   // the shell leaves the `~` for git to expand.
   gitAt(cli, home, d, ["config", "core.excludesFile", "~/.gitignore_global"]);
-  cli.writeFile(d + "/.git/info/exclude", "!both.txt\n".toBytes()).wait();
-  cli.writeFile(d + "/.gitignore", "kept.txt\n".toBytes()).wait();
+  cli.writeFile("\{d}/.git/info/exclude", "!both.txt\n".toBytes()).wait();
+  cli.writeFile("\{d}/.gitignore", "kept.txt\n".toBytes()).wait();
   string[] files = ["drop.txt", "kept.txt", "both.txt", "plain.txt"];
   for (i32 i = 0; i < files.len(); i++) {
-    cli.writeFile(d + "/" + files[i], "x\n".toBytes()).wait();
+    cli.writeFile("\{d}/\{files[i]}", "x\n".toBytes()).wait();
   }
-  cli.writeFile(d + "/tracked.txt", "x\n".toBytes()).wait();
+  cli.writeFile("\{d}/tracked.txt", "x\n".toBytes()).wait();
   gitAt(cli, home, d, ["add", "tracked.txt"]);
   Exec made = gitAt(cli, home, d, ["commit", "-qm", "one"]);
-  t.eqI32(made.status, 0, "git commit — " + string.fromBytes(made.stderr));
+  t.eqI32(made.status, 0, "git commit — \{string.fromBytes(made.stderr)}");
 
   string theirsText = withoutTrailingNewline(
     string.fromBytes(gitAt(cli, home, d, ["status", "--porcelain"]).stdout));
@@ -346,7 +346,7 @@ export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_inf
   // **The shape, asserted before the comparison.** Each of these is the fixture doing its job; a
   // fixture where the excludes file never mattered would pass against a matcher that ignored it.
   t.isTrue(!anyEndsWith(theirs, " drop.txt"),
-           "the excludes file was not read by git: " + theirsText);
+           "the excludes file was not read by git: \{theirsText}");
   t.isTrue(!anyEndsWith(theirs, " kept.txt"),
            "a .gitignore did not override the excludes file's negation");
   t.isTrue(anyEndsWith(theirs, " both.txt"), "info/exclude did not override the excludes file");
@@ -358,7 +358,7 @@ export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_inf
   string verdicts = string.fromBytes(
     gitAt(cli, home, d, ["check-ignore", "-v", "kept.txt", "both.txt"]).stdout);
   t.isTrue(verdicts.indexOf(".gitignore:1:kept.txt") >= 0,
-           ".gitignore did not decide kept.txt: " + verdicts);
+           ".gitignore did not decide kept.txt: \{verdicts}");
 
   string wac = wacBinary(cli);
   Exec ours = withHome(cli, home, wac,
@@ -371,7 +371,7 @@ export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_inf
                                 d
                        ]);
   t.eqStr(ours.error, "", "the wac binary could be started");
-  t.eqI32(ours.status, 0, "gitst exited zero: " + string.fromBytes(ours.stderr));
+  t.eqI32(ours.status, 0, "gitst exited zero: \{string.fromBytes(ours.stderr)}");
   t.eqStr(withoutTrailingNewline(string.fromBytes(ours.stdout)), theirsText,
           "gitst and git disagree about the same directory");
 

@@ -82,9 +82,9 @@ export u8[] authorityCertificate(AuthorityKeys k, i64 published, i64 expires) {
 
   Buf d = Buf.create();
   d.pushAll("dir-key-certificate-version 3\n".toBytes());
-  d.pushAll(("fingerprint " + plainFingerprint(fingerprint) + "\n").toBytes());
-  d.pushAll(("dir-key-published " + publishedTime(published) + "\n").toBytes());
-  d.pushAll(("dir-key-expires " + publishedTime(expires) + "\n").toBytes());
+  d.pushAll("fingerprint \{plainFingerprint(fingerprint)}\n".toBytes());
+  d.pushAll("dir-key-published \{publishedTime(published)}\n".toBytes());
+  d.pushAll("dir-key-expires \{publishedTime(expires)}\n".toBytes());
   d.pushAll("dir-identity-key\n".toBytes());
   d.pushAll(pemBlock("RSA PUBLIC KEY", rsaPublicKeyDer(k.identityN, k.identityE)));
   d.pushAll("dir-signing-key\n".toBytes());

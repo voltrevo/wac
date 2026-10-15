@@ -21,7 +21,6 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { ProxyAt, ProxyReply, parseProxy, connectRequest, readReply } from "../../src/proxy.wac";
 
 /** The variant's name, for a message that says what came back rather than what did not. */
@@ -77,10 +76,10 @@ export string test_a_proxy_variable_parses_the_way_http_proxy_is_actually_writte
   i32[] ports = [3128, 3128, 3128, 3128, 3128, 8080, 0, 0, 0, 0, 0, 0];
   for (i32 i = 0; i < urls.len(); i++) {
     ProxyAt got = parseProxy(urls[i]);
-    t.eqBool(got.ok, oks[i], "\"" + urls[i] + "\": ok");
+    t.eqBool(got.ok, oks[i], "\"\{urls[i]}\": ok");
     if (!oks[i]) { continue; }
-    t.eqStr(got.host, hosts[i], "\"" + urls[i] + "\": host");
-    t.eqI32(got.port, ports[i], "\"" + urls[i] + "\": port");
+    t.eqStr(got.host, hosts[i], "\"\{urls[i]}\": host");
+    t.eqI32(got.port, ports[i], "\"\{urls[i]}\": port");
   }
   return t.report();
 }

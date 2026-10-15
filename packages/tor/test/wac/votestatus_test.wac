@@ -1,11 +1,9 @@
 // The `r` line an authority writes, against the lines a chutney network's authorities wrote.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   routerStatusLine, descriptorIdentityDigest, lineValue, b64Unpadded,
 } from "../../src/routerdesc.wac";
@@ -60,7 +58,7 @@ u8[] numOf(Cli cli, i32 i, string key) {
   JsonValue? v = caseAt(cli, i).getStr(key);
   if (v is null) { trap; }
   match (v!) {
-    Number(value, raw): { return itoa(value as~ i32).toBytes(); }
+    Number(value, raw): { return "\{value as~ i32}".toBytes(); }
     default: { trap; }
   }
 }
@@ -72,22 +70,22 @@ export string test_the_r_line_is_the_one_tors_authority_wrote(Core core, Cli cli
 
   for (i32 i = 0; i < n; i++) {
     u8[] desc = strOf(cli, i, "descriptor");
-    string which = "relay " + itoa64(i as i64);
+    string which = "relay \{i as i64}";
 
     // The whole line, from the descriptor alone.
     t.eqBytes(routerStatusLine(desc), strOf(cli, i, "rLine"),
-              which + ": our r line is the one tor's authority wrote");
+              "\{which}: our r line is the one tor's authority wrote");
 
     // And the digest field on its own, so a failure says which part moved rather than only that the
     // line differs. This is the field the whole pairing rests on.
     t.eqBytes(b64Unpadded(descriptorIdentityDigest(desc)).toBytes(),
               strOf(cli, i, "digest"),
-              which + ": the descriptor digest is the one tor recorded");
+              "\{which}: the descriptor digest is the one tor recorded");
 
     // The publication time on the r line is the descriptor's own `published` line, copied rather than
     // recomputed — an authority does not restate the time in its own words.
     t.eqBytes(lineValue(desc, "published "), strOf(cli, i, "publication"),
-              which + ": the publication time is the descriptor's own");
+              "\{which}: the publication time is the descriptor's own");
   }
   return t.report();
 }

@@ -14,7 +14,6 @@
 // which asks the real tools what each one should answer, and `test/wac/behaviour_test.wac`, which replays
 // those answers in process. Data two languages hold twice is data that drifts.
 
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Buf } from "core";
 
 /** Every invocation, run through a shell so that redirection and pipelines are available. */
@@ -80,7 +79,7 @@ export struct Fixture {
  */
 export Fixture[] fixtures() {
   string longLines = "";
-  for (i32 i = 1; i <= 30; i++) { longLines = longLines + "line " + itoa(i) + "\n"; }
+  for (i32 i = 1; i <= 30; i++) { longLines = longLines + "line \{i}\n"; }
   return [
     Fixture("nums.txt", "10\n9\n100\n1\n-5\n2.5\n0\n".toBytes(), false),
     Fixture("words.txt", "banana\nApple\ncherry\napple\nBanana\n".toBytes(), false),

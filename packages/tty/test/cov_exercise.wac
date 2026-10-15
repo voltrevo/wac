@@ -15,7 +15,6 @@
 // All eight tests take `(Core, Cli)`: every one of them opens a pty or asks a recorded oracle.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_the_oracle_is_the_configuration_this_module_implements as ln__the_oracle_is_the_configuration_this_module_implements,
   test_every_editing_rule_answers_what_the_kernel_answers as ln__every_editing_rule_answers_what_the_kernel_answers,
@@ -70,6 +69,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED modes_test test_the_live_pty_still_answers_what_was_recorded_in_each_mode");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("tty: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("tty: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

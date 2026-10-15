@@ -77,7 +77,7 @@ string[] requests() {
     "GET / HTTP/1.1\r\nHost : a\r\n\r\n",
     "GET / HTTP/2.0\r\n\r\n",
     "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 99999999\r\n\r\n",
-    "GET /" + DEL + " HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /\{DEL} HTTP/1.1\r\nHost: a\r\n\r\n",
     // chunked in, which routes the same as any other body
     "POST /json HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n7\r\n{\"a\":1}\r\n0\r\n\r\n"
   ];
@@ -103,8 +103,8 @@ export i32 main() {
     "GET /echo//a//b HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET /b64//aGk HTTP/1.1\r\nHost: a\r\n\r\n",
     // control characters that JSON has to escape as `\u00xx`, both nibble halves
-    "GET /echo?q=" + US + SO + " HTTP/1.1\r\nHost: a\r\n\r\n",
-    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 8\r\n\r\n{\"a\":" + US + SO + "1}",
+    "GET /echo?q=\{US}\{SO} HTTP/1.1\r\nHost: a\r\n\r\n",
+    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 8\r\n\r\n{\"a\":\{US}\{SO}1}",
     // numbers the JSON writer has to render, which it was only ever handed zero for
     "GET /echo?n=12345&m=-7 HTTP/1.1\r\nHost: a\r\n\r\n",
     "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 20\r\n\r\n{\"n\":12345,\"m\":-7}",
@@ -131,7 +131,7 @@ export i32 main() {
     "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}"
   ];
   for (i32 i = 0; i < firsts.len(); i++) {
-    seen = seen + one(firsts[i] + "GET /time HTTP/1.1\r\nHost: a\r\n\r\n");
+    seen = seen + one("\{firsts[i]}GET /time HTTP/1.1\r\nHost: a\r\n\r\n");
   }
 
   return seen;

@@ -13,7 +13,6 @@
 // published roots through a host-side oracle. None expects a trap.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_the_two_empty_constants_are_what_they_claim_to_be as ac__the_two_empty_constants_are_what_they_claim_to_be,
   test_an_account_is_read_out_of_the_state_trie_fields_and_all as ac__an_account_is_read_out_of_the_state_trie_fields_and_all,
@@ -192,6 +191,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED proof_test test_a_trie_the_shape_ethereums_actually_are_keccak_keys_32_byte_values_deep_paths");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("mpt: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("mpt: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

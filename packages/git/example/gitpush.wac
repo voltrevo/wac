@@ -20,7 +20,6 @@
 
 import { Cli, Core, FileResult, Sys } from "std";
 import { Fs } from "../../fs/src/fs.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { decode } from "../../codec/src/hex.wac";
 import { Vec } from "core";
 import { Ad, Advertised, parseAdvertisement } from "../src/fetch.wac";
@@ -43,7 +42,7 @@ export i32 main(Sys sys) {
 
   FileResult adv = fs.readFile(advPath);
   if (!adv.ok) {
-    core.warn("gitpush: cannot read " + advPath);
+    core.warn("gitpush: cannot read \{advPath}");
     return 1;
   }
   // **The old value comes from what the server just said**, which is what makes this a compare-and-swap
@@ -52,9 +51,9 @@ export i32 main(Sys sys) {
   // only thing standing between a stale client and a discarded commit.
   u8[] old = oldFor(adv.bytes, ref);
 
-  match (openRepo(fs, root + "/.git", root)) {
+  match (openRepo(fs, "\{root}/.git", root)) {
     NoRepo(why): {
-      core.warn("gitpush: " + why);
+      core.warn("gitpush: \{why}");
       return 1;
     }
     Opened(repo): {
@@ -78,7 +77,7 @@ export i32 main(Sys sys) {
         kinds[i] = objects.get(i).kind;
         match (readObject(repo, objects.get(i).name)) {
           Absent(why): {
-            core.warn("gitpush: " + why);
+            core.warn("gitpush: \{why}");
             return 1;
           }
           Found(kind, data): { bodies.push(data); }
@@ -95,7 +94,7 @@ export i32 main(Sys sys) {
         core.warn("gitpush: cannot write the pack");
         return 1;
       }
-      core.warn("gitpush: " + itoa(objects.len()) + " objects for " + ref);
+      core.warn("gitpush: \{objects.len()} objects for \{ref}");
       return 0;
     }
   }

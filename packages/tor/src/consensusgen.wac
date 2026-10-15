@@ -26,7 +26,6 @@
 //     all over the same digest — the span ends at the *first* one.
 
 import { Buf } from "core";
-import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { rsaSignRawPkcs1 } from "../../crypto/src/rsa.wac";
 import { AuthorityKeys, plainFingerprint } from "./authcert.wac";
 import { microdescLine, microdescriptor } from "./microdesc.wac";
@@ -115,30 +114,30 @@ u8[] consensusFlavoured(
   d.pushAll(microdesc ? "network-status-version 3 microdesc\n".toBytes()
                       : "network-status-version 3\n".toBytes());
   d.pushAll("vote-status consensus\n".toBytes());
-  d.pushAll(("consensus-method " + itoa(info.consensusMethod) + "\n").toBytes());
-  d.pushAll(("valid-after " + publishedTime(info.validAfter) + "\n").toBytes());
-  d.pushAll(("fresh-until " + publishedTime(info.freshUntil) + "\n").toBytes());
-  d.pushAll(("valid-until " + publishedTime(info.validUntil) + "\n").toBytes());
-  d.pushAll(("voting-delay " + itoa(info.voteSeconds) + " " + itoa(info.distSeconds) +
+  d.pushAll("consensus-method \{info.consensusMethod}\n".toBytes());
+  d.pushAll("valid-after \{publishedTime(info.validAfter)}\n".toBytes());
+  d.pushAll("fresh-until \{publishedTime(info.freshUntil)}\n".toBytes());
+  d.pushAll("valid-until \{publishedTime(info.validUntil)}\n".toBytes());
+  d.pushAll(("voting-delay \{info.voteSeconds} \{info.distSeconds}" +
              "\n").toBytes());
   // Empty and still present, with the trailing space a real consensus has: the keyword asserts that
   // the authorities agreed on no recommendation, which is not the same as saying nothing.
   d.pushAll("client-versions \n".toBytes());
   d.pushAll("server-versions \n".toBytes());
-  d.pushAll(("known-flags " + CONSENSUS_FLAGS + "\n").toBytes());
-  d.pushAll(("recommended-client-protocols " + CLIENT_PROTOCOLS + "\n").toBytes());
-  d.pushAll(("recommended-relay-protocols " + RELAY_PROTOCOLS + "\n").toBytes());
-  d.pushAll(("required-client-protocols " + REQUIRED_CLIENT + "\n").toBytes());
-  d.pushAll(("required-relay-protocols " + RELAY_PROTOCOLS + "\n").toBytes());
+  d.pushAll("known-flags \{CONSENSUS_FLAGS}\n".toBytes());
+  d.pushAll("recommended-client-protocols \{CLIENT_PROTOCOLS}\n".toBytes());
+  d.pushAll("recommended-relay-protocols \{RELAY_PROTOCOLS}\n".toBytes());
+  d.pushAll("required-client-protocols \{REQUIRED_CLIENT}\n".toBytes());
+  d.pushAll("required-relay-protocols \{RELAY_PROTOCOLS}\n".toBytes());
 
   for (i32 i = 0; i < voters.len(); i++) {
     ConsensusVoter v = voters[i];
     if (v.identityDigest.len() != 20 || v.voteDigest.len() != 20) { return u8[](); }
-    d.pushAll(("dir-source " + v.nickname + " " + plainFingerprint(v.identityDigest) + " " +
-               v.address + " " + v.ip + " " + itoa(v.dirPort) + " " + itoa(v.orPort) +
+    d.pushAll(("dir-source \{v.nickname} \{plainFingerprint(v.identityDigest)} " +
+               "\{v.address} \{v.ip} \{v.dirPort} \{v.orPort}" +
                "\n").toBytes());
-    d.pushAll(("contact " + v.contact + "\n").toBytes());
-    d.pushAll(("vote-digest " + plainFingerprint(v.voteDigest) + "\n").toBytes());
+    d.pushAll("contact \{v.contact}\n".toBytes());
+    d.pushAll("vote-digest \{plainFingerprint(v.voteDigest)}\n".toBytes());
   }
 
   u8[][] descriptors = u8[][].defaulted(relays.len());
@@ -156,30 +155,30 @@ u8[] consensusFlavoured(
       if (md.len() == 0) { continue; }
       d.pushAll(line);
       d.push(10);
-      d.pushAll((microdescLine(md) + "\n").toBytes());
+      d.pushAll("\{microdescLine(md)}\n".toBytes());
     } else {
       d.pushAll(line);
       d.push(10);
     }
 
-    d.pushAll(("s " + r.flags + "\n").toBytes());
-    d.pushAll(("v Tor " + TOR_VERSION + "\n").toBytes());
-    d.pushAll(("pr " + RELAY_SUBPROTOCOLS + "\n").toBytes());
+    d.pushAll("s \{r.flags}\n".toBytes());
+    d.pushAll("v Tor \{TOR_VERSION}\n".toBytes());
+    d.pushAll("pr \{RELAY_SUBPROTOCOLS}\n".toBytes());
     // Unmeasured, because nothing here runs a bandwidth authority. Saying so is the honest form; a
     // consensus that omitted it would claim the number came from a measurement.
-    d.pushAll(("w Bandwidth=" + itoa64(r.bandwidth) + " Unmeasured=1\n").toBytes());
+    d.pushAll("w Bandwidth=\{r.bandwidth} Unmeasured=1\n".toBytes());
     // The policy summary lives in the microdescriptor for that flavour, so writing it here too would
     // state it twice, in a document whose reader does not expect it.
-    if (!microdesc) { d.pushAll(("p " + r.exitPolicy + "\n").toBytes()); }
+    if (!microdesc) { d.pushAll("p \{r.exitPolicy}\n".toBytes()); }
   }
 
   d.pushAll("directory-footer\n".toBytes());
-  d.pushAll(("bandwidth-weights " + info.bandwidthWeights + "\n").toBytes());
+  d.pushAll("bandwidth-weights \{info.bandwidthWeights}\n".toBytes());
 
   d.pushAll(signatureKeywordText());
   u8[] digest = voteSignatureDigest(d.bytes());
   if (digest.len() != 20) { return u8[](); }
-  d.pushAll((plainFingerprint(identityFp) + " " + plainFingerprint(signingFp) + "\n").toBytes());
+  d.pushAll("\{plainFingerprint(identityFp)} \{plainFingerprint(signingFp)}\n".toBytes());
   u8[] sig = rsaSignRawPkcs1(signer.signingN, signer.signingD, digest);
   if (sig.len() == 0) { return u8[](); }
   d.pushAll(pemBlock("SIGNATURE", sig));

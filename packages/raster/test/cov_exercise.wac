@@ -29,7 +29,6 @@ import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFil
          gridScrolled, gridEmpty, gridWideTail, gridInk, caretInk, deskPress, deskDrag,
          deskCloseDuringDrag, deskTyped, deskDrawn } from "./wac/scenes.wac";
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_the_generated_font_is_the_font_that_was_vendored as rt__the_generated_font_is_the_font_that_was_vendored,
   test_a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell as rt__a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell,
@@ -310,7 +309,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED raster_test test_grid_a_selected_cell_is_drawn_inverted_and_only_where_the_selection_is");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("raster: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("raster: \{bad} test(s) failed under the coverage driver"); }
   seen = seen + bad;
 
   return seen;

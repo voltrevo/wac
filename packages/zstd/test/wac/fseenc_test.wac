@@ -26,7 +26,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { FseTable, BackBits, readTable, buildFromCounts, initState, symbolAt,
          nextState } from "../../src/fse.wac";
 import { BitOut, CTable, Step, normalize, optimalLog, buildCTable, encodeStep, initialState,
@@ -96,16 +95,16 @@ void roundTrip(T t, string what, i32[] symbols, i32 maxSymbol, i32 maxLog) {
 
   i32 sum = 0;
   for (i32 i = 0; i < norm.len(); i++) { sum = sum + (norm[i] < 0 ? -norm[i] : norm[i]); }
-  t.eqI32(sum, 1 << log, what + ": the normalised counts' sum");
+  t.eqI32(sum, 1 << log, "\{what}: the normalised counts' sum");
   if (sum != 1 << log) { return; }
   for (i32 s = 0; s <= maxSymbol; s++) {
     t.isFalse(counts[s] > 0 && norm[s] == 0,
-              what + ": symbol " + itoa(s) + " occurs but normalised to zero");
+              "\{what}: symbol \{s} occurs but normalised to zero");
   }
 
   Decoded got = decode(encode(symbols, maxSymbol, log, norm), symbols.len(), maxSymbol, maxLog);
-  t.eqI32(got.left, 0, what + ": bits left in the stream");
-  t.eqI32Array(got.symbols, symbols, what + ": the symbols read back");
+  t.eqI32(got.left, 0, "\{what}: bits left in the stream");
+  t.eqI32Array(got.symbols, symbols, "\{what}: the symbols read back");
 }
 
 /** `n` symbols from `f(i)`, which is how each corpus below is spelled. */
@@ -158,7 +157,7 @@ export string test_fuzz_random_symbol_streams_of_random_shapes() {
     }
     i32[] symbols = i32[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { symbols[i] = pool[rng.upto(poolSize)]; }
-    roundTrip(t, "trial " + itoa(trial) + " (maxSymbol " + itoa(maxSymbol) + ", " + itoa(n) +
+    roundTrip(t, "trial \{trial} (maxSymbol \{maxSymbol}, \{n}" +
                  " symbols)", symbols, maxSymbol, 9);
   }
   return t.report();
@@ -201,16 +200,16 @@ export string test_descriptions_round_trip_including_counts_the_normaliser_never
     u8[] desc = o.flush();
 
     FseTable read = readTable(desc, 0, maxSymbol, 9);
-    t.eqI32(read.log, logs[c], names[c] + ": the log read back");
-    t.eqI32(read.bytesUsed, desc.len(), names[c] + ": bytes the reader consumed");
+    t.eqI32(read.log, logs[c], "\{names[c]}: the log read back");
+    t.eqI32(read.bytesUsed, desc.len(), "\{names[c]}: bytes the reader consumed");
 
     // Compared through the table, which is stricter than comparing counts — and against
     // `buildFromCounts`, which is the decoder's *other* route to one. Reading the description
     // twice and comparing the two would be one answer wearing two names.
     FseTable built = buildFromCounts(norm, maxSymbol, logs[c]);
-    t.eqI32Array(read.symbol, built.symbol, names[c] + ": symbol");
-    t.eqI32Array(read.nbBits, built.nbBits, names[c] + ": nbBits");
-    t.eqI32Array(read.newState, built.newState, names[c] + ": newState");
+    t.eqI32Array(read.symbol, built.symbol, "\{names[c]}: symbol");
+    t.eqI32Array(read.nbBits, built.nbBits, "\{names[c]}: nbBits");
+    t.eqI32Array(read.newState, built.newState, "\{names[c]}: newState");
   }
   return t.report();
 }

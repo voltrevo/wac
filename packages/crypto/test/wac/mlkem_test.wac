@@ -19,7 +19,6 @@
 // that work perfectly with themselves.
 //
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Lines, Answers, askDeno, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -45,7 +44,7 @@ struct Vector {
 /** `n` fresh vectors, in one batch — a round trip to Deno is a process, so ask once. */
 Vector[] vectors(T t, Cli cli, i32 n) {
   Lines lines = Lines.create();
-  lines.add("mlkemvec " + itoa64(n as i64));
+  lines.add("mlkemvec \{n as i64}");
   Answers a = askDeno(t, cli, ORACLE, lines, "ML-KEM vectors");
   if (!a.ok) { return Vector[].filled(0, Vector(u8[](), u8[](), u8[](), u8[]())); }
   Vector[] out = Vector[].filled(a.lines.len(), Vector(u8[](), u8[](), u8[](), u8[]()));
@@ -68,7 +67,7 @@ export string test_key_generation_matches_webcrypto_byte_for_byte(Core core, Cli
     u8[] ours = mlkemKeyGen(all[r].seed);
     t.eqI32(ours.len(), EK + DK, "keyGen returns ek then dk");
     t.eqBytes(slice(ours, 0, EK), wantEk,
-              "encapsulation key " + itoa64(r as i64) + " matches WebCrypto");
+              "encapsulation key \{r as i64} matches WebCrypto");
   }
   return t.report();
 }
@@ -83,7 +82,7 @@ export string test_webcryptos_ciphertext_decapsulates_here(Core core, Cli cli) {
   for (i32 r = 0; r < all.len(); r++) {
     u8[] dk = slice(mlkemKeyGen(all[r].seed), EK, EK + DK);
     t.eqBytes(mlkemDecaps(dk, all[r].ct), all[r].shared,
-              "we decapsulate WebCrypto's ciphertext " + itoa64(r as i64));
+              "we decapsulate WebCrypto's ciphertext \{r as i64}");
   }
   return t.report();
 }
@@ -153,10 +152,10 @@ export string test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure
     bad[spots[i]] = bad[spots[i]] ^ 1;
     u8[] got = mlkemDecaps(dk, bad);
     t.isFalse(equal(got, real),
-              "byte " + itoa64(spots[i] as i64) + " flipped changes the secret");
+              "byte \{spots[i] as i64} flipped changes the secret");
     // The rejection secret is a function of the key and the ciphertext, so it repeats.
     t.eqBytes(got, mlkemDecaps(dk, bad),
-              "and the rejection secret at " + itoa64(spots[i] as i64) + " is deterministic");
+              "and the rejection secret at \{spots[i] as i64} is deterministic");
   }
   // Two different corruptions must give two different rejection secrets, or the value is
   // not bound to the ciphertext at all.

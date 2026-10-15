@@ -23,7 +23,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { targetOf, requestLength, replyForEndReason, endReasonName } from "../../src/socks5.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { cellSize, cellCommand, cellCircId, cellPayload, isVarLength, certsCount,
          decodeCreated2, negotiateVersion, ID_WIDE} from "../../src/cell.wac";
 import { relayCommand, relayStreamId, relayPayload, extended2Reply, endReason,
@@ -72,7 +71,7 @@ export string test_cell_framing_survives_truncation_at_every_offset() {
     u8[] part = u8[].filled(cut, 0);
     for (i32 i = 0; i < cut; i++) { part[i] = whole[i]; }
     i32 size = cellSize(part, 0, ID_WIDE);
-    t.isTrue(size == -1 || size <= cut, "truncated at " + itoa64(cut as i64));
+    t.isTrue(size == -1 || size <= cut, "truncated at \{cut as i64}");
     if (size > 0) { cellPayload(part, 0, ID_WIDE); }
   }
   return t.report();
@@ -102,7 +101,7 @@ export string test_a_relay_cell_body_with_a_hostile_length() {
   }
   t.isTrue(refused > 0,
            "a random body regularly carries a length past the end — " +
-           itoa64(refused as i64) + " of two thousand");
+           "\{refused as i64} of two thousand");
   return t.report();
 }
 
@@ -287,7 +286,7 @@ export string test_fuzz_socks_requests() {
   t.isTrue(parsed > 0,
            "none of the 4000 random requests parsed as a target, so `requestLength` was never asked " +
            "anything — the fuzz is now only a no-trap check");
-  t.isTrue(true, "no trap on 4000 random requests, " + itoa64(parsed as i64) + " of them parsed");
+  t.isTrue(true, "no trap on 4000 random requests, \{parsed as i64} of them parsed");
   return t.report();
 }
 
@@ -320,7 +319,7 @@ export string test_fuzz_socks_requests_arriving_in_pieces() {
       // Once it answers, it must keep answering the same thing. An answer that changes as
       // more bytes arrive is one that was given too early.
       if (!settled) { settled = true; }
-      t.eqStr(got, whole, "an answer at " + itoa64(cut as i64) + " bytes must be final");
+      t.eqStr(got, whole, "an answer at \{cut as i64} bytes must be final");
     }
   }
   return t.report();

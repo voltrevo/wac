@@ -14,7 +14,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { deriveKey, ephemeralPublic, sharedSecret, verifyEd25519Host } from "../../src/kex.wac";
 import { cat, str, strOf, ramp, filled } from "./build.wac";
 
@@ -47,9 +46,9 @@ export string test_key_derivation_extends_by_hashing_the_accumulated_output(Core
     for (i32 l = 0; l < letters.len(); l++) {
       for (i32 n = 0; n < lengths.len(); n++) {
         u8[] got = deriveKey(secrets[s], h, sid, letters[l], lengths[n]);
-        t.eqI32(got.len(), lengths[n], "asked for " + itoa(lengths[n]) + " bytes");
-        lines.add("derive " + hex(secrets[s]) + " " + hex(h) + " " + hex(sid) + " " +
-                  itoa(letters[l]) + " " + itoa(lengths[n]) + " " + hex(got));
+        t.eqI32(got.len(), lengths[n], "asked for \{lengths[n]} bytes");
+        lines.add("derive \{hex(secrets[s])} \{hex(h)} \{hex(sid)} " +
+                  "\{letters[l]} \{lengths[n]} \{hex(got)}");
       }
     }
   }

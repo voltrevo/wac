@@ -40,7 +40,7 @@ export string normalise(string path) {
   }
   if (n == 0) { return "/"; }
   string out = "";
-  for (i32 i = 0; i < n; i++) { out = out + "/" + parts[i]; }
+  for (i32 i = 0; i < n; i++) { out = out + "/\{parts[i]}"; }
   return out;
 }
 
@@ -48,5 +48,5 @@ export string normalise(string path) {
 export string resolvePath(string cwd, string path) {
   if (path == "") { return cwd; }
   bool absolute = path.toBytes()[0] == '/';
-  return normalise(absolute ? path : (cwd == "/" ? "/" + path : cwd + "/" + path));
+  return normalise(absolute ? path : (cwd == "/" ? "/\{path}" : "\{cwd}/\{path}"));
 }

@@ -93,10 +93,10 @@ string[] texts() {
     "", "a", "abc", "ABC", "hello world",
     "café", "日本語", "😀😁", "ΣΊΣΥΦΟΣ", "σίσυφος",
     "straße", "İstanbul", string.fromCodepoint(0x10ffff),
-    "a" + string.fromCodepoint(0x80) + string.fromCodepoint(0x800) +
-      string.fromCodepoint(0x10000) + "a",
+    "a\{string.fromCodepoint(0x80)}\{string.fromCodepoint(0x800)}" +
+      "\{string.fromCodepoint(0x10000)}a",
     string.fromCodepoint(0x10000) + string.fromCodepoint(0x800) +
-      string.fromCodepoint(0x80) + "a"
+      "\{string.fromCodepoint(0x80)}a"
   ];
 }
 
@@ -164,8 +164,8 @@ export i32 main() {
   // about: "a broken input is its own answer, not a smaller total". Failing on the first read and on a
   // later one, because the later one has bytes already written and a held fragment in `upperCase`.
   // Literal escapes are not this language's spelling — the file uses `string.fromCodepoint`.
-  string sample = "hello caf" + string.fromCodepoint(0xe9) + " " +
-                  string.fromCodepoint(0x4e16) + " " + string.fromCodepoint(0x1f600) + " world";
+  string sample = "hello caf\{string.fromCodepoint(0xe9)} " +
+                  "\{string.fromCodepoint(0x4e16)} \{string.fromCodepoint(0x1f600)} world";
   i32[] fails = [0, 1, 3];
   for (i32 i = 0; i < fails.len(); i++) {
     f.feedFailing(sample.toBytes(), 4, fails[i]);

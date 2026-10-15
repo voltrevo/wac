@@ -9,16 +9,15 @@ import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule, Sys } from 
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { parse } from "../../json/src/json.wac";
 import { manifestIn } from "../../wacc/src/manifest.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 export i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   FileResult f = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
-  if (!f.ok) { core.warn("cannot read: " + f.error); return 1; }
+  if (!f.ok) { core.warn("cannot read: \{f.error}"); return 1; }
 
   LoadedModule m = cli.load(f.bytes, GRANT_ALL());
-  if (m.handle < 0) { core.warn("load: " + m.error); return 1; }
+  if (m.handle < 0) { core.warn("load: \{m.error}"); return 1; }
 
   i32 passed = 0;
   i32 failed = 0;
@@ -29,18 +28,18 @@ export i32 main(Sys sys) {
     bool wantsTrap = name.len() > 11 && name.slice(0, 11) == "test_traps_";
     if (c.trapped()) {
       // A trap is a value, so the runner decides what it means instead of dying with it.
-      if (wantsTrap) { passed = passed + 1; core.log("ok   " + name + " (trapped)"); }
-      else { failed = failed + 1; core.log("FAIL " + name + " — trapped: " + c.text); }
+      if (wantsTrap) { passed = passed + 1; core.log("ok   \{name} (trapped)"); }
+      else { failed = failed + 1; core.log("FAIL \{name} — trapped: \{c.text}"); }
     } else if (c.text == "") {
       passed = passed + 1;
-      core.log("ok   " + name);
+      core.log("ok   \{name}");
     } else {
       failed = failed + 1;
-      core.log("FAIL " + name + " — " + c.text);
+      core.log("FAIL \{name} — \{c.text}");
     }
   }
   cli.unload(m.handle);
-  core.log(itoa(passed) + " passed, " + itoa(failed) + " failed");
+  core.log("\{passed} passed, \{failed} failed");
   return failed == 0 ? 0 : 3;
 }
 

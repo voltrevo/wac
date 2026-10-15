@@ -33,11 +33,11 @@ import { objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
 /** `(` … `)` for a list, `<hex>` for a byte string. One rendering per tree, and no two trees alike. */
 string render(Item it) {
   match (it) {
-    Bytes(v): { return "<" + hex(v) + ">"; }
+    Bytes(v): { return "<\{hex(v)}>"; }
     List(xs): {
       string out = "(";
       for (i32 i = 0; i < xs.len(); i++) { out = out + render(xs[i]); }
-      return out + ")";
+      return "\{out})";
     }
   }
 }
@@ -67,10 +67,10 @@ string hex(u8[] b) {
  * Host-side until 2026-08-17; `issues/system/0161`.
  */
 JsonObject fixtures(Core core, Cli cli, string name) {
-  string path = "packages/rlp/test/vendor/" + name + ".json";
+  string path = "packages/rlp/test/vendor/\{name}.json";
   FileResult r = cli.readFile(path).wait();
   if (!r.ok) {
-    core.warn("rlp: cannot read " + path + " — " + r.error);
+    core.warn("rlp: cannot read \{path} — \{r.error}");
     trap;
   }
   JsonValue? v = parse(r.bytes);
@@ -134,7 +134,7 @@ string renderIn(JsonValue v) {
     Array(items): {
       string out = "(";
       for (i32 i = 0; i < items.len(); i++) { out = out + renderIn(items.get(i)); }
-      return out + ")";
+      return "\{out})";
     }
     Number(value, raw): { return "<" + string.fromBytes(hexEncode(beI64(value as~ i64))) + ">"; }
     Str(bytes): {
@@ -145,7 +145,7 @@ string renderIn(JsonValue v) {
       }
       // Otherwise the string's own bytes, which a wac `string` holds as UTF-8 exactly as
       // `TextEncoder` produced them on the host side.
-      return "<" + string.fromBytes(hexEncode(bytes)) + ">";
+      return "<\{string.fromBytes(hexEncode(bytes))}>";
     }
     default: { trap; }
   }
@@ -163,19 +163,19 @@ export string test_the_published_vectors_decode_and_re_encode(Core core, Cli cli
   i32 n = all.len();
   // Sanity on the corpus itself, before anything is asserted about the code: a fixture file that
   // failed to parse must not read as a suite that passed.
-  t.isTrue(n >= 25, "the fixture set should have twenty-odd cases, got " + itoa(n));
+  t.isTrue(n >= 25, "the fixture set should have twenty-odd cases, got \{n}");
   for (i32 i = 0; i < n; i++) {
     JsonMember m = all.at(i);
     string name = m.keyStr();
     JsonObject one = objectOf(m.value);
     u8[] bytes = decoded(stripHexPrefix(strOf(one, "out")));
     Decoded got = decode(bytes);
-    t.isTrue(got.ok, name + ": decode refused a valid encoding — " + got.error);
+    t.isTrue(got.ok, "\{name}: decode refused a valid encoding — \{got.error}");
     if (!got.ok) { continue; }
     JsonValue? in = one.getStr("in");
     if (in is null) { trap; }
-    t.eqStr(render(got.item), renderIn(in!), name + ": decoded to the wrong tree");
-    t.isTrue(equal(encode(got.item), bytes), name + ": re-encoding did not reproduce the bytes");
+    t.eqStr(render(got.item), renderIn(in!), "\{name}: decoded to the wrong tree");
+    t.isTrue(equal(encode(got.item), bytes), "\{name}: re-encoding did not reproduce the bytes");
   }
   return t.report();
 }
@@ -189,13 +189,13 @@ export string test_the_invalid_vectors_are_all_refused(Core core, Cli cli) {
   T t = T.create();
   JsonObject all = fixtures(core, cli, "invalidRLPTest");
   i32 n = all.len();
-  t.isTrue(n >= 20, "the invalid set should have twenty-odd cases, got " + itoa(n));
+  t.isTrue(n >= 20, "the invalid set should have twenty-odd cases, got \{n}");
   for (i32 i = 0; i < n; i++) {
     JsonMember m = all.at(i);
     Decoded got = decode(decoded(stripHexPrefix(strOf(objectOf(m.value), "out"))));
     // Named, because "one of twenty-six was accepted" is a bisect and "wrongSizeList was accepted"
     // is a fix. Each of these is a consensus fault if it decodes.
-    t.isFalse(got.ok, m.keyStr() + ": accepted an invalid encoding, rendered " + render(got.item));
+    t.isFalse(got.ok, "\{m.keyStr()}: accepted an invalid encoding, rendered \{render(got.item)}");
   }
   return t.report();
 }
@@ -218,7 +218,7 @@ export string test_trailing_bytes_are_refused() {
   ];
   for (i32 i = 0; i < cases.len(); i++) {
     Decoded got = decode(decoded(cases[i]));
-    t.isFalse(got.ok, "0x" + cases[i] + " is two items, not one — rendered " + render(got.item));
+    t.isFalse(got.ok, "0x\{cases[i]} is two items, not one — rendered \{render(got.item)}");
   }
   // And the same bytes *are* accepted when they are what a single item says they are.
   t.isTrue(decode(decoded("c2800f")).ok, "a list of two items is one item");
@@ -236,20 +236,20 @@ export string test_the_edges_of_the_length_forms() {
     for (i32 i = 0; i < payload.len(); i++) { payload[i] = ((i * 7 + 1) & 0xFF) as@ u8; }
     u8[] enc = encode(Item.Bytes(payload));
     Decoded back = decode(enc);
-    t.isTrue(back.ok, "a " + itoa(lens[k]) + "-byte string did not decode: " + back.error);
+    t.isTrue(back.ok, "a \{lens[k]}-byte string did not decode: \{back.error}");
     if (back.ok) {
-      t.eqStr(render(back.item), "<" + hex(payload) + ">", "a " + itoa(lens[k]) + "-byte string");
+      t.eqStr(render(back.item), "<\{hex(payload)}>", "a \{lens[k]}-byte string");
     }
     // The prefix itself, because the boundary is where the form changes and a test of the round trip
     // alone would pass with both sides using the wrong form.
     if (lens[k] == 1 && payload[0] < 0x80) {
       t.eqI32(enc.len(), 1, "a single small byte is itself, with no prefix");
     } else if (lens[k] <= 55) {
-      t.eqI32(enc[0] as i32, 0x80 + lens[k], "a " + itoa(lens[k]) + "-byte string uses the short form");
+      t.eqI32(enc[0] as i32, 0x80 + lens[k], "a \{lens[k]}-byte string uses the short form");
     } else if (lens[k] <= 255) {
-      t.eqI32(enc[0] as i32, 0xB8, "a " + itoa(lens[k]) + "-byte string uses a one-byte length");
+      t.eqI32(enc[0] as i32, 0xB8, "a \{lens[k]}-byte string uses a one-byte length");
     } else {
-      t.eqI32(enc[0] as i32, 0xB9, "a " + itoa(lens[k]) + "-byte string uses a two-byte length");
+      t.eqI32(enc[0] as i32, 0xB9, "a \{lens[k]}-byte string uses a two-byte length");
     }
   }
   return t.report();
@@ -290,18 +290,8 @@ export string test_nesting_survives_a_round_trip() {
   u8[] enc = encode(Item.List(three));
   t.eqStr(hex(enc), "c7c0c1c0c3c0c1c0", "the set theoretic representation of three");
   Decoded back = decode(enc);
-  t.isTrue(back.ok, "it decodes: " + back.error);
+  t.isTrue(back.ok, "it decodes: \{back.error}");
   if (back.ok) { t.eqStr(render(back.item), "(()(())(()(())))", "and to the same shape"); }
   return t.report();
 }
 
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  u8[] buf = u8[].filled(12, 0);
-  i32 n = 0;
-  i32 x = v;
-  while (x > 0) { buf[n] = ('0' + (x % 10)) as@ u8; n++; x = x / 10; }
-  u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = buf[n - 1 - i]; }
-  return string.fromBytes(out);
-}

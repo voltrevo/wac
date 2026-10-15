@@ -20,7 +20,6 @@
 // answers here for that reason, rather than a packet whose payload happens to be empty.
 
 import { Buf } from "core";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** One packet read off the wire. */
 export enum Pkt {
@@ -67,7 +66,7 @@ export Pkt readPkt(u8[] b, i32[] pos) {
   if (n == 2) { pos[0] = at + 4; return Pkt.ResponseEnd; }
   if (n == 3) { return Pkt.Broken("a length of 3 is not a packet"); }
   if (at + n > b.len()) {
-    return Pkt.Broken("a packet claims " + itoa(n) + " bytes and " + itoa(b.len() - at) + " remain");
+    return Pkt.Broken("a packet claims \{n} bytes and \{b.len() - at} remain");
   }
 
   u8[] payload = u8[].filled(n - 4, 0);

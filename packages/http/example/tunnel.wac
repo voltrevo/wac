@@ -9,7 +9,6 @@
 // network and cannot be about anything else.
 
 import { Cli, Core, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { ProxyAt, Tunnel, connectThrough, parseProxy } from "../src/proxy.wac";
 
 export i32 main(Sys sys) {
@@ -32,7 +31,7 @@ export i32 main(Sys sys) {
   for (i32 i = 0; i < digits.len(); i++) {
     i32 c = digits[i] as i32;
     if (c < '0' || c > '9') {
-      core.warn("tunnel: " + portText + " is not a port");
+      core.warn("tunnel: \{portText} is not a port");
       return 2;
     }
     port = port * 10 + (c - '0');
@@ -49,19 +48,19 @@ export i32 main(Sys sys) {
   string url = string.fromBytes(proxyVar!);
   ProxyAt at = parseProxy(url);
   if (!at.ok) {
-    core.warn("tunnel: HTTP_PROXY is " + url + ", which is not a proxy this can parse");
+    core.warn("tunnel: HTTP_PROXY is \{url}, which is not a proxy this can parse");
     return 1;
   }
 
   Tunnel t = connectThrough(cli, at.host, at.port, host, port);
   if (!t.ok) {
-    core.warn("tunnel: " + t.error);
+    core.warn("tunnel: \{t.error}");
     return 1;
   }
   // The leftover count is printed because it is the thing most likely to be zero everywhere it is
   // tried and non-zero somewhere it matters — see the note in `src/proxy.wac`.
-  core.log("open to " + host + ":" + itoa(port) + " via " + at.host + ":" + itoa(at.port)
-    + ", " + itoa(t.leftover.len()) + " byte(s) already through");
+  core.log("open to \{host}:\{port} via \{at.host}:\{at.port}"
+    + ", \{t.leftover.len()} byte(s) already through");
   cli.closeSocket(t.handle);
   return 0;
 }

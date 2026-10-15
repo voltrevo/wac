@@ -18,7 +18,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Stat } from "std";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
 static string WC = "packages/platform/example/wc.wac";
@@ -26,7 +25,7 @@ static string WC = "packages/platform/example/wc.wac";
 string root(Cli cli) { return cli.cwd().wait(); }
 
 string freshScratch(T t, Cli cli, string name) {
-  string dir = root(cli) + "/.cache/optimize-" + name;
+  string dir = "\{root(cli)}/.cache/optimize-\{name}";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   return dir;
@@ -63,13 +62,13 @@ i32 fieldCount(string s) {
 export string test_optimize_makes_a_smaller_artifact_that_answers_the_same(Core core, Cli cli) {
   T t = T.create();
   string dir = freshScratch(t, cli, "smaller");
-  string plain = dir + "/wc-plain";
-  string opt = dir + "/wc-opt";
+  string plain = "\{dir}/wc-plain";
+  string opt = "\{dir}/wc-opt";
 
   Exec bp = build(cli, plain, false);
   Exec bo = build(cli, opt, true);
-  t.isTrue(bp.ran() && bp.status == 0, "the plain build — " + string.fromBytes(bp.stderr));
-  t.isTrue(bo.ran() && bo.status == 0, "the optimised build — " + string.fromBytes(bo.stderr));
+  t.isTrue(bp.ran() && bp.status == 0, "the plain build — \{string.fromBytes(bp.stderr)}");
+  t.isTrue(bo.ran() && bo.status == 0, "the optimised build — \{string.fromBytes(bo.stderr)}");
   if (!bp.ran() || bp.status != 0 || !bo.ran() || bo.status != 0) {
     cli.remove(dir, true).wait();
     return t.report();
@@ -81,18 +80,18 @@ export string test_optimize_makes_a_smaller_artifact_that_answers_the_same(Core 
   // file that is about half host JavaScript (wac-mono 0129). A tenth is a floor with room under it
   // rather than the figure: what this asserts is that something happened, not how much.
   t.isTrue(before > (0 as i64) && after * (10 as i64) < before * (9 as i64),
-           itoa(before as~ i32) + " -> " + itoa(after as~ i32) +
+           "\{before as~ i32} -> \{after as~ i32}" +
            " bytes is not a saving worth a flag");
 
   // **And it is still the program.** A build that emitted an empty module would pass the line above.
   Exec rp = cli.exec(plain, ["README.md"], u8[]()).wait();
   Exec ro = cli.exec(opt, ["README.md"], u8[]()).wait();
-  t.isTrue(rp.ran() && rp.status == 0, "the plain program ran — " + string.fromBytes(rp.stderr));
-  t.isTrue(ro.ran() && ro.status == 0, "the optimised program ran — " + string.fromBytes(ro.stderr));
+  t.isTrue(rp.ran() && rp.status == 0, "the plain program ran — \{string.fromBytes(rp.stderr)}");
+  t.isTrue(ro.ran() && ro.status == 0, "the optimised program ran — \{string.fromBytes(ro.stderr)}");
   if (rp.ran() && ro.ran()) {
     string plainOut = string.fromBytes(rp.stdout);
     t.eqStr(string.fromBytes(ro.stdout), plainOut, "the optimised program answers differently");
-    t.eqI32(fieldCount(trimmed(plainOut)), 4, "wc printed " + plainOut);
+    t.eqI32(fieldCount(trimmed(plainOut)), 4, "wc printed \{plainOut}");
   }
   cli.remove(dir, true).wait();
   return t.report();
@@ -105,18 +104,18 @@ export string test_an_optimised_build_is_a_different_artifact_not_a_cache_hit_on
   // exists to prevent and would read here as "--optimize does nothing".
   T t = T.create();
   string dir = freshScratch(t, cli, "cachekey");
-  string a = dir + "/key-plain";
-  string b = dir + "/key-opt";
+  string a = "\{dir}/key-plain";
+  string b = "\{dir}/key-opt";
   Exec ba = build(cli, a, false);
   Exec bb = build(cli, b, true);
-  t.isTrue(ba.ran() && ba.status == 0, "the plain build — " + string.fromBytes(ba.stderr));
-  t.isTrue(bb.ran() && bb.status == 0, "the optimised build — " + string.fromBytes(bb.stderr));
+  t.isTrue(ba.ran() && ba.status == 0, "the plain build — \{string.fromBytes(ba.stderr)}");
+  t.isTrue(bb.ran() && bb.status == 0, "the optimised build — \{string.fromBytes(bb.stderr)}");
   if (ba.ran() && ba.status == 0 && bb.ran() && bb.status == 0) {
     i64 sa = sizeOf(cli, a);
     i64 sb = sizeOf(cli, b);
     t.isTrue(sa > (0 as i64) && sb < sa,
-             "the two builds are the same file: " + itoa(sa as~ i32) + " and " +
-             itoa(sb as~ i32) + " bytes");
+             "the two builds are the same file: \{sa as~ i32} and " +
+             "\{sb as~ i32} bytes");
   }
   cli.remove(dir, true).wait();
   return t.report();
@@ -130,14 +129,14 @@ export string test_a_coverage_build_refuses_to_be_optimised(Core core, Cli cli) 
   string dir = freshScratch(t, cli, "refusal");
   Exec r = cli.exec("/bin/sh",
     [
-             "-c", "WAC_PROFILE=1 exec deno run -A packages/platform/build.ts '" + WC +
-             "' --allow-read --optimize -o '" + dir + "/never'"
+             "-c", "WAC_PROFILE=1 exec deno run -A packages/platform/build.ts '\{WC}" +
+             "' --allow-read --optimize -o '\{dir}/never'"
     ], u8[]()).wait();
-  t.isTrue(r.ran(), "the build was attempted — " + r.error);
+  t.isTrue(r.ran(), "the build was attempted — \{r.error}");
   if (r.ran()) {
     t.isTrue(r.status != 0, "it built anyway, which it must not");
     string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
-    t.isTrue(contains(said, "cannot be optimised"), "expected a refusal, got: " + said);
+    t.isTrue(contains(said, "cannot be optimised"), "expected a refusal, got: \{said}");
   }
   cli.remove(dir, true).wait();
   return t.report();

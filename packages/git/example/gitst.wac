@@ -43,7 +43,7 @@ u8[] excludesFileOf(Core core, Cli cli, Fs fs, string gitDir) {
   if (path == "") { return u8[](); }
   FileResult f = fs.readFile(path);
   if (!f.ok) {
-    core.warn("gitst: core.excludesFile names " + path + ", which could not be read");
+    core.warn("gitst: core.excludesFile names \{path}, which could not be read");
     return u8[]();
   }
   return f.bytes;
@@ -59,13 +59,13 @@ export i32 main(Sys sys) {
   }
   string root = string.fromBytes(cli.arg(0).wait());
   Fs fs = Fs.onHost(cli, 0);
-  match (openRepo(fs, root + "/.git", root)) {
+  match (openRepo(fs, "\{root}/.git", root)) {
     NoRepo(why): {
-      core.warn("gitst: " + why);
+      core.warn("gitst: \{why}");
       return 1;
     }
     Opened(repo): {
-      Vec<string> lines = statusOf(repo, excludesFileOf(core, cli, fs, root + "/.git"));
+      Vec<string> lines = statusOf(repo, excludesFileOf(core, cli, fs, "\{root}/.git"));
       for (i32 i = 0; i < lines.len(); i++) { core.log(lines.get(i)); }
       return 0;
     }

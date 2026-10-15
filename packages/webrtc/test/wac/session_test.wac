@@ -15,7 +15,6 @@
 // bytes make a failure reproducible, which random ones did not.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Session } from "../../src/session.wac";
 import { sessionFor, sessionReceive, sessionChecks, sessionOpen, sessionPending,
          kChunkBytes, kPpidString, kPpidDcep } from "./session_probe.wac";
@@ -57,7 +56,7 @@ u8[] peerCheck(i32 seed) {
 
 string joinedInts(i32[] v) {
   string out = "";
-  for (i32 i = 0; i < v.len(); i++) { out = i == 0 ? itoa64(v[i] as i64) : out + "," + itoa64(v[i] as i64); }
+  for (i32 i = 0; i < v.len(); i++) { out = i == 0 ? "\{v[i] as i64}" : "\{out},\{v[i] as i64}"; }
   return out;
 }
 
@@ -119,7 +118,7 @@ export string test_the_chunk_size_leaves_room_for_the_headers_wrapped_around_it(
   T t = T.create();
   i32 overhead = 12 + 16 + 13 + 8 + 16;
   t.isTrue(kChunkBytes() + overhead <= 1200,
-           itoa64(kChunkBytes() as i64) + " bytes of payload plus " + itoa64(overhead as i64) +
+           "\{kChunkBytes() as i64} bytes of payload plus \{overhead as i64}" +
            " of headers stays under a 1200-byte MTU");
   t.eqI32(kPpidString(), 51, "WebRTC string data");
   t.eqI32(kPpidDcep(), 50, "and DCEP, which is what opens the channel");

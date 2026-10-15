@@ -12,7 +12,6 @@ import { Cli, Core, Exec } from "std";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Shell } from "../../src/exec.wac";
 import { shellMain } from "../../src/entry.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Vector, Vectors, load } from "./vectors.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
@@ -47,7 +46,7 @@ Ran runScript(Core core, Cli cli, string cwd, string script) {
  * `sh: f: No such file or directory` while the same frame with an absolute cwd writes the file.
  * `issues/system/0194`.
  */
-string caseDir(Cli cli, i32 i) { return cli.cwd().wait() + "/.cache/wac-shreplay/c" + itoa(i); }
+string caseDir(Cli cli, i32 i) { return "\{cli.cwd().wait()}/.cache/wac-shreplay/c\{i}"; }
 
 export string test_every_scripted_expectation_still_holds(Core core, Cli cli) {
   T t = T.create();
@@ -76,15 +75,15 @@ export string test_every_scripted_expectation_still_holds(Core core, Cli cli) {
       wrong = wrong + 1;
       if (wrong <= 3) {
         first = first + "\n  script: " + vec.script +
-                "\n  wanted: " + show(vec.out) + " exit " + itoa(vec.status) +
-                "\n  got:    " + show(r.out) + " exit " + itoa(r.status) +
-                (r.err == "" ? "" : "\n  stderr: " + show(r.err));
+                "\n  wanted: " + show(vec.out) + " exit \{vec.status}" +
+                "\n  got:    " + show(r.out) + " exit \{r.status}" +
+                (r.err == "" ? "" : "\n  stderr: \{show(r.err)}");
       }
     }
   }
-  t.isTrue(ran > 500, "only " + itoa(ran) + " scripts replayed — did the vectors load?");
-  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " scripts disagree with the captured oracle (" +
-                    v.oracle + ")" + first);
+  t.isTrue(ran > 500, "only \{ran} scripts replayed — did the vectors load?");
+  t.eqI32(wrong, 0, "\{wrong} of \{ran} scripts disagree with the captured oracle (" +
+                    "\{v.oracle})\{first}");
   return t.report();
 }
 
@@ -121,17 +120,17 @@ export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli)
                       u8[]()).wait();
     if (!r.ran()) {
       // No bash here is not a failure of this shell: say so and stop, rather than passing quietly.
-      t.isTrue(i > 0, "bash would not start: " + r.error);
+      t.isTrue(i > 0, "bash would not start: \{r.error}");
       return t.report();
     }
     checked = checked + 1;
-    string dir = cli.cwd().wait() + "/.cache/wac-shcanary/c" + itoa(i);
+    string dir = "\{cli.cwd().wait()}/.cache/wac-shcanary/c\{i}";
     string whyDir2 = madeDir(cli, dir);
     t.isTrue(whyDir2 == "", whyDir2);
     Ran ours = runScript(core, cli, dir, script);
     cli.remove(dir, true).wait();
-    t.eqStr(ours.out, string.fromBytes(r.stdout), "live oracle disagrees: " + script);
-    t.eqI32(ours.status, r.status, "live oracle's status disagrees: " + script);
+    t.eqStr(ours.out, string.fromBytes(r.stdout), "live oracle disagrees: \{script}");
+    t.eqI32(ours.status, r.status, "live oracle's status disagrees: \{script}");
   }
   t.eqI32(checked, canaries.len(), "not every canary ran");
   return t.report();
@@ -144,5 +143,5 @@ string show(string s) {
     string ch = s.slice(i, i + 1);
     out = out + (ch == "\n" ? "\\n" : ch);
   }
-  return "\"" + out + "\"";
+  return "\"\{out}\"";
 }

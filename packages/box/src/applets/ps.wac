@@ -27,7 +27,7 @@ import { refuseFlags } from "../lib/flags.wac";
 /** `n` right-aligned in `w` columns, as every `ps` prints a pid. */
 string pad(string s, i32 w) {
   string out = s;
-  while (out.len() < w) { out = " " + out; }
+  while (out.len() < w) { out = " \{out}"; }
   return out;
 }
 
@@ -69,12 +69,12 @@ export i32 ps(Core core, Cli cli, Fs fs, Args a) {
     // Real `ps` takes a pid list and a great many option syntaxes. None is implemented, and saying so
     // beats the two worse answers: ignoring the argument, or listing everything as though it had been
     // asked for.
-    core.warn(a.name + ": selecting processes is not implemented; ps lists all of them");
+    core.warn("\{a.name}: selecting processes is not implemented; ps lists all of them");
     return 1;
   }
   string[]? listing = fs.readDir("/proc");
   if (listing is null) {
-    core.warn(a.name + ": /proc: no such file or directory");
+    core.warn("\{a.name}: /proc: no such file or directory");
     return 1;
   }
   string[] names = listing!;
@@ -82,12 +82,12 @@ export i32 ps(Core core, Cli cli, Fs fs, Args a) {
   for (i32 i = 0; i < names.len(); i++) {
     // `self` is a name for a pid already in this listing, so following it would print one row twice.
     if (!allDigits(names[i])) { continue; }
-    FileResult f = fs.readFile("/proc/" + names[i] + "/status");
+    FileResult f = fs.readFile("/proc/\{names[i]}/status");
     // A process that exited between the listing and the read is gone rather than an error — the same
     // race real `ps` has, and the same answer it gives.
     if (!f.ok) { continue; }
     string body = string.fromBytes(f.bytes);
-    FileResult c = fs.readFile("/proc/" + names[i] + "/cmdline");
+    FileResult c = fs.readFile("/proc/\{names[i]}/cmdline");
     string cmd = field(body, "Name");
     if (c.ok) {
       // `cmdline` is NUL-separated with a trailing NUL; the words joined by spaces is what `ps` shows,

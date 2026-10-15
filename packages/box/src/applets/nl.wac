@@ -7,7 +7,6 @@ import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";
 import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
 export i32 nl(Core core, Cli cli, Fs fs, Args a) {
@@ -26,12 +25,12 @@ export i32 nl(Core core, Cli cli, Fs fs, Args a) {
       continue;
     }
     n++;
-    string num = itoa(n);
+    string num = "\{n}";
     string pad = "";
     for (i32 i = num.toBytes().len(); i < 6; i++) { pad = pad + " "; }
     // `nl` terminates its last line even when the input did not, unlike `head` and
     // `tail`. Checked against the real one rather than assumed to be uniform.
-    emitTo(out, (pad + num + "\t" + string.fromBytes(l.bytes)).toBytes(), true);
+    emitTo(out, "\{pad}\{num}\t\{string.fromBytes(l.bytes)}".toBytes(), true);
   }
   return 0;
 }

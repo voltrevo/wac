@@ -62,7 +62,7 @@ export string joinPath(string cwd, string path) {
   if (cwd == "" || (path.len() > 0 && path.slice(0, 1) == "/")) { return path; }
   if (path == "") { return cwd; }
   if (cwd.slice(cwd.len() - 1, cwd.len()) == "/") { return cwd + path; }
-  return cwd + "/" + path;
+  return "\{cwd}/\{path}";
 }
 
 /** The world one in-process child sees, and what it wrote. */
@@ -366,8 +366,8 @@ export Core childCore(Frame f, const Core parent) {
     parent.monotonicNanos,
     parent.sleepMillis,
     parent.randomBytes,
-    (string line) => { f.write((line + "\n").toBytes()); },
-    (string line) => { f.warn((line + "\n").toBytes()); },
+    (string line) => { f.write("\{line}\n".toBytes()); },
+    (string line) => { f.warn("\{line}\n".toBytes()); },
     parent.waitAny,
     parent.askInterrupt,
     // **Not the parent's `exit`**, which ends the whole program and not the frame: an applet asking to

@@ -8,7 +8,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { gzipStored } from "../../src/gzip.wac";
 import { roundTrip } from "./external.wac";
 
@@ -28,7 +27,7 @@ export string test_the_header_is_a_well_formed_gzip_header() {
   // Magic, CM=8 (deflate), no flags, no mtime, XFL=0, OS=255 (unknown).
   u8[] want = [0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 255];
   for (i32 i = 0; i < want.len(); i++) {
-    t.eqI32(gz[i] as i32, want[i] as i32, "header byte " + itoa(i));
+    t.eqI32(gz[i] as i32, want[i] as i32, "header byte \{i}");
   }
   return t.report();
 }
@@ -65,7 +64,7 @@ export string test_multi_block_input_crosses_the_65535_boundary(Core core, Cli c
     i32 n = sizes[k];
     u8[] input = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { input[i] = ((i * 131 + 17) & 0xFF) as@ u8; }
-    t.eqStr(same(cli, input, itoa(n) + " bytes"), "", itoa(n) + " bytes");
+    t.eqStr(same(cli, input, "\{n} bytes"), "", "\{n} bytes");
   }
   return t.report();
 }

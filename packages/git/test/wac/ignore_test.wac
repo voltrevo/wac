@@ -16,7 +16,6 @@
 // named with `git -C` instead; every argument this needs is an argument git already takes.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change } from "std";
 import { Vec } from "core";
 import { Buf } from "core";
@@ -26,7 +25,7 @@ import { has } from "../../../wactest/src/strings.wac";
 
 string workDir(Cli cli, string name) {
   string who = agentDir(cli);
-  return "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  return "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
 }
 
 /** One path to decide, and whether it is being asked about as a directory. */
@@ -43,7 +42,7 @@ struct Case {
  * produced two disagreements that were the question's fault and not the matcher's, and that is
  * exactly the kind of difference a differential is supposed to attribute correctly.
  */
-string askAs(Case c) { return c.isDir ? c.path + "/" : c.path; }
+string askAs(Case c) { return c.isDir ? "\{c.path}/" : c.path; }
 
 /** The `.gitignore` every case in the first test is judged against. */
 string ignoreFile() {
@@ -65,7 +64,7 @@ string ignoreFile() {
     "!dist/keep.txt"          // a negation inside an ignored directory: git does not look in there
   ];
   string out = "";
-  for (i32 i = 0; i < rules.len(); i++) { out = out + rules[i] + "\n"; }
+  for (i32 i = 0; i < rules.len(); i++) { out = out + "\{rules[i]}\n"; }
   return out;
 }
 
@@ -89,10 +88,10 @@ Case[] cases() {
     out[at] = Case(names[i], false); at = at + 1;
     out[at] = Case(names[i], true); at = at + 1;
     for (i32 j = 0; j < 10; j++) {
-      out[at] = Case(names[i] + "/" + names[j], false); at = at + 1;
-      out[at] = Case(names[i] + "/" + names[j] + "/z", false); at = at + 1;
-      out[at] = Case(names[i] + "/" + names[j], true); at = at + 1;
-      out[at] = Case(names[i] + "/" + names[j] + "/z", true); at = at + 1;
+      out[at] = Case("\{names[i]}/\{names[j]}", false); at = at + 1;
+      out[at] = Case("\{names[i]}/\{names[j]}/z", false); at = at + 1;
+      out[at] = Case("\{names[i]}/\{names[j]}", true); at = at + 1;
+      out[at] = Case("\{names[i]}/\{names[j]}/z", true); at = at + 1;
     }
   }
   return out;
@@ -102,11 +101,11 @@ Case[] cases() {
 bool makeRepo(T t, Cli cli, string dir) {
   cli.remove(dir, true).wait();                 // whatever a previous run left
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   if (!made.ok()) { return false; }
   Exec init = cli.exec("git", ["init", "-q", dir], u8[]()).wait();
   t.eqStr(init.error, "", "git could not be started");
-  t.eqI32(init.status, 0, "git init: " + string.fromBytes(init.stderr));
+  t.eqI32(init.status, 0, "git init: \{string.fromBytes(init.stderr)}");
   return init.error == "" && init.status == 0;
 }
 
@@ -132,7 +131,7 @@ string[] gitIgnores(T t, Cli cli, string dir, Case[] all) {
                     question.take()).wait();
   t.eqStr(r.error, "", "git could not be started");
   t.isTrue(r.status == 0 || r.status == 1,
-           "git check-ignore failed: " + string.fromBytes(r.stderr));
+           "git check-ignore failed: \{string.fromBytes(r.stderr)}");
   if (r.error != "" || (r.status != 0 && r.status != 1)) { return string[].filled(0, ""); }
   return splitNul(r.stdout);
 }
@@ -163,17 +162,17 @@ export string test_every_ignore_decision_is_the_one_git_check_ignore_makes(Core 
   T t = T.create();
   string dir = workDir(cli, "ign");
   if (!makeRepo(t, cli, dir)) { return t.report(); }
-  Change wrote = cli.writeFile(dir + "/.gitignore", ignoreFile().toBytes()).wait();
-  t.isTrue(wrote.ok(), "the .gitignore was written: " + wrote.message);
+  Change wrote = cli.writeFile("\{dir}/.gitignore", ignoreFile().toBytes()).wait();
+  t.isTrue(wrote.ok(), "the .gitignore was written: \{wrote.message}");
   if (!wrote.ok()) { return t.report(); }
 
   Case[] all = cases();
   string[] theirs = gitIgnores(t, cli, dir, all);
 
   // **The corpus has to contain both answers**, or a matcher that said "no" to everything would pass.
-  t.isTrue(all.len() > 800, "only " + itoa64(all.len() as i64) + " decisions; the corpus shrank");
+  t.isTrue(all.len() > 800, "only \{all.len() as i64} decisions; the corpus shrank");
   t.isTrue(theirs.len() > all.len() / 5 && theirs.len() < (all.len() * 4) / 5,
-           "git ignores " + itoa64(theirs.len() as i64) + " of " + itoa64(all.len() as i64) +
+           "git ignores \{theirs.len() as i64} of \{all.len() as i64}" +
            "; a corpus that lopsided would pass a matcher that answered the same way every time");
 
   Vec<Rule> rules = parseIgnore(ignoreFile().toBytes(), "");
@@ -189,7 +188,7 @@ export string test_every_ignore_decision_is_the_one_git_check_ignore_makes(Core 
               ", git says " + (gits ? "ignored" : "not ignored");
     }
   }
-  t.eqI32(wrong, 0, "disagreements with git, the first being " + first);
+  t.eqI32(wrong, 0, "disagreements with git, the first being \{first}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -226,11 +225,11 @@ export string test_a_nested_gitignore_overrides_the_one_above_it(Core core, Cli 
   // The root ignores every `.log` and the whole of `build`; the nested file brings one `.log` back
   // and ignores something of its own. **The negation in the deeper file is the case that matters** —
   // it can only work if the deeper rules are applied after the shallower ones.
-  cli.writeFile(dir + "/.gitignore", "*.log\nbuild/\n".toBytes()).wait();
-  string whyDir1 = madeDir(cli, dir + "/sub");
+  cli.writeFile("\{dir}/.gitignore", "*.log\nbuild/\n".toBytes()).wait();
+  string whyDir1 = madeDir(cli, "\{dir}/sub");
   t.isTrue(whyDir1 == "", whyDir1);
-  cli.writeFile(dir + "/sub/.gitignore", "!keep.log\nlocal\n".toBytes()).wait();
-  string whyDir2 = madeDir(cli, dir + "/other");
+  cli.writeFile("\{dir}/sub/.gitignore", "!keep.log\nlocal\n".toBytes()).wait();
+  string whyDir2 = madeDir(cli, "\{dir}/other");
   t.isTrue(whyDir2 == "", whyDir2);
 
   Case[] all = [
@@ -268,7 +267,7 @@ export string test_a_nested_gitignore_overrides_the_one_above_it(Core core, Cli 
               " git=" + (gits ? "true" : "false");
     }
   }
-  t.eqI32(wrong, 0, "disagreements with git, the first being " + first);
+  t.eqI32(wrong, 0, "disagreements with git, the first being \{first}");
 
   cli.remove(dir, true).wait();
   return t.report();

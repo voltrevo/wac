@@ -16,7 +16,6 @@ import { Cli, Core, Sys } from "std";
 import { proofOf, Proof } from "../src/getproof.wac";
 import { accountAt, AccountProof } from "../../mpt/src/account.wac";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 export i32 main(Sys sys) {
   Core core = sys.core;
@@ -35,11 +34,11 @@ export i32 main(Sys sys) {
   // Slot zero, because `eth_getProof` wants a slot list and the account proof is what is actually wanted.
   // Asking about a slot nothing wrote is not wasted: an absence proof is as small as it gets.
   string zero = "0x0000000000000000000000000000000000000000000000000000000000000000";
-  Proof p = proofOf(cli, host, port, "0x" + string.fromBytes(hexEncode(address)), zero, expected);
-  if (!p.ok) { core.warn("ethbalance: " + p.error); return 1; }
+  Proof p = proofOf(cli, host, port, "0x\{string.fromBytes(hexEncode(address))}", zero, expected);
+  if (!p.ok) { core.warn("ethbalance: \{p.error}"); return 1; }
 
   AccountProof a = accountAt(p.stateRoot, address, p.accountNodes);
-  if (!a.ok) { core.warn("ethbalance: " + a.error); return 1; }
+  if (!a.ok) { core.warn("ethbalance: \{a.error}"); return 1; }
   if (!a.present) {
     // An address nothing has ever touched is absent from the state trie, which is a proof that it holds
     // nothing — not a failure, and not the same as a balance of zero that was written.
@@ -49,8 +48,8 @@ export i32 main(Sys sys) {
   }
 
   // Big-endian and minimal, as the trie stores it: a balance of zero is the empty string, not a zero byte.
-  core.log(decimal(a.account.balance) + " wei");
-  core.log("nonce " + decimal(a.account.nonce));
+  core.log("\{decimal(a.account.balance)} wei");
+  core.log("nonce \{decimal(a.account.nonce)}");
   core.warn(note(expected));
   return 0;
 }

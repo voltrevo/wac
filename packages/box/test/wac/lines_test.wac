@@ -18,11 +18,10 @@
 import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "core";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, realOut, runApplet } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-lines"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-lines"; }
 
 /**
  * The fixture: several 64 KiB chunks, with blank lines, repeats and non-ASCII in it.
@@ -34,7 +33,7 @@ string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-lines"; }
 u8[] manyLines() {
   Buf b = Buf.create();
   for (i32 i = 0; i < 4000; i++) {
-    b.pushAll(("line " + itoa(i) + " ").toBytes());
+    b.pushAll("line \{i} ".toBytes());
     b.pushCodepoint(0x2014);                                   // em dash
     b.pushAll(" ".toBytes());
     // "ünïcode", by code point. This said wac has no `\u{…}` escape *yet* and it has one —
@@ -52,10 +51,10 @@ u8[] manyLines() {
 export string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
-  string many = dir + "/many.txt";
-  string nonl = dir + "/nonl.txt";
+  string many = "\{dir}/many.txt";
+  string nonl = "\{dir}/nonl.txt";
   t.isTrue(cli.writeFile(many, manyLines()).wait().ok(), "wrote the long fixture");
   // A file with no final newline: `head`, `tail` and `rev` preserve that and `nl` and `uniq` add one.
   // Not uniform, so each is asked rather than assumed.
@@ -81,7 +80,7 @@ export string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli
 
       Ran got = runApplet(core, cli, dir, argv);
       t.eqStr(got.out, realOut(cli, inv[0], theirs),
-              inv[0] + (inv.len() > 1 ? " " + inv[1] : "") + (f == 0 ? "" : " unterminated"));
+              inv[0] + (inv.len() > 1 ? " \{inv[1]}" : "") + (f == 0 ? "" : " unterminated"));
     }
   }
 
@@ -103,8 +102,8 @@ export string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli
 export string test_rev_reverses_characters_not_bytes(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string path = dir + "/rev.txt";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string path = "\{dir}/rev.txt";
 
   Buf in = Buf.create();
   in.pushAll("a".toBytes()); in.pushCodepoint(0x2014); in.pushCodepoint(0x00FC);
@@ -133,8 +132,8 @@ export string test_rev_reverses_characters_not_bytes(Core core, Cli cli) {
 export string test_one_very_long_line_is_linear(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string path = dir + "/oneline.txt";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string path = "\{dir}/oneline.txt";
 
   i32 width = 500000;
   u8[] line = u8[].filled(width, 0x78);                 // 'x'

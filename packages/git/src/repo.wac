@@ -38,7 +38,6 @@ import { sha1 } from "../../crypto/src/sha1.wac";
 import { GitIndex, IndexEntry, Staged, parseIndex, writeIndex } from "./index.wac";
 import { Rule, ignored, parseIgnore } from "./ignore.wac";
 import { encode } from "../../codec/src/hex.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { Vec } from "core";
 
 /** An open repository. */
@@ -85,11 +84,11 @@ export enum Written {
  * which is the trade `git` makes too.
  */
 export RepoAt openRepo(Fs fs, string gitDir, string workTree) {
-  Stat head = fs.stat(gitDir + "/HEAD");
-  if (!head.exists) { return RepoAt.NoRepo("no HEAD in " + gitDir); }
+  Stat head = fs.stat("\{gitDir}/HEAD");
+  if (!head.exists) { return RepoAt.NoRepo("no HEAD in \{gitDir}"); }
 
   Vec<Pack> packs = Vec.create();
-  string[]? names = fs.readDir(gitDir + "/objects/pack");
+  string[]? names = fs.readDir("\{gitDir}/objects/pack");
   if (!(names is null)) {
     string[] list = names!;
     for (i32 i = 0; i < list.len(); i++) {
@@ -97,15 +96,15 @@ export RepoAt openRepo(Fs fs, string gitDir, string workTree) {
       // Pair them by stem rather than by listing order, which is not guaranteed to be sorted.
       if (n.len() > 4 && n.slice(n.len() - 4, n.len()) == ".idx") {
         string stem = n.slice(0, n.len() - 4);
-        FileResult idxFile = fs.readFile(gitDir + "/objects/pack/" + stem + ".idx");
-        FileResult packFile = fs.readFile(gitDir + "/objects/pack/" + stem + ".pack");
+        FileResult idxFile = fs.readFile("\{gitDir}/objects/pack/\{stem}.idx");
+        FileResult packFile = fs.readFile("\{gitDir}/objects/pack/\{stem}.pack");
         if (idxFile.ok && packFile.ok) {
           match (openPack(packFile.bytes, idxFile.bytes)) {
             Ready(p): { packs.push(p); }
             Refused(why): {
               // A pack we cannot read is not a repository we cannot open: git carries on with the
               // others, and saying which one failed is more useful than refusing everything.
-              return RepoAt.NoRepo("pack " + stem + ": " + why);
+              return RepoAt.NoRepo("pack \{stem}: \{why}");
             }
           }
         }
@@ -132,12 +131,12 @@ string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
  */
 export Got readObject(Repo r, u8[] name) {
   string hex = hexOf(name);
-  string loosePath = r.gitDir + "/objects/" + hex.slice(0, 2) + "/" + hex.slice(2, hex.len());
+  string loosePath = "\{r.gitDir}/objects/\{hex.slice(0, 2)}/\{hex.slice(2, hex.len())}";
   FileResult f = r.fs.readFile(loosePath);
   if (f.ok) {
     match (readLoose(f.bytes)) {
       Loaded(kind, data): { return Got.Found(kindNumber(kind), data); }
-      Unreadable(why): { return Got.Absent("loose object " + hex + ": " + why); }
+      Unreadable(why): { return Got.Absent("loose object \{hex}: \{why}"); }
     }
   }
   for (i32 i = 0; i < r.packs.len(); i++) {
@@ -146,7 +145,7 @@ export Got readObject(Repo r, u8[] name) {
       Absent(why): { }
     }
   }
-  return Got.Absent("object " + hex + " is not in this repository");
+  return Got.Absent("object \{hex} is not in this repository");
 }
 
 /** The number `pack.wac` uses for a kind: 1 commit, 2 tree, 3 blob, 4 tag. */
@@ -169,7 +168,7 @@ i32 kindNumber(Kind k) {
 export u8[]? resolveRef(Repo r, string refName) {
   string name = refName;
   for (i32 hop = 0; hop < 8; hop++) {
-    FileResult loose = r.fs.readFile(r.gitDir + "/" + name);
+    FileResult loose = r.fs.readFile("\{r.gitDir}/\{name}");
     if (loose.ok) {
       match (parseRef(loose.bytes)) {
         Direct(target): { return target; }
@@ -177,7 +176,7 @@ export u8[]? resolveRef(Repo r, string refName) {
         Unparsed(why): { return null; }
       }
     }
-    FileResult packed = r.fs.readFile(r.gitDir + "/packed-refs");
+    FileResult packed = r.fs.readFile("\{r.gitDir}/packed-refs");
     if (packed.ok) {
       u8[]? found = packedTarget(parsePackedRefs(packed.bytes), name);
       if (!(found is null)) { return found; }
@@ -236,8 +235,8 @@ export Written checkout(Repo r, u8[] treeName, string into) {
   i32 n = walk(r, treeName, into, "", entries, 32, unset);
   if (n < 0) { return Written.Stopped("a tree could not be read, or nesting went past 32 deep"); }
   u8[] idx = writeIndex(GitIndex(entries, u8[]()));
-  Change wrote = r.fs.writeFile(r.gitDir + "/index", idx);
-  if (!wrote.ok()) { return Written.Stopped("could not write the index: " + wrote.message); }
+  Change wrote = r.fs.writeFile("\{r.gitDir}/index", idx);
+  if (!wrote.ok()) { return Written.Stopped("could not write the index: \{wrote.message}"); }
   return Written.Files(n, unset[0], unset[1]);
 }
 
@@ -255,8 +254,8 @@ i32 walk(Repo r, u8[] treeName, string dir, string prefix, Vec<IndexEntry> entri
           i32 count = 0;
           for (i32 i = 0; i < list.len(); i++) {
             Entry e = list.get(i);
-            string path = dir + "/" + e.name;
-            string rel = prefix == "" ? e.name : prefix + "/" + e.name;
+            string path = "\{dir}/\{e.name}";
+            string rel = prefix == "" ? e.name : "\{prefix}/\{e.name}";
             if (e.isTree()) {
               Change made = r.fs.mkdir(path, true);
               if (!made.ok()) { return -1; }
@@ -338,16 +337,16 @@ export enum Stored {
 export Stored writeObject(Repo r, Kind kind, u8[] content) {
   u8[] name = sha1(framed(kind, content));
   string hex = hexOf(name);
-  string dir = r.gitDir + "/objects/" + hex.slice(0, 2);
-  string path = dir + "/" + hex.slice(2, hex.len());
+  string dir = "\{r.gitDir}/objects/\{hex.slice(0, 2)}";
+  string path = "\{dir}/\{hex.slice(2, hex.len())}";
   Stat there = r.fs.stat(path);
   if (there.exists) { return Stored.Named(name); }
   Change made = r.fs.mkdir(dir, true);
   if (!made.ok() && made.fault != FAULT_EXISTS()) {
-    return Stored.NotStored("could not create " + dir + ": " + made.message);
+    return Stored.NotStored("could not create \{dir}: \{made.message}");
   }
   Change wrote = r.fs.writeFile(path, looseFile(kind, content));
-  if (!wrote.ok()) { return Stored.NotStored("could not write " + path + ": " + wrote.message); }
+  if (!wrote.ok()) { return Stored.NotStored("could not write \{path}: \{wrote.message}"); }
   return Stored.Named(name);
 }
 
@@ -394,7 +393,7 @@ export Stored writeObject(Repo r, Kind kind, u8[] content) {
  */
 export Vec<string> worktreeStatus(Repo r) {
   Vec<string> out = Vec.create();
-  FileResult f = r.fs.readFile(r.gitDir + "/index");
+  FileResult f = r.fs.readFile("\{r.gitDir}/index");
   if (!f.ok) { return out; }
   match (parseIndex(f.bytes)) {
     Unreadable(why): { return out; }
@@ -402,9 +401,9 @@ export Vec<string> worktreeStatus(Repo r) {
       for (i32 i = 0; i < idx.entries.len(); i++) {
         IndexEntry e = idx.entries.get(i);
         if (e.stage != 0) { continue; }
-        FileResult got = r.fs.readFile(r.workTree + "/" + e.path);
+        FileResult got = r.fs.readFile("\{r.workTree}/\{e.path}");
         if (!got.ok) {
-          out.push(" D " + e.path);
+          out.push(" D \{e.path}");
           continue;
         }
         // A gitlink has no content here — the commit lives in the submodule's repository — so hashing the
@@ -420,10 +419,10 @@ export Vec<string> worktreeStatus(Repo r) {
         // gained or lost its executable bit as ` M` with no content change, and this could not see it
         // until `Stat` carried the bit — issues/system/0132. `33261` is `100755`; anything else recorded
         // for a regular file is `100644`, so one comparison covers both directions.
-        if (same && (r.fs.stat(r.workTree + "/" + e.path).isExecutable != (e.mode == 33261))) {
+        if (same && (r.fs.stat("\{r.workTree}/\{e.path}").isExecutable != (e.mode == 33261))) {
           same = false;
         }
-        if (!same) { out.push(" M " + e.path); }
+        if (!same) { out.push(" M \{e.path}"); }
       }
     }
   }
@@ -454,7 +453,7 @@ bool flattenTree(Repo r, u8[] treeName, string prefix, Vec<TreeAt> out, i32 dept
         Ok(list): {
           for (i32 i = 0; i < list.len(); i++) {
             Entry e = list.get(i);
-            string rel = prefix == "" ? e.name : prefix + "/" + e.name;
+            string rel = prefix == "" ? e.name : "\{prefix}/\{e.name}";
             if (e.isTree()) {
               if (!flattenTree(r, e.hash, rel, out, depth - 1)) { return false; }
             } else {
@@ -476,7 +475,7 @@ bool sameName(const u8[] a, u8[] b) {
 
 /** Whether any index entry lives under `dir` — which decides whether git collapses it. */
 bool anyTrackedUnder(const Vec<IndexEntry> entries, string dir) {
-  string with = dir + "/";
+  string with = "\{dir}/";
   for (i32 i = 0; i < entries.len(); i++) {
     (const IndexEntry) e = entries.get(i);
     if (e.stage != 0) { continue; }
@@ -513,7 +512,7 @@ void untrackedUnder(Repo r, Vec<Rule> rules, const Vec<IndexEntry> entries, stri
   // level rather than shared, because a sibling directory must not inherit its neighbour's rules.
   Vec<Rule> here = Vec.create();
   for (i32 i = 0; i < rules.len(); i++) { here.push(rules.get(i)); }
-  FileResult own = r.fs.readFile(dir + "/.gitignore");
+  FileResult own = r.fs.readFile("\{dir}/.gitignore");
   if (own.ok) {
     Vec<Rule> mine = parseIgnore(own.bytes, prefix);
     for (i32 i = 0; i < mine.len(); i++) { here.push(mine.get(i)); }
@@ -534,18 +533,18 @@ void untrackedUnder(Repo r, Vec<Rule> rules, const Vec<IndexEntry> entries, stri
   for (i32 i = 0; i < list.len(); i++) {
     string name = list[i];
     if (name == ".git") { continue; }
-    string rel = prefix == "" ? name : prefix + "/" + name;
-    Stat st = r.fs.stat(dir + "/" + name);
+    string rel = prefix == "" ? name : "\{prefix}/\{name}";
+    Stat st = r.fs.stat("\{dir}/\{name}");
     if (ignored(here, rel, st.isDir)) { continue; }
     if (st.isDir) {
       if (anyTrackedUnder(entries, rel)) {
-        untrackedUnder(r, here, entries, dir + "/" + name, rel, out, depth - 1);
+        untrackedUnder(r, here, entries, "\{dir}/\{name}", rel, out, depth - 1);
       } else {
-        out.push("?? " + rel + "/");
+        out.push("?? \{rel}/");
       }
       continue;
     }
-    if (!tracked(entries, rel)) { out.push("?? " + rel); }
+    if (!tracked(entries, rel)) { out.push("?? \{rel}"); }
   }
 }
 
@@ -608,7 +607,7 @@ export Vec<string> statusOf(Repo r, u8[] excludes) {
   // untracked ones after, each sorted by path — so `?? .gitignore` follows `M  a.txt` even though `.`
   // sorts before `a`. One global sort put them the other way round, which is how this was found.
   Vec<string> untracked = Vec.create();
-  FileResult f = r.fs.readFile(r.gitDir + "/index");
+  FileResult f = r.fs.readFile("\{r.gitDir}/index");
   if (!f.ok) { return out; }
   Vec<TreeAt> tree = Vec.create();
   u8[]? at = head(r);
@@ -642,13 +641,13 @@ export Vec<string> statusOf(Repo r, u8[] excludes) {
 
         // Column two: the working tree against the index.
         string y = " ";
-        FileResult got = r.fs.readFile(r.workTree + "/" + e.path);
+        FileResult got = r.fs.readFile("\{r.workTree}/\{e.path}");
         if (!got.ok) {
           y = "D";
         } else if (e.mode != 57344) {
           if (!sameName(sha1(framed(Kind.Blob, got.bytes)), e.name)) {
             y = "M";
-          } else if (r.fs.stat(r.workTree + "/" + e.path).isExecutable != (e.mode == 33261)) {
+          } else if (r.fs.stat("\{r.workTree}/\{e.path}").isExecutable != (e.mode == 33261)) {
             // **A mode change with no content change**, which git reports as ` M` and this could not see
             // until `Stat` carried the bit — issues/system/0132. `33261` is `100755`; a regular file
             // recorded as anything else is `100644`, so one comparison covers gaining and losing it.
@@ -661,7 +660,7 @@ export Vec<string> statusOf(Repo r, u8[] excludes) {
           }
         }
 
-        if (x != " " || y != " ") { out.push(x + y + " " + e.path); }
+        if (x != " " || y != " ") { out.push("\{x}\{y} \{e.path}"); }
       }
 
       // Untracked files, which need the ignore rules or they would be noise.
@@ -679,7 +678,7 @@ export Vec<string> statusOf(Repo r, u8[] excludes) {
       // differs on exactly the paths where they do not, which is the class of mistake a tidy fixture
       // passes straight through.
       Vec<Rule> rules = parseIgnore(excludes, "");
-      FileResult exclude = r.fs.readFile(r.gitDir + "/info/exclude");
+      FileResult exclude = r.fs.readFile("\{r.gitDir}/info/exclude");
       if (exclude.ok) { rules.extend(parseIgnore(exclude.bytes, "")); }
       untrackedUnder(r, rules, idx.entries, r.workTree, "", untracked, 64);
 
@@ -690,7 +689,7 @@ export Vec<string> statusOf(Repo r, u8[] excludes) {
           IndexEntry e = idx.entries.get(i);
           if (e.stage == 0 && e.path == tree.get(k).path) { present = true; break; }
         }
-        if (!present) { out.push("D  " + tree.get(k).path); }
+        if (!present) { out.push("D  \{tree.get(k).path}"); }
       }
     }
   }
@@ -867,8 +866,8 @@ export Completion completeThin(Repo r, u8[] pack) {
       for (i32 i = 0; i < bases.len(); i++) {
         match (readObject(r, bases.get(i))) {
           Absent(why): {
-            return Completion.Missing("the pack is deltified against " + hexOf(bases.get(i))
-              + ", which this repository does not have: " + why);
+            return Completion.Missing("the pack is deltified against \{hexOf(bases.get(i))}"
+              + ", which this repository does not have: \{why}");
           }
           Found(kind, data): {
             kinds[i] = kind;
@@ -883,7 +882,7 @@ export Completion completeThin(Repo r, u8[] pack) {
 
 export Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> index) {
   string[]? listing = r.fs.readDir(dir);
-  if (listing is null) { return Stored.NotStored("cannot read " + dir); }
+  if (listing is null) { return Stored.NotStored("cannot read \{dir}"); }
   string[] names = listing!;
 
   // **Ordered before anything is written, not after.** The tree could be sorted at the end, but the
@@ -895,7 +894,7 @@ export Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> i
   for (i32 i = 0; i < names.len(); i++) {
     string n = names[i];
     if (n == ".git" || n == "." || n == "..") { continue; }
-    Stat st = r.fs.stat(dir + "/" + n);
+    Stat st = r.fs.stat("\{dir}/\{n}");
     if (!st.isDir && !st.isFile) { continue; }
     kept.push(n);
     dirs.push(st.isDir);
@@ -905,8 +904,8 @@ export Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> i
   Vec<Entry> entries = Vec.create();
   for (i32 i = 0; i < kept.len(); i++) {
     string n = kept.get(i);
-    string path = dir + "/" + n;
-    string rel = prefix == "" ? n : prefix + "/" + n;
+    string path = "\{dir}/\{n}";
+    string rel = prefix == "" ? n : "\{prefix}/\{n}";
     if (dirs.get(i)) {
       match (writeWorkTree(r, path, rel, index)) {
         NotStored(why): { return Stored.NotStored(why); }
@@ -917,7 +916,7 @@ export Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> i
       }
     } else {
       FileResult f = r.fs.readFile(path);
-      if (!f.ok) { return Stored.NotStored("cannot read " + path); }
+      if (!f.ok) { return Stored.NotStored("cannot read \{path}"); }
       // **The mode is read, not assumed.** `Stat.isExecutable` is one bit and it is the only bit that
       // separates git's two regular-file modes, so a tree built from a working tree now records what is
       // on disk. Before this it recorded `100644` for everything and a commit of an executable carried a
@@ -997,12 +996,12 @@ export Stored commitTree(Repo r, u8[] tree, string refName, Who author, string m
     Named(commit): {
       // A ref file is forty hex characters and a newline. Written whole rather than appended: git
       // rewrites it too, and an interrupted append would leave a ref nothing can read.
-      Change moved = r.fs.writeFile(r.gitDir + "/" + refName, (hexOf(commit) + "\n").toBytes());
-      if (!moved.ok()) { return Stored.NotStored("could not update " + refName + ": " + moved.message); }
+      Change moved = r.fs.writeFile("\{r.gitDir}/\{refName}", "\{hexOf(commit)}\n".toBytes());
+      if (!moved.ok()) { return Stored.NotStored("could not update \{refName}: \{moved.message}"); }
       // The index too, or `git status` compares the new commit against the old index and reports every
       // path as both deleted and untracked.
-      Change staged = r.fs.writeFile(r.gitDir + "/index", writeIndex(GitIndex(index, u8[]())));
-      if (!staged.ok()) { return Stored.NotStored("could not write the index: " + staged.message); }
+      Change staged = r.fs.writeFile("\{r.gitDir}/index", writeIndex(GitIndex(index, u8[]())));
+      if (!staged.ok()) { return Stored.NotStored("could not write the index: \{staged.message}"); }
       return Stored.Named(commit);
     }
   }
@@ -1010,7 +1009,7 @@ export Stored commitTree(Repo r, u8[] tree, string refName, Who author, string m
 
 /** What `HEAD` points at, as a ref name — or empty if it is detached. */
 export string headRef(Repo r) {
-  FileResult f = r.fs.readFile(r.gitDir + "/HEAD");
+  FileResult f = r.fs.readFile("\{r.gitDir}/HEAD");
   if (!f.ok) { return ""; }
   match (parseRef(f.bytes)) {
     Symbolic(target): { return target; }

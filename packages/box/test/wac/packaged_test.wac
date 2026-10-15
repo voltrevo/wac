@@ -12,11 +12,10 @@
 import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "core";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, differs, runApplet, runAppletIn, trimEnd } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-packaged"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-packaged"; }
 
 /**
  * `gzip` and `gunzip`, each against the system tool in the other direction.
@@ -27,14 +26,14 @@ string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-packaged"; }
 export string test_gzip_and_the_system_gzip_read_each_others_output(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
-  u8[] raw = cli.readFile(cli.cwd().wait() + "/README.md").wait().bytes;
+  u8[] raw = cli.readFile("\{cli.cwd().wait()}/README.md").wait().bytes;
   t.isTrue(raw.len() > 0, "README.md is readable and not empty");
 
   Ran squeezed = runAppletIn(core, cli, dir, ["gzip"], raw);
-  t.eqI32(squeezed.status, 0, "gzip ran: " + squeezed.err);
-  t.isTrue(squeezed.outBytes.len() < raw.len(), "gzip did not compress: " + itoa(squeezed.outBytes.len()));
+  t.eqI32(squeezed.status, 0, "gzip ran: \{squeezed.err}");
+  t.isTrue(squeezed.outBytes.len() < raw.len(), "gzip did not compress: \{squeezed.outBytes.len()}");
 
   // Ours reads its own.
   t.eqStr(differs(runAppletIn(core, cli, dir, ["gunzip"], squeezed.outBytes).outBytes, raw), "",
@@ -42,13 +41,13 @@ export string test_gzip_and_the_system_gzip_read_each_others_output(Core core, C
 
   // **The system one reads ours.** This is the direction that catches a header we invented.
   Exec theirs = cli.exec("gunzip", string[](), squeezed.outBytes).wait();
-  t.isTrue(theirs.error == "", "there is a real gunzip: " + theirs.error);
+  t.isTrue(theirs.error == "", "there is a real gunzip: \{theirs.error}");
   t.eqStr(differs(theirs.stdout, raw), "", "the system gzip could not read box's");
 
   // **And ours reads the system one's**, which catches a decompressor that only understands what our
   // compressor happens to emit.
   Exec sysGz = cli.exec("gzip", ["-c"], raw).wait();
-  t.isTrue(sysGz.error == "", "there is a real gzip: " + sysGz.error);
+  t.isTrue(sysGz.error == "", "there is a real gzip: \{sysGz.error}");
   t.eqStr(differs(runAppletIn(core, cli, dir, ["gunzip"], sysGz.stdout).outBytes, raw), "",
           "box could not read the system gzip's");
 
@@ -65,9 +64,9 @@ export string test_gzip_and_the_system_gzip_read_each_others_output(Core core, C
 export string test_crc32_matches_an_independently_computed_checksum(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
-  u8[] raw = cli.readFile(cli.cwd().wait() + "/README.md").wait().bytes;
+  u8[] raw = cli.readFile("\{cli.cwd().wait()}/README.md").wait().bytes;
   t.isTrue(raw.len() > 0, "README.md is readable and not empty");
 
   u32[] table = u32[].filled(256, 0);
@@ -92,7 +91,7 @@ export string test_crc32_matches_an_independently_computed_checksum(Core core, C
   // `-` is the name for standard input, which is where this arrived from, and the two spaces are the
   // spelling the applet shares with `sha256sum`.
   Ran got = runAppletIn(core, cli, dir, ["crc32"], raw);
-  t.eqStr(trimEnd(got.out), want + "  -", "crc32 of README.md");
+  t.eqStr(trimEnd(got.out), "\{want}  -", "crc32 of README.md");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -111,22 +110,22 @@ export string test_crc32_matches_an_independently_computed_checksum(Core core, C
 export string test_date_is_rfc3339_and_is_now(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
   string[] fmt = ["-u", "+%Y-%m-%dT%H:%M"];
   string before = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
   Ran got = runApplet(core, cli, dir, ["date"]);
   string after = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
 
-  t.eqI32(got.status, 0, "date ran: " + got.err);
+  t.eqI32(got.status, 0, "date ran: \{got.err}");
   string mine = trimEnd(got.out);
-  t.isTrue(before.len() == 16, "the oracle answered: " + before);
-  t.isTrue(mine.len() >= 20, "RFC 3339 is at least 20 characters: " + mine);
-  t.isTrue(mine.slice(mine.len() - 1, mine.len()) == "Z", "and ends in Z: " + mine);
+  t.isTrue(before.len() == 16, "the oracle answered: \{before}");
+  t.isTrue(mine.len() >= 20, "RFC 3339 is at least 20 characters: \{mine}");
+  t.isTrue(mine.slice(mine.len() - 1, mine.len()) == "Z", "and ends in Z: \{mine}");
 
   string toTheMinute = mine.slice(0, 16);
   t.isTrue(toTheMinute == before || toTheMinute == after,
-           "date is not now: " + mine + " between " + before + " and " + after);
+           "date is not now: \{mine} between \{before} and \{after}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -141,7 +140,7 @@ export string test_date_is_rfc3339_and_is_now(Core core, Cli cli) {
 export string test_urlencode_round_trips(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
   Buf uni = Buf.create();
   uni.pushCodepoint(0x00FC); uni.pushAll("n".toBytes()); uni.pushCodepoint(0x00EF);
@@ -149,13 +148,13 @@ export string test_urlencode_round_trips(Core core, Cli cli) {
 
   string[] cases = ["a b/c?d=e&f#g", uni.toStr(), "plain", "%already%20encoded"];
   for (i32 i = 0; i < cases.len(); i++) {
-    u8[] input = (cases[i] + "\n").toBytes();
+    u8[] input = "\{cases[i]}\n".toBytes();
     Ran encoded = runAppletIn(core, cli, dir, ["urlencode"], input);
-    t.eqI32(encoded.status, 0, "urlencode ran: " + encoded.err);
-    t.isTrue(encoded.out.indexOf(" ") < 0, "a space survived encoding: " + encoded.out);
+    t.eqI32(encoded.status, 0, "urlencode ran: \{encoded.err}");
+    t.isTrue(encoded.out.indexOf(" ") < 0, "a space survived encoding: \{encoded.out}");
 
     Ran back = runAppletIn(core, cli, dir, ["urldecode"], encoded.outBytes);
-    t.eqStr(back.out, cases[i] + "\n", cases[i] + " did not round-trip");
+    t.eqStr(back.out, "\{cases[i]}\n", "\{cases[i]} did not round-trip");
   }
 
   cli.remove(dir, true).wait();

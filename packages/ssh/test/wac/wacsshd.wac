@@ -37,7 +37,7 @@ import { Cli, Core, Exec, FileResult, Stat } from "std";
 import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wac";
 import { onlyEnv, onlyEnvLine, quoted } from "../../../wactest/src/childenv.wac";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
-import { atoi, itoa } from "../../../fmt/src/itoa.wac";
+import { atoi } from "../../../fmt/src/itoa.wac";
 import { freshScratch } from "./fixture.wac";
 import { copyPreserving, keygen, restrict } from "../../../wactest/src/keys.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
@@ -62,7 +62,7 @@ export struct Wacsshd {
  * Empty on failure, with `t` already told why.
  */
 export string buildServer(T t, Cli cli, bool writable) {
-  string dir = cli.cwd().wait() + "/.cache/wacsshd";
+  string dir = "\{cli.cwd().wait()}/.cache/wacsshd";
   string whyDir1 = madeDir(cli, dir);
   t.isTrue(whyDir1 == "", whyDir1);
   string stem = dir + (writable ? "/sshd-writable" : "/sshd");
@@ -70,10 +70,10 @@ export string buildServer(T t, Cli cli, bool writable) {
   // Reused when it is already there and no older than its own source. `wac build` rewrites it, so a
   // stale one cannot survive a rebuild — but it can survive *not* rebuilding, which is what the
   // mtime comparison is for.
-  Stat built = cli.stat(stem + ".wasm").wait();
+  Stat built = cli.stat("\{stem}.wasm").wait();
   Stat source = cli.stat("packages/ssh/src/sshd.wac").wait();
   if (built.isFile && source.isFile && built.modifiedMillis > source.modifiedMillis) {
-    return stem + ".wasm";
+    return "\{stem}.wasm";
   }
 
   string[] args = writable
@@ -86,9 +86,9 @@ export string buildServer(T t, Cli cli, bool writable) {
                "--allow-env", "--quiet"
     ];
   Exec r = cli.exec(wacBinary(cli), args, u8[]()).wait();
-  t.isTrue(r.ran(), "the wac binary ran — " + r.error);
-  t.eqI32(r.status, 0, "building sshd.wac: " + string.fromBytes(r.stderr));
-  return r.ran() && r.status == 0 ? stem + ".wasm" : "";
+  t.isTrue(r.ran(), "the wac binary ran — \{r.error}");
+  t.eqI32(r.status, 0, "building sshd.wac: \{string.fromBytes(r.stderr)}");
+  return r.ran() && r.status == 0 ? "\{stem}.wasm" : "";
 }
 
 /**
@@ -99,7 +99,7 @@ export string buildServer(T t, Cli cli, bool writable) {
  * test's server — or another agent's — is never touched. wac-mono 0073.
  */
 void reapAbandoned(Cli cli) {
-  cli.exec("/bin/sh", ["-c", WACSSHD_REAP + "kill \"$pid\" 2>/dev/null; done; true"],
+  cli.exec("/bin/sh", ["-c", "\{WACSSHD_REAP}kill \"$pid\" 2>/dev/null; done; true"],
            u8[]()).wait();
 }
 
@@ -110,7 +110,7 @@ static string WACSSHD_REAP =
 
 /** Which pids `reapAbandoned` would kill — for the test that the pattern selects anything. */
 export string reapSelectsServers(Cli cli) {
-  Exec r = cli.exec("/bin/sh", ["-c", WACSSHD_REAP + "echo \"$pid\"; done"],
+  Exec r = cli.exec("/bin/sh", ["-c", "\{WACSSHD_REAP}echo \"$pid\"; done"],
                     u8[]()).wait();
   return string.fromBytes(r.stdout);
 }
@@ -137,17 +137,17 @@ export Wacsshd startWacsshd(T t, Core core, Cli cli, string name, string[] extra
 
 Wacsshd startOnce(T t, Core core, Cli cli, string name, string[] extra, string binary) {
   string dir = freshScratch(t, cli, name);
-  string whyDir2 = madeDir(cli, dir + "/.ssh");
+  string whyDir2 = madeDir(cli, "\{dir}/.ssh");
   t.isTrue(whyDir2 == "", whyDir2);
-  if (!keygen(t, cli, dir + "/.ssh/ssh_host_ed25519_key")) {
+  if (!keygen(t, cli, "\{dir}/.ssh/ssh_host_ed25519_key")) {
     return Wacsshd(false, "ssh-keygen failed for the host key", dir, -1, Daemon(-1, "", ""));
   }
-  if (!keygen(t, cli, dir + "/clientkey")) {
+  if (!keygen(t, cli, "\{dir}/clientkey")) {
     return Wacsshd(false, "ssh-keygen failed for the client key", dir, -1, Daemon(-1, "", ""));
   }
-  restrict(cli, dir + "/.ssh/ssh_host_ed25519_key");
-  restrict(cli, dir + "/clientkey");
-  copyPreserving(cli, dir + "/clientkey.pub", dir + "/.ssh/authorized_keys");
+  restrict(cli, "\{dir}/.ssh/ssh_host_ed25519_key");
+  restrict(cli, "\{dir}/clientkey");
+  copyPreserving(cli, "\{dir}/clientkey.pub", "\{dir}/.ssh/authorized_keys");
 
   Held held = Held.take(cli);
   if (held.port < 0) { return Wacsshd(false, "no port could be bound", dir, -1, Daemon(-1, "", "")); }
@@ -156,13 +156,13 @@ Wacsshd startOnce(T t, Core core, Cli cli, string name, string[] extra, string b
   // `env HOME=…` rather than a bare assignment: `start` puts `exec` at the front of the line, and
   // `exec HOME=x prog` is not a command — the assignment has to be a program's argument, not a
   // prefix `exec` will try to run.
-  string line = "env HOME=" + quoted(dir) + " " + quoted(wacBinary(cli)) + " " + quoted(binary) +
-                " -p " + itoa(port);
-  for (i32 i = 0; i < extra.len(); i++) { line = line + " " + quoted(extra[i]); }
+  string line = "env HOME=\{quoted(dir)} \{quoted(wacBinary(cli))} \{quoted(binary)}" +
+                " -p \{port}";
+  for (i32 i = 0; i < extra.len(); i++) { line = line + " \{quoted(extra[i])}"; }
 
   held.release(cli);   // the next statement binds it
-  Daemon d = start(cli, line, dir + "/sshd.log");
-  if (!d.ok()) { return Wacsshd(false, "the server did not start — " + d.error, dir, port, d); }
+  Daemon d = start(cli, line, "\{dir}/sshd.log");
+  if (!d.ok()) { return Wacsshd(false, "the server did not start — \{d.error}", dir, port, d); }
 
   // **Wait for the announcement rather than for the socket.** A successful connect only proves the
   // listener is bound; the startup line is written around the same moment, and a test that read
@@ -196,7 +196,7 @@ Wacsshd startOnce(T t, Core core, Cli cli, string name, string[] extra, string b
 }
 
 bool alive(Cli cli, Daemon d) {
-  Exec r = cli.exec("/bin/sh", ["-c", "kill -0 " + itoa(d.pid) + " 2>/dev/null"],
+  Exec r = cli.exec("/bin/sh", ["-c", "kill -0 \{d.pid} 2>/dev/null"],
                     u8[]()).wait();
   return r.ran() && r.status == 0;
 }
@@ -220,7 +220,7 @@ export void stopWacsshd(Cli cli, Wacsshd s) {
  */
 export string[] sshArgs(Wacsshd s, string key, string[] extra) {
   string[] head = [
-                           "-F", "/dev/null", "-i", key, "-p", itoa(s.port),
+                           "-F", "/dev/null", "-i", key, "-p", "\{s.port}",
                            "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
                            "-o", "BatchMode=yes"
   ];
@@ -271,14 +271,14 @@ export Said rawSsh(Cli cli, Wacsshd s, string[] args) {
  * call left an orphan behind. wac-mono 0017.
  */
 export string buildClient(T t, Cli cli, bool writable) {
-  string dir = cli.cwd().wait() + "/.cache/wacsshd";
+  string dir = "\{cli.cwd().wait()}/.cache/wacsshd";
   string whyDir3 = madeDir(cli, dir);
   t.isTrue(whyDir3 == "", whyDir3);
   string stem = dir + (writable ? "/ssh-writable" : "/ssh");
-  Stat built = cli.stat(stem + ".wasm").wait();
+  Stat built = cli.stat("\{stem}.wasm").wait();
   Stat source = cli.stat("packages/ssh/src/ssh.wac").wait();
   if (built.isFile && source.isFile && built.modifiedMillis > source.modifiedMillis) {
-    return stem + ".wasm";
+    return "\{stem}.wasm";
   }
   // **Two binaries, because the grants are the point of one of the tests.** They are baked in at
   // build time, so a single permissive binary would quietly pass the case that checks `-k` is
@@ -294,9 +294,9 @@ export string buildClient(T t, Cli cli, bool writable) {
                "--allow-env", "--quiet"
     ];
   Exec r = cli.exec(wacBinary(cli), args, u8[]()).wait();
-  t.isTrue(r.ran(), "the wac binary ran — " + r.error);
-  t.eqI32(r.status, 0, "building ssh.wac: " + string.fromBytes(r.stderr));
-  return r.ran() && r.status == 0 ? stem + ".wasm" : "";
+  t.isTrue(r.ran(), "the wac binary ran — \{r.error}");
+  t.eqI32(r.status, 0, "building ssh.wac: \{string.fromBytes(r.stderr)}");
+  return r.ran() && r.status == 0 ? "\{stem}.wasm" : "";
 }
 
 /** Our own client with extra environment — `SSH_PASSPHRASE` is what needs it. */
@@ -331,11 +331,11 @@ string wacBinaryPath(Cli cli) { return wacBinary(cli); }
  * the wrong shape besides: it asserts a duration where the case is about an event.
  */
 export Said typedInto(Cli cli, Wacsshd s, string[] extra, string producer) {
-  string[] args = withTail(sshArgs(s, s.dir + "/clientkey", extra), ["claude@127.0.0.1"]);
+  string[] args = withTail(sshArgs(s, "\{s.dir}/clientkey", extra), ["claude@127.0.0.1"]);
   string line = onlyEnvLine(["LANG", "LC_ALL", "HOME", "PATH"],
                             ["C.UTF-8", "C.UTF-8", s.dir, "/usr/bin:/bin:/usr/local/bin"],
                             "ssh", args);
-  Exec r = cli.exec("/bin/sh", ["-c", "{ " + producer + " ; } | " + line], u8[]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "{ \{producer} ; } | \{line}"], u8[]()).wait();
   return said(r);
 }
 
@@ -357,14 +357,14 @@ export Said typedInto(Cli cli, Wacsshd s, string[] extra, string producer) {
  * ending exactly where the case needs it not to.
  */
 export Said typedIntoWatching(Cli cli, Wacsshd s, string[] extra, string producer) {
-  string[] args = withTail(sshArgs(s, s.dir + "/clientkey", extra), ["claude@127.0.0.1"]);
+  string[] args = withTail(sshArgs(s, "\{s.dir}/clientkey", extra), ["claude@127.0.0.1"]);
   string line = onlyEnvLine(["LANG", "LC_ALL", "HOME", "PATH"],
                             ["C.UTF-8", "C.UTF-8", s.dir, "/usr/bin:/bin:/usr/local/bin"],
                             "ssh", args);
   // `grep -c` prints 0 and exits 1 when nothing matches, so the count is read and defaulted rather
   // than taken from the exit status.
   string prelude =
-    "O=" + s.dir + "/watched.out; : > \"$O\"; " +
+    "O=\{s.dir}/watched.out; : > \"$O\"; " +
     "seen() { p=\"$1\"; c=\"${2:-1}\"; n=0; " +
     "while [ $n -lt 200 ]; do " +
     "got=$(grep -c -e \"$p\" \"$O\" 2>/dev/null); [ -z \"$got\" ] && got=0; " +
@@ -386,14 +386,14 @@ export Said typedIntoWatching(Cli cli, Wacsshd s, string[] extra, string produce
   // last command, and `sh` here is `dash`, which has no `pipefail`.
   Exec r = cli.exec("/bin/sh",
                     [
-                                   "-c", prelude + "{ " + producer + " ; } | { " + line +
+                                   "-c", "\{prelude}{ \{producer} ; } | { \{line}" +
                                    " > \"$O\" ; echo $? > \"$O.rc\" ; }"
                     ],
                     u8[]()).wait();
   Said out = said(r);
-  FileResult got = cli.readFile(s.dir + "/watched.out").wait();
+  FileResult got = cli.readFile("\{s.dir}/watched.out").wait();
   string text = got.ok ? string.fromBytes(got.bytes) : out.stdout;
-  FileResult rc = cli.readFile(s.dir + "/watched.out.rc").wait();
+  FileResult rc = cli.readFile("\{s.dir}/watched.out.rc").wait();
   i32 status = rc.ok ? atoi(trimmed(string.fromBytes(rc.bytes))) : out.status;
   return Said(status, text, out.stderr);
 }

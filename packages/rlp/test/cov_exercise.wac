@@ -14,7 +14,6 @@
 // wiring — which is `packages/bytes`' lesson and the tell is `test_traps_` in the name.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { Item, bytesOf, itemsOf } from "../src/rlp.wac";
 import {
   test_the_accessors_answer_for_the_variant_they_are_for as ac__the_accessors_answer_for_the_variant_they_are_for,
@@ -91,6 +90,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED traps_test test_an_ordinary_number_still_encodes");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("rlp: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("rlp: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

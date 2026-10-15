@@ -33,7 +33,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Core, Cli } from "std";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
-import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { Civil, isLeap, daysInMonth, isValidDate, daysFromCivil, civilFromDays, weekday,
          dayOfYear } from "../../src/civil.wac";
 import { Parsed, parse, format } from "../../src/rfc3339.wac";
@@ -63,14 +62,14 @@ export string test_day_numbers_and_weekdays_agree_with_date_over_four_centuries(
     // The forward direction as well, so the pair is checked rather than only the inverse: if
     // `daysFromCivil` disagreed with `civilFromDays` the round trip below would catch it.
     if (daysFromCivil(c.year, c.month, c.day) != n) {
-      t.fail("day " + itoa64(n) + " round-tripped to " + itoa64(daysFromCivil(c.year, c.month,
-                                                                             c.day)));
+      i64 back = daysFromCivil(c.year, c.month, c.day);
+      t.fail("day \{n} round-tripped to \{back}");
       return t.report();
     }
-    lines.add("civil " + itoa64(n) + " " + itoa(c.year) + " " + itoa(c.month) + " " +
-              itoa(c.day) + " " + itoa(weekday(n)));
+    lines.add("civil \{n} \{c.year} \{c.month} " +
+              "\{c.day} \{weekday(n)}");
   }
-  t.isTrue(lines.n >= 290000, "the sweep is four centuries — " + itoa(lines.n) + " days");
+  t.isTrue(lines.n >= 290000, "the sweep is four centuries — \{lines.n} days");
   check(t, cli, lines, "four centuries");
   return t.report();
 }
@@ -96,11 +95,11 @@ export string test_the_far_past_and_far_future(Core core, Cli cli) {
       i32 m = months[k];
       i32 d = days[k];
       i64 n = daysFromCivil(y, m, d);
-      lines.add("days " + itoa(y) + " " + itoa(m) + " " + itoa(d) + " " + itoa64(n));
+      lines.add("days \{y} \{m} \{d} \{n}");
       Civil back = civilFromDays(n);
       t.isTrue(back.year == y && back.month == m && back.day == d,
-               itoa(y) + "-" + itoa(m) + "-" + itoa(d) + " round-tripped to " +
-               itoa(back.year) + "-" + itoa(back.month) + "-" + itoa(back.day));
+               "\{y}-\{m}-\{d} round-tripped to " +
+               "\{back.year}-\{back.month}-\{back.day}");
     }
   }
   check(t, cli, lines, "the far range");
@@ -112,9 +111,9 @@ export string test_leap_years_and_month_lengths(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
   for (i32 y = -2000; y <= 4000; y++) {
-    lines.add("leap " + itoa(y) + " " + (isLeap(y) ? "1" : "0"));
+    lines.add("leap \{y} " + (isLeap(y) ? "1" : "0"));
     for (i32 m = 1; m <= 12; m++) {
-      lines.add("mlen " + itoa(y) + " " + itoa(m) + " " + itoa(daysInMonth(y, m)));
+      lines.add("mlen \{y} \{m} \{daysInMonth(y, m)}");
     }
   }
   check(t, cli, lines, "leap years and month lengths");
@@ -130,8 +129,8 @@ export string test_day_of_year_agrees_with_date(Core core, Cli cli) {
     for (i32 m = 1; m <= 12; m++) {
       i32[] ds = [1, 15, daysInMonth(y, m)];
       for (i32 k = 0; k < ds.len(); k++) {
-        lines.add("yday " + itoa(y) + " " + itoa(m) + " " + itoa(ds[k]) + " " +
-                  itoa(dayOfYear(y, m, ds[k])));
+        lines.add("yday \{y} \{m} \{ds[k]} " +
+                  "\{dayOfYear(y, m, ds[k])}");
       }
     }
   }
@@ -146,14 +145,14 @@ export string test_invalid_dates_are_rejected() {
   i32[] badD = [1, 1, 0, 32, 30, 29, 29, 31, 31, 31, 31];
   for (i32 i = 0; i < badY.len(); i++) {
     t.isFalse(isValidDate(badY[i], badM[i], badD[i]),
-              itoa(badY[i]) + "-" + itoa(badM[i]) + "-" + itoa(badD[i]) + " was accepted");
+              "\{badY[i]}-\{badM[i]}-\{badD[i]} was accepted");
   }
   i32[] okY = [2020, 2000, 1900, 2020, 2020];
   i32[] okM = [2, 2, 2, 1, 4];
   i32[] okD = [29, 29, 28, 31, 30];
   for (i32 i = 0; i < okY.len(); i++) {
     t.isTrue(isValidDate(okY[i], okM[i], okD[i]),
-             itoa(okY[i]) + "-" + itoa(okM[i]) + "-" + itoa(okD[i]) + " was rejected");
+             "\{okY[i]}-\{okM[i]}-\{okD[i]} was rejected");
   }
   return t.report();
 }
@@ -170,18 +169,18 @@ export string test_format_matches_date_to_iso_string(Core core, Cli cli) {
   Lines lines = Lines.create();
   i64[] fixed = [0, 1, -1, 999, 1000, -1000, -999];
   for (i32 i = 0; i < fixed.len(); i++) {
-    lines.add("fmt " + itoa64(fixed[i]) + " " + string.fromBytes(format(fixed[i])));
+    lines.add("fmt \{fixed[i]} \{string.fromBytes(format(fixed[i]))}");
   }
   // Every hour of a day either side of the epoch, where the floor-division cases live.
   for (i32 h = -48; h <= 48; h++) {
     i64 ms = (h as i64) * 3600000;
-    lines.add("fmt " + itoa64(ms) + " " + string.fromBytes(format(ms)));
+    lines.add("fmt \{ms} \{string.fromBytes(format(ms))}");
   }
   // And a spread across the whole range `Date` supports.
   Rng rng = Rng(0x1f2e3d4c);
   for (i32 i = 0; i < 20000; i++) {
     i64 ms = spreadMillis(rng);
-    lines.add("fmt " + itoa64(ms) + " " + string.fromBytes(format(ms)));
+    lines.add("fmt \{ms} \{string.fromBytes(format(ms))}");
   }
   // Outside 0000..9999, where the year needs a sign and six digits. The random spread above cannot
   // reach here — it covers about 1963 to 1976 — so a four-digit year that silently took the value
@@ -196,7 +195,7 @@ export string test_format_matches_date_to_iso_string(Core core, Cli cli) {
                      -8640000000000000  // -271821-04-20, the smallest
   ];
   for (i32 i = 0; i < wide.len(); i++) {
-    lines.add("fmt " + itoa64(wide[i]) + " " + string.fromBytes(format(wide[i])));
+    lines.add("fmt \{wide[i]} \{string.fromBytes(format(wide[i]))}");
   }
   check(t, cli, lines, "format");
   return t.report();
@@ -230,9 +229,9 @@ export string test_parse_matches_date_parse(Core core, Cli cli) {
   string[] stamps = wellFormedStamps();
   for (i32 i = 0; i < stamps.len(); i++) {
     Parsed p = parse(stamps[i].toBytes());
-    t.isTrue(p.ok, stamps[i] + " was rejected");
+    t.isTrue(p.ok, "\{stamps[i]} was rejected");
     if (!p.ok) { continue; }
-    lines.add("parse " + itoa64(p.millis) + " " + stamps[i]);
+    lines.add("parse \{p.millis} \{stamps[i]}");
   }
   check(t, cli, lines, "parse");
   return t.report();
@@ -259,7 +258,7 @@ export string test_minus_zero_zero_is_an_unknown_offset() {
   ];
   for (i32 i = 0; i < asserting.len(); i++) {
     Parsed p = parse(asserting[i].toBytes());
-    t.isTrue(p.ok && p.offsetKnown, asserting[i] + " asserts an offset");
+    t.isTrue(p.ok && p.offsetKnown, "\{asserting[i]} asserts an offset");
   }
   t.isFalse(parse("2020-06-15T10:00:00".toBytes()).ok, "a timestamp with no offset is rejected");
 
@@ -272,8 +271,8 @@ export string test_minus_zero_zero_is_an_unknown_offset() {
   ];
   for (i32 i = 0; i < zeros.len(); i++) {
     Parsed p = parse(zeros[i].toBytes());
-    t.eqI64(p.millis, at, zeros[i] + " is the same instant");
-    t.eqI32(p.offsetMin, 0, zeros[i] + " has a zero offset");
+    t.eqI64(p.millis, at, "\{zeros[i]} is the same instant");
+    t.eqI32(p.offsetMin, 0, "\{zeros[i]} has a zero offset");
   }
   return t.report();
 }
@@ -316,7 +315,7 @@ export string test_malformed_timestamps_are_rejected() {
     "2020-01-01T00:00:0xZ", "2020-01-01T00:00:00+00:0x", "2020-01-01T00:00:00+0x:00"
   ];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.isFalse(parse(bad[i].toBytes()).ok, "accepted \"" + bad[i] + "\"");
+    t.isFalse(parse(bad[i].toBytes()).ok, "accepted \"\{bad[i]}\"");
   }
   return t.report();
 }
@@ -336,8 +335,8 @@ export string test_a_leap_second_is_rejected(Core core, Cli cli) {
   string[] leapSeconds = ["2016-12-31T23:59:60Z", "2015-06-30T23:59:60Z"];
   for (i32 i = 0; i < leapSeconds.len(); i++) {
     t.isFalse(parse(leapSeconds[i].toBytes()).ok,
-              leapSeconds[i] + " was accepted, so leap seconds may now be supported");
-    lines.add("nan " + leapSeconds[i]);
+              "\{leapSeconds[i]} was accepted, so leap seconds may now be supported");
+    lines.add("nan \{leapSeconds[i]}");
   }
   check(t, cli, lines, "leap seconds");
   return t.report();
@@ -350,9 +349,9 @@ export string test_parse_and_format_round_trip() {
     i64 ms = spreadMillis(rng);
     u8[] text = format(ms);
     Parsed back = parse(text);
-    t.isTrue(back.ok, string.fromBytes(text) + " did not parse back");
+    t.isTrue(back.ok, "\{string.fromBytes(text)} did not parse back");
     if (!back.ok) { return t.report(); }
-    t.eqI64(back.millis, ms, string.fromBytes(text) + " parsed back wrong");
+    t.eqI64(back.millis, ms, "\{string.fromBytes(text)} parsed back wrong");
     if (back.millis != ms) { return t.report(); }
   }
   return t.report();

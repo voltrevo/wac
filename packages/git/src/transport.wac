@@ -29,7 +29,6 @@
 // successful fetch before that was understood.
 
 import { Cli, Core, FileResult, Socket } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { slice } from "../../bytes/src/slice.wac";
 import { Store, pemBundle } from "../../tls/src/roots.wac";
 import { recordsReady } from "../../tls/src/record.wac";
@@ -103,7 +102,7 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
   u8[]? proxyVar = cli.env("HTTP_PROXY").wait();
   if (proxyVar is null) {
     Socket direct = cli.connect(host, 443).wait();
-    if (direct.handle < 0) { return Answer(false, 0, u8[](), host + ": " + direct.error); }
+    if (direct.handle < 0) { return Answer(false, 0, u8[](), "\{host}: \{direct.error}"); }
     handle = direct.handle;
   } else {
     ProxyAt at = parseProxy(string.fromBytes(proxyVar!));
@@ -135,8 +134,8 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
     if (phase == 4) {
       if (got.len() > 0) { break; }
       cli.closeSocket(handle);
-      return Answer(false, 0, u8[](), "TLS to " + host + " failed (code "
-        + itoa(tlsClientFailure(s.state)) + ")");
+      return Answer(false, 0, u8[](), "TLS to \{host} failed (code "
+        + "\{tlsClientFailure(s.state)})");
     }
     if (phase == 3 && !requested) {
       string head = (body.len() == 0 ? "GET " : "POST ") + target + " HTTP/1.1\r\n"
@@ -144,8 +143,8 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
         + "User-Agent: git/wac\r\n"
         + "Accept: */*\r\n";
       if (body.len() > 0) {
-        head = head + "Content-Type: " + contentType + "\r\n"
-             + "Content-Length: " + itoa(body.len()) + "\r\n";
+        head = head + "Content-Type: \{contentType}\r\n"
+             + "Content-Length: \{body.len()}\r\n";
       }
       head = head + "Connection: close\r\n\r\n";
       u8[] whole = u8[].filled(head.toBytes().len() + body.len(), 0);
@@ -176,7 +175,7 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
       End: { closed = true; }
       Failed(why): {
         cli.closeSocket(handle);
-        return Answer(false, 0, u8[](), host + ": " + why);
+        return Answer(false, 0, u8[](), "\{host}: \{why}");
       }
     }
     if (closed) { break; }
@@ -184,11 +183,11 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
 
   clientStep(tlsClientClose(s.state));
   cli.closeSocket(handle);
-  if (got.len() == 0) { return Answer(false, 0, u8[](), host + " said nothing"); }
+  if (got.len() == 0) { return Answer(false, 0, u8[](), "\{host} said nothing"); }
 
   match (parseResponse(got, (body.len() == 0 ? "GET" : "POST").toBytes(), true, 1 << 26)) {
     Incomplete: { return Answer(false, 0, u8[](), "the response ended mid-message"); }
-    Bad(code): { return Answer(false, 0, u8[](), "unparseable response (" + itoa(code) + ")"); }
+    Bad(code): { return Answer(false, 0, u8[](), "unparseable response (\{code})"); }
     Ok(res): { return Answer(true, res.status, res.body, ""); }
   }
 }

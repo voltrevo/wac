@@ -21,7 +21,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, FileResult, Stat } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 static string SITE = "site/src/next/Home.tsx";
 static string TERM = "packages/box/example/term.wac";
@@ -30,7 +29,7 @@ static string SHELL = "packages/box/example/boxsh.wac";
 string read(Core core, Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
   if (!r.ok) {
-    core.warn("frontpage: cannot read " + path + " — " + r.error);
+    core.warn("frontpage: cannot read \{path} — \{r.error}");
     trap;
   }
   return string.fromBytes(r.bytes);
@@ -50,7 +49,7 @@ string agentDir(Cli cli) {
   return "";
 }
 
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 /**
  * Every double-quoted string in `text`, with TypeScript's escapes undone.
@@ -139,11 +138,11 @@ export string test_the_terminal_opens_on_the_session_the_website_prints(Core cor
   // The table is command-then-output pairs, so the commands are its even entries.
   i32 shown = rows.len() / 2;
   t.eqI32(opens.len(), shown,
-          "term.wac opens on " + itoa(opens.len()) + " command(s) and the page prints " +
-          itoa(shown));
+          "term.wac opens on \{opens.len()} command(s) and the page prints " +
+          "\{shown}");
   i32 n = opens.len() < shown ? opens.len() : shown;
   for (i32 i = 0; i < n; i++) {
-    t.eqStr(opens[i], rows[i * 2], "command " + itoa(i + 1) + " differs between the two");
+    t.eqStr(opens[i], rows[i * 2], "command \{i + 1} differs between the two");
   }
   return t.report();
 }
@@ -151,7 +150,7 @@ export string test_the_terminal_opens_on_the_session_the_website_prints(Core cor
 /** Where to build the shell, named for this agent so two runs cannot overwrite each other. */
 string workDir(Cli cli) {
   string who = agentDir(cli);
-  return "/tmp/wac-frontpage" + (who == "" ? "" : "-" + who);
+  return "/tmp/wac-frontpage" + (who == "" ? "" : "-\{who}");
 }
 
 export string test_the_websites_shell_transcript_is_what_the_shell_prints(Core core, Cli cli) {
@@ -161,14 +160,14 @@ export string test_the_websites_shell_transcript_is_what_the_shell_prints(Core c
   if (!bin.exists) { return t.report(); }
 
   string[] rows = transcript(core, cli);
-  t.isTrue(rows.len() >= 4, "only " + itoa(rows.len() / 2) + " transcript row(s) found");
+  t.isTrue(rows.len() >= 4, "only \{rows.len() / 2} transcript row(s) found");
   if (rows.len() < 4) { return t.report(); }
 
   string work = workDir(cli);
   Change made = cli.mkdir(work, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   if (!made.ok()) { return t.report(); }
-  string stem = work + "/boxsh";
+  string stem = "\{work}/boxsh";
 
   Exec built = cli.exec(binary(cli),
                         ["build", SHELL, "-o", stem, "--allow-read", "--allow-write"],
@@ -180,15 +179,15 @@ export string test_the_websites_shell_transcript_is_what_the_shell_prints(Core c
   for (i32 i = 0; i + 1 < rows.len(); i = i + 2) {
     string command = rows[i];
     string expected = rows[i + 1];
-    Exec r = cli.exec(binary(cli), [stem + ".wasm", "-c", command], u8[]()).wait();
-    t.isTrue(r.ran(), command + ": the shell would not start — " + r.error);
+    Exec r = cli.exec(binary(cli), ["\{stem}.wasm", "-c", command], u8[]()).wait();
+    t.isTrue(r.ran(), "\{command}: the shell would not start — \{r.error}");
     if (!r.ran()) { continue; }
     t.eqStr(trimTrailingNewlines(string.fromBytes(r.stdout)), expected,
-            command + ": the page and the shell disagree");
+            "\{command}: the page and the shell disagree");
   }
 
   Change gone = cli.remove(work, true).wait();
-  if (!gone.ok()) { core.warn("frontpage: could not remove " + work + " — " + gone.message); }
+  if (!gone.ok()) { core.warn("frontpage: could not remove \{work} — \{gone.message}"); }
   return t.report();
 }
 

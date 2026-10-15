@@ -14,7 +14,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { parseNumberValue } from "../../src/json.wac";
 
 static string ORACLE = "packages/json/test/oracle.ts";
@@ -33,7 +32,7 @@ bool isNan(f64 x) {
 }
 
 void ask(Lines lines, string src) {
-  lines.add("number " + hex(src.toBytes()) + " " + bits64(parseNumberValue(src.toBytes())));
+  lines.add("number \{hex(src.toBytes())} \{bits64(parseNumberValue(src.toBytes()))}");
 }
 
 /** Values where even a naive conversion is exact: mantissa < 2^53, |exp| <= 22. */
@@ -71,13 +70,13 @@ export string test_a_document_that_is_not_a_number_yields_nan() {
   string[] unparseable = ["", "[", "1 2", "01", "-", "1e"];
   for (i32 i = 0; i < unparseable.len(); i++) {
     t.isTrue(isNan(parseNumberValue(unparseable[i].toBytes())),
-             "\"" + unparseable[i] + "\" should be NaN");
+             "\"\{unparseable[i]}\" should be NaN");
   }
   // Parses, but is not a number — the `else` arm of the match rather than the null check above it.
   string[] notNumbers = ["\"1\"", "true", "false", "null", "[1]", "{\"a\":1}"];
   for (i32 i = 0; i < notNumbers.len(); i++) {
     t.isTrue(isNan(parseNumberValue(notNumbers[i].toBytes())),
-             "\"" + notNumbers[i] + "\" should be NaN");
+             "\"\{notNumbers[i]}\" should be NaN");
   }
   return t.report();
 }

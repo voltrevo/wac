@@ -9,7 +9,6 @@
 import { Cli, Core, Stat } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
 /**
@@ -40,19 +39,19 @@ export i32 find(Core core, Cli cli, Fs fs, Args a) {
 /** False if any part of this subtree could not be listed. */
 bool walk(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
   if (depth > MAX_DEPTH()) {
-    core.warn(name + ": " + dir + ": deeper than " + itoa(MAX_DEPTH()) +
+    core.warn("\{name}: \{dir}: deeper than \{MAX_DEPTH()}" +
       " levels, not descending (a symlink loop, or a genuinely deep tree)");
     return false;
   }
   string[]? names = fs.readDir(dir);
   if (names is null) {
-    core.warn(name + ": " + dir + ": cannot read directory");
+    core.warn("\{name}: \{dir}: cannot read directory");
     return false;
   }
   string[] found = names!;
   bool complete = true;
   for (i32 i = 0; i < found.len(); i++) {
-    string path = dir + "/" + found[i];
+    string path = "\{dir}/\{found[i]}";
     core.log(path);
     if (fs.stat(path).isDir) {
       if (!walk(core, cli, fs, name, path, depth + 1)) { complete = false; }

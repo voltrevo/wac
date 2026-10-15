@@ -31,7 +31,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Loaded, json, memberText, memberArray, memberI32 } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { hashPair, floorLog2, subtreeIndex, isValidMerkleBranch,
@@ -95,7 +94,7 @@ u8[] fold(Proof p, Lines lines) {
     node = (idx & 1) != 0 ? hashPair(sib, node) : hashPair(node, sib);
     idx = idx / 2;
   }
-  lines.add("fold " + hex(p.leaf) + " " + itoa(p.gindex) + " " + hex(p.branch) + " " + hex(node));
+  lines.add("fold \{hex(p.leaf)} \{p.gindex} \{hex(p.branch)} \{hex(node)}");
   return node;
 }
 
@@ -124,9 +123,9 @@ export string test_three_proofs_into_one_state_fold_to_one_root_per_fork(Core co
       if (first.len() == 0) { first = root; }
       else if (root != first) { disagreed = true; }
     }
-    t.eqI32(count, 3, names[f] + ": proofs in the fixture");
+    t.eqI32(count, 3, "\{names[f]}: proofs in the fixture");
     t.isFalse(disagreed,
-              names[f] + ": three proofs into the same object folded to different roots — the " +
+              "\{names[f]}: three proofs into the same object folded to different roots — the " +
               "side-bit rule is wrong for at least one path");
   }
   t.eqI32(all.len(), 9, "proofs in the fixture, across three forks");
@@ -146,16 +145,16 @@ export string test_wac_verifies_every_real_branch_and_rejects_every_perturbation
     u8[] root = fold(p, lines);
     i32 depth = p.nodes;
     i32 index = p.gindex - (1 << depth);
-    string where = p.fork + "/" + p.name;
+    string where = "\{p.fork}/\{p.name}";
 
     t.eqI32(floorLog2(p.gindex as! u64), depth,
-            where + ": floorLog2(" + itoa(p.gindex) + ") against a " + itoa(depth) + "-node branch");
+            "\{where}: floorLog2(\{p.gindex}) against a \{depth}-node branch");
     t.eqI32(subtreeIndex(p.gindex as! u64) as! i32, index,
-            where + ": subtreeIndex(" + itoa(p.gindex) + ")");
+            "\{where}: subtreeIndex(\{p.gindex})");
     t.isTrue(isValidMerkleBranch(p.leaf, p.branch, depth, index as! u64, root),
-             where + ": a real Ethereum branch was rejected");
+             "\{where}: a real Ethereum branch was rejected");
     t.isTrue(isValidNormalizedMerkleBranch(p.leaf, p.branch, p.gindex as! u64, root),
-             where + ": rejected by the normalized check");
+             "\{where}: rejected by the normalized check");
     // A wrong gindex must fail, because the index is what picks the side at each level — this is the
     // check a fixed hashing order would pass.
     //
@@ -175,11 +174,11 @@ export string test_wac_verifies_every_real_branch_and_rejects_every_perturbation
     // Flipping bit 1 moves the path a level up, which is not symmetric here, so it still bites.
     i32 wrongPath = p.gindex ^ 2;
     t.isFalse(isValidNormalizedMerkleBranch(p.leaf, p.branch, wrongPath as! u64, root),
-              where + ": verified at gindex " + itoa(wrongPath) + " as well as " + itoa(p.gindex));
+              "\{where}: verified at gindex \{wrongPath} as well as \{p.gindex}");
     u8[] tampered = copyOf(p.branch);
     tampered[tampered.len() - 1] = tampered[tampered.len() - 1] ^ 1;   // the node nearest the root
     t.isFalse(isValidNormalizedMerkleBranch(p.leaf, tampered, p.gindex as! u64, root),
-              where + ": a tampered branch verified");
+              "\{where}: a tampered branch verified");
     checked = checked + 1;
   }
   t.eqI32(checked, 9, "proofs checked");
@@ -221,15 +220,15 @@ export string test_the_generalized_indices_are_fork_dependent_which_is_why_norma
       for (i32 i = 0; i < all.len(); i++) {
         if (all[i].fork == names[f] && all[i].name == order[k]) { found = i; }
       }
-      t.isTrue(found >= 0, names[f] + ": no " + order[k]);
+      t.isTrue(found >= 0, "\{names[f]}: no \{order[k]}");
       if (found < 0) { continue; }
-      t.eqI32(all[found].gindex, want[f * 3 + k], names[f] + "/" + order[k] + ": gindex");
+      t.eqI32(all[found].gindex, want[f * 3 + k], "\{names[f]}/\{order[k]}: gindex");
     }
   }
   // And the depths follow: floorlog2 of the gindex, which is what the branch length must be.
   for (i32 i = 0; i < all.len(); i++) {
     t.eqI32(all[i].nodes, floorLog2(all[i].gindex as! u64),
-            all[i].fork + "/" + all[i].name + ": nodes for gindex " + itoa(all[i].gindex));
+            "\{all[i].fork}/\{all[i].name}: nodes for gindex \{all[i].gindex}");
   }
   return t.report();
 }

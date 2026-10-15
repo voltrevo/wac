@@ -26,7 +26,7 @@ import {
 export string test_the_vectors_can_discriminate(Core core, Cli cli) {
   T t = T.create();
   i32 n = caseCount(cli);
-  t.isTrue(n >= 2, "expected several microdescriptor cases, found " + itoaLocal(n));
+  t.isTrue(n >= 2, "expected several microdescriptor cases, found \{n}");
 
   bool sawExit = false;
   bool sawDefault = false;
@@ -41,7 +41,7 @@ export string test_the_vectors_can_discriminate(Core core, Cli cli) {
   t.isTrue(muts >= 1, "no mutations, so the digest check proves nothing");
   for (i32 i = 0; i < muts; i++) {
     t.isFalse(mutationDigestBase64(cli, i) == digestBase64(cli, 0),
-              "mutation \"" + mutationName(cli, i) + "\" kept the original digest, so the digest " +
+              "mutation \"\{mutationName(cli, i)}\" kept the original digest, so the digest " +
               "is not a check");
   }
   return t.report();
@@ -56,7 +56,7 @@ export string test_the_bytes_tor_accepted(Core core, Cli cli) {
     string policy = policySummary(cli, i);
     u8[] made = microdescriptor(descriptor, policy);
     t.eqBytes(made, expected(cli, i),
-              "case " + itoaLocal(i) + ": the microdescriptor is the document tor accepted");
+              "case \{i}: the microdescriptor is the document tor accepted");
   }
   return t.report();
 }
@@ -76,13 +76,13 @@ export string test_the_digest_is_the_one_the_m_line_names(Core core, Cli cli) {
     u8[] made = microdescriptor(descriptor(cli, i),
                                policySummary(cli, i));
     t.eqBytes(microdescDigest(made), digest(cli, i),
-              "case " + itoaLocal(i) + ": SHA-256 over the same span tor hashed");
+              "case \{i}: SHA-256 over the same span tor hashed");
     t.eqStr(b64Unpadded(microdescDigest(made)),
             digestBase64(cli, i),
-            "case " + itoaLocal(i) + ": and it renders as tor's unpadded base64");
+            "case \{i}: and it renders as tor's unpadded base64");
     t.eqStr(microdescLine(made),
-            "m " + digestBase64(cli, i),
-            "case " + itoaLocal(i) + ": the consensus line names it");
+            "m \{digestBase64(cli, i)}",
+            "case \{i}: the consensus line names it");
   }
   return t.report();
 }
@@ -105,7 +105,7 @@ export string test_a_corrupted_microdescriptor_gets_a_different_digest(Core core
   for (i32 i = 0; i < m; i++) {
     string other = mutationDigestBase64(cli, i);
     t.isTrue(ours != other,
-             "mutation " + itoaLocal(i) + " has a digest of its own, so the digest is a check");
+             "mutation \{i} has a digest of its own, so the digest is a check");
   }
   return t.report();
 }
@@ -131,7 +131,7 @@ export string test_the_default_policy_writes_no_p_line(Core core, Cli cli) {
       t.isTrue(!contains(made, "\np "), "the default policy writes no p line");
     } else {
       sawAccept = true;
-      t.isTrue(contains(made, "\np " + policy + "\n"), "a real policy is written as a p line");
+      t.isTrue(contains(made, "\np \{policy}\n"), "a real policy is written as a p line");
     }
   }
   t.isTrue(sawAccept && sawReject, "both policy cases were exercised");
@@ -180,14 +180,14 @@ export string test_a_run_of_microdescriptors_splits_back_apart(Core core, Cli cl
   for (i32 i = 0; i < n; i++) {
     u8[] want = microdescriptor(descriptor(cli, i),
                                policySummary(cli, i));
-    t.eqBytes(parts[i], want, "document " + itoaLocal(i) + " comes back whole and in order");
+    t.eqBytes(parts[i], want, "document \{i} comes back whole and in order");
   }
 
   u8[][] digests = microdescDigests(joined);
   t.eqI32(digests.len(), n, "one digest per document");
   for (i32 i = 0; i < n; i++) {
     t.eqBytes(digests[i], digest(cli, i),
-              "digest " + itoaLocal(i) + " is still tor's after a round trip through the blob");
+              "digest \{i} is still tor's after a round trip through the blob");
   }
 
   t.eqI32(splitMicrodescriptors(u8[]()).len(), 0, "an empty response holds nothing");
@@ -213,15 +213,3 @@ bool contains(u8[] s, string text) {
   return false;
 }
 
-string itoaLocal(i32 n) {
-  if (n == 0) { return "0"; }
-  string out = "";
-  i32 v = n;
-  while (v > 0) {
-    u8[] d = u8[].filled(1, 0);
-    d[0] = (48 + v % 10) as@ u8;
-    out = string.fromBytes(d) + out;
-    v = v / 10;
-  }
-  return out;
-}

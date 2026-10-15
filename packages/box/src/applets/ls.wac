@@ -18,7 +18,7 @@ import { Fs } from "../../../fs/src/fs.wac";
 export i32 ls(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.flags != "") {
-    core.warn(a.name + ": -" + a.flags + ": not implemented — this ls takes no options");
+    core.warn("\{a.name}: -\{a.flags}: not implemented — this ls takes no options");
     return 2;
   }
   string path = a.rest.len() < 1 ? "." : a.rest[0];

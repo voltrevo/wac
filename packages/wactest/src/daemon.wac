@@ -32,7 +32,6 @@
 
 import { Cli, Core, Exec, Socket } from "std";
 import { quoted } from "./childenv.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** A child that is still running. `pid` is negative when it did not start. */
 export struct Daemon {
@@ -120,11 +119,11 @@ export Daemon start(Cli cli, string line, string logPath) {
   // backgrounds *that*, and `$!` names the subshell rather than the program — so `stop` kills a shell
   // and leaves the server running, which showed up as "still answering after stop". `exec` replaces
   // the subshell with the program, so the pid is the one that matters.
-  string script = "{ exec " + line + "; } >" + quoted(logPath) + " 2>&1 & echo $!";
+  string script = "{ exec \{line}; } >\{quoted(logPath)} 2>&1 & echo $!";
   Exec r = cli.exec("/bin/sh", ["-c", script], u8[]()).wait();
-  if (!r.ran()) { return Daemon(-1, "the shell did not run — " + r.error, logPath); }
+  if (!r.ran()) { return Daemon(-1, "the shell did not run — \{r.error}", logPath); }
   if (r.status != 0) {
-    return Daemon(-1, "the shell exited " + itoa(r.status) + " — " +
+    return Daemon(-1, "the shell exited \{r.status} — " +
                       string.fromBytes(r.stderr), logPath);
   }
   string said = string.fromBytes(r.stdout);
@@ -137,7 +136,7 @@ export Daemon start(Cli cli, string line, string logPath) {
     pid = pid * 10 + (b - '0');
     digits = digits + 1;
   }
-  if (digits == 0) { return Daemon(-1, "the shell printed no pid: " + said, logPath); }
+  if (digits == 0) { return Daemon(-1, "the shell printed no pid: \{said}", logPath); }
   return Daemon(pid, "", logPath);
 }
 
@@ -233,7 +232,7 @@ export string logOf(Cli cli, const Daemon d) {
 export void stop(Cli cli, Daemon d) {
   if (d.pid <= 0) { return; }
   cli.exec("/bin/sh", [
-                               "-c", "kill " + itoa(d.pid) + " 2>/dev/null; wait " + itoa(d.pid) +
+                               "-c", "kill \{d.pid} 2>/dev/null; wait \{d.pid}" +
                                " 2>/dev/null; true"
   ], u8[]()).wait();
 }

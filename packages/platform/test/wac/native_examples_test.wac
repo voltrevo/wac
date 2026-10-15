@@ -40,7 +40,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, Pending } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Held } from "../../../wactest/src/daemon.wac";
 import { stale } from "./hostfs.wac";
 import { builtProgram, builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
@@ -173,10 +172,10 @@ Case[] cases() {
  * had changed underneath them, which reads exactly like a difference and is not one.
  */
 string workspace(Cli cli, string tmp, string name, string which) {
-  string dir = tmp + "/run/" + name + "-" + which;
+  string dir = "\{tmp}/run/\{name}-\{which}";
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
-  cli.writeFile(dir + "/in.txt", ("a b c\nd e\n").toBytes()).wait();
+  cli.writeFile("\{dir}/in.txt", ("a b c\nd e\n").toBytes()).wait();
   return dir;
 }
 
@@ -190,7 +189,7 @@ string hide(Case c, string text) {
       i32 found = out.slice(at, out.len()).indexOf(c.maskBefore);
       if (found < 0) { built = built + out.slice(at, out.len()); break; }
       i32 start = at + found + c.maskBefore.len();
-      built = built + out.slice(at, start) + "<measured>";
+      built = built + "\{out.slice(at, start)}<measured>";
       i32 end = start;
       u8[] b = out.toBytes();
       while (end < b.len() && b[end] >= '0' && b[end] <= '9') { end = end + 1; }
@@ -213,8 +212,8 @@ string hide(Case c, string text) {
 
 /** A shell line that runs `prog` with `args` from `where`, since `Cli.exec` has no working directory. */
 string lineFor(string where, string prog, string[] args) {
-  string line = "cd '" + where + "' && exec '" + prog + "'";
-  for (i32 i = 0; i < args.len(); i++) { line = line + " '" + args[i] + "'"; }
+  string line = "cd '\{where}' && exec '\{prog}'";
+  for (i32 i = 0; i < args.len(); i++) { line = line + " '\{args[i]}'"; }
   return line;
 }
 
@@ -235,16 +234,16 @@ string lineFor(string where, string prog, string[] args) {
  * `<name>`, and the copy is what keeps the per-case workspaces separate.
  */
 string builtOnce(Cli cli, string tmp, Case c, bool haveNative) {
-  string entry = "packages/platform/example/" + c.name + ".wac";
-  string deno = builtByDeno(cli, entry, c.name + "-deno", c.grants, "deno", false);
-  if (deno == "") { return entry + " did not build for the JavaScript host\n"; }
-  if (!copyBuilt(cli, deno, tmp + "/" + c.name + "-deno", true)) {
-    return entry + ": its built script would not copy into " + tmp + "\n";
+  string entry = "packages/platform/example/\{c.name}.wac";
+  string deno = builtByDeno(cli, entry, "\{c.name}-deno", c.grants, "deno", false);
+  if (deno == "") { return "\{entry} did not build for the JavaScript host\n"; }
+  if (!copyBuilt(cli, deno, "\{tmp}/\{c.name}-deno", true)) {
+    return "\{entry}: its built script would not copy into \{tmp}\n";
   }
   if (!haveNative) { return ""; }
   string mod = builtProgram(cli, entry, c.name, c.grants);
-  if (!copyBuilt(cli, mod, tmp + "/" + c.name + ".wasm", false)) {
-    return entry + ": its module would not copy into " + tmp + "\n";
+  if (!copyBuilt(cli, mod, "\{tmp}/\{c.name}.wasm", false)) {
+    return "\{entry}: its module would not copy into \{tmp}\n";
   }
   return "";
 }
@@ -269,7 +268,7 @@ static i32 AT_ONCE = 3;
 export string test_the_capability_examples_answer_the_same_on_both_hosts(Core core, Cli cli) {
   T t = T.create();
   string native = nativeBinary(cli);
-  string tmp = root(cli) + "/" + BUILT;
+  string tmp = "\{root(cli)}/\{BUILT}";
   string whyDir1 = madeDir(cli, tmp);
   t.isTrue(whyDir1 == "", whyDir1);
 
@@ -307,17 +306,17 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
 
       string[] denoArgs = string[].filled(c.args.len() + (c.port ? 1 : 0), "");
       for (i32 k = 0; k < c.args.len(); k++) { denoArgs[k] = c.args[k]; }
-      if (c.port) { denoArgs[c.args.len()] = itoa(hd.port); }
+      if (c.port) { denoArgs[c.args.len()] = "\{hd.port}"; }
 
       string[] nativeArgs = string[].filled(1 + c.args.len() + (c.port ? 1 : 0), "");
-      nativeArgs[0] = tmp + "/" + c.name + ".wasm";
+      nativeArgs[0] = "\{tmp}/\{c.name}.wasm";
       for (i32 k = 0; k < c.args.len(); k++) { nativeArgs[1 + k] = c.args[k]; }
-      if (c.port) { nativeArgs[1 + c.args.len()] = itoa(hn.port); }
+      if (c.port) { nativeArgs[1 + c.args.len()] = "\{hn.port}"; }
 
       hd.release(cli);
       hn.release(cli);
       runs[i * 2] = cli.exec("/bin/sh",
-        ["-c", lineFor(dirsDeno[i], tmp + "/" + c.name + "-deno", denoArgs)],
+        ["-c", lineFor(dirsDeno[i], "\{tmp}/\{c.name}-deno", denoArgs)],
         c.stdin.toBytes());
       if (native != "") {
         runs[i * 2 + 1] = cli.exec("/bin/sh",
@@ -334,7 +333,7 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
       // tests that the Deno side runs — and so that two silent hosts cannot agree. Both streams,
       // because `crowd` reports through `warn` and the first version of this checked standard output
       // alone and called a working program silent.
-      t.isTrue(jsOut.len() + jsErr.len() > 0, "deno " + c.name + " printed nothing");
+      t.isTrue(jsOut.len() + jsErr.len() > 0, "deno \{c.name} printed nothing");
       if (native == "") { continue; }
 
       Exec rs = runs[i * 2 + 1].wait();
@@ -350,12 +349,12 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
           if (contains(jsOut, c.racy[k])) { jsSaid = true; }
           if (contains(rsOut, c.racy[k])) { rsSaid = true; }
         }
-        t.isTrue(jsSaid, "deno " + c.name + " said none of its legal answers: " + jsOut);
-        t.isTrue(rsSaid, "native " + c.name + " said none of its legal answers: " + rsOut);
+        t.isTrue(jsSaid, "deno \{c.name} said none of its legal answers: \{jsOut}");
+        t.isTrue(rsSaid, "native \{c.name} said none of its legal answers: \{rsOut}");
       }
-      t.eqStr(hide(c, rsOut), hide(c, jsOut), c.name + ": stdout");
-      t.eqStr(hide(c, rsErr), hide(c, jsErr), c.name + ": stderr");
-      t.eqI32(rs.status, js.status, c.name + ": status");
+      t.eqStr(hide(c, rsOut), hide(c, jsOut), "\{c.name}: stdout");
+      t.eqStr(hide(c, rsErr), hide(c, jsErr), "\{c.name}: stderr");
+      t.eqI32(rs.status, js.status, "\{c.name}: status");
     }
   }
 
@@ -365,9 +364,9 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
   // case rather than a broken one. The warning names it so this cannot go quiet — the nine other
   // callers of `nativeHostWhyNot` have said it this way all along.
   if (native == "") {
-    core.warn("SKIPPED the wasmtime half: " + nativeHostWhyNot(cli)
+    core.warn("SKIPPED the wasmtime half: \{nativeHostWhyNot(cli)}"
               + ". The JavaScript half above still ran and still asserted.");
   }
-  cli.remove(tmp + "/run", true).wait();
+  cli.remove("\{tmp}/run", true).wait();
   return t.report();
 }

@@ -73,10 +73,10 @@ string render(Value v, i32[] schema, i32 s) {
     u8[] w = wordOfValue(v);
     u8[] a = u8[].filled(20, 0);
     for (i32 i = 0; i < 20; i++) { a[i] = w[12 + i]; }
-    return "a" + hex(a);
+    return "a\{hex(a)}";
   }
-  if (t == 5) { return "x" + hex(bytesOfValue(v)); }
-  if (t == 6) { return "s" + hex(bytesOfValue(v)); }
+  if (t == 5) { return "x\{hex(bytesOfValue(v))}"; }
+  if (t == 6) { return "s\{hex(bytesOfValue(v))}"; }
   if (t == 7 || t == 8) {
     Value[] xs = listOf(v);
     i32 elem = t == 7 ? s + 1 : s + 2;
@@ -85,7 +85,7 @@ string render(Value v, i32[] schema, i32 s) {
       if (i > 0) { out = out + ","; }
       out = out + render(xs[i], schema, elem);
     }
-    return out + "]";
+    return "\{out}]";
   }
   if (t == 9) {
     Value[] xs = listOf(v);
@@ -96,7 +96,7 @@ string render(Value v, i32[] schema, i32 s) {
       out = out + render(xs[i], schema, m);
       m = m + typeLen(schema, m);
     }
-    return out + ")";
+    return "\{out})";
   }
   return "?";
 }

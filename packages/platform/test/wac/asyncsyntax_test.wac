@@ -12,7 +12,6 @@
 // `continue`. `asyncplan_test.wac` holds the shapes it still declines, by name — a suspension in a
 // loop *condition*, one nested inside a larger expression, and one whose value is discarded.
 
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Core, FileResult } from "std";
 import { Ticket } from "core";
@@ -133,7 +132,7 @@ export string test_a_for_loop_suspends_once_per_iteration(Core core, Cli cli) {
   i32 want = 0;
   for (i32 i = 0; i < ps.len(); i++) {
     i32 one = sizeOf(cli, ps[i]);
-    t.isTrue(one > 0, "the oracle read " + ps[i]);
+    t.isTrue(one > 0, "the oracle read \{ps[i]}");
     want = want + one;
   }
   // **Three suspensions and three resumptions, all re-entering one loop.** `i` and `total` are
@@ -232,12 +231,12 @@ export string test_two_machines_interleave_under_one_drain(Core core, Cli cli) {
     Ticket<i32> a1 = ticks(core, 2, log, 1);
     Ticket<i32> b1 = ticks(core, 2, log, 2);
     core.drain();
-    seen = seen + (trial == 0 ? "" : " ") + itoa(log[0]);
+    seen = seen + (trial == 0 ? "" : " ") + "\{log[0]}";
     if (log[0] != 1122 && log[0] != 2211) { interleaved = interleaved + 1; }
-    t.isTrue(a1.settled() && b1.settled(), "both machines finished in trial " + itoa(trial));
+    t.isTrue(a1.settled() && b1.settled(), "both machines finished in trial \{trial}");
   }
   t.isTrue(interleaved > 0,
-           "the two machines interleaved at least once in five runs — the logs were " + seen +
+           "the two machines interleaved at least once in five runs — the logs were \{seen}" +
            ", and 1122 or 2211 is one finishing before the other started. Never interleaving is "
            + "`issues/lang/0302b`");
 

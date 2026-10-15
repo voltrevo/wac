@@ -22,7 +22,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { roundTrip, acceptsDecimal, acceptsHex, toHex, fromHex, fromI64, fromU64, opBitLen,
          opIsZero } from "../probe.wac";
 
@@ -72,7 +71,7 @@ string randomHex(Rng rng, i32 bits) {
 /** The decimal a hex string names, with the oracle asked to confirm the two spell one number. */
 string decimalOf(Lines lines, string hexText) {
   string d = text(fromHex(b(hexText)));
-  lines.add("text fromhex " + hexText + " " + d);
+  lines.add("text fromhex \{hexText} \{d}");
   return d;
 }
 
@@ -80,8 +79,8 @@ export string test_decimal_small_values_round_trip(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
   for (i32 i = -1000; i <= 1000; i++) {
-    string v = itoa(i);
-    lines.add("text roundtrip " + v + " " + text(roundTrip(b(v))));
+    string v = "\{i}";
+    lines.add("text roundtrip \{v} \{text(roundTrip(b(v)))}");
   }
   checkDeno(t, cli, ORACLE, lines, "small values");
   return t.report();
@@ -112,8 +111,8 @@ export string test_decimal_limb_boundaries_round_trip(Core core, Cli cli) {
   for (i32 a = 0; a < anchors.len(); a++) {
     for (i32 d = -2; d <= 2; d++) {
       string v = addSmall(anchors[a], d);
-      lines.add("text roundtrip " + v + " " + text(roundTrip(b(v))));
-      lines.add("text roundtrip -" + v + " " + text(roundTrip(b("-" + v))));
+      lines.add("text roundtrip \{v} \{text(roundTrip(b(v)))}");
+      lines.add("text roundtrip -" + v + " " + text(roundTrip(b("-\{v}"))));
     }
   }
   checkDeno(t, cli, ORACLE, lines, "limb boundaries");
@@ -131,7 +130,7 @@ string powerOfTwoHex(i32 p) {
 }
 
 /** `d * 10^9`, as text — appending nine zeros, which needs no arithmetic. */
-string mulDecimalByTen9(string d) { return d + "000000000"; }
+string mulDecimalByTen9(string d) { return "\{d}000000000"; }
 
 /**
  * `d + n` for a small `n`, done on the decimal text.
@@ -156,7 +155,7 @@ string addSmall(string d, i32 n) {
   bool started = false;
   for (i32 i = 0; i < value.len(); i++) {
     if (value[i] != 0) { started = true; }
-    if (started) { out = out + itoa(value[i]); }
+    if (started) { out = out + "\{value[i]}"; }
   }
   return out == "" ? "0" : out;
 }
@@ -168,8 +167,8 @@ export string test_decimal_random_values_round_trip_across_sizes(Core core, Cli 
   for (i32 bits = 1; bits <= 600; bits++) {
     for (i32 trial = 0; trial < 3; trial++) {
       string mag = decimalOf(lines, randomHex(rng, bits));
-      string v = bit(rng) == 1 ? "-" + mag : mag;
-      lines.add("text roundtrip " + v + " " + text(roundTrip(b(v))));
+      string v = bit(rng) == 1 ? "-\{mag}" : mag;
+      lines.add("text roundtrip \{v} \{text(roundTrip(b(v)))}");
     }
   }
   checkDeno(t, cli, ORACLE, lines, "random values across sizes");
@@ -182,7 +181,7 @@ export string test_decimal_zero_has_one_spelling() {
   string[] zeros = ["0", "-0", "+0", "00", "-000", "0000000000000000000000"];
   for (i32 i = 0; i < zeros.len(); i++) {
     t.eqStr(text(roundTrip(b(zeros[i]))), "0", zeros[i]);
-    t.isTrue(opIsZero(b(zeros[i])), zeros[i] + ": not reported as zero");
+    t.isTrue(opIsZero(b(zeros[i])), "\{zeros[i]}: not reported as zero");
   }
   return t.report();
 }
@@ -193,7 +192,7 @@ export string test_decimal_leading_zeros_are_accepted_and_dropped() {
   for (i32 i = 0; i < 40; i++) { many = many + "0"; }
   t.eqStr(text(roundTrip(b("007"))), "7", "007");
   t.eqStr(text(roundTrip(b("-0000012345"))), "-12345", "-0000012345");
-  t.eqStr(text(roundTrip(b(many + "1"))), "1", "forty zeros and a one");
+  t.eqStr(text(roundTrip(b("\{many}1"))), "1", "forty zeros and a one");
   return t.report();
 }
 
@@ -204,7 +203,7 @@ export string test_decimal_malformed_input_is_rejected() {
     "1 2", " ", "١٢٣", "1_000"
   ];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.isFalse(acceptsDecimal(b(bad[i])), "accepted \"" + bad[i] + "\"");
+    t.isFalse(acceptsDecimal(b(bad[i])), "accepted \"\{bad[i]}\"");
   }
   return t.report();
 }
@@ -221,7 +220,7 @@ export string test_decimal_a_non_digit_in_a_later_chunk_is_rejected() {
   for (i32 p = 0; p < positions.len(); p++) {
     string s = "";
     for (i32 i = 0; i < 30; i++) { s = s + (i == positions[p] ? "x" : "1"); }
-    t.isFalse(acceptsDecimal(b(s)), "accepted a non-digit at index " + itoa(positions[p]));
+    t.isFalse(acceptsDecimal(b(s)), "accepted a non-digit at index \{positions[p]}");
   }
   return t.report();
 }
@@ -247,10 +246,10 @@ void hexBothWays(T t, Lines lines, string mag) {
   for (i32 s = 0; s < signs.len(); s++) {
     string v = mag == "0" ? "0" : signs[s] + mag;
     string got = text(toHex(b(v)));
-    lines.add("text tohex " + v + " " + got);
+    lines.add("text tohex \{v} \{got}");
     // And back, which is the direction that must undo the first exactly. Checked here rather than by
     // the oracle because it is a statement about this package composing with itself.
-    t.eqStr(text(fromHex(b(got))), v, "hex round trip of " + v);
+    t.eqStr(text(fromHex(b(got))), v, "hex round trip of \{v}");
   }
 }
 
@@ -263,7 +262,7 @@ export string test_hex_prefix_case_and_malformed_input() {
   }
   string[] bad = ["", "-", "0x", "-0x", "g", "0xg", "ff.0", "0x 1"];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.isFalse(acceptsHex(b(bad[i])), "accepted \"" + bad[i] + "\"");
+    t.isFalse(acceptsHex(b(bad[i])), "accepted \"\{bad[i]}\"");
   }
   return t.report();
 }
@@ -288,8 +287,8 @@ export string test_from_i64_and_from_u64_cover_the_extremes(Core core, Cli cli) 
   ];
   for (i32 i = 0; i < signed.len(); i++) {
     string got = text(fromI64(signed[i]));
-    lines.add("text roundtrip " + got + " " + got);
-    t.eqStr(got, itoa64Local(signed[i]), "fromI64 of a value this file can also spell");
+    lines.add("text roundtrip \{got} \{got}");
+    t.eqStr(got, "\{signed[i]}", "fromI64 of a value this file can also spell");
   }
   u64[] unsigned = [0, 1, 0xFFFFFFFF, 0x100000000, 0x8000000000000000, 0xFFFFFFFFFFFFFFFF];
   string[] wanted = [
@@ -301,22 +300,6 @@ export string test_from_i64_and_from_u64_cover_the_extremes(Core core, Cli cli) 
   }
   checkDeno(t, cli, ORACLE, lines, "the i64 constructor");
   return t.report();
-}
-
-/** Decimal for an i64, written here so the check above is not `fromI64` agreeing with itself. */
-string itoa64Local(i64 v) {
-  if (v == 0) { return "0"; }
-  bool neg = v < 0;
-  string out = "";
-  i64 x = v;
-  // The most negative value has no positive counterpart, so the digits come off the negative side.
-  if (!neg) { x = -x; }
-  while (x != 0) {
-    i32 d = (-(x % 10)) as~ i32;
-    out = itoa(d) + out;
-    x = x / 10;
-  }
-  return neg ? "-" + out : out;
 }
 
 export string test_bit_len_matches_bigint(Core core, Cli cli) {
@@ -333,8 +316,8 @@ export string test_bit_len_matches_bigint(Core core, Cli cli) {
 }
 
 void bitLenBothWays(Lines lines, string mag) {
-  lines.add("text bitlen " + mag + " " + itoa(opBitLen(mag.toBytes())));
+  lines.add("text bitlen \{mag} \{opBitLen(mag.toBytes())}");
   if (mag != "0") {
-    lines.add("text bitlen -" + mag + " " + itoa(opBitLen(("-" + mag).toBytes())));
+    lines.add("text bitlen -\{mag} \{opBitLen("-\{mag}".toBytes())}");
   }
 }

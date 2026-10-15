@@ -50,12 +50,11 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, FileResult, Pending, execReason} from "std";
 import { contains, startsWith, trimmed, splitLines } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram, writeIfDifferent } from "../../../wactest/src/built.wac";
 import { traceSite, describeSite } from "../../../wactest/src/tracesite.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
-string binary(Cli cli) { return root(cli) + "/native/v8/target/release/wac"; }
+string binary(Cli cli) { return "\{root(cli)}/native/v8/target/release/wac"; }
 
 /**
  * Structured secrets, not random ones: a leak shows at the extremes first.
@@ -84,8 +83,8 @@ i32[] block16() {
 
 string literal(i32[] v) {
   string out = "[";
-  for (i32 i = 0; i < v.len(); i++) { out = out + (i > 0 ? ", " : "") + itoa(v[i]); }
-  return out + "] as u8[]";
+  for (i32 i = 0; i < v.len(); i++) { out = out + (i > 0 ? ", " : "") + "\{v[i]}"; }
+  return "\{out}] as u8[]";
 }
 
 /**
@@ -98,7 +97,7 @@ string literal(i32[] v) {
  * its bytes change.
  */
 string scratchDir(Cli cli, string name) {
-  string dir = root(cli) + "/.cache/ct-" + name;
+  string dir = "\{root(cli)}/.cache/ct-\{name}";
   cli.mkdir(dir, true).wait();
   return dir;
 }
@@ -116,9 +115,9 @@ string driver(T t, Cli cli, string dir, string name, string src, string body, i3
   }
   string call = at < 0 ? body
                        : body.slice(0, at) + literal(key) + body.slice(at + 4, body.len());
-  string program = "import { " + name + " } from \"../../" + src + "\";\n" +
+  string program = "import { \{name} } from \"../../\{src}\";\n" +
                    "export i32 main() {\n" +
-                   "  return " + call + ".len();\n" +
+                   "  return \{call}.len();\n" +
                    "}\n";
   return program;
 }
@@ -144,14 +143,14 @@ string driver(T t, Cli cli, string dir, string name, string src, string body, i3
  * where the leak it used to have needed nothing.
  */
 string builtDriver(T t, Cli cli, string dir, string label, string tag, string program, i32 slots) {
-  string entry = dir + "/" + tag + ".wac";
-  t.isTrue(writeIfDifferent(cli, entry, program.toBytes()), tag + ": writing the driver");
-  string mod = builtProgram(cli, entry, "ct-" + label + "-" + tag,
+  string entry = "\{dir}/\{tag}.wac";
+  t.isTrue(writeIfDifferent(cli, entry, program.toBytes()), "\{tag}: writing the driver");
+  string mod = builtProgram(cli, entry, "ct-\{label}-\{tag}",
                             slots > 0
-                              ? ["--trace", "--trace-slots", itoa(slots), "--quiet"]
+                              ? ["--trace", "--trace-slots", "\{slots}", "--quiet"]
                               : ["--trace", "--quiet"]);
   if (!cli.stat(mod).wait().exists) {
-    t.fail(tag + ": the traced build produced nothing — see " + mod);
+    t.fail("\{tag}: the traced build produced nothing — see \{mod}");
     return "";
   }
   return mod.slice(0, mod.len() - 5);
@@ -160,15 +159,15 @@ string builtDriver(T t, Cli cli, string dir, string label, string tag, string pr
 
 /** `wac ctcompare`, started. Every comparison of one routine is against the same first module. */
 Pending<Exec> submitCompare(Cli cli, string a, string b, bool all) {
-  string[] argv = all ? ["ctcompare", "--all", a + ".wasm", b + ".wasm"]
-                      : ["ctcompare", a + ".wasm", b + ".wasm"];
+  string[] argv = all ? ["ctcompare", "--all", "\{a}.wasm", "\{b}.wasm"]
+                      : ["ctcompare", "\{a}.wasm", "\{b}.wasm"];
   return cli.exec(binary(cli), argv, u8[]());
 }
 
 /** Its whole answer, trimmed. */
 string collected(T t, Pending<Exec> p) {
   Exec r = p.wait();
-  t.isTrue(r.ran() && r.status == 0, "ctcompare ran — " + execReason(r));
+  t.isTrue(r.ran() && r.status == 0, "ctcompare ran — \{execReason(r)}");
   return (r.ran() && r.status == 0) ? trimmed(string.fromBytes(r.stdout)) : "<did not run>";
 }
 
@@ -242,7 +241,7 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
   // are what still run every time, and they are what this test is about.
   string[] stems = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) {
-    stems[i] = builtDriver(t, cli, dir, label, "k" + itoa(i),
+    stems[i] = builtDriver(t, cli, dir, label, "k\{i}",
                            driver(t, cli, dir, name, src, body, keyOf(which[i], len)), slots);
   }
   if (stems[0] == "") { return; }
@@ -257,14 +256,14 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
     if (stems[i] == "") { continue; }
     string said = collected(t, cmps[i]);
     t.isTrue(startsWith(said, "same "),
-             label + ": behaviour depends on the secret — #0 against #" + itoa(i) + ": " + said +
+             label + ": behaviour depends on the secret — #0 against #\{i}: " + said +
              (startsWith(said, "differs ") ? " at " + siteAt(cli, stems[0], numberOf(word(said, 2))) : ""));
     // **Only when it says `same`.** This used to be one assertion with the check above, so a
     // `differs` answer failed twice — once correctly, and once claiming the call never happened. The
     // empty-journal case it is really for is `same 0`: two routines that never ran agree perfectly.
     if (startsWith(said, "same ")) {
       t.isTrue(numberOf(word(said, 1)) > 0,
-               label + ": recorded no events at all — did the call actually happen? " + said);
+               "\{label}: recorded no events at all — did the call actually happen? \{said}");
     }
   }
 }
@@ -286,7 +285,7 @@ export string test_chacha20s_block_function_does_not_vary_with_the_key(Core core
 export string test_poly1305_does_not_vary_with_the_key(Core core, Cli cli) {
   T t = T.create();
   noSecretDependence(t, cli, "poly1305", "packages/crypto/src/poly1305.wac", "poly1305",
-                     "poly1305($KEY, " + literal(block16()) + ")", [0, 1, 2, 3] as i32[], 32, 0);
+                     "poly1305($KEY, \{literal(block16())})", [0, 1, 2, 3] as i32[], 32, 0);
   return t.report();
 }
 
@@ -313,7 +312,7 @@ export string test_ed25519_signing_does_not_vary_with_the_secret_key(Core core, 
   // than agreeing, which is the whole reason that answer is not a pass.
   T t = T.create();
   noSecretDependence(t, cli, "ed25519", "packages/crypto/src/ed25519.wac", "ed25519Sign",
-                     "ed25519Sign($KEY, " + literal(block16()) + ")", [0, 1, 2, 3] as i32[], 32,
+                     "ed25519Sign($KEY, \{literal(block16())})", [0, 1, 2, 3] as i32[], 32,
                      16777216);
   return t.report();
 }
@@ -393,11 +392,11 @@ export string test_ml_kem_decapsulation_does_not_reveal_whether_the_ciphertext_w
   string said = compared(t, cli, a, b, false);
   t.isTrue(startsWith(said, "same "),
            "a valid and an invalid ciphertext are distinguishable: " + said +
-           (startsWith(said, "differs ") ? " at " + siteAt(cli, a, numberOf(word(said, 2))) : ""));
+           (startsWith(said, "differs ") ? " at \{siteAt(cli, a, numberOf(word(said, 2)))}" : ""));
   // `truncated` is not a pass here any more than anywhere else, and the count is the evidence the
   // programs ran at all: two empty journals agree perfectly.
   if (startsWith(said, "same ")) {
-    t.isTrue(numberOf(word(said, 1)) > 0, "no events recorded — did decapsulation happen? " + said);
+    t.isTrue(numberOf(word(said, 1)) > 0, "no events recorded — did decapsulation happen? \{said}");
   }
   return t.report();
 }
@@ -417,7 +416,7 @@ export string test_ghash_does_not_vary_with_the_authentication_key(Core core, Cl
   // of the two halves of GCM no longer branches on its key.
   T t = T.create();
   noSecretDependence(t, cli, "ghash", "packages/crypto/src/ghash.wac", "ghash",
-                     "ghash($KEY, " + literal(block16()) + ")", [0, 1, 2, 3] as i32[], 16, 0);
+                     "ghash($KEY, \{literal(block16())})", [0, 1, 2, 3] as i32[], 16, 0);
   return t.report();
 }
 
@@ -429,7 +428,7 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
   T t = T.create();
   string dir = scratchDir(cli, "aes");
   const string SRC = "packages/crypto/src/aes.wac";
-  string call = "aesEncrypt($KEY, " + literal(block16()) + ")";
+  string call = "aesEncrypt($KEY, \{literal(block16())})";
   string[] ab = pair(t, cli, dir, "aesEncrypt",
                      driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(0, 16)),
                      driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(1, 16)));
@@ -439,7 +438,7 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
 
   string said = compared(t, cli, a, b, false);
   t.isTrue(startsWith(said, "differs "),
-           "aes no longer leaks — update the README and delete this test: " + said);
+           "aes no longer leaks — update the README and delete this test: \{said}");
   if (!startsWith(said, "differs ")) { cli.remove(dir, true).wait(); return t.report(); }
 
   // The point of the whole exercise: this one has no branch to find. Counting branches reports AES's
@@ -447,7 +446,7 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
   // indices — which `--all` reports as `site` and a branch leak reports as `split`.
   string all = compared(t, cli, a, b, true);
   t.isTrue(startsWith(all, "site "),
-           "expected an index leak, got: " + all + " — " + siteAt(cli, a, numberOf(word(said, 2))));
+           "expected an index leak, got: \{all} — \{siteAt(cli, a, numberOf(word(said, 2)))}");
 
   // The README names these lines. Asserting them here is what stops the table drifting away from the
   // code — a published measurement nothing checks is the failure this package already has an issue
@@ -465,9 +464,9 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
   // which is a stronger claim than the one the split allowed.
   i32[] lines = [129, 130, 131, 132, 165];
   for (i32 i = 0; i < lines.len(); i++) {
-    string want = "index@packages/crypto/src/aes.wac:" + itoa(lines[i]);
+    string want = "index@packages/crypto/src/aes.wac:\{lines[i]}";
     t.isTrue(contains(found, want),
-             "README says " + want + " leaks; the trace no longer agrees. found: " + found);
+             "README says \{want} leaks; the trace no longer agrees. found: \{found}");
   }
   return t.report();
 }

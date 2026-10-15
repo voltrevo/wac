@@ -14,7 +14,6 @@
 // Five cases stay live at the bottom as the drift canary.
 
 import { Cli, Core, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { operandCases, operandFixtures } from "./cases.wac";
 import { Loaded, Ran, layFixtures, load, runCase, show, trimmed } from "./replay.wac";
@@ -22,7 +21,7 @@ import { Loaded, Ran, layFixtures, load, runCase, show, trimmed } from "./replay
 string vectorsPath() { return "packages/box/test/operand-vectors.txt"; }
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-operands"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-operands"; }
 
 /**
  * Cases the shell answers instead of the applet, by name and with the reason.
@@ -54,7 +53,7 @@ export string test_an_operand_error_says_what_the_real_tool_says(Core core, Cli 
     if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
     if (shadowedByBuiltin(list[i])) { continue; }
     if (!layFixtures(cli, dir, operandFixtures())) {
-      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
     Ran r = runCase(core, cli, dir, list[i]);
@@ -63,11 +62,11 @@ export string test_an_operand_error_says_what_the_real_tool_says(Core core, Cli 
         r.status != v.items[i].status) {
       wrong = wrong + 1;
       if (wrong <= 5) {
-        detail = detail + "\n  $ " + list[i] +
-                 "\n    GNU  " + show(trimmed(v.items[i].err)) + " out " + show(v.items[i].out) +
-                 " exit " + itoa(v.items[i].status) +
-                 "\n    ours " + show(trimmed(r.err)) + " out " + show(r.out) +
-                 " exit " + itoa(r.status);
+        detail = detail + "\n  $ \{list[i]}" +
+                 "\n    GNU  \{show(trimmed(v.items[i].err))} out \{show(v.items[i].out)}" +
+                 " exit \{v.items[i].status}" +
+                 "\n    ours \{show(trimmed(r.err))} out \{show(r.out)}" +
+                 " exit \{r.status}";
       }
     }
   }
@@ -76,13 +75,13 @@ export string test_an_operand_error_says_what_the_real_tool_says(Core core, Cli 
   // Two short of the list, and both are named: `mkdir` and `rm` are answered by shell builtins rather
   // than by the applets — `issues/system/0201`. A bare `ran == list.len()` would have to be relaxed
   // silently.
-  t.eqI32(ran, list.len() - 2, "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+  t.eqI32(ran, list.len() - 2, "not every case replayed — \{list.len()} cases, \{v.n}" +
                                " vectors, and two skipped for issues/system/0201");
-  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded invocation — `cases.wac` " +
+  t.eqI32(unknown, 0, "\{unknown} cases do not match the recorded invocation — `cases.wac` " +
                       "changed, so `wac run --allow-read --allow-write --allow-run " +
                       "tools/wac/appletvectors.wac` is what makes this file mean anything again");
-  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " operand errors differ from the captured tools (" +
-                    v.oracle + ")" + detail);
+  t.eqI32(wrong, 0, "\{wrong} of \{ran} operand errors differ from the captured tools (" +
+                    "\{v.oracle})\{detail}");
   return t.report();
 }
 
@@ -96,33 +95,33 @@ export string test_the_live_tools_still_refuse_the_same_way(Core core, Cli cli) 
     i32 i = (k * list.len()) / 5;
     if (shadowedByBuiltin(list[i])) { continue; }
     if (!layFixtures(cli, dir, operandFixtures())) {
-      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
     Exec want = cli.exec("env",
                          [
                                   "-i",
                                   "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                                  "LC_ALL=C", "HOME=" + dir,
+                                  "LC_ALL=C", "HOME=\{dir}",
                                   "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
                                   "bash", dir, list[i]
                          ],
                          u8[]()).wait();
     if (!want.ran()) {
-      t.isTrue(checked > 0, "bash would not start: " + want.error);
+      t.isTrue(checked > 0, "bash would not start: \{want.error}");
       return t.report();
     }
     if (!layFixtures(cli, dir, operandFixtures())) {
-      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
     Ran ours = runCase(core, cli, dir, list[i]);
     checked = checked + 1;
     t.eqStr(trimmed(ours.err), trimmed(string.fromBytes(want.stderr)),
-            "the live tool refuses differently: $ " + list[i]);
-    t.eqI32(ours.status, want.status, "the live tool's status differs: $ " + list[i]);
+            "the live tool refuses differently: $ \{list[i]}");
+    t.eqI32(ours.status, want.status, "the live tool's status differs: $ \{list[i]}");
   }
   cli.remove(dir, true).wait();
-  t.isTrue(checked >= 4, "not every canary ran: " + itoa(checked));
+  t.isTrue(checked >= 4, "not every canary ran: \{checked}");
   return t.report();
 }

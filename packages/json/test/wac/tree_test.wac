@@ -21,7 +21,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { ftoa } from "../../../fmt/src/ftoa.wac";
 import { parse, stringify } from "../../src/json.wac";
 import { JsonValue, JsonArray, JsonObject, JsonMember } from "../../src/value.wac";
@@ -47,7 +46,7 @@ export string test_every_kind_arrives_with_the_right_tag() {
   string[] tags = ["Null", "Bool", "Number", "Str", "Array", "Object"];
   for (i32 i = 0; i < docs.len(); i++) {
     JsonValue? v = parse(docs[i].toBytes());
-    t.isTrue(!(v is null), docs[i] + " did not parse");
+    t.isTrue(!(v is null), "\{docs[i]} did not parse");
     if (!(v is null)) { t.eqStr(tagOf(v!), tags[i], docs[i]); }
   }
   return t.report();
@@ -57,7 +56,7 @@ export string test_a_document_that_is_not_json_parses_as_null() {
   T t = T.create();
   string[] bad = ["", "{", "[1,]", "tru", "{\"a\"}", "1 2"];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.isTrue(parse(bad[i].toBytes()) is null, "\"" + bad[i] + "\" should not have parsed");
+    t.isTrue(parse(bad[i].toBytes()) is null, "\"\{bad[i]}\" should not have parsed");
   }
   return t.report();
 }
@@ -157,7 +156,7 @@ export string test_a_tree_handed_back_serializes_to_what_it_came_from() {
   ];
   for (i32 i = 0; i < docs.len(); i++) {
     JsonValue? v = parse(docs[i].toBytes());
-    t.isTrue(!(v is null), docs[i] + " did not parse");
+    t.isTrue(!(v is null), "\{docs[i]} did not parse");
     if (!(v is null)) { t.eqStr(string.fromBytes(stringify(v!)), docs[i], docs[i]); }
   }
   return t.report();
@@ -186,9 +185,9 @@ export string test_the_tree_walks_to_the_same_data_the_host_produces(Core core, 
   Lines lines = Lines.create();
   for (i32 i = 0; i < docs.len(); i++) {
     JsonValue? v = parse(docs[i].toBytes());
-    t.isTrue(!(v is null), docs[i] + " did not parse");
+    t.isTrue(!(v is null), "\{docs[i]} did not parse");
     if (v is null) { continue; }
-    lines.add("restringify " + hex(docs[i].toBytes()) + " " + hex(walk(v!).toBytes()));
+    lines.add("restringify \{hex(docs[i].toBytes())} \{hex(walk(v!).toBytes())}");
   }
   t.eqI32(lines.n, docs.len(), "every document was walked");
   checkDeno(t, cli, ORACLE, lines, "the walked tree");
@@ -214,7 +213,7 @@ string walk(JsonValue v) {
       for (i32 i = 0; i < items.len(); i++) {
         out = out + (i == 0 ? "" : ",") + walk(items.get(i));
       }
-      return out + "]";
+      return "\{out}]";
     }
     Object(members): {
       // Last wins, which is what `JSON.parse` does with a duplicate key. The tree keeps both members,
@@ -227,7 +226,7 @@ string walk(JsonValue v) {
               walk(members.at(i).value);
         written = written + 1;
       }
-      return out + "}";
+      return "\{out}}";
     }
   }
 }
@@ -263,10 +262,10 @@ string quoted(u8[] bytes) {
     else if (c == 10) { out = out + "\\n"; }
     else if (c == 12) { out = out + "\\f"; }
     else if (c == 13) { out = out + "\\r"; }
-    else if (c < 0x20) { out = out + "\\u00" + twoHex(c); }
+    else if (c < 0x20) { out = out + "\\u00\{twoHex(c)}"; }
     else { out = out + oneByte(c); }
   }
-  return out + "\"";
+  return "\{out}\"";
 }
 
 string twoHex(i32 c) {

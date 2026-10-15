@@ -29,8 +29,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Socket } from "std";
 import { Server, ask, firstHeard, handshake, heardCount, receiveWithin, startServer,
          stopServer } from "./peer.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { ackPacket, applicationPacketNumber, clientFinishedPacket, closeCodeIn, flight,
          lostThenResent, openApplication, resendAfterAckIsEmpty, streamBytes, streamFinished,
@@ -197,7 +195,7 @@ export string test_an_acknowledgement_the_server_accepts(Core core, Cli cli) {
     t.fail("the connection did not outlive the acknowledgement: heard " +
            s.file(cli, "streams.json") + ". " +
            (code >= 0
-              ? "The server closed with transport error " + itoa64(code) + ". 0xa (10) is " +
+              ? "The server closed with transport error \{code}. 0xa (10) is " +
                 "PROTOCOL_VIOLATION, which an over-generous or malformed ACK provokes — so this is " +
                 "the ACK rather than the streams, and the test above shows a stream arriving alone."
               : "The server sent no CONNECTION_CLOSE, so it did not refuse anything — it never " +
@@ -298,8 +296,8 @@ export string test_an_ack_past_what_the_server_sent_is_refused(Core core, Cli cl
            "either way the CONNECTION_CLOSE the test above relies on did not arrive, and that test " +
            "cannot tell a refusal from a silence any more");
   if (code >= 0) {
-    t.eqStr(itoa64(code), "10",
-            "the close carried transport error " + itoa64(code) + " rather than PROTOCOL_VIOLATION");
+    t.eqStr("\{code}", "10",
+            "the close carried transport error \{code} rather than PROTOCOL_VIOLATION");
   }
 
   done(cli, sock, s);

@@ -30,7 +30,7 @@ import { Fs } from "../../../fs/src/fs.wac";
 import { Ran } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-grants"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-grants"; }
 
 /** One applet, in a frame holding exactly `g` and nothing more. */
 Ran runGranted(Core core, Cli cli, string dir, string[] argv, Grants g) {
@@ -50,20 +50,20 @@ Ran runGranted(Core core, Cli cli, string dir, string[] argv, Grants g) {
 export string test_a_denied_read_says_why(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string path = dir + "/readable";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string path = "\{dir}/readable";
   t.isTrue(cli.writeFile(path, "alpha beta\n".toBytes()).wait().ok(), "wrote a readable file");
 
   // **The control comes first**, and it is not decoration: it says the file is there and `cat` works,
   // so the refusal below is about the grant and not about the fixture or the applet.
   Ran granted = runGranted(core, cli, dir, ["cat", path], Grants.everything());
-  t.eqI32(granted.status, 0, "cat with the grant: " + granted.err);
+  t.eqI32(granted.status, 0, "cat with the grant: \{granted.err}");
   t.eqStr(granted.out, "alpha beta\n", "and it reads the file");
 
   Ran denied = runGranted(core, cli, dir, ["cat", path], Grants.nothing());
   t.eqI32(denied.status, 1, "cat without the read grant fails");
   t.isTrue(denied.err.indexOf("Not granted to this application") >= 0, denied.err);
-  t.eqI32(denied.outBytes.len(), 0, "and writes nothing: " + denied.out);
+  t.eqI32(denied.outBytes.len(), 0, "and writes nothing: \{denied.out}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -80,13 +80,13 @@ export string test_a_denied_read_says_why(Core core, Cli cli) {
 export string test_rm_f_without_the_write_grant_is_a_denial(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string doomed = dir + "/doomed";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string doomed = "\{dir}/doomed";
   t.isTrue(cli.writeFile(doomed, "x".toBytes()).wait().ok(), "wrote the file");
 
   Grants readOnly = Grants(true, false, true);
   Ran denied = runGranted(core, cli, dir, ["rm", "-f", doomed], readOnly);
-  t.eqI32(denied.status, 1, "no write grant is denial, not silence: " + denied.err);
+  t.eqI32(denied.status, 1, "no write grant is denial, not silence: \{denied.err}");
   t.isTrue(cli.stat(doomed).wait().exists, "and the file is still there");
 
   // With the grant it goes, so the refusal above is the grant talking and not `rm` being broken.
@@ -112,12 +112,12 @@ export string test_rm_f_without_the_write_grant_is_a_denial(Core core, Cli cli) 
 export string test_without_the_write_grant_nothing_is_made(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string wanted = dir + "/denied";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string wanted = "\{dir}/denied";
 
   Grants readOnly = Grants(true, false, true);
   Ran denied = runGranted(core, cli, dir, ["mkdir", wanted], readOnly);
-  t.eqI32(denied.status, 1, "mkdir without the grant should fail: " + denied.err);
+  t.eqI32(denied.status, 1, "mkdir without the grant should fail: \{denied.err}");
   t.isFalse(cli.stat(wanted).wait().exists, "and should make nothing");
 
   // The control: the same command with the grant does make it, so the refusal is the grant talking.

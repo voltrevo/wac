@@ -18,7 +18,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { dcidLen, packetType, parseOk, version } from "./packet_probe.wac";
 import { anInitial } from "./minted.wac";
 import { ask } from "./peer.wac";
@@ -37,7 +36,7 @@ import { ask } from "./peer.wac";
 u8[] aGreasedReply(T t, Core core, Cli cli, string name, u8[] initial) {
   u8[] last = u8[]();
   for (i32 i = 0; i < 15; i++) {
-    u8[] reply = ask(t, core, cli, name + "-" + itoa(i), initial, 5000);
+    u8[] reply = ask(t, core, cli, "\{name}-\{i}", initial, 5000);
     if (reply.len() == 0) { return u8[](); }
     last = reply;
     if ((reply[0] & 0x40) == 0) { return reply; }

@@ -9,7 +9,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { gzipFixed } from "../../src/gzip.wac";
 import { External, gunzip, roundTrip } from "./external.wac";
 
@@ -99,7 +98,7 @@ export string test_gunzip_returns_the_input_bytes(Core core, Cli cli) {
   T t = T.create();
   u8[] input = repeated("interoperability check ", 20);
   External out = gunzip(cli, gzipFixed(input));
-  t.isTrue(out.ok(), "gunzip accepted the stream: " + out.error);
+  t.isTrue(out.ok(), "gunzip accepted the stream: \{out.error}");
   if (!out.ok()) { return t.report(); }
   t.eqI32(out.bytes.len(), input.len(), "and gave back as many bytes as went in");
   t.eqStr(string.fromBytes(out.bytes), string.fromBytes(input), "byte for byte");

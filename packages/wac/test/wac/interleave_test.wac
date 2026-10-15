@@ -23,7 +23,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 static string PROBE = "packages/wac/test/wac/interleave_probe.wac";
 
@@ -46,13 +45,13 @@ export string test_a_launched_programs_error_output_lands_between_the_lines_it_w
 
   // `2>&1` is the whole point: one destination, so the relative order of the two streams is a fact
   // about the run rather than about which field the harness looked at first.
-  string cmd = "'" + binaryPath(cli) + "' '" + mod + "' 2>&1";
+  string cmd = "'\{binaryPath(cli)}' '\{mod}' 2>&1";
   for (i32 i = 0; i < RUNS; i++) {
     Exec r = cli.exec("/bin/sh", ["-c", cmd], u8[]()).wait();
-    t.isTrue(r.ran(), "run " + itoa(i) + " started — " + r.error);
+    t.isTrue(r.ran(), "run \{i} started — \{r.error}");
     if (!r.ran()) { continue; }
     t.eqStr(string.fromBytes(r.stdout), "one\nmid\ntwo\n",
-            "run " + itoa(i) + ": the diagnostic is between the two lines it was written between");
+            "run \{i}: the diagnostic is between the two lines it was written between");
   }
   return t.report();
 }

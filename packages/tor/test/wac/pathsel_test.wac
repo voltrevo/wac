@@ -9,7 +9,6 @@
 // a wrong path selection builds a working circuit with the anonymity quietly removed.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   weightedChoice, weightedBandwidths, positionWeight, pathAllows, sameSubnet16, choose,
   positionGuard, positionMiddle, positionExit, portPermitted,
@@ -76,7 +75,7 @@ export string test_a_zero_weight_relay_is_never_returned() {
   i64[] w = [0, 5, 0, 0, 11, 0];
   for (i64 r = 0; r < 16; r++) {
     i32 i = weightedChoice(w, r);
-    t.isTrue(w[i] > 0, "index " + itoa64(i as i64) + " has a non-zero weight");
+    t.isTrue(w[i] > 0, "index \{i as i64} has a non-zero weight");
   }
   return t.report();
 }
@@ -324,7 +323,7 @@ export string test_a_reject_policy_permits_everything_it_does_not_list() {
   i32[] r = [80, 80, 443, 443, 8000, 8100];
   for (i32 p = 1; p < 9000; p += 7) {
     t.isTrue(portPermitted(true, r, p) != portPermitted(false, r, p),
-             "accept and reject disagree at every port, including " + itoa64(p as i64));
+             "accept and reject disagree at every port, including \{p as i64}");
   }
   t.isTrue(!portPermitted(false, r, 80), "reject 80 refuses 80");
   t.isTrue(portPermitted(false, r, 22), "and permits 22");
@@ -394,8 +393,8 @@ export string test_a_family_named_by_fingerprint_resolves() {
   for (i32 i = 0; i < 20; i++) { a.identity[i] = i as@ u8; }
   for (i32 i = 0; i < 20; i++) { b.identity[i] = (100 + i) as@ u8; }
   // A consensus writes `$FINGERPRINT`, sometimes with `=name` or `~name` after it.
-  a.family = ["$" + hexOf(b.identity) + "=beta"];
-  b.family = ["$" + hexOf(a.identity)];
+  a.family = ["$\{hexOf(b.identity)}=beta"];
+  b.family = ["$\{hexOf(a.identity)}"];
   Relay[] r = [a, b];
 
   Families f = resolveFamilies(r);

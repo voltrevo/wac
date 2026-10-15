@@ -21,7 +21,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, askDeno, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { keccak256 } from "../../../crypto/src/keccak.wac";
 import { AccountProof, StorageProof, accountAt, storageAt, emptyStorageRoot,
@@ -123,7 +122,7 @@ string storageTrieLine() {
     pairs = pairs + (i == 0 ? "" : ",") + hex(keccak256(word32(keys[i]))) + ":" +
             hex(rlpBytes(minimal(values[i])));
   }
-  return "trie storage " + pairs;
+  return "trie storage \{pairs}";
 }
 
 u8[] contractCodeHash() { return keccak256([0x60, 0x60] as u8[]); }
@@ -139,7 +138,7 @@ string stateTrieLine(u8[] storageRoot) {
   for (i32 i = 0; i < 3; i++) {
     pairs = pairs + (i == 0 ? "" : ",") + hex(keccak256(address(i + 1))) + ":" + hex(values[i]);
   }
-  return "trie state " + pairs;
+  return "trie state \{pairs}";
 }
 
 /** The comma-separated node list of a `proof` answer, as bytes. */
@@ -184,11 +183,11 @@ World world(T t, Cli cli) {
   first.add(storageTrieLine());
   i32[] keys = slotKeys();
   for (i32 i = 0; i < keys.len(); i++) {
-    first.add("proof storage " + hex(keccak256(word32(keys[i]))));
+    first.add("proof storage \{hex(keccak256(word32(keys[i])))}");
   }
   i32[] absent = [2, 3, 999, 1000000];
   for (i32 i = 0; i < absent.len(); i++) {
-    first.add("proof storage " + hex(keccak256(word32(absent[i]))));
+    first.add("proof storage \{hex(keccak256(word32(absent[i])))}");
   }
   Answers storage = askDeno(t, cli, ORACLE, first, "the storage trie");
   if (!storage.ok) { return none; }
@@ -196,19 +195,19 @@ World world(T t, Cli cli) {
 
   Lines second = Lines.create();
   second.add(stateTrieLine(storageRoot));
-  for (i32 i = 1; i <= 3; i++) { second.add("proof state " + hex(keccak256(address(i)))); }
-  second.add("proof state " + hex(keccak256(address(99))));
+  for (i32 i = 1; i <= 3; i++) { second.add("proof state \{hex(keccak256(address(i)))}"); }
+  second.add("proof state \{hex(keccak256(address(99)))}");
   Answers state = askDeno(t, cli, ORACLE, second, "the state trie");
   if (!state.ok) { return none; }
   return World(true, decoded(word(state.find("root", "state"), 2)), storageRoot, state, storage);
 }
 
 u8[][] stateProof(World w, i32 n) {
-  return nodesOf(w.state.find("proof", "state " + hex(keccak256(address(n)))));
+  return nodesOf(w.state.find("proof", "state \{hex(keccak256(address(n)))}"));
 }
 
 u8[][] storageProof(World w, i32 slot) {
-  return nodesOf(w.storage.find("proof", "storage " + hex(keccak256(word32(slot)))));
+  return nodesOf(w.storage.find("proof", "storage \{hex(keccak256(word32(slot)))}"));
 }
 
 // ── The tests ─────────────────────────────────────────────────────────────────
@@ -256,7 +255,7 @@ export string test_an_address_the_state_has_never_seen_is_proved_absent(Core cor
   World w = world(t, cli);
   if (!w.ok) { return t.report(); }
   AccountProof got = accountAt(w.stateRoot, address(99), stateProof(w, 99));
-  t.isTrue(got.ok, "absence should verify — " + got.error);
+  t.isTrue(got.ok, "absence should verify — \{got.error}");
   t.isFalse(got.present, "there is no such account");
   return t.report();
 }
@@ -276,9 +275,9 @@ export string test_a_slot_is_read_out_of_the_storage_trie_under_the_root_the_acc
   i32[] values = slotValues();
   for (i32 i = 0; i < keys.len(); i++) {
     StorageProof got = storageAt(acct.account.storageRoot, word32(keys[i]), storageProof(w, keys[i]));
-    t.isTrue(got.ok, "slot " + itoa(keys[i]) + ": " + got.error);
-    t.isTrue(got.present, "slot " + itoa(keys[i]) + ": reported absent");
-    t.eqStr(hex(got.value), hex(minimal(values[i])), "slot " + itoa(keys[i]) + ": value");
+    t.isTrue(got.ok, "slot \{keys[i]}: \{got.error}");
+    t.isTrue(got.present, "slot \{keys[i]}: reported absent");
+    t.eqStr(hex(got.value), hex(minimal(values[i])), "slot \{keys[i]}: value");
   }
   return t.report();
 }
@@ -297,9 +296,9 @@ export string test_a_slot_that_was_never_written_is_absent_which_is_how_zero_is_
   for (i32 i = 0; i < absent.len(); i++) {
     StorageProof got = storageAt(acct.account.storageRoot, word32(absent[i]),
                                  storageProof(w, absent[i]));
-    t.isTrue(got.ok, "slot " + itoa(absent[i]) + ": absence should verify — " + got.error);
-    t.isFalse(got.present, "slot " + itoa(absent[i]) + ": reported present with " + hex(got.value));
-    t.eqStr(hex(got.value), "", "slot " + itoa(absent[i]) + ": an absent slot has no value");
+    t.isTrue(got.ok, "slot \{absent[i]}: absence should verify — \{got.error}");
+    t.isFalse(got.present, "slot \{absent[i]}: reported present with \{hex(got.value)}");
+    t.eqStr(hex(got.value), "", "slot \{absent[i]}: an absent slot has no value");
   }
   return t.report();
 }
@@ -315,7 +314,7 @@ export string test_an_account_with_no_storage_refuses_a_storage_proof_from_anoth
   AccountProof eoa = accountAt(w.stateRoot, address(1), stateProof(w, 1));
   t.eqStr(hex(eoa.account.storageRoot), hex(emptyStorageRoot()), "account 1 has no storage");
   StorageProof got = storageAt(eoa.account.storageRoot, word32(0), storageProof(w, 0));
-  t.isFalse(got.ok, "a foreign storage proof was accepted: " + hex(got.value));
+  t.isFalse(got.ok, "a foreign storage proof was accepted: \{hex(got.value)}");
   return t.report();
 }
 
@@ -345,17 +344,17 @@ export string test_the_accounts_own_bytes_are_checked_not_just_the_path_to_them(
   Lines lines = Lines.create();
   string key = hex(keccak256(address(5)));
   for (i32 i = 0; i < what.len(); i++) {
-    lines.add("trie bad" + itoa(i) + " " + key + ":" + hex(values[i]));
-    lines.add("proof bad" + itoa(i) + " " + key);
+    lines.add("trie bad\{i} \{key}:\{hex(values[i])}");
+    lines.add("proof bad\{i} \{key}");
   }
   Answers a = askDeno(t, cli, ORACLE, lines, "tries of one malformed account");
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < what.len(); i++) {
-    u8[] root = decoded(word(a.find("root", "bad" + itoa(i)), 2));
+    u8[] root = decoded(word(a.find("root", "bad\{i}"), 2));
     AccountProof got = accountAt(root, address(5),
-                                 nodesOf(a.find("proof", "bad" + itoa(i) + " " + key)));
-    t.isFalse(got.ok, what[i] + ": accepted");
-    t.isTrue(got.error.len() > 0, what[i] + ": refused without saying why");
+                                 nodesOf(a.find("proof", "bad\{i} \{key}")));
+    t.isFalse(got.ok, "\{what[i]}: accepted");
+    t.isTrue(got.error.len() > 0, "\{what[i]}: refused without saying why");
   }
   return t.report();
 }
@@ -376,16 +375,16 @@ export string test_a_slots_stored_value_must_be_canonical_rlp_of_at_most_32_byte
   Lines lines = Lines.create();
   string key = hex(keccak256(word32(0)));
   for (i32 i = 0; i < what.len(); i++) {
-    lines.add("trie bad" + itoa(i) + " " + key + ":" + hex(values[i]));
-    lines.add("proof bad" + itoa(i) + " " + key);
+    lines.add("trie bad\{i} \{key}:\{hex(values[i])}");
+    lines.add("proof bad\{i} \{key}");
   }
   Answers a = askDeno(t, cli, ORACLE, lines, "tries of one malformed slot");
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < what.len(); i++) {
-    u8[] root = decoded(word(a.find("root", "bad" + itoa(i)), 2));
+    u8[] root = decoded(word(a.find("root", "bad\{i}"), 2));
     StorageProof got = storageAt(root, word32(0),
-                                 nodesOf(a.find("proof", "bad" + itoa(i) + " " + key)));
-    t.isFalse(got.ok, what[i] + ": accepted as a slot value");
+                                 nodesOf(a.find("proof", "bad\{i} \{key}")));
+    t.isFalse(got.ok, "\{what[i]}: accepted as a slot value");
   }
   return t.report();
 }
@@ -408,17 +407,17 @@ export string test_an_address_is_twenty_bytes_and_a_slot_key_is_thirty_two(Core 
   Lines lines = Lines.create();
   lines.add("trie addr " + hex(keccak256(shortAddr)) + ":" +
             hex(accountRlp(1, 2, emptyStorageRoot(), emptyCodeHash())));
-  lines.add("proof addr " + hex(keccak256(shortAddr)));
-  lines.add("trie slot " + hex(keccak256(shortSlot)) + ":" + hex(rlpBytes(minimal(5))));
-  lines.add("proof slot " + hex(keccak256(shortSlot)));
+  lines.add("proof addr \{hex(keccak256(shortAddr))}");
+  lines.add("trie slot \{hex(keccak256(shortSlot))}:\{hex(rlpBytes(minimal(5)))}");
+  lines.add("proof slot \{hex(keccak256(shortSlot))}");
   Answers a = askDeno(t, cli, ORACLE, lines, "tries keyed by a mis-sized key");
   if (!a.ok) { return t.report(); }
 
   AccountProof short = accountAt(decoded(word(a.find("root", "addr"), 2)), shortAddr,
-                                 nodesOf(a.find("proof", "addr " + hex(keccak256(shortAddr)))));
+                                 nodesOf(a.find("proof", "addr \{hex(keccak256(shortAddr))}")));
   t.isFalse(short.ok, "a 19-byte address was accepted, with a proof that fits it");
   StorageProof slot = storageAt(decoded(word(a.find("root", "slot"), 2)), shortSlot,
-                                nodesOf(a.find("proof", "slot " + hex(keccak256(shortSlot)))));
+                                nodesOf(a.find("proof", "slot \{hex(keccak256(shortSlot))}")));
   t.isFalse(slot.ok, "a 31-byte slot key was accepted, with a proof that fits it");
   return t.report();
 }

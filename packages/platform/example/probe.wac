@@ -33,6 +33,6 @@ export i32 main(Sys sys) {
   string net = s.handle < 0 ? (s.fault == FAULT_NOT_GRANTED() ? "denied" : "failed") : "ok";
   if (s.handle >= 0) { cli.closeSocket(s.handle); }
 
-  core.log("read=" + read + " net=" + net);
+  core.log("read=\{read} net=\{net}");
   return 0;
 }

@@ -45,9 +45,9 @@ export i32 main(Sys sys) {
  */
 void ask(Core core, Cli cli, i32 n) {
   u8[] bytes = core.randomBytes(n).wait();
-  say(cli, itoa(n) + " bytes answered", bytes.len() == n);
+  say(cli, "\{n} bytes answered", bytes.len() == n);
   if (n >= 4096) {
-    say(cli, itoa(n) + " bytes vary", varies(bytes));
+    say(cli, "\{n} bytes vary", varies(bytes));
   }
 }
 
@@ -81,13 +81,3 @@ void say(Cli cli, string claim, bool held) {
   cli.write((claim + ": " + (held ? "yes" : "NO") + "\n").toBytes());
 }
 
-string itoa(i32 n) {
-  if (n == 0) { return "0"; }
-  i32 v = n < 0 ? 0 - n : n;
-  u8[] digits = u8[].filled(12, 0);
-  i32 at = 12;
-  while (v > 0) { at--; digits[at] = ('0' + (v % 10)) as@ u8; v = v / 10; }
-  u8[] used = u8[].filled(12 - at, 0);
-  used.copyFrom(digits, at, 0, 12 - at);
-  return (n < 0 ? "-" : "") + string.fromBytes(used);
-}

@@ -26,7 +26,6 @@ import { gzipBest } from "../../gzip/src/gzip.wac";
 // `itoa` copies in this repo had already drifted once — the i32-minimum bug was fixed in each of them
 // separately (GitHub wac-mono#6). A page is not a reason to fork a decimal formatter.
 import { encode as hexBytes } from "../../codec/src/hex.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
 static string SOURCE =
@@ -96,7 +95,7 @@ export i32 page(Core core, Cli cli, Page page) {
     "    <dt>took</dt><dd class=\"dim\"><span id=\"ms\">0</span> ms</dd>" +
     "  </dl>" +
     "  <footer>Both algorithms and this page are wac. " +
-    "    <a href=\"" + SOURCE + "\">source, and how to build it yourself</a>.</footer>" +
+    "    <a href=\"\{SOURCE}\">source, and how to build it yourself</a>.</footer>" +
     "</div>"
   ).wait();
   page.on("#in", "input").wait();
@@ -123,14 +122,14 @@ export i32 page(Core core, Cli cli, Page page) {
       Picked f = file.wait();
       file = page.nextFile();
       if (!f.ok) {
-        page.setText("note", "could not read it: " + f.error).wait();
+        page.setText("note", "could not read it: \{f.error}").wait();
       } else if (f.bytes.len() > LIMIT) {
         // Said rather than attempted. DEFLATE on a hundred megabytes would hold the worker for
         // minutes with nothing on screen, and a page that looks hung is worse than one that
         // declines — the point being demonstrated is that the *page* stays live, so proving it
         // by wedging the thing behind it would be self-defeating.
-        page.setText("note", f.name + " is " + itoa(f.bytes.len()) +
-          " bytes; this page stops at " + itoa(LIMIT) + " so it never looks hung").wait();
+        page.setText("note", "\{f.name} is \{f.bytes.len()}" +
+          " bytes; this page stops at \{LIMIT} so it never looks hung").wait();
       } else {
         saveName = f.name;
         packed = update(core, page, f.bytes, f.name);
@@ -146,7 +145,7 @@ export i32 page(Core core, Cli cli, Page page) {
     } else if (e.kind == "click" && e.id == "save") {
       // A real gzip container, header and trailer and CRC — so this is checkable with whatever
       // is already on your machine, which is the only reason a byte count is worth trusting.
-      page.offerDownload(saveName + ".gz", packed).wait();
+      page.offerDownload("\{saveName}.gz", packed).wait();
     }
   }
 }
@@ -166,7 +165,7 @@ u8[] update(Core core, Page page, u8[] bytes, string from) {
 
   i64 took = (core.monotonicNanos().wait() - began) / 1000000;
 
-  page.setText("len", itoa(bytes.len())).wait();
+  page.setText("len", "\{bytes.len()}").wait();
   // Characters as well as bytes, because they differ the moment anything is not ASCII — paste an
   // emoji and this line explains why the byte count jumped further than you expected.
   //
@@ -177,17 +176,17 @@ u8[] update(Core core, Page page, u8[] bytes, string from) {
   for (i32 i = 0; i < bytes.len(); i++) {
     if ((bytes[i] & 192) != 128) { chars = chars + 1; }
   }
-  page.setText("chars", chars == bytes.len() ? "" : "(" + itoa(chars) + " characters)").wait();
+  page.setText("chars", chars == bytes.len() ? "" : "(\{chars} characters)").wait();
   page.setText("sha", string.fromBytes(hexBytes(digest))).wait();
-  page.setText("gz", itoa(packed.len())).wait();
-  page.setText("ms", itoa(took as~ i32)).wait();
+  page.setText("gz", "\{packed.len()}").wait();
+  page.setText("ms", "\{took as~ i32}").wait();
   // The ratio is the interesting number and the one that needs care. Two things bite: gzip of
   // nothing is still twenty bytes of header and trailer, so the percentage of zero is not a
   // percentage; and integer division reported eighteen kilobytes down to 131 bytes as "0%",
   // which is arithmetically true and the least informative way to say it. Tenths, from
   // per-mille, because wac has floats and a ratio does not need them.
-  page.setText("ratio", bytes.len() == 0 ? "(header only)" : "(" + tenths(packed.len(), bytes.len()) + "% of the input)").wait();
-  page.setText("note", from == "" ? "or drop a file anywhere on this page" : "from " + from).wait();
+  page.setText("ratio", bytes.len() == 0 ? "(header only)" : "(\{tenths(packed.len(), bytes.len())}% of the input)").wait();
+  page.setText("note", from == "" ? "or drop a file anywhere on this page" : "from \{from}").wait();
   return packed;
 }
 
@@ -195,7 +194,7 @@ u8[] update(Core core, Page page, u8[] bytes, string from) {
 /** `part` as a percentage of `whole`, to one decimal place, without floating point. */
 string tenths(i32 part, i32 whole) {
   i32 permille = part * 1000 / whole;
-  return itoa(permille / 10) + "." + itoa(permille % 10);
+  return "\{permille / 10}.\{permille % 10}";
 }
 
 

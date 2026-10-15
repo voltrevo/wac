@@ -24,7 +24,6 @@
 // `x?: T` — an optional parameter — distinguishable from `c ? x : y`.
 
 import { Vec } from "core";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   Lexed, kEof, kIdent, kNum, kPunct, kRegex, kStr, kTemplate,
   kindAt, lenAt, lex, lineAt, colAt, startAt, textAt, tokenCount,
@@ -236,7 +235,7 @@ export Stripped strip(u8[] src) {
                    && (inBraces(stack) || (i > 0 && textAt(src, l, i - 1) == "*"));
       if ((tx == "as" || tx == "satisfies") && !renaming) {
         i32 end = pastType(src, l, i + 1, stack);
-        if (end < 0) { err = "a type after `" + tx + "` that does not end"; errLine = lineAt(l, i); errCol = colAt(l, i); break; }
+        if (end < 0) { err = "a type after `\{tx}` that does not end"; errLine = lineAt(l, i); errCol = colAt(l, i); break; }
         cut(cutFrom, cutTo, startAt(l, i), endOf(l, end - 1));
         i = end;
         continue;

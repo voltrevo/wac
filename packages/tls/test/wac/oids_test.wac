@@ -23,7 +23,6 @@
 // `asn1.wac` for `export u8[] oid…` and fails if the two lists disagree.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 import { hex } from "../../../wactest/src/oracle.wac";
 import {
@@ -68,7 +67,7 @@ bool matchesAt(string text, i32 at, string needle) {
  */
 string documented(string src, string name) {
   i32 decl = -1;
-  string needle = "export u8[] " + name + "()";
+  string needle = "export u8[] \{name}()";
   for (i32 i = 0; i + needle.len() <= src.len(); i++) {
     if (matchesAt(src, i, needle)) { decl = i; break; }
   }
@@ -110,20 +109,20 @@ bool isDigit(string s, i32 at) {
 u8[] opensslOid(T t, Cli cli, string dotted) {
   Exec r = cli.exec("openssl",
                     [
-                             "asn1parse", "-genstr", "OID:" + dotted, "-noout", "-out",
+                             "asn1parse", "-genstr", "OID:\{dotted}", "-noout", "-out",
                              "/dev/stdout"
                     ],
                     u8[]()).wait();
   t.eqStr(r.error, "", "openssl could not be started");
   if (r.error != "") { return u8[](); }
   t.eqI32(r.status, 0,
-          "openssl could not encode " + dotted + ": " + string.fromBytes(r.stderr));
+          "openssl could not encode \{dotted}: \{string.fromBytes(r.stderr)}");
   if (r.status != 0) { return u8[](); }
   u8[] b = r.stdout;
   t.isTrue(b.len() > 2 && b[0] == 0x06,
-           "openssl produced an OBJECT IDENTIFIER for " + dotted);
+           "openssl produced an OBJECT IDENTIFIER for \{dotted}");
   if (b.len() <= 2 || b[0] != 0x06) { return u8[](); }
-  t.eqI32(b[1] as i32, b.len() - 2, "the length encoding for " + dotted + " is short form");
+  t.eqI32(b[1] as i32, b.len() - 2, "the length encoding for \{dotted} is short form");
 
   u8[] out = u8[].filled(b.len() - 2, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = b[2 + i]; }
@@ -133,7 +132,7 @@ u8[] opensslOid(T t, Cli cli, string dotted) {
 export string test_every_oid_is_the_one_its_comment_says(Core core, Cli cli) {
   T t = T.create();
   FileResult f = cli.readFile(SOURCE).wait();
-  t.isTrue(f.ok, SOURCE + " could not be read: " + f.error);
+  t.isTrue(f.ok, "\{SOURCE} could not be read: \{f.error}");
   if (!f.ok) { return t.report(); }
   string src = string.fromBytes(f.bytes);
 
@@ -141,9 +140,9 @@ export string test_every_oid_is_the_one_its_comment_says(Core core, Cli cli) {
   u8[][] v = values();
   for (i32 i = 0; i < n.len(); i++) {
     string dotted = documented(src, n[i]);
-    t.isTrue(dotted != "", n[i] + "'s doc comment does not say which OID it is");
+    t.isTrue(dotted != "", "\{n[i]}'s doc comment does not say which OID it is");
     if (dotted == "") { continue; }
-    t.eqStr(hex(v[i]), hex(opensslOid(t, cli, dotted)), n[i] + " claims to be " + dotted);
+    t.eqStr(hex(v[i]), hex(opensslOid(t, cli, dotted)), "\{n[i]} claims to be \{dotted}");
   }
   return t.report();
 }
@@ -158,7 +157,7 @@ export string test_every_oid_is_the_one_its_comment_says(Core core, Cli cli) {
 export string test_every_oid_in_the_source_is_in_the_table(Core core, Cli cli) {
   T t = T.create();
   FileResult f = cli.readFile(SOURCE).wait();
-  t.isTrue(f.ok, SOURCE + " could not be read: " + f.error);
+  t.isTrue(f.ok, "\{SOURCE} could not be read: \{f.error}");
   if (!f.ok) { return t.report(); }
   string src = string.fromBytes(f.bytes);
 
@@ -174,12 +173,12 @@ export string test_every_oid_in_the_source_is_in_the_table(Core core, Cli cli) {
     declared = declared + 1;
     bool found = false;
     for (i32 k = 0; k < listed.len(); k++) { if (listed[k] == name) { found = true; } }
-    if (!found) { missing = missing == "" ? name : missing + ", " + name; }
+    if (!found) { missing = missing == "" ? name : "\{missing}, \{name}"; }
   }
   t.eqStr(missing, "", "these OIDs are declared and not in this file's table");
   t.eqI32(listed.len(), declared,
-          "the table has " + itoa64(listed.len() as i64) + " entries for " +
-          itoa64(declared as i64) + " declarations");
+          "the table has \{listed.len() as i64} entries for " +
+          "\{declared as i64} declarations");
   t.isTrue(declared >= 18, "eighteen or more OIDs — did the scan break?");
   return t.report();
 }

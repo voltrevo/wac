@@ -16,7 +16,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 import { contains, startsWith, splitLines, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { binaryPath, freshDir, madeDir } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 
@@ -26,7 +25,7 @@ static string HEXDUMP = "packages/platform/example/hexdump.wac";
 string root(Cli cli) { return cli.cwd().wait(); }
 
 string freshScratch(T t, Cli cli, string name) {
-  string dir = root(cli) + "/.cache/world-" + name;
+  string dir = "\{root(cli)}/.cache/world-\{name}";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   return dir;
@@ -49,7 +48,7 @@ string freshScratch(T t, Cli cli, string name) {
  */
 string built(T t, Cli cli, string entry, string name, string[] grants) {
   string mod = builtProgram(cli, entry, name, grants);
-  t.isTrue(mod != "", entry + " built as " + name);
+  t.isTrue(mod != "", "\{entry} built as \{name}");
   return mod;
 }
 
@@ -98,7 +97,7 @@ export string test_an_application_written_entirely_in_wac_runs_and_agrees_with_w
   }
 
   Exec r = cli.exec(binaryPath(cli), [app, WC], u8[]()).wait();
-  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  t.isTrue(r.ran(), "the built program ran — \{r.error}");
   if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   t.eqI32(r.status, 0, string.fromBytes(r.stderr));
 
@@ -117,8 +116,8 @@ export string test_an_application_written_entirely_in_wac_runs_and_agrees_with_w
   // the whole of the difference. `test_the_c_locale_accounts_for_its_own_two_words` measures that
   // rather than leaving it as prose. `issues/system/0227a`.
   Exec oracle = cli.exec("/bin/sh",
-    ["-c", "LC_ALL=C.UTF-8 wc < '" + WC + "'"], u8[]()).wait();
-  t.isTrue(oracle.ran() && oracle.status == 0, "the system wc ran — " + oracle.error);
+    ["-c", "LC_ALL=C.UTF-8 wc < '\{WC}'"], u8[]()).wait();
+  t.isTrue(oracle.ran() && oracle.status == 0, "the system wc ran — \{oracle.error}");
   if (!oracle.ran()) { cli.remove(dir, true).wait(); return t.report(); }
 
   string[] mine = lines(r.stdout);
@@ -129,8 +128,8 @@ export string test_an_application_written_entirely_in_wac_runs_and_agrees_with_w
   // rather than skipped — the TypeScript destructured the first three and never looked at it.
   string[] got = fields(mine[0]);
   string[] want = fields(trimmed(string.fromBytes(oracle.stdout)));
-  t.eqI32(got.len(), 4, "three numbers and the name: " + mine[0]);
-  t.eqI32(want.len(), 3, "the system wc said: " + string.fromBytes(oracle.stdout));
+  t.eqI32(got.len(), 4, "three numbers and the name: \{mine[0]}");
+  t.eqI32(want.len(), 3, "the system wc said: \{string.fromBytes(oracle.stdout)}");
   if (got.len() != 4 || want.len() != 3) { cli.remove(dir, true).wait(); return t.report(); }
   t.eqStr(got[0], want[0], "lines");
   t.eqStr(got[1], want[1], "words");
@@ -150,11 +149,11 @@ export string test_a_capability_the_build_withholds_is_a_failure_the_application
   if (app == "") { cli.remove(dir, true).wait(); return t.report(); }
 
   Exec r = cli.exec(binaryPath(cli), [app, WC], u8[]()).wait();
-  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  t.isTrue(r.ran(), "the built program ran — \{r.error}");
   if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   t.eqI32(r.status, 1, "the application reported failure");
   string[] err = lines(r.stderr);
-  t.eqI32(err.len(), 1, "one line of complaint: " + string.fromBytes(r.stderr));
+  t.eqI32(err.len(), 1, "one line of complaint: \{string.fromBytes(r.stderr)}");
   // **`granted`, not `not granted`, and that is a concession rather than a tidy-up.** The hosts word
   // this refusal differently — the JavaScript ones say *filesystem read not granted to this
   // application* and both Rust ones say *Not granted to this application*, which names no capability
@@ -162,7 +161,7 @@ export string test_a_capability_the_build_withholds_is_a_failure_the_application
   // either: the refusal reached the application and the application reported it. Tighten this back
   // to the informative sentence on the day the hosts agree on one.
   t.isTrue(err.len() > 0 && contains(err[0], "granted"),
-           "got: " + string.fromBytes(r.stderr));
+           "got: \{string.fromBytes(r.stderr)}");
   t.eqI32(lines(r.stdout).len(), 0, "and printed no counts");
   cli.remove(dir, true).wait();
   return t.report();
@@ -177,11 +176,11 @@ export string test_a_missing_file_reaches_the_application_as_its_hosts_message(C
     return t.report();
   }
   Exec r = cli.exec(binaryPath(cli), [app, "no/such/file"], u8[]()).wait();
-  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  t.isTrue(r.ran(), "the built program ran — \{r.error}");
   if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   t.eqI32(r.status, 1, string.fromBytes(r.stderr));
   t.isTrue(contains(string.fromBytes(r.stderr), "no/such/file"),
-           "got: " + string.fromBytes(r.stderr));
+           "got: \{string.fromBytes(r.stderr)}");
   cli.remove(dir, true).wait();
   return t.report();
 }
@@ -192,7 +191,7 @@ export string test_no_arguments_means_standard_input_as_wc_has_always_meant_it(C
   string app = built(t, cli, WC, "world-wc-none", none());
   if (app == "") { cli.remove(dir, true).wait(); return t.report(); }
   Exec r = cli.exec(binaryPath(cli), [app], "one two\nthree\n".toBytes()).wait();
-  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  t.isTrue(r.ran(), "the built program ran — \{r.error}");
   if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   t.eqI32(r.status, 0, string.fromBytes(r.stderr));
   t.eqStr(trimmed(string.fromBytes(r.stdout)), "2 3 14", "counts of the piped text");
@@ -219,22 +218,22 @@ export string test_env_distinguishes_unset_from_empty(Core core, Cli cli) {
   }
 
   Exec set = cli.exec("/bin/sh",
-    ["-c", "WC_VERBOSE= exec '" + binaryPath(cli) + "' '" + app + "' '" + WC + "'"], u8[]()).wait();
-  t.isTrue(set.ran(), "the built program ran — " + set.error);
+    ["-c", "WC_VERBOSE= exec '\{binaryPath(cli)}' '\{app}' '\{WC}'"], u8[]()).wait();
+  t.isTrue(set.ran(), "the built program ran — \{set.error}");
   if (!set.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   string[] out = lines(set.stdout);
-  t.eqI32(out.len(), 2, "expected the timing line, got: " + string.fromBytes(set.stdout) +
+  t.eqI32(out.len(), 2, "expected the timing line, got: \{string.fromBytes(set.stdout)}" +
           string.fromBytes(set.stderr));
   t.isTrue(out.len() > 1 && startsWith(out[1], "counted in "),
-           out.len() > 1 ? "the second line was: " + out[1] : "there was no second line");
+           out.len() > 1 ? "the second line was: \{out[1]}" : "there was no second line");
 
   // Unset: the same program, the same grant, and nothing in the environment. `sh -c` again so the two
   // runs differ in the variable and in nothing else.
   Exec unset = cli.exec("/bin/sh",
-    ["-c", "unset WC_VERBOSE; exec '" + binaryPath(cli) + "' '" + app + "' '" + WC + "'"], u8[]()).wait();
-  t.isTrue(unset.ran(), "the built program ran — " + unset.error);
+    ["-c", "unset WC_VERBOSE; exec '\{binaryPath(cli)}' '\{app}' '\{WC}'"], u8[]()).wait();
+  t.isTrue(unset.ran(), "the built program ran — \{unset.error}");
   if (unset.ran()) {
-    t.eqI32(lines(unset.stdout).len(), 1, "unset means absent: " + string.fromBytes(unset.stdout));
+    t.eqI32(lines(unset.stdout).len(), 1, "unset means absent: \{string.fromBytes(unset.stdout)}");
   }
   cli.remove(dir, true).wait();
   return t.report();
@@ -251,7 +250,7 @@ export string test_a_program_can_be_a_filter_stdin_in_exact_bytes_out(Core core,
   if (app == "") { cli.remove(dir, true).wait(); return t.report(); }
 
   Exec r = cli.exec(binaryPath(cli), [app], "hello, wac".toBytes()).wait();
-  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  t.isTrue(r.ran(), "the built program ran — \{r.error}");
   if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   t.eqI32(r.status, 0, string.fromBytes(r.stderr));
   string text = string.fromBytes(r.stdout);
@@ -260,14 +259,14 @@ export string test_a_program_can_be_a_filter_stdin_in_exact_bytes_out(Core core,
   // facts rather than as `split("\n").length == 2`, which is the JavaScript spelling of them: wac's
   // `splitLines` does not leave an empty element after a trailing newline, so the count alone would
   // be checking a property of the splitter.
-  t.eqI32(splitLines(text).len(), 1, "the output was: " + text);
+  t.eqI32(splitLines(text).len(), 1, "the output was: \{text}");
   t.isTrue(text.len() > 0 && text.slice(text.len() - 1, text.len()) == "\n",
-           "it did not end in a newline: " + text);
+           "it did not end in a newline: \{text}");
 
   // Bytes, not text: 0x00 and 0xFF survive, which a string-shaped output would mangle.
   Exec binary = cli.exec(binaryPath(cli), [app], [0, 255, 128] as u8[]).wait();
   t.isTrue(binary.ran() && contains(string.fromBytes(binary.stdout), "00 ff 80"),
-           "three raw bytes: " + string.fromBytes(binary.stdout));
+           "three raw bytes: \{string.fromBytes(binary.stdout)}");
   cli.remove(dir, true).wait();
   return t.report();
 }
@@ -279,19 +278,19 @@ export string test_wc_reads_standard_input_when_given_no_file(Core core, Cli cli
   if (app == "") { cli.remove(dir, true).wait(); return t.report(); }
 
   FileResult f = cli.readFile(WC).wait();
-  t.isTrue(f.ok, "read the example's own source — " + f.error);
+  t.isTrue(f.ok, "read the example's own source — \{f.error}");
   if (!f.ok) { cli.remove(dir, true).wait(); return t.report(); }
 
   Exec r = cli.exec(binaryPath(cli), [app], f.bytes).wait();
-  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  t.isTrue(r.ran(), "the built program ran — \{r.error}");
   if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   t.eqI32(r.status, 0, string.fromBytes(r.stderr));
 
-  Exec oracle = cli.exec("/bin/sh", ["-c", "wc < '" + WC + "'"], u8[]()).wait();
+  Exec oracle = cli.exec("/bin/sh", ["-c", "wc < '\{WC}'"], u8[]()).wait();
   string[] got = fields(trimmed(string.fromBytes(r.stdout)));
   string[] want = fields(trimmed(string.fromBytes(oracle.stdout)));
-  t.eqI32(got.len(), 3, "three numbers: " + string.fromBytes(r.stdout));
-  t.eqI32(want.len(), 3, "the system wc said: " + string.fromBytes(oracle.stdout));
+  t.eqI32(got.len(), 3, "three numbers: \{string.fromBytes(r.stdout)}");
+  t.eqI32(want.len(), 3, "the system wc said: \{string.fromBytes(oracle.stdout)}");
   if (got.len() == 3 && want.len() == 3) {
     t.eqStr(got[0], want[0], "lines");
     t.eqStr(got[1], want[1], "words");
@@ -313,27 +312,27 @@ export string test_stat_and_readdir_reach_the_application_and_are_gated(Core cor
     cli.remove(dir, true).wait();
     return t.report();
   }
-  string listing = dir + "/listing";
+  string listing = "\{dir}/listing";
   string whyDir1 = madeDir(cli, listing);
   t.isTrue(whyDir1 == "", whyDir1);
-  cli.writeFile(listing + "/one.txt", "1".toBytes()).wait();
-  cli.writeFile(listing + "/two.txt", "2".toBytes()).wait();
-  string whyDir2 = madeDir(cli, listing + "/sub");
+  cli.writeFile("\{listing}/one.txt", "1".toBytes()).wait();
+  cli.writeFile("\{listing}/two.txt", "2".toBytes()).wait();
+  string whyDir2 = madeDir(cli, "\{listing}/sub");
   t.isTrue(whyDir2 == "", whyDir2);
 
   Exec r = cli.exec(binaryPath(cli), [app, listing], u8[]()).wait();
-  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  t.isTrue(r.ran(), "the built program ran — \{r.error}");
   if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
   t.eqI32(r.status, 0, string.fromBytes(r.stderr));
   string[] got = lines(r.stdout);
   // Compared as a set rather than sorted, because the order a host lists a directory in is not
   // something either host promises and neither is the subject here.
-  t.eqI32(got.len(), 3, "three entries, got: " + string.fromBytes(r.stdout));
+  t.eqI32(got.len(), 3, "three entries, got: \{string.fromBytes(r.stdout)}");
   string[] want = ["one.txt", "two.txt", "sub"];
   for (i32 i = 0; i < want.len(); i++) {
     bool found = false;
     for (i32 k = 0; k < got.len(); k++) { if (trimmed(got[k]) == want[i]) { found = true; } }
-    t.isTrue(found, want[i] + " was not listed: " + string.fromBytes(r.stdout));
+    t.isTrue(found, "\{want[i]} was not listed: \{string.fromBytes(r.stdout)}");
   }
 
   // Without the grant, `stat` reports "does not exist" rather than throwing: an application cannot
@@ -341,11 +340,11 @@ export string test_stat_and_readdir_reach_the_application_and_are_gated(Core cor
   string bare = built(t, cli, HEXDUMP, "world-hexdump-none", none());
   if (bare != "") {
     Exec denied = cli.exec(binaryPath(cli), [bare, "packages/platform/src"], u8[]()).wait();
-    t.isTrue(denied.ran(), "the ungranted build ran — " + denied.error);
+    t.isTrue(denied.ran(), "the ungranted build ran — \{denied.error}");
     if (denied.ran()) {
       t.eqI32(denied.status, 1, string.fromBytes(denied.stderr));
       t.isTrue(contains(string.fromBytes(denied.stderr), "not found"),
-               "got: " + string.fromBytes(denied.stderr));
+               "got: \{string.fromBytes(denied.stderr)}");
     }
   }
   cli.remove(dir, true).wait();
@@ -365,13 +364,13 @@ export string test_stat_and_readdir_reach_the_application_and_are_gated(Core cor
 export string test_the_c_locale_accounts_for_its_own_two_words(Core core, Cli cli) {
   T t = T.create();
   FileResult f = cli.readFile(WC).wait();
-  t.isTrue(f.ok, "read " + WC + " — " + f.error);
+  t.isTrue(f.ok, "read \{WC} — \{f.error}");
   if (!f.ok) { return t.report(); }
 
-  Exec utf8 = cli.exec("/bin/sh", ["-c", "LC_ALL=C.UTF-8 wc -w < '" + WC + "'"], u8[]()).wait();
-  Exec c = cli.exec("/bin/sh", ["-c", "LC_ALL=C wc -w < '" + WC + "'"], u8[]()).wait();
-  t.isTrue(utf8.ran() && utf8.status == 0, "the UTF-8 oracle ran — " + utf8.error);
-  t.isTrue(c.ran() && c.status == 0, "the C oracle ran — " + c.error);
+  Exec utf8 = cli.exec("/bin/sh", ["-c", "LC_ALL=C.UTF-8 wc -w < '\{WC}'"], u8[]()).wait();
+  Exec c = cli.exec("/bin/sh", ["-c", "LC_ALL=C wc -w < '\{WC}'"], u8[]()).wait();
+  t.isTrue(utf8.ran() && utf8.status == 0, "the UTF-8 oracle ran — \{utf8.error}");
+  t.isTrue(c.ran() && c.status == 0, "the C oracle ran — \{c.error}");
   if (!utf8.ran() || !c.ran()) { return t.report(); }
 
   i32 utf8Words = atoi(trimmed(string.fromBytes(utf8.stdout)));
@@ -381,8 +380,8 @@ export string test_the_c_locale_accounts_for_its_own_two_words(Core core, Cli cl
   // The invariant, not the numbers: whatever the file says, the gap between the locales is that class
   // of run. If this ever fails, the C locale is dropping something else and the comment above is stale.
   t.eqI32(utf8Words - cWords, unprintable,
-      "the two locales differ by " + itoa(utf8Words - cWords) + " words and the file has "
-      + itoa(unprintable) + " run(s) with no printable character");
+      "the two locales differ by \{utf8Words - cWords} words and the file has "
+      + "\{unprintable} run(s) with no printable character");
   // And which side ours is on, said once here so the comparison above does not have to imply it.
   t.isTrue(unprintable > 0,
       "this file no longer has an unprintable-only run, so the pinned locale above buys nothing "

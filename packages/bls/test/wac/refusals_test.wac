@@ -38,7 +38,6 @@ import {
 } from "../../src/verify.wac";
 import { g2Compress, g2Infinity } from "../../src/g2.wac";
 import { g1Compress, g1Infinity } from "../../src/g1.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** `0x…` as bytes. */
 u8[] un(string h) {

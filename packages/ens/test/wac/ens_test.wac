@@ -66,7 +66,7 @@ export string test_namehash_and_dns_encoding_match_ethers(Core core, Cli cli) {
   JsonObject corpus = corpusOf(cli);
   JsonArray entries = arrayAt(corpus, "names");
   i32 n = entries.len();
-  t.isTrue(n >= 10, "the corpus should have a dozen names, has " + itoa(n));
+  t.isTrue(n >= 10, "the corpus should have a dozen names, has \{n}");
   for (i32 i = 0; i < n; i++) {
     JsonObject e = objectAt(entries, i);
     u8[] name = strAt(e, "name").toBytes();
@@ -88,7 +88,7 @@ export string test_selectors_match_ethers(Core core, Cli cli) {
   T t = T.create();
   JsonArray entries = arrayAt(corpusOf(cli), "selectors");
   i32 n = entries.len();
-  t.isTrue(n >= 5, "the corpus should have several signatures, has " + itoa(n));
+  t.isTrue(n >= 5, "the corpus should have several signatures, has \{n}");
   for (i32 i = 0; i < n; i++) {
     JsonObject e = objectAt(entries, i);
     string sig = strAt(e, "signature");
@@ -186,13 +186,3 @@ string hex(u8[] b) {
   return string.fromBytes(out);
 }
 
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  u8[] buf = u8[].filled(12, 0);
-  i32 n = 0;
-  i32 x = v;
-  while (x > 0) { buf[n] = ('0' + (x % 10)) as@ u8; n++; x = x / 10; }
-  u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = buf[n - 1 - i]; }
-  return string.fromBytes(out);
-}

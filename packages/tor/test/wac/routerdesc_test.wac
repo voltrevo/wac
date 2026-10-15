@@ -39,7 +39,6 @@
 // secret — which is what the last test does.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   curve25519ToEd25519Secret, ed25519FromCurve25519Public, ed25519PublicKeyExpanded,
   ed25519SignBit, ed25519SignExpanded,
@@ -154,8 +153,8 @@ export string test_the_conversion_matches_the_certificates_tor_signed(Core core,
     u8[] ntor = decoded(strOf(d, "ntor_onion_key"));
     i32 bit = numOf(d, "signbit");
     string cert = strOf(d, "ntor_crosscert");
-    lines.add("edverify " + hex(convert(ntor, bit)) + " " + cert);
-    lines.add("edverify " + hex(convert(ntor, 1 - bit)) + " " + cert);
+    lines.add("edverify \{hex(convert(ntor, bit))} \{cert}");
+    lines.add("edverify \{hex(convert(ntor, 1 - bit))} \{cert}");
   }
   Answers a = ask(t, cli, "node", [ORACLE], lines, "node's verdicts on both sign bits");
   if (!a.ok) { return t.report(); }
@@ -166,27 +165,27 @@ export string test_the_conversion_matches_the_certificates_tor_signed(Core core,
     i32 bit = numOf(d, "signbit");
     u8[] cert = decoded(strOf(d, "ntor_crosscert"));
     u8[] master = decoded(strOf(d, "master_key_ed25519"));
-    string which = "descriptor " + itoa64(i as i64);
+    string which = "descriptor \{i as i64}";
 
-    t.eqI32(certType(cert), CERT_TYPE_ONION_ID, which + ": is a type-10 certificate");
-    t.eqI32(cert.len(), 104, which + ": 40 bytes of body and a 64-byte signature");
-    t.eqBytes(certCertifiedKey(cert), master, which + ": certifies the master identity");
+    t.eqI32(certType(cert), CERT_TYPE_ONION_ID, "\{which}: is a type-10 certificate");
+    t.eqI32(cert.len(), 104, "\{which}: 40 bytes of body and a 64-byte signature");
+    t.eqBytes(certCertifiedKey(cert), master, "\{which}: certifies the master identity");
 
     // The assertion the file exists for: the converted key is the one that signed tor's certificate,
     // as judged by node rather than by us.
     u8[] key = convert(ntor, bit);
-    t.eqI32(key.len(), 32, which + ": the onion key converts");
+    t.eqI32(key.len(), 32, "\{which}: the onion key converts");
     t.eqStr(word(a.lines[i * 2], 1), "1",
-            which + ": node verifies tor's crosscert under the converted key");
+            "\{which}: node verifies tor's crosscert under the converted key");
 
     // And our own verifier agrees, now that the host has settled what the answer is.
-    t.isTrue(verifyEd25519Cert(cert, key), which + ": our verifier agrees");
+    t.isTrue(verifyEd25519Cert(cert, key), "\{which}: our verifier agrees");
 
     // The sign bit is not decoration. Flipping it must produce a key that fails, or the conversion
     // could be ignoring it and passing on the half of the vectors where it happens to be zero.
     u8[] flipped = convert(ntor, 1 - bit);
-    t.eqStr(word(a.lines[i * 2 + 1], 1), "0", which + ": the other sign bit does not verify");
-    t.isFalse(verifyEd25519Cert(cert, flipped), which + ": our verifier rejects it too");
+    t.eqStr(word(a.lines[i * 2 + 1], 1), "0", "\{which}: the other sign bit does not verify");
+    t.isFalse(verifyEd25519Cert(cert, flipped), "\{which}: our verifier rejects it too");
   }
   return t.report();
 }
@@ -200,22 +199,22 @@ export string test_the_crosscert_body_is_reproduced_byte_for_byte(Core core, Cli
     JsonObject d = objectOf(all.get(i));
     u8[] cert = decoded(strOf(d, "ntor_crosscert"));
     u8[] master = decoded(strOf(d, "master_key_ed25519"));
-    string which = "descriptor " + itoa64(i as i64);
+    string which = "descriptor \{i as i64}";
 
     u8[] want = u8[].filled(40, 0);
     for (i32 j = 0; j < 40; j++) { want[j] = cert[j]; }
 
     u8[] got = ed25519CertBody(CERT_TYPE_ONION_ID, be32At(cert, 2), KEY_TYPE_ED25519,
                                master, u8[](), false);
-    t.eqBytes(got, want, which + ": the body we build is the body tor wrote");
+    t.eqBytes(got, want, "\{which}: the body we build is the body tor wrote");
 
     // The zero-extension byte is the difference between this certificate and every other one the
     // relay publishes, and it is one byte at the end of the body — so it is worth naming rather than
     // leaving to the comparison above.
-    t.eqI32(cert[39] as i32, 0, which + ": tor's crosscert carries no extension");
+    t.eqI32(cert[39] as i32, 0, "\{which}: tor's crosscert carries no extension");
     u8[] withExt = ed25519CertBody(CERT_TYPE_ONION_ID, be32At(cert, 2), KEY_TYPE_ED25519,
                                    master, master, true);
-    t.eqI32(withExt.len(), 76, which + ": including the signing key makes it 76 bytes");
+    t.eqI32(withExt.len(), 76, "\{which}: including the signing key makes it 76 bytes");
   }
   return t.report();
 }
@@ -245,36 +244,36 @@ export string test_the_secret_derivation_is_tors(Core core, Cli cli) {
   for (i32 k = 0; k < n; k++) {
     JsonObject c = objectOf(cases.get(k));
     u8[] secret = decoded(strOf(c, "curve_secret"));
-    string which = "case " + itoa64(k as i64);
+    string which = "case \{k as i64}";
 
     // The whole expanded secret, against the bytes tor produced. This is what pins the derivation
     // string and its trailing NUL: the second half is a hash of both.
     u8[] expanded = curve25519ToEd25519Secret(secret);
     t.eqBytes(expanded, decoded(strOf(c, "expanded")),
-              which + ": the expanded secret is the one tor derived");
+              "\{which}: the expanded secret is the one tor derived");
 
     u8[] edPublic = decoded(strOf(c, "ed_public"));
     t.eqBytes(ed25519PublicKeyExpanded(expanded), edPublic,
-              which + ": the public key matches tor's");
+              "\{which}: the public key matches tor's");
     t.eqI32(ed25519SignBit(edPublic), numOf(c, "signbit"),
-            which + ": the sign bit is the one tor reported");
+            "\{which}: the sign bit is the one tor reported");
     t.eqBytes(x25519Base(secret), decoded(strOf(c, "curve_public")),
-              which + ": the curve25519 public key matches tor's");
+              "\{which}: the curve25519 public key matches tor's");
     t.eqBytes(convert(decoded(strOf(c, "curve_public")), ed25519SignBit(edPublic)), edPublic,
-              which + ": converting tor's public key gives tor's ed25519 key");
+              "\{which}: converting tor's public key gives tor's ed25519 key");
 
     // And the signature, byte for byte. A public key cannot see the nonce prefix; a signature is a
     // fingerprint of the whole secret, so this is the assertion the second vector file exists for.
     t.eqBytes(ed25519SignExpanded(expanded, message), decoded(strOf(c, "signature")),
-              which + ": the signature is identical to tor's");
+              "\{which}: the signature is identical to tor's");
 
     // Finally the builder path a relay actually uses, judged from outside: a certificate signed with
     // the derived key must verify under the converted public key, according to node.
     u8[] cert = ed25519CertExpanded(CERT_TYPE_ONION_ID, 123456, KEY_TYPE_ED25519,
                                    identity, expanded);
-    t.eqI32(cert.len(), 104, which + ": the certificate we build is 104 bytes");
+    t.eqI32(cert.len(), 104, "\{which}: the certificate we build is 104 bytes");
     t.eqStr(word(a.lines[k], 1), "1",
-            which + ": node verifies the certificate we signed with the derived key");
+            "\{which}: node verifies the certificate we signed with the derived key");
   }
   return t.report();
 }
@@ -296,35 +295,35 @@ export string test_the_document_digests_are_tors(Core core, Cli cli) {
     JsonObject d = objectOf(all.get(i));
     u8[] text = strOf(d, "descriptor").toBytes();
     u8[] sig = b64Padded(strOf(d, "router_sig_ed25519"));
-    string which = "descriptor " + itoa64(i as i64);
+    string which = "descriptor \{i as i64}";
 
-    t.eqI32(sig.len(), 64, which + ": router-sig-ed25519 decodes to 64 bytes");
+    t.eqI32(sig.len(), 64, "\{which}: router-sig-ed25519 decodes to 64 bytes");
 
     // `identity-ed25519` is a type-4 certificate whose *certified* key is the signing key. The master
     // identity is in its extension, and does not sign the descriptor — using it here would be the
     // natural mistake and would fail for every relay.
     u8[] signingKey = certCertifiedKey(decoded(strOf(d, "identity_ed25519_cert")));
-    t.eqI32(signingKey.len(), 32, which + ": the identity certificate names a signing key");
+    t.eqI32(signingKey.len(), 32, "\{which}: the identity certificate names a signing key");
 
     // The assertion: tor's signature over tor's document, under our digest rule. If the span or the
     // prefix or the hash is wrong, this fails — and nothing else here would notice.
     u8[] digest = edDescriptorDigest(text);
-    t.eqI32(digest.len(), 32, which + ": the ed25519 digest is 32 bytes");
+    t.eqI32(digest.len(), 32, "\{which}: the ed25519 digest is 32 bytes");
     t.isTrue(ed25519Verify(signingKey, digest, sig),
-             which + ": tor's router-sig-ed25519 verifies over our digest");
+             "\{which}: tor's router-sig-ed25519 verifies over our digest");
 
     // Not under the master identity, so the choice of key is pinned too.
     t.isFalse(ed25519Verify(decoded(strOf(d, "master_key_ed25519")), digest, sig),
-              which + ": the master identity did not sign the descriptor");
+              "\{which}: the master identity did not sign the descriptor");
 
     // The RSA digest, against the payload node recovers from tor's own `router-signature` using the
     // `signing-key` the descriptor publishes. Length alone would not do: stopping one byte short of
     // the newline gives a perfectly good 20-byte digest, and that fault survived until this compared
     // the bytes.
     u8[] recovered = descOf(a.lines[i]).recovered;
-    t.eqI32(recovered.len(), 20, which + ": node recovered a SHA-1 digest from router-signature");
+    t.eqI32(recovered.len(), 20, "\{which}: node recovered a SHA-1 digest from router-signature");
     t.eqBytes(rsaDescriptorDigest(text), recovered,
-              which + ": our RSA digest is the one tor signed");
+              "\{which}: our RSA digest is the one tor signed");
   }
   return t.report();
 }
@@ -377,14 +376,14 @@ export string test_a_pem_block_is_wrapped_the_way_tor_wraps_one(Core core, Cli c
     Desc d = descOf(a.lines[i]);
     u8[] der = d.onionDer;
     u8[] want = d.onionPem;
-    string which = "descriptor " + itoa64(i as i64);
+    string which = "descriptor \{i as i64}";
 
-    t.isTrue(der.len() > 100, which + ": the onion key decoded");
+    t.isTrue(der.len() > 100, "\{which}: the onion key decoded");
     // Byte for byte against tor's own block: header, 64-character lines, the trailing newline on the
     // last one, and the footer. Wrapping at 76 — RFC 2045's width, and most tools' default — would
     // still be valid base64 and would change every byte after the first line.
     t.eqBytes(pemBlock("RSA PUBLIC KEY", der), want,
-              which + ": our PEM block is the block tor wrote");
+              "\{which}: our PEM block is the block tor wrote");
   }
 
   // Every line is at most 64 characters, checked directly rather than inferred from the comparison
@@ -418,29 +417,29 @@ export string test_the_field_formats_are_tors(Core core, Cli cli) {
 
   for (i32 i = 0; i < n; i++) {
     Desc d = descOf(a.lines[i]);
-    string which = "descriptor " + itoa64(i as i64);
+    string which = "descriptor \{i as i64}";
 
     // `published` — the descriptor writes UTC with no zone marker at all, so a generator using local
     // time produces a document that verifies and describes the wrong moment.
     t.eqStr(publishedTime(d.publishedEpoch), d.publishedLine,
-            which + ": our published line is tor's");
+            "\{which}: our published line is tor's");
 
     // `fingerprint` — SHA-1 of the DER RSAPublicKey, uppercase, in groups of four. The key comes from
     // the descriptor's own `signing-key`, so this checks the digest and the formatting together.
     u8[] nn = d.signingN;
     u8[] ee = d.signingE;
-    t.eqI32(nn.len(), 128, which + ": the signing key is RSA-1024");
+    t.eqI32(nn.len(), 128, "\{which}: the signing key is RSA-1024");
     t.eqStr(spacedFingerprint(rsaFingerprint(nn, ee)), d.fingerprintLine,
-            which + ": our fingerprint line is tor's");
+            "\{which}: our fingerprint line is tor's");
 
     // And the DER we re-encode is the DER tor published, so the fingerprint above is not agreeing by
     // way of two compensating mistakes.
     t.eqBytes(rsaPublicKeyDer(nn, ee), d.signingDer,
-              which + ": our RSAPublicKey encoding is tor's");
+              "\{which}: our RSAPublicKey encoding is tor's");
 
     // `ntor-onion-key` — base64 with the padding stripped.
     t.eqStr(b64Unpadded(decoded(strOf(objectOf(all.get(i)), "ntor_onion_key"))), d.ntorLine,
-            which + ": our ntor-onion-key line is tor's");
+            "\{which}: our ntor-onion-key line is tor's");
   }
   return t.report();
 }

@@ -24,7 +24,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains, startsWith, trimmed, splitLines } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change, FileResult, execReason} from "std";
 
 /**
@@ -36,7 +35,7 @@ import { Core, Cli, Exec, Change, FileResult, execReason} from "std";
 string indexed(i32 secret) {
   return "static u8[] SBOX = [3, 1, 4, 1, 5, 9, 2, 6];\n" +
          "export i32 main() {\n" +
-         "  i32 secret = " + itoa(secret) + ";\n" +
+         "  i32 secret = \{secret};\n" +
          "  return SBOX[secret & 7] as i32;\n" +
          "}\n";
 }
@@ -44,7 +43,7 @@ string indexed(i32 secret) {
 /** A program that reads its secret and cannot leak it: the work is the same either way. */
 string uniform(i32 secret) {
   return "export i32 main() {\n" +
-         "  i32 secret = " + itoa(secret) + ";\n" +
+         "  i32 secret = \{secret};\n" +
          "  i32 acc = 0;\n" +
          "  for (i32 i = 0; i < 8; i++) { acc = acc + (secret & 1); }\n" +
          "  return acc;\n" +
@@ -54,7 +53,7 @@ string uniform(i32 secret) {
 /** A program whose secret decides a branch. */
 string branching(i32 secret) {
   return "export i32 main() {\n" +
-         "  i32 secret = " + itoa(secret) + ";\n" +
+         "  i32 secret = \{secret};\n" +
          "  if (secret > 10) { return 1; }\n" +
          "  return 0;\n" +
          "}\n";
@@ -79,34 +78,34 @@ string swapped(bool other) {
 
 /** Build one traced module, answering the stem or the empty string. */
 string built(T t, Cli cli, string dir, string name, string src) {
-  string entry = dir + "/" + name + ".wac";
+  string entry = "\{dir}/\{name}.wac";
   Change wrote = cli.writeFile(entry, src.toBytes()).wait();
-  t.isTrue(wrote.ok(), name + ": writing the source — " + wrote.message);
+  t.isTrue(wrote.ok(), "\{name}: writing the source — \{wrote.message}");
   if (!wrote.ok()) { return ""; }
   Exec r = cli.exec(binaryPath(cli),
-                    ["build", entry, "--trace", "-o", dir + "/" + name, "--quiet"],
+                    ["build", entry, "--trace", "-o", "\{dir}/\{name}", "--quiet"],
                     u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
-           name + ": the traced build — " + execReason(r));
-  return (r.ran() && r.status == 0) ? dir + "/" + name : "";
+           "\{name}: the traced build — \{execReason(r)}");
+  return (r.ran() && r.status == 0) ? "\{dir}/\{name}" : "";
 }
 
 /** `ctcompare`, with its whole answer trimmed. */
 string compared(T t, Cli cli, string a, string b, bool all) {
-  string[] argv = all ? ["ctcompare", "--all", a + ".wasm", b + ".wasm"]
-                      : ["ctcompare", a + ".wasm", b + ".wasm"];
+  string[] argv = all ? ["ctcompare", "--all", "\{a}.wasm", "\{b}.wasm"]
+                      : ["ctcompare", "\{a}.wasm", "\{b}.wasm"];
   Exec r = cli.exec(binaryPath(cli), argv, u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
-           "ctcompare ran — " + execReason(r));
+           "ctcompare ran — \{execReason(r)}");
   return (r.ran() && r.status == 0) ? trimmed(string.fromBytes(r.stdout)) : "<did not run>";
 }
 
 /** The `kind` and `line` of one site, out of the table the build wrote beside the module. */
 string siteAt(Cli cli, string stem, i32 site) {
-  FileResult f = cli.readFile(stem + ".trace").wait();
-  if (!f.ok) { return "<no table: " + f.error + ">"; }
+  FileResult f = cli.readFile("\{stem}.trace").wait();
+  if (!f.ok) { return "<no table: \{f.error}>"; }
   string[] rows = splitLines(string.fromBytes(f.bytes));
-  string want = itoa(site) + "\t";
+  string want = "\{site}\t";
   for (i32 i = 0; i < rows.len(); i++) {
     if (startsWith(rows[i], want)) {
       // index, line, col, kind, file
@@ -122,7 +121,7 @@ string siteAt(Cli cli, string stem, i32 site) {
         }
       }
       if (n < 5) { parts[n] = cur; n = n + 1; }
-      return n >= 4 ? parts[3] + "@" + parts[1] : "<short row>";
+      return n >= 4 ? "\{parts[3]}@\{parts[1]}" : "<short row>";
     }
   }
   return "<no such site>";
@@ -139,12 +138,12 @@ export string test_a_secret_dependent_index_is_found_where_no_branch_differs_6kn
   if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
 
   string said = compared(t, cli, a, b, false);
-  t.isTrue(startsWith(said, "differs "), "the index leak was not found: " + said);
+  t.isTrue(startsWith(said, "differs "), "the index leak was not found: \{said}");
 
   // Both runs stand at the *same* point with different values, which is what an index leak is and
   // what a branch counter cannot see. `--all` names the site, and the table says it is an index.
   string all = compared(t, cli, a, b, true);
-  t.isTrue(startsWith(all, "site "), "--all did not name a site: " + all);
+  t.isTrue(startsWith(all, "site "), "--all did not name a site: \{all}");
   if (startsWith(all, "site ")) {
     // `site <i> <site> <va> <vb>`
     string[] f = splitLines(all);
@@ -158,7 +157,7 @@ export string test_a_secret_dependent_index_is_found_where_no_branch_differs_6kn
       if (c == " ") { if (cur.len() > 0 && n < 5) { parts[n] = cur; n = n + 1; } cur = ""; }
       else { cur = cur + c; }
     }
-    t.eqI32(n, 5, "a site line has five fields: " + row);
+    t.eqI32(n, 5, "a site line has five fields: \{row}");
     if (n == 5) {
       t.eqStr(siteAt(cli, a, atoiOf(parts[2])), "index@4", "the site the table names");
     }
@@ -207,9 +206,9 @@ export string test_a_routine_that_does_not_look_at_its_secret_says_same_6knq4wp(
   // empty journals — a mistyped export calls nothing, records nothing, and matches perfectly. Both
   // forms are asserted, and the number is asserted to be a number greater than nothing.
   string said = compared(t, cli, a, b, false);
-  t.isTrue(startsWith(said, "same "), "two runs that observe nothing: " + said);
+  t.isTrue(startsWith(said, "same "), "two runs that observe nothing: \{said}");
   t.isTrue(atoiOf(said.slice(5, said.len())) > 0,
-           "`same` over no events at all is not agreement: " + said);
+           "`same` over no events at all is not agreement: \{said}");
   // And `--all` says so out loud rather than printing nothing, which is what a command that never ran
   // also prints.
   t.isTrue(startsWith(compared(t, cli, a, b, true), "same "), "--all on an identical pair");
@@ -231,7 +230,7 @@ export string test_a_secret_dependent_branch_parts_the_two_runs_6knq4wp(Core cor
   // A branch leak is a *split*: the two runs are at different points, not at one point with different
   // values. `--all` stops there, because past it the journals are not aligned.
   string all = compared(t, cli, a, b, true);
-  t.isTrue(startsWith(all, "split "), "a branch leak should be a split, got: " + all);
+  t.isTrue(startsWith(all, "split "), "a branch leak should be a split, got: \{all}");
   cli.remove(dir, true).wait();
   return t.report();
 }
@@ -250,11 +249,11 @@ export string test_two_journals_holding_the_same_numbers_in_a_different_order_di
   // plain integer agrees, so this reaches the hash and nothing else can answer it.
   string said = compared(t, cli, a, b, false);
   t.isTrue(startsWith(said, "differs "),
-           "two journals differing only in the order of their events: " + said);
+           "two journals differing only in the order of their events: \{said}");
   // And it is a `site`, not a `split`: both runs are at the same point holding different values,
   // which is the shape of an index leak and what `--all` is for.
   string all = compared(t, cli, a, b, true);
-  t.isTrue(startsWith(all, "site "), "an index leak should be a site, got: " + all);
+  t.isTrue(startsWith(all, "site "), "an index leak should be a site, got: \{all}");
   cli.remove(dir, true).wait();
   return t.report();
 }
@@ -267,20 +266,20 @@ export string test_a_module_with_no_journal_is_an_error_not_an_empty_comparison_
   string dir = scratch(cli, "ctcompare-plain");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  string entry = dir + "/p.wac";
+  string entry = "\{dir}/p.wac";
   cli.writeFile(entry, "export i32 main() { return 0; }\n".toBytes()).wait();
   Exec b = cli.exec(binaryPath(cli),
-                    ["build", entry, "-o", dir + "/p", "--quiet"], u8[]()).wait();
-  t.isTrue(b.ran() && b.status == 0, "the plain build — " + string.fromBytes(b.stderr));
+                    ["build", entry, "-o", "\{dir}/p", "--quiet"], u8[]()).wait();
+  t.isTrue(b.ran() && b.status == 0, "the plain build — \{string.fromBytes(b.stderr)}");
   if (!b.ran() || b.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
   Exec r = cli.exec(binaryPath(cli),
-                    ["ctcompare", dir + "/p.wasm", dir + "/p.wasm"], u8[]()).wait();
-  t.isTrue(r.ran(), "ctcompare ran — " + r.error);
+                    ["ctcompare", "\{dir}/p.wasm", "\{dir}/p.wasm"], u8[]()).wait();
+  t.isTrue(r.ran(), "ctcompare ran — \{r.error}");
   if (r.ran()) {
     t.eqI32(r.status, 1, "an uninstrumented module compared as though it had a journal");
     t.isTrue(contains(string.fromBytes(r.stderr), "no counters"),
-             "the message names the cause: " + string.fromBytes(r.stderr));
+             "the message names the cause: \{string.fromBytes(r.stderr)}");
   }
 
   Exec usage = cli.exec(binaryPath(cli), ["ctcompare"], u8[]()).wait();
@@ -305,41 +304,41 @@ export string test_tracestat_reports_what_a_run_wanted_so_the_next_one_can_fit_6
     "  for (i32 i = 0; i < 40; i++) { acc = acc + i; }\n" +
     "  return acc;\n" +
     "}\n";
-  string entry = dir + "/p.wac";
+  string entry = "\{dir}/p.wac";
   cli.writeFile(entry, SRC.toBytes()).wait();
 
   Exec small = cli.exec(binaryPath(cli),
-    ["build", entry, "--trace", "--trace-slots", "8", "-o", dir + "/small", "--quiet"],
+    ["build", entry, "--trace", "--trace-slots", "8", "-o", "\{dir}/small", "--quiet"],
     u8[]()).wait();
   t.isTrue(small.ran() && small.status == 0,
-           "the small build — " + string.fromBytes(small.stderr));
+           "the small build — \{string.fromBytes(small.stderr)}");
   if (!small.ran() || small.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
-  Exec r = cli.exec(binaryPath(cli), ["tracestat", dir + "/small.wasm"], u8[]()).wait();
-  t.isTrue(r.ran() && r.status == 0, "tracestat ran — " + string.fromBytes(r.stderr));
+  Exec r = cli.exec(binaryPath(cli), ["tracestat", "\{dir}/small.wasm"], u8[]()).wait();
+  t.isTrue(r.ran() && r.status == 0, "tracestat ran — \{string.fromBytes(r.stderr)}");
   if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
   string said = trimmed(string.fromBytes(r.stdout));
   i32 events = atoiOf(word(said, 1));
   i32 wanted = atoiOf(word(said, 3));
   i32 slots = atoiOf(word(said, 5));
-  t.eqI32(slots, 8, "the size is the caller's: " + said);
-  t.isTrue(wanted > events, "it should have overflowed: " + said);
-  t.isTrue(wanted > 40, "one point per iteration at least: " + said);
+  t.eqI32(slots, 8, "the size is the caller's: \{said}");
+  t.isTrue(wanted > events, "it should have overflowed: \{said}");
+  t.isTrue(wanted > 40, "one point per iteration at least: \{said}");
 
   // Sized from what the first run reported, the second fits — and `events` and `wanted` agree, which
   // is the whole claim.
   Exec big = cli.exec(binaryPath(cli),
     [
-             "build", entry, "--trace", "--trace-slots", itoa(2 * wanted + 8),
-             "-o", dir + "/big", "--quiet"
+             "build", entry, "--trace", "--trace-slots", "\{2 * wanted + 8}",
+             "-o", "\{dir}/big", "--quiet"
     ], u8[]()).wait();
-  t.isTrue(big.ran() && big.status == 0, "the resized build — " + string.fromBytes(big.stderr));
+  t.isTrue(big.ran() && big.status == 0, "the resized build — \{string.fromBytes(big.stderr)}");
   if (big.ran() && big.status == 0) {
-    Exec r2 = cli.exec(binaryPath(cli), ["tracestat", dir + "/big.wasm"], u8[]()).wait();
+    Exec r2 = cli.exec(binaryPath(cli), ["tracestat", "\{dir}/big.wasm"], u8[]()).wait();
     string said2 = trimmed(string.fromBytes(r2.stdout));
     t.eqI32(atoiOf(word(said2, 1)), atoiOf(word(said2, 3)),
-            "the resized journal did not fit what the first run asked for: " + said2);
-    t.eqI32(atoiOf(word(said2, 3)), wanted, "the two runs counted different events: " + said2);
+            "the resized journal did not fit what the first run asked for: \{said2}");
+    t.eqI32(atoiOf(word(said2, 3)), wanted, "the two runs counted different events: \{said2}");
   }
 
   Exec usage = cli.exec(binaryPath(cli), ["tracestat"], u8[]()).wait();
@@ -355,16 +354,16 @@ export string test_coverage_and_trace_cannot_be_asked_for_together_6knq4wp(Core 
   string dir = scratch(cli, "ctcompare-both");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  string entry = dir + "/p.wac";
+  string entry = "\{dir}/p.wac";
   cli.writeFile(entry, "export i32 main() { return 0; }\n".toBytes()).wait();
   Exec r = cli.exec(binaryPath(cli),
-                    ["build", entry, "--coverage", "--trace", "-o", dir + "/p", "--quiet"],
+                    ["build", entry, "--coverage", "--trace", "-o", "\{dir}/p", "--quiet"],
                     u8[]()).wait();
-  t.isTrue(r.ran(), "the build was attempted — " + r.error);
+  t.isTrue(r.ran(), "the build was attempted — \{r.error}");
   if (r.ran()) {
     t.isTrue(r.status != 0, "it built both ways, which it must not");
     t.isTrue(contains(string.fromBytes(r.stderr), "one counter array"),
-             "the refusal says why: " + string.fromBytes(r.stderr));
+             "the refusal says why: \{string.fromBytes(r.stderr)}");
   }
   cli.remove(dir, true).wait();
   return t.report();

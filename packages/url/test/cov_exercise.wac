@@ -96,7 +96,7 @@ string[] hand() {
     "foo://h/a\\b", "foo://h/a/../b",
     "http://h/ \"<>`{}", "http://h/?\" <>#", "http://h/?a'b", "foo://h/?a'b", "http://h/#\" <>`",
     "http://h/%41%42", "http://h/%zz", "http://h/%", "http://h/%a", "http://user na:me@h/",
-    "http://h/a?b#c d", "http://h/" + string.fromCodepoint(1) + string.fromCodepoint(0x1f),
+    "http://h/a?b#c d", "http://h/\{string.fromCodepoint(1)}\{string.fromCodepoint(0x1f)}",
     "http://h/café", "http://h/?café", "http://h/#café", "http://h/日本", "http://h/😀",
     "http://127.0.0.1/", "http://127.1/", "http://127.0.1/", "http://2130706433/",
     "http://0x7f.1/", "http://0x7f000001/", "http://0177.0.0.1/", "http://0300.0250.0.1/",
@@ -113,7 +113,7 @@ string[] hand() {
     "file://", "file:", "file:/a", "file:a", "file:///c:/x", "file:///c|/x", "file://c:/x",
     "file:///C:/", "file:///c:", "file:////a", "file:///a/../b", "file://\\\\a",
     "  http://h/  ", "\thttp://h/", "ht\ntp://h/", "http://h/a\tb", "http://h/a\rb",
-    string.fromCodepoint(0) + "http://h/", "", "   ", "http", "://h/", "http:", "1http://h/",
+    "\{string.fromCodepoint(0)}http://h/", "", "   ", "http", "://h/", "http:", "1http://h/",
     "http://", "http://:@/", "//h/", "/a/b", "a/b",
     // The edges the main groups miss, kept in step with the test of the same name.
     "foo:/.//x", "foo:/..//x", "web+demo:/.//not-a-host/",

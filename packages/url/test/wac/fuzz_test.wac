@@ -24,7 +24,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse, parseWithBase } from "../probe.wac";
 
 static string ORACLE = "packages/url/test/batchOracle.ts";
@@ -117,7 +116,7 @@ void sweep(T t, Cli cli, i32 seed, i32 count, string what) {
     string input = generate(rng);
     add(lines, input, bs[rng.upto(bs.len())]);
   }
-  lines.add("skipped " + itoa(count) + " 15");
+  lines.add("skipped \{count} 15");
   ask(t, cli, lines, what);
 }
 

@@ -26,7 +26,6 @@ import { isWordSeparator, isWordSeparatorC } from "../lib/words.wac";
 import { utf8Locale } from "../lib/locale.wac";
 import { Scalar, decode, TRUNCATED } from "../../../unicode/src/utf8.wac";
 import { isPrintable } from "../../../unicode/src/printable.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Feed } from "../../../platform/src/stream.wac";
 
@@ -207,7 +206,7 @@ i32 digits(i32 n) {
 /** `s` right-aligned in `width`, which is how every column here is printed. */
 string pad(string s, i32 width) {
   string out = s;
-  for (i32 i = s.toBytes().len(); i < width; i++) { out = " " + out; }
+  for (i32 i = s.toBytes().len(); i < width; i++) { out = " \{out}"; }
   return out;
 }
 
@@ -225,11 +224,11 @@ string row(Args a, Counts c, string label, i32 width) {
   bool b = has(a, 'c');
   string nums = "";
   if (!l && !w && !b) {
-    nums = pad(itoa(c.lines), width) + " " + pad(itoa(c.words), width) + " " + pad(itoa(c.bytes), width);
+    nums = pad("\{c.lines}", width) + " " + pad("\{c.words}", width) + " " + pad("\{c.bytes}", width);
   } else {
-    if (l) { nums = pad(itoa(c.lines), width); }
-    if (w) { nums = nums == "" ? pad(itoa(c.words), width) : nums + " " + pad(itoa(c.words), width); }
-    if (b) { nums = nums == "" ? pad(itoa(c.bytes), width) : nums + " " + pad(itoa(c.bytes), width); }
+    if (l) { nums = pad("\{c.lines}", width); }
+    if (w) { nums = nums == "" ? pad("\{c.words}", width) : nums + " " + pad("\{c.words}", width); }
+    if (b) { nums = nums == "" ? pad("\{c.bytes}", width) : nums + " " + pad("\{c.bytes}", width); }
   }
-  return label == "" ? nums : nums + " " + label;
+  return label == "" ? nums : "\{nums} \{label}";
 }

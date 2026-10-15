@@ -48,7 +48,6 @@
 // a case that does not trap is a red test rather than a silent one. It was a second copy here.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { decoded } from "../../codec/src/hex.wac";
 
 import { test_rfc_8439_poly1305 as aead__rfc_8439_poly1305, test_poly1305_forced_carries as aead__poly1305_forced_carries, test_rfc_8439_aead as aead__rfc_8439_aead, test_the_length_fields_stop_a_block_moving as aead__the_length_fields_stop_a_block_moving, test_the_tag_covers_everything as aead__the_tag_covers_everything, test_poly1305_agrees_with_the_reference_at_every_length_to_three_blocks as aead__poly1305_agrees_with_the_reference_at_every_length_to_three_blocks, test_poly1305_agrees_with_the_reference_under_fuzzing as aead__poly1305_agrees_with_the_reference_under_fuzzing, test_traps_on_a_flipped_first_ciphertext_bit as aead__traps_on_a_flipped_first_ciphertext_bit, test_traps_on_a_flipped_last_ciphertext_bit as aead__traps_on_a_flipped_last_ciphertext_bit, test_traps_on_modified_associated_data as aead__traps_on_modified_associated_data, test_traps_on_a_flipped_tag_bit as aead__traps_on_a_flipped_tag_bit, test_traps_on_the_wrong_key as aead__traps_on_the_wrong_key, test_traps_on_the_wrong_nonce as aead__traps_on_the_wrong_nonce, test_traps_on_a_short_tag as aead__traps_on_a_short_tag, test_traps_on_a_seventeen_byte_tag as aead__traps_on_a_seventeen_byte_tag, test_traps_on_an_eighteen_byte_tag as aead__traps_on_an_eighteen_byte_tag, test_traps_on_a_double_length_tag as aead__traps_on_a_double_length_tag, test_traps_on_a_truncated_ciphertext as aead__traps_on_a_truncated_ciphertext }
@@ -296,7 +295,7 @@ export i32 main(Sys sys) {
   if (rsa__a_negative_salt_length_is_rejected(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_a_negative_salt_length_is_rejected"); bad = bad + 1; }
   if (nistcurve__a_malformed_public_key_is_false_not_a_trap(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_a_malformed_public_key_is_false_not_a_trap"); bad = bad + 1; }
   if (bad > 0) {
-    core.warn("error: " + itoa(bad) + " test(s) failed, so this measured a broken package");
+    core.warn("error: \{bad} test(s) failed, so this measured a broken package");
     return 1;
   }
   return probes(core, cli);

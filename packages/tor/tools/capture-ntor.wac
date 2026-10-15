@@ -18,7 +18,6 @@
 import { Core, Cli, Exec, Stat, Sys } from "std";
 import { x25519Base } from "../../crypto/src/x25519.wac";
 import { ntorClientRequest } from "../src/ntor.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { hex, pad } from "./capturejson.wac";
 
 /** The same fill `ntor_test.wac` uses, so the keys match the questions it asks. */
@@ -37,12 +36,12 @@ string homeDir(Cli cli) {
 string torNtor(Cli cli) {
   u8[]? set = cli.env("TOR_NTOR_CL").wait();
   if (!(set is null)) { return string.fromBytes(set!); }
-  return homeDir(cli) + "/tor-build/torproject-tor-c8d2b17/src/test/test-ntor-cl";
+  return "\{homeDir(cli)}/tor-build/torproject-tor-c8d2b17/src/test/test-ntor-cl";
 }
 
 /** tor's relay half: the reply then the keys, both hex, one per line. */
 string server1(Cli cli, string path, string b, string id, string msg, i32 keyLen) {
-  Exec r = cli.exec(path, ["server1", b, id, msg, itoa(keyLen)], u8[]()).wait();
+  Exec r = cli.exec(path, ["server1", b, id, msg, "\{keyLen}"], u8[]()).wait();
   if (r.error != "" || r.status != 0) { return ""; }
   string text = string.fromBytes(r.stdout);
   string joined = "";
@@ -61,7 +60,7 @@ export i32 main(Sys sys) {
   string path = torNtor(cli);
   Stat there = cli.stat(path).wait();
   if (!there.exists) {
-    core.warn("capture-ntor: no binary at " + path + " — build it with tools/tor.sh");
+    core.warn("capture-ntor: no binary at \{path} — build it with tools/tor.sh");
     return 1;
   }
 
@@ -76,18 +75,18 @@ export i32 main(Sys sys) {
     // expansion.
     string out = server1(cli, path, hex(onionPriv), hex(id), hex(req), 92);
     if (out == "") {
-      core.warn("capture-ntor: " + path + " server1 failed on round " + itoa(i));
+      core.warn("capture-ntor: \{path} server1 failed on round \{i}");
       return 1;
     }
     if (i > 0) { cases = cases + ",\n"; }
-    cases = cases + pad(1, 2) + "{\n" +
-      pad(2, 2) + "\"b\": \"" + hex(onionPriv) + "\",\n" +
-      pad(2, 2) + "\"id\": \"" + hex(id) + "\",\n" +
-      pad(2, 2) + "\"msg\": \"" + hex(req) + "\",\n" +
-      pad(2, 2) + "\"keyLen\": 92,\n" +
-      pad(2, 2) + "\"out\": \"" + out + "\"\n" +
-      pad(1, 2) + "}";
+    cases = cases + "\{pad(1, 2)}{\n" +
+      "\{pad(2, 2)}\"b\": \"\{hex(onionPriv)}\",\n" +
+      "\{pad(2, 2)}\"id\": \"\{hex(id)}\",\n" +
+      "\{pad(2, 2)}\"msg\": \"\{hex(req)}\",\n" +
+      "\{pad(2, 2)}\"keyLen\": 92,\n" +
+      "\{pad(2, 2)}\"out\": \"\{out}\"\n" +
+      "\{pad(1, 2)}}";
   }
-  cli.write(("[\n" + cases + "\n]\n").toBytes());
+  cli.write("[\n\{cases}\n]\n".toBytes());
   return 0;
 }

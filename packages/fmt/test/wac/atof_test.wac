@@ -20,7 +20,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { approxBits, atofSpan, scan } from "../../src/atof.wac";
 import { ftoaBytes } from "../../src/ftoa.wac";
 
@@ -61,7 +60,7 @@ bool isFinite64(f64 x) {
 
 /** One `p64` line: this decimal, and the bits we parsed it to. */
 void parsed(Lines lines, string s) {
-  lines.add("p64 " + hex(s.toBytes()) + " " + bits64(atof(s)));
+  lines.add("p64 \{hex(s.toBytes())} \{bits64(atof(s))}");
 }
 
 
@@ -146,7 +145,7 @@ export string test_atof_exact_halfway_cases_round_to_even(Core core, Cli cli) {
   for (i32 i = 0; i < ms.len(); i++) {
     // Two claims per case, and the second is the one the host-side version could not make about
     // itself: that this decimal is a midpoint at all.
-    lines.add("midpoint " + hex(ms[i].toBytes()));
+    lines.add("midpoint \{hex(ms[i].toBytes())}");
     parsed(lines, ms[i]);
   }
   t.eqI32(ms.len(), 20, "twenty midpoints — five starting values, four steps each");
@@ -169,14 +168,14 @@ export string test_atof_round_trips_every_shortest_representation(Core core, Cli
     f64 x = nextDouble(rng);
     if (!isFinite64(x)) { continue; }
     string s = string.fromBytes(ftoaBytes(x));
-    t.eqStr(bits64(atof(s)), bits64(x), "\"" + s + "\" parsed back to a different double");
+    t.eqStr(bits64(atof(s)), bits64(x), "\"\{s}\" parsed back to a different double");
     // And the same string sent to the oracle, so "our formatter and our parser agree" is not the
     // whole of the evidence: `Number(s)` has to reach the same double too.
     parsed(lines, s);
     checked = checked + 1;
   }
-  t.isTrue(checked > 2000, "only " + itoa(checked) + " shortest forms were drawn");
-  checkDeno(t, cli, ORACLE, lines, itoa(checked) + " shortest forms");
+  t.isTrue(checked > 2000, "only \{checked} shortest forms were drawn");
+  checkDeno(t, cli, ORACLE, lines, "\{checked} shortest forms");
   return t.report();
 }
 
@@ -187,9 +186,9 @@ export string test_atof_random_decimals_across_the_exponent_range(Core core, Cli
   for (i32 i = 0; i < 4000; i++) {
     i32 digits = 1 + rng.upto(25);
     string mant = "";
-    for (i32 d = 0; d < digits; d++) { mant = mant + itoa(rng.upto(10)); }
+    for (i32 d = 0; d < digits; d++) { mant = mant + "\{rng.upto(10)}"; }
     i32 exp = rng.upto(680) - 340;
-    parsed(lines, (rng.upto(2) == 0 ? "-" : "") + mant + "e" + itoa(exp));
+    parsed(lines, (rng.upto(2) == 0 ? "-" : "") + mant + "e\{exp}");
   }
   checkDeno(t, cli, ORACLE, lines, "random decimals across the exponent range");
   return t.report();
@@ -241,13 +240,13 @@ export string test_atof_the_estimate_is_inside_the_bisection_window() {
     u64 want = f64.toBits(atof(cases[i]));
     u64 off = estimate > want ? estimate - want : want - estimate;
     t.isTrue(off <= 4,
-             cases[i] + ": the estimate is " + itoa64(off as~ i64) +
+             "\{cases[i]}: the estimate is \{off as~ i64}" +
              " ulps out; the bisection window is 4");
   }
   // And it must actually guess: a function that always declined would satisfy the loop above without
   // ever being tested, which is exactly the mutant this test was written for.
   t.isTrue(guessed >= cases.len() - 4,
-           "only " + itoa(guessed) + " of " + itoa(cases.len()) +
+           "only \{guessed} of \{cases.len()}" +
            " produced an estimate; the fast path is not working");
   return t.report();
 }

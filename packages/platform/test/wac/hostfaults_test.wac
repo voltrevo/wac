@@ -22,7 +22,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Change, Core, Cli, Exec, FAULT_DENIED, FAULT_NOT_GRANTED, FAULT_NOT_REPRESENTABLE, FAULT_REFUSED,
          FileResult, Socket, Stat, faultWords } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, isSpace, trimmed } from "../../../wactest/src/strings.wac";
 
 static string V8_HOST = "native/v8/src/main.rs";
@@ -31,7 +30,7 @@ static string WASMTIME_HOST = "native/src/main.rs";
 string read(Core core, Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
   if (!r.ok) {
-    core.warn("platform: cannot read " + path + " — " + r.error);
+    core.warn("platform: cannot read \{path} — \{r.error}");
     trap;
   }
   return string.fromBytes(r.bytes);
@@ -112,19 +111,19 @@ export string test_the_two_rust_hosts_classify_an_error_the_same_way(Core core, 
 
   // The extraction has to have found something, or every comparison below holds vacuously — which is
   // exactly how a source scan goes quietly wrong.
-  t.isTrue(v8.len() >= 7, V8_HOST + ": found " + itoa(v8.len()) +
+  t.isTrue(v8.len() >= 7, "\{V8_HOST}: found \{v8.len()}" +
            " mapping arms in fault_of, which is too few to be the whole function");
-  t.isTrue(wasmtime.len() >= 7, WASMTIME_HOST + ": found " + itoa(wasmtime.len()) +
+  t.isTrue(wasmtime.len() >= 7, "\{WASMTIME_HOST}: found \{wasmtime.len()}" +
            " mapping arms in fault_of, which is too few to be the whole function");
   if (v8.len() < 7 || wasmtime.len() < 7) { return t.report(); }
 
   for (i32 i = 0; i < v8.len(); i++) {
     t.isTrue(has(wasmtime, v8[i]),
-             "the V8 host maps `" + v8[i] + "` and the wasmtime host does not");
+             "the V8 host maps `\{v8[i]}` and the wasmtime host does not");
   }
   for (i32 i = 0; i < wasmtime.len(); i++) {
     t.isTrue(has(v8, wasmtime[i]),
-             "the wasmtime host maps `" + wasmtime[i] + "` and the V8 host does not");
+             "the wasmtime host maps `\{wasmtime[i]}` and the V8 host does not");
   }
   return t.report();
 }
@@ -140,17 +139,17 @@ export string test_the_two_rust_hosts_number_the_faults_the_same_way(Core core, 
   T t = T.create();
   string[] v8 = constantsOf(read(core, cli, V8_HOST));
   string[] wasmtime = constantsOf(read(core, cli, WASMTIME_HOST));
-  t.isTrue(v8.len() >= 8, V8_HOST + ": found " + itoa(v8.len()) + " FAULT_ constants");
-  t.isTrue(wasmtime.len() >= 8, WASMTIME_HOST + ": found " + itoa(wasmtime.len()) +
+  t.isTrue(v8.len() >= 8, "\{V8_HOST}: found \{v8.len()} FAULT_ constants");
+  t.isTrue(wasmtime.len() >= 8, "\{WASMTIME_HOST}: found \{wasmtime.len()}" +
            " FAULT_ constants");
   if (v8.len() < 8 || wasmtime.len() < 8) { return t.report(); }
   for (i32 i = 0; i < v8.len(); i++) {
     t.isTrue(has(wasmtime, v8[i]),
-             "the V8 host declares `" + v8[i] + "` and the wasmtime host does not");
+             "the V8 host declares `\{v8[i]}` and the wasmtime host does not");
   }
   for (i32 i = 0; i < wasmtime.len(); i++) {
     t.isTrue(has(v8, wasmtime[i]),
-             "the wasmtime host declares `" + wasmtime[i] + "` and the V8 host does not");
+             "the wasmtime host declares `\{wasmtime[i]}` and the V8 host does not");
   }
   return t.report();
 }
@@ -199,8 +198,8 @@ export string test_a_refused_connection_is_refused_and_not_merely_failed(Core co
     return t.report();
   }
   t.eqI32(s.fault, FAULT_REFUSED(),
-          "a refused dial is its own category, not FAULT_OTHER — got " + itoa(s.fault)
-          + " with the message " + s.error);
+          "a refused dial is its own category, not FAULT_OTHER — got \{s.fault}"
+          + " with the message \{s.error}");
   t.eqStr(faultWords(s.fault), "Connection refused", "and the words strerror uses for it");
   return t.report();
 }
@@ -224,30 +223,30 @@ export string test_a_refused_connection_is_refused_and_not_merely_failed(Core co
  */
 export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/hostfaults-denied";
+  string dir = "\{cli.cwd().wait()}/.cache/hostfaults-denied";
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
-  Change wrote = cli.writeFile(dir + "/inside.txt", "here\n".toBytes()).wait();
-  t.isTrue(wrote.ok(), "the fixture was written — " + wrote.message);
+  Change wrote = cli.writeFile("\{dir}/inside.txt", "here\n".toBytes()).wait();
+  t.isTrue(wrote.ok(), "the fixture was written — \{wrote.message}");
   if (!wrote.ok()) { return t.report(); }
 
   // No execute bit, so the kernel refuses to walk into it. `chmod` through the shell because
   // `Cli` has no mode-setting capability beyond `setExecutable`, which sets rather than clears.
-  Exec locked = cli.exec("/bin/sh", ["-c", "chmod 000 '" + dir + "'"], u8[]()).wait();
+  Exec locked = cli.exec("/bin/sh", ["-c", "chmod 000 '\{dir}'"], u8[]()).wait();
   t.isTrue(locked.ran() && locked.status == 0, "the directory was locked");
   if (!locked.ran() || locked.status != 0) { return t.report(); }
 
-  FileResult r = cli.readFile(dir + "/inside.txt").wait();
-  Stat s = cli.stat(dir + "/inside.txt").wait();
+  FileResult r = cli.readFile("\{dir}/inside.txt").wait();
+  Stat s = cli.stat("\{dir}/inside.txt").wait();
 
   // Unlocked before the assertions, so a failure does not leave a directory the suite cannot remove.
-  cli.exec("/bin/sh", ["-c", "chmod 755 '" + dir + "'"], u8[]()).wait();
+  cli.exec("/bin/sh", ["-c", "chmod 755 '\{dir}'"], u8[]()).wait();
 
   t.isTrue(!r.ok, "reading through a locked directory failed");
-  t.eqI32(r.fault, FAULT_DENIED(), "and the fault says denied rather than " + faultWords(r.fault));
+  t.eqI32(r.fault, FAULT_DENIED(), "and the fault says denied rather than \{faultWords(r.fault)}");
   // **The `stat` half is the one a script acts on.** A `test -e` built on a `stat` that answered
   // "absent" would tell a script the file is not there, and the script would go on to create it.
-  t.eqI32(s.fault, FAULT_DENIED(), "stat says denied rather than " + faultWords(s.fault));
+  t.eqI32(s.fault, FAULT_DENIED(), "stat says denied rather than \{faultWords(s.fault)}");
   t.isTrue(!s.exists, "and does not claim it exists, which it cannot know");
 
   cli.remove(dir, true).wait();
@@ -277,18 +276,18 @@ export string test_a_path_the_system_refuses_is_denied_rather_than_absent(Core c
  */
 export string test_a_name_this_host_cannot_hold_is_not_reported_absent(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/hostfaults-unnameable";
-  cli.exec("/bin/sh", ["-c", "rm -rf '" + dir + "'"], u8[]()).wait();
+  string dir = "\{cli.cwd().wait()}/.cache/hostfaults-unnameable";
+  cli.exec("/bin/sh", ["-c", "rm -rf '\{dir}'"], u8[]()).wait();
   cli.mkdir(dir, true).wait();
 
   // A raw `0xFF` byte: a name the filesystem holds happily and UTF-8 cannot spell. Made through the
   // shell because a wac string cannot carry it *to* `writeFile` on a host that would mangle it on the
   // way out — which is the thing under test, so the fixture must not go through it.
   Exec made = cli.exec("/bin/sh",
-                       ["-c", "cd '" + dir + "' && touch \"$(printf 'bad-\\377-name')\""],
+                       ["-c", "cd '\{dir}' && touch \"$(printf 'bad-\\377-name')\""],
                        u8[]()).wait();
   t.isTrue(made.ran() && made.status == 0,
-           "the fixture was made — " + string.fromBytes(made.stderr));
+           "the fixture was made — \{string.fromBytes(made.stderr)}");
   if (!made.ran() || made.status != 0) { return t.report(); }
 
   string[]? listed = cli.readDir(dir).wait();
@@ -299,14 +298,14 @@ export string test_a_name_this_host_cannot_hold_is_not_reported_absent(Core core
   t.eqI32(names.len(), 1, "the listing has exactly the one fixture in it");
 
   for (i32 i = 0; i < names.len(); i++) {
-    Stat s = cli.stat(dir + "/" + names[i]).wait();
+    Stat s = cli.stat("\{dir}/\{names[i]}").wait();
     t.isTrue(s.exists || s.fault == FAULT_NOT_REPRESENTABLE(),
              "a file that is on the disk came back as exists="
-               + (s.exists ? "true" : "false") + " fault=" + itoa(s.fault)
+               + (s.exists ? "true" : "false") + " fault=\{s.fault}"
                + " (" + faultWords(s.fault) + ") — a caller acts on that by creating it");
   }
 
-  cli.exec("/bin/sh", ["-c", "rm -rf '" + dir + "'"], u8[]()).wait();
+  cli.exec("/bin/sh", ["-c", "rm -rf '\{dir}'"], u8[]()).wait();
   return t.report();
 }
 
@@ -332,10 +331,10 @@ export string test_the_two_rust_hosts_hand_the_seed_the_same_grants(Core core, C
   string[] names = ["read", "write", "env", "net", "run"];
   for (i32 i = 0; i < names.len(); i++) {
     string grant = names[i];
-    bool inV8 = v8.indexOf("grants." + grant + " = true") >= 0
-             || v8.indexOf(grant + ": true") >= 0;
-    bool inNative = wasmtime.indexOf("grants." + grant + " = true") >= 0
-                 || wasmtime.indexOf(grant + ": true") >= 0;
+    bool inV8 = v8.indexOf("grants.\{grant} = true") >= 0
+             || v8.indexOf("\{grant}: true") >= 0;
+    bool inNative = wasmtime.indexOf("grants.\{grant} = true") >= 0
+                 || wasmtime.indexOf("\{grant}: true") >= 0;
     t.isTrue(inV8 == inNative,
              "the hosts disagree about granting `" + grant + "` to the seed: v8 "
                + (inV8 ? "does" : "does not") + ", wasmtime "

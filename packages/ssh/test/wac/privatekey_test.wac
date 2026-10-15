@@ -12,7 +12,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { ALPHABET_STANDARD, decode as b64Decode, encode as b64Encode }
   from "../../../codec/src/base64.wac";
@@ -43,10 +42,10 @@ string statusOf(u8[] pem, string passphrase) {
 export string test_an_openssh_private_key_reads_encrypted_or_not(Core core, Cli cli) {
   T t = T.create();
   string dir = freshScratch(t, cli, "ssh-privatekey");
-  if (!keygen(t, cli, dir + "/k")) { return t.report(); }
+  if (!keygen(t, cli, "\{dir}/k")) { return t.report(); }
 
-  FileResult plain = cli.readFile(dir + "/k").wait();
-  t.isTrue(plain.ok, "the generated key could not be read — " + plain.error);
+  FileResult plain = cli.readFile("\{dir}/k").wait();
+  t.isTrue(plain.ok, "the generated key could not be read — \{plain.error}");
   if (!plain.ok) { return t.report(); }
   PrivateKey key = readEd25519(plain.bytes, u8[]());
   t.eqStr(errorName(key.error), "ok", "an unencrypted key did not read");
@@ -55,16 +54,16 @@ export string test_an_openssh_private_key_reads_encrypted_or_not(Core core, Cli 
   // Same key, now encrypted. `-p` rewrites the file with a passphrase and nothing else, so the key
   // material is unchanged by construction. Copied with the mode preserved: `ssh-keygen` refuses to
   // touch a private key that anyone else could read, and a plain write would make one.
-  t.isTrue(copyPreserving(cli, dir + "/k", dir + "/enc"), "the key could not be copied");
+  t.isTrue(copyPreserving(cli, "\{dir}/k", "\{dir}/enc"), "the key could not be copied");
   string pass = "a passphrase with spaces";
   Exec rekey = cli.exec("ssh-keygen",
-                        ["-p", "-f", dir + "/enc", "-P", "", "-N", pass, "-q", "-a", "8"],
+                        ["-p", "-f", "\{dir}/enc", "-P", "", "-N", pass, "-q", "-a", "8"],
                         u8[]()).wait();
-  t.eqI32(rekey.status, 0, "ssh-keygen -p: " + string.fromBytes(rekey.stderr));
+  t.eqI32(rekey.status, 0, "ssh-keygen -p: \{string.fromBytes(rekey.stderr)}");
   if (rekey.status != 0) { return t.report(); }
 
-  FileResult enc = cli.readFile(dir + "/enc").wait();
-  t.isTrue(enc.ok, "the encrypted key could not be read — " + enc.error);
+  FileResult enc = cli.readFile("\{dir}/enc").wait();
+  t.isTrue(enc.ok, "the encrypted key could not be read — \{enc.error}");
   if (!enc.ok) { return t.report(); }
   // A file that came back unchanged would make every assertion below pass for the wrong reason.
   t.isTrue(string.fromBytes(enc.bytes).indexOf("aes256-ctr") >= 0 ||
@@ -118,9 +117,9 @@ export string test_a_key_whose_two_public_halves_disagree_is_refused(Core core, 
   // it was untested is that nothing could reach it *through a valid file*.
   T t = T.create();
   string dir = freshScratch(t, cli, "ssh-badkey");
-  if (!keygen(t, cli, dir + "/k")) { return t.report(); }
-  FileResult pem = cli.readFile(dir + "/k").wait();
-  t.isTrue(pem.ok, "the generated key could not be read — " + pem.error);
+  if (!keygen(t, cli, "\{dir}/k")) { return t.report(); }
+  FileResult pem = cli.readFile("\{dir}/k").wait();
+  t.isTrue(pem.ok, "the generated key could not be read — \{pem.error}");
   if (!pem.ok) { return t.report(); }
 
   // Decode the base64 body, then rewrite the outer public-key string to something short. Every
@@ -178,7 +177,7 @@ string wrapped(string b64) {
   string out = "";
   for (i32 at = 0; at < b64.len(); at = at + 70) {
     i32 end = at + 70 > b64.len() ? b64.len() : at + 70;
-    out = out + b64.slice(at, end) + "\n";
+    out = out + "\{b64.slice(at, end)}\n";
   }
   return out;
 }

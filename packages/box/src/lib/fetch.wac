@@ -7,19 +7,18 @@
 // and the exit code.
 
 import { Cli, Core } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { get, Fetched } from "../../../http/src/client.wac";
 
 /** The exit code the applet should return. */
 export i32 fetch(Core core, Cli cli, string name, string host, string path, i32 port, bool headers) {
   Fetched f = get(cli, host, port, path);
   if (!f.ok) {
-    core.warn(name + ": " + f.error);
+    core.warn("\{name}: \{f.error}");
     return 1;
   }
 
   if (headers) {
-    core.log("HTTP " + itoa(f.response.status));
+    core.log("HTTP \{f.response.status}");
     for (i32 i = 0; i < f.response.headers.count; i++) {
       core.log(string.fromBytes(f.response.headers.nameAt(i)) + ": "
              + string.fromBytes(f.response.headers.valueAt(i)));

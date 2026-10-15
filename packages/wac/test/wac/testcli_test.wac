@@ -34,7 +34,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std";
 
 /** The binary under test, with whatever arguments, and its output as one string. */
@@ -49,9 +48,9 @@ string oneTestDir(Cli cli, T t, string name) {
   string dir = scratch(cli, name);
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  Change w = cli.writeFile(dir + "/x_test.wac",
+  Change w = cli.writeFile("\{dir}/x_test.wac",
     "export string test_passes() { return \"\"; }\n".toBytes()).wait();
-  t.isTrue(w.ok(), "could not write the test file — " + w.message);
+  t.isTrue(w.ok(), "could not write the test file — \{w.message}");
   return dir;
 }
 
@@ -116,9 +115,9 @@ export string test_a_grant_after_the_path_is_a_flag_not_a_phantom_test_file(Core
   Exec after = wac(cli, ["test", dir, "--allow-read"]);
   t.eqI32(after.status, 0, said(after));
   t.isTrue(!contains(said(after), "did not run"),
-           "a moved flag should not become a file: " + said(after));
+           "a moved flag should not become a file: \{said(after)}");
   t.isTrue(!contains(said(after), "--allow-read"),
-           "and should not be named as one: " + said(after));
+           "and should not be named as one: \{said(after)}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -132,13 +131,13 @@ export string test_a_filter_after_the_path_keeps_its_value(Core core, Cli cli) {
   // second directory — which discovery then reports as a file that did not run.
   Exec r = wac(cli, ["test", dir, "--filter", "passes"]);
   t.eqI32(r.status, 0, said(r));
-  t.isTrue(!contains(said(r), "did not run"), "the filter's value is not a target: " + said(r));
+  t.isTrue(!contains(said(r), "did not run"), "the filter's value is not a target: \{said(r)}");
 
   // And a filter matching nothing is said by name — spec ch47: "neither is a failure, and
   // neither is silence" — so a typo shows in the output rather than in the status.
   Exec none = wac(cli, ["test", dir, "--filter", "nosuchtest"]);
-  t.eqI32(none.status, 0, "a filter matching nothing is not a failure: " + said(none));
-  t.isTrue(contains(said(none), "matches --filter nosuchtest"), "and it is said: " + said(none));
+  t.eqI32(none.status, 0, "a filter matching nothing is not a failure: \{said(none)}");
+  t.isTrue(contains(said(none), "matches --filter nosuchtest"), "and it is said: \{said(none)}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -164,11 +163,11 @@ export string test_the_summary_says_how_many_tests_were_skipped_for_a_grant(Core
   string dir = scratch(cli, "testcli-grantskip");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  Change a = cli.writeFile(dir + "/y_test.wac",
+  Change a = cli.writeFile("\{dir}/y_test.wac",
     ("import { Cli, Core } from \"std\";\n" +
      "export string test_needs_nothing() { return \"\"; }\n" +
      "export string test_wants_a_capability(Core core, Cli cli) { return \"\"; }\n").toBytes()).wait();
-  Change b = cli.writeFile(dir + "/z_test.wac",
+  Change b = cli.writeFile("\{dir}/z_test.wac",
     "export string test_also_passes() { return \"\"; }\n".toBytes()).wait();
   t.isTrue(a.ok() && b.ok(), "could not write the two test files");
   if (!a.ok() || !b.ok()) { cli.remove(dir, true).wait(); return t.report(); }
@@ -178,9 +177,9 @@ export string test_the_summary_says_how_many_tests_were_skipped_for_a_grant(Core
   t.eqI32(r.status, 0, said(r));
   string summary = summaryOf(said(r));
   t.isTrue(contains(summary, "grant"),
-           "the summary should mention the skipped test: \"" + summary + "\"\n" + said(r));
+           "the summary should mention the skipped test: \"\{summary}\"\n\{said(r)}");
   // And say how many, since one skipped test and seventeen are different situations.
-  t.isTrue(contains(summary, "1"), "and count them: \"" + summary + "\"");
+  t.isTrue(contains(summary, "1"), "and count them: \"\{summary}\"");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -191,45 +190,45 @@ export string test_validate_takes_a_batch_and_names_only_what_it_rejected(Core c
   string dir = scratch(cli, "testcli-validate");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  Change src = cli.writeFile(dir + "/m.wac", "export i32 main() { return 0; }\n".toBytes()).wait();
-  t.isTrue(src.ok(), "could not write the source — " + src.message);
-  Exec built = wac(cli, ["build", dir + "/m.wac", "-o", dir + "/m", "--quiet"]);
-  t.eqI32(built.status, 0, "could not build the module to validate: " + said(built));
+  Change src = cli.writeFile("\{dir}/m.wac", "export i32 main() { return 0; }\n".toBytes()).wait();
+  t.isTrue(src.ok(), "could not write the source — \{src.message}");
+  Exec built = wac(cli, ["build", "\{dir}/m.wac", "-o", "\{dir}/m", "--quiet"]);
+  t.eqI32(built.status, 0, "could not build the module to validate: \{said(built)}");
   if (built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
-  string good = dir + "/m.wasm";
+  string good = "\{dir}/m.wasm";
 
   // The same bytes with one flipped inside the header, which is what the engine rejects.
   FileResult bytes = cli.readFile(good).wait();
-  t.isTrue(bytes.ok, "could not read the module back — " + bytes.error);
+  t.isTrue(bytes.ok, "could not read the module back — \{bytes.error}");
   if (!bytes.ok) { cli.remove(dir, true).wait(); return t.report(); }
   u8[] broken = u8[].filled(bytes.bytes.len(), 0);
   for (i32 i = 0; i < broken.len(); i++) { broken[i] = bytes.bytes[i]; }
   broken[4] = broken[4] ^ 0xFF;
-  string bad = dir + "/bad.wasm";
+  string bad = "\{dir}/bad.wasm";
   cli.writeFile(bad, broken).wait();
 
   // **A good module after a bad one**, which is the case the `TryCatch` exists for.
   Exec mixed = wac(cli, ["validate", good, bad, good]);
-  t.eqI32(mixed.status, 1, "a rejected module fails the batch: " + said(mixed));
+  t.eqI32(mixed.status, 1, "a rejected module fails the batch: \{said(mixed)}");
   t.eqI32(countLinesStarting(string.fromBytes(mixed.stdout), "rejected"), 1,
-          "exactly the bad one is named:\n" + said(mixed));
+          "exactly the bad one is named:\n\{said(mixed)}");
   t.eqStr(lastLine(string.fromBytes(mixed.stdout)), "3 module(s): 1 rejected",
           "and the count is what it was asked for");
 
   // Every module accepted: only the count.
   Exec allGood = wac(cli, ["validate", good, good]);
-  t.eqI32(allGood.status, 0, "all accepted: " + said(allGood));
+  t.eqI32(allGood.status, 0, "all accepted: \{said(allGood)}");
   t.eqStr(lastLine(string.fromBytes(allGood.stdout)), "2 module(s): 0 rejected", "only the count");
 
   // A file it cannot read is a rejection rather than a crash, so one missing path does not hide the
   // verdict on the others.
   Exec missing = wac(cli, ["validate", "/nope/does-not-exist.wasm"]);
-  t.eqI32(missing.status, 1, "unreadable counts against it: " + said(missing));
+  t.eqI32(missing.status, 1, "unreadable counts against it: \{said(missing)}");
   t.eqStr(lastLine(string.fromBytes(missing.stdout)), "1 module(s): 1 rejected", "and is counted");
 
   // No arguments is a usage error, not a failure.
   Exec none = wac(cli, ["validate"]);
-  t.eqI32(none.status, 2, "usage, not failure: " + said(none));
+  t.eqI32(none.status, 2, "usage, not failure: \{said(none)}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -259,35 +258,35 @@ export string test_several_paths_run_all_of_them_and_a_repeat_runs_once(Core cor
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  Change a = cli.writeFile(dir + "/a_test.wac",
+  Change a = cli.writeFile("\{dir}/a_test.wac",
     ("export string test_a1() { return \"\"; }\n" +
      "export string test_a2() { return \"\"; }\n").toBytes()).wait();
-  t.isTrue(a.ok(), "could not write a_test.wac — " + a.message);
-  Change b = cli.writeFile(dir + "/b_test.wac",
+  t.isTrue(a.ok(), "could not write a_test.wac — \{a.message}");
+  Change b = cli.writeFile("\{dir}/b_test.wac",
     ("export string test_b1() { return \"\"; }\n" +
      "export string test_b2() { return \"\"; }\n" +
      "export string test_b3() { return \"\"; }\n").toBytes()).wait();
-  t.isTrue(b.ok(), "could not write b_test.wac — " + b.message);
+  t.isTrue(b.ok(), "could not write b_test.wac — \{b.message}");
 
-  Exec both = wac(cli, ["test", dir + "/a_test.wac", dir + "/b_test.wac"]);
+  Exec both = wac(cli, ["test", "\{dir}/a_test.wac", "\{dir}/b_test.wac"]);
   string out = said(both);
-  t.eqI32(both.status, 0, "two paths did not run — " + out);
-  t.isTrue(contains(out, "a_test.wac"), "the first path is not named in the report — " + out);
-  t.isTrue(contains(out, "b_test.wac"), "the second path is not named in the report — " + out);
+  t.eqI32(both.status, 0, "two paths did not run — \{out}");
+  t.isTrue(contains(out, "a_test.wac"), "the first path is not named in the report — \{out}");
+  t.isTrue(contains(out, "b_test.wac"), "the second path is not named in the report — \{out}");
   // The report is per file — `── <path>` then that file's own count — so the sum is asserted as its
   // two halves. Stronger than a total would be: a total of 5 is also what one file of 5 answers.
-  t.isTrue(contains(out, "2 passed, 0 failed"), "a_test.wac's two tests did not run — " + out);
-  t.isTrue(contains(out, "3 passed, 0 failed"), "b_test.wac's three tests did not run — " + out);
-  t.eqStr(summaryOf(out), "2 files: 2 ok", "two paths did not report as two files — " + out);
+  t.isTrue(contains(out, "2 passed, 0 failed"), "a_test.wac's two tests did not run — \{out}");
+  t.isTrue(contains(out, "3 passed, 0 failed"), "b_test.wac's three tests did not run — \{out}");
+  t.eqStr(summaryOf(out), "2 files: 2 ok", "two paths did not report as two files — \{out}");
 
   // The directory and a file under it. Five is still the answer: `b_test.wac` is in both.
-  Exec dup = wac(cli, ["test", dir, dir + "/b_test.wac"]);
+  Exec dup = wac(cli, ["test", dir, "\{dir}/b_test.wac"]);
   string dupOut = said(dup);
-  t.eqI32(dup.status, 0, "a directory plus a file under it did not run — " + dupOut);
+  t.eqI32(dup.status, 0, "a directory plus a file under it did not run — \{dupOut}");
   t.eqStr(summaryOf(dupOut), "2 files: 2 ok",
-          "the repeated file ran twice — " + dupOut);
+          "the repeated file ran twice — \{dupOut}");
   t.eqI32(countLinesStarting(dupOut, "── "), 2,
-          "a file named twice is reported twice — " + dupOut);
+          "a file named twice is reported twice — \{dupOut}");
   cli.remove(dir, true).wait();
   return t.report();
 }

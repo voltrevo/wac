@@ -41,7 +41,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 import { has } from "../../../wactest/src/strings.wac";
 
@@ -155,7 +154,7 @@ export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_gi
   // **The fixture, asserted.** A remote with one branch and no tags would let this pass while
   // exercising none of the advertisement's shapes.
   t.isTrue(lines.len() > 100,
-           REMOTE + " advertises " + itoa(lines.len()) + " refs; this test wants many");
+           "\{REMOTE} advertises \{lines.len()} refs; this test wants many");
   t.isTrue(anyEndsWith(lines, "\tHEAD"), "no HEAD in the advertisement");
   t.isTrue(anyContains(lines, "\trefs/heads/"), "no branch in the advertisement");
   t.isTrue(anyContains(lines, "\trefs/tags/"), "no tag in the advertisement");
@@ -167,7 +166,7 @@ export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_gi
   if (lines.len() <= 100) { return t.report(); }
 
   // Read for the trust store, net for the socket, env for the proxy. No write.
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
   Exec r = withEnv(cli, names, values, wac,
                    [
                                          builtProgram(cli, "packages/git/example/gitls.wac", "gitls",
@@ -178,7 +177,7 @@ export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_gi
                             REMOTE
                    ]);
   string err = trimmedEnd(string.fromBytes(r.stderr));
-  t.eqI32(r.status, 0, "gitls failed: " + err);
+  t.eqI32(r.status, 0, "gitls failed: \{err}");
   t.eqStr(err, "", "gitls warned");
   if (r.status != 0) { return t.report(); }
   string ours = trimmedEnd(string.fromBytes(r.stdout));
@@ -197,6 +196,6 @@ export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_gi
   t.fail("our advertisement differs from git's.\n  we lack: " +
          joinedWith(missingFrom(theirs, mine, 3), " | ") + "\n  we add:  " +
          joinedWith(missingFrom(mine, theirs, 3), " | ") + "\n  " +
-         itoa(mine.len()) + " against " + itoa(theirs.len()));
+         "\{mine.len()} against \{theirs.len()}");
   return t.report();
 }

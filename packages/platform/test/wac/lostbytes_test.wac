@@ -289,14 +289,14 @@ string ran(Cli cli, string binary, string path, string mode) {
                path, mode
     ];
   Exec r = cli.exec(binary, argv, u8[]()).wait();
-  if (!r.ran()) { return "the binary did not run — " + r.error; }
+  if (!r.ran()) { return "the binary did not run — \{r.error}"; }
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
 }
 
 string writtenAs(Cli cli, string name, string program) {
-  string dir = cli.cwd().wait() + "/.cache/lostbytes";
+  string dir = "\{cli.cwd().wait()}/.cache/lostbytes";
   cli.mkdir(dir, true).wait();
-  string path = dir + "/" + name + ".wac";
+  string path = "\{dir}/\{name}.wac";
   Change wrote = cli.writeFile(path, program.toBytes()).wait();
   if (wrote.fault != 0) { return ""; }
   return path;
@@ -322,7 +322,7 @@ void check(T t, Cli cli, string binary, string path, string host) {
   // The canary first: if the control arm cannot see the payload, the abandoned arm proves nothing.
   string control = ran(cli, binary, path, "control");
   t.isTrue(contains(control, "VERDICT kept"),
-           host + ": the control arm did not see the payload, so this case cannot fail — " + control);
+           "\{host}: the control arm did not see the payload, so this case cannot fail — \{control}");
 
   // **Every one of them, and the first failure is the one reported.** Reporting the last would hide
   // a run that lost the payload behind a later one that happened not to.
@@ -331,7 +331,7 @@ void check(T t, Cli cli, string binary, string path, string host) {
     string abandoned = ran(cli, binary, path, "");
     if (!contains(abandoned, "VERDICT kept") && lost == "") { lost = abandoned; }
   }
-  t.eqStr(lost, "", host + ": a reader was abandoned and its bytes went with it");
+  t.eqStr(lost, "", "\{host}: a reader was abandoned and its bytes went with it");
 
   // **And the other order, which is `issues/system/0308b`.** Above, the caller gives up long before
   // the bytes arrive, so the reader declines to take them. Here it gives up *after* they have landed
@@ -340,7 +340,7 @@ void check(T t, Cli cli, string binary, string path, string host) {
   // to. One run is enough for this one: it was deterministic, not a race.
   string late = ran(cli, binary, path, "late");
   t.isTrue(contains(late, "VERDICT kept"),
-           host + ": the answer was dropped with the ticket that had already collected it — " + late);
+           "\{host}: the answer was dropped with the ticket that had already collected it — \{late}");
 }
 
 /**
@@ -358,19 +358,19 @@ void check(T t, Cli cli, string binary, string path, string host) {
  */
 void checkTaken(T t, Cli cli, string binary, string stdinPath, string acceptPath, string host) {
   t.isTrue(contains(ran(cli, binary, stdinPath, "control"), "VERDICT kept"),
-           host + ": the readStdin control saw nothing, so its case cannot fail");
+           "\{host}: the readStdin control saw nothing, so its case cannot fail");
   string lostIn = "";
   for (i32 i = 0; i < TRIES; i++) {
     string got = ran(cli, binary, stdinPath, "");
     if (!contains(got, "VERDICT kept") && lostIn == "") { lostIn = got; }
   }
-  t.eqStr(lostIn, "", host + ": an abandoned readStdin took the whole of standard input with it");
+  t.eqStr(lostIn, "", "\{host}: an abandoned readStdin took the whole of standard input with it");
 
   t.isTrue(contains(ran(cli, binary, acceptPath, "control"), "VERDICT kept"),
-           host + ": the accept control saw nothing, so its case cannot fail");
+           "\{host}: the accept control saw nothing, so its case cannot fail");
   string acc = ran(cli, binary, acceptPath, "");
   t.isTrue(contains(acc, "VERDICT kept"),
-           host + ": an abandoned accept orphaned the connection it had taken — " + acc);
+           "\{host}: an abandoned accept orphaned the connection it had taken — \{acc}");
 
   // ── The *other* ordering for both, which is the half I first shipped without ──
   //
@@ -381,10 +381,10 @@ void checkTaken(T t, Cli cli, string binary, string stdinPath, string acceptPath
   // 8 of 8, and reported done — and each still lost everything on the other, 0 of 6.
   string lateIn = ran(cli, binary, stdinPath, "late");
   t.isTrue(contains(lateIn, "VERDICT kept"),
-           host + ": a readStdin given up on after its answer landed lost it — " + lateIn);
+           "\{host}: a readStdin given up on after its answer landed lost it — \{lateIn}");
   string lateAcc = ran(cli, binary, acceptPath, "late");
   t.isTrue(contains(lateAcc, "VERDICT kept"),
-           host + ": an accept given up on after the connection arrived lost it — " + lateAcc);
+           "\{host}: an accept given up on after the connection arrived lost it — \{lateAcc}");
 }
 
 /** `readStdin` on the process's own input, which needs the binary to exec itself. */
@@ -395,23 +395,23 @@ void checkOwnStdin(T t, Cli cli, string binary, string path, string host) {
   ],
                     u8[]()).wait();
   t.isTrue(contains(string.fromBytes(c.stdout) + string.fromBytes(c.stderr), "VERDICT kept"),
-           host + ": the own-stdin control saw nothing, so its case cannot fail");
+           "\{host}: the own-stdin control saw nothing, so its case cannot fail");
   Exec a = cli.exec(binary, [
                                      "run", "--allow-read", "--allow-write", "--allow-run",
                                      "--allow-env", "--allow-net", path, "abandon", binary, path
   ],
                     u8[]()).wait();
   t.isTrue(contains(string.fromBytes(a.stdout) + string.fromBytes(a.stderr), "VERDICT kept"),
-           host + ": an abandoned readStdin on the program's own input took it with it");
+           "\{host}: an abandoned readStdin on the program's own input took it with it");
 }
 
 /** `connect`, whose remedy is to close rather than to hand on — see `CONNECT_PROGRAM`. */
 void checkDialled(T t, Cli cli, string binary, string path, string host) {
   t.isTrue(contains(ran(cli, binary, path, "control"), "VERDICT kept"),
-           host + ": the connect control did not see the close, so its case cannot fail");
+           "\{host}: the connect control did not see the close, so its case cannot fail");
   string got = ran(cli, binary, path, "");
   t.isTrue(contains(got, "VERDICT kept"),
-           host + ": an abandoned connect left the peer holding the line — " + got);
+           "\{host}: an abandoned connect left the peer holding the line — \{got}");
 }
 
 export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core, Cli cli) {
@@ -429,7 +429,7 @@ export string test_bytes_survive_a_reader_whose_caller_stopped_waiting(Core core
   if (why == "") {
     check(t, cli, nativeBinaryPath(core, cli, "lostbytes"), path, "wasmtime");
   } else {
-    core.log("skipping the wasmtime arm: " + why);
+    core.log("skipping the wasmtime arm: \{why}");
   }
 
   // **And the other two capabilities that take something they cannot recreate.** Both hosts again,

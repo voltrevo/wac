@@ -30,7 +30,6 @@
 // is passed through — which is how `packages/wac/test/wac/app_test.wac` still exercises the refusal.
 
 import { Change, Cli, Core, FileResult, Stat } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { runBytes } from "./runprog.wac";
 
 /**
@@ -60,7 +59,7 @@ export string wacVersion(Cli cli) {
  */
 export string preamble(string version) {
   return "#!/bin/sh\n"
-       + APP_MARK + version + "\n"
+       + "\{APP_MARK}\{version}\n"
        + "# A wac program. The wasm module begins at the first NUL byte below.\n"
        + "command -v wac >/dev/null 2>&1 || {\n"
        + "  echo \"$0: needs the wac command on PATH.\" >&2\n"
@@ -159,15 +158,15 @@ export i32 writeApp(Core core, Cli cli, u8[] whole, string dest, string grantWor
   for (i32 i = 0; i < whole.len(); i++) { out[head.len() + i] = whole[i]; }
   Change wrote = cli.writeFile(dest, out).wait();
   if (!wrote.ok()) {
-    core.warn("wac: cannot write " + dest + " — " + wrote.message);
+    core.warn("wac: cannot write \{dest} — \{wrote.message}");
     return 1;
   }
   Change made = cli.setExecutable(dest, true).wait();
   if (!made.ok()) {
-    core.warn("wac: cannot make " + dest + " executable — " + made.message);
+    core.warn("wac: cannot make \{dest} executable — \{made.message}");
     return 1;
   }
-  core.warn(dest + "  " + itoa(out.len() / 1024) + " KB  ["
+  core.warn(dest + "  \{out.len() / 1024} KB  ["
             + (grantWords == "" ? "no capabilities" : grantWords) + "]");
   return 0;
 }
@@ -186,12 +185,12 @@ export i32 writeApp(Core core, Cli cli, u8[] whole, string dest, string grantWor
 export i32 appRun(Core core, Cli cli, i32 argc, string path, u8[][] args) {
   FileResult f = cli.readFile(path).wait();
   if (!f.ok) {
-    core.warn("wac: cannot read " + path + " — " + f.error);
+    core.warn("wac: cannot read \{path} — \{f.error}");
     return 1;
   }
   i32 at = moduleAt(f.bytes);
   if (at < 0) {
-    core.warn("wac: " + path + " carries no wasm module — is it a `wac app` executable?");
+    core.warn("wac: \{path} carries no wasm module — is it a `wac app` executable?");
     return 1;
   }
   u8[] headBytes = u8[].filled(at, 0);
@@ -201,7 +200,7 @@ export i32 appRun(Core core, Cli cli, i32 argc, string path, u8[][] args) {
   // test for a file nobody built with `wac app` and for one built by a host that publishes no
   // version. See `hasAppMark`.
   if (!hasAppMark(head)) {
-    core.warn("wac: " + path + " has a module in it but no `" + APP_MARK + "` line — not built by "
+    core.warn("wac: \{path} has a module in it but no `\{APP_MARK}` line — not built by "
               + "`wac app`");
     return 1;
   }
@@ -218,9 +217,9 @@ export i32 appRun(Core core, Cli cli, i32 argc, string path, u8[][] args) {
   // exist can differ.** A stamp is missing on every host but `native/v8` today, so this is the case
   // rather than the corner — see `hasAppMark`, and `issues/system/0230a` for the stamp itself.
   if (mine != "" && was != "" && was != mine) {
-    core.warn("wac: " + path + " was built by wac " + was + " and this is wac " + mine);
+    core.warn("wac: \{path} was built by wac \{was} and this is wac \{mine}");
     core.warn("     wac is unstable by choice, so a manifest from another version is not read");
-    core.warn("     the same way. Rebuild it: wac app <entry.wac> -o " + path);
+    core.warn("     the same way. Rebuild it: wac app <entry.wac> -o \{path}");
     return 1;
   }
   u8[] wasm = u8[].filled(f.bytes.len() - at, 0);

@@ -61,7 +61,7 @@ Exec host(Cli cli, string repo, string at, string entry, string out, string extr
     [
                    "-c", "cd " + at + " && exec deno run -A --import-map " + repo + "/deno.json " +
                    repo + "/packages/platform/native.ts " + entry + " -o " + out +
-                   (extra == "" ? "" : " " + extra)
+                   (extra == "" ? "" : " \{extra}")
     ],
     u8[]()).wait();
 }
@@ -81,19 +81,19 @@ export string test_the_deno_host_refuses_a_flag_it_does_not_know(Core core, Cli 
   string dir = scratch(cli, "nativecli-flag");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  t.isTrue(put(cli, dir + "/p.wac", "export i32 main() { return 5; }\n"), "wrote the fixture");
+  t.isTrue(put(cli, "\{dir}/p.wac", "export i32 main() { return 5; }\n"), "wrote the fixture");
 
-  Exec bad = host(cli, repo, dir, dir + "/p.wac", dir + "/bad", "--allow-bogus");
-  t.isTrue(bad.ran(), "deno did not run — " + bad.error);
+  Exec bad = host(cli, repo, dir, "\{dir}/p.wac", "\{dir}/bad", "--allow-bogus");
+  t.isTrue(bad.ran(), "deno did not run — \{bad.error}");
   if (bad.ran()) {
     string said = string.fromBytes(bad.stderr) + string.fromBytes(bad.stdout);
-    t.isTrue(bad.status != 0, "an unknown flag was accepted — " + said);
-    t.isTrue(!cli.readFile(dir + "/bad.wasm").wait().ok, "it built the program anyway");
-    t.isTrue(contains(said, "--allow-bogus"), "the refusal did not name the flag — " + said);
+    t.isTrue(bad.status != 0, "an unknown flag was accepted — \{said}");
+    t.isTrue(!cli.readFile("\{dir}/bad.wasm").wait().ok, "it built the program anyway");
+    t.isTrue(contains(said, "--allow-bogus"), "the refusal did not name the flag — \{said}");
   }
 
-  Exec ok = host(cli, repo, dir, dir + "/p.wac", dir + "/ok", "--allow-read");
-  t.isTrue(ok.ran(), "deno did not run the control — " + ok.error);
+  Exec ok = host(cli, repo, dir, "\{dir}/p.wac", "\{dir}/ok", "--allow-read");
+  t.isTrue(ok.ran(), "deno did not run the control — \{ok.error}");
   if (ok.ran()) {
     t.eqI32(ok.status, 0, "a grant it is supposed to take was refused — " +
                           string.fromBytes(ok.stderr));

@@ -4,7 +4,7 @@
 // request in, a target or a refusal out. The program that owns the sockets is the part that
 // cannot be tested without a network, and it is smaller for not containing this.
 
-import { sliceOf, itoa } from "./link.wac";
+import { sliceOf } from "./link.wac";
 
 // SOCKS5 reply codes, RFC 1928 §6.
 export i32 repOk() { return 0; }
@@ -68,7 +68,7 @@ export string endReasonName(u8[] body) {
   if (r == 12) { return "connection reset"; }
   if (r == 13) { return "tor protocol violation"; }
   if (r == 14) { return "not a directory"; }
-  return "reason " + itoa(r);
+  return "reason \{r}";
 }
 
 /** `host:port` from a SOCKS5 request, or "" if the request is not yet whole. */
@@ -79,7 +79,7 @@ export string targetOf(u8[] r) {
   string host = "";
   if (atyp == 0x01) {
     if (r.len() < 10) { return ""; }
-    host = itoa(r[4] as i32) + "." + itoa(r[5] as i32) + "." + itoa(r[6] as i32) + "." + itoa(r[7] as i32);
+    host = "\{r[4] as i32}.\{r[5] as i32}.\{r[6] as i32}.\{r[7] as i32}";
     at = 8;
   } else if (atyp == 0x03) {
     i32 n = r[4] as i32;
@@ -94,7 +94,7 @@ export string targetOf(u8[] r) {
     return "!";
   }
   i32 port = (r[at] as i32 << 8) | r[at + 1] as i32;
-  return host + ":" + itoa(port);
+  return "\{host}:\{port}";
 }
 
 /** How many bytes the whole request occupies, once `targetOf` has said it is whole. */

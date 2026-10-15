@@ -30,7 +30,6 @@
 // gone `hsdir_fixture.wac` names the fields. `issues/system/0161` step 4.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   hsServiceIndex, hsRelayIndex, disasterSrv, compareIndex, responsibleHsdirs,
   HSDIR_N_REPLICAS_DEFAULT, HSDIR_SPREAD_STORE_DEFAULT, HSDIR_SPREAD_FETCH_DEFAULT,
@@ -75,8 +74,8 @@ export string test_the_capture_can_discriminate(Core core, Cli cli) {
 
   i32 slots = HSDIR_N_REPLICAS_DEFAULT * HSDIR_SPREAD_STORE_DEFAULT;
   t.isTrue(candidateCount(cli) > slots,
-           "only " + itoa64(candidateCount(cli) as i64) + " HSDir candidates for " +
-           itoa64(slots as i64) + " slots — the selection test cannot discriminate. Recapture from " +
+           "only \{candidateCount(cli) as i64} HSDir candidates for " +
+           "\{slots as i64} slots — the selection test cannot discriminate. Recapture from " +
            "a wider network (chutney networks/hs-v3-wide).");
 
   // Distinct candidates, because the ring is a set of positions and two entries at one identity
@@ -103,10 +102,10 @@ export string test_every_relay_index_is_the_one_tor_computed(Core core, Cli cli)
     i64 plen = casePeriodLength(cli, c);
 
     i32 n = caseHsdirCount(cli, c);
-    t.isTrue(n > 0, "case " + itoa64(c as i64) + " names some directories");
+    t.isTrue(n > 0, "case \{c as i64} names some directories");
     for (i32 i = 0; i < n; i++) {
       t.isTrue(equal(hsRelayIndex(caseHsdirEd(cli, c, i), srv, tp, plen), caseHsdirIndex(cli, c, i)),
-               "case " + itoa64(c as i64) + " relay " + itoa64(i as i64) +
+               "case \{c as i64} relay \{i as i64}" +
                ": hs_relay_index agrees with tor's");
       checked = checked + 1;
     }
@@ -141,7 +140,7 @@ export string test_we_choose_the_directories_tor_chose(Core core, Cli cli) {
 
     i32 want = caseHsdirCount(cli, c);
     t.eqI32(chosen.len(), want,
-            "case " + itoa64(c as i64) + ": we chose as many directories as tor did");
+            "case \{c as i64}: we chose as many directories as tor did");
 
     // Membership both ways. Ours must all be tor's, and tor's must all be ours — one direction alone
     // would pass for a subset.
@@ -154,7 +153,7 @@ export string test_we_choose_the_directories_tor_chose(Core core, Cli cli) {
       }
       if (!found) { missing = missing + 1; }
     }
-    t.eqI32(missing, 0, "case " + itoa64(c as i64) + ": every directory tor used is one we chose");
+    t.eqI32(missing, 0, "case \{c as i64}: every directory tor used is one we chose");
 
     // No relay chosen twice. With few candidates the two replicas' spreads overlap, and the spec
     // says a relay already taken by a lower-numbered replica is skipped — without that a service
@@ -165,7 +164,7 @@ export string test_we_choose_the_directories_tor_chose(Core core, Cli cli) {
         if (chosen[i] == chosen[j]) { dupes = dupes + 1; }
       }
     }
-    t.eqI32(dupes, 0, "case " + itoa64(c as i64) + ": no directory is chosen twice");
+    t.eqI32(dupes, 0, "case \{c as i64}: no directory is chosen twice");
   }
   return t.report();
 }
@@ -353,7 +352,7 @@ export string test_the_directories_are_chosen_from_a_parsed_consensus(Core core,
     i32[] chosen = hsdirsForDescriptor(relays, blinded, srv, tp, plen,
                                        HSDIR_N_REPLICAS_DEFAULT, HSDIR_SPREAD_STORE_DEFAULT);
     i32 want = caseHsdirCount(cli, c);
-    t.eqI32(chosen.len(), want, "case " + itoa64(c as i64) + ": as many directories as tor used");
+    t.eqI32(chosen.len(), want, "case \{c as i64}: as many directories as tor used");
 
     i32 missing = 0;
     for (i32 i = 0; i < want; i++) {
@@ -365,7 +364,7 @@ export string test_the_directories_are_chosen_from_a_parsed_consensus(Core core,
       if (!found) { missing = missing + 1; }
     }
     t.eqI32(missing, 0,
-            "case " + itoa64(c as i64) + ": every directory tor used was chosen from the consensus");
+            "case \{c as i64}: every directory tor used was chosen from the consensus");
   }
   return t.report();
 }
@@ -376,7 +375,7 @@ export string test_the_descriptor_path_is_the_one_an_hsdir_answers(Core core, Cl
   string path = descriptorPath(blinded);
   // `/tor/hs/3/<z>`, z being the blinded key in unpadded base64: 32 bytes is 43 characters.
   t.eqI32(path.len(), 10 + 43, "the path is the prefix plus an unpadded base64 key");
-  t.isTrue(equal(path.toBytes(), ("/tor/hs/3/" + base64NoPad(blinded)).toBytes()),
+  t.isTrue(equal(path.toBytes(), "/tor/hs/3/\{base64NoPad(blinded)}".toBytes()),
            "and it is exactly /tor/hs/3/<z>");
   i32 pad = 0;
   u8[] pb = path.toBytes();
@@ -603,7 +602,7 @@ export string test_a_consensus_with_no_srv_falls_back(Core core, Cli cli) {
 
 /** A consensus with nothing in it but the two timings the ring arithmetic reads. */
 u8[] timings(string validAfter, string freshUntil) {
-  return ("valid-after 2026-08-05 " + validAfter + "\nfresh-until 2026-08-05 " + freshUntil +
+  return ("valid-after 2026-08-05 \{validAfter}\nfresh-until 2026-08-05 \{freshUntil}" +
           "\n").toBytes();
 }
 

@@ -7,7 +7,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { bodyLength, dcidLen, numberAt, packetType, parseOk, scidLen, shortDcidLen, version }
   from "./packet_probe.wac";
 import { anInitial } from "./minted.wac";
@@ -47,7 +46,7 @@ export string test_a_real_initial_parses_to_the_fields_it_has(Core core, Cli cli
   if (packet.len() == 0) { return t.report(); }
 
   t.isTrue(packet.len() >= 1200,
-           "an Initial is padded to at least 1200, got " + itoa(packet.len()));
+           "an Initial is padded to at least 1200, got \{packet.len()}");
   t.isTrue(parseOk(packet, false), "the header parses");
   t.eqI32(version(packet, false), 1, "version 1");
   t.eqI32(packetType(packet, false), 0, "type 0 is Initial");
@@ -56,14 +55,14 @@ export string test_a_real_initial_parses_to_the_fields_it_has(Core core, Cli cli
   // allows and that the parse agrees with the length byte the packet itself carries.
   i32 dlen = dcidLen(packet, false);
   t.eqI32(dlen, packet[5] as i32, "the DCID length matches the packet's own byte");
-  t.isTrue(dlen <= 20, "a connection id is at most 20 bytes, got " + itoa(dlen));
+  t.isTrue(dlen <= 20, "a connection id is at most 20 bytes, got \{dlen}");
   t.isTrue(scidLen(packet, false) <= 20, "and so is the source id");
 
   // Everything the header claims has to be inside the datagram. This is the assertion that would
   // catch a length read from the wrong offset, which is the failure mode that looks like corruption.
   i32 at = numberAt(packet, false);
   t.isTrue(at > 0 && at < packet.len(),
-           "the packet number starts inside the packet: " + itoa(at));
+           "the packet number starts inside the packet: \{at}");
   t.isTrue(at + bodyLength(packet, false) <= packet.len(),
            "the length field does not run past what arrived");
   return t.report();
@@ -80,7 +79,7 @@ export string test_a_header_that_cannot_be_read_completely_is_refused(Core core,
   i32[] cuts = [0, 1, 5, 6, 7, 20, 40];
   for (i32 i = 0; i < cuts.len(); i++) {
     t.isFalse(parseOk(prefix(packet, cuts[i]), false),
-              "a " + itoa(cuts[i]) + "-byte prefix must not parse");
+              "a \{cuts[i]}-byte prefix must not parse");
   }
 
   // The fixed bit cleared, **with greasing not allowed**, which is what every call in this file

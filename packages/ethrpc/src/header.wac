@@ -25,7 +25,6 @@ import { keccak256 } from "../../crypto/src/keccak.wac";
 import { encode, Item } from "../../rlp/src/rlp.wac";
 import { JsonValue } from "../../json/src/value.wac";
 import { memberOf, memberData, memberQuantity, isNull } from "./jsonhex.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** A header, re-encoded and checked against the hash the node gave it. */
 export struct Header {
@@ -81,7 +80,7 @@ export Header headerOf(JsonValue block, u8[] expectedHash) {
     // and a difficulty of zero is what every post-Merge block has. Treating either as missing rejects
     // every block anvil produces, which is how this was found.
     if (isNull(memberOf(block, fixed[i]))) {
-      return Header.of(false, u8[](), u8[](), "the block has no " + fixed[i]);
+      return Header.of(false, u8[](), u8[](), "the block has no \{fixed[i]}");
     }
     // **`isQuantity` now decides the decoding as well as the encoding.** It always had to: a QUANTITY
     // may have an odd number of digits and DATA may not, and one decoder for both padded everything
@@ -116,7 +115,7 @@ export Header headerOf(JsonValue block, u8[] expectedHash) {
   for (i32 i = 0; i < 32; i++) {
     if (hash[i] != want[i]) {
       return Header.of(false, hash, u8[](),
-        "the header re-encodes to a different hash than the one it was given — " + itoa(n) + " fields");
+        "the header re-encodes to a different hash than the one it was given — \{n} fields");
     }
   }
   return Header.of(true, hash, memberData(block, "stateRoot"), "");

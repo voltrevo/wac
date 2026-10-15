@@ -14,7 +14,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { LitHeader, Block, askZstd, compressLine, frameAt, firstCompressedBlock,
          literalsHeader } from "./frames.wac";
 import { HuffTable, readTable, decodeLiterals } from "../../src/huffman.wac";
@@ -44,7 +43,7 @@ u8[][] samples() {
                           400);
   string json = "[";
   for (i32 i = 0; i < 2000; i++) {
-    json = json + (i == 0 ? "" : ",") + "{\"id\":" + itoa(i) + ",\"name\":\"item" + itoa(i) +
+    json = json + (i == 0 ? "" : ",") + "{\"id\":\{i},\"name\":\"item\{i}" +
            "\",\"tags\":[\"a\",\"b\"]}";
   }
   json = json + "]";
@@ -54,7 +53,7 @@ u8[][] samples() {
     one[0] = (33 + i) as@ u8;
     punctuation = punctuation + string.fromBytes(one);
   }
-  string mixed = repeated("Lorem ipsum dolor sit amet 12345 " + punctuation, 300);
+  string mixed = repeated("Lorem ipsum dolor sit amet 12345 \{punctuation}", 300);
   string short = "hello hello hello hello hello world";
   string skewed = repeated("a", 3000) + repeated("bcdefghij", 50);
   return [
@@ -105,9 +104,9 @@ export string test_decoded_literals_are_a_subsequence_of_what_was_compressed(Cor
   for (i32 i = 0; i < frames.len(); i++) {
     Literals got = literalsOf(frames[i]);
     if (got.regen < 0) { continue; }
-    t.eqI32(got.bytes.len(), got.regen, names[i] + ": literals against the header's count");
+    t.eqI32(got.bytes.len(), got.regen, "\{names[i]}: literals against the header's count");
     t.isTrue(isSubsequence(got.bytes, texts[i]),
-             names[i] + ": the literals are not a subsequence of the input");
+             "\{names[i]}: the literals are not a subsequence of the input");
     checked = checked + 1;
   }
   t.isTrue(checked > 0, "no sample had Huffman-coded literals; the test proved nothing");
@@ -183,7 +182,7 @@ export string test_a_table_built_from_directly_written_weights_is_a_complete_pre
     i32[] weights = cases[c];
     HuffTable table = readTable(directTree(weights), 0);
     i32 size = 1 << table.maxBits;
-    t.eqI32(table.symbol.len(), size, names[c] + ": entries");
+    t.eqI32(table.symbol.len(), size, "\{names[c]}: entries");
     if (table.symbol.len() != size) { continue; }
 
     // Every entry must be assigned, and every symbol must hold exactly the number of entries
@@ -192,18 +191,18 @@ export string test_a_table_built_from_directly_written_weights_is_a_complete_pre
     for (i32 i = 0; i < size; i++) {
       i32 bits = table.nbBits[i];
       t.isTrue(bits >= 1 && bits <= table.maxBits,
-               names[c] + ": entry " + itoa(i) + " reads " + itoa(bits) + " bits");
+               "\{names[c]}: entry \{i} reads \{bits} bits");
       held[table.symbol[i]] = held[table.symbol[i]] + 1;
     }
     i32 total = 0;
     for (i32 s = 0; s < 256; s++) { total = total + held[s]; }
-    t.eqI32(total, size, names[c] + ": entries covered");
+    t.eqI32(total, size, "\{names[c]}: entries covered");
 
     for (i32 sym = 0; sym < 256; sym++) {
       if (held[sym] == 0) { continue; }
       i32 w = sym < weights.len() ? weights[sym] : lastWeight(weights, table.maxBits);
       t.eqI32(held[sym], 1 << (w - 1),
-              names[c] + ": symbol " + itoa(sym) + " against what weight " + itoa(w) + " claims");
+              "\{names[c]}: symbol \{sym} against what weight \{w} claims");
     }
   }
   return t.report();

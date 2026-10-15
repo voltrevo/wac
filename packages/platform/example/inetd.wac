@@ -38,7 +38,7 @@ export i32 main(Sys sys) {
 
   FileResult prog = cli.readFile(workerPath).wait();
   if (!prog.ok) {
-    core.warn("inetd: " + workerPath + ": " + prog.error);
+    core.warn("inetd: \{workerPath}: \{prog.error}");
     return 1;
   }
   u8[] source = prog.bytes;
@@ -52,10 +52,10 @@ export i32 main(Sys sys) {
   // anywhere else while somebody is reading it. Issue 0025.
   Socket l = cli.listen("127.0.0.1", port).wait();
   if (l.handle < 0) {
-    core.warn("inetd: " + itoa(port) + ": " + l.error);
+    core.warn("inetd: \{port}: \{l.error}");
     return 1;
   }
-  core.warn("inetd: listening on port " + itoa(port));
+  core.warn("inetd: listening on port \{port}");
 
   // One connection, then exit. A loop would need `accept` and the live child watched
   // together, which `waitAny` can do — but serving one is what makes this testable, and
@@ -63,7 +63,7 @@ export i32 main(Sys sys) {
   Socket c = cli.accept(l.handle).wait();
   cli.closeSocket(l.handle);
   if (c.handle < 0) {
-    core.warn("inetd: accept: " + c.error);
+    core.warn("inetd: accept: \{c.error}");
     return 1;
   }
 
@@ -72,7 +72,7 @@ export i32 main(Sys sys) {
   // readable directory, and is the parent's decision to make rather than the handler's.
   Child kid = cli.spawn(source, argvOf(childArgs), GRANT_NONE, "", INHERIT_NONE, false).wait();
   if (kid.handle < 0) {
-    core.warn("inetd: " + kid.error);
+    core.warn("inetd: \{kid.error}");
     cli.closeSocket(c.handle);
     return 1;
   }
@@ -117,7 +117,7 @@ void relay(Core core, Cli cli, i32 net, i32 kid) {
         End: { over = true; }                       // the handler has finished
         // A handler whose pipe broke has not finished, and serving what it managed as though it had
         // is how a client gets half an answer with no indication.
-        Failed(why): { core.warn("inetd: handler: " + why); over = true; }
+        Failed(why): { core.warn("inetd: handler: \{why}"); over = true; }
       }
       if (over) { return; }
       continue;
@@ -131,7 +131,7 @@ void relay(Core core, Cli cli, i32 net, i32 kid) {
       }
       // The client stopped talking. Tell the handler, and keep reading its answer.
       End: { clientDone = true; }
-      Failed(why): { core.warn("inetd: client: " + why); clientDone = true; }
+      Failed(why): { core.warn("inetd: client: \{why}"); clientDone = true; }
     }
     if (clientDone) {
       cli.closeFeed(kid);
@@ -151,13 +151,3 @@ i32 atoi(string s) {
   return n;
 }
 
-string itoa(i32 n) {
-  if (n == 0) { return "0"; }
-  i32 v = n < 0 ? 0 - n : n;
-  u8[] digits = u8[].filled(12, 0);
-  i32 at = 12;
-  while (v > 0) { at--; digits[at] = ('0' + (v % 10)) as@ u8; v = v / 10; }
-  u8[] used = u8[].filled(12 - at, 0);
-  used.copyFrom(digits, at, 0, 12 - at);
-  return (n < 0 ? "-" : "") + string.fromBytes(used);
-}

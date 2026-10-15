@@ -23,7 +23,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { customSection } from "./section.wac";
@@ -37,17 +36,17 @@ struct Boundary {
 }
 
 Boundary manifestOf(Cli cli, string entry, string stem) {
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
-  string out = cli.cwd().wait() + "/.cache/declared/" + stem;
-  cli.mkdir(cli.cwd().wait() + "/.cache/declared", true).wait();
+  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
+  string out = "\{cli.cwd().wait()}/.cache/declared/\{stem}";
+  cli.mkdir("\{cli.cwd().wait()}/.cache/declared", true).wait();
   Exec built = cli.exec(wac, ["build", entry, "-o", out, "--quiet"], u8[]()).wait();
   if (!built.ran()) { return Boundary(string[].filled(0, ""), -1, "the wac binary did not run"); }
   if (built.status != 0) {
     return Boundary(string[].filled(0, ""), -1,
-                    entry + " did not build: " + string.fromBytes(built.stderr));
+                    "\{entry} did not build: \{string.fromBytes(built.stderr)}");
   }
-  FileResult f = cli.readFile(out + ".wasm").wait();
-  if (!f.ok) { return Boundary(string[].filled(0, ""), -1, "the build wrote no module: " + f.error); }
+  FileResult f = cli.readFile("\{out}.wasm").wait();
+  if (!f.ok) { return Boundary(string[].filled(0, ""), -1, "the build wrote no module: \{f.error}"); }
 
   // The manifest is a `wac.manifest` section inside the module — it was a `.json` beside it until
   // 2026-08-20.
@@ -124,7 +123,7 @@ export string test_a_program_handed_sys_is_described_by_the_world(Core core, Cli
   // may call into — every capability `Core` and `Cli` declare, against 51 when every imported file's
   // exports were roots and fifteen when a program could take `Core` alone.
   t.isTrue(m.callbacks >= 0 && m.callbacks <= 80,
-           itoa(m.callbacks) + " callback signatures");
+           "\{m.callbacks} callback signatures");
   return t.report();
 }
 
@@ -143,7 +142,7 @@ export string test_and_one_that_asks_for_two_is_described_by_two(Core core, Cli 
   // picks a file, and never names core's JSX tree.
   string[] absent = ["Page", "Event", "Picked", "Node", "Attr"];
   for (i32 i = 0; i < absent.len(); i++) {
-    t.isTrue(!has(m.structs, absent[i]), "wc was handed " + absent[i]);
+    t.isTrue(!has(m.structs, absent[i]), "wc was handed \{absent[i]}");
   }
   return t.report();
 }

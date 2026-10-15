@@ -29,7 +29,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Answers, Lines, ask, hex } from "../../../wactest/src/oracle.wac";
 import { endsWith, joined } from "../../../wactest/src/strings.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { Canonical, canonicalize, canonicalizeJson5, parse, parseJson5 } from "../../src/json.wac";
 import { JsonValue } from "../../src/value.wac";
@@ -98,7 +97,7 @@ export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli 
   Answers got = askOracle(t, cli, want, "the json5 corpus");
   if (!got.ok) { return t.report(); }
   t.isTrue(got.lines.len() > 400,
-           "only " + itoa(got.lines.len()) + " corpus cases came back — the corpus is not being read");
+           "only \{got.lines.len()} corpus cases came back — the corpus is not being read");
   if (got.lines.len() <= 400) { return t.report(); }
 
   string[] inputs = string[].filled(got.lines.len(), "");
@@ -106,7 +105,7 @@ export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli 
     string line = got.lines[i];
     i32 sp = line.indexOf(" ");
     if (sp < 0) {
-      t.fail("corpus line " + itoa(i) + " is not `case <hex>`: " + line);
+      t.fail("corpus line \{i} is not `case <hex>`: \{line}");
       return t.report();
     }
     inputs[i] = string.fromBytes(decoded(line.slice(sp + 1, line.len())));
@@ -116,7 +115,7 @@ export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli 
   Lines asked = Lines.create();
   for (i32 i = 0; i < inputs.len(); i++) {
     Canonical ours = canonicalizeJson5(inputs[i].toBytes());
-    asked.add("json5cmp " + itoa(i) + " " + (ours.ok ? "1" : "0") + " " + hex(ours.text));
+    asked.add("json5cmp \{i} " + (ours.ok ? "1" : "0") + " " + hex(ours.text));
   }
   Answers verdicts = askOracle(t, cli, asked, "the json5 comparison");
   if (!verdicts.ok) { return t.report(); }
@@ -131,7 +130,7 @@ export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli 
     if (v == "agree") {
       if (isKnown(inputs[i])) {
         if (nWrong < wrong.len()) {
-          wrong[nWrong] = "\"" + inputs[i] + "\" is listed as a known divergence but now agrees — " +
+          wrong[nWrong] = "\"\{inputs[i]}\" is listed as a known divergence but now agrees — " +
                           "delete the entry";
           nWrong = nWrong + 1;
         }
@@ -151,12 +150,12 @@ export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli 
   // Every entry in the list above has to have been reached. A known divergence that stopped being
   // one is caught by the `agree` branch; one whose input left the corpus is caught here.
   t.eqI32(divergedAsExpected, knownInputs().len(),
-          "the known-divergence list has " + itoa(knownInputs().len()) + " entries and " +
-          itoa(divergedAsExpected) + " of them diverged");
+          "the known-divergence list has \{knownInputs().len()} entries and " +
+          "\{divergedAsExpected} of them diverged");
 
   string[] tell = string[].filled(nWrong < wrong.len() ? nWrong : wrong.len(), "");
   for (i32 i = 0; i < tell.len(); i++) { tell[i] = wrong[i]; }
-  t.eqI32(nWrong, 0, itoa(nWrong) + " of " + itoa(inputs.len()) +
+  t.eqI32(nWrong, 0, "\{nWrong} of \{inputs.len()}" +
                      " disagree with npm:json5@2.2.3: " + joined(tell, " | "));
   return t.report();
 }
@@ -209,16 +208,16 @@ export string test_json5_accepts_every_json_document_with_the_same_tree(Core cor
   string[] names = entries!;
   for (i32 i = 0; i < names.len(); i++) {
     if (!endsWith(names[i], ".json")) { continue; }
-    FileResult r = cli.readFile(DIR + "/" + names[i]).wait();
-    if (!r.ok) { t.fail("cannot read " + names[i] + " — " + r.error); continue; }
+    FileResult r = cli.readFile("\{DIR}/\{names[i]}").wait();
+    if (!r.ok) { t.fail("cannot read \{names[i]} — \{r.error}"); continue; }
     Canonical asJson = canonicalize(r.bytes);
     if (!asJson.ok) { continue; }          // not JSON, so this invariant says nothing
     compared = compared + 1;
     Canonical asJson5 = canonicalizeJson5(r.bytes);
     if (!asJson5.ok) {
       if (nWrong < wrong.len()) {
-        wrong[nWrong] = names[i] + ": JSON accepts it, JSON5 rejects it with code " +
-                        itoa(asJson5.code);
+        wrong[nWrong] = "\{names[i]}: JSON accepts it, JSON5 rejects it with code " +
+                        "\{asJson5.code}";
         nWrong = nWrong + 1;
       } else { nWrong = nWrong + 1; }
       continue;
@@ -227,16 +226,16 @@ export string test_json5_accepts_every_json_document_with_the_same_tree(Core cor
     string b = string.fromBytes(asJson5.text);
     if (a == b) { continue; }
     if (nWrong < wrong.len()) {
-      wrong[nWrong] = names[i] + ": JSON gives " + a + ", JSON5 gives " + b;
+      wrong[nWrong] = "\{names[i]}: JSON gives \{a}, JSON5 gives \{b}";
       nWrong = nWrong + 1;
     } else { nWrong = nWrong + 1; }
   }
 
-  t.isTrue(compared >= 90, "only " + itoa(compared) + " documents were compared — the corpus is " +
+  t.isTrue(compared >= 90, "only \{compared} documents were compared — the corpus is " +
                            "not being read");
   string[] tell = string[].filled(nWrong < wrong.len() ? nWrong : wrong.len(), "");
   for (i32 i = 0; i < tell.len(); i++) { tell[i] = wrong[i]; }
-  t.eqI32(nWrong, 0, itoa(nWrong) + " of " + itoa(compared) + " differ between the two modes: " +
+  t.eqI32(nWrong, 0, "\{nWrong} of \{compared} differ between the two modes: " +
                      joined(tell, " | "));
   return t.report();
 }

@@ -100,7 +100,7 @@ string[] manifests() {
 }
 
 /** One import entry, as a manifest fragment. */
-string entryOf(string name) { return "'" + name + "': { git: 'g', ref: 'r' }"; }
+string entryOf(string name) { return "'\{name}': { git: 'g', ref: 'r' }"; }
 
 static string A40 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 static string B40 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -109,8 +109,8 @@ static string D40 = "dddddddddddddddddddddddddddddddddddddddd";
 
 string lockText() {
   return "{ imports: {\n" +
-         "  'bits': { git: 'g1', ref: 'main', commit: '" + A40 + "' },\n" +
-         "  'sub': { git: 'g2', ref: 'v1', subdir: './old', commit: '" + B40 + "' },\n" +
+         "  'bits': { git: 'g1', ref: 'main', commit: '\{A40}' },\n" +
+         "  'sub': { git: 'g2', ref: 'v1', subdir: './old', commit: '\{B40}' },\n" +
          "} }";
 }
 
@@ -123,8 +123,8 @@ i32 manifestExercises() {
   string[] oa = ["wac/", "foo", "a", "x", "p", "wac", "foo", "a", "ab"];
   string[] ob = ["wac/packages/json", "foo/", "a", "x/y", "p/q/", "wac2", "foobar", "b", "a/b"];
   for (i32 i = 0; i < oa.len(); i++) {
-    readManifest(("{ imports: { " + entryOf(oa[i]) + ", " + entryOf(ob[i]) + " } }").toBytes());
-    readManifest(("{ imports: { " + entryOf(ob[i]) + ", " + entryOf(oa[i]) + " } }").toBytes());
+    readManifest("{ imports: { \{entryOf(oa[i])}, \{entryOf(ob[i])} } }".toBytes());
+    readManifest("{ imports: { \{entryOf(ob[i])}, \{entryOf(oa[i])} } }".toBytes());
     seen = seen + 2;
   }
 
@@ -134,7 +134,7 @@ i32 manifestExercises() {
                            "/abs", "a/../b"
   ];
   for (i32 i = 0; i < subs.len(); i++) {
-    readManifest(("{ imports: { 'a': { git: 'g', ref: 'r', subdir: '" + subs[i] + "' } } }").toBytes());
+    readManifest("{ imports: { 'a': { git: 'g', ref: 'r', subdir: '\{subs[i]}' } } }".toBytes());
     seen = seen + 1;
   }
 
@@ -195,23 +195,23 @@ i32 lockExercises() {
 
   string[] texts = [
     "{}", "// none yet\n{}", LOCK, "{", "[]", "{ imports: [] }", "{ imports: { a: 1 } }",
-    "{ imports: { a: { ref: 'r', commit: '" + A40 + "' } } }",
-    "{ imports: { a: { git: 'g', commit: '" + A40 + "' } } }",
+    "{ imports: { a: { ref: 'r', commit: '\{A40}' } } }",
+    "{ imports: { a: { git: 'g', commit: '\{A40}' } } }",
     "{ imports: { a: { git: 'g', ref: 'r' } } }",
-    "{ imports: { a: { git: 1, ref: 'r', commit: '" + A40 + "' } } }",
-    "{ imports: { a: { git: 'g', ref: 1, commit: '" + A40 + "' } } }",
+    "{ imports: { a: { git: 1, ref: 'r', commit: '\{A40}' } } }",
+    "{ imports: { a: { git: 'g', ref: 1, commit: '\{A40}' } } }",
     "{ imports: { a: { git: 'g', ref: 'r', commit: 1 } } }",
-    "{ imports: { a: { git: 'g', ref: 'r', commit: '" + A40 + "', subdir: 1 } } }",
+    "{ imports: { a: { git: 'g', ref: 'r', commit: '\{A40}', subdir: 1 } } }",
     "{ imports: { a: { git: 'g', ref: 'r', commit: 'nope' } } }",
     // Every character the writer escapes, so the writer's branches are reached rather than
     // reported dead — `test/wac/lock_test.wac` round-trips the same set.
-    "{ imports: { \"a\\\"b\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
-    "{ imports: { \"a\\\\b\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
-    "{ imports: { \"a\\nb\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
-    "{ imports: { \"a\\tb\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
-    "{ imports: { \"a\\rb\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
-    "{ imports: { z: { git: 'g', ref: 'r', commit: '" + A40 + "' }, " +
-      "a: { git: 'g', ref: 'r', commit: '" + B40 + "' } } }"
+    "{ imports: { \"a\\\"b\": { git: 'g', ref: 'r', commit: '\{A40}' } } }",
+    "{ imports: { \"a\\\\b\": { git: 'g', ref: 'r', commit: '\{A40}' } } }",
+    "{ imports: { \"a\\nb\": { git: 'g', ref: 'r', commit: '\{A40}' } } }",
+    "{ imports: { \"a\\tb\": { git: 'g', ref: 'r', commit: '\{A40}' } } }",
+    "{ imports: { \"a\\rb\": { git: 'g', ref: 'r', commit: '\{A40}' } } }",
+    "{ imports: { z: { git: 'g', ref: 'r', commit: '\{A40}' }, " +
+      "a: { git: 'g', ref: 'r', commit: '\{B40}' } } }"
   ];
   for (i32 i = 0; i < texts.len(); i++) {
     lockOf(texts[i].toBytes());
@@ -254,7 +254,7 @@ i32 mappingExercises() {
   string[] shas = [
                            A40, "0000000000000000000000000000000000000000", "", "3f2a",
                            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                           "gggggggggggggggggggggggggggggggggggggggg", A40 + "a"
+                           "gggggggggggggggggggggggggggggggggggggggg", "\{A40}a"
   ];
   for (i32 i = 0; i < shas.len(); i++) { if (fullSha(shas[i])) { seen = seen + 1; } }
   return seen;
@@ -265,10 +265,10 @@ i32 updateExercises() {
   i32 seen = 0;
   string two = "{ imports: { 'bits': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }";
   updatedLock(two.toBytes(),
-    ("{ imports: { 'bits': { git: 'g1', ref: 'main', commit: '" + A40 + "' } } }").toBytes(),
+    "{ imports: { 'bits': { git: 'g1', ref: 'main', commit: '\{A40}' } } }".toBytes(),
     [D40, C40]);
   updatedLock("{ imports: { 'a': { git: 'g', ref: 'v2', subdir: './lib' } } }".toBytes(),
-    ("{ imports: { 'a': { git: 'g', ref: 'v1', commit: '" + A40 + "' } } }").toBytes(),
+    "{ imports: { 'a': { git: 'g', ref: 'v1', commit: '\{A40}' } } }".toBytes(),
     [C40]);
   updatedLock(two.toBytes(), "{}".toBytes(), [C40, ""]);          // a missing commit
   updatedLock(two.toBytes(), "{}".toBytes(), [C40]);              // too few

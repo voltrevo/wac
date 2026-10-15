@@ -26,7 +26,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Outcome, oracle, outcomeOf, wire } from "./nodeoracle.wac";
 import { Parsed, Request, parseRequest, ERR_METHOD, ERR_TARGET, ERR_VERSION, ERR_LINE,
          ERR_HEADER_NAME, ERR_HEADER_VALUE, ERR_OBS_FOLD, ERR_FRAMING, ERR_CHUNK,
@@ -86,7 +85,7 @@ string describe(u8[] input) {
       out = out + string.fromBytes(one);
     }
   }
-  return "\"" + out + "\"";
+  return "\"\{out}\"";
 }
 
 /** `ok`, `bad` or `incomplete` — the same three words the oracle answers with. */
@@ -120,7 +119,7 @@ void checkBytes(T t, Cli cli, u8[][] cases) {
     // A listed case is one where this parser is deliberately stricter. It must still *refuse* —
     // being on the list is permission to differ, not permission to do anything.
     if (isStricter(cases[i])) {
-      t.eqStr(wacOutcome(got), "bad", label + ": listed as deliberately stricter");
+      t.eqStr(wacOutcome(got), "bad", "\{label}: listed as deliberately stricter");
       continue;
     }
 
@@ -130,13 +129,13 @@ void checkBytes(T t, Cli cli, u8[][] cases) {
       }
       Refused(code): {
         // The reason is not specified and the two will not agree on it. Acceptance is.
-        t.isFalse(wacOutcome(got) == "ok", label + ": llhttp rejected (" + code + "), wac accepted");
+        t.isFalse(wacOutcome(got) == "ok", "\{label}: llhttp rejected (\{code}), wac accepted");
       }
       Incomplete: {
-        t.isFalse(wacOutcome(got) == "ok", label + ": llhttp wanted more bytes, wac accepted");
-        t.isFalse(wacOutcome(got) == "bad", label + ": llhttp wanted more bytes, wac rejected");
+        t.isFalse(wacOutcome(got) == "ok", "\{label}: llhttp wanted more bytes, wac accepted");
+        t.isFalse(wacOutcome(got) == "bad", "\{label}: llhttp wanted more bytes, wac rejected");
       }
-      Broken(why): { t.fail(label + ": " + why); }
+      Broken(why): { t.fail("\{label}: \{why}"); }
     }
   }
 }
@@ -145,23 +144,23 @@ void compareOk(T t, string label, Parsed got, string method, string target, stri
                string[] rawHeaders, u8[] body) {
   match (got) {
     Ok(req): {
-      t.eqStr(string.fromBytes(req.method), method, label + ": method");
-      t.eqStr(string.fromBytes(req.target), target, label + ": target");
-      t.eqStr("1." + itoa(req.minor), version, label + ": version");
-      t.eqStr(string.fromBytes(req.body), string.fromBytes(body), label + ": body");
+      t.eqStr(string.fromBytes(req.method), method, "\{label}: method");
+      t.eqStr(string.fromBytes(req.target), target, "\{label}: target");
+      t.eqStr("1.\{req.minor}", version, "\{label}: version");
+      t.eqStr(string.fromBytes(req.body), string.fromBytes(body), "\{label}: body");
       // Trailers arrive as headers here and separately there, so compare only the leading run.
       i32 pairs = rawHeaders.len() / 2;
       i32 n = req.headers.count < pairs ? req.headers.count : pairs;
       for (i32 k = 0; k < n; k++) {
         t.eqStr(string.fromBytes(req.headers.names[k]), rawHeaders[k * 2],
-                label + ": header " + itoa(k) + " name");
+                "\{label}: header \{k} name");
         t.eqStr(string.fromBytes(req.headers.values[k]), rawHeaders[k * 2 + 1],
-                label + ": header " + itoa(k) + " value");
+                "\{label}: header \{k} value");
       }
       t.isFalse(req.headers.count < pairs,
-                label + ": " + itoa(pairs - req.headers.count) + " headers missing");
+                "\{label}: \{pairs - req.headers.count} headers missing");
     }
-    default: { t.fail(label + ": llhttp accepted, wac said " + wacOutcome(got)); }
+    default: { t.fail("\{label}: llhttp accepted, wac said \{wacOutcome(got)}"); }
   }
 }
 
@@ -321,9 +320,9 @@ export string test_what_the_parser_consumed_is_where_the_next_message_starts() {
     match (parseRequest((firsts[i] + seconds[i]).toBytes(), MAX_BODY())) {
       Ok(req): {
         t.eqI32(req.consumed, firsts[i].len(),
-                describe(firsts[i].toBytes()) + ": consumed against the message's length");
+                "\{describe(firsts[i].toBytes())}: consumed against the message's length");
       }
-      default: { t.fail(describe(firsts[i].toBytes()) + ": expected a parse"); }
+      default: { t.fail("\{describe(firsts[i].toBytes())}: expected a parse"); }
     }
   }
   return t.report();
@@ -372,8 +371,8 @@ export string test_each_rejection_reports_its_own_reason_not_just_no() {
   bool[] seen = bool[].filled(11, false);
   for (i32 i = 0; i < why.len(); i++) {
     Parsed got = parseRequest(texts[i], MAX_BODY());
-    t.eqStr(wacOutcome(got), "bad", why[i] + ": expected a rejection");
-    t.eqI32(codeOf(got), codes[i], why[i] + ": the reported code");
+    t.eqStr(wacOutcome(got), "bad", "\{why[i]}: expected a rejection");
+    t.eqI32(codeOf(got), codes[i], "\{why[i]}: the reported code");
     if (codeOf(got) >= 0 && codeOf(got) <= 10) { seen[codeOf(got)] = true; }
   }
 
@@ -420,17 +419,17 @@ export string test_a_framing_length_too_large_for_an_i32_is_refused_not_wrapped(
   string[] lengths = ["4294967296", "2147483648", "4294967295", repeated("9", 40)];
   for (i32 i = 0; i < lengths.len(); i++) {
     Parsed got = parseRequest(
-      ("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: " + lengths[i] + "\r\n\r\n").toBytes(), MAX);
-    t.eqI32(codeOf(got), ERR_TOO_LARGE(), "Content-Length: " + lengths[i]);
+      "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: \{lengths[i]}\r\n\r\n".toBytes(), MAX);
+    t.eqI32(codeOf(got), ERR_TOO_LARGE(), "Content-Length: \{lengths[i]}");
   }
 
   // The same for a chunk size, in hex, where the accumulator multiplied by sixteen.
   string[] sizes = ["100000000", "FFFFFFFF", "7FFFFFFFF"];
   for (i32 i = 0; i < sizes.len(); i++) {
     Parsed got = parseRequest(
-      ("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n" + sizes[i] + "\r\n")
+      "POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n\{sizes[i]}\r\n"
         .toBytes(), MAX);
-    t.eqI32(codeOf(got), ERR_TOO_LARGE(), "chunk size " + sizes[i]);
+    t.eqI32(codeOf(got), ERR_TOO_LARGE(), "chunk size \{sizes[i]}");
   }
 
   // And a length that fits is still accepted, so the guard has not simply refused everything.

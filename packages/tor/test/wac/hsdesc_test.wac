@@ -10,7 +10,6 @@
 // whole 10 KB layer have to be right to the byte, and one wrong bit anywhere changes the hash.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { sha3_256 } from "../../../crypto/src/keccak.wac";
 import { decryptLayer, layerKeys, layerMac, keywordValue, keywordInt, pemBlock, findKeywordLine, certSignedWithKey, certCertifiedKey, certType, superencryptedConstant, encryptedConstant, S_KEY_LEN, S_IV_LEN, MAC_KEY_LEN, SALT_LEN, MAC_LEN} from "../../src/hsdesc.wac";
 import {
@@ -140,26 +139,26 @@ u8[] checkLayer(
   i64 wantLen = layerPlaintextLength(cli, which) as i64;
 
   u8[] salt = slice(blob, 0, SALT_LEN);
-  t.isTrue(equal(salt, wantSalt), name + ": the salt is the one in the blob tor produced");
+  t.isTrue(equal(salt, wantSalt), "\{name}: the salt is the one in the blob tor produced");
 
   // The three derived keys, separately. A wrong key and a failed MAC both present as "it did not
   // decrypt", and only asserting them apart says which.
   u8[] derived = layerKeys(secretData, subcred, revision, salt, constant);
-  t.eqI32(derived.len(), S_KEY_LEN + S_IV_LEN + MAC_KEY_LEN, name + ": 80 bytes of key material");
-  t.isTrue(equal(slice(derived, 0, S_KEY_LEN), wantKey), name + ": SECRET_KEY agrees with tor's");
+  t.eqI32(derived.len(), S_KEY_LEN + S_IV_LEN + MAC_KEY_LEN, "\{name}: 80 bytes of key material");
+  t.isTrue(equal(slice(derived, 0, S_KEY_LEN), wantKey), "\{name}: SECRET_KEY agrees with tor's");
   t.isTrue(equal(slice(derived, S_KEY_LEN, S_KEY_LEN + S_IV_LEN), wantIv),
-           name + ": SECRET_IV agrees");
+           "\{name}: SECRET_IV agrees");
   t.isTrue(equal(slice(derived, S_KEY_LEN + S_IV_LEN, derived.len()), wantMacKey),
-           name + ": MAC_KEY agrees");
+           "\{name}: MAC_KEY agrees");
 
   u8[] ciphertext = slice(blob, SALT_LEN, blob.len() - MAC_LEN);
   t.isTrue(equal(layerMac(wantMacKey, salt, ciphertext), slice(blob, blob.len() - MAC_LEN, blob.len())),
-           name + ": the MAC we compute is the MAC on the wire");
+           "\{name}: the MAC we compute is the MAC on the wire");
 
   u8[] plain = decryptLayer(blob, secretData, subcred, revision, constant);
-  t.eqI64(plain.len() as i64, wantLen, name + ": the plaintext is the expected length");
+  t.eqI64(plain.len() as i64, wantLen, "\{name}: the plaintext is the expected length");
   t.isTrue(equal(sha3_256(plain), wantSha3),
-           name + ": the plaintext hashes to what an independent decryption produced");
+           "\{name}: the plaintext hashes to what an independent decryption produced");
   return plain;
 }
 
@@ -185,7 +184,7 @@ export string test_a_tampered_layer_is_refused(Core core, Cli cli) {
     for (i32 j = 0; j < blob.len(); j++) { bad[j] = blob[j]; }
     bad[spots[i]] = (bad[spots[i]] ^ 1);
     t.eqI32(decryptLayer(bad, blinded, subcred, revision, constant).len(), 0,
-            "a flipped bit at " + itoa64(spots[i] as i64) + " is refused");
+            "a flipped bit at \{spots[i] as i64} is refused");
   }
   // And the MAC itself, which is the field an attacker would have to forge rather than avoid.
   u8[] badMac = u8[].filled(blob.len(), 0);
@@ -272,21 +271,21 @@ export string test_the_introduction_points_are_the_ones_tor_published(Core core,
   t.eqI32(points.len(), want, "every introduction point parsed");
 
   for (i32 i = 0; i < points.len(); i++) {
-    string which = "intro " + itoa64(i as i64);
+    string which = "intro \{i as i64}";
     t.isTrue(equal(points[i].linkSpecifiers, introLinkSpecifiers(cli, i)),
-             which + ": the link specifiers are forwarded verbatim");
+             "\{which}: the link specifiers are forwarded verbatim");
     t.isTrue(equal(points[i].onionKey, introOnionKey(cli, i)),
-             which + ": onion-key ntor — the introduction relay's, for extending to it");
+             "\{which}: onion-key ntor — the introduction relay's, for extending to it");
     t.isTrue(equal(points[i].encKey, introEncKey(cli, i)),
-             which + ": enc-key ntor — the service's, for the hs-ntor handshake");
+             "\{which}: enc-key ntor — the service's, for the hs-ntor handshake");
     t.isTrue(equal(points[i].authKey, introAuthKey(cli, i)),
-             which + ": auth-key, from inside its type-9 certificate");
+             "\{which}: auth-key, from inside its type-9 certificate");
     // The three keys are all 32 bytes and all distinct, so a transposition would be caught above —
     // assert the distinctness too, since a descriptor where two happened to match would make those
     // comparisons vacuous.
-    t.isFalse(equal(points[i].onionKey, points[i].encKey), which + ": onion-key is not enc-key");
-    t.isFalse(equal(points[i].onionKey, points[i].authKey), which + ": onion-key is not auth-key");
-    t.isFalse(equal(points[i].encKey, points[i].authKey), which + ": enc-key is not auth-key");
+    t.isFalse(equal(points[i].onionKey, points[i].encKey), "\{which}: onion-key is not enc-key");
+    t.isFalse(equal(points[i].onionKey, points[i].authKey), "\{which}: onion-key is not auth-key");
+    t.isFalse(equal(points[i].encKey, points[i].authKey), "\{which}: enc-key is not auth-key");
   }
   return t.report();
 }

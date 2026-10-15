@@ -15,7 +15,6 @@
 import { Cli, Core, FileResult, Stat, Socket } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { concat } from "../lib/bytes.wac";
 import { Parsed, Request, parseRequest } from "../../../http/src/request.wac";
 import { Response, write as writeResponse } from "../../../http/src/response.wac";
@@ -30,10 +29,10 @@ export i32 httpd(Core core, Cli cli, Fs fs, Args a) {
 
   // Every interface, which is what a web server people point a browser at is for. Issue 0025.
   Socket l = cli.listen("", port).wait();
-  if (l.handle < 0) { core.warn(a.name + ": " + itoa(port) + ": " + l.error); return 1; }
+  if (l.handle < 0) { core.warn("\{a.name}: \{port}: \{l.error}"); return 1; }
   // The same phrase `serve` prints, deliberately: it is what a caller waits for to know
   // the port is up, and two spellings for it meant a test hung instead of failing.
-  core.warn(a.name + ": listening on port " + itoa(port) + ", serving " + root);
+  core.warn("\{a.name}: listening on port \{port}, serving \{root}");
 
   bool once = has(a, 'o');
   // `-x` adds the two headers a page needs before `SharedArrayBuffer` exists. A wac
@@ -42,7 +41,7 @@ export i32 httpd(Core core, Cli cli, Fs fs, Args a) {
   bool isolate = has(a, 'x');
   while (true) {
     Socket c = cli.accept(l.handle).wait();
-    if (c.handle < 0) { core.warn(a.name + ": accept: " + c.error); break; }
+    if (c.handle < 0) { core.warn("\{a.name}: accept: \{c.error}"); break; }
     connection(core, cli, fs, c.handle, root, isolate);
     cli.closeSocket(c.handle);
     if (once) { break; }
@@ -62,7 +61,7 @@ void connection(Core core, Cli cli, Fs fs, i32 sock, string root, bool isolate) 
         match (cli.recv(sock).wait()) {
           Data(bytes): { buffered = concat(buffered, bytes); }
           End: { return; }
-          Failed(why): { core.warn("httpd: " + why); return; }
+          Failed(why): { core.warn("httpd: \{why}"); return; }
         }
       }
       Bad(code): {
@@ -97,9 +96,9 @@ void answer(Core core, Cli cli, Fs fs, i32 sock, string root, Request req, bool 
   if (!f.ok) {
     Response nf = Response.create(404);
     nf.set("Content-Type", "text/plain; charset=utf-8");
-    nf.body = ("not found: " + string.fromBytes(target) + "\n").toBytes();
+    nf.body = "not found: \{string.fromBytes(target)}\n".toBytes();
     cli.send(sock, writeResponse(nf, req.method, false)).wait();
-    core.warn("404 " + string.fromBytes(target));
+    core.warn("404 \{string.fromBytes(target)}");
     return;
   }
 
@@ -113,7 +112,7 @@ void answer(Core core, Cli cli, Fs fs, i32 sock, string root, Request req, bool 
   }
   res.body = f.bytes;
   cli.send(sock, writeResponse(res, req.method, false)).wait();
-  core.warn("200 " + string.fromBytes(target) + " " + itoa(f.bytes.len()));
+  core.warn("200 \{string.fromBytes(target)} \{f.bytes.len()}");
 }
 
 /**

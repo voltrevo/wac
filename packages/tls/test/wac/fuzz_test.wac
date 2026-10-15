@@ -25,7 +25,6 @@
 // 2026-08-17; `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { recordLength, recordType, maxPlaintext, typeHandshake, typeAlert } from "../../src/record.wac";
 import { Reader } from "../../src/wire.wac";
 import { tlsClientInit, tlsClientFeed, tlsClientFailure, tlsClientPhase, tlsClientClose }
@@ -53,10 +52,10 @@ Store fixtures(Core core, Cli cli) {
   u8[] all = u8[]();
   string[] names = ["ec_leaf", "ec_ca"];
   for (i32 i = 0; i < names.len(); i++) {
-    string path = "packages/tls/test/data/" + names[i] + ".pem";
+    string path = "packages/tls/test/data/\{names[i]}.pem";
     FileResult r = cli.readFile(path).wait();
     if (!r.ok) {
-      core.warn("tls fuzz: cannot read " + path + " — " + r.error);
+      core.warn("tls fuzz: cannot read \{path} — \{r.error}");
       trap;
     }
     u8[] joined = u8[].filled(all.len() + r.bytes.len(), 0);
@@ -110,7 +109,7 @@ export string test_record_framing_at_every_truncation() {
     u8[] part = u8[].filled(cut, 0);
     for (i32 i = 0; i < cut; i++) { part[i] = whole[i]; }
     i32 n = recordLength(part);
-    if (cut < 5) { t.eqI32(n, -1, "no header yet at " + itoa64(cut as i64)); }
+    if (cut < 5) { t.eqI32(n, -1, "no header yet at \{cut as i64}"); }
     else { t.eqI32(n, 256, "the claimed length does not change as more arrives"); }
   }
   return t.report();
@@ -317,7 +316,7 @@ export string test_a_malformed_certificate_is_refused_on_its_own_terms(Core core
   t.eqI32(swept.wrongCode, 0, "an unparseable certificate is refused as unparseable");
   t.isTrue(swept.unparseable > 0,
            "and some of those mutations genuinely broke the encoding rather than the signature: " +
-           itoa64(swept.unparseable as i64) + " of " + itoa64(swept.tried as i64));
+           "\{swept.unparseable as i64} of \{swept.tried as i64}");
   return t.report();
 }
 

@@ -28,7 +28,6 @@
 // is about how fast wac compiled to WebAssembly runs a stencil over 30,000 cells.
 
 import { Cli, Core, Event, Page, Pending } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/ripple.wac";
@@ -139,9 +138,9 @@ export i32 page(Core core, Cli cli, Page page) {
     "    <button id=\"rain\">rain</button>" +
     "  </div>" +
     "  <p class=\"dim\">frame <b id=\"fr\">0</b>, <span id=\"ms\">0</span> ms a step over" +
-    "    " + itoa(W * H) + " cells</p>" +
+    "    \{W * H} cells</p>" +
     "  <footer>The solver, the colouring and this page are wac. " +
-    "    <a href=\"" + SOURCE + "\">source</a>. It proves nothing and is here to be played with." +
+    "    <a href=\"\{SOURCE}\">source</a>. It proves nothing and is here to be played with." +
     "  </footer>" +
     "</div>"
   ).wait();
@@ -193,8 +192,8 @@ export i32 page(Core core, Cli cli, Page page) {
         }
         frame = frame + 1;
         paint(page, now, rgba);
-        page.setText("fr", itoa(frame)).wait();
-        page.setText("ms", itoa(took as@ i32)).wait();
+        page.setText("fr", "\{frame}").wait();
+        page.setText("ms", "\{took as@ i32}").wait();
       }
       continue;
     }

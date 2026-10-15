@@ -19,18 +19,17 @@
 // built a 900 KB application first and spawned it fourteen times as well.
 
 import { Cli, Core, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture } from "./cases.wac";
 import { Ran, layFixtures, runCase } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-diff"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-diff"; }
 
 /** `1\n2\n…\nn\n`, the spine every case below is a variation of. */
 string seq(i32 n) {
   string out = "";
-  for (i32 i = 1; i <= n; i++) { out = out + itoa(i) + "\n"; }
+  for (i32 i = 1; i <= n; i++) { out = out + "\{i}\n"; }
   return out;
 }
 
@@ -39,10 +38,10 @@ string seqEdit(i32 n, i32 at, string val) {
   string out = "";
   for (i32 i = 1; i <= n; i++) {
     if (i == at) {
-      if (val != "") { out = out + val + "\n"; }
+      if (val != "") { out = out + "\{val}\n"; }
       continue;
     }
-    out = out + itoa(i) + "\n";
+    out = out + "\{i}\n";
   }
   return out;
 }
@@ -51,8 +50,8 @@ string seqEdit(i32 n, i32 at, string val) {
 string seqInsert(i32 n, i32 at, string val) {
   string out = "";
   for (i32 i = 1; i <= n; i++) {
-    if (i == at) { out = out + val + "\n"; }
-    out = out + itoa(i) + "\n";
+    if (i == at) { out = out + "\{val}\n"; }
+    out = out + "\{i}\n";
   }
   return out;
 }
@@ -60,7 +59,7 @@ string seqInsert(i32 n, i32 at, string val) {
 /** `n` down to 1, which shares no line position with `seq(n)`. */
 string seqReversed(i32 n) {
   string out = "";
-  for (i32 i = n; i >= 1; i--) { out = out + itoa(i) + "\n"; }
+  for (i32 i = n; i >= 1; i--) { out = out + "\{i}\n"; }
   return out;
 }
 
@@ -78,7 +77,7 @@ string body(string all) {
     i32 nl = rest.indexOf("\n");
     string line = nl < 0 ? rest : rest.slice(0, nl);
     string head = line.len() >= 3 ? line.slice(0, 3) : "";
-    if (head != "---" && head != "+++") { out = out + line + "\n"; }
+    if (head != "---" && head != "+++") { out = out + "\{line}\n"; }
     if (nl < 0) { break; }
     rest = rest.slice(nl + 1, rest.len());
   }
@@ -87,26 +86,26 @@ string body(string all) {
 
 /** One shape, both ways. */
 bool oneCase(T t, Core core, Cli cli, string dir, string what, string a, string b) {
-  cli.writeFile(dir + "/a", a.toBytes()).wait();
-  cli.writeFile(dir + "/b", b.toBytes()).wait();
+  cli.writeFile("\{dir}/a", a.toBytes()).wait();
+  cli.writeFile("\{dir}/b", b.toBytes()).wait();
 
   Ran mine = runCase(core, cli, dir, "diff a b");
-  Exec real = cli.exec("diff", ["-u", dir + "/a", dir + "/b"], u8[]()).wait();
+  Exec real = cli.exec("diff", ["-u", "\{dir}/a", "\{dir}/b"], u8[]()).wait();
   if (!real.ran()) {
-    t.isTrue(false, "the real diff would not start: " + real.error);
+    t.isTrue(false, "the real diff would not start: \{real.error}");
     return false;
   }
   string ours = body(mine.out);
   t.eqStr(ours, body(string.fromBytes(real.stdout)), what);
   // 0 the same, 1 different, 2 trouble — as the real one does.
-  t.eqI32(mine.status, real.status, what + ": exit status");
+  t.eqI32(mine.status, real.status, "\{what}: exit status");
   return true;
 }
 
 export string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
 
   // **A floor first.** Every comparison below is `eqStr` against the real tool, and two empty strings
   // are equal — so a `diff` that printed nothing at all, or a `body` that filtered everything, would
@@ -114,7 +113,7 @@ export string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli c
   oneCase(t, core, cli, dir, "one change", seq(8), seqEdit(8, 3, "X"));
   Ran floor = runCase(core, cli, dir, "diff a b");
   t.isTrue(body(floor.out).indexOf("@@") >= 0,
-           "the comparison has something in it — got: " + floor.out);
+           "the comparison has something in it — got: \{floor.out}");
   oneCase(t, core, cli, dir, "two distant hunks", seq(30), twoDistant());
   // Closer than twice the context, so they must merge into one hunk rather than two.
   oneCase(t, core, cli, dir, "two close changes merge", seq(30), twoClose());
@@ -147,17 +146,17 @@ export string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli c
 export string test_a_missing_final_newline_is_a_difference(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
 
-  cli.writeFile(dir + "/withnl", "x\ny\n".toBytes()).wait();
-  cli.writeFile(dir + "/nonl", "x\ny".toBytes()).wait();
+  cli.writeFile("\{dir}/withnl", "x\ny\n".toBytes()).wait();
+  cli.writeFile("\{dir}/nonl", "x\ny".toBytes()).wait();
 
   Ran near = runCase(core, cli, dir, "diff withnl nonl");
   t.eqI32(near.status, 1, "files differing only in a final newline are different");
   t.isTrue(near.out.indexOf("No newline at end of file") >= 0, near.out);
 
   // GNU agrees about the status, which is the part a script reads.
-  Exec real = cli.exec("diff", [dir + "/withnl", dir + "/nonl"], u8[]()).wait();
+  Exec real = cli.exec("diff", ["\{dir}/withnl", "\{dir}/nonl"], u8[]()).wait();
   t.isTrue(real.ran(), "the real diff ran");
   t.eqI32(real.status, 1, "and so does GNU diff");
 
@@ -173,7 +172,7 @@ string twoDistant() {
   for (i32 i = 1; i <= 30; i++) {
     if (i == 5) { out = out + "five\n"; continue; }
     if (i == 25) { out = out + "twentyfive\n"; continue; }
-    out = out + itoa(i) + "\n";
+    out = out + "\{i}\n";
   }
   return out;
 }
@@ -184,7 +183,7 @@ string twoClose() {
   for (i32 i = 1; i <= 30; i++) {
     if (i == 5) { out = out + "five\n"; continue; }
     if (i == 7) { out = out + "seven\n"; continue; }
-    out = out + itoa(i) + "\n";
+    out = out + "\{i}\n";
   }
   return out;
 }

@@ -58,7 +58,7 @@ export bool refuseFlags(Core core, Args a) {
     // Separating them needs a table of what the real tool documents, the long-option twin of `gnuFlags`
     // beside `implementedFlags` — `issues/system/0303c`. Until then this names the applet's gap and
     // claims nothing about anyone else's.
-    core.warn(a.name + ": long option not implemented: " + a.longOpt);
+    core.warn("\{a.name}: long option not implemented: \{a.longOpt}");
     return true;
   }
   if (!flagsChecked(a.name)) { return false; }
@@ -70,10 +70,10 @@ export bool refuseFlags(Core core, Args a) {
     string letter = string.fromBytes(u8[].filled(1, flags[i]));
     if (contains(gnuFlags(a.name), flags[i] as i32)) {
       // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.
-      core.warn(a.name + ": -" + letter + " is not implemented");
+      core.warn("\{a.name}: -\{letter} is not implemented");
     } else {
-      core.warn(a.name + ": invalid option -- '" + letter + "'");
-      core.warn("Try '" + a.name + " --help' for more information.");
+      core.warn("\{a.name}: invalid option -- '\{letter}'");
+      core.warn("Try '\{a.name} --help' for more information.");
     }
     return true;
   }
@@ -227,15 +227,15 @@ bool contains(string letters, i32 c) {
 export i32 appletHelp(Core core, string name) {
   string mine = implementedFlags(name);
   string free = acceptedFlags(name);
-  core.log("usage: " + name + (mine == "" ? "" : " [-" + mine + "]") + " [operand...]");
-  if (mine != "") { core.log("flags: " + spaced(mine)); }
+  core.log("usage: " + name + (mine == "" ? "" : " [-\{mine}]") + " [operand...]");
+  if (mine != "") { core.log("flags: \{spaced(mine)}"); }
   // Named separately because "accepted" is not "implemented": GNU's own `--help` says of `id -a`
   // *"ignore, for compatibility with other versions"*, and that is exactly what these do.
-  if (free != "") { core.log("accepted and ignored, as the real tool does: " + spaced(free)); }
+  if (free != "") { core.log("accepted and ignored, as the real tool does: \{spaced(free)}"); }
   if (!flagsChecked(name)) {
-    core.log("this applet's flags are not enumerated here; see " + name + "(1)");
+    core.log("this applet's flags are not enumerated here; see \{name}(1)");
   }
-  core.log("box implements a subset of " + name + "(1). `box` lists every applet.");
+  core.log("box implements a subset of \{name}(1). `box` lists every applet.");
   return 0;
 }
 
@@ -245,7 +245,7 @@ string spaced(string letters) {
   string out = "";
   for (i32 i = 0; i < b.len(); i++) {
     if (i > 0) { out = out + " "; }
-    out = out + "-" + string.fromBytes(u8[].filled(1, b[i]));
+    out = out + "-\{string.fromBytes(u8[].filled(1, b[i]))}";
   }
   return out;
 }

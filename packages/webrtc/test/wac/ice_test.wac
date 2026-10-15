@@ -32,8 +32,6 @@ import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { Consent } from "../../src/ice.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
@@ -55,7 +53,7 @@ void ask(T t, Cli cli, Lines lines, string what) {
 
 export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/ice";
+  string dir = "\{cli.cwd().wait()}/.cache/ice";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
@@ -64,21 +62,21 @@ export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
   // to a `127.0.0.1` candidate does not route. Advertising loopback made the agent send checks that
   // never arrived and time out, which reads exactly like a protocol bug and is not one.
   Socket sock = cli.bindDatagram("0.0.0.0", 0).wait();
-  t.isTrue(sock.handle >= 0, "our socket did not bind — " + sock.error);
+  t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
   if (sock.handle < 0) { return t.report(); }
   i32 ourPort = sock.port;
   string ourUfrag = "wacUF";
   string ourPwd = "wac-password-0123456789";
   i64 ourPriority = priorityOf(hostPref(), 65535, 1);
 
-  Daemon agent = start(cli, "python3 " + quoted(AGENT) + " " + quoted(dir), dir + "/agent.log");
-  t.isTrue(agent.ok(), "the aioice agent did not start — " + agent.error);
+  Daemon agent = start(cli, "python3 \{quoted(AGENT)} \{quoted(dir)}", "\{dir}/agent.log");
+  t.isTrue(agent.ok(), "the aioice agent did not start — \{agent.error}");
   if (!agent.ok()) { return t.report(); }
 
   // Gathering takes a moment; the file appears when it is done.
-  string theirs = awaitFile(cli, dir + "/theirs.json", 600);
+  string theirs = awaitFile(cli, "\{dir}/theirs.json", 600);
   if (theirs == "") {
-    t.fail("aioice never published its candidates. It said: " + logTail(cli, dir + "/agent.log"));
+    t.fail("aioice never published its candidates. It said: " + logTail(cli, "\{dir}/agent.log"));
     stop(cli, agent);
     cli.closeSocket(sock.handle);
     return t.report();
@@ -96,9 +94,9 @@ export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
   string ourHost = word(firstCandidate, 4);
 
   string ourLine = lineFor("wac1", 1, "udp", ourPriority, ourHost, ourPort, "host");
-  cli.writeFile(dir + "/ours.json",
-                ("{\"ufrag\": \"" + ourUfrag + "\", \"pwd\": \"" + ourPwd +
-                 "\", \"candidates\": [\"" + ourLine + "\"]}").toBytes()).wait();
+  cli.writeFile("\{dir}/ours.json",
+                ("{\"ufrag\": \"\{ourUfrag}\", \"pwd\": \"\{ourPwd}" +
+                 "\", \"candidates\": [\"\{ourLine}\"]}").toBytes()).wait();
 
   // **Answer every check, for as long as it keeps sending them.** Each is validated with our own
   // rules — the username has to name us, and the integrity has to check under the password we
@@ -111,7 +109,7 @@ export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
     Pending<Datagram> p = cli.receiveFrom(sock.handle);
     if (core.waitAny([p.id], 50) < 0) {
       p.drop(p.id);
-      result = readIfPresent(cli, dir + "/result.json");
+      result = readIfPresent(cli, "\{dir}/result.json");
       continue;
     }
     Datagram d = p.wait();
@@ -122,19 +120,19 @@ export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
     cli.sendTo(sock.handle, d.peer, d.port,
                success(tidOf(d.bytes), ourPwd.toBytes(), 1, ipv4Of(d.peer), d.port)).wait();
   }
-  if (result == "") { result = awaitFile(cli, dir + "/result.json", 200); }
+  if (result == "") { result = awaitFile(cli, "\{dir}/result.json", 200); }
 
   t.isTrue(result != "",
-           "aioice never reported a result. It said: " + logTail(cli, dir + "/agent.log"));
+           "aioice never reported a result. It said: " + logTail(cli, "\{dir}/agent.log"));
   t.isTrue(contains(result, "\"connected\": true"),
-           "aioice did not report a completed connection: " + result);
+           "aioice did not report a completed connection: \{result}");
   t.isFalse(contains(result, "\"selected\": null"), "and it selected no candidate pair");
   // **The evidence, stated as counts.** A `connect()` that returned without ever sending us a check
   // would mean it found some other path, and this is what says otherwise.
   t.isTrue(checksSeen > 0, "aioice sent no checks we accepted");
   t.isTrue(nominations > 0,
            "and nominated no pair with USE-CANDIDATE, which is the controlling agent's last word");
-  core.log("    ice: " + itoa(checksSeen) + " checks answered, " + itoa(nominations) +
+  core.log("    ice: \{checksSeen} checks answered, \{nominations}" +
            " of them nominations");
 
   stop(cli, agent);
@@ -160,9 +158,9 @@ export string test_aioice_validates_a_check_we_build(Core core, Cli cli) {
   Lines lines = Lines.create();
   // `72623859790382856` is 0x0102030405060708 as an unsigned 64-bit number, which is how aioice
   // reports it. The peer's fragment comes first in the username: a check names the receiver.
-  lines.add("check " + hexOf(good) + " peer-password-xyz peerUF:wacUF " + itoa64(priority) +
+  lines.add("check \{hexOf(good)} peer-password-xyz peerUF:wacUF \{priority}" +
             " ICE-CONTROLLING 72623859790382856 yes");
-  lines.add("refused " + hexOf(bad) + " peer-password-xyz");
+  lines.add("refused \{hexOf(bad)} peer-password-xyz");
   ask(t, cli, lines, "aioice validating our check");
   return t.report();
 }
@@ -177,9 +175,9 @@ export string test_aioice_accepts_a_consent_check_as_an_authenticated_binding_re
   u8[] msg = iceCheck(tid, "THEIRUF", "OURUF", ("their-password").toBytes(),
                       priorityOf(hostPref(), 65535, 1), false, decoded("0707070707070707"), false);
   Lines lines = Lines.create();
-  lines.add("check " + hexOf(msg) + " their-password THEIRUF:OURUF 2130706431 ICE-CONTROLLED " +
+  lines.add("check \{hexOf(msg)} their-password THEIRUF:OURUF 2130706431 ICE-CONTROLLED " +
             "506381209866536711 no");
-  lines.add("refused " + hexOf(msg) + " not-their-password");
+  lines.add("refused \{hexOf(msg)} not-their-password");
   ask(t, cli, lines, "aioice and a consent check");
   return t.report();
 }
@@ -190,7 +188,7 @@ export string test_a_candidate_line_is_the_shape_aioice_parses(Core core, Cli cl
                         "host");
   t.eqStr(line, "wac1 1 udp 2130706431 127.0.0.1 45678 typ host", "the line we write");
   Lines lines = Lines.create();
-  lines.add("candidate " + hexOf(line.toBytes()) +
+  lines.add("candidate \{hexOf(line.toBytes())}" +
             " wac1 1 udp 2130706431 127.0.0.1 45678 host");
   ask(t, cli, lines, "aioice reading our candidate");
   return t.report();
@@ -325,12 +323,12 @@ string readIfPresent(Cli cli, string path) {
 string logTail(Cli cli, string path) {
   string said = trimmed(readIfPresent(cli, path));
   if (said == "") { return "(nothing)"; }
-  return said.len() <= 700 ? said : "…" + said.slice(said.len() - 700, said.len());
+  return said.len() <= 700 ? said : "…\{said.slice(said.len() - 700, said.len())}";
 }
 
 /** `"key": "value"` out of a flat JSON object — enough for what the agent writes. */
 string jsonString(string json, string key) {
-  i32 at = json.indexOf("\"" + key + "\"");
+  i32 at = json.indexOf("\"\{key}\"");
   if (at < 0) { return ""; }
   string rest = json.slice(at + key.len() + 2, json.len());
   i32 open = rest.indexOf("\"");
@@ -342,7 +340,7 @@ string jsonString(string json, string key) {
 
 /** The first string of `"key": ["a", "b"]`. */
 string firstOfArray(string json, string key) {
-  i32 at = json.indexOf("\"" + key + "\"");
+  i32 at = json.indexOf("\"\{key}\"");
   if (at < 0) { return ""; }
   string rest = json.slice(at, json.len());
   i32 bracket = rest.indexOf("[");
@@ -393,6 +391,6 @@ u8[] ipv4Of(string address) {
 /** `reportedAddress`'s tail as `a.b.c.d`. */
 string dotted(i32[] a) {
   string out = "";
-  for (i32 i = 2; i < a.len(); i++) { out = out + (i == 2 ? "" : ".") + itoa(a[i]); }
+  for (i32 i = 2; i < a.len(); i++) { out = out + (i == 2 ? "" : ".") + "\{a[i]}"; }
   return out;
 }

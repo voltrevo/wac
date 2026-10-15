@@ -23,7 +23,7 @@ export i32 mkdir(Core core, Cli cli, Fs fs, Args a) {
     // host's absolute path — where GNU prints four words. A copy of one row is the worst size to keep.
     //
     // GNU's frame too: `mkdir: cannot create directory 'f/g': …`, quotes and all. Issue 0009.
-    core.warn(a.name + ": cannot create directory '" + a.rest[i] + "': " + reasonOf(c));
+    core.warn("\{a.name}: cannot create directory '\{a.rest[i]}': \{reasonOf(c)}");
     code = 1;
   }
   return code;

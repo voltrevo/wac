@@ -63,7 +63,7 @@ string configText() {
   ];
   string out = "";
   for (i32 i = 0; i < lines.len(); i++) {
-    out = i == 0 ? lines[i] : out + "\n" + lines[i];
+    out = i == 0 ? lines[i] : "\{out}\n\{lines[i]}";
   }
   return out;
 }
@@ -102,27 +102,27 @@ i32 countStarting(string[] all, string prefix) {
 
 string joined(string[] all) {
   string out = "";
-  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + "\n" + all[i]; }
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : "\{out}\n\{all[i]}"; }
   return out;
 }
 
 export string test_every_setting_is_the_one_git_config_list_reports_in_order(Core core, Cli cli) {
   T t = T.create();
   string who = agentDir(cli);
-  string dir = "/tmp/wac-git-cfg" + (who == "" ? "" : "-" + who);
+  string dir = "/tmp/wac-git-cfg" + (who == "" ? "" : "-\{who}");
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   if (!made.ok()) { return t.report(); }
 
-  string path = dir + "/c.ini";
+  string path = "\{dir}/c.ini";
   Change wrote = cli.writeFile(path, configText().toBytes()).wait();
-  t.isTrue(wrote.ok(), "the config file was written: " + wrote.message);
+  t.isTrue(wrote.ok(), "the config file was written: \{wrote.message}");
   if (!wrote.ok()) { return t.report(); }
 
   Exec r = cli.exec("git", ["config", "--list", "--file", path], u8[]()).wait();
   t.eqStr(r.error, "", "git could not be started");
   if (r.error != "") { return t.report(); }
-  t.eqI32(r.status, 0, "git config refused the file: " + string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "git config refused the file: \{string.fromBytes(r.stderr)}");
   if (r.status != 0) { return t.report(); }
   string[] theirs = lines(string.fromBytes(r.stdout));
 
@@ -130,7 +130,7 @@ export string test_every_setting_is_the_one_git_config_list_reports_in_order(Cor
   // these is a rule this parser could get wrong while still passing a tidy file — and if git's
   // listing stopped containing one, the comparison below would agree about a weaker question.
   t.isTrue(contains(theirs, "core.excludesfile=~/.gitignore_Global"),
-           "the key was not folded: " + joined(theirs));
+           "the key was not folded: \{joined(theirs)}");
   t.isTrue(contains(theirs, "remote.Upstream.url=https://example.com/y.git"),
            "the subsection lost its case");
   t.isTrue(contains(theirs, "sendemail.Work.smtpserver=smtp.example.com"),
@@ -147,7 +147,7 @@ export string test_every_setting_is_the_one_git_config_list_reports_in_order(Cor
   string[] ours = string[].filled(settings.len(), "");
   for (i32 i = 0; i < settings.len(); i++) {
     Setting s = settings.get(i);
-    ours[i] = s.valued ? s.name + "=" + s.value : s.name;
+    ours[i] = s.valued ? "\{s.name}=\{s.value}" : s.name;
   }
   t.eqStr(joined(ours), joined(theirs), "our listing is git's, line for line");
 
@@ -159,7 +159,7 @@ export string test_every_setting_is_the_one_git_config_list_reports_in_order(Cor
   t.eqStr(configOf(settings, "nothing.here"), "", "an unset name answers empty");
 
   Change gone = cli.remove(path, false).wait();
-  if (!gone.ok()) { core.warn("config_test: could not remove " + path + " — " + gone.message); }
+  if (!gone.ok()) { core.warn("config_test: could not remove \{path} — \{gone.message}"); }
   return t.report();
 }
 

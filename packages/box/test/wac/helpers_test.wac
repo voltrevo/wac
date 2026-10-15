@@ -48,7 +48,7 @@ export string test_split_on_a_multi_character_separator(Core core, Cli cli) {
 
   string[] one = splitOn("a\nb\nc", "\n");
   t.eqI32(one.len(), 3, "three fields");
-  t.eqStr(one[0] + "|" + one[1] + "|" + one[2], "a|b|c", "in order");
+  t.eqStr("\{one[0]}|\{one[1]}|\{one[2]}", "a|b|c", "in order");
 
   // A two-character separator that cannot overlap itself: three fields, and both implementations
   // agreed here. Kept because it is the shape every caller actually uses.
@@ -62,7 +62,7 @@ export string test_split_on_a_multi_character_separator(Core core, Cli cli) {
   // passed. Three fields, both empty at the ends, is the standard answer.
   string[] over = splitOn("aaaa", "aa");
   t.eqI32(over.len(), 3, "a self-overlapping separator matches twice, not three times");
-  t.eqStr(over[0] + "|" + over[1] + "|" + over[2], "||", "and the fields between them are empty");
+  t.eqStr("\{over[0]}|\{over[1]}|\{over[2]}", "||", "and the fields between them are empty");
 
   // Adjacent separators are empty fields, which is what a splitter is for — dropping them would make
   // `a::::b` and `a::b` the same input.

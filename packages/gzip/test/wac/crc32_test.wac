@@ -6,7 +6,6 @@
 // definition across every byte value and a spread of lengths.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { crc32, crc32Bitwise } from "../../src/crc32.wac";
 
 export string test_table_agrees_with_definition_on_every_byte() {
@@ -16,7 +15,7 @@ export string test_table_agrees_with_definition_on_every_byte() {
   for (i32 b = 0; b < 256; b++) {
     u8[] one = u8[].filled(1, 0);
     one[0] = b as@ u8;
-    t.eqU32(crc32(one), crc32Bitwise(one), "single byte " + itoa(b));
+    t.eqU32(crc32(one), crc32Bitwise(one), "single byte \{b}");
   }
   return t.report();
 }
@@ -39,7 +38,7 @@ export string test_table_agrees_across_lengths() {
     for (i32 i = 0; i < n; i++) {
       data[i] = ((i * 37 + n * 11) & 0xFF) as@ u8;
     }
-    t.eqU32(crc32(data), crc32Bitwise(data), "length " + itoa(n));
+    t.eqU32(crc32(data), crc32Bitwise(data), "length \{n}");
   }
   return t.report();
 }

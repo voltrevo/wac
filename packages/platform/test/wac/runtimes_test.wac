@@ -19,7 +19,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
 static string WC = "packages/platform/example/wc.wac";
@@ -29,7 +28,7 @@ static string PROBE = "packages/platform/test/wac/exec_probe.wac";
 string root(Cli cli) { return cli.cwd().wait(); }
 
 string freshScratch(T t, Cli cli, string name) {
-  string dir = root(cli) + "/.cache/runtimes-" + name;
+  string dir = "\{root(cli)}/.cache/runtimes-\{name}";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   return dir;
@@ -53,7 +52,7 @@ bool build(T t, Cli cli, string entry, string out, string target, string[] grant
   args[head.len() + grants.len() + 1] = out;
   Exec r = cli.exec("deno", args, u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
-           entry + " built for " + target + " — " +
+           "\{entry} built for \{target} — " +
            string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
   return r.ran() && r.status == 0;
 }
@@ -61,7 +60,7 @@ bool build(T t, Cli cli, string entry, string out, string target, string[] grant
 /** The first line of a built program, which is its shebang. */
 string shebang(Cli cli, string path) {
   FileResult f = cli.readFile(path).wait();
-  if (!f.ok) { return "<unreadable: " + f.error + ">"; }
+  if (!f.ok) { return "<unreadable: \{f.error}>"; }
   string[] ls = splitLines(string.fromBytes(f.bytes));
   return ls.len() > 0 ? ls[0] : "<empty>";
 }
@@ -80,7 +79,7 @@ export string test_an_application_builds_to_one_executable_file_and_runs_repeate
   // a pass.
   T t = T.create();
   string dir = freshScratch(t, cli, "exe");
-  string app = dir + "/wc";
+  string app = "\{dir}/wc";
   if (!build(t, cli, WC, app, "deno", ["--allow-read"])) {
     cli.remove(dir, true).wait();
     return t.report();
@@ -88,7 +87,7 @@ export string test_an_application_builds_to_one_executable_file_and_runs_repeate
 
   // `Stat` says `isFile` and a size and nothing about the mode, so the execute bit is asked of the
   // shell. It is the property that matters: a built program is run, not interpreted by a launcher.
-  Exec x = cli.exec("/bin/sh", ["-c", "test -x '" + app + "'"], u8[]()).wait();
+  Exec x = cli.exec("/bin/sh", ["-c", "test -x '\{app}'"], u8[]()).wait();
   t.isTrue(x.ran() && x.status == 0, "the built file is executable");
 
   if (!profiling(cli)) {
@@ -101,20 +100,20 @@ export string test_an_application_builds_to_one_executable_file_and_runs_repeate
     // No permission flags and no separator: a built program takes the arguments a program takes.
     // What it may *do* was decided at build.
     Exec r = cli.exec(app, [WC], u8[]()).wait();
-    t.isTrue(r.ran(), "run " + itoa(i) + " started — " + r.error);
+    t.isTrue(r.ran(), "run \{i} started — \{r.error}");
     if (!r.ran()) { continue; }
-    t.eqI32(r.status, 0, "run " + itoa(i) + ": " + string.fromBytes(r.stderr));
+    t.eqI32(r.status, 0, "run \{i}: \{string.fromBytes(r.stderr)}");
     string out = trimmed(string.fromBytes(r.stdout));
     t.isTrue(out.len() >= WC.len() && out.slice(out.len() - WC.len(), out.len()) == WC,
-             "run " + itoa(i) + " counted the file: " + out);
+             "run \{i} counted the file: \{out}");
   }
 
   // The same application built without the grant: the capability is simply absent, and nothing the
   // caller passes can put it back.
-  string bare = dir + "/wc-bare";
+  string bare = "\{dir}/wc-bare";
   if (build(t, cli, WC, bare, "deno", none())) {
     Exec denied = cli.exec(bare, [WC], u8[]()).wait();
-    t.isTrue(denied.ran(), "the ungranted build ran — " + denied.error);
+    t.isTrue(denied.ran(), "the ungranted build ran — \{denied.error}");
     if (denied.ran()) {
       t.eqI32(denied.status, 1, "no filesystem, and the application says so");
       t.isTrue(contains(string.fromBytes(denied.stderr), "not granted"),
@@ -138,8 +137,8 @@ export string test_the_same_application_builds_for_node_and_agrees_with_the_deno
     Core core, Cli cli) {
   T t = T.create();
   string dir = freshScratch(t, cli, "node");
-  string denoOut = dir + "/wc-deno";
-  string nodeOut = dir + "/wc-node";
+  string denoOut = "\{dir}/wc-deno";
+  string nodeOut = "\{dir}/wc-node";
   bool okD = build(t, cli, WC, denoOut, "deno", ["--allow-read"]);
   bool okN = build(t, cli, WC, nodeOut, "node", ["--allow-read"]);
   if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
@@ -149,22 +148,22 @@ export string test_the_same_application_builds_for_node_and_agrees_with_the_deno
 
   Exec d = cli.exec(denoOut, [WC], u8[]()).wait();
   Exec n = cli.exec("node", [nodeOut, WC], u8[]()).wait();
-  t.isTrue(d.ran() && d.status == 0, "the Deno build ran — " + string.fromBytes(d.stderr));
-  t.isTrue(n.ran() && n.status == 0, "the Node build ran — " + string.fromBytes(n.stderr));
+  t.isTrue(d.ran() && d.status == 0, "the Deno build ran — \{string.fromBytes(d.stderr)}");
+  t.isTrue(n.ran() && n.status == 0, "the Node build ran — \{string.fromBytes(n.stderr)}");
   if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
 
   string dOut = trimmed(string.fromBytes(d.stdout));
   t.eqStr(trimmed(string.fromBytes(n.stdout)), dOut,
           "byte for byte, the same answer from both runtimes");
   // And it is an answer rather than two empty strings agreeing.
-  t.isTrue(contains(dOut, WC), "neither runtime counted anything: " + dOut);
+  t.isTrue(contains(dOut, WC), "neither runtime counted anything: \{dOut}");
 
   // And the capability boundary holds on Node, where it is the *only* boundary — there is no
   // process-level permission behind it.
-  string bare = dir + "/wc-node-bare";
+  string bare = "\{dir}/wc-node-bare";
   if (build(t, cli, WC, bare, "node", none())) {
     Exec denied = cli.exec("node", [bare, WC], u8[]()).wait();
-    t.isTrue(denied.ran(), "the ungranted Node build ran — " + denied.error);
+    t.isTrue(denied.ran(), "the ungranted Node build ran — \{denied.error}");
     if (denied.ran()) {
       t.eqI32(denied.status, 1, string.fromBytes(denied.stderr));
       t.isTrue(contains(string.fromBytes(denied.stderr), "not granted"),
@@ -183,7 +182,7 @@ export string test_the_same_application_builds_for_node_and_agrees_with_the_deno
  * differ for a reason that has nothing to do with the hosts.
  */
 Exec inDir(Cli cli, string dir, string command) {
-  return cli.exec("/bin/sh", ["-c", "cd '" + dir + "' && " + command], u8[]()).wait();
+  return cli.exec("/bin/sh", ["-c", "cd '\{dir}' && \{command}"], u8[]()).wait();
 }
 
 export string test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_reading_a_file(
@@ -197,23 +196,23 @@ export string test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_re
   // it an oracle for itself: the two runtimes have to produce the same transcript.
   T t = T.create();
   string dir = freshScratch(t, cli, "fs");
-  string denoOut = dir + "/rt-deno";
-  string nodeOut = dir + "/rt-node";
+  string denoOut = "\{dir}/rt-deno";
+  string nodeOut = "\{dir}/rt-node";
   bool okD = build(t, cli, ROUNDTRIP, denoOut, "deno", ["--allow-read", "--allow-write"]);
   bool okN = build(t, cli, ROUNDTRIP, nodeOut, "node", ["--allow-read", "--allow-write"]);
   if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
 
-  string denoDir = dir + "/d";
-  string nodeDir = dir + "/n";
+  string denoDir = "\{dir}/d";
+  string nodeDir = "\{dir}/n";
   string whyDir1 = madeDir(cli, denoDir);
   t.isTrue(whyDir1 == "", whyDir1);
   string whyDir2 = madeDir(cli, nodeDir);
   t.isTrue(whyDir2 == "", whyDir2);
 
-  Exec d = inDir(cli, denoDir, "'" + denoOut + "' hello");
-  Exec n = inDir(cli, nodeDir, "node '" + nodeOut + "' hello");
-  t.isTrue(d.ran() && d.status == 0, "the Deno build ran — " + string.fromBytes(d.stderr));
-  t.isTrue(n.ran() && n.status == 0, "the Node build ran — " + string.fromBytes(n.stderr));
+  Exec d = inDir(cli, denoDir, "'\{denoOut}' hello");
+  Exec n = inDir(cli, nodeDir, "node '\{nodeOut}' hello");
+  t.isTrue(d.ran() && d.status == 0, "the Deno build ran — \{string.fromBytes(d.stderr)}");
+  t.isTrue(n.ran() && n.status == 0, "the Node build ran — \{string.fromBytes(n.stderr)}");
   if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
 
   string dOut = string.fromBytes(d.stdout);
@@ -227,7 +226,7 @@ export string test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_re
                            "read: hello", "same bytes back", "rename:", "removed,"
   ];
   for (i32 i = 0; i < want.len(); i++) {
-    t.isTrue(contains(dOut, want[i]), "missing \"" + want[i] + "\" in:\n" + dOut);
+    t.isTrue(contains(dOut, want[i]), "missing \"\{want[i]}\" in:\n\{dOut}");
   }
   cli.remove(dir, true).wait();
   return t.report();
@@ -247,29 +246,29 @@ export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_tak
   // denial and claiming to check the stat.
   T t = T.create();
   string dir = freshScratch(t, cli, "statdenied");
-  string denoOut = dir + "/rtd-deno";
-  string nodeOut = dir + "/rtd-node";
+  string denoOut = "\{dir}/rtd-deno";
+  string nodeOut = "\{dir}/rtd-node";
   bool okD = build(t, cli, ROUNDTRIP, denoOut, "deno", ["--allow-write"]);
   bool okN = build(t, cli, ROUNDTRIP, nodeOut, "node", ["--allow-write"]);
   if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
 
-  string work = dir + "/w";
+  string work = "\{dir}/w";
   string whyDir3 = madeDir(cli, work);
   t.isTrue(whyDir3 == "", whyDir3);
-  Exec d = inDir(cli, work, "'" + denoOut + "' hello");
-  Exec n = inDir(cli, work, "node '" + nodeOut + "' hello");
-  t.isTrue(d.ran() && n.ran(), "both builds ran — " + d.error + n.error);
+  Exec d = inDir(cli, work, "'\{denoOut}' hello");
+  Exec n = inDir(cli, work, "node '\{nodeOut}' hello");
+  t.isTrue(d.ran() && n.ran(), "both builds ran — \{d.error}\{n.error}");
   if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
 
   string dOut = string.fromBytes(d.stdout);
   t.eqStr(string.fromBytes(n.stdout), dOut, "Deno and Node told different stories");
-  t.eqI32(n.status, d.status, "exit " + itoa(d.status) + " against " + itoa(n.status));
+  t.eqI32(n.status, d.status, "exit \{d.status} against \{n.status}");
   t.isTrue(contains(dOut, "stat: cannot tell — Not granted to this application"),
-           "the ungranted stat was not reported as ungranted:\n" + dOut + string.fromBytes(d.stderr));
+           "the ungranted stat was not reported as ungranted:\n\{dOut}\{string.fromBytes(d.stderr)}");
   // And not with an empty reason, which is what this printed while the category had no phrase:
   // `Stat` carries no host message to fall back to, so "no words for this category" meant no words
   // at all.
-  t.isTrue(!contains(dOut, "stat: cannot tell — \n"), "an empty reason:\n" + dOut);
+  t.isTrue(!contains(dOut, "stat: cannot tell — \n"), "an empty reason:\n\{dOut}");
   // It got that far, which is what makes the line above a statement about `stat` rather than about
   // whichever capability happened to fail first.
   t.isTrue(contains(dOut, "wrote roundtrip.txt"), dOut);
@@ -296,39 +295,39 @@ export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_tak
 export string test_the_two_runtimes_agree_about_running_a_host_program(Core core, Cli cli) {
   T t = T.create();
   string dir = freshScratch(t, cli, "exec");
-  string denoOut = dir + "/probe-deno";
-  string nodeOut = dir + "/probe-node";
+  string denoOut = "\{dir}/probe-deno";
+  string nodeOut = "\{dir}/probe-node";
   bool okD = build(t, cli, PROBE, denoOut, "deno", ["--allow-run"]);
   bool okN = build(t, cli, PROBE, nodeOut, "node", ["--allow-run"]);
   if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
 
   Exec d = cli.exec(denoOut, string[](), u8[]()).wait();
   Exec n = cli.exec("node", [nodeOut], u8[]()).wait();
-  t.isTrue(d.ran() && n.ran(), "both builds ran — " + d.error + n.error);
+  t.isTrue(d.ran() && n.ran(), "both builds ran — \{d.error}\{n.error}");
   if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
 
   string dLog = string.fromBytes(d.stderr);
   string nLog = string.fromBytes(n.stderr);
   t.eqStr(nLog, dLog, "Deno and Node told different stories about `execWith`");
-  t.eqI32(n.status, d.status, "exit " + itoa(d.status) + " against " + itoa(n.status));
+  t.eqI32(n.status, d.status, "exit \{d.status} against \{n.status}");
 
   // The transcript as well as the agreement: two hosts that had both lost the capability would
   // agree perfectly, and every one of these lines is a verdict the probe could only reach by
   // running something.
   t.isTrue(contains(dLog, "inherit: ran=yes status=0 buffered=0/0"),
-           "an inherited stream carried the bytes and the answer carried none:\n" + dLog);
+           "an inherited stream carried the bytes and the answer carried none:\n\{dLog}");
   t.isTrue(contains(dLog, "env: ran=yes handed=yes kept-others=yes"),
-           "a handed variable arrived and the inherited ones stayed:\n" + dLog);
+           "a handed variable arrived and the inherited ones stayed:\n\{dLog}");
   t.isTrue(contains(dLog, "cleared: ran=yes only-what-was-passed=yes"),
-           "a cleared environment was only what was passed:\n" + dLog);
+           "a cleared environment was only what was passed:\n\{dLog}");
   // A signalled child, which is one convention written out in four hosts and compared by nothing
   // until now — `?? -1` in the two JavaScript ones and `unwrap_or(-1)` in the two Rust ones.
   // `eqStr` above already fails if Deno and Node disagree; this says the answer is also *right*,
   // which two hosts making the same mistake would otherwise satisfy.
   t.isTrue(contains(dLog, "signalled: ran=yes status=-1 signalled=yes"),
-           "a child killed by a signal is reported as having run and having no exit code:\n" + dLog);
+           "a child killed by a signal is reported as having run and having no exit code:\n\{dLog}");
   t.isTrue(contains(dLog, "exited: ran=yes status=255 signalled=no"),
-           "and the top of the exit range is not clipped into that sentinel:\n" + dLog);
+           "and the top of the exit range is not clipped into that sentinel:\n\{dLog}");
 
   // And the inherited bytes themselves, which are on the other stream: the grandchild wrote to the
   // probe's stdout, which is this pipe, on both hosts.

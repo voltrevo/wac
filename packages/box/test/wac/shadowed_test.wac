@@ -29,7 +29,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Core } from "std";
 import { builtinNames } from "../../../sh/src/exec.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 string appletDir() { return "packages/box/src/applets"; }
 
@@ -72,7 +71,7 @@ export string test_the_shadowed_names_are_the_ones_we_think_they_are(Core core, 
   // **A floor first**, because the derivation reads a directory and calls an export, and either could
   // stop answering — an empty intersection would otherwise pass every assertion below by vacuity.
   t.isTrue(got.len() >= 4,
-           "only " + itoa(got.len()) + " shadowed names derived; the scan or the export has moved");
+           "only \{got.len()} shadowed names derived; the scan or the export has moved");
   string joined = "";
   for (i32 i = 0; i < got.len(); i++) { joined = joined + (i == 0 ? "" : " ") + got[i]; }
   // Pinned, so a builtin gaining an applet twin — or an applet gaining a builtin — is a decision
@@ -95,7 +94,7 @@ export string test_every_known_divergence_is_still_shadowed(Core core, Cli cli) 
   // The same floor as above rather than an early return: a derivation that answered nothing would
   // otherwise satisfy this test by having no rows to disagree about, which is the way a check like
   // this goes quiet without going red.
-  t.isTrue(got.len() >= 4, "the derivation answered " + itoa(got.len()) + " names");
+  t.isTrue(got.len() >= 4, "the derivation answered \{got.len()} names");
   if (got.len() == 0) { return t.report(); }
   // The other direction of the same pin: a name on the shrink-only list that is no longer shadowed at
   // all — because the builtin went, which is `issues/system/0201`'s first option — must be taken off
@@ -105,10 +104,10 @@ export string test_every_known_divergence_is_still_shadowed(Core core, Cli cli) 
   for (i32 k = 0; k < known.len(); k++) {
     bool still = false;
     for (i32 i = 0; i < got.len(); i++) { if (got[i] == known[k]) { still = true; } }
-    if (!still) { missing = missing + " " + known[k]; }
+    if (!still) { missing = missing + " \{known[k]}"; }
   }
   t.eqStr(missing, "",
-          "no longer shadowed, so `knownDivergent` should lose it —" + missing +
+          "no longer shadowed, so `knownDivergent` should lose it —\{missing}" +
           " (issues/system/0201 has been decided; empty the list and raise operands_test's count)");
   return t.report();
 }
@@ -119,7 +118,7 @@ export string test_a_shadowed_name_that_is_not_known_to_diverge_is_named(Core co
   // The same floor as above rather than an early return: a derivation that answered nothing would
   // otherwise satisfy this test by having no rows to disagree about, which is the way a check like
   // this goes quiet without going red.
-  t.isTrue(got.len() >= 4, "the derivation answered " + itoa(got.len()) + " names");
+  t.isTrue(got.len() >= 4, "the derivation answered \{got.len()} names");
   if (got.len() == 0) { return t.report(); }
   // `echo` and `ls` were compared three ways on 2026-08-20 — GNU, the applet, the builtin — and agree.
   // They are shadowed and harmless, which is worth stating: the defect is not shadowing, it is the two
@@ -133,10 +132,10 @@ export string test_a_shadowed_name_that_is_not_known_to_diverge_is_named(Core co
   for (i32 i = 0; i < got.len(); i++) {
     if (knownDivergent(got[i])) { continue; }
     if (got[i] == "echo" || got[i] == "ls" || got[i] == "chmod") { continue; }
-    news = news + " " + got[i];
+    news = news + " \{got[i]}";
   }
   t.eqStr(news, "",
-          "a new shadowed name nobody has compared against the real tool —" + news +
+          "a new shadowed name nobody has compared against the real tool —\{news}" +
           " (compare it three ways: GNU, `box <name>`, and the shell's builtin)");
   return t.report();
 }

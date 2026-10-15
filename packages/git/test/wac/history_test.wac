@@ -21,7 +21,6 @@
 // answer for the same object.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std";
 import { Vec } from "core";
 import { RefValue, PackedRef, parseRef, parsePackedRefs, packedTarget } from "../../src/refs.wac";
@@ -82,27 +81,27 @@ string hexStr(u8[] b) { return string.fromBytes(hexOf(b)); }
 /** A repository with a root commit, a merge, and its refs packed. */
 Git history(T t, Cli cli, string name) {
   string who = agentDir(cli);
-  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   Git g = Git(cli, dir);
   if (!made.ok()) { return g; }
 
   g.run(["init", "-q", "-b", "main"]);
-  cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile("\{dir}/a.txt", "one\n".toBytes()).wait();
   g.run(["add", "-A"]);
   g.run(["commit", "-qm", "root commit"]);
   g.run(["checkout", "-qb", "side"]);
-  cli.writeFile(dir + "/b.txt", "side\n".toBytes()).wait();
+  cli.writeFile("\{dir}/b.txt", "side\n".toBytes()).wait();
   g.run(["add", "-A"]);
   g.run(["commit", "-qm", "on the side"]);
   g.run(["checkout", "-q", "main"]);
-  cli.writeFile(dir + "/c.txt", "main\n".toBytes()).wait();
+  cli.writeFile("\{dir}/c.txt", "main\n".toBytes()).wait();
   g.run(["add", "-A"]);
   g.run(["commit", "-qm", "on main"]);
   Exec m = g.run(["merge", "-q", "--no-ff", "-m", "the merge", "side"]);
-  t.eqI32(m.status, 0, "git merge: " + string.fromBytes(m.stderr));
+  t.eqI32(m.status, 0, "git merge: \{string.fromBytes(m.stderr)}");
   g.run(["gc", "-q"]);
   return g;
 }
@@ -115,7 +114,7 @@ struct Reader {
   Pack pack;
 
   u8[] read(const this, string name) {
-    FileResult f = this.cli.readFile(this.dir + "/.git/objects/" + name.slice(0, 2) + "/" +
+    FileResult f = this.cli.readFile("\{this.dir}/.git/objects/\{name.slice(0, 2)}/" +
                                      name.slice(2, name.len())).wait();
     if (f.ok) {
       match (readLoose(f.bytes)) {
@@ -132,7 +131,7 @@ struct Reader {
 }
 
 Reader reader(T t, Cli cli, string dir) {
-  string pd = dir + "/.git/objects/pack";
+  string pd = "\{dir}/.git/objects/pack";
   string[]? listing = cli.readDir(pd).wait();
   string stem = "";
   if (!(listing is null)) {
@@ -145,15 +144,15 @@ Reader reader(T t, Cli cli, string dir) {
   t.isTrue(stem != "", "the fixture has a pack, so `git gc` ran");
   if (stem == "") { return Reader(cli, dir, false, openPackOrDie(t, u8[](), u8[]())); }
 
-  FileResult p = cli.readFile(pd + "/" + stem + ".pack").wait();
-  FileResult i = cli.readFile(pd + "/" + stem + ".idx").wait();
+  FileResult p = cli.readFile("\{pd}/\{stem}.pack").wait();
+  FileResult i = cli.readFile("\{pd}/\{stem}.idx").wait();
   t.isTrue(p.ok && i.ok, "the pack and its index could be read");
   if (!p.ok || !i.ok) { return Reader(cli, dir, false, openPackOrDie(t, u8[](), u8[]())); }
 
   match (openPack(p.bytes, i.bytes)) {
     Ready(pack): { return Reader(cli, dir, true, pack); }
     Refused(why): {
-      t.isTrue(false, "the fixture's pack did not open: " + why);
+      t.isTrue(false, "the fixture's pack did not open: \{why}");
       return Reader(cli, dir, false, openPackOrDie(t, u8[](), u8[]()));
     }
   }
@@ -172,7 +171,7 @@ export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_
   T t = T.create();
   Git g = history(t, cli, "hist");
 
-  FileResult headFile = cli.readFile(g.dir + "/.git/HEAD").wait();
+  FileResult headFile = cli.readFile("\{g.dir}/.git/HEAD").wait();
   t.isTrue(headFile.ok, "HEAD could be read");
   if (!headFile.ok) { return t.report(); }
   string branch = "";
@@ -184,12 +183,12 @@ export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_
 
   // `git gc` packed the refs, so the loose file is gone and `packed-refs` is the only copy — which
   // is exactly the state a reader that only looks in `refs/` gets wrong.
-  FileResult pr = cli.readFile(g.dir + "/.git/packed-refs").wait();
+  FileResult pr = cli.readFile("\{g.dir}/.git/packed-refs").wait();
   t.isTrue(pr.ok, "packed-refs could be read");
   if (!pr.ok) { return t.report(); }
   Vec<PackedRef> packed = parsePackedRefs(pr.bytes);
   t.isTrue(packed.len() >= 2,
-           "packed-refs held " + itoa64(packed.len() as i64) + " refs, expected main and side");
+           "packed-refs held \{packed.len() as i64} refs, expected main and side");
 
   u8[]? target = packedTarget(packed, "refs/heads/main");
   t.isTrue(!(target is null), "refs/heads/main is in packed-refs");
@@ -200,15 +199,15 @@ export string test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_
   string[] shown = splitOn(g.text(["show-ref"]), "\n");
   for (i32 i = 0; i < packed.len(); i++) {
     PackedRef r = packed.get(i);
-    string want = hexStr(r.target) + " " + r.name;
+    string want = "\{hexStr(r.target)} \{r.name}";
     bool found = false;
     for (i32 k = 0; k < shown.len(); k++) { if (shown[k] == want) { found = true; } }
-    t.isTrue(found, "git agrees about " + r.name + " at " + hexStr(r.target));
+    t.isTrue(found, "git agrees about \{r.name} at \{hexStr(r.target)}");
   }
 
   // A detached HEAD is the other shape, and it is direct rather than symbolic.
   g.run(["checkout", "-q", "--detach"]);
-  FileResult detachedFile = cli.readFile(g.dir + "/.git/HEAD").wait();
+  FileResult detachedFile = cli.readFile("\{g.dir}/.git/HEAD").wait();
   match (parseRef(detachedFile.bytes)) {
     Direct(name): {
       t.eqStr(hexStr(name), g.text(["rev-parse", "HEAD"]), "a detached HEAD names its commit");
@@ -226,8 +225,8 @@ export string test_walking_parents_from_head_gives_what_rev_list_first_parent_gi
   Git g = history(t, cli, "hist2");
   Reader r = reader(t, cli, g.dir);
 
-  FileResult pr = cli.readFile(g.dir + "/.git/packed-refs").wait();
-  FileResult headFile = cli.readFile(g.dir + "/.git/HEAD").wait();
+  FileResult pr = cli.readFile("\{g.dir}/.git/packed-refs").wait();
+  FileResult headFile = cli.readFile("\{g.dir}/.git/HEAD").wait();
   if (!pr.ok || !headFile.ok) { return t.report(); }
   string branch = "";
   match (parseRef(headFile.bytes)) {
@@ -245,11 +244,11 @@ export string test_walking_parents_from_head_gives_what_rev_list_first_parent_gi
   string cur = hexStr(start!);
   while (cur != "" && count < ours.len()) {
     u8[] bytes = r.read(cur);
-    t.isTrue(bytes.len() > 0, cur + " is in neither loose objects nor the pack");
+    t.isTrue(bytes.len() > 0, "\{cur} is in neither loose objects nor the pack");
     if (bytes.len() == 0) { break; }
     match (parseCommit(bytes)) {
       Malformed(why): {
-        t.isTrue(false, cur + " did not parse: " + why);
+        t.isTrue(false, "\{cur} did not parse: \{why}");
         cur = "";
       }
       Understood(commit): {
@@ -283,7 +282,7 @@ export string test_a_commits_fields_are_the_ones_git_prints(Core core, Cli cli) 
   string head = g.text(["rev-parse", "HEAD"]);
 
   match (parseCommit(r.read(head))) {
-    Malformed(why): { t.isTrue(false, "HEAD did not parse: " + why); }
+    Malformed(why): { t.isTrue(false, "HEAD did not parse: \{why}"); }
     Understood(c): {
       t.eqStr(c.treeHex(), g.text(["rev-parse", "HEAD^{tree}"]), "the tree");
       t.eqStr(splitOn(c.message, "\n")[0], g.text(["log", "-1", "--format=%s"]),
@@ -294,14 +293,14 @@ export string test_a_commits_fields_are_the_ones_git_prints(Core core, Cli cli) 
       // **`--date=raw` prints `<unix-seconds> <zone>`**, which is the author line's own tail. Read
       // that way the zone is git's answer rather than an assumption about the machine's timezone.
       string raw = g.text(["log", "-1", "--format=%ad", "--date=raw"]);
-      t.eqStr(itoa64(c.author.when) + " " + c.author.zone, raw, "the author's timestamp and zone");
+      t.eqStr("\{c.author.when} \{c.author.zone}", raw, "the author's timestamp and zone");
 
       // The merge's parents, in git's order — a set comparison would pass on a reader that reversed
       // them.
       string[] parents = splitOn(g.text(["log", "-1", "--format=%P"]), " ");
       t.eqI32(c.parents.len(), parents.len(), "the number of parents");
       for (i32 i = 0; i < parents.len() && i < c.parents.len(); i++) {
-        t.eqStr(hexStr(c.parents.get(i)), parents[i], "parent " + itoa64(i as i64));
+        t.eqStr(hexStr(c.parents.get(i)), parents[i], "parent \{i as i64}");
       }
     }
   }
@@ -375,7 +374,7 @@ export string test_a_header_continued_onto_the_next_line_does_not_eat_the_messag
     "\n" +
     "the real message\n";
   match (parseCommit(commit.toBytes())) {
-    Malformed(why): { t.isTrue(false, "a signed commit did not parse: " + why); }
+    Malformed(why): { t.isTrue(false, "a signed commit did not parse: \{why}"); }
     Understood(c): {
       t.eqStr(c.message, "the real message\n", "the message survived the armour's blank line");
       t.eqI32(c.parents.len(), 1, "the parent survived too");

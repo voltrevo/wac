@@ -51,11 +51,11 @@ struct Said {
  * sharing one would differ for a reason that has nothing to do with which frame served them.
  */
 Said run(T t, Cli cli, string name, string entry, u8[] stdin) {
-  string dir = root(cli) + "/.cache/frame-" + name;
+  string dir = "\{root(cli)}/.cache/frame-\{name}";
   cli.remove(dir, true).wait();
   string whyDir1 = madeDir(cli, dir);
   t.isTrue(whyDir1 == "", whyDir1);
-  string app = dir + "/app";
+  string app = "\{dir}/app";
   Exec built = cli.exec("deno",
     [
              "run", "-A", "packages/platform/build.ts", entry,
@@ -64,7 +64,7 @@ Said run(T t, Cli cli, string name, string entry, u8[] stdin) {
   if (!built.ran() || built.status != 0) {
     cli.remove(dir, true).wait();
     return Said("", "", -1, false,
-                entry + " did not build — " + string.fromBytes(built.stderr));
+                "\{entry} did not build — \{string.fromBytes(built.stderr)}");
   }
   Exec r = cli.exec(app, [dir], stdin).wait();
   Said said = Said(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status,
@@ -78,8 +78,8 @@ export string test_a_substitute_capability_answers_exactly_as_the_host_frame_doe
   T t = T.create();
   Said host = run(t, cli, "host", HOST, u8[]());
   Said value = run(t, cli, "value", VALUE, u8[]());
-  t.isTrue(host.ran, "the host-frame program ran — " + host.error);
-  t.isTrue(value.ran, "the substitute-frame program ran — " + value.error);
+  t.isTrue(host.ran, "the host-frame program ran — \{host.error}");
+  t.isTrue(value.ran, "the substitute-frame program ran — \{value.error}");
   if (!host.ran || !value.ran) { return t.report(); }
 
   // Sanity before the comparison: two programs that both failed would agree perfectly.
@@ -101,10 +101,10 @@ export string test_a_substitute_capability_does_not_let_the_child_reach_the_real
   // from its own bytes rather than the host being asked at all.
   T t = T.create();
   Said value = run(t, cli, "stdin", VALUE, "THE PARENT'S OWN INPUT\n".toBytes());
-  t.isTrue(value.ran, "the substitute-frame program ran — " + value.error);
+  t.isTrue(value.ran, "the substitute-frame program ran — \{value.error}");
   if (!value.ran) { return t.report(); }
-  t.isTrue(contains(value.out, "FROM STDIN"), "the child read its own feed: " + value.out);
-  t.isTrue(!contains(value.out, "PARENT"), "the child read the real standard input: " + value.out);
+  t.isTrue(contains(value.out, "FROM STDIN"), "the child read its own feed: \{value.out}");
+  t.isTrue(!contains(value.out, "PARENT"), "the child read the real standard input: \{value.out}");
   return t.report();
 }
 
@@ -121,10 +121,10 @@ export string test_a_substitute_capability_does_not_let_the_child_reach_the_real
  * A directory each, for the reason `run` above gives: the child writes a file by a relative name.
  */
 Said runOnBinary(Cli cli, string name, string entry) {
-  string dir = root(cli) + "/.cache/framebin-" + name;
+  string dir = "\{root(cli)}/.cache/framebin-\{name}";
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
-  Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
+  Exec r = cli.exec("\{root(cli)}/native/v8/target/release/wac",
     ["run", "--allow-read", "--allow-write", entry, "--", dir], u8[]()).wait();
   Said said = Said(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status,
                    r.ran(), r.error);
@@ -136,8 +136,8 @@ export string test_the_two_frames_agree_on_the_binary_as_well(Core core, Cli cli
   T t = T.create();
   Said host = runOnBinary(cli, "host", HOST);
   Said value = runOnBinary(cli, "value", VALUE);
-  t.isTrue(host.ran, "the host-frame program ran — " + host.error);
-  t.isTrue(value.ran, "the substitute-frame program ran — " + value.error);
+  t.isTrue(host.ran, "the host-frame program ran — \{host.error}");
+  t.isTrue(value.ran, "the substitute-frame program ran — \{value.error}");
   if (!host.ran || !value.ran) { return t.report(); }
 
   // Sanity before the comparison, as above: two programs that both failed agree perfectly. The child
@@ -169,9 +169,9 @@ export string test_the_two_frames_agree_on_the_binary_as_well(Core core, Cli cli
  */
 export string test_a_withheld_capability_answers_as_a_host_does(Core core, Cli cli) {
   T t = T.create();
-  string dir = root(cli) + "/.cache/wac-frame-grants";
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string path = dir + "/subject";
+  string dir = "\{root(cli)}/.cache/wac-frame-grants";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string path = "\{dir}/subject";
   t.isTrue(cli.writeFile(path, "alpha\n".toBytes()).wait().ok(), "wrote the subject");
 
   Frame f = Frame.of(["probe"], u8[](), dir, false);
@@ -199,11 +199,11 @@ export string test_a_withheld_capability_answers_as_a_host_does(Core core, Cli c
   // Write: the effect matters as much as the answer. A refusal that returned a fault and made the file
   // anyway would pass on the message alone, which is the failure mode a capability check has.
   Cli noWrite = childCliGranted(f, cli, Grants(true, false, true));
-  string made = dir + "/made";
+  string made = "\{dir}/made";
   t.neI32(noWrite.writeFile(made, "x".toBytes()).wait().fault, 0, "a withheld write refuses");
   t.isFalse(cli.stat(made).wait().exists, "and writes nothing");
-  t.neI32(noWrite.mkdir(dir + "/sub", false).wait().fault, 0, "and so does mkdir");
-  t.isFalse(cli.stat(dir + "/sub").wait().exists, "which also makes nothing");
+  t.neI32(noWrite.mkdir("\{dir}/sub", false).wait().fault, 0, "and so does mkdir");
+  t.isFalse(cli.stat("\{dir}/sub").wait().exists, "which also makes nothing");
   t.eqI32(all.writeFile(made, "x".toBytes()).wait().fault, 0, "with the grant the write lands");
   t.isTrue(cli.stat(made).wait().exists, "and the file is there");
 
@@ -219,9 +219,9 @@ export string test_a_withheld_capability_answers_as_a_host_does(Core core, Cli c
   // and is what `packages/box`'s refusal tests are written against.
   Cli none = childCliGranted(f, cli, Grants.nothing());
   t.isFalse(none.readFile(path).wait().ok, "with nothing granted, the read is refused");
-  t.neI32(none.writeFile(dir + "/none", "x".toBytes()).wait().fault, 0, "and so is the write");
+  t.neI32(none.writeFile("\{dir}/none", "x".toBytes()).wait().fault, 0, "and so is the write");
   t.isTrue(none.env("PATH").wait() is null, "and the environment is not there");
-  t.isFalse(cli.stat(dir + "/none").wait().exists, "and nothing was made");
+  t.isFalse(cli.stat("\{dir}/none").wait().exists, "and nothing was made");
 
   cli.remove(dir, true).wait();
   return t.report();

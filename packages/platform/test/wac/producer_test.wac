@@ -24,7 +24,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 import { joined } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { leb, name } from "./section.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
@@ -67,7 +66,7 @@ string[] producedBy(u8[] b) {
 
 /** Build a program with `WAC_APP_FROM` set as given, and read the marker back. */
 string builtBy(T t, Cli cli, string label, string from) {
-  string dir = root(cli) + "/.cache/producer-" + label;
+  string dir = "\{root(cli)}/.cache/producer-\{label}";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
@@ -77,22 +76,22 @@ string builtBy(T t, Cli cli, string label, string from) {
   // build under both. `hello.wac` cannot: it takes a `Core`, and `packages/platform` is wacc-only now
   // that `Pending.then` is a lambda, which the reference compiler does not have. Using it here would
   // make this test fail for a reason that has nothing to do with what it checks.
-  cli.writeFile(dir + "/stamp.wac", "export i32 main() { return 0; }\n".toBytes()).wait();
+  cli.writeFile("\{dir}/stamp.wac", "export i32 main() { return 0; }\n".toBytes()).wait();
 
   // `unset` rather than leaving it alone, so the default case is the default rather than whatever
   // this run inherited.
-  string env = from.len() == 0 ? "unset WAC_APP_FROM;" : "WAC_APP_FROM='" + from + "'";
+  string env = from.len() == 0 ? "unset WAC_APP_FROM;" : "WAC_APP_FROM='\{from}'";
   Exec r = cli.exec("/bin/sh",
     [
-             "-c", env + " exec deno run -A packages/platform/native.ts '" + dir +
-             "/stamp.wac' -o '" + dir + "/hello'"
+             "-c", "\{env} exec deno run -A packages/platform/native.ts '\{dir}" +
+             "/stamp.wac' -o '\{dir}/hello'"
     ], u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
-           label + ": the build — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+           "\{label}: the build — \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}");
   if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return "<did not build>"; }
 
-  FileResult f = cli.readFile(dir + "/hello.wasm").wait();
-  t.isTrue(f.ok, label + ": the module is there — " + f.error);
+  FileResult f = cli.readFile("\{dir}/hello.wasm").wait();
+  t.isTrue(f.ok, "\{label}: the module is there — \{f.error}");
   string answer = f.ok ? joined(producedBy(f.bytes), ",") : "<no module>";
   cli.remove(dir, true).wait();
   return answer;

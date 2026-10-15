@@ -15,7 +15,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Buf } from "core";
 import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
@@ -78,11 +77,11 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
 
   Exec r = cli.exec("node", [RESPONSE_ORACLE], payload.take()).wait();
   if (!r.ran()) {
-    return allResponsesBroken(t, cases.len(), "the response oracle could not be run: " + r.error);
+    return allResponsesBroken(t, cases.len(), "the response oracle could not be run: \{r.error}");
   }
   if (r.status != 0) {
     return allResponsesBroken(t, cases.len(),
-                              "the response oracle failed: " + string.fromBytes(r.stderr));
+                              "the response oracle failed: \{string.fromBytes(r.stderr)}");
   }
   JsonValue? doc = parse(r.stdout);
   if (doc is null) {
@@ -97,8 +96,8 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
   }
   if (items.len() != cases.len()) {
     return allResponsesBroken(t, cases.len(),
-                              "the response oracle answered " + itoa(items.len()) + " of " +
-                              itoa(cases.len()) + " cases");
+                              "the response oracle answered \{items.len()} of " +
+                              "\{cases.len()} cases");
   }
 
   ResponseOutcome[] out = ResponseOutcome[].filled(cases.len(), ResponseOutcome.Incomplete);
@@ -114,7 +113,7 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
     } else if (kind == "incomplete") {
       out[i] = ResponseOutcome.Incomplete;
     } else {
-      out[i] = ResponseOutcome.Broken("the oracle answered \"" + kind + "\"");
+      out[i] = ResponseOutcome.Broken("the oracle answered \"\{kind}\"");
     }
   }
   return out;

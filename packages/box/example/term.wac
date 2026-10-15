@@ -71,7 +71,6 @@ import { Cli, Core, Event, Page, Sys } from "std";
 import { Shell, runScript } from "../../sh/src/exec.wac";
 // `fmt`'s, not a fourth copy: this file had one, and the copies had already drifted — the i32-minimum
 // bug (GitHub wac-mono#6) was fixed in each of them separately, which is the drift a copy guarantees.
-import { itoa } from "../../fmt/src/itoa.wac";
 import { boxApplet, boxNames, boxRun } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";
 import { mountSystem } from "../../fs/src/fs.wac";
@@ -86,8 +85,8 @@ import { Vec } from "core";
 string cr() { return string.fromCodepoint(13); }
 /** `^C`. The same byte `packages/tty`'s discipline calls `INTR`. */
 string intr() { return string.fromCodepoint(3); }
-string upArrow() { return string.fromCodepoint(27) + "[A"; }
-string downArrow() { return string.fromCodepoint(27) + "[B"; }
+string upArrow() { return "\{string.fromCodepoint(27)}[A"; }
+string downArrow() { return "\{string.fromCodepoint(27)}[B"; }
 
 /** How many commands to remember. A ring, so the oldest falls off rather than growing forever. */
 static i32 HISTORY = 64;
@@ -200,7 +199,7 @@ export i32 page(Core core, Cli cli, Page page) {
     "             autocapitalize=\"off\" autocorrect=\"off\"></div>" +
     "    <pre id=\"scr\"></pre>" +
     "  </div>" +
-    "  <a id=\"src\" href=\"" + SOURCE + "\">source &amp; build it</a>" +
+    "  <a id=\"src\" href=\"\{SOURCE}\">source &amp; build it</a>" +
     "</label>"
   ).wait();
 
@@ -282,7 +281,7 @@ export i32 page(Core core, Cli cli, Page page) {
     page.setText("ps1", s.prompt()).wait();
     page.setText("scr", s.screen).wait();
     if (s.over()) {
-      page.setText("scr", s.screen + "\n[the shell exited " + itoa(s.code()) + "]\n").wait();
+      page.setText("scr", "\{s.screen}\n[the shell exited \{s.code()}]\n").wait();
       return s.code();
     }
   }

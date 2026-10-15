@@ -20,11 +20,10 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, Stat, Pending } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
 
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 /**
  * The entries, written out.
@@ -72,14 +71,14 @@ export string test_every_entry_file_compiles(Core core, Cli cli) {
   if (!bin.exists) { return t.report(); }
 
   string who = agentDir(cli);
-  string work = "/tmp/wac-tor-entries" + (who == "" ? "" : "-" + who);
+  string work = "/tmp/wac-tor-entries" + (who == "" ? "" : "-\{who}");
   Change made = cli.mkdir(work, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   if (!made.ok()) { return t.report(); }
 
   string[] es = entries();
   // A floor, because a list that emptied would leave this reporting a clean sweep of nothing.
-  t.isTrue(es.len() >= 10, "the entry list still has entries: " + itoa(es.len()));
+  t.isTrue(es.len() >= 10, "the entry list still has entries: \{es.len()}");
 
   // **Built once and kept, which is what the question actually needs.** This asks whether every entry
   // *compiles*, and an entry whose own files have not changed since the last successful compile still
@@ -93,13 +92,13 @@ export string test_every_entry_file_compiles(Core core, Cli cli) {
   // case, which is now serial. A cold pass is slower than it was; every other pass is the price of
   // asking, and `tor`'s sources change on the days somebody works in `tor`.
   for (i32 i = 0; i < es.len(); i++) {
-    string mod = builtProgram(cli, es[i], "torentry-" + stemOf(es[i]),
+    string mod = builtProgram(cli, es[i], "torentry-\{stemOf(es[i])}",
                               ["--allow-read", "--allow-write"]);
     t.isTrue(cli.stat(mod).wait().exists,
-             es[i] + " did not compile — see " + mod + " and the build's own message above");
+             "\{es[i]} did not compile — see \{mod} and the build's own message above");
   }
 
   Change gone = cli.remove(work, true).wait();
-  if (!gone.ok()) { core.warn("entries: could not remove " + work + " — " + gone.message); }
+  if (!gone.ok()) { core.warn("entries: could not remove \{work} — \{gone.message}"); }
   return t.report();
 }

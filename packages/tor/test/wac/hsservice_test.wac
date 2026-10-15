@@ -72,8 +72,8 @@ export string test_the_fixture_can_discriminate(Core core, Cli cli) {
     JsonObject m = objectOf(muts.get(i));
     string name = strOf(m, "name");
     t.isFalse(boolOf(m, "accepted"),
-              "tor accepted the mutation \"" + name + "\", so ACCEPTED means nothing");
-    t.isTrue(strOf(m, "cell").len() > 0, "the mutation \"" + name + "\" has no bytes to replay");
+              "tor accepted the mutation \"\{name}\", so ACCEPTED means nothing");
+    t.isTrue(strOf(m, "cell").len() > 0, "the mutation \"\{name}\" has no bytes to replay");
     if (contains(name, "obvious span")) { spanTrap = true; }
   }
   t.isTrue(spanTrap, "the signature-span trap is not in the fixture, so nothing pins the span");

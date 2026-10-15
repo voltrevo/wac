@@ -21,7 +21,6 @@
 // for that one — `issues/system/0195`.
 
 import { Cli, Core, Exec, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Answer, Rand, askOurs, combined, fixtures, normalise, perSeed, script, seeds, show,
          vectorsPath } from "../../../../tools/wac/shfuzz.wac";
@@ -33,7 +32,7 @@ struct Vector {
   string text;
 }
 
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-fuzzreplay"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-fuzzreplay"; }
 
 export string test_the_generated_scripts_still_answer_what_bash_answered(Core core, Cli cli) {
   T t = T.create();
@@ -63,7 +62,7 @@ export string test_the_generated_scripts_still_answer_what_bash_answered(Core co
       }
       cli.remove(dir, true).wait();
       if (!fixtures(cli, dir)) {
-        t.isTrue(false, "cannot make the fixtures in " + dir);
+        t.isTrue(false, "cannot make the fixtures in \{dir}");
         return t.report();
       }
       Answer got = askOurs(core, cli, dir, sc);
@@ -71,9 +70,9 @@ export string test_the_generated_scripts_still_answer_what_bash_answered(Core co
       if (got.text != vec.text || got.status != vec.status) {
         differ = differ + 1;
         if (differ <= 5) {
-          detail = detail + "\n  seed " + itoa(seeds()[s]) + ": " + show(sc) +
-                   "\n    bash " + show(vec.text) + " (" + itoa(vec.status) + ")" +
-                   "\n    ours " + show(got.text) + " (" + itoa(got.status) + ")";
+          detail = detail + "\n  seed \{seeds()[s]}: \{show(sc)}" +
+                   "\n    bash \{show(vec.text)} (\{vec.status})" +
+                   "\n    ours \{show(got.text)} (\{got.status})";
         }
       }
     }
@@ -81,12 +80,12 @@ export string test_the_generated_scripts_still_answer_what_bash_answered(Core co
   cli.remove(dir, true).wait();
 
   t.eqI32(ran, seeds().len() * perSeed(), "not every seeded script was replayed");
-  t.eqI32(wrongScript, 0, itoa(wrongScript) + " of " + itoa(ran) +
+  t.eqI32(wrongScript, 0, "\{wrongScript} of \{ran}" +
                           " scripts differ from the ones recorded — the generator has changed, so " +
                           "`wac run --allow-read --allow-write --allow-run tools/wac/shfuzz.wac " +
                           "--capture` is what makes this file mean anything again");
-  t.eqI32(differ, 0, itoa(differ) + " of " + itoa(ran) + " generated scripts disagree with the " +
-                     "captured oracle (" + v.oracle + ")" + detail);
+  t.eqI32(differ, 0, "\{differ} of \{ran} generated scripts disagree with the " +
+                     "captured oracle (\{v.oracle})\{detail}");
   return t.report();
 }
 
@@ -107,21 +106,21 @@ export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli)
       string sc = script(r);
       cli.remove(dir, true).wait();
       if (!fixtures(cli, dir)) {
-        t.isTrue(false, "cannot make the fixtures in " + dir);
+        t.isTrue(false, "cannot make the fixtures in \{dir}");
         return t.report();
       }
       Exec want = cli.exec("env",
                            [
                                     "-i",
                                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                                    "LC_ALL=C", "HOME=" + dir,
+                                    "LC_ALL=C", "HOME=\{dir}",
                                     "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
                                     "bash", dir, sc
                            ],
                            u8[]()).wait();
       if (!want.ran()) {
         // No bash here is not a failure of this shell: say so and stop, rather than passing quietly.
-        t.isTrue(checked > 0, "bash would not start: " + want.error);
+        t.isTrue(checked > 0, "bash would not start: \{want.error}");
         return t.report();
       }
       string wanted = normalise(combined(string.fromBytes(want.stdout), string.fromBytes(want.stderr)));
@@ -129,8 +128,8 @@ export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli)
       fixtures(cli, dir);
       Answer got = askOurs(core, cli, dir, sc);
       checked = checked + 1;
-      t.eqStr(got.text, wanted, "the live oracle disagrees: " + show(sc));
-      t.eqI32(got.status, want.status, "the live oracle's status disagrees: " + show(sc));
+      t.eqStr(got.text, wanted, "the live oracle disagrees: \{show(sc)}");
+      t.eqI32(got.status, want.status, "the live oracle's status disagrees: \{show(sc)}");
     }
   }
   cli.remove(dir, true).wait();
@@ -191,12 +190,12 @@ Loaded load(Cli cli) {
   FileResult r = cli.readFile(vectorsPath()).wait();
   if (!r.ok) {
     return Loaded(Vector[](), 0, "",
-                  "cannot read " + vectorsPath() + " — run `wac run --allow-read --allow-write " +
+                  "cannot read \{vectorsPath()} — run `wac run --allow-read --allow-write " +
                   "--allow-run tools/wac/shfuzz.wac --capture` to write it");
   }
   u8[] b = r.bytes;
   Line l = lineAt(b, 0);
-  if (l.text != "wac-sh-fuzz 1") { return Loaded(Vector[](), 0, "", "not a fuzz vectors file: " + l.text); }
+  if (l.text != "wac-sh-fuzz 1") { return Loaded(Vector[](), 0, "", "not a fuzz vectors file: \{l.text}"); }
   string oracle = "";
   i32 at = l.next;
   i32 count = 0 - 1;
@@ -213,7 +212,7 @@ Loaded load(Cli cli) {
   for (i32 i = 0; i < count; i++) {
     Line sl = lineAt(b, at);
     i32 slen = numberIn(sl.text, "S");
-    if (slen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no script"); }
+    if (slen < 0) { return Loaded(items, n, oracle, "record \{i} has no script"); }
     string sc = string.fromBytes(sliceOf(b, sl.next, sl.next + slen));
     at = sl.next + slen + 1;
 
@@ -223,7 +222,7 @@ Loaded load(Cli cli) {
 
     Line cl = lineAt(b, at);
     i32 clen = numberIn(cl.text, "C");
-    if (clen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no answer"); }
+    if (clen < 0) { return Loaded(items, n, oracle, "record \{i} has no answer"); }
     string text = string.fromBytes(sliceOf(b, cl.next, cl.next + clen));
     at = cl.next + clen + 1;
 

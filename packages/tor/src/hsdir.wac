@@ -276,7 +276,7 @@ bool isHsdir(Relay r) {
 /** `/tor/hs/3/<z>`, where `z` is the blinded key in unpadded base64. rend-spec-v3 §2.2.6. */
 export string descriptorPath(u8[] blindedKey) {
   if (blindedKey.len() != 32) { return ""; }
-  return "/tor/hs/3/" + base64NoPad(blindedKey);
+  return "/tor/hs/3/\{base64NoPad(blindedKey)}";
 }
 
 /**
@@ -307,7 +307,7 @@ export string publishPath() { return "/tor/hs/3/publish"; }
  */
 export u8[] consensusSharedRandom(u8[] consensus, bool current) {
   string field = current ? "shared-rand-current-value" : "shared-rand-previous-value";
-  i32 at = findFrom(consensus, "\n" + field + " ", 0);
+  i32 at = findFrom(consensus, "\n\{field} ", 0);
   if (at < 0) { return u8[](); }
   i32 from = at + field.len() + 2;
   // The line is `<field> SP NUM_REVEALS SP VALUE`, so skip the reveal count.

@@ -27,7 +27,7 @@ import { freshDir } from "../../../wactest/src/host.wac";
 string root(Cli cli) { return cli.cwd().wait(); }
 
 string freshScratch(T t, Cli cli, string name) {
-  string dir = root(cli) + "/.cache/spawn-" + name;
+  string dir = "\{root(cli)}/.cache/spawn-\{name}";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   return dir;
@@ -62,11 +62,11 @@ string build(Cli cli, string entry, string out, string[] grants, string target, 
   string name = "spawn-" + base + "-" + target + (worker ? "-worker" : "");
   for (i32 i = 0; i < grants.len(); i++) {
     string g = grants[i];
-    name = name + "-" + (g.len() > 8 ? g.slice(8, g.len()) : g);
+    name = name + "-\{(g.len() > 8 ? g.slice(8, g.len()) : g)}";
   }
   string made = builtByDeno(cli, entry, name, grants, target, worker);
-  if (made == "") { return entry + " did not build"; }
-  if (!copyBuilt(cli, made, out, !worker)) { return entry + ": the build did not copy to " + out; }
+  if (made == "") { return "\{entry} did not build"; }
+  if (!copyBuilt(cli, made, out, !worker)) { return "\{entry}: the build did not copy to \{out}"; }
   return "";
 }
 
@@ -80,7 +80,7 @@ struct Ran {
 
 Ran run(Cli cli, string bin, string[] args) {
   Exec r = cli.exec(bin, args, u8[]()).wait();
-  if (!r.ran()) { return Ran(-1, "", "did not run — " + r.error); }
+  if (!r.ran()) { return Ran(-1, "", "did not run — \{r.error}"); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
 
@@ -102,8 +102,8 @@ string firstLine(string s) {
 export string test_a_wac_program_runs_another_wac_program_as_a_worker(Core core, Cli cli) {
   T t = T.create();
   string dir = freshScratch(t, cli, "worker");
-  string runner = dir + "/runner";
-  string child = dir + "/wc.worker.js";
+  string runner = "\{dir}/runner";
+  string child = "\{dir}/wc.worker.js";
 
   string why = build(cli, "packages/platform/example/runner.wac", runner,
                      ["--allow-read"], "deno", false) +
@@ -135,8 +135,8 @@ export string test_a_source_that_is_not_a_program_is_a_failed_child_not_a_dead_p
   // it could call the child failed. wac-mono issue 0021.
   T t = T.create();
   string dir = freshScratch(t, cli, "notaprogram");
-  string runner = dir + "/runner";
-  string bad = dir + "/bad.worker.js";
+  string runner = "\{dir}/runner";
+  string bad = "\{dir}/bad.worker.js";
 
   string why = build(cli, "packages/platform/example/runner.wac", runner,
                      ["--allow-read"], "deno", false);
@@ -148,12 +148,12 @@ export string test_a_source_that_is_not_a_program_is_a_failed_child_not_a_dead_p
   // 1, because that is what `runner.wac` returns for a child it could not start. The point is that
   // the *program* decided it: before this, the process died with 1 and nothing of its own.
   t.eqI32(r.code, 1, r.err);
-  t.isTrue(contains(r.err, "runner: "), "the program reported it, not the runtime: " + r.err);
+  t.isTrue(contains(r.err, "runner: "), "the program reported it, not the runtime: \{r.err}");
   // The reason is now the *marker's* rather than a `SyntaxError`, and it arrives without starting a
   // worker at all: a bundle says on its first line that it is one, so "this is not a program" is a
   // fact about the file rather than something inferred from how it failed. 0033.
   t.isTrue(contains(r.err, "not a wac program"),
-           "with a reason that names the gap: " + r.err);
+           "with a reason that names the gap: \{r.err}");
   // The line that used to be there, and is the parent dying rather than reporting.
   t.isFalse(contains(r.err, "Unhandled error in child worker"), r.err);
   // And *one* account of one failure now, where there used to be two. The worker's own isolate
@@ -173,8 +173,8 @@ export string test_a_program_runs_itself_with_no_file_to_read_and_nothing_to_fin
   // to see. The child is this program with different arguments, which is what a multi-call binary is.
   T t = T.create();
   string dir = freshScratch(t, cli, "twin");
-  string twin = dir + "/twin";
-  string nodeTwin = dir + "/twin-node";
+  string twin = "\{dir}/twin";
+  string nodeTwin = "\{dir}/twin-node";
 
   string why = build(cli, "packages/platform/example/twin.wac", twin, none(), "deno", false);
   t.eqStr(why, "", "twin built");
@@ -209,8 +209,8 @@ export string test_node_spawns_the_same_way_from_the_same_code(Core core, Cli cl
   // notice and the grace period.
   T t = T.create();
   string dir = freshScratch(t, cli, "node");
-  string runner = dir + "/runner";
-  string child = dir + "/wc.worker.js";
+  string runner = "\{dir}/runner";
+  string child = "\{dir}/wc.worker.js";
 
   string why = build(cli, "packages/platform/example/runner.wac", runner,
                      ["--allow-read"], "node", false) +
@@ -225,7 +225,7 @@ export string test_node_spawns_the_same_way_from_the_same_code(Core core, Cli cl
   t.eqStr(trimmed(r.out), "1 3 14", r.err);
 
   // And a source that is not a program is a failed child here too, with a reason and no crash.
-  string bad = dir + "/bad";
+  string bad = "\{dir}/bad";
   cli.writeFile(bad, ("this is not javascript {{{\n").toBytes()).wait();
   Ran badRun = run(cli, "node", [runner, bad, "anything"]);
   t.eqI32(badRun.code, 1, badRun.err);
@@ -249,7 +249,7 @@ export string test_a_built_program_spawns_a_wasm_module_and_grants_it_the_same_w
   // `FileResult` back. Two runs of one artefact where the only difference is the grant.
   T t = T.create();
   string dir = freshScratch(t, cli, "wasmchild");
-  string runner = dir + "/runner";
+  string runner = "\{dir}/runner";
   string why = build(cli, "packages/platform/example/runner.wac", runner,
                      ["--allow-read"], "deno", false);
   t.eqStr(why, "", "the runner built");
@@ -258,7 +258,7 @@ export string test_a_built_program_spawns_a_wasm_module_and_grants_it_the_same_w
   // `builtProgram` rather than `build`: the `wac` binary writes a module, `build.ts` writes a bundle,
   // and the whole point here is which of the two `spawn` is handed.
   string mod = builtProgram(cli, "packages/platform/example/probe.wac", "spawn-probe-wasm", none());
-  t.isTrue(cli.stat(mod).wait().isFile, "the module built: " + mod);
+  t.isTrue(cli.stat(mod).wait().isFile, "the module built: \{mod}");
   if (!cli.stat(mod).wait().isFile) { cli.remove(dir, true).wait(); return t.report(); }
 
   Ran denied = run(cli, runner, [mod, ""]);
@@ -280,14 +280,14 @@ export string test_node_spawns_a_wasm_module_from_the_same_module(Core core, Cli
   // that would not pass.
   T t = T.create();
   string dir = freshScratch(t, cli, "wasmchild-node");
-  string runner = dir + "/runner";
+  string runner = "\{dir}/runner";
   string why = build(cli, "packages/platform/example/runner.wac", runner,
                      ["--allow-read"], "node", false);
   t.eqStr(why, "", "the Node runner built");
   if (why != "") { return t.report(); }
 
   string mod = builtProgram(cli, "packages/platform/example/probe.wac", "spawn-probe-wasm", none());
-  t.isTrue(cli.stat(mod).wait().isFile, "the module built: " + mod);
+  t.isTrue(cli.stat(mod).wait().isFile, "the module built: \{mod}");
   if (!cli.stat(mod).wait().isFile) { cli.remove(dir, true).wait(); return t.report(); }
 
   Ran denied = run(cli, "node", [runner, mod, ""]);
@@ -314,7 +314,7 @@ export string test_all_four_hosts_spawn_one_module_and_confine_it_the_same_way(C
   // two hosts, which is the split that issue was filed about.
   T t = T.create();
   string wac = wacBinary(cli);
-  t.isTrue(cli.stat(wac).wait().isFile, "the wac binary is built: " + wac);
+  t.isTrue(cli.stat(wac).wait().isFile, "the wac binary is built: \{wac}");
   if (!cli.stat(wac).wait().isFile) { return t.report(); }
 
   // One runner and one probe, built once and handed to every host — the same bytes, so a difference
@@ -322,8 +322,8 @@ export string test_all_four_hosts_spawn_one_module_and_confine_it_the_same_way(C
   string runner = builtProgram(cli, "packages/platform/example/runner.wac", "spawn-runner-wasm",
                                ["--allow-read"]);
   string mod = builtProgram(cli, "packages/platform/example/probe.wac", "spawn-probe-wasm", none());
-  t.isTrue(cli.stat(runner).wait().isFile, "the runner module built: " + runner);
-  t.isTrue(cli.stat(mod).wait().isFile, "the probe module built: " + mod);
+  t.isTrue(cli.stat(runner).wait().isFile, "the runner module built: \{runner}");
+  t.isTrue(cli.stat(mod).wait().isFile, "the probe module built: \{mod}");
   if (!cli.stat(runner).wait().isFile || !cli.stat(mod).wait().isFile) { return t.report(); }
 
   Ran v8Denied = run(cli, wac, [runner, mod, ""]);
@@ -338,7 +338,7 @@ export string test_all_four_hosts_spawn_one_module_and_confine_it_the_same_way(C
   // three hosts above still ran, which is what stops the skip from hiding everything.
   string why = nativeHostWhyNot(cli);
   if (why != "") {
-    core.warn("   skipping the wasmtime half: " + why);
+    core.warn("   skipping the wasmtime half: \{why}");
     return t.report();
   }
   string wacland = nativeHost(cli);
@@ -361,9 +361,9 @@ export string test_a_child_is_granted_nothing_even_by_a_parent_that_has_it(Core 
   // language makes it hold, because wac cannot reach past what it was handed.
   T t = T.create();
   string dir = freshScratch(t, cli, "grant");
-  string runner = dir + "/runner";
-  string direct = dir + "/probe";
-  string child = dir + "/probe.worker.js";
+  string runner = "\{dir}/runner";
+  string direct = "\{dir}/probe";
+  string child = "\{dir}/probe.worker.js";
 
   string why = build(cli, "packages/platform/example/runner.wac", runner,
                      ["--allow-read"], "deno", false) +
@@ -402,9 +402,9 @@ export string test_a_parent_hands_a_child_a_subset_of_its_own_grants_and_cannot_
   // vet it first.
   T t = T.create();
   string dir = freshScratch(t, cli, "subset");
-  string readOnly = dir + "/parent-r";
-  string readNet = dir + "/parent-rn";
-  string child = dir + "/probe.worker.js";
+  string readOnly = "\{dir}/parent-r";
+  string readNet = "\{dir}/parent-rn";
+  string child = "\{dir}/probe.worker.js";
 
   string why = build(cli, "packages/platform/example/runner.wac", readOnly,
                      ["--allow-read"], "deno", false) +
@@ -446,9 +446,9 @@ export string test_a_bundle_that_parses_and_never_speaks_the_protocol_is_a_faile
   // `children.ts` beside the reasoning for it.
   T t = T.create();
   string dir = freshScratch(t, cli, "mute");
-  string runner = dir + "/runner";
-  string real = dir + "/real.worker.js";
-  string mute = dir + "/mute.worker.js";
+  string runner = "\{dir}/runner";
+  string real = "\{dir}/real.worker.js";
+  string mute = "\{dir}/mute.worker.js";
 
   // `env` as well as `read`, and only here: the deadline knob below is read with `Deno.env.get`, which
   // a program built without the grant cannot call at all. The grant is the *process's*, not the wac
@@ -466,11 +466,11 @@ export string test_a_bundle_that_parses_and_never_speaks_the_protocol_is_a_faile
   FileResult bundle = cli.readFile(real).wait();
   string marker = bundle.ok ? firstLine(string.fromBytes(bundle.bytes)) : "";
   t.isTrue(marker.len() > 0 && marker.slice(0, 2) == "//",
-           "a built bundle's first line is its marker, and it is: " + marker);
+           "a built bundle's first line is its marker, and it is: \{marker}");
   if (marker.len() == 0) { cli.remove(dir, true).wait(); return t.report(); }
 
   // The marker, and then nothing. Valid JavaScript, evaluates cleanly, says nothing.
-  cli.writeFile(mute, (marker + "\n// and not another word\n").toBytes()).wait();
+  cli.writeFile(mute, "\{marker}\n// and not another word\n".toBytes()).wait();
 
   i64 started = core.nowMillis().wait();
   // The deadline itself, shortened for the one test that has to *wait it out*. It is thirty seconds in
@@ -480,14 +480,14 @@ export string test_a_bundle_that_parses_and_never_speaks_the_protocol_is_a_faile
   Exec e = cli.exec("/bin/sh",
     [
                    "-c", "exec env -i WAC_LOAD_GRACE_MS=1000 \"PATH=$PATH\" " +
-                   quoted(runner) + " " + quoted(mute) + " anything"
+                   "\{quoted(runner)} \{quoted(mute)} anything"
     ], u8[]()).wait();
   i64 took = core.nowMillis().wait() - started;
   string err = e.ran() ? string.fromBytes(e.stderr) : e.error;
 
-  t.eqI32(e.status, 1, "it should fail, and say so: " + err);
-  t.isTrue(contains(err, "did not report ready"), "naming the gap: " + err);
-  t.isTrue(contains(err, "1000ms"), "and the deadline it waited: " + err);
+  t.eqI32(e.status, 1, "it should fail, and say so: \{err}");
+  t.isTrue(contains(err, "did not report ready"), "naming the gap: \{err}");
+  t.isTrue(contains(err, "1000ms"), "and the deadline it waited: \{err}");
   // Bounded, which is the whole difference: it used to be unbounded, and "hangs" and "is slow" look
   // identical from outside. Generous on the upper side because this machine is shared.
   t.isTrue(took < (60000 as i64), "the grace did not end it");

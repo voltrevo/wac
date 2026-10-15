@@ -18,7 +18,6 @@
 // Host-side until 2026-08-17. `issues/system/0161` step 4.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli } from "std";
 import { DirAction, dirStep, filed } from "../../src/dirstep.wac";
 import { DirDocuments } from "../../src/dirserve.wac";
@@ -48,8 +47,8 @@ export string test_the_sequences_can_show_the_rule(Core core, Cli cli) {
   bool sawRefusal = false;
   for (i32 si = 0; si < n; si++) {
     u8[] stored = sequenceStored(cli, si);
-    t.isTrue(stored.len() >= 2, "sequence " + itoa(si) + " is a sequence, not one upload");
-    t.eqI32(stored[0] as i32, 1, "sequence " + itoa(si) + " was refused from the start");
+    t.isTrue(stored.len() >= 2, "sequence \{si} is a sequence, not one upload");
+    t.eqI32(stored[0] as i32, 1, "sequence \{si} was refused from the start");
     for (i32 pos = 0; pos < stored.len(); pos++) {
       if (stored[pos] == 0) { sawRefusal = true; }
     }
@@ -252,7 +251,7 @@ export string test_the_revision_comes_from_the_document(Core core, Cli cli) {
 /** A publish request for `body`, framed as tor frames it. */
 u8[] publishRequest(u8[] body) {
   string head = "POST /tor/hs/3/publish HTTP/1.0\r\nHost: 127.0.0.1:9001\r\n" +
-                "Content-Length: " + itoa(body.len()) + "\r\n\r\n";
+                "Content-Length: \{body.len()}\r\n\r\n";
   u8[] h = head.toBytes();
   u8[] out = u8[].filled(h.len() + body.len(), 0);
   for (i32 i = 0; i < h.len(); i++) { out[i] = h[i]; }

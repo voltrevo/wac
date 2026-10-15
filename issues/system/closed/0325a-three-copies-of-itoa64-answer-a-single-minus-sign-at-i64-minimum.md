@@ -1,7 +1,7 @@
 # 0325a — three copies of `itoa64` answer a single minus sign at `i64` minimum
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-09-04
 - **Kind:** bug
@@ -51,3 +51,13 @@ came out differently, and hashing does not find them.
 `packages/fmt` exports the tested one. The bench and the probe can import it; the example is a
 demonstration of the platform and may want to stay self-contained, in which case it should say so at
 the line, as `source_probe` does in `f8d9b489`.
+
+## Done
+
+All three re-derivations are gone, and so is the reason for them. Interpolation converts an integer
+through core's `toString`, which is right at every minimum (`"\{n}"` for `i64` minimum is
+`-9223372036854775808`, checked), so the codemod that turned `"x " + itoa64(n)` into `"x \{n}"` across
+`packages/` left the bench, the probe and the example with nothing calling their copies, and they were
+deleted with the rest of the hand-written `itoa`s (37 of them). `fmt`'s `itoa`, `itoa64` and `utoa64`
+are now that interpolation, kept for `tools/`; `wactest`'s copies are deleted, and its BigInt
+differential judges interpolation instead.

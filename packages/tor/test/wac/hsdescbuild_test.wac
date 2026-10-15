@@ -18,7 +18,6 @@
 // 12ms and RSA 117ms, and `0210` is P-256 not being constant-time.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Core, Cli, FileResult } from "std";
@@ -154,7 +153,7 @@ export string test_the_two_vector_files_agree(Core core, Cli cli) {
   JsonObject top = jsonObject(cli, "packages/tor/test/data/hspublish.json");
   string source = stringField(top, "source");
   t.isTrue(source.indexOf("hs_cache_store_as_dir") >= 0,
-           "the verdicts must be tor's — source is " + source);
+           "the verdicts must be tor's — source is \{source}");
 
   JsonArray pub = publishVariants(cli);
   JsonArray gen = generatedVariants(cli);
@@ -167,10 +166,10 @@ export string test_the_two_vector_files_agree(Core core, Cli cli) {
   for (i32 i = 0; i < pub.len(); i++) {
     JsonObject x = objectAt(pub, i);
     string name = stringField(x, "name");
-    t.isTrue(boolField(x, "storedByHsdir"), "an HSDir would not file the variant " + name);
-    t.isTrue(boolField(x, "accepted"), "a client would not decode the variant " + name);
+    t.isTrue(boolField(x, "storedByHsdir"), "an HSDir would not file the variant \{name}");
+    t.isTrue(boolField(x, "accepted"), "a client would not decode the variant \{name}");
     t.eqStr(stringField(objectAt(gen, i), "name"), name,
-            "variant " + itoa(i) + " is named differently in the two files");
+            "variant \{i} is named differently in the two files");
     if (numberField(x, "introPoints") > 1) { many = true; }
     string key = stringField(x, "blindedKey");
     if (firstKey == "") { firstKey = key; } else { if (key != firstKey) { twoKeys = true; } }

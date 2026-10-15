@@ -36,13 +36,13 @@ export string quoted(string s) {
     string c = s.slice(i, i + 1);
     out = out + (c == "'" ? "'\\''" : c);
   }
-  return out + "'";
+  return "\{out}'";
 }
 
 /** `prog args…` as a shell line, every word quoted. */
 export string commandLine(string prog, string[] args) {
-  string line = "exec " + quoted(prog);
-  for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
+  string line = "exec \{quoted(prog)}";
+  for (i32 i = 0; i < args.len(); i++) { line = line + " \{quoted(args[i])}"; }
   return line;
 }
 
@@ -50,7 +50,7 @@ export string commandLine(string prog, string[] args) {
 string[] pairs(const string[] names, const string[] values) {
   i32 n = names.len() < values.len() ? names.len() : values.len();
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = names[i] + "=" + values[i]; }
+  for (i32 i = 0; i < n; i++) { out[i] = "\{names[i]}=\{values[i]}"; }
   return out;
 }
 
@@ -103,10 +103,10 @@ export Exec onlyEnv(Cli cli, string[] names, string[] values, string prog, strin
 export string onlyEnvLine(string[] names, string[] values, string prog, string[] args) {
   string line = "exec env -i";
   for (i32 i = 0; i < names.len() && i < values.len(); i++) {
-    line = line + " " + names[i] + "=" + quoted(values[i]);
+    line = line + " \{names[i]}=\{quoted(values[i])}";
   }
-  line = line + " " + quoted(prog);
-  for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
+  line = line + " \{quoted(prog)}";
+  for (i32 i = 0; i < args.len(); i++) { line = line + " \{quoted(args[i])}"; }
   return line;
 }
 
@@ -118,7 +118,7 @@ export string onlyEnvLine(string[] names, string[] values, string prog, string[]
  */
 export Exec withoutEnv(Cli cli, string[] names, string prog, string[] args) {
   string line = "unset";
-  for (i32 i = 0; i < names.len(); i++) { line = line + " " + names[i]; }
-  return cli.exec("/bin/sh", ["-c", line + "; " + commandLine(prog, args)],
+  for (i32 i = 0; i < names.len(); i++) { line = line + " \{names[i]}"; }
+  return cli.exec("/bin/sh", ["-c", "\{line}; \{commandLine(prog, args)}"],
                   u8[]()).wait();
 }

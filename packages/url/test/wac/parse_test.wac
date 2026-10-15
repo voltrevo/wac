@@ -30,7 +30,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse, parseWithBase } from "../probe.wac";
 
 static string ORACLE = "packages/url/test/batchOracle.ts";
@@ -128,7 +127,7 @@ void checkAll(T t, Cli cli, string[] inputs, string base, string what) {
               (base == "" ? "-" : hex(base.toBytes())) + " " + hex(answer(inputs[i], base)));
     sent = sent + 1;
   }
-  t.isTrue(sent > 0, what + ": every input was held out, so nothing was compared");
+  t.isTrue(sent > 0, "\{what}: every input was held out, so nothing was compared");
   ask(t, cli, lines, what);
 }
 
@@ -183,7 +182,7 @@ export string test_percent_encoding_by_component(Core core, Cli cli) {
   checkAll(t, cli, [
     "http://h/ \"<>`{}", "http://h/?\" <>#", "http://h/?a'b", "foo://h/?a'b",
     "http://h/#\" <>`", "http://h/%41%42", "http://h/%zz", "http://h/%", "http://h/%a",
-    "http://user na:me@h/", "http://h/a?b#c d", "http://h/" + oneByte(1) + oneByte(0x1F),
+    "http://user na:me@h/", "http://h/a?b#c d", "http://h/\{oneByte(1)}\{oneByte(0x1F)}",
     // Multi-byte UTF-8 in each component that allows it.
     "http://h/café", "http://h/?café", "http://h/#café", "http://h/日本", "http://h/😀"
   ],
@@ -249,7 +248,7 @@ export string test_relative_resolution_against_a_base(Core core, Cli cli) {
     "file:///a/b/c", "foo://host/p", "foo:opaque"
   ];
   for (i32 i = 0; i < bases.len(); i++) {
-    checkAll(t, cli, relativeRefs(), bases[i], "against \"" + bases[i] + "\"");
+    checkAll(t, cli, relativeRefs(), bases[i], "against \"\{bases[i]}\"");
   }
   return t.report();
 }
@@ -294,7 +293,7 @@ export string test_edges_the_main_groups_miss(Core core, Cli cli) {
   string[] bases = ["file:///c:/a/b", "file:///c:", "file://h/c:/x"];
   string[] refs = ["..", "/x", "x", "../..", "d:/y", "/d:/y"];
   for (i32 i = 0; i < bases.len(); i++) {
-    checkAll(t, cli, refs, bases[i], "drive letters against \"" + bases[i] + "\"");
+    checkAll(t, cli, refs, bases[i], "drive letters against \"\{bases[i]}\"");
   }
   return t.report();
 }
@@ -303,7 +302,7 @@ export string test_whitespace_and_control_bytes_are_stripped(Core core, Cli cli)
   T t = T.create();
   checkAll(t, cli, [
     "  http://h/  ", "\thttp://h/", "ht\ntp://h/", "http://h/a\tb", "http://h/a\rb",
-    oneByte(0) + "http://h/", "http://h/ "
+    "\{oneByte(0)}http://h/", "http://h/ "
   ], "", "whitespace");
   return t.report();
 }
@@ -330,11 +329,11 @@ export string test_a_non_ascii_domain_is_rejected_rather_than_mapped(Core core, 
   Lines lines = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) {
     t.isFalse(accepted(cases[i], ""),
-              cases[i] + ": a non-ASCII domain was accepted, so IDNA may have landed");
+              "\{cases[i]}: a non-ASCII domain was accepted, so IDNA may have landed");
     // The other side of the same claim, and it is not decoration: without it, the day something
     // else starts rejecting these the "we reject it" half above would keep passing and the
     // divergence would have quietly become an agreement about nothing.
-    lines.add("nodeok " + hex(cases[i].toBytes()) + " - 1");
+    lines.add("nodeok \{hex(cases[i].toBytes())} - 1");
   }
   ask(t, cli, lines, "IDNA, which must still be a divergence");
   // An already-punycoded domain is ASCII, so it needs no mapping and must agree.
@@ -364,12 +363,12 @@ export string test_a_reference_resolves_against_an_opaque_path_only_with_a_hash(
   string[] bad = ["/a", "a", "?q", "//h/x", "/a#f", "a#f", "?q#f", "", "."];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isFalse(accepted(bad[i], base),
-              "\"" + bad[i] + "\" was accepted against " + base + ", and should not be");
+              "\"\{bad[i]}\" was accepted against \{base}, and should not be");
   }
   string[] good = ["#f", "#", "#a#b"];
   string[] wanted = ["foo:opaque#f", "foo:opaque#", "foo:opaque#a#b"];
   for (i32 i = 0; i < good.len(); i++) {
-    t.eqStr(href(good[i], base), wanted[i], "\"" + good[i] + "\" against " + base);
+    t.eqStr(href(good[i], base), wanted[i], "\"\{good[i]}\" against \{base}");
   }
   // A query on the base survives the fragment-only resolution.
   t.eqStr(href("#f", "foo:opaque?q"), "foo:opaque?q#f", "the base's query is kept");
@@ -397,9 +396,9 @@ export string test_runtime_divergences_judged_against_the_standard(Core core, Cl
   string[] why = divergentWhy();
   Lines lines = Lines.create();
   for (i32 i = 0; i < ins.len(); i++) {
-    string label = bs[i] == "" ? "\"" + ins[i] + "\""
-                               : "\"" + ins[i] + "\" against \"" + bs[i] + "\"";
-    t.eqStr(href(ins[i], bs[i]), wanted[i], label + " — because " + why[i]);
+    string label = bs[i] == "" ? "\"\{ins[i]}\""
+                               : "\"\{ins[i]}\" against \"\{bs[i]}\"";
+    t.eqStr(href(ins[i], bs[i]), wanted[i], "\{label} — because \{why[i]}");
     lines.add("stilldiffer " + hex(ins[i].toBytes()) + " " +
               (bs[i] == "" ? "-" : hex(bs[i].toBytes())));
   }

@@ -86,7 +86,7 @@ export struct Client {
       break;
     }
     if (!speaksV2(serverVersion)) {
-      this.conn.fail("the server does not speak SSH-2: " + string.fromBytes(serverVersion));
+      this.conn.fail("the server does not speak SSH-2: \{string.fromBytes(serverVersion)}");
       return;
     }
 
@@ -191,7 +191,7 @@ export struct Client {
       Incoming m = parse(p);
       if (!m.ok) { this.conn.fail("a channel message did not parse"); return -1; }
       if (m.kind == msgChannelOpenFailure()) {
-        this.conn.fail("the server refused the channel: " + string.fromBytes(m.data));
+        this.conn.fail("the server refused the channel: \{string.fromBytes(m.data)}");
         return -1;
       }
       if (m.kind == msgChannelOpenConfirmation()) { serverChannel = m.senderChannel; }

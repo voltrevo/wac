@@ -169,7 +169,7 @@ export string test_names_are_bytes() {
   odd[1] = 0xff;
   odd[2] = 0xfe;
   odd[3] = 'y';
-  string name = "/" + string.fromBytes(odd);
+  string name = "/\{string.fromBytes(odd)}";
   t.eqI32(fs.writeFile(name, "held\n".toBytes()).fault, FAULT_NONE(), "a write under a name that is not text");
   t.eqStr(string.fromBytes(fs.readFile(name).bytes), "held\n", "reads back");
   string[] names = fs.readDir("/")!;

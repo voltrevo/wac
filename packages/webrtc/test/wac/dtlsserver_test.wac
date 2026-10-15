@@ -22,7 +22,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, Exec, Pending, Socket } from "std";
 import { Buf } from "core";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { blockFrom, ckePublic, certMessage, doneBody, ecdhParams, epochAt, finishedMessage,
          fragInfoAt, handshakeKindAt, helloHasSuite, kindAt, masterFrom, openedAt, ourPublic,
@@ -101,7 +100,7 @@ Identity identity(Cli cli) {
                                "der"
                       ], u8[]()).wait();
   if (!der.ran() || der.status != 0) {
-    return Identity(false, "openssl x509: " + string.fromBytes(der.stderr), u8[](), u8[]());
+    return Identity(false, "openssl x509: \{string.fromBytes(der.stderr)}", u8[](), u8[]());
   }
   Exec key = cli.exec("openssl",
                       [
@@ -109,7 +108,7 @@ Identity identity(Cli cli) {
                                "-noout"
                       ], u8[]()).wait();
   if (!key.ran() || key.status != 0) {
-    return Identity(false, "openssl pkey: " + string.fromBytes(key.stderr), u8[](), u8[]());
+    return Identity(false, "openssl pkey: \{string.fromBytes(key.stderr)}", u8[](), u8[]());
   }
   // The `priv:` block, which is the scalar as colon-separated hex over several lines.
   string text = string.fromBytes(key.stdout);
@@ -161,12 +160,12 @@ Got receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
 export string test_openssl_s_client_completes_a_handshake_with_our_server_role(Core core, Cli cli) {
   T t = T.create();
   Identity me = identity(cli);
-  t.isTrue(me.ok, "the certificate and key could not be read — " + me.error);
+  t.isTrue(me.ok, "the certificate and key could not be read — \{me.error}");
   if (!me.ok) { return t.report(); }
   t.eqI32(me.priv.len(), 32, "a P-256 private scalar is thirty-two bytes");
 
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  t.isTrue(sock.handle >= 0, "our socket did not bind — " + sock.error);
+  t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
   if (sock.handle < 0) { return t.report(); }
   SClient client = startClient(cli, "serverrole", sock.port);
   t.isTrue(client.ok, client.error);
@@ -174,7 +173,7 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
 
   // ── Their first hello, and our cookie ────────────────────────────────────────
   Got first = receiveWithin(core, cli, sock, 8000);
-  t.isTrue(first.ok, "s_client sent no ClientHello — " + client.said(cli));
+  t.isTrue(first.ok, "s_client sent no ClientHello — \{client.said(cli)}");
   if (!first.ok) { finish(cli, sock, client); return t.report(); }
   t.eqI32(handshakeKindAt(first.bytes, 0), 1, "a ClientHello");
   u8[] firstBody = slice(first.bytes, 13 + 12, sizeAt(first.bytes, 0));
@@ -189,7 +188,7 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
 
   // ── Their second hello: the transcript starts here ───────────────────────────
   Got second = receiveWithin(core, cli, sock, 8000);
-  t.isTrue(second.ok, "s_client did not retry with the cookie — " + client.said(cli));
+  t.isTrue(second.ok, "s_client did not retry with the cookie — \{client.said(cli)}");
   if (!second.ok) { finish(cli, sock, client); return t.report(); }
   t.eqI32(handshakeKindAt(second.bytes, 0), 1, "a second ClientHello");
   u8[] clientHelloMsg = slice(second.bytes, 13, sizeAt(second.bytes, 0));
@@ -314,7 +313,7 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   // ── And what s_client says about all that ────────────────────────────────────
   string said = saidUntil(cli, client, CIPHER_LINE, 500);
   t.isTrue(contains(said, CIPHER_LINE),
-           "s_client did not report a completed handshake. Its output:\n" + said);
+           "s_client did not report a completed handshake. Its output:\n\{said}");
   t.isTrue(contains(said, "Verify return code: 0 (ok)") || contains(said, "verify error"),
            "and it reached certificate verification, which means the handshake got that far");
 
@@ -333,12 +332,12 @@ export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
   // stalls exactly as though the retransmission had been lost too.
   T t = T.create();
   Identity me = identity(cli);
-  t.isTrue(me.ok, "the certificate and key could not be read — " + me.error);
+  t.isTrue(me.ok, "the certificate and key could not be read — \{me.error}");
   if (!me.ok) { return t.report(); }
 
   Peer peer = newPeer(me.der, me.priv, sigK(), serverScalar(), serverRandom(), cookie());
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  t.isTrue(sock.handle >= 0, "our socket did not bind — " + sock.error);
+  t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
   if (sock.handle < 0) { return t.report(); }
   SClient client = startClient(cli, "resend", sock.port);
   t.isTrue(client.ok, client.error);
@@ -374,7 +373,7 @@ export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
   t.isTrue(peerEstablished(peer),
            "the handshake did not recover from the dropped flight — the client retransmitted its " +
            "ClientHello and either we did not resend, or we resent records the peer discarded as " +
-           "replays. It said:\n" + client.said(cli));
+           "replays. It said:\n\{client.said(cli)}");
 
   // **The evidence that it was a resend and not a rebuild.** Ten records went out for five messages,
   // and no record sequence number appears twice.
@@ -385,7 +384,7 @@ export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
 
   string said = saidUntil(cli, client, CIPHER_LINE, 500);
   t.isTrue(contains(said, CIPHER_LINE),
-           "s_client did not report a completed handshake:\n" + said);
+           "s_client did not report a completed handshake:\n\{said}");
 
   finish(cli, sock, client);
   return t.report();

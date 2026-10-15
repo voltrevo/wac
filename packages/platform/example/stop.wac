@@ -31,19 +31,19 @@ export i32 main(Sys sys) {
 
   Child kid = cli.spawnSelf(argvOf(["spin", "stop"]), GRANT_NONE, "", false, false).wait();
   if (kid.unavailable()) {
-    core.warn("stop: this world cannot spawn: " + kid.error);
+    core.warn("stop: this world cannot spawn: \{kid.error}");
     return 2;
   }
   if (kid.handle < 0) {
-    core.warn("stop: the child would not start: " + kid.error);
+    core.warn("stop: the child would not start: \{kid.error}");
     return 2;
   }
 
   // Its first line, which is also the proof it reached the loop.
   match (cli.recv(kid.handle).wait()) {
-    Data(bytes): { cli.write(("child said: " + string.fromBytes(bytes)).toBytes()); }
+    Data(bytes): { cli.write("child said: \{string.fromBytes(bytes)}".toBytes()); }
     End: { core.warn("stop: the child said nothing at all"); return 2; }
-    Failed(why): { core.warn("stop: reading the child failed: " + why); return 2; }
+    Failed(why): { core.warn("stop: reading the child failed: \{why}"); return 2; }
   }
 
   cli.closeSocket(kid.handle);
@@ -52,20 +52,7 @@ export i32 main(Sys sys) {
   // says the stop landed rather than merely that the call returned. A host that only ended the
   // child's queues never answers this, because a child that does not write never finds out.
   i32 code = cli.exitCode(kid.handle).wait();
-  cli.write(("stopped: " + itoa(code) + "\n").toBytes());
+  cli.write("stopped: \{code}\n".toBytes());
   return 0;
 }
 
-// Its own, as every example here has one: `example/` imports the capability layer and nothing else,
-// so that each file reads as the whole of what it demonstrates.
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  if (v == -2147483648) { return "-2147483648"; }
-  i32 x = v < 0 ? 0 - v : v;
-  string out = "";
-  while (x > 0) {
-    out = string.fromCodepoint('0' + (x % 10)) + out;
-    x = x / 10;
-  }
-  return (v < 0 ? "-" : "") + out;
-}

@@ -36,8 +36,6 @@
 // Host-side until 2026-08-17, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decodeCreated2 } from "../../src/cell.wac";
 import { ntorClientRequest, ntorClientFinish, ntorServerRespond } from "../../src/ntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
@@ -60,7 +58,7 @@ string torNtor(Cli cli) {
   if (!(set is null)) { return string.fromBytes(set!); }
   u8[]? home = cli.env("HOME").wait();
   string root = home is null ? "" : string.fromBytes(home!);
-  return root + "/tor-build/torproject-tor-c8d2b17/src/test/test-ntor-cl";
+  return "\{root}/tor-build/torproject-tor-c8d2b17/src/test/test-ntor-cl";
 }
 
 /** The committed answers, as a JSON array — the file's top level is a list, not an object. */
@@ -77,7 +75,7 @@ JsonArray recorded(Cli cli) {
 
 /** tor's relay half: `server1 b nodeID msg N` prints the reply then the keys, in hex. */
 u8[] runBinary(Cli cli, string path, string b, string id, string msg, i32 keyLen) {
-  Exec r = cli.exec(path, ["server1", b, id, msg, itoa64(keyLen as i64)], u8[]()).wait();
+  Exec r = cli.exec(path, ["server1", b, id, msg, "\{keyLen as i64}"], u8[]()).wait();
   if (r.error != "" || r.status != 0) { return u8[](); }
   string text = string.fromBytes(r.stdout);
   string joined = "";
@@ -111,7 +109,7 @@ u8[] server1(T t, Cli cli, JsonArray vectors, u8[] b, u8[] id, u8[] msg, i32 key
     }
   }
   t.isTrue(false,
-           "no recorded answer for this case and no tor binary at " + path +
+           "no recorded answer for this case and no tor binary at \{path}" +
            " — build with tools/tor.sh, then re-record with " +
            "packages/tor/tools/capture-ntor.wac");
   return u8[]();
@@ -170,7 +168,7 @@ export string test_the_relay_must_prove_it_holds_the_onion_key() {
     for (i32 j = 0; j < 64; j++) { bad[j] = good[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
     t.eqI32(ntorClientFinish(id, onionKey, clientPriv, bad, 72).len(), 0,
-            "AUTH altered at byte " + itoa64(spots[i] as i64) + " is refused");
+            "AUTH altered at byte \{spots[i] as i64} is refused");
   }
   return t.report();
 }
@@ -284,12 +282,12 @@ export string test_agrees_with_tors_own_implementation(Core core, Cli cli) {
     // *one* expansion rather than two, which is the thing a service that derived KH separately would
     // get subtly wrong.
     u8[] out = server1(t, cli, vectors, onionPriv, id, req, 92);
-    t.isTrue(out.len() == 64 + 92, "tor answered round " + itoa64(i as i64));
+    t.isTrue(out.len() == 64 + 92, "tor answered round \{i as i64}");
     if (out.len() == 64 + 92) {
       u8[] keys = ntorClientFinish(id, onionKey, clientPriv, slice(out, 0, 64), 92);
-      t.eqI32(keys.len(), 92, "we accepted tor's reply " + itoa64(i as i64));
+      t.eqI32(keys.len(), 92, "we accepted tor's reply \{i as i64}");
       t.eqBytes(keys, slice(out, 64, out.len()),
-                "and derived tor's keys and nonce byte for byte " + itoa64(i as i64));
+                "and derived tor's keys and nonce byte for byte \{i as i64}");
       // Named, so a reader knows where the boundary is and a change to it is visible here.
       t.eqI32(slice(keys, 0, 72).len(), 72, "the first seventy-two are the hop's");
       t.eqI32(slice(keys, 72, 92).len(), 20, "and the last twenty are KH");
@@ -341,7 +339,7 @@ export string test_a_relay_cannot_choose_the_length_of_its_own_reply() {
   i32[] widths = [0, 1, 2, 31, 32, 33, 63, 65, 96, 128, 507];
   for (i32 i = 0; i < widths.len(); i++) {
     t.eqI32(ntorClientFinish(identity, onionKey, ephemeral, u8[].filled(widths[i], 0xAB), 72).len(), 0,
-            "a reply of " + itoa(widths[i]) + " bytes was not refused");
+            "a reply of \{widths[i]} bytes was not refused");
   }
 
   // And through the framing a relay actually controls: `decodeCreated2` hands on whatever length the
@@ -354,7 +352,7 @@ export string test_a_relay_cannot_choose_the_length_of_its_own_reply() {
     for (i32 k = 0; k < hlens[i] && 2 + k < 509; k++) { payload[2 + k] = 0xAB; }
     u8[] reply = decodeCreated2(payload);
     t.eqI32(ntorClientFinish(identity, onionKey, ephemeral, reply, 72).len(), 0,
-            "a CREATED2 with HLEN " + itoa(hlens[i]) + " was not refused");
+            "a CREATED2 with HLEN \{hlens[i]} was not refused");
   }
   return t.report();
 }

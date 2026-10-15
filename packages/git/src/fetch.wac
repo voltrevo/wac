@@ -39,7 +39,6 @@ import { Buf } from "core";
 import { Pkt, flushPkt, readPkt, writeText } from "./pktline.wac";
 import { Vec } from "core";
 import { decode, encode } from "../../codec/src/hex.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** One ref a server advertised. */
 export struct AdRef {
@@ -176,16 +175,16 @@ export bool offers(const Advertised ad, string want) {
 export u8[] wantRequest(Vec<u8[]> wants, Vec<u8[]> haves, string capabilities, i32 depth) {
   Buf out = Buf.create();
   for (i32 i = 0; i < wants.len(); i++) {
-    string line = "want " + string.fromBytes(encode(wants.get(i)));
+    string line = "want \{string.fromBytes(encode(wants.get(i)))}";
     // **Capabilities go on the first want only.** A server reading them on the second is entitled to
     // treat the whole line as a malformed want.
-    if (i == 0 && capabilities != "") { line = line + " " + capabilities; }
-    out.pushAll(writeText(line + "\n"));
+    if (i == 0 && capabilities != "") { line = line + " \{capabilities}"; }
+    out.pushAll(writeText("\{line}\n"));
   }
-  if (depth > 0) { out.pushAll(writeText("deepen " + itoa(depth) + "\n")); }
+  if (depth > 0) { out.pushAll(writeText("deepen \{depth}\n")); }
   out.pushAll(flushPkt());
   for (i32 i = 0; i < haves.len(); i++) {
-    out.pushAll(writeText("have " + string.fromBytes(encode(haves.get(i))) + "\n"));
+    out.pushAll(writeText("have \{string.fromBytes(encode(haves.get(i)))}\n"));
   }
   out.pushAll(writeText("done\n"));
   return out.take();
@@ -229,7 +228,7 @@ export Reply findPack(u8[] b) {
       Line(payload): {
         if (isNegotiation(payload)) { continue; }
         if (payload.len() > 3 && payload[0] == 'E' && payload[1] == 'R' && payload[2] == 'R') {
-          return Reply.NoPack("the server said: " + slice(payload, 4, payload.len()));
+          return Reply.NoPack("the server said: \{slice(payload, 4, payload.len())}");
         }
         // A packet that is neither: the pack began inside it, which means this reply is banded after
         // all. Refuse rather than guess.

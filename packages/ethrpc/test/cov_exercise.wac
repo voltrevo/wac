@@ -6,7 +6,6 @@
 // One of the packages `issues/system/0205` records as unmeasured.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
   test_ensowner_resolves_a_name_against_a_live_node_and_proves_it as ens__ensowner_resolves_a_name_against_a_live_node_and_proves_it,
@@ -79,6 +78,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED rpc_live_test test_ethrpc_asks_a_real_node_for_its_block_number_over_a_real_socket");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("ethrpc: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("ethrpc: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

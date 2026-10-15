@@ -16,7 +16,6 @@
 import { Cli, Core, FileResult, readReason, Socket } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { concat } from "../lib/bytes.wac";
 import { recordsReady } from "../../../tls/src/record.wac";
 import { ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
@@ -30,7 +29,7 @@ import { Fs } from "../../../fs/src/fs.wac";
 export i32 gets(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 3) {
-    core.warn("usage: " + a.name + " <host> <path> <root.der> [-<port>] [-i]");
+    core.warn("usage: \{a.name} <host> <path> <root.der> [-<port>] [-i]");
     return 2;
   }
   string host = a.rest[0];
@@ -38,7 +37,7 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
   i32 port = a.hasNum ? a.num : 443;
 
   FileResult rootFile = fs.readFile(a.rest[2]);
-  if (!rootFile.ok) { core.warn(a.name + ": " + a.rest[2] + ": " + readReason(rootFile)); return 1; }
+  if (!rootFile.ok) { core.warn("\{a.name}: \{a.rest[2]}: \{readReason(rootFile)}"); return 1; }
   u8[] root = rootFile.bytes;
   // The store is DER certificates end to end, indexed by (start, end) pairs. One here.
   i32[] offsets = [0, root.len()];
@@ -56,9 +55,9 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
     core.nowMillis().wait() / 1000));
 
   Socket sock = cli.connect(host, port).wait();
-  if (sock.handle < 0) { core.warn(a.name + ": " + host + ": " + sock.error); return 1; }
+  if (sock.handle < 0) { core.warn("\{a.name}: \{host}: \{sock.error}"); return 1; }
   if (!cli.send(sock.handle, s.toSend).wait()) {
-    core.warn(a.name + ": cannot send the client hello");
+    core.warn("\{a.name}: cannot send the client hello");
     cli.closeSocket(sock.handle);
     return 1;
   }
@@ -76,15 +75,15 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
       // phase. Reading it as a failure reported "handshake failed" on every successful
       // fetch, with the body already in hand.
       if (body.len() > 0) { break; }
-      core.warn(a.name + ": connection failed (code " + itoa(tlsClientFailure(s.state)) + ")");
+      core.warn("\{a.name}: connection failed (code \{tlsClientFailure(s.state)})");
       cli.closeSocket(sock.handle);
       return 1;
     }
 
     // Once the handshake is done, ask for the page — once.
     if (phase == 3 && !requested) {
-      string req = "GET " + path + " HTTP/1.1\r\n"
-        + "Host: " + host + "\r\n"
+      string req = "GET \{path} HTTP/1.1\r\n"
+        + "Host: \{host}\r\n"
         + "User-Agent: box\r\n"
         + "Connection: close\r\n\r\n";
       ClientStep out = clientStep(tlsClientSend(s.state, req.toBytes()));
@@ -98,7 +97,7 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
       Data(bytes): { buffered = concat(buffered, bytes); }
       End: { closed = true; }            // the peer closed
       Failed(why): {
-        core.warn(a.name + ": " + host + ": " + why);
+        core.warn("\{a.name}: \{host}: \{why}");
         cli.closeSocket(sock.handle);
         return 1;
       }
@@ -127,7 +126,7 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
   cli.closeSocket(sock.handle);
 
   if (body.len() == 0) {
-    core.warn(a.name + ": the connection closed before any response arrived");
+    core.warn("\{a.name}: the connection closed before any response arrived");
     return 1;
   }
   return show(core, cli, parseResponse(body, "GET".toBytes(), true, 1 << 26), has(a, 'i'), a.name);
@@ -135,13 +134,13 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
 
 i32 show(Core core, Cli cli, ParsedResponse p, bool headers, string name) {
   match (p) {
-    Incomplete: { core.warn(name + ": the response ended mid-message"); return 1; }
-    Bad(code): { core.warn(name + ": unparseable response (" + itoa(code) + ")"); return 1; }
+    Incomplete: { core.warn("\{name}: the response ended mid-message"); return 1; }
+    Bad(code): { core.warn("\{name}: unparseable response (\{code})"); return 1; }
     Ok(res): {
       if (headers) {
-        core.log("HTTP " + itoa(res.status));
+        core.log("HTTP \{res.status}");
         for (i32 i = 0; i < res.headers.count; i++) {
-          core.log(string.fromBytes(res.headers.nameAt(i)) + ": "
+          core.log("\{string.fromBytes(res.headers.nameAt(i))}: "
                  + string.fromBytes(res.headers.valueAt(i)));
         }
         core.log("");

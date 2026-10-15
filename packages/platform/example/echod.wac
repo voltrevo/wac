@@ -36,16 +36,16 @@ export i32 main(Sys sys) {
   // of a UDP packet is not verified, so an open echo amplifies for free.
   Socket sock = cli.bindDatagram("127.0.0.1", port).wait();
   if (sock.handle < 0) {
-    core.warn("echod: cannot bind: " + sock.error);
+    core.warn("echod: cannot bind: \{sock.error}");
     return 1;
   }
   // The bound port, which for port 0 is the only way anyone learns it.
-  core.log("echod listening on 127.0.0.1:" + itoa(sock.port));
+  core.log("echod listening on 127.0.0.1:\{sock.port}");
 
   while (true) {
     Datagram d = cli.receiveFrom(sock.handle).wait();
     if (d.error != "") {
-      core.warn("echod: " + d.error);
+      core.warn("echod: \{d.error}");
       cli.closeSocket(sock.handle);
       return 1;
     }
@@ -53,22 +53,10 @@ export i32 main(Sys sys) {
     // socket remembers, because it remembers none — that is what lets the next datagram come from
     // somewhere else entirely and still be answered correctly.
     if (!cli.sendTo(sock.handle, d.peer, d.port, d.bytes).wait()) {
-      core.warn("echod: cannot reply to " + d.peer + ":" + itoa(d.port));
+      core.warn("echod: cannot reply to \{d.peer}:\{d.port}");
     }
   }
   return 0;
-}
-
-/** An i32 as text, for the port. As `example/greet.wac` — a port is all either needs. */
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  string out = "";
-  i32 x = v;
-  while (x > 0) {
-    out = string.fromCodepoint('0' + (x % 10)) + out;
-    x = x / 10;
-  }
-  return out;
 }
 
 /** Digits to an i32, and 0 for anything else — which is the "let the kernel pick" case anyway. */

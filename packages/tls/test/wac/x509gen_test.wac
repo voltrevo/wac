@@ -13,7 +13,6 @@
 // key type — since asking three times ran openssl nine times for one certificate.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { ed25519PublicKey } from "../../../crypto/src/ed25519.wac";
 import { selfSignedEd25519, selfSignedP256, selfSignedRsa } from "../../src/x509gen.wac";
 import {
@@ -72,8 +71,8 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(Core core, 
 
   // Both certificates in one batch — openssl runs three times per `cert` line as it is.
   Lines lines = Lines.create();
-  lines.add("cert " + hex(ecDer));
-  lines.add("cert " + hex(der));
+  lines.add("cert \{hex(ecDer)}");
+  lines.add("cert \{hex(der)}");
   Answers a = ask(t, cli, "node", [ORACLE], lines, "two certificates");
   if (!a.ok) { return t.report(); }
   Facts ec = factsOf(a.lines[0]);
@@ -124,7 +123,7 @@ export string test_openssl_reads_and_verifies_an_rsa_certificate(Core core, Cli 
   u8[] der = selfSignedRsa("wac relay identity", 2, NOT_BEFORE, NOT_AFTER, n, e, d);
   t.isTrue(der.len() > 300, "a certificate was produced");
   Lines lines = Lines.create();
-  lines.add("cert " + hex(der));
+  lines.add("cert \{hex(der)}");
   Answers a = ask(t, cli, "node", [ORACLE], lines, "the RSA certificate");
   if (!a.ok) { return t.report(); }
   Facts f = factsOf(a.lines[0]);

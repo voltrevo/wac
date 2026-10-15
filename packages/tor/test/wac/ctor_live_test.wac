@@ -45,7 +45,6 @@ import { Daemon, start, stop, logOf, waitForLogWithin, freePort }
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { quoted, withoutEnv } from "../../../wactest/src/childenv.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
 /**
@@ -59,7 +58,7 @@ string torBinary(Cli cli) {
   if (!(set is null)) { return string.fromBytes(set!); }
   u8[]? home = cli.env("HOME").wait();
   string root = home is null ? "" : string.fromBytes(home!);
-  return root + "/tor-build/torproject-tor-c8d2b17/src/app/tor";
+  return "\{root}/tor-build/torproject-tor-c8d2b17/src/app/tor";
 }
 
 /**
@@ -75,12 +74,12 @@ string torBinary(Cli cli) {
  * what it is actually asking for.
  */
 string inDir(string dir, string line) {
-  return "/bin/sh -c " + quoted("cd " + quoted(dir) + " && exec " + line);
+  return "/bin/sh -c " + quoted("cd \{quoted(dir)} && exec \{line}");
 }
 
 /** A fresh directory per case, under `.cache` so nothing walking this repository's own files sees it. */
 string freshScratch(T t, Cli cli, string name) {
-  string dir = cli.cwd().wait() + "/.cache/ctor-" + name;
+  string dir = "\{cli.cwd().wait()}/.cache/ctor-\{name}";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   return dir;
@@ -117,7 +116,7 @@ static string DOCS = "-C v.consensus -K cert.cert -D r1.desc -D r2.desc -D r3.de
 string relaysSaid(Cli cli, Daemon[] relays) {
   string out = "";
   for (i32 i = 0; i < relays.len(); i++) {
-    out = out + "--- relay" + itoa(i + 1) + " ---\n" + tail(logOf(cli, relays[i]), 12) + "\n";
+    out = out + "--- relay\{i + 1} ---\n\{tail(logOf(cli, relays[i]), 12)}\n";
   }
   return out;
 }
@@ -138,44 +137,44 @@ Net standUpNetwork(Core core, Cli cli, string dir) {
                                ["--allow-read", "--allow-write", "--allow-net"]);
   string gendesc = builtProgram(cli, "packages/tor/src/gendesc.wac", "ctorgendesc",
                                 ["--allow-read", "--allow-write"]);
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
 
   // Distinct random seeds, so no two relays derive the same identity — and random rather than fixed,
   // because a fixed one would make two concurrent runs of this suite share keys.
   for (i32 n = 1; n <= 3; n++) {
-    cli.writeFile(dir + "/s" + itoa(n), core.randomBytes(32).wait()).wait();
+    cli.writeFile("\{dir}/s\{n}", core.randomBytes(32).wait()).wait();
   }
 
   Daemon[] relays = Daemon[].filled(3, Daemon(-1, "", ""));
   for (i32 n = 1; n <= 3; n++) {
     string extra = n == 1 ? "--seedline seed.txt " : "";
-    string line = quoted(wac) + " " + quoted(relayd) +
-                  " s" + itoa(n) + " -p 0 -n wacc" + itoa(n) +
-                  " --descriptor r" + itoa(n) + ".desc " + extra + DOCS;
-    relays[n - 1] = start(cli, inDir(dir, line), dir + "/relay" + itoa(n) + ".log");
+    string line = "\{quoted(wac)} \{quoted(relayd)}" +
+                  " s\{n} -p 0 -n wacc\{n}" +
+                  " --descriptor r\{n}.desc \{extra}\{DOCS}";
+    relays[n - 1] = start(cli, inDir(dir, line), "\{dir}/relay\{n}.log");
     if (relays[n - 1].pid < 0) {
-      return failed("relay " + itoa(n) + " did not start — " + relays[n - 1].error);
+      return failed("relay \{n} did not start — \{relays[n - 1].error}");
     }
   }
   for (i32 n = 0; n < 3; n++) {
     if (!waitForLogWithin(core, cli, relays[n], "-byte descriptor for port", 120000)) {
-      return failed("relay " + itoa(n + 1) + " never wrote a descriptor within 120s\n" +
+      return failed("relay \{n + 1} never wrote a descriptor within 120s\n" +
                     relaysSaid(cli, relays));
     }
   }
 
   Exec vote = cli.exec("/bin/sh",
     [
-                   "-c", "cd " + quoted(dir) + " && exec " + quoted(wac) + " " + quoted(gendesc) +
+                   "-c", "cd \{quoted(dir)} && exec \{quoted(wac)} \{quoted(gendesc)}" +
                    " keys.json cert vote v - r1.desc r2.desc r3.desc"
     ], u8[]()).wait();
   if (!vote.ran() || vote.status != 0) {
-    return failed("gendesc failed: " + string.fromBytes(vote.stderr) +
+    return failed("gendesc failed: \{string.fromBytes(vote.stderr)}" +
                   string.fromBytes(vote.stdout));
   }
   for (i32 n = 0; n < 3; n++) {
     if (!waitForLogWithin(core, cli, relays[n], "serving the consensus", 30000)) {
-      return failed("relay " + itoa(n + 1) + " never found the documents within 30s\n" +
+      return failed("relay \{n + 1} never found the documents within 30s\n" +
                     relaysSaid(cli, relays));
     }
   }
@@ -186,15 +185,15 @@ Net standUpNetwork(Core core, Cli cli, string dir) {
   // whole shape of the DirAuthority line — and tor dials the **ORPort** named here rather than the
   // DirPort, because it prefers a tunnelled directory connection even for a direct fetch. A `dird`
   // serving only a DirPort is unreachable to it; a relay answering BEGIN_DIR is not.
-  FileResult seedFile = cli.readFile(dir + "/seed.txt").wait();
-  FileResult identFile = cli.readFile(dir + "/cert.fingerprint").wait();
+  FileResult seedFile = cli.readFile("\{dir}/seed.txt").wait();
+  FileResult identFile = cli.readFile("\{dir}/cert.fingerprint").wait();
   if (!seedFile.ok || !identFile.ok) {
     return failed("the network did not write seed.txt and cert.fingerprint\n" +
                   relaysSaid(cli, relays));
   }
   string[] seed = words(string.fromBytes(seedFile.bytes));
   if (seed.len() < 3) {
-    return failed("seed.txt has " + itoa(seed.len()) + " fields, not three: " +
+    return failed("seed.txt has \{seed.len()} fields, not three: " +
                   string.fromBytes(seedFile.bytes));
   }
   return Net(true, "", seed[1], seed[2], trimmed(string.fromBytes(identFile.bytes)), relays);
@@ -229,40 +228,40 @@ string[] words(string text) {
  */
 Daemon startTor(Core core, Cli cli, string dir, Net net, string[] extra, string awaitLine,
                 string[] failure) {
-  cli.mkdir(dir + "/tordata", true).wait();
-  string torrc = "DataDirectory " + dir + "/tordata\n" +
+  cli.mkdir("\{dir}/tordata", true).wait();
+  string torrc = "DataDirectory \{dir}/tordata\n" +
                  "ControlPort 0\n" +
                  "TestingTorNetwork 1\n" +
-                 "DirAuthority wacauth orport=" + net.orPort + " no-v2 v3ident=" + net.v3ident +
-                 " 127.0.0.1:17999 " + net.relayFingerprint + "\n" +
-                 "Log notice file " + dir + "/tor.log\n";
-  for (i32 i = 0; i < extra.len(); i++) { torrc = torrc + extra[i] + "\n"; }
-  cli.writeFile(dir + "/torrc", torrc.toBytes()).wait();
+                 "DirAuthority wacauth orport=\{net.orPort} no-v2 v3ident=\{net.v3ident}" +
+                 " 127.0.0.1:17999 \{net.relayFingerprint}\n" +
+                 "Log notice file \{dir}/tor.log\n";
+  for (i32 i = 0; i < extra.len(); i++) { torrc = torrc + "\{extra[i]}\n"; }
+  cli.writeFile("\{dir}/torrc", torrc.toBytes()).wait();
 
   // No cwd for tor: everything in the torrc is an absolute path, so it needs none.
-  Daemon tor = start(cli, quoted(torBinary(cli)) + " -f " + quoted(dir + "/torrc"),
-                     dir + "/tor.stdout.log");
+  Daemon tor = start(cli, quoted(torBinary(cli)) + " -f " + quoted("\{dir}/torrc"),
+                     "\{dir}/tor.stdout.log");
   if (tor.pid < 0) {
-    failure[0] = "tor did not start — " + tor.error;
+    failure[0] = "tor did not start — \{tor.error}";
     return tor;
   }
   i64 deadline = core.nowMillis().wait() + (120000 as i64);
   for (i32 guard = 0; guard < 1000000; guard++) {
     if (contains(torLog(cli, dir), awaitLine)) { return tor; }
     if (core.nowMillis().wait() >= deadline) {
-      failure[0] = "tor never reached \"" + awaitLine + "\" within 120s\n--- tor.log ---\n" +
-                   tail(torLog(cli, dir), 25) + "\n--- tor's stdout ---\n" +
+      failure[0] = "tor never reached \"\{awaitLine}\" within 120s\n--- tor.log ---\n" +
+                   "\{tail(torLog(cli, dir), 25)}\n--- tor's stdout ---\n" +
                    tail(logOf(cli, tor), 12);
       return tor;
     }
     core.sleepMillis(100).wait();
   }
-  failure[0] = "tor never reached \"" + awaitLine + "\"";
+  failure[0] = "tor never reached \"\{awaitLine}\"";
   return tor;
 }
 
 string torLog(Cli cli, string dir) {
-  return string.fromBytes(cli.readFile(dir + "/tor.log").wait().bytes);
+  return string.fromBytes(cli.readFile("\{dir}/tor.log").wait().bytes);
 }
 
 void stopAll(Cli cli, Daemon[] ds) { for (i32 i = 0; i < ds.len(); i++) { stop(cli, ds[i]); } }
@@ -273,7 +272,7 @@ bool announceMissing(Core core, Cli cli) {
   Stat have = cli.stat(path).wait();
   if (have.exists) { return false; }
   core.warn("");
-  core.warn("  ctor_live_test.wac is skipped: no tor binary at " + path + ".");
+  core.warn("  ctor_live_test.wac is skipped: no tor binary at \{path}.");
   core.warn("  Build one with tools/tor.sh to check that C tor still agrees with us.");
   return true;
 }
@@ -305,7 +304,7 @@ export string test_a_c_tor_bootstraps_from_our_authority_and_through_our_relays(
     ];
     for (i32 i = 0; i < stages.len(); i++) {
       t.isTrue(contains(log, stages[i]),
-               "tor logged \"" + stages[i] + "\"\n" + tail(log, 25));
+               "tor logged \"\{stages[i]}\"\n\{tail(log, 25)}");
     }
 
     // And the thing this test was written to catch: **tor complaining about us**. The first run of it
@@ -314,15 +313,15 @@ export string test_a_c_tor_bootstraps_from_our_authority_and_through_our_relays(
     // that check is `warn`. A wrong value that still works is exactly what a suite with no C tor in it
     // cannot see, and it is what these three assertions are for.
     t.isTrue(!contains(log, "skewed time"),
-             "tor does not think our clock is wrong — check the NETINFO timestamp\n" + tail(log, 25));
+             "tor does not think our clock is wrong — check the NETINFO timestamp\n\{tail(log, 25)}");
     // Our link certificate was Ed25519 where every real relay's is RSA, so tor asked it for an RSA key,
     // got none, and left `expecting an rsa key` on OpenSSL's error queue three times per handshake. The
     // message was noise; what it pointed at was a relay identifiable as ours from the first flight, by a
     // field anyone on the path can read.
     t.isTrue(!contains(log, "expecting an rsa key"),
-             "tor can read our link certificate's key as RSA\n" + tail(log, 25));
+             "tor can read our link certificate's key as RSA\n\{tail(log, 25)}");
     t.isTrue(!contains(log, "Unhandled OpenSSL errors"),
-             "we leave no OpenSSL errors on tor's queue\n" + tail(log, 25));
+             "we leave no OpenSSL errors on tor's queue\n\{tail(log, 25)}");
   }
 
   stop(cli, tor);
@@ -368,12 +367,12 @@ export string test_a_c_tor_carries_a_stream_through_our_relays_both_directions(C
   // with a body that fits in one.
   string body = "";
   for (i32 i = 0; i < 300; i++) { body = body + "wac relay carried this\n"; }
-  string whyDir1 = madeDir(cli, dir + "/www");
+  string whyDir1 = madeDir(cli, "\{dir}/www");
   t.isTrue(whyDir1 == "", whyDir1);
-  cli.writeFile(dir + "/www/body.txt", body.toBytes()).wait();
-  Daemon target = start(cli, inDir(dir + "/www", "python3 -m http.server " + itoa(targetPort) +
-                                            " --bind 127.0.0.1"), dir + "/target.log");
-  t.isTrue(target.pid > 0, "the target server started — " + target.error);
+  cli.writeFile("\{dir}/www/body.txt", body.toBytes()).wait();
+  Daemon target = start(cli, inDir("\{dir}/www", "python3 -m http.server \{targetPort}" +
+                                            " --bind 127.0.0.1"), "\{dir}/target.log");
+  t.isTrue(target.pid > 0, "the target server started — \{target.error}");
   if (target.pid <= 0) { return t.report(); }
 
   Net net = standUpNetwork(core, cli, dir);
@@ -383,7 +382,7 @@ export string test_a_c_tor_carries_a_stream_through_our_relays_both_directions(C
   // `TestingTorNetwork` sets `ClientRejectInternalAddresses 0`, which is what makes a loopback target
   // reachable through a circuit at all — on a real network a client refuses one, correctly.
   string[] failure = string[].filled(1, "");
-  Daemon tor = startTor(core, cli, dir, net, ["SocksPort " + itoa(socksPort)],
+  Daemon tor = startTor(core, cli, dir, net, ["SocksPort \{socksPort}"],
                         "Bootstrapped 100%", failure);
   t.eqStr(failure[0], "", "tor bootstrapped");
 
@@ -391,28 +390,28 @@ export string test_a_c_tor_carries_a_stream_through_our_relays_both_directions(C
     Exec got = withoutEnv(cli, ["no_proxy", "NO_PROXY", "http_proxy", "HTTP_PROXY"],
       "curl", [
                        "--silent", "--show-error", "--max-time", "60", "--noproxy", "",
-                       "--socks5-hostname", "127.0.0.1:" + itoa(socksPort),
-                       "http://127.0.0.1:" + itoa(targetPort) + "/body.txt"
+                       "--socks5-hostname", "127.0.0.1:\{socksPort}",
+                       "http://127.0.0.1:\{targetPort}/body.txt"
       ]);
-    t.eqI32(got.status, 0, "curl through tor: " + string.fromBytes(got.stderr) +
-                           "\n--- tor.log ---\n" + tail(torLog(cli, dir), 25));
+    t.eqI32(got.status, 0, "curl through tor: \{string.fromBytes(got.stderr)}" +
+                           "\n--- tor.log ---\n\{tail(torLog(cli, dir), 25)}");
 
     if (got.status == 0) {
       // **First: did it go through us at all?** Asking tor whether the bytes went through our relays is
       // asking the wrong process, so this reads the relays' own logs.
       bool opened = false;
-      string want = "open to 127.0.0.1:" + itoa(targetPort);
+      string want = "open to 127.0.0.1:\{targetPort}";
       for (i32 i = 0; i < net.relays.len(); i++) {
         if (waitForLogWithin(core, cli, net.relays[i], want, i == 0 ? 15000 : 1)) { opened = true; }
       }
       t.isTrue(opened,
-               "a relay of ours opened the stream to 127.0.0.1:" + itoa(targetPort) +
-               ", so what curl fetched came through them\n" + relaysSaid(cli, net.relays));
+               "a relay of ours opened the stream to 127.0.0.1:\{targetPort}" +
+               ", so what curl fetched came through them\n\{relaysSaid(cli, net.relays)}");
 
       // **Then: byte-identical, not merely non-empty.** A stream that dropped or reordered a cell in
       // the middle would still pass a length check.
       t.eqStr(string.fromBytes(got.stdout), body,
-              "the body came back byte for byte\n--- tor.log ---\n" + tail(torLog(cli, dir), 25));
+              "the body came back byte for byte\n--- tor.log ---\n\{tail(torLog(cli, dir), 25)}");
     }
   }
 

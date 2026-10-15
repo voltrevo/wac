@@ -80,13 +80,13 @@ export string optionRefusal(string name, string letter) {
   // blanket "long options are not implemented" is false there. The builtins here still take none —
   // the sentence is shared, the reason for it is not.
   if (b.len() > 1 && b[0] == '-' && b[1] == '-') {
-    return name + ": long option not implemented: " + letter + "\n";
+    return "\{name}: long option not implemented: \{letter}\n";
   }
   if (b.len() == 1 && gnuHas(name, b[0] as i32)) {
     // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.
-    return name + ": -" + letter + " is not implemented\n";
+    return "\{name}: -\{letter} is not implemented\n";
   }
-  return name + ": invalid option -- '" + letter + "'\n" + tryHelp(name);
+  return "\{name}: invalid option -- '\{letter}'\n\{tryHelp(name)}";
 }
 
 /**
@@ -96,5 +96,5 @@ export string optionRefusal(string name, string letter) {
  * against the real tool's stderr rather than against an expectation written here.
  */
 string tryHelp(string name) {
-  return "Try '" + name + " --help' for more information.\n";
+  return "Try '\{name} --help' for more information.\n";
 }

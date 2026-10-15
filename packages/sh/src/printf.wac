@@ -14,7 +14,7 @@
 import { Buf } from "core";
 import { Vec } from "core";
 import { Sink } from "../../platform/src/stream.wac";
-import { atoi, itoa } from "../../fmt/src/itoa.wac";
+import { atoi } from "../../fmt/src/itoa.wac";
 import { digitValue } from "../../codec/src/hex.wac";
 
 /**
@@ -102,10 +102,10 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
       } else if (conv == 0x64 || conv == 0x69) {            // 'd', 'i'
         numeric = true;
         if (a != "" && !isNumber(a)) {
-          err.pushAll(("printf: " + a + ": invalid number\n").toBytes());
+          err.pushAll("printf: \{a}: invalid number\n".toBytes());
           status = 1;
         }
-        text = itoa(atoi(a));
+        text = "\{atoi(a)}";
       } else if (conv == 0x62) {                            // 'b'
         // **The argument's escapes**, where every other conversion takes the argument as it is: that is
         // the whole of what `%b` is for, and it is how a script emits a tab it read from somewhere.
@@ -126,7 +126,7 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
       } else if (conv == 0x78 || conv == 0x58 || conv == 0x6f) {   // 'x', 'X', 'o'
         numeric = true;
         if (a != "" && !isNumber(a)) {
-          err.pushAll(("printf: " + a + ": invalid number\n").toBytes());
+          err.pushAll("printf: \{a}: invalid number\n".toBytes());
           status = 1;
         }
         text = inBase(atoi(a), conv == 0x6f ? 8 : 16, conv == 0x58);
@@ -207,7 +207,7 @@ string inBase(i32 v, i32 base, bool upper) {
     out = charFor(c) + out;
     n = n / base;
   }
-  return neg ? "-" + out : out;
+  return neg ? "-\{out}" : out;
 }
 
 string charFor(i32 c) {

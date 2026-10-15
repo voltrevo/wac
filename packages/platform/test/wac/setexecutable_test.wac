@@ -41,7 +41,7 @@ bool buildDeno(T t, Cli cli, string out) {
   ],
                     u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
-           "the probe built for deno — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+           "the probe built for deno — \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}");
   return r.ran() && r.status == 0;
 }
 
@@ -56,14 +56,14 @@ bool buildNative(T t, Cli cli, string out) {
                     ["app", PROBE, "-o", out, "--allow-read", "--allow-write"],
                     u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
-           "the probe built for native — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+           "the probe built for native — \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}");
   return r.ran() && r.status == 0;
 }
 
 /** `stat -c %a`, because `Stat` carries no mode — the gap `runtimes_test.wac` notes for `cd` too. */
 string modeOf(Cli cli, string path) {
-  Exec r = cli.exec("/bin/sh", ["-c", "stat -c %a " + path], u8[]()).wait();
-  if (!r.ran()) { return "(stat did not run: " + r.error + ")"; }
+  Exec r = cli.exec("/bin/sh", ["-c", "stat -c %a \{path}"], u8[]()).wait();
+  if (!r.ran()) { return "(stat did not run: \{r.error})"; }
   string out = string.fromBytes(r.stdout);
   i32 nl = out.indexOf("\n");
   return nl < 0 ? out : out.slice(0, nl);
@@ -87,8 +87,8 @@ i32 runProbe(Cli cli, string app, string file, string mode, string start) {
   string dir = cut <= 0 ? "." : bin.slice(0, cut);
   Exec r = cli.exec("/bin/sh",
       [
-               "-c", "printf x > " + file + " && chmod " + start + " " + file
-               + " && PATH=" + dir + ":$PATH " + app + " " + file + " " + mode
+               "-c", "printf x > \{file} && chmod \{start} \{file}"
+               + " && PATH=\{dir}:$PATH \{app} \{file} \{mode}"
       ],
       u8[]()).wait();
   return r.ran() ? r.status : 0 - 1;
@@ -96,21 +96,21 @@ i32 runProbe(Cli cli, string app, string file, string mode, string start) {
 
 export string test_setexecutable_puts_the_same_bits_on_under_either_host(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/setexecutable";
+  string dir = "\{cli.cwd().wait()}/.cache/setexecutable";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   if (why != "") { return t.report(); }
 
-  if (!buildDeno(t, cli, dir + "/probe-deno")) { return t.report(); }
-  if (!buildNative(t, cli, dir + "/probe-native")) { return t.report(); }
+  if (!buildDeno(t, cli, "\{dir}/probe-deno")) { return t.report(); }
+  if (!buildNative(t, cli, "\{dir}/probe-native")) { return t.report(); }
 
   // **Setting.** From 644 the rule gives 755 — execute wherever read already is.
   string dm = "";
   string nm = "";
   for (i32 i = 0; i < 2; i++) {
     string who = i == 0 ? "deno" : "native";
-    string f = dir + "/on-" + who;
-    t.eqI32(runProbe(cli, dir + "/probe-" + who, f, "on", "644"), 0, who + "'s probe did not run");
+    string f = "\{dir}/on-\{who}";
+    t.eqI32(runProbe(cli, "\{dir}/probe-\{who}", f, "on", "644"), 0, "\{who}'s probe did not run");
     string got = modeOf(cli, f);
     if (i == 0) { dm = got; } else { nm = got; }
   }
@@ -126,8 +126,8 @@ export string test_setexecutable_puts_the_same_bits_on_under_either_host(Core co
   string nc = "";
   for (i32 i = 0; i < 2; i++) {
     string who = i == 0 ? "deno" : "native";
-    string f = dir + "/off-" + who;
-    t.eqI32(runProbe(cli, dir + "/probe-" + who, f, "off", "755"), 0, who + "'s probe did not run");
+    string f = "\{dir}/off-\{who}";
+    t.eqI32(runProbe(cli, "\{dir}/probe-\{who}", f, "off", "755"), 0, "\{who}'s probe did not run");
     string got = modeOf(cli, f);
     if (i == 0) { dc = got; } else { nc = got; }
   }

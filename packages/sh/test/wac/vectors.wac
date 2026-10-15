@@ -87,13 +87,13 @@ export Vectors load(Cli cli) {
   FileRead r = readAll(cli);
   if (!r.ok) {
     return Vectors(Vector[](), 0, "",
-                   "cannot read " + vectorsPath() + " — run `wac run --allow-read --allow-write " +
+                   "cannot read \{vectorsPath()} — run `wac run --allow-read --allow-write " +
                    "--allow-run tools/wac/shvectors.wac` to write it");
   }
   u8[] b = r.bytes;
   Line l = lineAt(b, 0);
   if (l.text != "wac-sh-vectors 1") {
-    return Vectors(Vector[](), 0, "", "not a vectors file: " + l.text);
+    return Vectors(Vector[](), 0, "", "not a vectors file: \{l.text}");
   }
   string oracle = "";
   i32 at = l.next;

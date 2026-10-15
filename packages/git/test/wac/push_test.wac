@@ -19,7 +19,6 @@
 // caller wants and is still what is tested, but it is now a convenience rather than a workaround.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { Vec } from "core";
@@ -107,7 +106,7 @@ struct Pushed {
 }
 
 Pushed pushWith(T t, Cli cli, string src, string target, string advFile, i32 advLen) {
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
   Exec made = cli.exec(wac,
                        [
                                               builtProgram(cli, "packages/git/example/gitpush.wac", "gitpush",
@@ -116,7 +115,7 @@ Pushed pushWith(T t, Cli cli, string src, string target, string advFile, i32 adv
                        ],
                        u8[]()).wait();
   string note = trimmed(string.fromBytes(made.stderr));
-  t.eqI32(made.status, 0, "gitpush exited zero: " + note);
+  t.eqI32(made.status, 0, "gitpush exited zero: \{note}");
   Vec<RefReport> empty = Vec.create();
   if (made.status != 0) { return Pushed(false, note, Report(false, "", empty, "gitpush failed")); }
 
@@ -132,13 +131,13 @@ Pushed pushWith(T t, Cli cli, string src, string target, string advFile, i32 adv
 export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core core, Cli cli) {
   T t = T.create();
   string who = agentDir(cli);
-  string dir = "/tmp/wac-git-push" + (who == "" ? "" : "-" + who);
+  string dir = "/tmp/wac-git-push" + (who == "" ? "" : "-\{who}");
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   if (!made.ok()) { return t.report(); }
-  string src = dir + "/src";
-  string target = dir + "/target.git";
+  string src = "\{dir}/src";
+  string target = "\{dir}/target.git";
   string whyDir1 = madeDir(cli, src);
   t.isTrue(whyDir1 == "", whyDir1);
 
@@ -146,13 +145,13 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   // a notice about an unborn `master`, which is noise rather than a finding.
   cli.exec("git", ["init", "-q", "--bare", "-b", "main", target], u8[]()).wait();
   git(cli, src, ["init", "-q", "-b", "main"], u8[]());
-  string whyDir2 = madeDir(cli, src + "/sub");
+  string whyDir2 = madeDir(cli, "\{src}/sub");
   t.isTrue(whyDir2 == "", whyDir2);
-  cli.writeFile(src + "/a.txt", "one\n".toBytes()).wait();
-  cli.writeFile(src + "/sub/b.txt", "two\n".toBytes()).wait();
+  cli.writeFile("\{src}/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile("\{src}/sub/b.txt", "two\n".toBytes()).wait();
   git(cli, src, ["add", "-A"], u8[]());
   git(cli, src, ["commit", "-qm", "one"], u8[]());
-  cli.writeFile(src + "/a.txt", "two\n".toBytes()).wait();
+  cli.writeFile("\{src}/a.txt", "two\n".toBytes()).wait();
   git(cli, src, ["add", "-A"], u8[]());
   git(cli, src, ["commit", "-qm", "two"], u8[]());
   string tip = gitText(cli, src, ["rev-parse", "HEAD"]);
@@ -160,20 +159,20 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   // What git says has to travel, so the walk below is compared against it rather than trusted.
   i32 wanted = countLines(gitText(cli, src, ["rev-list", "--objects", "HEAD"]));
   t.isTrue(wanted >= 7,
-           "the fixture carries " + itoa64(wanted as i64) + " objects, enough for two commits");
+           "the fixture carries \{wanted as i64} objects, enough for two commits");
 
   // ── The advertisement ──
   u8[] adv = advertise(cli, target);
   match (parseAdvertisement(adv)) {
-    Garbled(why): { t.isTrue(false, "the advertisement did not parse: " + why); }
+    Garbled(why): { t.isTrue(false, "the advertisement did not parse: \{why}"); }
     Said(ad): { t.isTrue(true, "the advertisement parsed"); }
   }
   // **An empty repository advertises one line that is not a ref**, asserted rather than assumed — a
   // client treating it as a branch would try to update something called `capabilities^{}`.
   t.isTrue(noRefsIn(adv), "an empty repository is recognised as having no refs");
 
-  cli.writeFile(dir + "/adv.bin", adv).wait();
-  Pushed first = pushWith(t, cli, src, target, dir + "/adv.bin", adv.len());
+  cli.writeFile("\{dir}/adv.bin", adv).wait();
+  Pushed first = pushWith(t, cli, src, target, "\{dir}/adv.bin", adv.len());
   if (!first.ok) { return t.report(); }
 
   // **The object count against git's own**, because a walk that missed a parent's tree still produces
@@ -182,17 +181,17 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   // wrong.
   t.eqI32(objectsIn(first.note), wanted, "we walked the objects git says are reachable");
 
-  t.isTrue(first.report.unpacked, "the server unpacked our pack: " + first.report.unpackWhy);
+  t.isTrue(first.report.unpacked, "the server unpacked our pack: \{first.report.unpackWhy}");
   t.eqI32(first.report.refs.len(), 1, "one ref in the report");
   if (first.report.refs.len() == 1) {
     t.eqStr(first.report.refs.get(0).name, "refs/heads/main", "the report names the ref we pushed");
-    t.isTrue(first.report.refs.get(0).ok, "the server accepted it: " + first.report.refs.get(0).why);
+    t.isTrue(first.report.refs.get(0).ok, "the server accepted it: \{first.report.refs.get(0).why}");
   }
   t.eqStr(gitText(cli, target, ["rev-parse", "refs/heads/main"]), tip,
           "the target's ref is the commit we pushed");
 
   // ── A second push onto the ref we just created: a fast-forward ──
-  cli.writeFile(src + "/a.txt", "three\n".toBytes()).wait();
+  cli.writeFile("\{src}/a.txt", "three\n".toBytes()).wait();
   git(cli, src, ["add", "-A"], u8[]());
   git(cli, src, ["commit", "-qm", "three"], u8[]());
   string tip2 = gitText(cli, src, ["rev-parse", "HEAD"]);
@@ -205,10 +204,10 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   t.eqStr(hexName(oldFor(adv2, "refs/heads/main")), tip,
           "the advertised old value is the commit we pushed");
 
-  cli.writeFile(dir + "/adv2.bin", adv2).wait();
-  Pushed ff = pushWith(t, cli, src, target, dir + "/adv2.bin", adv2.len());
+  cli.writeFile("\{dir}/adv2.bin", adv2).wait();
+  Pushed ff = pushWith(t, cli, src, target, "\{dir}/adv2.bin", adv2.len());
   if (!ff.ok) { return t.report(); }
-  t.isTrue(ff.report.unpacked, "the fast-forward unpacked: " + ff.report.unpackWhy);
+  t.isTrue(ff.report.unpacked, "the fast-forward unpacked: \{ff.report.unpackWhy}");
 
   // **What the second push should carry, and what it did.** `receive-pack` has no `have` exchange, so
   // this is a local computation from the advertisement — and `git rev-list --objects <new> --not
@@ -219,11 +218,11 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   // The shape: the exclusion has to have *excluded* something, or this passes while a push that
   // re-sends an entire history looks correct.
   t.isTrue(needed < everything,
-           "git says " + itoa64(needed as i64) + " of " + itoa64(everything as i64) +
+           "git says \{needed as i64} of \{everything as i64}" +
            " objects are needed, so something can be left out");
   t.isTrue(objectsIn(ff.note) < everything, "and the push left something out");
   if (ff.report.refs.len() == 1) {
-    t.isTrue(ff.report.refs.get(0).ok, "the fast-forward was accepted: " + ff.report.refs.get(0).why);
+    t.isTrue(ff.report.refs.get(0).ok, "the fast-forward was accepted: \{ff.report.refs.get(0).why}");
   }
   t.eqStr(gitText(cli, target, ["rev-parse", "refs/heads/main"]), tip2,
           "the ref moved to the second commit");
@@ -234,16 +233,16 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   // exist, so the request claims twenty zeros; the ref does exist, so the server must refuse. And the
   // shape of the refusal is the point: the pack unpacks *fine* and the ref is still rejected, which a
   // client that checked only "did the push work" would read as success.
-  string emptyRepo = dir + "/empty.git";
+  string emptyRepo = "\{dir}/empty.git";
   cli.exec("git", ["init", "-q", "--bare", "-b", "main", emptyRepo], u8[]()).wait();
   u8[] staleAdv = advertise(cli, emptyRepo);
-  cli.writeFile(src + "/a.txt", "four\n".toBytes()).wait();
+  cli.writeFile("\{src}/a.txt", "four\n".toBytes()).wait();
   git(cli, src, ["add", "-A"], u8[]());
   git(cli, src, ["commit", "-qm", "four"], u8[]());
-  cli.writeFile(dir + "/stale.bin", staleAdv).wait();
-  Pushed stale = pushWith(t, cli, src, target, dir + "/stale.bin", staleAdv.len());
+  cli.writeFile("\{dir}/stale.bin", staleAdv).wait();
+  Pushed stale = pushWith(t, cli, src, target, "\{dir}/stale.bin", staleAdv.len());
   if (stale.ok) {
-    t.isTrue(stale.report.unpacked, "the pack itself was fine: " + stale.report.unpackWhy);
+    t.isTrue(stale.report.unpacked, "the pack itself was fine: \{stale.report.unpackWhy}");
     t.eqI32(stale.report.refs.len(), 1, "one ref in the report");
     if (stale.report.refs.len() == 1) {
       t.isFalse(stale.report.refs.get(0).ok,

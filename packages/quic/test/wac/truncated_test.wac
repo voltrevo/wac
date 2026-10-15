@@ -44,7 +44,6 @@
 //     the guard is the only thing between it and reading memory that is not there.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Frame, Next, nextIn, EPOCH_1RTT, EPOCH_INITIAL } from "../../src/frame.wac";
 
 /** Whether a `Next` is the `Incomplete` answer. */
@@ -59,9 +58,9 @@ bool isIncomplete(Next n) {
 string named(Next n) {
   match (n.frame) {
     Incomplete: { return "Incomplete"; }
-    Unknown(kind): { return "Unknown(" + itoa(kind as! i32) + ")"; }
-    NotPermitted(kind): { return "NotPermitted(" + itoa(kind as! i32) + ")"; }
-    Padding(count): { return "Padding(" + itoa(count) + ")"; }
+    Unknown(kind): { return "Unknown(\{kind as! i32})"; }
+    NotPermitted(kind): { return "NotPermitted(\{kind as! i32})"; }
+    Padding(count): { return "Padding(\{count})"; }
     Ping: { return "Ping"; }
     Ack(largest, delay): { return "Ack"; }
     Crypto(offset, data): { return "Crypto"; }
@@ -103,16 +102,16 @@ u8[] prefix(u8[] b, i32 n) {
  */
 i32 sweep(T t, string name, u8[] frame, i32 epoch, string want) {
   Next whole = nextIn(frame, 0, epoch);
-  t.eqStr(named(whole), want, name + ": the complete frame did not parse as itself");
-  t.eqI32(whole.size, frame.len(), name + ": the complete frame consumed the wrong number of bytes");
+  t.eqStr(named(whole), want, "\{name}: the complete frame did not parse as itself");
+  t.eqI32(whole.size, frame.len(), "\{name}: the complete frame consumed the wrong number of bytes");
 
   i32 cut = 0;
   for (i32 n = 1; n < frame.len(); n++) {
     Next part = nextIn(prefix(frame, n), 0, epoch);
     t.isTrue(isIncomplete(part),
-             name + ": " + itoa(n) + " of " + itoa(frame.len()) + " bytes answered " + named(part) +
+             "\{name}: \{n} of \{frame.len()} bytes answered \{named(part)}" +
              " rather than Incomplete");
-    t.eqI32(part.size, 0, name + ": a truncated frame reported a size at " + itoa(n) + " bytes");
+    t.eqI32(part.size, 0, "\{name}: a truncated frame reported a size at \{n} bytes");
     cut = cut + 1;
   }
   return cut;
@@ -151,7 +150,7 @@ export string test_a_frame_of_varints_cut_short_is_incomplete() {
   // type, seq
   cuts = cuts + sweep(t, "RETIRE_CONNECTION_ID", [0x19, 0x03] as u8[], e, "RetireConnectionId");
 
-  t.isTrue(cuts >= 15, "only " + itoa(cuts) + " truncations were tried, which is too few to mean much");
+  t.isTrue(cuts >= 15, "only \{cuts} truncations were tried, which is too few to mean much");
   return t.report();
 }
 
@@ -197,7 +196,7 @@ export string test_a_frame_with_a_length_cut_short_is_incomplete() {
   cuts = cuts + sweep(t, "CONNECTION_CLOSE_APP", [0x1D, 0x02, 0x02, 0x68, 0x69] as u8[], e,
                       "ConnectionClose");
 
-  t.isTrue(cuts >= 20, "only " + itoa(cuts) + " truncations were tried across the length-carrying frames");
+  t.isTrue(cuts >= 20, "only \{cuts} truncations were tried across the length-carrying frames");
   return t.report();
 }
 
@@ -226,7 +225,7 @@ export string test_a_frame_of_fixed_width_cut_short_is_incomplete() {
   for (i32 i = 0; i < 16; i++) { nci[8 + i] = (0x50 + i) as@ u8; }
   cuts = cuts + sweep(t, "NEW_CONNECTION_ID", nci, e, "NewConnectionId");
 
-  t.isTrue(cuts >= 25, "only " + itoa(cuts) + " truncations were tried across the fixed-width frames");
+  t.isTrue(cuts >= 25, "only \{cuts} truncations were tried across the fixed-width frames");
   return t.report();
 }
 
@@ -256,9 +255,9 @@ export string test_an_ack_cut_short_is_incomplete() {
   // frame — a frame that lies about its own shape, which is the same guard reached the other way.
   Next lying = nextIn([0x02, 0x0A, 0x01, 0x3F, 0x05] as u8[], 0, e);
   t.isTrue(isIncomplete(lying),
-           "an ACK claiming 63 ranges in five bytes answered " + named(lying));
+           "an ACK claiming 63 ranges in five bytes answered \{named(lying)}");
 
-  t.isTrue(cuts >= 15, "only " + itoa(cuts) + " truncations were tried across the ACK spellings");
+  t.isTrue(cuts >= 15, "only \{cuts} truncations were tried across the ACK spellings");
   return t.report();
 }
 
@@ -297,11 +296,11 @@ export string test_the_frames_with_nothing_to_truncate() {
 
   // Nothing at all: reading past the end of an empty buffer.
   Next empty = nextIn(u8[](), 0, e);
-  t.isTrue(isIncomplete(empty), "an empty datagram answered " + named(empty));
+  t.isTrue(isIncomplete(empty), "an empty datagram answered \{named(empty)}");
 
   // And past the end of a non-empty one, which is what a walk does when it has consumed everything.
   Next past = nextIn([0x01] as u8[], 1, e);
-  t.isTrue(isIncomplete(past), "reading past the last byte answered " + named(past));
+  t.isTrue(isIncomplete(past), "reading past the last byte answered \{named(past)}");
   return t.report();
 }
 

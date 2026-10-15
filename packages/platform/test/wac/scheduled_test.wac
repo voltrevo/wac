@@ -16,8 +16,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Pending } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 
 static string ENTRY = "packages/platform/example/scheduled.wac";
 
@@ -29,9 +27,9 @@ struct Ran {
 }
 
 Ran run(Cli cli, string how) {
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
   Exec r = cli.exec(wac, ["run", ENTRY, "--", how], u8[]()).wait();
-  if (!r.ran()) { return Ran(false, -1, "", "the wac binary did not run — " + r.error); }
+  if (!r.ran()) { return Ran(false, -1, "", "the wac binary did not run — \{r.error}"); }
   return Ran(true, r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
 
@@ -136,7 +134,7 @@ export string test_a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest(Core
   // And it came back on time. The bound is what is being tested, so the assertion is that it *ended* —
   // a budget in the wrong unit would sit here for the full minute. Loose on both sides: compiling the
   // program dominates this number, and the only wrong answers are "immediately" and "a minute".
-  t.isTrue(elapsedMillis < 45000, "a 500ms budget took " + itoa64(elapsedMillis) + "ms");
+  t.isTrue(elapsedMillis < 45000, "a 500ms budget took \{elapsedMillis}ms");
   return t.report();
 }
 

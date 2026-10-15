@@ -22,7 +22,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa, atoi } from "../../../fmt/src/itoa.wac";
+import { atoi } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Stat } from "std";
 
 // ## It skipped itself until 2026-08-20 — `issues/system/0216a`
@@ -46,16 +46,16 @@ Exec sh(Cli cli, string[] argv) {
 export string test_wac_sh_runs_a_pipeline_of_applets(Core core, Cli cli) {
   T t = T.create();
   Exec piped = sh(cli, ["-c", "seq 1 20 | grep 7 | wc -l"]);
-  t.isTrue(piped.ran(), "the shell ran — " + piped.error);
+  t.isTrue(piped.ran(), "the shell ran — \{piped.error}");
   if (piped.ran()) {
     t.eqStr(trimmed(string.fromBytes(piped.stdout)), "2",
-            "pipeline: " + string.fromBytes(piped.stdout) + string.fromBytes(piped.stderr));
+            "pipeline: \{string.fromBytes(piped.stdout)}\{string.fromBytes(piped.stderr)}");
   }
 
   // A second pipeline whose answer is a digest, so a shell that ran the applets in the wrong order,
   // or dropped one, cannot produce it by accident.
   Exec hashed = sh(cli, ["-c", "echo hello | sha256sum"]);
-  t.isTrue(hashed.ran(), "the shell ran — " + hashed.error);
+  t.isTrue(hashed.ran(), "the shell ran — \{hashed.error}");
   if (hashed.ran()) {
     string first = "";
     string all = trimmed(string.fromBytes(hashed.stdout));
@@ -64,7 +64,7 @@ export string test_wac_sh_runs_a_pipeline_of_applets(Core core, Cli cli) {
       first = first + all.slice(i, i + 1);
     }
     t.eqStr(first, "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
-            "sha256sum: " + all + string.fromBytes(hashed.stderr));
+            "sha256sum: \{all}\{string.fromBytes(hashed.stderr)}");
   }
   return t.report();
 }
@@ -74,15 +74,15 @@ export string test_wac_sh_is_sealed_unless_it_is_granted(Core core, Cli cli) {
   string dir = scratch(cli, "shsealed");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  string probe = dir + "/written";
+  string probe = "\{dir}/written";
 
   // **Refused, and nothing written.** Checking only the message would pass for a shell that reported a
   // refusal and did the write anyway, which is the failure that matters.
-  Exec denied = sh(cli, ["-c", "echo x > " + probe]);
-  t.isTrue(denied.ran(), "the shell ran — " + denied.error);
+  Exec denied = sh(cli, ["-c", "echo x > \{probe}"]);
+  t.isTrue(denied.ran(), "the shell ran — \{denied.error}");
   if (denied.ran()) {
     string said = string.fromBytes(denied.stdout) + string.fromBytes(denied.stderr);
-    t.isTrue(contains(said, "Not granted"), "an ungranted write should say so: " + said);
+    t.isTrue(contains(said, "Not granted"), "an ungranted write should say so: \{said}");
   }
   Stat wrote = cli.stat(probe).wait();
   t.isTrue(!wrote.exists, "the file was written despite the refusal");
@@ -90,19 +90,19 @@ export string test_wac_sh_is_sealed_unless_it_is_granted(Core core, Cli cli) {
   // The same shell, granted, reaches the machine. `--allow-read` only, so the write above stays
   // refused: the two grants are independent rather than one switch with a long name.
   Exec read = sh(cli, ["--allow-read", "-c", "wc -l < spec/tour.wac"]);
-  t.isTrue(read.ran(), "the shell ran — " + read.error);
+  t.isTrue(read.ran(), "the shell ran — \{read.error}");
   if (read.ran()) {
     t.isTrue(atoi(trimmed(string.fromBytes(read.stdout))) > 100,
-             "a granted read should count lines: " + string.fromBytes(read.stdout) +
+             "a granted read should count lines: \{string.fromBytes(read.stdout)}" +
              string.fromBytes(read.stderr));
   }
 
   // A flag that is not a grant is refused by name rather than ignored, because a typo that silently
   // dropped a grant would leave a program failing for a reason nobody would look for.
   Exec bogus = sh(cli, ["--allow-everything", "-c", "echo x"]);
-  t.isTrue(bogus.ran(), "the shell ran — " + bogus.error);
+  t.isTrue(bogus.ran(), "the shell ran — \{bogus.error}");
   if (bogus.ran()) {
-    t.eqI32(bogus.status, 2, "an unknown grant should exit 2: " + string.fromBytes(bogus.stderr));
+    t.eqI32(bogus.status, 2, "an unknown grant should exit 2: \{string.fromBytes(bogus.stderr)}");
     t.isTrue(contains(string.fromBytes(bogus.stderr), "is not a grant"),
              string.fromBytes(bogus.stderr));
   }

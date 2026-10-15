@@ -24,7 +24,6 @@
 // handshake with anybody — which is why `dtls.wac` checks it and why this file's job is to carry it
 // faithfully rather than to interpret it.
 
-import { itoa64 } from "../../fmt/src/itoa.wac";
 
 /** The two lines that end a session and a media description. Written out, so `\r\n` is never typed. */
 string crlf() { return "\r\n"; }
@@ -38,32 +37,32 @@ string crlf() { return "\r\n"; }
  */
 export string dataChannelDescription(i64 sessionId, string ufrag, string password,
                                      string fingerprint, string setup, string candidates) {
-  string s = "v=0" + crlf();
+  string s = "v=0\{crlf()}";
   // The origin's address is `IN IP4 127.0.0.1` by convention and is ignored: ICE decides the
   // address, and anything here would be a guess a NAT would make wrong.
-  s = s + "o=- " + itoa64(sessionId) + " 1 IN IP4 127.0.0.1" + crlf();
-  s = s + "s=-" + crlf();
-  s = s + "t=0 0" + crlf();
-  s = s + "a=group:BUNDLE 0" + crlf();
+  s = s + "o=- \{sessionId} 1 IN IP4 127.0.0.1\{crlf()}";
+  s = s + "s=-\{crlf()}";
+  s = s + "t=0 0\{crlf()}";
+  s = s + "a=group:BUNDLE 0\{crlf()}";
   // **Port 9 is the discard port and means "look at the candidates".** A literal port here would be
   // one an ICE agent then contradicted.
-  s = s + "m=application 9 UDP/DTLS/SCTP webrtc-datachannel" + crlf();
-  s = s + "c=IN IP4 0.0.0.0" + crlf();
+  s = s + "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\{crlf()}";
+  s = s + "c=IN IP4 0.0.0.0\{crlf()}";
   s = s + candidates;
-  s = s + "a=ice-ufrag:" + ufrag + crlf();
-  s = s + "a=ice-pwd:" + password + crlf();
-  s = s + "a=fingerprint:sha-256 " + fingerprint + crlf();
-  s = s + "a=setup:" + setup + crlf();
-  s = s + "a=mid:0" + crlf();
-  s = s + "a=sctp-port:5000" + crlf();
+  s = s + "a=ice-ufrag:\{ufrag}\{crlf()}";
+  s = s + "a=ice-pwd:\{password}\{crlf()}";
+  s = s + "a=fingerprint:sha-256 \{fingerprint}\{crlf()}";
+  s = s + "a=setup:\{setup}\{crlf()}";
+  s = s + "a=mid:0\{crlf()}";
+  s = s + "a=sctp-port:5000\{crlf()}";
   // 65536 is what browsers offer and aiortc expects; a larger value is legal and unhelpful, since
   // the sender still has to fragment for the path.
-  s = s + "a=max-message-size:65536" + crlf();
+  s = s + "a=max-message-size:65536\{crlf()}";
   return s;
 }
 
 /** An `a=candidate:` line from the value `ice.wac` builds. */
-export string candidateLineOf(string candidate) { return "a=candidate:" + candidate + crlf(); }
+export string candidateLineOf(string candidate) { return "a=candidate:\{candidate}\{crlf()}"; }
 
 /**
  * The value of the first `a=<name>:` attribute, or `""`.
@@ -75,7 +74,7 @@ export string candidateLineOf(string candidate) { return "a=candidate:" + candid
  */
 export string attribute(string sdp, string name) {
   u8[] b = sdp.toBytes();
-  u8[] want = ("a=" + name + ":").toBytes();
+  u8[] want = "a=\{name}:".toBytes();
   i32 at = 0;
   while (at < b.len()) {
     // The start of a line, so `a=mid:0` is not found inside some other line's value.

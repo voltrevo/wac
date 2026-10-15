@@ -20,7 +20,6 @@
 // None of them expects a trap, so there is no `trapCase` sweep.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_container_spans_refuses_every_malformed_offset_table as rf__container_spans_refuses_every_malformed_offset_table,
   test_the_field_readers_refuse_what_the_data_cannot_support as rf__the_field_readers_refuse_what_the_data_cannot_support,
@@ -200,6 +199,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED sync_fixture_test test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_refused");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("ssz: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("ssz: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

@@ -54,7 +54,6 @@ import { serveOn } from "../../../fs/src/serve.wac";
 import { argvOf } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Vec, Read } from "core";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 
@@ -100,7 +99,7 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     // Absent is not a failure: a system with no services is a system. Said out loud, because a boot
     // that started nothing in silence is indistinguishable from one that started everything and lost
     // the output.
-    core.warn("init: " + path + ": " + readReason(f) + "; nothing to start");
+    core.warn("init: \{path}: \{readReason(f)}; nothing to start");
     return 0;
   }
 
@@ -135,7 +134,7 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
       return 1;
     }
     if (kid.handle < 0) {
-      core.warn("init: " + argv[0] + ": " + kid.error);
+      core.warn("init: \{argv[0]}: \{kid.error}");
       continue;
     }
     // Nothing feeds a service's input, and a service that waits for one would wait for ever.
@@ -144,7 +143,7 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     errs.push(kid.errHandle);
     chans.push(serve && kid.fsHandle >= 0 ? Chan.of(cli, kid.fsHandle) : null);
     names.push(argv[0]);
-    core.log("init: started " + argv[0]);
+    core.log("init: started \{argv[0]}");
   }
 
   if (handles.len() == 0) {
@@ -214,7 +213,7 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     i32 code = cli.exitCode(h).wait();
     cli.closeSocket(h);
     if (eh >= 0) { cli.closeSocket(eh); }
-    core.log("init: " + names.get(i) + " exited " + itoa(code));
+    core.log("init: \{names.get(i)} exited \{code}");
     if (code != 0 && worst == 0) { worst = code; }
   }
   // **The system ends here, and says so.** Every service has stopped, which is the trigger — see the

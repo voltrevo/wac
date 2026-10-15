@@ -25,7 +25,7 @@ import { reapMatching } from "../../../../tools/wac/suitehouse.wac";
 void started(Cli cli, string script) {
   cli.writeFile(script, "sleep 120\n".toBytes()).wait();
   // `setsid` and detached, so it outlives the shell that starts it and this test can ask about it.
-  cli.execWith("/bin/sh", ["-c", "setsid /bin/sh " + script + " >/dev/null 2>&1 &"],
+  cli.execWith("/bin/sh", ["-c", "setsid /bin/sh \{script} >/dev/null 2>&1 &"],
                u8[](), string[].filled(0, ""), false, false).wait();
 }
 
@@ -37,9 +37,9 @@ bool alive(Cli cli, string script) {
 
 export string test_the_reaper_spares_what_is_young_and_takes_what_is_not(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/reaperprobe";
+  string dir = "\{cli.cwd().wait()}/.cache/reaperprobe";
   cli.mkdir(dir, true).wait();
-  string script = dir + "/held.sh";
+  string script = "\{dir}/held.sh";
 
   started(cli, script);
   core.delay(400).wait();

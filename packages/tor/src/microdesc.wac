@@ -74,7 +74,7 @@ export u8[] microdescriptor(u8[] descriptor, string policySummary) {
   d.pushAll(ntor);
   d.push(10);
   if (policySummary != POLICY_REJECT_ALL && policySummary != "") {
-    d.pushAll(("p " + policySummary + "\n").toBytes());
+    d.pushAll("p \{policySummary}\n".toBytes());
   }
   // `id ed25519 <master identity key>`. tor falls back to `id rsa1024 <identity digest>` for a relay
   // whose descriptor carries no ed25519 certificate; every descriptor this package writes carries one,
@@ -92,7 +92,7 @@ export u8[] microdescDigest(u8[] microdesc) {
 
 /** The consensus line that names this microdescriptor: `m <unpadded base64 of SHA-256>`. */
 export string microdescLine(u8[] microdesc) {
-  return "m " + b64Unpadded(microdescDigest(microdesc));
+  return "m \{b64Unpadded(microdescDigest(microdesc))}";
 }
 
 /**

@@ -23,7 +23,6 @@
 import { fmtF64, fmtF32, parseF64, parseF32, itoaOf } from "./probe.wac";
 import { ftoa, ftoa32, writeF32 } from "../src/ftoa.wac";
 import { Buf } from "core";
-import { itoa } from "../src/itoa.wac";
 import { Rng } from "../../wactest/src/rng.wac";
 
 import { Core, Cli, Sys } from "std";
@@ -118,7 +117,7 @@ export i32 main(Sys sys) {
   // space. The decimal is built as text and parsed, which is what `Number(`${d}e${k}`)` was.
   for (i32 k = -320; k <= 300; k++) {
     for (i32 d = 1; d <= 99; d++) {
-      f64 target = parseF64((itoa(d) + "e" + itoa(k)).toBytes());
+      f64 target = parseF64("\{d}e\{k}".toBytes());
       if (!finite(target) || target == 0.0) { continue; }
       u64 base = f64.toBits(target);
       for (i32 step = -2; step <= 2; step++) {
@@ -140,8 +139,8 @@ export i32 main(Sys sys) {
     "0.1234567890123456789012345", "2.2250738585072011e-308",
     "1.00000000000000000000001e300",
     // 900 significant digits, which is where the sticky flag and the digit cap live.
-    "1." + nines + "e10",
-    "0." + zeros + "1234567890"
+    "1.\{nines}e10",
+    "0.\{zeros}1234567890"
   ];
   for (i32 i = 0; i < texts.len(); i++) {
     u8[] b = texts[i].toBytes();

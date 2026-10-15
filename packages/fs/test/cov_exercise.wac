@@ -59,7 +59,7 @@ export i32 main(Sys sys) {
   // **Named rather than counted.** "a probe returned nothing" sent the reader to thirteen candidates.
   for (i32 i = 0; i < said.len(); i++) {
     if (said[i].len() == 0) {
-      core.warn("error: " + names[i] + " returned an empty transcript, so it measured nothing");
+      core.warn("error: \{names[i]} returned an empty transcript, so it measured nothing");
       return 1;
     }
   }

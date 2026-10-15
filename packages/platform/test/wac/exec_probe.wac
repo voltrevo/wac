@@ -17,7 +17,6 @@
 // number is the claim. "Did the name we passed arrive" is.
 
 import { Cli, Core, Exec, Sys } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 string yn(bool b) { return b ? "yes" : "no"; }
 
@@ -27,8 +26,8 @@ export i32 main(Sys sys) {
   // Inherited: the line below arrives on *this* program's stdout, and the answer carries none of it.
   Exec a = cli.execWith("/bin/echo", ["from the grandchild"], u8[](), string[](),
                         false, true).wait();
-  cli.writeErr(("inherit: ran=" + yn(a.ran()) + " status=" + itoa(a.status) +
-                " buffered=" + itoa(a.stdout.len()) + "/" + itoa(a.stderr.len()) + "\n").toBytes());
+  cli.writeErr(("inherit: ran=\{yn(a.ran())} status=\{a.status}" +
+                " buffered=\{a.stdout.len()}/\{a.stderr.len()}\n").toBytes());
 
   // Handed a name, and the environment it would have had anyway is still there.
   Exec b = cli.execWith("/usr/bin/printenv", string[](), u8[](),
@@ -56,12 +55,12 @@ export i32 main(Sys sys) {
   // this distinction one level up, for a wasm trap.
   Exec d = cli.execWith("/bin/sh", ["-c", "kill -9 $$"], u8[](), string[](), false, true)
               .wait();
-  cli.writeErr(("signalled: ran=" + yn(d.ran()) + " status=" + itoa(d.status) +
-                " signalled=" + yn(d.signalled()) + "\n").toBytes());
+  cli.writeErr(("signalled: ran=\{yn(d.ran())} status=\{d.status}" +
+                " signalled=\{yn(d.signalled())}\n").toBytes());
 
   Exec e = cli.execWith("/bin/sh", ["-c", "exit 255"], u8[](), string[](), false, true)
               .wait();
-  cli.writeErr(("exited: ran=" + yn(e.ran()) + " status=" + itoa(e.status) +
-                " signalled=" + yn(e.signalled()) + "\n").toBytes());
+  cli.writeErr(("exited: ran=\{yn(e.ran())} status=\{e.status}" +
+                " signalled=\{yn(e.signalled())}\n").toBytes());
   return 0;
 }

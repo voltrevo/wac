@@ -31,7 +31,6 @@
 // what matters before scaling the count.
 
 import { Core, Cli, FileResult, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   Awaited, Network, Session, awaitCommand, bootstrap, buildCircuit, buildCircuitTo, relayByEd25519,
 } from "./bootstrap.wac";
@@ -92,7 +91,7 @@ export i32 main(Sys sys) {
     core.warn("hsserviced: bootstrap found no relays");
     return 1;
   }
-  core.log("hsserviced: bootstrapped, " + itoa(net.relays.len()) + " relays");
+  core.log("hsserviced: bootstrapped, \{net.relays.len()} relays");
 
   // ── 1. An introduction point, and the cell that claims it ───────────────────
   //
@@ -118,7 +117,7 @@ export i32 main(Sys sys) {
     core.warn("hsserviced: could not build an introduction circuit");
     return 1;
   }
-  core.log("hsserviced: introduction circuit " + intro.description);
+  core.log("hsserviced: introduction circuit \{intro.description}");
 
   // ESTABLISH_INTRO is signed over the circuit's own KH, which is why it cannot be built before the
   // circuit exists and cannot be replayed onto another one.
@@ -129,7 +128,7 @@ export i32 main(Sys sys) {
     core.warn("hsserviced: the introduction point did not confirm");
     return 1;
   }
-  core.log("hsserviced: introduction point established at " + net.relays[introRelay].nickname);
+  core.log("hsserviced: introduction point established at \{net.relays[introRelay].nickname}");
 
   // ── 2. The descriptor, and the directories that hold it ─────────────────────
   i64[] period = consensusTimePeriod(net.consensus, testnet, 0);
@@ -171,8 +170,8 @@ export i32 main(Sys sys) {
                                   core.randomBytes(16).wait(), core.randomBytes(16).wait(),
                                   decoyClients(core));
     if (built.error != BUILD_OK) {
-      core.warn("hsserviced: could not build the descriptor for period " + itoa(p) +
-                ", error " + itoa(built.error));
+      core.warn("hsserviced: could not build the descriptor for period \{p}" +
+                ", error \{built.error}");
       continue;
     }
     uploaded = uploaded + uploadTo(core, cli, net, plan[p], built);
@@ -181,7 +180,7 @@ export i32 main(Sys sys) {
     core.warn("hsserviced: no directory took the descriptor");
     return 1;
   }
-  core.log("hsserviced: published to " + itoa(uploaded) + " directories");
+  core.log("hsserviced: published to \{uploaded} directories");
 
   // ── 3. Wait for a client, and go and meet it ────────────────────────────────
   u8[] subcred = subcredential(identityPublic, blindedPublicKey(identityPublic, period[0],
@@ -208,13 +207,13 @@ export i32 main(Sys sys) {
                                            clamp(core.randomBytes(32).wait()), cells, cookies,
                                            core.nowMillis().wait() / 1000, testnet);
     if (answer.error != INTRO2_OK) {
-      core.warn("hsserviced: an introduction was refused, reason " + itoa(answer.error));
+      core.warn("hsserviced: an introduction was refused, reason \{answer.error}");
       continue;
     }
     core.log("hsserviced: an introduction, meeting at " +
-             itoa(answer.rendezvous.address[0]) + "." + itoa(answer.rendezvous.address[1]) + "." +
-             itoa(answer.rendezvous.address[2]) + "." + itoa(answer.rendezvous.address[3]) + ":" +
-             itoa(answer.rendezvous.port));
+             "\{answer.rendezvous.address[0]}.\{answer.rendezvous.address[1]}." +
+             "\{answer.rendezvous.address[2]}.\{answer.rendezvous.address[3]}:" +
+             "\{answer.rendezvous.port}");
 
     if (!serveOne(core, cli, net, answer)) {
       core.warn("hsserviced: could not reach the rendezvous point");
@@ -244,7 +243,7 @@ bool serveOne(Core core, Cli cli, Network net, Introduction answer) {
   // circuits. Adding the hop is what makes it the far end of *this* one, and it is the same key
   // expansion the client added — read the other way round, because we are the other end of it.
   rend.circ.addRendezvousHopAsService(rendezvousCircuitKeys(answer.keySeed));
-  core.log("hsserviced: rendezvous joined, the client is hop " + itoa(rend.circ.length()));
+  core.log("hsserviced: rendezvous joined, the client is hop \{rend.circ.length()}");
 
   // Then serve whatever it asks for. **One client at a time**, which is the honest limit of this
   // program rather than of the protocol: while this loop runs, an INTRODUCE2 arriving on the
@@ -271,7 +270,7 @@ bool serveOne(Core core, Cli cli, Network net, Introduction answer) {
         sendCells(rend.link, rend.circ.dataCell(got.streamId, parts[i]));
       }
       sendCells(rend.link, rend.circ.sendToEnd(relayEnd(), got.streamId, endDone()));
-      core.log("hsserviced: served " + itoa(page.len()) + " bytes to a client");
+      core.log("hsserviced: served \{page.len()} bytes to a client");
       break;
     }
   }
@@ -283,7 +282,7 @@ bool serveOne(Core core, Cli cli, Network net, Introduction answer) {
 u8[] greeting() {
   string body = "hello from behind an onion\n";
   return ("HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " +
-          itoa(body.toBytes().len()) + "\r\n\r\n" + body).toBytes();
+          "\{body.toBytes().len()}\r\n\r\n\{body}").toBytes();
 }
 
 /** REASON_DONE, the one-byte body of a RELAY_END that is not an error. */
@@ -300,22 +299,22 @@ i32 uploadTo(Core core, Cli cli, Network net, Publication where, Built built) {
     i32 r = where.hsdirs[i];
     Session s = buildCircuitTo(core, cli, net, r, 0x80000040 + i);
     if (!s.ok) {
-      core.warn("hsserviced: no circuit to " + net.relays[r].nickname);
+      core.warn("hsserviced: no circuit to \{net.relays[r].nickname}");
       continue;
     }
     i32 outcome = publishOverCircuit(s.link, s.circ, built.document,
-                                     net.relays[r].address + ":" + itoa(net.relays[r].orPort));
+                                     "\{net.relays[r].address}:\{net.relays[r].orPort}");
     if (outcome == UPLOAD_OK) {
       took = took + 1;
-      core.log("hsserviced: " + net.relays[r].nickname + " took the descriptor");
+      core.log("hsserviced: \{net.relays[r].nickname} took the descriptor");
     } else if (outcome == UPLOAD_REJECTED) {
       // Every other directory will read the same bytes and refuse them too — see `hsupload.wac`.
-      core.warn("hsserviced: " + net.relays[r].nickname + " refused the descriptor; it is the "
+      core.warn("hsserviced: \{net.relays[r].nickname} refused the descriptor; it is the "
                 + "document that is wrong, not the directory");
       return took;
     } else {
-      core.warn("hsserviced: " + net.relays[r].nickname + " answered oddly, outcome " +
-                itoa(outcome));
+      core.warn("hsserviced: \{net.relays[r].nickname} answered oddly, outcome " +
+                "\{outcome}");
     }
   }
   return took;

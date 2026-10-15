@@ -232,7 +232,7 @@ bool ruleHits(const Rule r, string path, bool isDir) {
   // business, and the pattern is written as if `base` were the root — so it is removed before matching.
   string within = path;
   if (r.base != "") {
-    string prefix = r.base + "/";
+    string prefix = "\{r.base}/";
     if (path.len() <= prefix.len() || path.slice(0, prefix.len()) != prefix) { return false; }
     within = path.slice(prefix.len(), path.len());
   }

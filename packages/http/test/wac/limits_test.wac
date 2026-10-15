@@ -19,7 +19,6 @@
 //     caller outside this package would actually use were the untested pair.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Headers } from "../../src/headers.wac";
 import { Parsed, parseRequest, ERR_TOO_LARGE, ERR_LINE, ERR_TARGET, ERR_CHUNK, ERR_HEADER_NAME }
   from "../../src/request.wac";
@@ -76,7 +75,7 @@ export string test_a_body_past_the_limit_is_refused_on_every_route_into_one() {
   //    per chunk instead of per message would miss.
   string many = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
   for (i32 i = 0; i < 6; i++) { many = many + "8\r\nabcdefgh\r\n"; }
-  t.eqI32(responseRefusal(many + "0\r\n\r\n", "GET", false, 16),
+  t.eqI32(responseRefusal("\{many}0\r\n\r\n", "GET", false, 16),
           ERR_TOO_LARGE(), "six chunks of eight against a limit of sixteen");
 
   // 4. A chunk size so large it does not fit an i32, which must be refused as too large rather than
@@ -89,12 +88,12 @@ export string test_a_body_past_the_limit_is_refused_on_every_route_into_one() {
   //    route where the sender never declared anything, and the limit is the only thing bounding it.
   string body = "";
   for (i32 i = 0; i < 40; i++) { body = body + "x"; }
-  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n" + body, "GET", true, 16),
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n\{body}", "GET", true, 16),
           ERR_TOO_LARGE(), "a close-delimited body past the limit");
 
   // And the same message under a limit that admits it is not refused, so the assertions above are
   // about the limit rather than about the message being malformed.
-  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n" + body, "GET", true, 1024),
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n\{body}", "GET", true, 1024),
           -1, "the same response inside a limit that admits it");
   t.eqI32(requestRefusal("POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello", 1024),
           -1, "a request inside the limit");
@@ -116,7 +115,7 @@ export string test_a_body_past_the_limit_is_refused_on_every_route_into_one() {
 export string test_a_message_with_more_headers_than_the_table_holds() {
   T t = T.create();
   string msg = "GET / HTTP/1.1\r\nHost: a\r\n";
-  for (i32 i = 0; i < 20; i++) { msg = msg + "X-Field-" + itoa(i) + ": value-" + itoa(i) + "\r\n"; }
+  for (i32 i = 0; i < 20; i++) { msg = msg + "X-Field-\{i}: value-\{i}\r\n"; }
   msg = msg + "\r\n";
 
   match (parseRequest(wire(msg), 4096)) {
@@ -124,20 +123,20 @@ export string test_a_message_with_more_headers_than_the_table_holds() {
       t.eqI32(req.headers.len(), 21, "every header is present");
       // Read back by position, since a lost entry shows up as a shifted one rather than a missing one.
       for (i32 i = 0; i < 20; i++) {
-        t.eqStr(string.fromBytes(req.headers.nameAt(i + 1)), "X-Field-" + itoa(i),
-                "the name at position " + itoa(i + 1));
-        t.eqStr(string.fromBytes(req.headers.valueAt(i + 1)), "value-" + itoa(i),
-                "the value at position " + itoa(i + 1));
+        t.eqStr(string.fromBytes(req.headers.nameAt(i + 1)), "X-Field-\{i}",
+                "the name at position \{i + 1}");
+        t.eqStr(string.fromBytes(req.headers.valueAt(i + 1)), "value-\{i}",
+                "the value at position \{i + 1}");
       }
     }
-    Bad(code): { t.isTrue(false, "refused with " + itoa(code)); }
+    Bad(code): { t.isTrue(false, "refused with \{code}"); }
     default: { t.isTrue(false, "the message was incomplete"); }
   }
 
   // The same growth reached directly, so a parser that stopped at some header count of its own would
   // not hide it.
   Headers h = Headers.create();
-  for (i32 i = 0; i < 40; i++) { h.push(("n" + itoa(i)).toBytes(), ("v" + itoa(i)).toBytes()); }
+  for (i32 i = 0; i < 40; i++) { h.push("n\{i}".toBytes(), "v\{i}".toBytes()); }
   t.eqI32(h.len(), 40, "forty pushed, forty held");
   t.eqStr(string.fromBytes(h.nameAt(0)), "n0", "the first survived three doublings");
   t.eqStr(string.fromBytes(h.nameAt(39)), "n39", "and the last is the last");
@@ -170,7 +169,7 @@ export string test_the_request_builder_produces_what_a_caller_asked_for() {
   string sent = string.fromBytes(writeRequest(req, true));
   t.eqStr(sent.slice(0, sent.indexOf("\r\n")), "POST /submit HTTP/1.1",
           "the request line the builder was asked for");
-  t.isTrue(sent.indexOf("\r\nHost: example.test\r\n") > 0, "the host is written — " + sent);
+  t.isTrue(sent.indexOf("\r\nHost: example.test\r\n") > 0, "the host is written — \{sent}");
   t.isTrue(sent.indexOf("\r\nAccept: text/plain\r\n") > 0, "the first Accept survived");
   t.isTrue(sent.indexOf("\r\nAccept: text/html\r\n") > 0, "and so did the second");
 
@@ -181,13 +180,13 @@ export string test_the_request_builder_produces_what_a_caller_asked_for() {
   //
   // The consequence is that `writeDecimal`'s zero case is unreachable from here, which is why
   // `test/cov_ledger.wac` pins it rather than pretending an input exists.
-  t.eqI32(sent.indexOf("Content-Length"), -1, "an empty body declares no length — " + sent);
+  t.eqI32(sent.indexOf("Content-Length"), -1, "an empty body declares no length — \{sent}");
 
   Outgoing withBody = Outgoing.create("POST", "/submit", "example.test");
   withBody.body = "hello".toBytes();
   string sentBody = string.fromBytes(writeRequest(withBody, true));
   t.isTrue(sentBody.indexOf("\r\nContent-Length: 5\r\n") > 0,
-           "a body that exists is framed — " + sentBody);
+           "a body that exists is framed — \{sentBody}");
   t.isTrue(sentBody.indexOf("\r\n\r\nhello") > 0, "and the bytes follow the blank line");
   return t.report();
 }
@@ -196,7 +195,7 @@ export string test_the_request_builder_produces_what_a_caller_asked_for() {
 string responseHeader(string msg, string method, bool eof, i32 maxBody, string name) {
   match (parseResponse(wire(msg), method.toBytes(), eof, maxBody)) {
     Ok(res): { return string.fromBytes(res.headers.first(name)); }
-    Bad(code): { return "(refused " + itoa(code) + ")"; }
+    Bad(code): { return "(refused \{code})"; }
     default: { return "(incomplete)"; }
   }
 }
@@ -280,7 +279,7 @@ export string test_the_shapes_a_node_generated_corpus_does_not_contain() {
   // accumulation check above and a separate line of code.
   string chunks = "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n";
   for (i32 i = 0; i < 6; i++) { chunks = chunks + "8\r\nabcdefgh\r\n"; }
-  t.eqI32(requestRefusal(chunks + "0\r\n\r\n", 16), ERR_TOO_LARGE(),
+  t.eqI32(requestRefusal("\{chunks}0\r\n\r\n", 16), ERR_TOO_LARGE(),
           "a chunked request past the limit");
 
   // A chunked request's *trailer*, padded — the request-side twin of the trailer trim above, and a
@@ -293,7 +292,7 @@ export string test_the_shapes_a_node_generated_corpus_does_not_contain() {
               "a request trailer value is trimmed at both ends");
       t.eqStr(string.fromBytes(req.body), "hello", "and the body is still the body");
     }
-    Bad(code): { t.isTrue(false, "a padded request trailer was refused with " + itoa(code)); }
+    Bad(code): { t.isTrue(false, "a padded request trailer was refused with \{code}"); }
     default: { t.isTrue(false, "a padded request trailer read as incomplete"); }
   }
   return t.report();

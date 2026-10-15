@@ -359,7 +359,7 @@ i32 collectBodies(u8[] s, i32 at, Vec<Token> out, Vec<i32> pendingAt, Vec<string
       string line = sliceOf(s, from, lineEnd);
       p = lineEnd < s.len() ? lineEnd + 1 : lineEnd;
       if (line == delim) { break; }
-      body = body + line + "\n";
+      body = body + "\{line}\n";
     }
     Token t = out.get(pendingAt.get(i));
     t.body = body;

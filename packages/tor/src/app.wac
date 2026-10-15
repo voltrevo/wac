@@ -44,7 +44,7 @@
 
 import { Core, Cli, FileResult, Sys } from "std";
 import { Network, Session, bootstrap, buildCircuit } from "./bootstrap.wac";
-import { fetchOverCircuit, itoa } from "./link.wac";
+import { fetchOverCircuit } from "./link.wac";
 
 export i32 main(Sys sys) {
   Core core = sys.core;
@@ -56,9 +56,9 @@ export i32 main(Sys sys) {
     return 2;
   }
   FileResult seedFile = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
-  if (!seedFile.ok) { core.warn("tor: " + seedFile.error); return 1; }
+  if (!seedFile.ok) { core.warn("tor: \{seedFile.error}"); return 1; }
   FileResult authFile = cli.readFile(string.fromBytes(cli.arg(1).wait())).wait();
-  if (!authFile.ok) { core.warn("tor: " + authFile.error); return 1; }
+  if (!authFile.ok) { core.warn("tor: \{authFile.error}"); return 1; }
   string path = string.fromBytes(cli.arg(2).wait());
 
   Network net = bootstrap(core, cli, seedFile.bytes, authFile.bytes, true);
@@ -71,8 +71,8 @@ export i32 main(Sys sys) {
   // Progress on the error channel, so stdout carries the fetched document and nothing else. Without
   // this `tor … /tor/status-vote/current/consensus > cons.txt` writes a file with three lines of
   // commentary above the document, which every consumer then has to strip.
-  core.warn("path: " + s.description);
-  core.warn("circuit built, " + itoa(s.circ.length()) + " hops");
+  core.warn("path: \{s.description}");
+  core.warn("circuit built, \{s.circ.length()} hops");
 
   u8[] body = fetchOverCircuit(s.link, s.circ, path);
   cli.closeSocket(s.link.sock);

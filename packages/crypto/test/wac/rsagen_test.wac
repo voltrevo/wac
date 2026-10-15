@@ -20,7 +20,6 @@
 // handed; that assertion could not fail.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Big, add, sub, mul, cmp, isZero, bitLen } from "../../../bignum/src/big.wac";
 import { fromBytes, toBytes, modPow, rsaSignPkcs1, rsaVerifyPkcs1 } from "../../src/rsa.wac";
 import {
@@ -55,9 +54,9 @@ u8[] privateKeyPem(RsaKey k) {
   string pem = "-----BEGIN RSA PRIVATE KEY-----\n";
   for (i32 i = 0; i < b64.len(); i = i + 64) {
     i32 end = i + 64 < b64.len() ? i + 64 : b64.len();
-    pem = pem + b64.slice(i, end) + "\n";
+    pem = pem + "\{b64.slice(i, end)}\n";
   }
-  return (pem + "-----END RSA PRIVATE KEY-----\n").toBytes();
+  return ("\{pem}-----END RSA PRIVATE KEY-----\n").toBytes();
 }
 
 /** Whether `text` contains `needle`. */
@@ -92,11 +91,11 @@ export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(Core core
                     privateKeyPem(k)).wait();
   t.eqStr(r.error, "", "openssl could not be started");
   string out = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
-  t.eqI32(r.status, 0, "openssl rejected the generated key: " + out);
+  t.eqI32(r.status, 0, "openssl rejected the generated key: \{out}");
   t.isTrue(contains(out, "RSA key ok"),
-           "openssl accepts it: p and q are prime, n = p*q, and d is the inverse — said: " + out);
+           "openssl accepts it: p and q are prime, n = p*q, and d is the inverse — said: \{out}");
   // And openssl's own reading of the modulus width, which the key's structure has to agree with.
-  t.isTrue(contains(out, "Private-Key: (1024 bit"), "openssl reads it as a 1024-bit key: " + out);
+  t.isTrue(contains(out, "Private-Key: (1024 bit"), "openssl reads it as a 1024-bit key: \{out}");
 
   // And it signs. This is the whole point of the key existing, and it uses `rsaSignPkcs1` from
   // design/0002 step 1 with a key this package made rather than one node handed it.
@@ -151,7 +150,7 @@ export string test_miller_rabin_knows_primes_from_composites(Core core, Cli cli)
   i64[] primes = [2, 3, 5, 7, 11, 13, 97, 101, 7919, 65537, 1000003, 2147483647];
   for (i32 i = 0; i < primes.len(); i++) {
     t.isTrue(millerRabin(small(primes[i]), bases),
-             itoa64(primes[i]) + " is prime");
+             "\{primes[i]} is prime");
   }
 
   // 561, 1105, 1729, 2465 are Carmichael numbers: composite, and Fermat's test calls them prime for
@@ -159,13 +158,13 @@ export string test_miller_rabin_knows_primes_from_composites(Core core, Cli cli)
   i64[] carmichael = [561, 1105, 1729, 2465, 2821, 6601, 8911];
   for (i32 i = 0; i < carmichael.len(); i++) {
     t.isFalse(millerRabin(small(carmichael[i]), bases),
-              itoa64(carmichael[i]) + " is a Carmichael number, and composite");
+              "\{carmichael[i]} is a Carmichael number, and composite");
   }
 
   i64[] composites = [1, 4, 9, 15, 21, 25, 91, 100, 7917, 65535, 1000001];
   for (i32 i = 0; i < composites.len(); i++) {
     t.isFalse(millerRabin(small(composites[i]), bases),
-              itoa64(composites[i]) + " is composite");
+              "\{composites[i]} is composite");
   }
   t.eqI32(MILLER_RABIN_ROUNDS, 40, "forty rounds, which puts the error below 2^-80");
   return t.report();

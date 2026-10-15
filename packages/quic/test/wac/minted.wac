@@ -13,7 +13,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, Pending, Socket } from "std";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
 static string CLIENT = "packages/quic/test/quicclient.ts";
@@ -25,19 +24,19 @@ static string CLIENT = "packages/quic/test/quicclient.ts";
  * which is why the read is retried rather than being a single bounded wait.
  */
 export u8[] anInitial(T t, Core core, Cli cli, string name) {
-  string dir = cli.cwd().wait() + "/.cache/quic/" + name;
+  string dir = "\{cli.cwd().wait()}/.cache/quic/\{name}";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
-    t.fail("our socket did not bind — " + sock.error);
+    t.fail("our socket did not bind — \{sock.error}");
     return u8[]();
   }
-  Daemon d = start(cli, "deno run -A --unstable-net " + quoted(CLIENT) + " " + itoa(sock.port),
-                   dir + "/client.log");
+  Daemon d = start(cli, "deno run -A --unstable-net \{quoted(CLIENT)} \{sock.port}",
+                   "\{dir}/client.log");
   if (!d.ok()) {
-    t.fail("the QUIC client did not start — " + d.error);
+    t.fail("the QUIC client did not start — \{d.error}");
     cli.closeSocket(sock.handle);
     return u8[]();
   }
@@ -51,7 +50,7 @@ export u8[] anInitial(T t, Core core, Cli cli, string name) {
   }
   if (got.len() == 0) {
     t.fail("Deno's QUIC client sent no Initial. It said: " +
-           string.fromBytes(cli.readFile(dir + "/client.log").wait().bytes));
+           string.fromBytes(cli.readFile("\{dir}/client.log").wait().bytes));
   }
 
   stop(cli, d);

@@ -127,7 +127,7 @@ export string resolveAt(string spec, string projectRoot) {
   if (projectRoot == "") { return ""; }
   string rest = spec.slice(2, spec.len());
   string root = here(projectRoot);
-  return root == "." ? here(rest) : here(root + "/" + rest);
+  return root == "." ? here(rest) : here("\{root}/\{rest}");
 }
 
 /** Whether `spec` is a project reference, which is the question a caller asks before the above. */

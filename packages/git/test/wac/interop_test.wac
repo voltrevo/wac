@@ -27,7 +27,6 @@
 // `"blob 99 hello"` — a header that would be refused for a different reason than the one intended.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std";
 import { Vec } from "core";
 import { Buf } from "core";
@@ -85,10 +84,10 @@ string[] splitLines(string s) {
 /** A throwaway repository, and a `git` that runs in it. */
 Git repo(T t, Cli cli, string name) {
   string who = agentDir(cli);
-  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   Git g = Git(cli, dir);
   if (made.ok()) { g.run(["init", "-q"], u8[]()); }
   return g;
@@ -102,7 +101,7 @@ string[] blobs() {
 }
 
 string label(string text) {
-  return text.len() > 20 ? text.slice(0, 20) + "…" : text;
+  return text.len() > 20 ? "\{text.slice(0, 20)}…" : text;
 }
 
 export string test_an_objects_name_is_the_one_git_gives_it(Core core, Cli cli) {
@@ -112,7 +111,7 @@ export string test_an_objects_name_is_the_one_git_gives_it(Core core, Cli cli) {
   for (i32 i = 0; i < all.len(); i++) {
     u8[] bytes = all[i].toBytes();
     t.eqStr(nameOf(Kind.Blob, bytes), g.text(["hash-object", "--stdin"], bytes),
-            "blob \"" + label(all[i]) + "\"");
+            "blob \"\{label(all[i])}\"");
   }
 
   // The canary. Every assertion above is "these two agree", and a harness that hashed nothing would
@@ -135,26 +134,26 @@ export string test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_
 
   for (i32 i = 0; i < all.len(); i++) {
     u8[] bytes = all[i].toBytes();
-    string what = "\"" + label(all[i]) + "\"";
+    string what = "\"\{label(all[i])}\"";
 
     // ── ours, read by git
     string name = nameOf(Kind.Blob, bytes);
-    string whyDir1 = madeDir(cli, g.dir + "/.git/objects/" + name.slice(0, 2));
+    string whyDir1 = madeDir(cli, "\{g.dir}/.git/objects/\{name.slice(0, 2)}");
     t.isTrue(whyDir1 == "", whyDir1);
-    cli.writeFile(g.dir + "/.git/objects/" + name.slice(0, 2) + "/" + name.slice(2, name.len()),
+    cli.writeFile("\{g.dir}/.git/objects/\{name.slice(0, 2)}/\{name.slice(2, name.len())}",
                   looseFile(Kind.Blob, bytes)).wait();
     Exec back = g.run(["cat-file", "blob", name], u8[]());
-    t.eqI32(back.status, 0, "git read the object we wrote for " + what);
-    t.eqStr(string.fromBytes(back.stdout), all[i], "git read the same bytes for " + what);
+    t.eqI32(back.status, 0, "git read the object we wrote for \{what}");
+    t.eqStr(string.fromBytes(back.stdout), all[i], "git read the same bytes for \{what}");
 
     // ── git's, read by us
     string theirs = g.text(["hash-object", "-w", "--stdin"], bytes);
-    FileResult f = cli.readFile(g.dir + "/.git/objects/" + theirs.slice(0, 2) + "/" +
+    FileResult f = cli.readFile("\{g.dir}/.git/objects/\{theirs.slice(0, 2)}/" +
                                 theirs.slice(2, theirs.len())).wait();
-    t.isTrue(f.ok, "git's object file could be read for " + what);
+    t.isTrue(f.ok, "git's object file could be read for \{what}");
     if (!f.ok) { continue; }
     match (readLoose(f.bytes)) {
-      Unreadable(why): { t.isTrue(false, "we could not read git's object: " + why); }
+      Unreadable(why): { t.isTrue(false, "we could not read git's object: \{why}"); }
       Loaded(kind, content): {
         t.eqStr(kind.word(), "blob", "we read git's blob as a blob");
         t.eqStr(string.fromBytes(content), all[i], "we read the same bytes out of git's object");
@@ -175,18 +174,18 @@ export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes
   // subtree as though its name ended in `/`, so `a.b` comes before the directory `a` because `.` is
   // 0x2E and `/` is 0x2F. A parser that kept insertion order would pass on almost any other set of
   // names.
-  string whyDir2 = madeDir(cli, g.dir + "/a");
+  string whyDir2 = madeDir(cli, "\{g.dir}/a");
   t.isTrue(whyDir2 == "", whyDir2);
-  cli.writeFile(g.dir + "/a.b", "dot\n".toBytes()).wait();
-  cli.writeFile(g.dir + "/a/inner", "nested\n".toBytes()).wait();
-  cli.writeFile(g.dir + "/zz", "last\n".toBytes()).wait();
-  cli.setExecutable(g.dir + "/zz", true).wait();
+  cli.writeFile("\{g.dir}/a.b", "dot\n".toBytes()).wait();
+  cli.writeFile("\{g.dir}/a/inner", "nested\n".toBytes()).wait();
+  cli.writeFile("\{g.dir}/zz", "last\n".toBytes()).wait();
+  cli.setExecutable("\{g.dir}/zz", true).wait();
   g.run(["add", "-A"], u8[]());
   string name = g.text(["write-tree"], u8[]());
-  t.eqI32(name.len(), 40, "git wrote a tree: " + name);
+  t.eqI32(name.len(), 40, "git wrote a tree: \{name}");
   if (name.len() != 40) { return t.report(); }
 
-  FileResult f = cli.readFile(g.dir + "/.git/objects/" + name.slice(0, 2) + "/" +
+  FileResult f = cli.readFile("\{g.dir}/.git/objects/\{name.slice(0, 2)}/" +
                               name.slice(2, name.len())).wait();
   t.isTrue(f.ok, "git's tree object could be read");
   if (!f.ok) { return t.report(); }
@@ -194,7 +193,7 @@ export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes
   u8[] content = u8[]();
   match (readLoose(f.bytes)) {
     Unreadable(why): {
-      t.isTrue(false, "git's tree object did not read back: " + why);
+      t.isTrue(false, "git's tree object did not read back: \{why}");
       return t.report();
     }
     Loaded(kind, bytes): {
@@ -206,7 +205,7 @@ export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes
   Vec<Entry> es = Vec.create();
   match (parseTree(content)) {
     Bad(why): {
-      t.isTrue(false, "parse failed: " + why);
+      t.isTrue(false, "parse failed: \{why}");
       return t.report();
     }
     Ok(entries): { es = entries; }
@@ -220,13 +219,13 @@ export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes
     string[] parts = splitOnAny(lines[i]);
     string mode = parts[0];
     while (mode.len() > 5 && mode.slice(0, 1) == "0") { mode = mode.slice(1, mode.len()); }
-    want[i] = mode + " " + parts[3] + " " + parts[2];
+    want[i] = "\{mode} \{parts[3]} \{parts[2]}";
   }
   string[] got = string[].filled(es.len(), "");
   i32 subtrees = 0;
   for (i32 i = 0; i < es.len(); i++) {
     Entry e = es.get(i);
-    got[i] = e.mode + " " + e.name + " " + e.hex();
+    got[i] = "\{e.mode} \{e.name} \{e.hex()}";
     if (e.isTree()) { subtrees = subtrees + 1; }
   }
   t.eqStr(joined(got, "\n"), joined(want, "\n"), "our entries are git's, in git's order");
@@ -267,7 +266,7 @@ export string test_adler32_matches_its_published_vector_and_a_zlib_stream_round_
   string[] all = blobs();
   for (i32 i = 0; i < all.len(); i++) {
     match (zlibDecompress(zlibCompress(all[i].toBytes()))) {
-      Bad(why): { t.isTrue(false, "round trip failed: " + why); }
+      Bad(why): { t.isTrue(false, "round trip failed: \{why}"); }
       Ok(bytes): {
         t.eqStr(string.fromBytes(bytes), all[i], "the round trip kept the bytes");
       }

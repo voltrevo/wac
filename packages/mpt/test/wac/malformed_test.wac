@@ -42,7 +42,6 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Item, encode } from "../../../rlp/src/rlp.wac";
 import { keccak256 } from "../../../crypto/src/keccak.wac";
 import { Proved, verify } from "../../src/proof.wac";
@@ -130,13 +129,13 @@ export string test_a_leaf_whose_value_is_a_list_is_refused() {
   T t = T.create();
   u8[] good = leafNode(Item.Bytes([1, 2, 3] as u8[]));
   Proved wellFormed = verify(keccak256(good), key(), one(good));
-  t.isTrue(wellFormed.ok, "the well-formed twin should verify — " + wellFormed.error);
+  t.isTrue(wellFormed.ok, "the well-formed twin should verify — \{wellFormed.error}");
   t.isTrue(wellFormed.present, "and the key is present in it");
 
   u8[] bad = leafNode(Item.List(Item[].filled(0, Item.Bytes(empty()))));
   Proved got = verify(keccak256(bad), key(), one(bad));
   t.isFalse(got.ok, "accepted, present=" + (got.present ? "true" : "false"));
-  t.isTrue(got.error.indexOf("leaf") >= 0, "the message does not say where: " + got.error);
+  t.isTrue(got.error.indexOf("leaf") >= 0, "the message does not say where: \{got.error}");
   return t.report();
 }
 
@@ -144,13 +143,13 @@ export string test_a_branch_terminal_that_is_a_list_is_refused() {
   T t = T.create();
   Trie good = branchTrie(Item.Bytes([7] as u8[]));
   Proved wellFormed = verify(good.root, key(), good.nodes);
-  t.isTrue(wellFormed.ok, "the well-formed twin should verify — " + wellFormed.error);
+  t.isTrue(wellFormed.ok, "the well-formed twin should verify — \{wellFormed.error}");
   t.isTrue(wellFormed.present, "the branch holds a value at the key");
 
   Trie bad = branchTrie(Item.List(Item[].filled(0, Item.Bytes(empty()))));
   Proved got = verify(bad.root, key(), bad.nodes);
   t.isFalse(got.ok, "accepted, present=" + (got.present ? "true" : "false"));
-  t.isTrue(got.error.indexOf("branch") >= 0, "the message does not say where: " + got.error);
+  t.isTrue(got.error.indexOf("branch") >= 0, "the message does not say where: \{got.error}");
   return t.report();
 }
 
@@ -169,7 +168,7 @@ export string test_a_hex_prefix_header_that_is_a_list_is_refused() {
   u8[] bad = encode(Item.List(pair));
   Proved got = verify(keccak256(bad), key(), one(bad));
   t.isFalse(got.ok, "accepted");
-  t.isTrue(got.error.indexOf("list") >= 0, "the message does not say what was wrong: " + got.error);
+  t.isTrue(got.error.indexOf("list") >= 0, "the message does not say what was wrong: \{got.error}");
   return t.report();
 }
 
@@ -200,16 +199,16 @@ export string test_an_account_field_that_is_a_list_is_refused() {
   T t = T.create();
   Trie good = accountTrie(-1);
   AccountProof wellFormed = accountAt(good.root, address(), good.nodes);
-  t.isTrue(wellFormed.ok, "the well-formed account should verify — " + wellFormed.error);
+  t.isTrue(wellFormed.ok, "the well-formed account should verify — \{wellFormed.error}");
   t.isTrue(wellFormed.present, "and it is in the trie");
 
   string[] names = ["nonce", "balance", "storage root", "code hash"];
   for (i32 at = 0; at < names.len(); at++) {
     Trie bad = accountTrie(at);
     AccountProof got = accountAt(bad.root, address(), bad.nodes);
-    t.isFalse(got.ok, names[at] + ": accepted");
+    t.isFalse(got.ok, "\{names[at]}: accepted");
     t.isTrue(got.error.indexOf(names[at]) >= 0,
-             names[at] + ": the message names the wrong field — " + got.error);
+             "\{names[at]}: the message names the wrong field — \{got.error}");
   }
   return t.report();
 }
@@ -235,8 +234,8 @@ export string test_absence_from_an_empty_trie_is_proved_by_no_nodes() {
   keys[3] = u8[].filled(32, 0xFF);
   for (i32 i = 0; i < keys.len(); i++) {
     Proved got = verify(root, keys[i], u8[][].filled(0, empty()));
-    t.isTrue(got.ok, "key " + itoa(i) + ": " + got.error);
-    t.isFalse(got.present, "key " + itoa(i) + ": nothing is present in an empty trie");
+    t.isTrue(got.ok, "key \{i}: \{got.error}");
+    t.isFalse(got.present, "key \{i}: nothing is present in an empty trie");
   }
   return t.report();
 }
@@ -263,7 +262,7 @@ export string test_no_nodes_against_any_other_root_proves_nothing() {
   ];
   for (i32 i = 0; i < roots.len(); i++) {
     t.isFalse(verify(roots[i], key(), u8[][].filled(0, empty())).ok,
-              names[i] + ": accepted an empty proof");
+              "\{names[i]}: accepted an empty proof");
   }
   return t.report();
 }
@@ -286,7 +285,7 @@ export string test_a_slot_of_an_account_with_no_storage_is_absent() {
   u8[] slot = u8[].filled(32, 0);
   slot[31] = 7;
   StorageProof got = storageAt(acct.account.storageRoot, slot, u8[][].filled(0, empty()));
-  t.isTrue(got.ok, "the empty storage should answer — " + got.error);
+  t.isTrue(got.ok, "the empty storage should answer — \{got.error}");
   t.isFalse(got.present, "the slot is unset");
   t.eqI32(got.value.len(), 0, "and has no value");
   return t.report();
@@ -321,13 +320,13 @@ export string test_a_hex_prefix_header_must_be_canonical_not_merely_parseable() 
   u8[] path = nibbles(key());
   u8[] good = leafWithHeader(hp(path, true));
   Proved fine = verify(keccak256(good), key(), one(good));
-  t.isTrue(fine.ok, "the well-formed twin should verify — " + fine.error);
+  t.isTrue(fine.ok, "the well-formed twin should verify — \{fine.error}");
 
   // An empty header: there is no flag, so there is no leaf.
   u8[] noHeader = leafWithHeader(empty());
   Proved none = verify(keccak256(noHeader), key(), one(noHeader));
   t.isFalse(none.ok, "an empty hex-prefix header was accepted");
-  t.isTrue(none.error.indexOf("empty") >= 0, "the message does not say why: " + none.error);
+  t.isTrue(none.error.indexOf("empty") >= 0, "the message does not say why: \{none.error}");
 
   // A flag nibble above 3. The two bits are leaf and odd; 4 and above are not a hex prefix at all.
   u8[] badFlag = hp(path, true);
@@ -335,7 +334,7 @@ export string test_a_hex_prefix_header_must_be_canonical_not_merely_parseable() 
   u8[] flagged = leafWithHeader(badFlag);
   Proved f = verify(keccak256(flagged), key(), one(flagged));
   t.isFalse(f.ok, "a hex-prefix flag of 4 was accepted");
-  t.isTrue(f.error.indexOf("0..3") >= 0, "the message does not name the range: " + f.error);
+  t.isTrue(f.error.indexOf("0..3") >= 0, "the message does not name the range: \{f.error}");
 
   // **A non-zero pad nibble on an even-length path.** Same path, same value, different bytes.
   u8[] padded = hp(path, true);
@@ -344,7 +343,7 @@ export string test_a_hex_prefix_header_must_be_canonical_not_merely_parseable() 
   u8[] mal = leafWithHeader(padded);
   Proved m = verify(keccak256(mal), key(), one(mal));
   t.isFalse(m.ok, "a non-zero padding nibble was accepted — the same path has two encodings");
-  t.isTrue(m.error.indexOf("pad") >= 0, "the message does not say what is wrong: " + m.error);
+  t.isTrue(m.error.indexOf("pad") >= 0, "the message does not say what is wrong: \{m.error}");
   return t.report();
 }
 
@@ -364,7 +363,7 @@ export string test_a_root_and_a_node_reference_are_thirty_two_bytes() {
 
   Proved short = verify(u8[].filled(31, 0), key(), one(good));
   t.isFalse(short.ok, "a 31-byte root was accepted");
-  t.isTrue(short.error.indexOf("32 bytes") >= 0, "the message does not say so: " + short.error);
+  t.isTrue(short.error.indexOf("32 bytes") >= 0, "the message does not say so: \{short.error}");
   t.isFalse(verify(empty(), key(), one(good)).ok, "an empty root was accepted");
   t.isFalse(verify(u8[].filled(33, 0), key(), one(good)).ok, "a 33-byte root was accepted");
 
@@ -439,7 +438,7 @@ export string test_a_proved_value_that_is_not_rlp_is_refused_after_the_proof_ver
   u8[] acct = leafFor(keccak256(address), Item.Bytes([0xC1] as u8[]));
   AccountProof a = accountAt(keccak256(acct), address, one(acct));
   t.isFalse(a.ok, "an account whose bytes are not RLP was accepted");
-  t.isTrue(a.error.indexOf("not RLP") >= 0, "the message does not say what failed: " + a.error);
+  t.isTrue(a.error.indexOf("not RLP") >= 0, "the message does not say what failed: \{a.error}");
 
   // The same for a storage slot.
   u8[] st = leafFor(keccak256(slot), Item.Bytes([0xC1] as u8[]));
@@ -459,7 +458,7 @@ export string test_a_proved_value_that_is_not_rlp_is_refused_after_the_proof_ver
   u8[] okAcct = leafFor(keccak256(address), Item.Bytes(encode(Item.List(four))));
   AccountProof control = accountAt(keccak256(okAcct), address, one(okAcct));
   t.isTrue(control.ok,
-           "the well-formed account was refused, so the negative above proves nothing — " + control.error);
+           "the well-formed account was refused, so the negative above proves nothing — \{control.error}");
   return t.report();
 }
 
@@ -480,6 +479,6 @@ export string test_a_later_node_cannot_overwrite_the_first_refusal() {
   Proved p = verify(keccak256(two[0]), key(), two);
   t.isFalse(p.ok, "a proof whose first node is not a list was accepted");
   t.isTrue(p.error.indexOf("byte string") >= 0,
-           "the refusal names something other than the first fault: " + p.error);
+           "the refusal names something other than the first fault: \{p.error}");
   return t.report();
 }

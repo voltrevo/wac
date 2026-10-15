@@ -54,8 +54,8 @@ export i32 main(Sys sys) {
     return 2;
   }
 
-  core.warn("crowd: the ring has " + itoa(CALL_SLOTS) + " slots; arming " + itoa(n) +
-            " calls of " + itoa(ms) + "ms");
+  core.warn("crowd: the ring has \{CALL_SLOTS} slots; arming \{n}" +
+            " calls of \{ms}ms");
 
   i64 started = core.nowMillis().wait();
 
@@ -73,7 +73,7 @@ export i32 main(Sys sys) {
     // last line you see is a quarter of a ring behind the truth, which is the most any program can say
     // about the moment it ran out.
     if (armed % (CALL_SLOTS / 4) == 0 && armed > 0) {
-      core.warn("crowd: armed " + itoa(armed) + " so far...");
+      core.warn("crowd: armed \{armed} so far...");
     }
     live[armed] = core.sleepMillis(ms);
     armed = armed + 1;
@@ -87,8 +87,8 @@ export i32 main(Sys sys) {
   }
 
   i64 elapsed = core.nowMillis().wait() - started;
-  core.warn("crowd: armed " + itoa(armed) + ", collected " + itoa(collected) +
-            ", elapsed " + itoa(elapsed as~ i32) + "ms");
+  core.warn("crowd: armed \{armed}, collected \{collected}" +
+            ", elapsed \{elapsed as~ i32}ms");
   return 0;
 }
 
@@ -103,20 +103,3 @@ i32 atoi(u8[] b) {
   return v;
 }
 
-/** Decimal, because `warn` takes a string and this file has numbers to say. */
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  bool neg = v < 0;
-  i32 x = neg ? -v : v;
-  u8[] buf = u8[].filled(12, 0);
-  i32 n = 0;
-  while (x > 0) {
-    buf[n] = ('0' + (x % 10)) as@ u8;
-    n++;
-    x = x / 10;
-  }
-  u8[] out = u8[].filled(n + (neg ? 1 : 0), 0);
-  if (neg) { out[0] = '-'; }
-  for (i32 i = 0; i < n; i++) { out[(neg ? 1 : 0) + i] = buf[n - 1 - i]; }
-  return string.fromBytes(out);
-}

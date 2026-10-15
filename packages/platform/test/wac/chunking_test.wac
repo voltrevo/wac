@@ -19,7 +19,6 @@ import { binaryPath } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
 static string BOX = "packages/box/src/box.wac";
@@ -44,10 +43,10 @@ string firstDifference(u8[] got, u8[] want) {
   i32 n = got.len() > want.len() ? got.len() : want.len();
   for (i32 i = 0; i < n; i++) {
     if (i >= got.len() || i >= want.len() || got[i] != want[i]) {
-      string g = i < got.len() ? itoa(got[i] as i32) : "<end>";
-      string w = i < want.len() ? itoa(want[i] as i32) : "<end>";
-      return "first difference at byte " + itoa(i) + ": got " + g + ", want " + w +
-             " (lengths " + itoa(got.len()) + " and " + itoa(want.len()) + ")";
+      string g = i < got.len() ? "\{got[i] as i32}" : "<end>";
+      string w = i < want.len() ? "\{want[i] as i32}" : "<end>";
+      return "first difference at byte \{i}: got \{g}, want \{w}" +
+             " (lengths \{got.len()} and \{want.len()})";
     }
   }
   return "";
@@ -55,11 +54,11 @@ string firstDifference(u8[] got, u8[] want) {
 
 export string test_the_bridge_chunks_in_both_directions(Core core, Cli cli) {
   T t = T.create();
-  string dir = root(cli) + "/.cache/chunking";
+  string dir = "\{root(cli)}/.cache/chunking";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  string src = dir + "/src.bin";
-  string dst = dir + "/dst.bin";
+  string src = "\{dir}/src.bin";
+  string dst = "\{dir}/dst.bin";
 
   // **`builtProgram` rather than `deno run packages/platform/build.ts`.** `design/system/0009` is
   // removing that builder's non-browser targets. This wanted a program to run, which `wac
@@ -80,44 +79,44 @@ export string test_the_bridge_chunks_in_both_directions(Core core, Cli cli) {
     // Out through `write`: the whole file crosses as the request payload.
     Exec cat = cli.exec(binaryPath(cli), [app, "cat", src], u8[]()).wait();
     t.isTrue(cat.ran() && cat.status == 0,
-             "cat at " + itoa(size) + " bytes — " + string.fromBytes(cat.stderr));
+             "cat at \{size} bytes — \{string.fromBytes(cat.stderr)}");
     if (cat.ran() && cat.status == 0) {
       string d = firstDifference(cat.stdout, data);
-      t.eqStr(d, "", "cat at " + itoa(size) + " bytes: " + d);
+      t.eqStr(d, "", "cat at \{size} bytes: \{d}");
     }
 
     // And through `writeFile`, which is where `cp` was failing.
     cli.remove(dst, false).wait();
     Exec cp = cli.exec(binaryPath(cli), [app, "cp", src, dst], u8[]()).wait();
     t.isTrue(cp.ran() && cp.status == 0,
-             "cp at " + itoa(size) + ": " + string.fromBytes(cp.stderr));
+             "cp at \{size}: \{string.fromBytes(cp.stderr)}");
     if (cp.ran() && cp.status == 0) {
       FileResult back = cli.readFile(dst).wait();
-      t.isTrue(back.ok, "cp at " + itoa(size) + " wrote a file — " + back.error);
+      t.isTrue(back.ok, "cp at \{size} wrote a file — \{back.error}");
       if (back.ok) {
         string d = firstDifference(back.bytes, data);
-        t.eqStr(d, "", "cp at " + itoa(size) + " bytes: " + d);
+        t.eqStr(d, "", "cp at \{size} bytes: \{d}");
       }
     }
   }
 
   // Both directions at once, through a compressor. `src` is still the last size written above.
   FileResult data = cli.readFile(src).wait();
-  t.isTrue(data.ok, "the source is still there — " + data.error);
+  t.isTrue(data.ok, "the source is still there — \{data.error}");
   if (data.ok) {
     Exec gz = cli.exec(binaryPath(cli), [app, "gzip", src], u8[]()).wait();
-    t.isTrue(gz.ran() && gz.status == 0, "gzip ran — " + string.fromBytes(gz.stderr));
+    t.isTrue(gz.ran() && gz.status == 0, "gzip ran — \{string.fromBytes(gz.stderr)}");
     // Compressed, rather than handed back unchanged — a `gzip` that copied its input would round
     // trip perfectly and prove nothing about either direction.
     t.isTrue(gz.ran() && gz.stdout.len() > 0 && gz.stdout.len() < data.bytes.len(),
-             "gzip made it no smaller: " + itoa(gz.stdout.len()) + " from " +
-             itoa(data.bytes.len()));
+             "gzip made it no smaller: \{gz.stdout.len()} from " +
+             "\{data.bytes.len()}");
     if (gz.ran() && gz.status == 0) {
       Exec back = cli.exec(binaryPath(cli), [app, "gunzip"], gz.stdout).wait();
-      t.isTrue(back.ran() && back.status == 0, "gunzip ran — " + string.fromBytes(back.stderr));
+      t.isTrue(back.ran() && back.status == 0, "gunzip ran — \{string.fromBytes(back.stderr)}");
       if (back.ran() && back.status == 0) {
         string d = firstDifference(back.stdout, data.bytes);
-        t.eqStr(d, "", "gzip and back at " + itoa(data.bytes.len()) + " bytes: " + d);
+        t.eqStr(d, "", "gzip and back at \{data.bytes.len()} bytes: \{d}");
       }
     }
   }

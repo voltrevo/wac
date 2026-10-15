@@ -15,7 +15,6 @@
 import { sha1 } from "../../crypto/src/sha1.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { Buf } from "core";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { Unzipped, zlibCompress, zlibDecompress } from "./zlib.wac";
 
 /** The four kinds git stores. The spelling is the one that goes in the header. */
@@ -52,7 +51,7 @@ export Kind? kindOf(string word) {
  */
 export u8[] framed(Kind kind, u8[] content) {
   Buf out = Buf.create();
-  out.pushAll((kind.word() + " " + itoa(content.len())).toBytes());
+  out.pushAll("\{kind.word()} \{content.len()}".toBytes());
   out.push(0);
   out.pushAll(content);
   return out.take();
@@ -109,7 +108,7 @@ export enum Object {
  */
 export Object readLoose(u8[] file) {
   match (zlibDecompress(file)) {
-    Bad(why): { return Object.Unreadable("not a zlib stream: " + why); }
+    Bad(why): { return Object.Unreadable("not a zlib stream: \{why}"); }
     Ok(raw): { return parseFramed(raw); }
   }
 }
@@ -139,7 +138,7 @@ export Object parseFramed(u8[] raw) {
   Buf w = Buf.create();
   for (i32 i = 0; i < space; i++) { w.push(raw[i]); }
   Kind? kind = kindOf(w.toStr());
-  if (kind is null) { return Object.Unreadable("unknown object kind '" + w.toStr() + "'"); }
+  if (kind is null) { return Object.Unreadable("unknown object kind '\{w.toStr()}'"); }
 
   // The length is checked rather than trusted. It is the one field that can disagree with the bytes
   // around it, and a header claiming fewer bytes than follow would otherwise truncate the content
@@ -152,7 +151,7 @@ export Object parseFramed(u8[] raw) {
   }
   i32 have = raw.len() - nul - 1;
   if (want != have) {
-    return Object.Unreadable("header says " + itoa(want) + " bytes and " + itoa(have) + " follow");
+    return Object.Unreadable("header says \{want} bytes and \{have} follow");
   }
 
   u8[] content = u8[].filled(have, 0);

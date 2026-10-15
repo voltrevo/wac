@@ -15,7 +15,6 @@ import { Cli, Core, GRANT_ALL, Sys } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { main } from "../../src/box.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { splitOn } from "./replay.wac";
 
 /** What `box` said, running the whole program in a frame. */
@@ -47,8 +46,8 @@ export string test_help_is_answered_three_ways(Core core, Cli cli) {
   string[] spellings = ["help", "--help", "-h"];
   for (i32 i = 0; i < spellings.len(); i++) {
     Said said = box(core, cli, [spellings[i]]);
-    t.eqI32(said.code, 0, "box " + spellings[i] + " should succeed: " + said.err);
-    t.isTrue(said.err.indexOf("usage: box") >= 0, "box " + spellings[i] + ": " + said.err);
+    t.eqI32(said.code, 0, "box \{spellings[i]} should succeed: \{said.err}");
+    t.isTrue(said.err.indexOf("usage: box") >= 0, "box \{spellings[i]}: \{said.err}");
   }
   return t.report();
 }
@@ -66,7 +65,7 @@ export string test_the_usage_lists_every_applet_and_wraps_it(Core core, Cli cli)
 
   string[] want = ["cat", "grep", "sha256sum", "zstd"];
   for (i32 i = 0; i < want.len(); i++) {
-    t.isTrue(help.err.indexOf(want[i]) >= 0, "usage does not list " + want[i] + ":\n" + help.err);
+    t.isTrue(help.err.indexOf(want[i]) >= 0, "usage does not list \{want[i]}:\n\{help.err}");
   }
 
   // The applet list is the indented lines that are not `label:` lines. More than one of them is the
@@ -77,8 +76,8 @@ export string test_the_usage_lists_every_applet_and_wraps_it(Core core, Cli cli)
     string line = lines[i];
     if (line.len() < 2 || line.slice(0, 2) != "  " || line.indexOf(":") >= 0) { continue; }
     listed++;
-    t.isTrue(line.len() <= 74, "a usage line is " + itoa(line.len()) + " wide: " + line);
+    t.isTrue(line.len() <= 74, "a usage line is \{line.len()} wide: \{line}");
   }
-  t.isTrue(listed > 1, "the applet list is not wrapped at all:\n" + help.err);
+  t.isTrue(listed > 1, "the applet list is not wrapped at all:\n\{help.err}");
   return t.report();
 }

@@ -19,7 +19,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { gunzipBytes, inflate } from "../../src/inflate.wac";
 import { gzipStored, gzipFixed, gzipDynamic, gzipBest } from "../../src/gzip.wac";
 import { External, pythonGzip, pythonZlib, firstDifference } from "./external.wac";
@@ -69,8 +68,8 @@ u8[][] samples() {
 /** `got` against `want`, as a message naming the first byte that differs — or "". */
 string sameBytes(u8[] got, u8[] want) {
   i32 diff = firstDifference(got, want);
-  if (diff == -2) { return "length " + itoa(got.len()) + ", expected " + itoa(want.len()); }
-  if (diff >= 0) { return "byte " + itoa(diff) + " differs"; }
+  if (diff == -2) { return "length \{got.len()}, expected \{want.len()}"; }
+  if (diff >= 0) { return "byte \{diff} differs"; }
   return "";
 }
 
@@ -82,8 +81,8 @@ export string test_python_gzip_output_levels_zero_through_nine(Core core, Cli cl
   for (i32 i = 0; i < data.len(); i++) {
     for (i32 k = 0; k < levels.len(); k++) {
       External gz = pythonGzip(cli, data[i], levels[k]);
-      string where = names[i] + " @level " + itoa(levels[k]);
-      t.isTrue(gz.ok(), where + ": " + gz.error);
+      string where = "\{names[i]} @level \{levels[k]}";
+      t.isTrue(gz.ok(), "\{where}: \{gz.error}");
       if (!gz.ok()) { continue; }
       t.eqStr(sameBytes(gunzipBytes(gz.bytes), data[i]), "", where);
     }
@@ -100,22 +99,22 @@ export string test_python_gzip_output_levels_zero_through_nine(Core core, Cli cl
 export string test_gzip_cli_output_including_the_fname_header_field(Core core, Cli cli) {
   T t = T.create();
   u8[] data = repeated("filename header check ", 100);
-  string dir = "/tmp/wac-inflate-" + itoa(data.len());
+  string dir = "/tmp/wac-inflate-\{data.len()}";
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   if (!made.ok()) { return t.report(); }
-  string path = dir + "/payload.txt";
+  string path = "\{dir}/payload.txt";
   // gzip refuses to overwrite, so a leftover from an interrupted run would fail the next one.
-  cli.remove(path + ".gz", false).wait();
+  cli.remove("\{path}.gz", false).wait();
   Change wrote = cli.writeFile(path, data).wait();
-  t.isTrue(wrote.ok(), "the payload writes: " + wrote.message);
+  t.isTrue(wrote.ok(), "the payload writes: \{wrote.message}");
   if (wrote.ok()) {
     Exec r = cli.exec("gzip", ["-9", path], u8[]()).wait();
     t.isTrue(r.ran() && r.status == 0,
              "gzip ran: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
     if (r.ran() && r.status == 0) {
-      FileResult got = cli.readFile(path + ".gz").wait();
-      t.isTrue(got.ok, "gzip wrote " + path + ".gz — " + got.error);
+      FileResult got = cli.readFile("\{path}.gz").wait();
+      t.isTrue(got.ok, "gzip wrote \{path}.gz — \{got.error}");
       if (got.ok) {
         u8[] gz = got.bytes;
         t.isTrue(gz.len() > 3 && (gz[3] & 8) != 0,
@@ -125,7 +124,7 @@ export string test_gzip_cli_output_including_the_fname_header_field(Core core, C
     }
   }
   Change gone = cli.remove(dir, true).wait();
-  if (!gone.ok()) { core.warn("inflate: could not remove " + dir + " — " + gone.message); }
+  if (!gone.ok()) { core.warn("inflate: could not remove \{dir} — \{gone.message}"); }
   return t.report();
 }
 
@@ -140,10 +139,10 @@ export string test_round_trips_this_compressors_own_output() {
   string[] names = sampleNames();
   u8[][] data = samples();
   for (i32 i = 0; i < data.len(); i++) {
-    t.eqStr(sameBytes(gunzipBytes(gzipStored(data[i])), data[i]), "", "stored/" + names[i]);
-    t.eqStr(sameBytes(gunzipBytes(gzipFixed(data[i])), data[i]), "", "fixed/" + names[i]);
-    t.eqStr(sameBytes(gunzipBytes(gzipDynamic(data[i])), data[i]), "", "dynamic/" + names[i]);
-    t.eqStr(sameBytes(gunzipBytes(gzipBest(data[i])), data[i]), "", "best/" + names[i]);
+    t.eqStr(sameBytes(gunzipBytes(gzipStored(data[i])), data[i]), "", "stored/\{names[i]}");
+    t.eqStr(sameBytes(gunzipBytes(gzipFixed(data[i])), data[i]), "", "fixed/\{names[i]}");
+    t.eqStr(sameBytes(gunzipBytes(gzipDynamic(data[i])), data[i]), "", "dynamic/\{names[i]}");
+    t.eqStr(sameBytes(gunzipBytes(gzipBest(data[i])), data[i]), "", "best/\{names[i]}");
   }
   return t.report();
 }
@@ -160,7 +159,7 @@ export string test_overlapping_matches_decode_byte_by_byte() {
   for (i32 i = 0; i < lengths.len(); i++) {
     u8[] data = u8[].filled(lengths[i], 0x7E);
     t.eqStr(sameBytes(gunzipBytes(gzipFixed(data)), data), "",
-            itoa(lengths[i]) + " identical bytes");
+            "\{lengths[i]} identical bytes");
   }
   u8[] ab = repeated("ab", 3000);
   t.eqStr(sameBytes(gunzipBytes(gzipFixed(ab)), ab), "", "ab-repeat");
@@ -169,9 +168,9 @@ export string test_overlapping_matches_decode_byte_by_byte() {
   // hundreds, so an off-by-one in the predicate survives them — these land on it.
   for (i32 d = 3; d <= 6; d++) {
     string unit = "abcdefgh".slice(0, d);
-    u8[] data = (unit + unit + unit.slice(0, 1) + "ZZZZZZZZ").toBytes();
+    u8[] data = "\{unit}\{unit}\{unit.slice(0, 1)}ZZZZZZZZ".toBytes();
     t.eqStr(sameBytes(gunzipBytes(gzipFixed(data)), data), "",
-            "a match one byte longer than its distance " + itoa(d));
+            "a match one byte longer than its distance \{d}");
   }
   return t.report();
 }
@@ -181,7 +180,7 @@ export string test_raw_deflate_streams_without_the_gzip_wrapper(Core core, Cli c
   T t = T.create();
   u8[] data = repeated("raw deflate stream ", 50);
   External raw = pythonZlib(cli, data, 6, -15);
-  t.isTrue(raw.ok(), "python zlib: " + raw.error);
+  t.isTrue(raw.ok(), "python zlib: \{raw.error}");
   if (!raw.ok()) { return t.report(); }
   t.eqStr(sameBytes(inflate(raw.bytes), data), "", "the raw stream inflates");
   return t.report();
@@ -335,10 +334,10 @@ export string test_multi_block_streams_from_a_large_input(Core core, Cli cli) {
   i32[] levels = [1, 6, 9];
   for (i32 k = 0; k < levels.len(); k++) {
     External gz = pythonGzip(cli, data, levels[k]);
-    t.isTrue(gz.ok(), "level " + itoa(levels[k]) + ": " + gz.error);
+    t.isTrue(gz.ok(), "level \{levels[k]}: \{gz.error}");
     if (!gz.ok()) { continue; }
     t.eqStr(sameBytes(gunzipBytes(gz.bytes), data), "",
-            "level " + itoa(levels[k]) + ": 400000-byte stream");
+            "level \{levels[k]}: 400000-byte stream");
   }
   return t.report();
 }

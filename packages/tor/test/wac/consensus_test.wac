@@ -13,7 +13,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   signedLength, signedDigest, keyFingerprint, rsaModulus, rsaExponent, signatureMatches,
   parseCertificates, verifyConsensus, parseUtc, AuthorityCert, Verdict,
@@ -62,7 +61,7 @@ Fixtures fixtures(T t, Cli cli, u8[][] digests) {
                            u8[][](), u8[][](), u8[][]());
   Lines lines = Lines.create();
   lines.add("consfixtures");
-  for (i32 i = 0; i < digests.len(); i++) { lines.add("conssign " + hex(digests[i])); }
+  for (i32 i = 0; i < digests.len(); i++) { lines.add("conssign \{hex(digests[i])}"); }
   Answers a = ask(t, cli, "node", [ORACLE], lines, "the consensus fixtures");
   if (!a.ok) { return none; }
   // `consfixtures` answers ten lines: two keys, six documents and two fingerprint sets.
@@ -166,7 +165,7 @@ export string test_a_genuine_signature_verifies(Core core, Cli cli) {
   u8[] e = rsaExponent(f.keyDer);
   for (i32 i = 0; i < 6; i++) {
     t.isTrue(signatureMatches(n, e, digests[i], f.signatures[i]),
-             "signature " + itoa64(i as i64) + " verifies");
+             "signature \{i as i64} verifies");
   }
   t.isTrue(signatureMatches(n, e, digests[6], f.signatures[6]), "a sha256 digest verifies too");
   return t.report();
@@ -193,14 +192,14 @@ export string test_everything_that_must_be_refused(Core core, Cli cli) {
     u8[] d = copyOf(digest);
     d[i] = d[i] ^ 1;
     t.isTrue(!signatureMatches(n, e, d, sig),
-             "digest byte " + itoa64(i as i64) + " flipped is refused");
+             "digest byte \{i as i64} flipped is refused");
   }
   // Every single-byte change to the signature.
   for (i32 i = 0; i < 256; i += 17) {
     u8[] s = copyOf(sig);
     s[i] = s[i] ^ 0x80;
     t.isTrue(!signatureMatches(n, e, digest, s),
-             "signature byte " + itoa64(i as i64) + " flipped is refused");
+             "signature byte \{i as i64} flipped is refused");
   }
 
   // A truncated or over-long signature, which must not be padded or cut to fit.
@@ -479,7 +478,7 @@ export string test_a_malformed_consensus_is_refused_without_trapping(Core core, 
                                      certs, trusted, 1785715200);
   t.isFalse(noWindow.ok, "a consensus with no valid-after was accepted");
   t.eqStr(noWindow.stale, "no valid-after/valid-until",
-          "a missing validity window was not reported as such: " + noWindow.stale);
+          "a missing validity window was not reported as such: \{noWindow.stale}");
   t.eqI32(noWindow.goodSignatures, 0,
           "editing the signed portion left signatures intact, which cannot be right");
 
@@ -631,14 +630,14 @@ export string test_a_malformed_directory_signature_line_is_not_counted(Core core
   string line0 = signatureLine(doc, 0);
   string algo = field(line0, 0);
   t.isTrue(algo == "sha1" || algo == "sha256",
-           "the first signature's algorithm is \"" + algo + "\", so the cases below are misaimed");
+           "the first signature's algorithm is \"\{algo}\", so the cases below are misaimed");
   string identity = field(line0, 1);
   string keyDigest = field(line0, 2);
   t.isTrue(identity.len() > 0 && keyDigest.len() > 0, "the first signature line did not parse");
 
   // 1. An algorithm neither sha1 nor sha256. Three fields, so the shape is right and the name is not.
   //    Defence in depth — see the header. The count drops here whether or not the arm exists.
-  t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0, "sha512 " + identity + " " + keyDigest),
+  t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0, "sha512 \{identity} \{keyDigest}"),
                           certs, trusted, 1785715200).goodSignatures, 2,
           "a signature under an algorithm we do not implement was counted");
 
@@ -648,7 +647,7 @@ export string test_a_malformed_directory_signature_line_is_not_counted(Core core
   t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0, identity),
                           certs, trusted, 1785715200).goodSignatures, 2,
           "a signature line of one field was counted");
-  t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0, "sha256 " + identity + " " + keyDigest + " extra"),
+  t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0, "sha256 \{identity} \{keyDigest} extra"),
                           certs, trusted, 1785715200).goodSignatures, 2,
           "a signature line of four fields was counted");
 
@@ -687,7 +686,7 @@ export string test_a_malformed_directory_signature_line_is_not_counted(Core core
   // 5. A signing key that identity never certified — the check `consensus.wac` calls out in a
   //    comment as the reason both fields must match.
   t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0,
-              algo + " " + identity + " FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
+              "\{algo} \{identity} FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
                           certs, trusted, 1785715200).goodSignatures, 2,
           "a signature naming a signing key its identity never certified was counted");
 

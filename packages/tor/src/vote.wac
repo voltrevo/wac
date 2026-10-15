@@ -27,7 +27,6 @@
 import { sha1 } from "../../crypto/src/sha1.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { Buf } from "core";
-import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { rsaSignRawPkcs1 } from "../../crypto/src/rsa.wac";
 import { AuthorityKeys, plainFingerprint } from "./authcert.wac";
 import {
@@ -171,26 +170,26 @@ export u8[] voteDocument(
   Buf d = Buf.create();
   d.pushAll("network-status-version 3\n".toBytes());
   d.pushAll("vote-status vote\n".toBytes());
-  d.pushAll(("consensus-methods " + CONSENSUS_METHODS + "\n").toBytes());
-  d.pushAll(("published " + publishedTime(info.published) + "\n").toBytes());
-  d.pushAll(("valid-after " + publishedTime(info.validAfter) + "\n").toBytes());
-  d.pushAll(("fresh-until " + publishedTime(info.freshUntil) + "\n").toBytes());
-  d.pushAll(("valid-until " + publishedTime(info.validUntil) + "\n").toBytes());
-  d.pushAll(("voting-delay " + itoa(info.voteSeconds) + " " + itoa(info.distSeconds) +
+  d.pushAll("consensus-methods \{CONSENSUS_METHODS}\n".toBytes());
+  d.pushAll("published \{publishedTime(info.published)}\n".toBytes());
+  d.pushAll("valid-after \{publishedTime(info.validAfter)}\n".toBytes());
+  d.pushAll("fresh-until \{publishedTime(info.freshUntil)}\n".toBytes());
+  d.pushAll("valid-until \{publishedTime(info.validUntil)}\n".toBytes());
+  d.pushAll(("voting-delay \{info.voteSeconds} \{info.distSeconds}" +
              "\n").toBytes());
-  d.pushAll(("recommended-relay-protocols " + RELAY_PROTOCOLS + "\n").toBytes());
-  d.pushAll(("recommended-client-protocols " + CLIENT_PROTOCOLS + "\n").toBytes());
-  d.pushAll(("required-relay-protocols " + RELAY_PROTOCOLS + "\n").toBytes());
-  d.pushAll(("required-client-protocols " + CLIENT_PROTOCOLS + "\n").toBytes());
-  d.pushAll(("known-flags " + KNOWN_FLAGS + "\n").toBytes());
-  d.pushAll(("params " + PARAMS + "\n").toBytes());
+  d.pushAll("recommended-relay-protocols \{RELAY_PROTOCOLS}\n".toBytes());
+  d.pushAll("recommended-client-protocols \{CLIENT_PROTOCOLS}\n".toBytes());
+  d.pushAll("required-relay-protocols \{RELAY_PROTOCOLS}\n".toBytes());
+  d.pushAll("required-client-protocols \{CLIENT_PROTOCOLS}\n".toBytes());
+  d.pushAll("known-flags \{KNOWN_FLAGS}\n".toBytes());
+  d.pushAll("params \{PARAMS}\n".toBytes());
 
   // `dir-source` writes the fingerprint as unbroken uppercase hex, like a certificate and unlike a
   // descriptor. Address and IP are separate fields and are the same thing for a testnet.
-  d.pushAll(("dir-source " + info.nickname + " " + plainFingerprint(identityFp) + " " +
-             info.address + " " + info.ip + " " + itoa(info.dirPort) + " " +
-             itoa(info.orPort) + "\n").toBytes());
-  d.pushAll(("contact " + info.contact + "\n").toBytes());
+  d.pushAll(("dir-source \{info.nickname} \{plainFingerprint(identityFp)} " +
+             "\{info.address} \{info.ip} \{info.dirPort} " +
+             "\{info.orPort}\n").toBytes());
+  d.pushAll("contact \{info.contact}\n".toBytes());
 
   // The certificate goes in verbatim, so that a reader who has only the authority's fingerprint can
   // learn the signing key from the vote itself. It is what makes a vote self-verifying.
@@ -205,11 +204,11 @@ export u8[] voteDocument(
     RelayOpinion r = opinionFor(relays, lines[i]);
     d.pushAll(lines[i]);
     d.push(10);
-    d.pushAll(("s " + r.flags + "\n").toBytes());
-    d.pushAll(("v Tor " + TOR_VERSION + "\n").toBytes());
-    d.pushAll(("pr " + RELAY_SUBPROTOCOLS + "\n").toBytes());
-    d.pushAll(("w Bandwidth=" + itoa64(r.bandwidth) + "\n").toBytes());
-    d.pushAll(("p " + r.exitPolicy + "\n").toBytes());
+    d.pushAll("s \{r.flags}\n".toBytes());
+    d.pushAll("v Tor \{TOR_VERSION}\n".toBytes());
+    d.pushAll("pr \{RELAY_SUBPROTOCOLS}\n".toBytes());
+    d.pushAll("w Bandwidth=\{r.bandwidth}\n".toBytes());
+    d.pushAll("p \{r.exitPolicy}\n".toBytes());
     u8[] ed = lineValue(r.descriptor, "master-key-ed25519 ");
     if (ed.len() > 0) {
       d.pushAll("id ed25519 ".toBytes());
@@ -224,7 +223,7 @@ export u8[] voteDocument(
   d.pushAll(signatureKeyword());
   u8[] digest = voteSignatureDigest(d.bytes());
   if (digest.len() != 20) { return u8[](); }
-  d.pushAll((plainFingerprint(identityFp) + " " + plainFingerprint(signingFp) + "\n").toBytes());
+  d.pushAll("\{plainFingerprint(identityFp)} \{plainFingerprint(signingFp)}\n".toBytes());
   u8[] sig = rsaSignRawPkcs1(keys.signingN, keys.signingD, digest);
   if (sig.len() == 0) { return u8[](); }
   d.pushAll(pemBlock("SIGNATURE", sig));

@@ -11,7 +11,6 @@
 // the relay to exist first.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   relayHandshakeReply, authChallengeBody, relayNetinfo, relayNetinfoAt, responderVersion,
   netinfoOtherAddress, supportedVersions, AUTH_METHOD_ED25519_SHA256_RFC5705,
@@ -143,7 +142,7 @@ export string test_the_version_we_pick_is_the_highest_in_common() {
   t.isTrue(mine.len() >= 1, "we speak at least one version");
   for (i32 i = 0; i < mine.len(); i++) {
     t.eqI32(responderVersion(encodeVersions([mine[i]])), mine[i],
-            "we accept version " + itoa64(mine[i] as i64) + ", which we offer");
+            "we accept version \{mine[i] as i64}, which we offer");
   }
   return t.report();
 }

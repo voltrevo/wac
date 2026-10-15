@@ -42,7 +42,6 @@ import { T } from "../../wactest/src/assert.wac";
 import { Rng } from "../../wactest/src/rng.wac";
 import { Lines, Answers, askDeno, word } from "../../wactest/src/oracle.wac";
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr,
          opMulSmall, opDivSmall, opRemSmall, opCmp, opCmpAbs, opBitLen, opIsZero,
          roundTrip, acceptsDecimal, acceptsHex, toHex, fromHex, fromI64,
@@ -137,7 +136,7 @@ i32 both(string x, string y) {
 }
 
 /** `-x` as text, without arithmetic: the oracle's answers are never negative. */
-string neg(string x) { return x == "0" ? "0" : "-" + x; }
+string neg(string x) { return x == "0" ? "0" : "-\{x}"; }
 
 export i32 main(Sys sys) {
   Core core = sys.core;
@@ -150,7 +149,7 @@ export i32 main(Sys sys) {
   // Where the sign rules and the |a| < |b| early return live. Every value fits in an i32, so wac
   // writes these itself.
   for (i32 x = -40; x <= 40; x++) {
-    for (i32 y = -40; y <= 40; y++) { seen = seen + both(itoa(x), itoa(y)); }
+    for (i32 y = -40; y <= 40; y++) { seen = seen + both("\{x}", "\{y}"); }
   }
 
   // ── Batch one: every operand that is a fixed shape ──
@@ -166,7 +165,7 @@ export i32 main(Sys sys) {
       // `2^0 - 2` is negative and the oracle rightly refuses it; not asking keeps `FAIL` meaning
       // "the caller asked wrongly" rather than "this combination does not exist".
       if (powers[i] == 0 && d < -1) { continue; }
-      b1.add("pow2 " + itoa(powers[i]) + " " + itoa(d));
+      b1.add("pow2 \{powers[i]} \{d}");
       nAsked = nAsked + 1;
     }
   }
@@ -177,11 +176,11 @@ export i32 main(Sys sys) {
   i32[] limbCounts = [1, 2, 3, 4, 8, 17];
   i32 runsAt = nAsked;
   for (i32 i = 0; i < limbCounts.len(); i++) {
-    b1.add("ones " + itoa(limbCounts[i]) + " 0");
-    b1.add("ones " + itoa(limbCounts[i]) + " -1");
-    b1.add("ones " + itoa(limbCounts[i]) + " 1");
-    b1.add("pow2 " + itoa(32 * limbCounts[i]) + " 0");
-    b1.add("alt " + itoa(limbCounts[i]));
+    b1.add("ones \{limbCounts[i]} 0");
+    b1.add("ones \{limbCounts[i]} -1");
+    b1.add("ones \{limbCounts[i]} 1");
+    b1.add("pow2 \{32 * limbCounts[i]} 0");
+    b1.add("alt \{limbCounts[i]}");
     nAsked = nAsked + 5;
   }
 
@@ -193,7 +192,7 @@ export i32 main(Sys sys) {
   for (i32 i = 0; i < addbackLimbs.len(); i++) {
     for (i32 p = 0; p < tops.len(); p++) {
       for (i32 q = 0; q < rests.len(); q++) {
-        b1.add("word " + itoa(addbackLimbs[i]) + " " + tops[p] + " " + rests[q]);
+        b1.add("word \{addbackLimbs[i]} \{tops[p]} \{rests[q]}");
         nAsked = nAsked + 1;
       }
     }
@@ -204,7 +203,7 @@ export i32 main(Sys sys) {
   i32 quotientsAt = nAsked;
   i32 perDivisor = 6;
   for (i32 i = 0; i < nDivisors * perDivisor; i++) {
-    b1.add("rand " + itoa(1 + r.upto(130)));
+    b1.add("rand \{1 + r.upto(130)}");
     nAsked = nAsked + 1;
   }
 
@@ -212,7 +211,7 @@ export i32 main(Sys sys) {
   i32 randomAt = nAsked;
   i32 nRandom = 200;
   for (i32 i = 0; i < nRandom * 2; i++) {
-    b1.add("rand " + itoa(1 + r.upto(400)));
+    b1.add("rand \{1 + r.upto(400)}");
     nAsked = nAsked + 1;
   }
 
@@ -239,9 +238,9 @@ export i32 main(Sys sys) {
     for (i32 k = 0; k < perDivisor; k++) {
       string q = decOf(a1, quotientsAt + i * perDivisor + k);
       // `-1`, `0`, `+1` around an exact multiple: the remainder-zero path and both sides of it.
-      b2.add("mul " + q + " " + d + " -1");
-      b2.add("mul " + q + " " + d + " 0");
-      b2.add("mul " + q + " " + d + " 1");
+      b2.add("mul \{q} \{d} -1");
+      b2.add("mul \{q} \{d} 0");
+      b2.add("mul \{q} \{d} 1");
       nMul = nMul + 3;
     }
   }
@@ -352,7 +351,7 @@ export i32 main(Sys sys) {
   for (i32 i = 0; i < 18; i++) { eighteen = eighteen + "1"; }
   string[] decs = [
     "0", "-0", "+0", "007", "-12345", forty,
-    "", "-", "+", "abc", "1.5", "1e5", " 1", "1,000", "1x", nines + "x", eighteen + "x"
+    "", "-", "+", "abc", "1.5", "1e5", " 1", "1,000", "1x", "\{nines}x", "\{eighteen}x"
   ];
   for (i32 i = 0; i < decs.len(); i++) {
     if (acceptsDecimal(decs[i].toBytes())) { seen = seen + 1; }

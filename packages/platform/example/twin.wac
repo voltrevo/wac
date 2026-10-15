@@ -33,7 +33,7 @@ export i32 main(Sys sys) {
     for (i32 i = 1; i < n; i++) {
       said = said + (i > 1 ? " " : "") + string.fromBytes(cli.arg(i).wait());
     }
-    cli.write(("SHOUT: " + upper(said) + "\n").toBytes());
+    cli.write("SHOUT: \{upper(said)}\n".toBytes());
     return 0;
   }
 
@@ -43,11 +43,11 @@ export i32 main(Sys sys) {
   // shouting needs nothing — and a child could not have more than this program has anyway.
   Child kid = cli.spawnSelf(argvOf(["shout", "hello", "twin"]), GRANT_NONE, "", false, false).wait();
   if (kid.unavailable()) {
-    core.warn("twin: this world cannot spawn: " + kid.error);
+    core.warn("twin: this world cannot spawn: \{kid.error}");
     return 2;
   }
   if (kid.handle < 0) {
-    core.warn("twin: " + kid.error);
+    core.warn("twin: \{kid.error}");
     return 1;
   }
 
@@ -60,7 +60,7 @@ export i32 main(Sys sys) {
       Data(bytes): { cli.write(bytes); }
       End: { reading = false; }
       Failed(why): {
-        core.warn("twin: reading the child: " + why);
+        core.warn("twin: reading the child: \{why}");
         return 1;
       }
     }
@@ -68,7 +68,7 @@ export i32 main(Sys sys) {
 
   i32 code = cli.exitCode(kid.handle).wait();
   cli.closeSocket(kid.handle);
-  core.log("parent: the child exited " + itoa(code));
+  core.log("parent: the child exited \{code}");
   return code;
 }
 
@@ -82,14 +82,3 @@ u8[] upperBytes(u8[] b) {
 
 string upper(string s) { return string.fromBytes(upperBytes(s.toBytes())); }
 
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  if (v == -2147483648) { return "-2147483648"; }
-  i32 x = v < 0 ? 0 - v : v;
-  string out = "";
-  while (x > 0) {
-    out = string.fromCodepoint('0' + (x % 10)) + out;
-    x = x / 10;
-  }
-  return (v < 0 ? "-" : "") + out;
-}

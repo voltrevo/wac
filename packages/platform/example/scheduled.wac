@@ -31,12 +31,12 @@ export i32 main(Sys sys) {
   i32 done = 0;
   core.delay(1).then((i64 at) => { done = done + 1; core.log("first"); });
   core.delay(2).then((i64 at) => { done = done + 1; core.log("second"); });
-  core.log("scheduled " + itoa(core.outstanding()) + ", ran " + itoa(done));
+  core.log("scheduled \{core.outstanding()}, ran \{done}");
 
   if (how == "drain") {
     // Runs them here, on this stack, in the order the host answered.
     i32 ran = core.drain();
-    core.log("drained " + itoa(ran) + ", ran " + itoa(done));
+    core.log("drained \{ran}, ran \{done}");
     return 0;
   }
 
@@ -45,9 +45,9 @@ export i32 main(Sys sys) {
     // `Core` hands out; `Cli.of` links its thirty-one the same way, so neither of these says where
     // its continuation should run. A ticket made by the program itself is the one case that still
     // does — `Pending.linkedTo` is for those, and `packages/platform/test/wac/sched_test.wac` has one.
-    core.randomBytes(8).then((u8[] b) => { core.log("random " + itoa(b.len())); });
+    core.randomBytes(8).then((u8[] b) => { core.log("random \{b.len()}"); });
     cli.cwd().then((string d) => { core.log("and a Cli ticket, linked by its capability"); });
-    core.log("drained " + itoa(core.drain()));
+    core.log("drained \{core.drain()}");
     return 0;
   }
 
@@ -57,14 +57,14 @@ export i32 main(Sys sys) {
     i32 ran = core.drainFor(500);
     // The two above ran; this one did not, and is still outstanding — a budget that ran out is not a
     // decision, so leaving now would be the same error as never draining.
-    core.log("budget ran " + itoa(ran) + ", left " + itoa(core.outstanding()));
-    core.log("abandoned " + itoa(core.dropAll()));
+    core.log("budget ran \{ran}, left \{core.outstanding()}");
+    core.log("abandoned \{core.dropAll()}");
     return 0;
   }
 
   if (how == "abandon") {
     // **Meaning it.** Each ticket's own `drop` is called, so the host's slots go back.
-    core.log("abandoned " + itoa(core.dropAll()));
+    core.log("abandoned \{core.dropAll()}");
     return 0;
   }
 
@@ -74,10 +74,3 @@ export i32 main(Sys sys) {
   return 0;
 }
 
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  i32 x = v < 0 ? 0 - v : v;
-  string out = "";
-  while (x > 0) { out = string.fromCodepoint('0' + (x % 10)) + out; x = x / 10; }
-  return (v < 0 ? "-" : "") + out;
-}

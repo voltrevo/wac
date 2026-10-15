@@ -33,7 +33,6 @@
 // ledger asked for; the second is what the first turned up.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import {
   Record, Handshake, parseRecord, recordSize, parseHandshake, record, handshake,
   helloGroups, helloOffers, helloCookie, chosenSuite, serverPublic, clientPublic,
@@ -94,7 +93,7 @@ export string test_a_group_list_longer_than_its_extension_is_refused() {
   for (i32 claim = 0; claim < 24; claim = claim + 2) {
     i32[] got = helloGroups(clientHello(claim));
     t.isTrue(got.len() * 2 <= 2,
-             "a list length of " + itoa(claim) + " yielded " + itoa(got.len()) +
+             "a list length of \{claim} yielded \{got.len()}" +
              " groups, which is more than the extension can hold");
   }
 
@@ -128,8 +127,8 @@ export string test_every_prefix_of_a_hello_is_survived_by_every_reader() {
     i32[] g = helloGroups(part);
     u8[] c = helloCookie(part);
     bool o = helloOffers(part, 0xC02B);
-    t.isTrue(g.len() * 2 <= (n > 0 ? n : 0), "a prefix of " + itoa(n) + " yielded too many groups");
-    t.isTrue(c.len() <= (n > 0 ? n : 0), "a prefix of " + itoa(n) + " yielded too long a cookie");
+    t.isTrue(g.len() * 2 <= (n > 0 ? n : 0), "a prefix of \{n} yielded too many groups");
+    t.isTrue(c.len() <= (n > 0 ? n : 0), "a prefix of \{n} yielded too long a cookie");
     cuts = cuts + 1;
   }
   t.eqI32(cuts, full.len(), "the sweep did not reach every prefix");
@@ -151,7 +150,7 @@ export string test_every_prefix_of_a_hello_is_survived_by_every_reader() {
   t.eqI32(chosenSuite(server), 0xC02B, "the ServerHello's suite is not the one written into it");
   for (i32 n = 0; n < server.len(); n++) {
     t.isTrue(chosenSuite(prefix(server, n)) == -1 || n >= server.len(),
-             "a ServerHello prefix of " + itoa(n) + " answered a suite");
+             "a ServerHello prefix of \{n} answered a suite");
   }
   return t.report();
 }
@@ -183,14 +182,14 @@ export string test_a_record_or_handshake_header_that_does_not_add_up_is_refused(
   // Every prefix of the record refuses rather than reading past the end.
   for (i32 n = 0; n < rec.len(); n++) {
     t.eqI32(recordSize(prefix(rec, n), 0), -1,
-            "a record of " + itoa(n) + " bytes was reported as whole");
+            "a record of \{n} bytes was reported as whole");
     t.isFalse(parseRecord(prefix(rec, n), 0).ok,
-              "a record of " + itoa(n) + " bytes parsed");
+              "a record of \{n} bytes parsed");
   }
   // And every prefix of the handshake message.
   for (i32 n = 0; n < msg.len(); n++) {
     t.isFalse(parseHandshake(prefix(msg, n)).ok,
-              "a handshake message of " + itoa(n) + " bytes parsed");
+              "a handshake message of \{n} bytes parsed");
   }
 
   // A record header whose length field promises more than arrived.
@@ -243,7 +242,7 @@ export string test_the_nested_lengths_that_were_already_checked_stay_checked() {
   t.eqI32(leafCertificate(lyingCert).len(), 0, "a certificate longer than its message was read");
   for (i32 n = 0; n < cert.len(); n++) {
     t.isTrue(leafCertificate(prefix(cert, n)).len() <= n,
-             "a certificate prefix of " + itoa(n) + " yielded more bytes than it holds");
+             "a certificate prefix of \{n} yielded more bytes than it holds");
   }
 
   // A ServerKeyExchange: curve_type(3), named_curve(2), public key length + key, then the signature.

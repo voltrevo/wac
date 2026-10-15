@@ -39,7 +39,6 @@ import { Session } from "../src/session.wac";
 import { candidateLineOf, dataChannelDescription, attribute, fingerprintOf,
          hexColons } from "../src/sdp.wac";
 import { candidateLine, candidatePriority, prefHost, Candidate } from "../src/ice.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** Ten years, in the seconds since the epoch a certificate counts in. */
 i64 notBefore() { return 1735689600 as i64; }      // 2025-01-01
@@ -140,7 +139,7 @@ export i32 main(Sys sys) {
 
   Socket sock = cli.bindDatagram(host, port).wait();
   if (sock.error.len() > 0) {
-    core.warn("could not bind " + host + ":" + itoa(port) + ": " + sock.error);
+    core.warn("could not bind \{host}:\{port}: \{sock.error}");
     return 1;
   }
 
@@ -174,7 +173,7 @@ export i32 main(Sys sys) {
     for (i32 guard = 0; guard < 64; guard++) {
       u8[] msg = session.take();
       if (msg.len() == 0) { break; }
-      core.log("received " + itoa(msg.len()) + " bytes");
+      core.log("received \{msg.len()} bytes");
       u8[][] back = session.send(0, msg, now);
       for (i32 i = 0; i < back.len(); i++) {
         cli.sendTo(sock.handle, in.peer, in.port, back[i]).wait();

@@ -18,7 +18,6 @@ import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
 import { recordsReady } from "../../src/record.wac";
 import { pemBundle, Store } from "../../src/roots.wac";
 import { Buf } from "core";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 
 /** How long a handshake and one reply may take before the peer is called dead. */
@@ -100,12 +99,12 @@ Chunk readOnce(Core core, Cli cli, i32 handle, i32 millis) {
     // slot until the call underneath finishes. Closing the handle is what makes it finish.
     read.cancel();
     cli.closeSocket(handle);
-    return Chunk(u8[](), false, "the peer said nothing for " + itoa(millis) + "ms");
+    return Chunk(u8[](), false, "the peer said nothing for \{millis}ms");
   }
   match (read.wait()) {
     Data(bytes): { return Chunk(bytes, true, ""); }
     End: { return Chunk(u8[](), true, ""); }
-    Failed(why): { return Chunk(u8[](), false, "recv: " + why); }
+    Failed(why): { return Chunk(u8[](), false, "recv: \{why}"); }
   }
 }
 
@@ -120,10 +119,10 @@ export Reply request(Core core, Cli cli, string host, i32 port, string sni, Stor
   Pending<Socket> dial = cli.connect(host, port);
   if (core.waitAny([dial.id], READ_TIMEOUT_MS) < 0) {
     dial.cancel();
-    return Reply(-1, "", host + ":" + itoa(port) + " did not answer the dial");
+    return Reply(-1, "", "\{host}:\{port} did not answer the dial");
   }
   Socket s = dial.wait();
-  if (s.handle < 0) { return Reply(-1, "", "connect: " + s.error); }
+  if (s.handle < 0) { return Reply(-1, "", "connect: \{s.error}"); }
 
   ClientStep st = firstFlight(core, cli, sni, roots, now);
   u8[] state = st.state;

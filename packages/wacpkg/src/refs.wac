@@ -65,17 +65,17 @@ export Resolved resolveRef(string[] names, string[] commits, string ref) {
   i32 exact = indexOfName(names, ref);
   if (exact >= 0) { return peeledOr(names, commits, ref, exact); }
 
-  i32 head = indexOfName(names, "refs/heads/" + ref);
-  i32 tag = indexOfName(names, "refs/tags/" + ref);
+  i32 head = indexOfName(names, "refs/heads/\{ref}");
+  i32 tag = indexOfName(names, "refs/tags/\{ref}");
   if (head >= 0 && tag >= 0) { return refFailed(R_AMBIGUOUS()); }
   if (head >= 0) { return Resolved(true, R_OK(), commits[head], names[head]); }
-  if (tag >= 0) { return peeledOr(names, commits, "refs/tags/" + ref, tag); }
+  if (tag >= 0) { return peeledOr(names, commits, "refs/tags/\{ref}", tag); }
   return refFailed(R_NOT_FOUND());
 }
 
 /** `name`'s commit, or the commit its `^{}` peel names when one is advertised. */
 Resolved peeledOr(string[] names, string[] commits, string name, i32 at) {
-  i32 peeled = indexOfName(names, name + "^{}");
+  i32 peeled = indexOfName(names, "\{name}^{}");
   if (peeled >= 0) { return Resolved(true, R_OK(), commits[peeled], names[peeled]); }
   return Resolved(true, R_OK(), commits[at], names[at]);
 }

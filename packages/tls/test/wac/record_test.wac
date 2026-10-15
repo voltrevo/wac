@@ -23,7 +23,6 @@
 // every byte of a record it is handed. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   recordSeal, recordOpen, recordType, recordContent, recordLength, suiteAes128Gcm,
   suiteChaCha20, suiteKeyLen, typeHandshake, typeApplicationData, typeAlert,
@@ -80,8 +79,8 @@ export string test_round_trips_both_suites_at_every_shape() {
       for (i32 li = 0; li < lens.len(); li++) {
         u8[] content = fill(lens[li], 6);
         u8[] inner = recordOpen(suite, key, iv, 42, recordSeal(suite, key, iv, 42, types[ti], content, 3));
-        t.eqI32(recordType(inner), types[ti], "content type at len " + itoa64(lens[li] as i64));
-        t.eqBytes(recordContent(inner), content, "content at len " + itoa64(lens[li] as i64));
+        t.eqI32(recordType(inner), types[ti], "content type at len \{lens[li] as i64}");
+        t.eqBytes(recordContent(inner), content, "content at len \{lens[li] as i64}");
       }
     }
   }
@@ -167,8 +166,8 @@ export string test_sealing_agrees_with_the_host_aead(Core core, Cli cli) {
     for (i32 q = 0; q < seqs.len(); q++) {
       i64 seq = seqs[q] as i64;
       u8[] rec = recordSeal(suite, key, iv, seq, typeHandshake(), fill(64 + seqs[q] % 7, 23), 0);
-      lines.add("aeadopen " + itoa64(suite as i64) + " " + hex(key) + " " +
-                hex(sequenceNonce(iv, seq)) + " " + hex(slice(rec, 0, 5)) + " " +
+      lines.add("aeadopen \{suite as i64} \{hex(key)} " +
+                "\{hex(sequenceNonce(iv, seq))} \{hex(slice(rec, 0, 5))} " +
                 hex(slice(rec, 5, rec.len())));
     }
   }
@@ -180,7 +179,7 @@ export string test_sealing_agrees_with_the_host_aead(Core core, Cli cli) {
       i64 seq = seqs[q] as i64;
       u8[] content = fill(64 + seqs[q] % 7, 23);
       u8[] plain = decoded(word(a.lines[s * seqs.len() + q], 1));
-      t.isTrue(plain.len() > 0, "the host decrypts what we sealed at seq " + itoa64(seq));
+      t.isTrue(plain.len() > 0, "the host decrypts what we sealed at seq \{seq}");
       if (plain.len() > 0) {
         // The plaintext is the content, then the true type, then any padding.
         t.eqI32(plain.len(), content.len() + 1, "plaintext is content plus a type byte");
@@ -211,9 +210,9 @@ export string test_the_header_is_authenticated(Core core, Cli cli) {
   // Both in one batch, so a host that answered empty to everything fails the first assertion
   // rather than quietly satisfying the second.
   Lines lines = Lines.create();
-  string prefix = "aeadopen " + itoa64(aes as i64) + " " + hex(key) + " " + hex(iv) + " ";
-  lines.add(prefix + hex(goodAad) + " " + hex(ct));
-  lines.add(prefix + hex(badAad) + " " + hex(ct));
+  string prefix = "aeadopen \{aes as i64} \{hex(key)} \{hex(iv)} ";
+  lines.add("\{prefix}\{hex(goodAad)} \{hex(ct)}");
+  lines.add("\{prefix}\{hex(badAad)} \{hex(ct)}");
   Answers a = ask(t, cli, "node", [ORACLE], lines, "a good header and a rewritten one");
   if (!a.ok) { return t.report(); }
 
@@ -288,7 +287,7 @@ export string test_only_whole_records_are_offered() {
   u8[] one = record(100);
   t.eqI32(recordsReady(one), 105, "exactly one record");
   for (i32 i = 0; i < 105; i++) {
-    t.eqI32(recordsReady(cut(one, i)), 0, "one record cut at " + itoa64(i as i64));
+    t.eqI32(recordsReady(cut(one, i)), 0, "one record cut at \{i as i64}");
   }
 
   u8[] three = join(join(record(10), record(20)), record(30));

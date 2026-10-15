@@ -24,7 +24,6 @@
 // are ordinary calls.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std";
 import { Vec } from "core";
 import { Kind, nameOf } from "../../src/object.wac";
@@ -134,31 +133,31 @@ Kind kindOfCode(i32 kind) {
  */
 Packed packed(T t, Cli cli, string name) {
   string who = agentDir(cli);
-  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   Packed p = Packed(cli, dir, "", "");
   if (!made.ok()) { return p; }
 
   p.run(["init", "-q"]);
   string body = "";
   for (i32 i = 0; i < 200; i++) { body = body + "a very long shared body\n"; }
-  cli.writeFile(dir + "/big.txt", body.toBytes()).wait();
+  cli.writeFile("\{dir}/big.txt", body.toBytes()).wait();
   for (i32 i = 1; i <= 3; i++) {
-    cli.writeFile(dir + "/f" + itoa64(i as i64) + ".txt",
-                  ("line " + itoa64(i as i64) + "\n").toBytes()).wait();
+    cli.writeFile("\{dir}/f\{i as i64}.txt",
+                  "line \{i as i64}\n".toBytes()).wait();
   }
   p.run(["add", "-A"]);
   p.run(["commit", "-qm", "one"]);
   string more = body;
   for (i32 i = 0; i < 5; i++) { more = more + "a very long shared body\n"; }
-  cli.writeFile(dir + "/big.txt", more.toBytes()).wait();
+  cli.writeFile("\{dir}/big.txt", more.toBytes()).wait();
   p.run(["add", "-A"]);
   p.run(["commit", "-qm", "two"]);
   p.run(["gc", "-q"]);
 
-  string pd = dir + "/.git/objects/pack";
+  string pd = "\{dir}/.git/objects/pack";
   string[]? listing = cli.readDir(pd).wait();
   string stem = "";
   if (!(listing is null)) {
@@ -169,7 +168,7 @@ Packed packed(T t, Cli cli, string name) {
     }
   }
   t.isTrue(stem != "", "the fixture has a pack");
-  return Packed(cli, dir, pd + "/" + stem + ".pack", pd + "/" + stem + ".idx");
+  return Packed(cli, dir, "\{pd}/\{stem}.pack", "\{pd}/\{stem}.idx");
 }
 
 export string test_every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its_own_name(
@@ -177,17 +176,17 @@ export string test_every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its
   T t = T.create();
   Packed f = packed(t, cli, "pack");
   match (openPack(f.packBytes(), f.idxBytes())) {
-    Refused(why): { t.isTrue(false, "openPack refused: " + why); }
+    Refused(why): { t.isTrue(false, "openPack refused: \{why}"); }
     Ready(p): {
       PackIndex idx = p.idx;
       t.isTrue(idx.count >= 9,
-               "at least nine objects, got " + itoa64(idx.count as i64));
+               "at least nine objects, got \{idx.count as i64}");
       for (i32 i = 0; i < idx.count; i++) {
         match (objectAt(p, idx.offsets[i], 64)) {
-          Absent(why): { t.isTrue(false, idx.hexAt(i) + " did not resolve: " + why); }
+          Absent(why): { t.isTrue(false, "\{idx.hexAt(i)} did not resolve: \{why}"); }
           Found(kind, data): {
             t.eqStr(nameOf(kindOfCode(kind), data), idx.hexAt(i),
-                    "the object at offset " + itoa64(idx.offsets[i]) + " hashes to its own name");
+                    "the object at offset \{idx.offsets[i]} hashes to its own name");
           }
         }
       }
@@ -219,7 +218,7 @@ export string test_the_header_at_each_offset_says_what_verify_pack_says(Core cor
   T t = T.create();
   Packed f = packed(t, cli, "pack2");
   match (openPack(f.packBytes(), f.idxBytes())) {
-    Refused(why): { t.isTrue(false, "openPack refused: " + why); }
+    Refused(why): { t.isTrue(false, "openPack refused: \{why}"); }
     Ready(p): {
       // `<name> <type> <size> <compressed> <offset> [<depth> <base>]`
       string[] all = splitLines(f.text(["verify-pack", "-v", f.idxPath]));
@@ -241,29 +240,29 @@ export string test_the_header_at_each_offset_says_what_verify_pack_says(Core cor
         i32 atOffset = -1;
         bool weSayDelta = false;
         match (rawAt(p, offset)) {
-          Damaged(why): { t.isTrue(false, name + ": rawAt failed: " + why); }
+          Damaged(why): { t.isTrue(false, "\{name}: rawAt failed: \{why}"); }
           Whole(kind, data): {
             atOffset = data.len();
-            t.eqStr(kindWord(kind), type, name + "'s type");
+            t.eqStr(kindWord(kind), type, "\{name}'s type");
           }
           FromOffset(base, delta): { atOffset = delta.len(); weSayDelta = true; }
           FromName(baseName, delta): { atOffset = delta.len(); weSayDelta = true; }
         }
-        t.eqI64(atOffset as i64, size, name + ": the bytes at its offset");
-        t.eqBool(weSayDelta, isDeltaRow, name + ": whether it is a delta");
+        t.eqI64(atOffset as i64, size, "\{name}: the bytes at its offset");
+        t.eqBool(weSayDelta, isDeltaRow, "\{name}: whether it is a delta");
 
         // And the other number: the reconstructed object, which for a delta is a different size.
         match (objectAt(p, offset, 64)) {
-          Absent(why): { t.isTrue(false, name + " did not resolve: " + why); }
+          Absent(why): { t.isTrue(false, "\{name} did not resolve: \{why}"); }
           Found(kind, data): {
             t.eqI64(data.len() as i64, atoi64(f.text(["cat-file", "-s", name])),
-                    name + ": the reconstructed size");
+                    "\{name}: the reconstructed size");
             t.eqStr(kindWord(kind), f.text(["cat-file", "-t", name]),
-                    name + ": the kind after resolving");
+                    "\{name}: the kind after resolving");
           }
         }
       }
-      t.isTrue(rows >= 9, "verify-pack listed " + itoa64(rows as i64) + " objects");
+      t.isTrue(rows >= 9, "verify-pack listed \{rows as i64} objects");
       t.isTrue(deltaRows >= 1,
                "verify-pack reported a delta, so the two-numbers case was exercised");
     }
@@ -276,11 +275,11 @@ export string test_a_named_lookup_finds_an_object_through_the_index(Core core, C
   T t = T.create();
   Packed f = packed(t, cli, "pack3");
   match (openPack(f.packBytes(), f.idxBytes())) {
-    Refused(why): { t.isTrue(false, "openPack refused: " + why); }
+    Refused(why): { t.isTrue(false, "openPack refused: \{why}"); }
     Ready(p): {
       string head = f.text(["rev-parse", "HEAD"]);
       match (objectNamed(p, decodedName(head))) {
-        Absent(why): { t.isTrue(false, "HEAD not found in the pack: " + why); }
+        Absent(why): { t.isTrue(false, "HEAD not found in the pack: \{why}"); }
         Found(kind, data): {
           t.eqStr(kindWord(kind), "commit", "HEAD comes back as a commit");
           t.eqStr(trimmed(string.fromBytes(data)),
@@ -396,16 +395,16 @@ export string test_an_index_we_built_from_a_pack_alone_is_the_index_git_wrote(Co
   u8[] packBytes = f.packBytes();
 
   match (indexPack(packBytes)) {
-    Unindexable(why): { t.isTrue(false, "indexPack failed: " + why); }
+    Unindexable(why): { t.isTrue(false, "indexPack failed: \{why}"); }
     Thin(bases): { t.isTrue(false, "the fixture pack came back thin"); }
     Built(ours): {
       match (parseIdx(f.idxBytes())) {
-        Rejected(why): { t.isTrue(false, "git's own index did not parse: " + why); }
+        Rejected(why): { t.isTrue(false, "git's own index did not parse: \{why}"); }
         Loaded(g): {
           t.eqI32(ours.count, g.count, "the number of objects");
           for (i32 i = 0; i < g.count && i < ours.count; i++) {
-            t.eqStr(ours.hexAt(i) + "@" + itoa64(ours.offsets[i]),
-                    g.hexAt(i) + "@" + itoa64(g.offsets[i]), "entry " + itoa64(i as i64));
+            t.eqStr("\{ours.hexAt(i)}@\{ours.offsets[i]}",
+                    "\{g.hexAt(i)}@\{g.offsets[i]}", "entry \{i as i64}");
           }
         }
       }
@@ -426,7 +425,7 @@ export string test_the_index_we_write_is_the_file_git_wrote_byte_for_byte(Core c
   u8[] packBytes = f.packBytes();
 
   match (indexPack(packBytes)) {
-    Unindexable(why): { t.isTrue(false, "indexPack failed: " + why); }
+    Unindexable(why): { t.isTrue(false, "indexPack failed: \{why}"); }
     Thin(bases): { t.isTrue(false, "the fixture pack came back thin"); }
     Built(idx): {
       // The pack's own trailing SHA-1 goes in the index's second-to-last field. It is not in
@@ -446,14 +445,14 @@ export string test_the_index_we_write_is_the_file_git_wrote_byte_for_byte(Core c
         if (ours[i] != theirs[i]) { differ = i; }
       }
       t.eqI32(differ, -1, differ < 0 ? "byte for byte" :
-              "byte " + itoa64(differ as i64) + " is " + itoa64(ours[differ] as i64) +
-              " and git's is " + itoa64(theirs[differ] as i64) + " — in " +
+              "byte \{differ as i64} is \{ours[differ] as i64}" +
+              " and git's is \{theirs[differ] as i64} — in " +
               layoutOf(differ, idx.count, theirs.len()));
 
       // The fixture's shape, asserted: a fanout that is all in one bucket, or a pack of one object,
       // would agree by accident. `big.txt` twice gives a delta, and five objects spread the first
       // byte around.
-      t.isTrue(idx.count >= 8, "a pack of " + itoa64(idx.count as i64) + " objects");
+      t.isTrue(idx.count >= 8, "a pack of \{idx.count as i64} objects");
       i32 distinct = 0;
       i32[] seen = i32[].filled(256, 0);
       for (i32 i = 0; i < idx.count; i++) {
@@ -461,7 +460,7 @@ export string test_the_index_we_write_is_the_file_git_wrote_byte_for_byte(Core c
         if (seen[b] == 0) { distinct = distinct + 1; seen[b] = 1; }
       }
       t.isTrue(distinct >= 4,
-               "names start with " + itoa64(distinct as i64) + " distinct bytes, so the fanout is " +
+               "names start with \{distinct as i64} distinct bytes, so the fanout is " +
                "exercised");
     }
   }
@@ -472,15 +471,15 @@ export string test_the_index_we_write_is_the_file_git_wrote_byte_for_byte(Core c
 /** Where a differing byte sits, in terms of the layout rather than just which byte. */
 string layoutOf(i32 i, i32 n, i32 total) {
   if (i < 8) { return "the magic and version"; }
-  if (i < 8 + 1024) { return "the fanout, entry " + itoa64(((i - 8) / 4) as i64); }
+  if (i < 8 + 1024) { return "the fanout, entry \{((i - 8) / 4) as i64}"; }
   if (i < 8 + 1024 + n * 20) {
-    return "an object name, " + itoa64(((i - 8 - 1024) / 20) as i64);
+    return "an object name, \{((i - 8 - 1024) / 20) as i64}";
   }
   if (i < 8 + 1024 + n * 24) {
-    return "a CRC-32, object " + itoa64(((i - 8 - 1024 - n * 20) / 4) as i64);
+    return "a CRC-32, object \{((i - 8 - 1024 - n * 20) / 4) as i64}";
   }
   if (i < 8 + 1024 + n * 28) {
-    return "an offset, object " + itoa64(((i - 8 - 1024 - n * 24) / 4) as i64);
+    return "an offset, object \{((i - 8 - 1024 - n * 24) / 4) as i64}";
   }
   if (i < total - 20) { return "the large-offset table or the pack checksum"; }
   return "the index's own trailing hash";
@@ -516,12 +515,12 @@ export string test_an_index_with_offsets_past_two_gigabytes_round_trips() {
   for (i32 i = 0; i < 20; i++) { checksum[i] = (i + 1) as@ u8; }
 
   match (parseIdx(writeIdx(PackIndex(n, names, offs, crcs), checksum))) {
-    Rejected(why): { t.isTrue(false, "the index we wrote did not read back: " + why); }
+    Rejected(why): { t.isTrue(false, "the index we wrote did not read back: \{why}"); }
     Loaded(back): {
       t.eqI32(back.count, n, "the object count survived");
       for (i32 i = 0; i < n && i < back.count; i++) {
-        t.eqI64(back.offsets[i], offs[i], "offset " + itoa64(i as i64));
-        t.eqI64(back.crcs[i] as i64, crcs[i] as i64, "crc " + itoa64(i as i64));
+        t.eqI64(back.offsets[i], offs[i], "offset \{i as i64}");
+        t.eqI64(back.crcs[i] as i64, crcs[i] as i64, "crc \{i as i64}");
       }
     }
   }

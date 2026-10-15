@@ -57,7 +57,7 @@ string[] wacArgs(string[] args) {
 }
 
 Exec runTunnel(Cli cli, string proxy, string[] args) {
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
   return withEnv(cli, ["HTTP_PROXY"], [proxy], wac, wacArgs(args));
 }
 
@@ -70,14 +70,14 @@ export string test_a_connect_tunnel_opens_through_the_real_proxy(Core core, Cli 
   }
   Exec r = runTunnel(cli, proxy, ["github.com", "443"]);
   string err = trimmedEnd(string.fromBytes(r.stderr));
-  t.eqI32(r.status, 0, "tunnel failed: " + err);
+  t.eqI32(r.status, 0, "tunnel failed: \{err}");
   string out = trimmedEnd(string.fromBytes(r.stdout));
-  t.isTrue(startsWith(out, "open to github.com:443 via "), "it said \"" + out + "\"");
+  t.isTrue(startsWith(out, "open to github.com:443 via "), "it said \"\{out}\"");
 
   // The count is printed rather than asserted to be zero: a proxy is allowed to coalesce, and a test
   // that demanded zero would be asserting the absence of the case `proxy.wac` carries the offset for.
   t.isTrue(endsWith(out, " byte(s) already through"),
-           "no leftover count in \"" + out + "\"");
+           "no leftover count in \"\{out}\"");
   return t.report();
 }
 
@@ -95,14 +95,14 @@ export string test_a_host_the_proxy_will_not_open_comes_back_in_the_proxys_own_w
   Exec r = runTunnel(cli, proxy, ["not-a-real-host.invalid", "443"]);
   string out = trimmedEnd(string.fromBytes(r.stdout));
   string err = trimmedEnd(string.fromBytes(r.stderr));
-  t.eqI32(r.status, 1, "expected a refusal, got \"" + out + "\"");
-  t.isTrue(startsWith(err, "tunnel: "), "the error is \"" + err + "\"");
+  t.eqI32(r.status, 1, "expected a refusal, got \"\{out}\"");
+  t.isTrue(startsWith(err, "tunnel: "), "the error is \"\{err}\"");
   bool refused = err.indexOf("the proxy refused not-a-real-host.invalid:443: HTTP/1.") >= 0;
   bool otherwise = err.indexOf("could not be reached") >= 0 ||
                    err.indexOf("closed the connection") >= 0 ||
                    err.indexOf("is not HTTP") >= 0;
   t.isTrue(refused || otherwise,
-           "the message does not carry what the proxy said: \"" + err + "\"");
+           "the message does not carry what the proxy said: \"\{err}\"");
   return t.report();
 }
 
@@ -113,11 +113,11 @@ export string test_without_a_proxy_variable_it_says_that_rather_than_dialling_so
     core.warn("http tunnel test: skipped — HTTP_PROXY is not set");
     return t.report();
   }
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
   Exec r = withoutEnv(cli, ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"],
                       wac, wacArgs(["github.com", "443"]));
-  t.eqI32(r.status, 1, "expected 1: " + string.fromBytes(r.stdout));
+  t.eqI32(r.status, 1, "expected 1: \{string.fromBytes(r.stdout)}");
   t.isTrue(string.fromBytes(r.stderr).indexOf("HTTP_PROXY is not set") >= 0,
-           "it said \"" + trimmedEnd(string.fromBytes(r.stderr)) + "\"");
+           "it said \"\{trimmedEnd(string.fromBytes(r.stderr))}\"");
   return t.report();
 }

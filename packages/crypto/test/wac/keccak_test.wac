@@ -23,7 +23,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { keccak256, sha3_256, sha3_512, shake128, shake256, keccakF, Sha3_256 } from "../../src/keccak.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -87,7 +86,7 @@ export string test_sha3_agrees_with_the_host(Core core, Cli cli) {
     for (i32 li = 0; li < lens.len(); li++) {
       u8[] m = fill(lens[li], lens[li]);
       u8[] got = bits[a] == 256 ? sha3_256(m) : sha3_512(m);
-      lines.add("sha3 " + itoa64(bits[a] as i64) + " " + hex(m) + " " + hex(got));
+      lines.add("sha3 \{bits[a] as i64} \{hex(m)} \{hex(got)}");
     }
   }
   t.eqI32(lines.n, 22, "eleven lengths at each of two rates");
@@ -111,8 +110,8 @@ export string test_shake_agrees_with_the_host(Core core, Cli cli) {
       for (i32 o = 0; o < outLens.len(); o++) {
         u8[] m = fill(inLens[i], inLens[i]);
         u8[] got = bits[a] == 128 ? shake128(m, outLens[o]) : shake256(m, outLens[o]);
-        lines.add("shake " + itoa64(bits[a] as i64) + " " + itoa64(outLens[o] as i64) + " " +
-                  hex(m) + " " + hex(got));
+        lines.add("shake \{bits[a] as i64} \{outLens[o] as i64} " +
+                  "\{hex(m)} \{hex(got)}");
       }
     }
   }
@@ -141,8 +140,8 @@ export string test_a_longer_squeeze_extends_a_shorter_one() {
       if (a[j] != long128[j]) { okA = false; }
       if (b[j] != long256[j]) { okB = false; }
     }
-    t.isTrue(okA, "shake128 is a prefix at " + itoa64(n as i64));
-    t.isTrue(okB, "shake256 is a prefix at " + itoa64(n as i64));
+    t.isTrue(okA, "shake128 is a prefix at \{n as i64}");
+    t.isTrue(okB, "shake256 is a prefix at \{n as i64}");
   }
   return t.report();
 }
@@ -157,7 +156,7 @@ export string test_the_domain_separation_actually_separates() {
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] m = fill(lens[i], 9);
     t.isFalse(equal(sha3_256(m), shake256(m, 32)),
-              "sha3-256 and shake256 differ at " + itoa64(lens[i] as i64) + " bytes");
+              "sha3-256 and shake256 differ at \{lens[i] as i64} bytes");
   }
   return t.report();
 }
@@ -201,12 +200,12 @@ export string test_keccak256_is_not_sha3_256() {
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] m = fill(lens[i], 5);
     u8[] k = keccak256(m);
-    t.eqI32(k.len(), 32, "keccak256 is 32 bytes at " + itoa64(lens[i] as i64));
+    t.eqI32(k.len(), 32, "keccak256 is 32 bytes at \{lens[i] as i64}");
     t.isFalse(equal(k, sha3_256(m)),
-              "keccak256 and sha3-256 differ at " + itoa64(lens[i] as i64) + " bytes");
+              "keccak256 and sha3-256 differ at \{lens[i] as i64} bytes");
     // And not a truncated SHAKE either, which shares the rate and differs only in the same byte.
     t.isFalse(equal(k, shake256(m, 32)),
-              "keccak256 and shake256 differ at " + itoa64(lens[i] as i64) + " bytes");
+              "keccak256 and shake256 differ at \{lens[i] as i64} bytes");
   }
   return t.report();
 }
@@ -224,7 +223,7 @@ export string test_the_running_sha3_agrees_with_the_one_shot() {
     Sha3_256 h = Sha3_256.create();
     h.update(msg);
     t.isTrue(sameBytes(h.peek(), sha3_256(msg)),
-             "running == one-shot at " + itoa64(n as i64) + " bytes");
+             "running == one-shot at \{n as i64} bytes");
   }
 
   // Fed in pieces, at every split of a message that crosses two blocks.

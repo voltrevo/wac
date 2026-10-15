@@ -1,7 +1,6 @@
 // Key blinding's service half, against the keys tor's own `ed25519_keypair_blind` produced.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -70,13 +69,13 @@ export string test_the_vectors_are_what_the_tests_assume(Core core, Cli cli) {
   T t = T.create();
   string source = textOfObject(blindTop(cli), "source");
   t.isTrue(source.indexOf("ed25519_keypair_blind") >= 0,
-           "the values must come from tor's blinding, not ours — source is " + source);
+           "the values must come from tor's blinding, not ours — source is \{source}");
   i32 n = caseCount(cli);
-  t.isTrue(n >= 3, "expected several cases, found " + itoa(n));
+  t.isTrue(n >= 3, "expected several cases, found \{n}");
   for (i32 i = 0; i < n; i++) {
     for (i32 j = i + 1; j < n; j++) {
       t.isFalse(fieldOf(cli, i, "blindedSecret") == fieldOf(cli, j, "blindedSecret"),
-                "cases " + itoa(i) + " and " + itoa(j) +
+                "cases \{i} and \{j}" +
                 " share a blinded secret, so the inputs are not being used");
     }
   }

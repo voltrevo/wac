@@ -26,7 +26,6 @@
 // `*_test.wac` so a `_probe.wac` beside this one is a helper rather than a test.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { kindAtIn, sizeAtIn, streamId, streamOffset, streamData, streamFin, newCid, newCidSeq,
          newCidToken, maxStreamDataFor, maxStreamsIsUni, streamText, streamWholeFor,
          streamFinFor, streamLenFor } from "./frame_probe.wac";
@@ -131,8 +130,8 @@ export string test_every_frame_in_table_3_reads_as_itself_at_its_documented_leng
   Row[] all = rows();
   for (i32 i = 0; i < all.len(); i++) {
     i32 epoch = lastAllowed(all[i].where);
-    t.eqI32(kindAtIn(all[i].bytes, 0, epoch), all[i].kind, all[i].what + ": its type");
-    t.eqI32(sizeAtIn(all[i].bytes, 0, epoch), all[i].size, all[i].what + ": its length");
+    t.eqI32(kindAtIn(all[i].bytes, 0, epoch), all[i].kind, "\{all[i].what}: its type");
+    t.eqI32(sizeAtIn(all[i].bytes, 0, epoch), all[i].size, "\{all[i].what}: its length");
   }
   return t.report();
 }
@@ -146,8 +145,8 @@ export string test_and_only_in_the_packet_types_table_3_permits() {
       // -4 is NotPermitted: a frame this reader knows, in a packet that may not carry it. Not -2,
       // which would mean the reader had never heard of it — the two are different accusations.
       t.eqI32(kindAtIn(all[i].bytes, 0, epoch), -4,
-              all[i].what + " is not legal in epoch " + itoa64(epoch as i64));
-      t.eqI32(sizeAtIn(all[i].bytes, 0, epoch), 0, all[i].what + ": and the walk stops");
+              "\{all[i].what} is not legal in epoch \{epoch as i64}");
+      t.eqI32(sizeAtIn(all[i].bytes, 0, epoch), 0, "\{all[i].what}: and the walk stops");
     }
   }
   return t.report();
@@ -185,13 +184,13 @@ export string test_a_walk_over_all_of_them_ends_exactly_at_the_end() {
     i32 size = sizeAtIn(b, pos, EPOCH_1RTT);
     if (size == 0) {
       t.isTrue(false,
-               "the walk stopped " + itoa64(seen as i64) + " frames in, at byte " +
-               itoa64(pos as i64) + " of " + itoa64(b.len() as i64) + " — the frame before it was " +
-               "sized wrong, so this is reading a type out of the middle of " + names[seen]);
+               "the walk stopped \{seen as i64} frames in, at byte " +
+               "\{pos as i64} of \{b.len() as i64} — the frame before it was " +
+               "sized wrong, so this is reading a type out of the middle of \{names[seen]}");
       return t.report();
     }
     t.eqI32(kindAtIn(b, pos, EPOCH_1RTT), kinds[seen],
-            "frame " + itoa64(seen as i64) + " (" + names[seen] + ")");
+            "frame \{seen as i64} (\{names[seen]})");
     pos = pos + size;
     seen = seen + 1;
   }

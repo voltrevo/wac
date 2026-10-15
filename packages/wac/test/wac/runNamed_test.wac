@@ -22,7 +22,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change } from "std";
 
 string LIB() {
@@ -56,11 +55,11 @@ struct Fixture {
 Fixture fixture(Cli cli) {
   string dir = scratch(cli, "run-named");
   Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) { return Fixture(false, "", "a working directory: " + made.message); }
-  Change a = cli.writeFile(dir + "/lib.wac", LIB().toBytes()).wait();
-  if (!a.ok()) { return Fixture(false, "", "lib.wac: " + a.message); }
-  Change b = cli.writeFile(dir + "/prog.wac", WITH_MAIN().toBytes()).wait();
-  if (!b.ok()) { return Fixture(false, "", "prog.wac: " + b.message); }
+  if (!made.ok()) { return Fixture(false, "", "a working directory: \{made.message}"); }
+  Change a = cli.writeFile("\{dir}/lib.wac", LIB().toBytes()).wait();
+  if (!a.ok()) { return Fixture(false, "", "lib.wac: \{a.message}"); }
+  Change b = cli.writeFile("\{dir}/prog.wac", WITH_MAIN().toBytes()).wait();
+  if (!b.ok()) { return Fixture(false, "", "prog.wac: \{b.message}"); }
   return Fixture(true, dir, "");
 }
 
@@ -101,9 +100,9 @@ string joined(string[] xs) {
 /** Assert one invocation exits 0 and prints exactly `want`. */
 void prints(T t, Cli cli, string file, string[] args, string want) {
   Ran got = runWac(cli, file, args);
-  if (!got.started) { t.fail(joined(args) + ": the binary would not start — " + got.out); return; }
+  if (!got.started) { t.fail("\{joined(args)}: the binary would not start — \{got.out}"); return; }
   if (got.status != 0) {
-    t.fail(joined(args) + ": exit " + itoa(got.status) + " — " + got.out);
+    t.fail("\{joined(args)}: exit \{got.status} — \{got.out}");
     return;
   }
   t.eqStr(got.out, want, joined(args));
@@ -114,7 +113,7 @@ export string test_run_calls_a_named_export_and_prints_what_it_answered_7jnq2mv(
   Fixture f = fixture(cli);
   t.isTrue(f.ok, f.what);
   if (!f.ok) { return t.report(); }
-  string lib = f.dir + "/lib.wac";
+  string lib = "\{f.dir}/lib.wac";
 
   prints(t, cli, lib, ["gcd", "48", "18"], "6");
   // A `string` parameter takes the argument exactly as written.
@@ -135,7 +134,7 @@ export string test_a_list_argument_however_it_is_written_7jnq2mv(Core core, Cli 
   Fixture f = fixture(cli);
   t.isTrue(f.ok, f.what);
   if (!f.ok) { return t.report(); }
-  string lib = f.dir + "/lib.wac";
+  string lib = "\{f.dir}/lib.wac";
 
   prints(t, cli, lib, ["total", "1,2,3"], "6");
   // Brackets are accepted because people type them.
@@ -155,7 +154,7 @@ export string test_what_it_refuses_and_what_it_says_7jnq2mv(Core core, Cli cli) 
   Fixture f = fixture(cli);
   t.isTrue(f.ok, f.what);
   if (!f.ok) { return t.report(); }
-  string lib = f.dir + "/lib.wac";
+  string lib = "\{f.dir}/lib.wac";
 
   // Every one of these is a usage mistake rather than a program failure, so all of them are exit 2
   // and all of them name the thing that is wrong rather than the call.
@@ -180,10 +179,10 @@ export string test_what_it_refuses_and_what_it_says_7jnq2mv(Core core, Cli cli) 
   ];
   for (i32 i = 0; i < calls.len(); i++) {
     Ran got = runWac(cli, lib, calls[i]);
-    if (!got.started) { t.fail(joined(calls[i]) + ": would not start — " + got.out); continue; }
-    t.eqI32(got.status, 2, joined(calls[i]) + " is a usage error");
+    if (!got.started) { t.fail("\{joined(calls[i])}: would not start — \{got.out}"); continue; }
+    t.eqI32(got.status, 2, "\{joined(calls[i])} is a usage error");
     t.isTrue(contains(got.out, says[i]),
-             joined(calls[i]) + ": does not say \"" + says[i] + "\" — got \"" + got.out + "\"");
+             "\{joined(calls[i])}: does not say \"\{says[i]}\" — got \"\{got.out}\"");
   }
 
   // A wrong name lists what the module does export, with signatures, because the next thing
@@ -191,7 +190,7 @@ export string test_what_it_refuses_and_what_it_says_7jnq2mv(Core core, Cli cli) 
   Ran named = runWac(cli, lib, ["nosuch"]);
   string[] listed = ["gcd(i32, i32)", "greet(string)", "flip(bool)"];
   for (i32 i = 0; i < listed.len(); i++) {
-    t.isTrue(contains(named.out, listed[i]), "the listing names " + listed[i]);
+    t.isTrue(contains(named.out, listed[i]), "the listing names \{listed[i]}");
   }
   return t.report();
 }
@@ -204,16 +203,16 @@ export string test_a_trap_is_exit_2_and_says_what_it_said_7jnq2mv(Core core, Cli
 
   // Distinct from a compile failure, which is 1: the program ran and stopped, which is a different
   // outcome from one that never started.
-  Ran got = runWac(cli, f.dir + "/lib.wac", ["boom"]);
+  Ran got = runWac(cli, "\{f.dir}/lib.wac", ["boom"]);
   t.isTrue(got.started, "the binary started");
   if (got.started) {
     t.eqI32(got.status, 2, "a trap is exit 2");
-    t.isTrue(contains(got.out, "the ring is full"), "it repeats the message — got \"" + got.out + "\"");
+    t.isTrue(contains(got.out, "the ring is full"), "it repeats the message — got \"\{got.out}\"");
   }
 
-  string broken = f.dir + "/broken.wac";
+  string broken = "\{f.dir}/broken.wac";
   Change w = cli.writeFile(broken, "export i32 nope() { return \"x\"; }\n".toBytes()).wait();
-  t.isTrue(w.ok(), "broken.wac: " + w.message);
+  t.isTrue(w.ok(), "broken.wac: \{w.message}");
   if (w.ok()) {
     Ran bad = runWac(cli, broken, ["nope"]);
     t.eqI32(bad.status, 1, "a file that does not compile is exit 1, not 2");
@@ -228,11 +227,11 @@ export string test_a_module_with_a_main_runs_it_arguments_and_all_7jnq2mv(Core c
   if (!f.ok) { return t.report(); }
   // The disambiguation. `prog.wac` exports both `main` and `gcd`; `gcd` here is the program's first
   // argument, not a function to call, and the program is what runs.
-  Ran got = runWac(cli, f.dir + "/prog.wac", ["gcd", "48", "18"]);
+  Ran got = runWac(cli, "\{f.dir}/prog.wac", ["gcd", "48", "18"]);
   t.isTrue(got.started, "the binary started");
   if (got.started) {
-    t.eqI32(got.status, 0, "the program ran — " + got.out);
-    t.isFalse(contains(got.out, "6"), "it did not call gcd — got \"" + got.out + "\"");
+    t.eqI32(got.status, 0, "the program ran — \{got.out}");
+    t.isFalse(contains(got.out, "6"), "it did not call gcd — got \"\{got.out}\"");
   }
   return t.report();
 }

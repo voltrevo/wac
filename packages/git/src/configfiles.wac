@@ -71,13 +71,13 @@ export Vec<Setting> configChain(Cli cli, Fs fs, string gitDir) {
   string home = homeOf(cli);
   u8[]? xdg = cli.env("XDG_CONFIG_HOME").wait();
   if (!(xdg is null)) {
-    addFile(fs, all, string.fromBytes(xdg!) + "/git/config");
+    addFile(fs, all, "\{string.fromBytes(xdg!)}/git/config");
   } else if (home != "") {
     // The fallback git uses when the variable is unset, which is not the same as reading no XDG file.
-    addFile(fs, all, home + "/.config/git/config");
+    addFile(fs, all, "\{home}/.config/git/config");
   }
-  if (home != "") { addFile(fs, all, home + "/.gitconfig"); }
-  if (gitDir != "") { addFile(fs, all, gitDir + "/config"); }
+  if (home != "") { addFile(fs, all, "\{home}/.gitconfig"); }
+  if (gitDir != "") { addFile(fs, all, "\{gitDir}/config"); }
   return all;
 }
 

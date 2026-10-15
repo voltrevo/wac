@@ -36,7 +36,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { hashTreeRoot } from "../../src/container.wac";
@@ -184,7 +183,7 @@ i32 typeOf(World w, string group, string name) {
     // the fault's parameter.
     if (!startsWith(name, "bitvec_")) { return -1; }
     i32 n = numberAt(name, 7);
-    return n < 0 ? -1 : once(w, "bv" + itoa(n), 0, n, 0);
+    return n < 0 ? -1 : once(w, "bv\{n}", 0, n, 0);
   }
 
   if (group == "bitlist") {
@@ -193,7 +192,7 @@ i32 typeOf(World w, string group, string name) {
       i32 n = numberAt(name, 8);
       i32 end = afterNumber(name, 8);
       if (n >= 0 && startsWith(name.slice(end, name.len()), "_but_")) {
-        return once(w, "bl" + itoa(n), 1, n, 0);
+        return once(w, "bl\{n}", 1, n, 0);
       }
     }
     // `bitlist_no_delimiter_*` names no limit, because the fault is the absent delimiter byte and
@@ -215,7 +214,7 @@ i32 typeOf(World w, string group, string name) {
     // The count must be followed by `_` or the end of the name, or `vec_uint8_0` and a hypothetical
     // `vec_uint8_04` would share a type.
     if (n < 0 || (end < name.len() && name.slice(end, end + 1) != "_")) { return -1; }
-    return once(w, "v" + elemName + "x" + itoa(n), 2, n, elem);
+    return once(w, "v\{elemName}x\{n}", 2, n, elem);
   }
 
   if (group == "containers") {
@@ -226,7 +225,7 @@ i32 typeOf(World w, string group, string name) {
     ];
     string best = "";
     for (i32 i = 0; i < known.len(); i++) {
-      if (name == known[i] || startsWith(name, known[i] + "_")) {
+      if (name == known[i] || startsWith(name, "\{known[i]}_")) {
         if (known[i].len() > best.len()) { best = known[i]; }
       }
     }
@@ -266,7 +265,7 @@ export string test_every_invalid_ssz_generic_encoding_is_refused(Core core, Cli 
       unparsed = unparsed + 1;
       if (shown < 20) {
         shown = shown + 1;
-        t.fail("the name " + group + "/" + name + " was not understood, so it tested nothing");
+        t.fail("the name \{group}/\{name} was not understood, so it tested nothing");
       }
       continue;
     }
@@ -275,7 +274,7 @@ export string test_every_invalid_ssz_generic_encoding_is_refused(Core core, Cli 
     fields = w.s.f();
     if (!(hashTreeRoot(types, fields, ty, decoded(memberText(c, "ssz"))) is null)) {
       accepted = accepted + 1;
-      if (accepted <= 25) { t.fail(group + "/" + name + " produced a root"); }
+      if (accepted <= 25) { t.fail("\{group}/\{name} produced a root"); }
     }
     for (i32 k = 0; k < groups.len(); k++) {
       if (groups[k] == group) { ran[k] = ran[k] + 1; }
@@ -286,7 +285,7 @@ export string test_every_invalid_ssz_generic_encoding_is_refused(Core core, Cli 
 
   // Counts, so a fixture that loses cases fails instead of passing faster.
   for (i32 k = 0; k < groups.len(); k++) {
-    t.eqI32(ran[k], want[k], groups[k] + ": cases run");
+    t.eqI32(ran[k], want[k], "\{groups[k]}: cases run");
   }
   t.eqI32(cases!.len(), 1131, "cases in the fixture");
   JsonValue? skipped = member(f.doc, "skippedProgressive");
@@ -345,9 +344,9 @@ export string test_the_refusals_are_not_vacuous_the_same_shapes_valid_are_accept
 
 void ok(T t, i32[] types, i32[] fields, i32 ty, u8[] data, string what) {
   u8[]? r = hashTreeRoot(types, fields, ty, data);
-  t.isTrue(!(r is null) && r!.len() == 32, "a valid " + what + " was refused");
+  t.isTrue(!(r is null) && r!.len() == 32, "a valid \{what} was refused");
 }
 
 void no(T t, i32[] types, i32[] fields, i32 ty, u8[] data, string what) {
-  t.isTrue(hashTreeRoot(types, fields, ty, data) is null, "an invalid " + what + " was accepted");
+  t.isTrue(hashTreeRoot(types, fields, ty, data) is null, "an invalid \{what} was accepted");
 }

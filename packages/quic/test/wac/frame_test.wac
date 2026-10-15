@@ -12,7 +12,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { ackLargest, closeReason, closeReasonAtIn, cryptoLen, cryptoWhole, frameCount,
          handshakeType, helloKeyShareLen, helloOffersTls13, helloRandomLen, helloSuite, kindAt,
          kindAtIn, opens, paddingBytes, sizeAt, sizeAtIn, streamByte, streamLen, streamWhole,
@@ -50,7 +49,7 @@ export string test_a_real_initials_payload_walks_to_frames_with_nothing_left_ove
   // An Initial is padded to 1200 bytes because of anti-amplification, and the padding is inside the
   // encrypted payload rather than after it — so most of what decrypts is zeros.
   t.isTrue(paddingBytes(packet) > 500,
-           "an Initial is mostly padding, got " + itoa(paddingBytes(packet)) + " bytes");
+           "an Initial is mostly padding, got \{paddingBytes(packet)} bytes");
   return t.report();
 }
 
@@ -61,7 +60,7 @@ export string test_the_crypto_frames_reassemble_into_a_clienthello(Core core, Cl
 
   t.isTrue(cryptoWhole(packet), "no hole in the CRYPTO stream");
   t.isTrue(cryptoLen(packet) > 100,
-           "a ClientHello is hundreds of bytes, got " + itoa(cryptoLen(packet)));
+           "a ClientHello is hundreds of bytes, got \{cryptoLen(packet)}");
 
   // 1 is `client_hello`. A wrong reassembly lands on a byte that is some other message type, or on
   // padding, so this single number is most of the check.
@@ -74,7 +73,7 @@ export string test_the_crypto_frames_reassemble_into_a_clienthello(Core core, Cl
   t.eqI32(helloRandomLen(packet), 32, "a ClientHello random is 32 bytes");
   t.isTrue(helloOffersTls13(packet), "a QUIC client must offer TLS 1.3");
   t.isTrue(helloKeyShareLen(packet) > 32,
-           "the client offered a key share we know: " + itoa(helloKeyShareLen(packet)) +
+           "the client offered a key share we know: \{helloKeyShareLen(packet)}" +
            " bytes of group ++ key");
   t.eqI32(helloSuite(packet), 0x1301, "quinn offers TLS_AES_128_GCM_SHA256");
   return t.report();
@@ -127,7 +126,7 @@ export string test_a_frame_that_will_not_fit_stops_the_walk() {
   u8[] crypto = bytesOf([0x06, 0, 4, 0xDE, 0xAD, 0xBE, 0xEF] as i32[]);
   t.eqI32(sizeAt(crypto, 0), 7, "whole, it is seven bytes");
   for (i32 n = 1; n <= 6; n++) {
-    t.eqI32(sizeAt(prefix(crypto, n), 0), 0, "a " + itoa(n) + "-byte prefix cannot be read whole");
+    t.eqI32(sizeAt(prefix(crypto, n), 0), 0, "a \{n}-byte prefix cannot be read whole");
     t.eqI32(kindAt(prefix(crypto, n), 0), -1, "and says so as Incomplete, not as a frame");
   }
 

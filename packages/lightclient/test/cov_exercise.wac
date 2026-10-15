@@ -6,7 +6,6 @@
 // One of the packages `issues/system/0205` records as unmeasured.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
   test_the_fork_digest_the_vectors_state_is_the_one_this_computes as dom__the_fork_digest_the_vectors_state_is_the_one_this_computes,
@@ -77,6 +76,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED sync_test test_an_update_nobody_signed_is_refused");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("lightclient: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("lightclient: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

@@ -34,7 +34,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { roundTrip } from "./probe.wac";
 import { Ints, unhex, hex, writeDescriptor } from "./descriptor.wac";
 import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
@@ -60,7 +59,7 @@ string findCast(Core core, Cli cli) {
               "so ~/tools/foundry could not be checked. Run this lane with --allow-env.");
     return "nolookup";
   }
-  string candidate = string.fromBytes(h!) + "/tools/foundry/cast";
+  string candidate = "\{string.fromBytes(h!)}/tools/foundry/cast";
   Exec there = cli.exec(candidate, ["--version"], u8[]()).wait();
   if (there.ran() && there.status == 0) { return candidate; }
 
@@ -75,8 +74,8 @@ u8[] castEncode(Core core, Cli cli, string cast, string[] types, string[] args) 
   string[] argv = string[].filled(types.len() + args.len() + 2, "");
   argv[0] = "abi-encode";
   string joined = "";
-  for (i32 i = 0; i < types.len(); i++) { joined = (i == 0 ? "" : joined + ",") + types[i]; }
-  argv[1] = "f(" + joined + ")";
+  for (i32 i = 0; i < types.len(); i++) { joined = (i == 0 ? "" : "\{joined},") + types[i]; }
+  argv[1] = "f(\{joined})";
   for (i32 i = 0; i < args.len(); i++) { argv[2 + i] = args[i]; }
   string[] exact = string[].filled(2 + args.len(), "");
   for (i32 i = 0; i < exact.len(); i++) { exact[i] = argv[i]; }
@@ -160,10 +159,10 @@ i32[] schemaOf(string[] types) {
 
 string label(Case c) {
   string types = "";
-  for (i32 i = 0; i < c.types.len(); i++) { types = (i == 0 ? "" : types + ",") + c.types[i]; }
+  for (i32 i = 0; i < c.types.len(); i++) { types = (i == 0 ? "" : "\{types},") + c.types[i]; }
   string args = "";
-  for (i32 i = 0; i < c.args.len(); i++) { args = (i == 0 ? "" : args + " ") + c.args[i]; }
-  return "(" + types + ") " + args + " — " + c.why;
+  for (i32 i = 0; i < c.args.len(); i++) { args = (i == 0 ? "" : "\{args} ") + c.args[i]; }
+  return "(\{types}) \{args} — \{c.why}";
 }
 
 export string test_bytes_another_implementation_produced_round_trip(Core core, Cli cli) {

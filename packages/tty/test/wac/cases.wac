@@ -8,7 +8,6 @@
 // The inputs are byte arrays rather than string literals with `\x01` in them, which is what they always
 // were: a line discipline edits bytes, and several of the cases exist because a character is not one.
 
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 export static i32 DEL = 0x7F;
 export static i32 KILL = 0x15;      // ^U
@@ -50,10 +49,10 @@ export string show(u8[] b) {
       one[0] = b[i];
       out = out + string.fromBytes(one);
     } else {
-      out = out + "<" + itoa(b[i] as i32) + ">";
+      out = out + "<\{b[i] as i32}>";
     }
   }
-  return out + "\"";
+  return "\{out}\"";
 }
 
 export bool sameBytes(u8[] a, u8[] b) {

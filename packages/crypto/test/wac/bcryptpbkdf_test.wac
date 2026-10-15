@@ -33,7 +33,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { startsWith, trimmed } from "../../../wactest/src/strings.wac";
 import { slice, equal } from "../../../bytes/src/slice.wac";
 import { decode, encode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
@@ -110,7 +109,7 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
 
   // `.cache` rather than a directory beside the tests: it is gitignored and the corpus walks do not
   // enter it, so a key left behind by an interrupted run is never mistaken for a source file.
-  string dir = cli.cwd().wait() + "/.cache/bcryptpbkdf";
+  string dir = "\{cli.cwd().wait()}/.cache/bcryptpbkdf";
   string whyDir1 = madeDir(cli, dir);
   t.isTrue(whyDir1 == "", whyDir1);
 
@@ -119,53 +118,53 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
   i32 checked = 0;
   for (i32 i = 0; i < all.len(); i++) {
     KeyCase c = all[i];
-    string f = dir + "/" + c.type + "-" + c.cipher + "-" + itoa(c.rounds);
+    string f = "\{dir}/\{c.type}-\{c.cipher}-\{c.rounds}";
     // ssh-keygen refuses to overwrite, and a leftover from an earlier run would otherwise be read
     // instead of a fresh one — a stale key still decrypts, so this would pass without generating.
     cli.remove(f, false).wait();
-    cli.remove(f + ".pub", false).wait();
+    cli.remove("\{f}.pub", false).wait();
 
     string[] argv = c.type == "rsa"
       ? [
-                 "-t", c.type, "-N", c.pass, "-f", f, "-q", "-a", itoa(c.rounds), "-Z", c.cipher,
+                 "-t", c.type, "-N", c.pass, "-f", f, "-q", "-a", "\{c.rounds}", "-Z", c.cipher,
                  "-b", "2048"
       ]
-      : ["-t", c.type, "-N", c.pass, "-f", f, "-q", "-a", itoa(c.rounds), "-Z", c.cipher];
+      : ["-t", c.type, "-N", c.pass, "-f", f, "-q", "-a", "\{c.rounds}", "-Z", c.cipher];
     Exec gen = cli.exec("ssh-keygen", argv, u8[]()).wait();
-    t.isTrue(gen.ran(), "ssh-keygen ran — " + gen.error);
+    t.isTrue(gen.ran(), "ssh-keygen ran — \{gen.error}");
     if (!gen.ran()) { return t.report(); }
-    t.eqI32(gen.status, 0, "ssh-keygen made " + c.type + " — " + string.fromBytes(gen.stderr));
+    t.eqI32(gen.status, 0, "ssh-keygen made \{c.type} — \{string.fromBytes(gen.stderr)}");
     if (gen.status != 0) { continue; }
 
     FileResult priv = cli.readFile(f).wait();
-    t.isTrue(priv.ok, "read the private key — " + priv.error);
+    t.isTrue(priv.ok, "read the private key — \{priv.error}");
     if (!priv.ok) { continue; }
 
     u8[]? blobOpt = pemBody(string.fromBytes(priv.bytes));
-    t.isTrue(blobOpt is not null, c.type + ": the PEM body is base64");
+    t.isTrue(blobOpt is not null, "\{c.type}: the PEM body is base64");
     if (blobOpt is null) { continue; }
     u8[] blob = blobOpt!;
 
     t.eqStr(string.fromBytes(slice(blob, 0, 15)), "openssh-key-v1\0",
-            c.type + ": not an openssh-key-v1 file");
+            "\{c.type}: not an openssh-key-v1 file");
 
     Rd r = Rd(slice(blob, 15, blob.len()), 0);
     string ciphername = string.fromBytes(rdStr(r));
     string kdfname = string.fromBytes(rdStr(r));
-    t.eqStr(kdfname, "bcrypt", c.type + ": expected the bcrypt kdf");
-    t.eqStr(ciphername, c.cipher, c.type + ": expected the cipher we asked for");
+    t.eqStr(kdfname, "bcrypt", "\{c.type}: expected the bcrypt kdf");
+    t.eqStr(ciphername, c.cipher, "\{c.type}: expected the cipher we asked for");
     if (kdfname != "bcrypt" || ciphername != c.cipher) { continue; }
 
     Rd opts = Rd(rdStr(r), 0);
     u8[] salt = rdStr(opts);
     i32 rounds = rdU32(opts);
-    t.eqI32(rounds, c.rounds, c.type + ": the file records the rounds we asked for");
+    t.eqI32(rounds, c.rounds, "\{c.type}: the file records the rounds we asked for");
     rdU32(r);                                  // key count, always 1 here
     u8[] pubblob = rdStr(r);
     u8[] ciphertext = rdStr(r);
 
     u8[] derived = bcryptPbkdf(c.pass.toBytes(), salt, c.keyLen + c.ivLen, rounds);
-    t.eqI32(derived.len(), c.keyLen + c.ivLen, c.type + ": derived length");
+    t.eqI32(derived.len(), c.keyLen + c.ivLen, "\{c.type}: derived length");
     if (derived.len() != c.keyLen + c.ivLen) { continue; }
     u8[] key = slice(derived, 0, c.keyLen);
     u8[] iv = slice(derived, c.keyLen, derived.len());
@@ -173,18 +172,18 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
 
     // The independence claim, batched: node derives the same keystream from the key we derived, and
     // is told what we made of it. CTR is symmetric, so encrypting the ciphertext is decrypting it.
-    lines.add("ctr " + hex(key) + " " + hex(iv) + " " + hex(ciphertext) + " " + hex(plain));
+    lines.add("ctr \{hex(key)} \{hex(iv)} \{hex(ciphertext)} \{hex(plain)}");
 
     Rd pr = Rd(plain, 0);
     i32 check1 = rdU32(pr);
     i32 check2 = rdU32(pr);
     t.eqI32(check1, check2,
-            c.type + "/" + ciphername + "/rounds=" + itoa(rounds) +
+            "\{c.type}/\{ciphername}/rounds=\{rounds}" +
             ": the check ints differ — the derived key is wrong");
 
     // Reaches further into the keystream than the check ints do, so the IV is covered too.
-    FileResult pub = cli.readFile(f + ".pub").wait();
-    t.isTrue(pub.ok, "read the .pub file — " + pub.error);
+    FileResult pub = cli.readFile("\{f}.pub").wait();
+    t.isTrue(pub.ok, "read the .pub file — \{pub.error}");
     if (pub.ok) {
       // `<type> <base64> <comment>\n` — the middle field. Taken by slicing past the first space and
       // looking again, because `indexOf` searches from the start and takes no offset.
@@ -194,7 +193,7 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
       i32 sp2 = rest.indexOf(" ");
       string want = sp2 < 0 ? rest : rest.slice(0, sp2);
       t.eqStr(string.fromBytes(encode(pubblob, ALPHABET_STANDARD(), true)), want,
-              c.type + ": the embedded public key does not match the .pub file");
+              "\{c.type}: the embedded public key does not match the .pub file");
     }
     checked = checked + 1;
   }
@@ -239,8 +238,8 @@ export string test_the_second_block_interleaves_with_the_first_rather_than_follo
   u8[] longOut = bcryptPbkdf("pw".toBytes(), "s".toBytes(), 64, 2);
   for (i32 i = 0; i < 32; i++) {
     if (longOut[i * 2] == shortOut[i]) { continue; }
-    t.fail("byte " + itoa(i) + " of block 1 landed at " + itoa(i * 2) + " as " +
-           itoa(longOut[i * 2] as i32) + ", expected " + itoa(shortOut[i] as i32) + " — the output is not striped");
+    t.fail("byte \{i} of block 1 landed at \{i * 2} as " +
+           "\{longOut[i * 2] as i32}, expected \{shortOut[i] as i32} — the output is not striped");
     break;
   }
 
@@ -252,10 +251,10 @@ export string test_the_second_block_interleaves_with_the_first_rather_than_follo
   i32[] lens = [1, 31, 32, 33, 48, 64, 100];
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] out = bcryptPbkdf("pw".toBytes(), "s".toBytes(), lens[i], 1);
-    t.eqI32(out.len(), lens[i], "asked for " + itoa(lens[i]) + " bytes");
+    t.eqI32(out.len(), lens[i], "asked for \{lens[i]} bytes");
     bool allZero = true;
     for (i32 j = 0; j < out.len(); j++) { if (out[j] != 0) { allZero = false; } }
-    t.isTrue(!allZero, itoa(lens[i]) + " bytes came back all zero — a block was never placed");
+    t.isTrue(!allZero, "\{lens[i]} bytes came back all zero — a block was never placed");
   }
   return t.report();
 }

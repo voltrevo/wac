@@ -18,7 +18,6 @@ import { Daemon, Port, freePortOr, logOf, start, stop, waitForPortWithin }
 // `quoted` is `childenv.wac`'s, not `daemon.wac`'s — importing it from the latter is a compile
 // error in every program that reaches this file, which is what `rung 3` and the lambda test caught.
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** A running node, or `port <= 0` with `why` saying what stopped it. */
 export struct Node {
@@ -35,7 +34,7 @@ export string anvilPath(Cli cli) {
   if ((named is not null) && named!.len() > 0) { return string.fromBytes(named!); }
   u8[]? home = cli.env("HOME").wait();
   string at = home is null ? "/home/claude" : string.fromBytes(home!);
-  return at + "/tools/foundry/anvil";
+  return "\{at}/tools/foundry/anvil";
 }
 
 /** Whether it is installed, so a caller can skip with the path it looked in. */
@@ -54,17 +53,17 @@ export Node anvil(Core core, Cli cli) {
   string path = anvilPath(cli);
   if (!cli.stat(path).wait().exists) {
     return Node(-1, Daemon(-1, "", ""),
-                "anvil not found at " + path + " — packages/ethrpc's live tests will not run. " +
+                "anvil not found at \{path} — packages/ethrpc's live tests will not run. " +
                 "Install the release tarball for this machine's architecture into ~/tools/foundry/");
   }
   Port p = freePortOr(cli);
-  if (p.port <= 0) { return Node(-1, Daemon(-1, "", ""), "no free port — " + p.error); }
+  if (p.port <= 0) { return Node(-1, Daemon(-1, "", ""), "no free port — \{p.error}"); }
   i32 port = p.port;
 
-  string log = cli.cwd().wait() + "/.cache/anvil-" + itoa(port) + ".log";
-  cli.mkdir(cli.cwd().wait() + "/.cache", true).wait();
-  Daemon d = start(cli, quoted(path) + " --port " + itoa(port) + " --silent", log);
-  if (!d.ok()) { return Node(-1, d, "anvil did not start — " + d.error); }
+  string log = "\{cli.cwd().wait()}/.cache/anvil-\{port}.log";
+  cli.mkdir("\{cli.cwd().wait()}/.cache", true).wait();
+  Daemon d = start(cli, "\{quoted(path)} --port \{port} --silent", log);
+  if (!d.ok()) { return Node(-1, d, "anvil did not start — \{d.error}"); }
   // **A deadline, not 200,000 attempts.** `waitForPort` counts *connects*, so its patience is a
   // function of how fast failed connects are on the day — longer on a quiet machine and shorter on a
   // busy one, which is exactly backwards, and `packages/wactest/test/wac/daemon_test.wac` says so
@@ -72,7 +71,7 @@ export Node anvil(Core core, Cli cli) {
   // *failure* took to report, which is the half nobody times.
   if (!waitForPortWithin(core, cli, "127.0.0.1", port, 30000)) {
     stop(cli, d);
-    return Node(-1, d, "anvil never answered on " + itoa(port) + " — it said: " + logOf(cli, d));
+    return Node(-1, d, "anvil never answered on \{port} — it said: \{logOf(cli, d)}");
   }
   return Node(port, d, "");
 }
@@ -88,7 +87,7 @@ export string castPath(Cli cli) {
   string a = anvilPath(cli);
   i32 cut = -1;
   for (i32 i = 0; i < a.len(); i++) { if (a.slice(i, i + 1) == "/") { cut = i; } }
-  return cut < 0 ? "cast" : a.slice(0, cut + 1) + "cast";
+  return cut < 0 ? "cast" : "\{a.slice(0, cut + 1)}cast";
 }
 
 /**
@@ -106,7 +105,7 @@ export string castRpc(Cli cli, i32 port, string[] args) {
   string[] argv = string[].filled(args.len() + 3, "");
   argv[0] = "rpc";
   argv[1] = "--rpc-url";
-  argv[2] = "http://127.0.0.1:" + itoa(port);
+  argv[2] = "http://127.0.0.1:\{port}";
   for (i32 i = 0; i < args.len(); i++) { argv[3 + i] = args[i]; }
   Exec r = cli.exec(castPath(cli), argv, u8[]()).wait();
   if (!r.ran() || r.status != 0) { return ""; }
@@ -146,7 +145,7 @@ export string castRun(Cli cli, string[] args) {
 export string blockHash(Cli cli, i32 port) {
   return castRun(cli, [
                                "block", "latest", "-f", "hash",
-                               "--rpc-url", "http://127.0.0.1:" + itoa(port)
+                               "--rpc-url", "http://127.0.0.1:\{port}"
   ]);
 }
 
@@ -168,7 +167,7 @@ export string toDec(Cli cli, string hex) {
 
 /** `wac run --allow-net <entry> -- args…`, which replaces the host-side `appRunner`. */
 export Exec runExample(Cli cli, string entry, string[] args) {
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
   string[] argv = string[].filled(args.len() + 4, "");
   argv[0] = "run";
   argv[1] = "--allow-net";

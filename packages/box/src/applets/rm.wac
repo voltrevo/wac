@@ -29,7 +29,7 @@ export i32 rm(Core core, Cli cli, Fs fs, Args a) {
     // The only fault `-f` forgives. Everything else — denied, a non-empty directory, a disk that
     // is full — happened to a file that was there, and `-f` does not get to hide that.
     if (force && c.absent()) { continue; }
-    core.warn(a.name + ": " + a.rest[i] + ": " + reasonOf(c));
+    core.warn("\{a.name}: \{a.rest[i]}: \{reasonOf(c)}");
     code = 1;
   }
   return code;

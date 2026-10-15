@@ -10,11 +10,10 @@
 import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "core";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, differs, runApplet, runAppletIn, splitOn, trimEnd } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-batch"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-batch"; }
 
 /**
  * `sponge`: the applet that only exists because of the atomic write.
@@ -26,15 +25,15 @@ string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-batch"; }
 export string test_sponge_writes_in_place_and_leaves_nothing_behind(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string target = dir + "/inplace";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string target = "\{dir}/inplace";
 
   t.isTrue(cli.writeFile(target, "delta\nalpha\ncharlie\nbravo\n".toBytes()).wait().ok(), "wrote it");
   Ran sorted = runApplet(core, cli, dir, ["sort", target]);
-  t.eqI32(sorted.status, 0, "sort ran: " + sorted.err);
+  t.eqI32(sorted.status, 0, "sort ran: \{sorted.err}");
 
   Ran soak = runAppletIn(core, cli, dir, ["sponge", target], sorted.outBytes);
-  t.eqI32(soak.status, 0, "sponge ran: " + soak.err);
+  t.eqI32(soak.status, 0, "sponge ran: \{soak.err}");
   t.eqStr(string.fromBytes(cli.readFile(target).wait().bytes), "alpha\nbravo\ncharlie\ndelta\n",
           "sorted in place");
 
@@ -51,7 +50,7 @@ export string test_sponge_writes_in_place_and_leaves_nothing_behind(Core core, C
     return t.report();
   }
   string[] left = listed!;
-  t.eqI32(left.len(), 1, "left behind: " + itoa(left.len()) + " entries");
+  t.eqI32(left.len(), 1, "left behind: \{left.len()} entries");
   if (left.len() > 0) { t.eqStr(left[0], "inplace", "and it is the target"); }
 
   cli.remove(dir, true).wait();
@@ -62,13 +61,13 @@ export string test_sponge_writes_in_place_and_leaves_nothing_behind(Core core, C
 export string test_zstd_round_trips(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
-  u8[] raw = cli.readFile(cli.cwd().wait() + "/README.md").wait().bytes;
+  u8[] raw = cli.readFile("\{cli.cwd().wait()}/README.md").wait().bytes;
   t.isTrue(raw.len() > 0, "README.md is readable and not empty");
 
   Ran squeezed = runAppletIn(core, cli, dir, ["zstd"], raw);
-  t.eqI32(squeezed.status, 0, "zstd ran: " + squeezed.err);
+  t.eqI32(squeezed.status, 0, "zstd ran: \{squeezed.err}");
   t.isTrue(squeezed.outBytes.len() < raw.len(), "zstd did not compress");
   t.eqStr(differs(runAppletIn(core, cli, dir, ["unzstd"], squeezed.outBytes).outBytes, raw), "",
           "zstd round trip");
@@ -87,7 +86,7 @@ export string test_zstd_round_trips(Core core, Cli cli) {
 export string test_json_canonicalises_and_reports_a_parse_error(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
   Ran canon = runAppletIn(core, cli, dir, ["json", "-c"],
                           "{\"b\":1,\"a\":[2, 3 ],\"c\":\"x\"}".toBytes());
@@ -119,16 +118,16 @@ export string test_json_canonicalises_and_reports_a_parse_error(Core core, Cli c
 export string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
   string[] fmt = ["-u", "+%Y-%m-%dT%H:%M"];
   string before = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
-  t.isTrue(cli.writeFile(dir + "/sized", "12345".toBytes()).wait().ok(), "wrote five bytes");
+  t.isTrue(cli.writeFile("\{dir}/sized", "12345".toBytes()).wait().ok(), "wrote five bytes");
 
-  Ran st = runApplet(core, cli, dir, ["stat", dir + "/sized", dir]);
+  Ran st = runApplet(core, cli, dir, ["stat", "\{dir}/sized", dir]);
   string after = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
-  t.eqI32(st.status, 0, "stat ran: " + st.err);
+  t.eqI32(st.status, 0, "stat ran: \{st.err}");
   string[] rows = splitOn(trimEnd(st.out), "\n");
-  t.eqI32(rows.len(), 2, "two operands, two rows: " + st.out);
+  t.eqI32(rows.len(), 2, "two operands, two rows: \{st.out}");
   if (rows.len() == 2) {
     t.isTrue(rows[0].indexOf(" file 5 ") >= 0, rows[0]);
     t.isTrue(rows[1].indexOf(" directory ") >= 0, rows[1]);
@@ -138,12 +137,12 @@ export string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cli cli)
     // that appears once a week and is blamed on the clock capability.
     string[] fields = splitOn(rows[0], " ");
     string when = fields[fields.len() - 1];
-    t.isTrue(when.len() >= 16, "an mtime that is RFC 3339: " + when);
+    t.isTrue(when.len() >= 16, "an mtime that is RFC 3339: \{when}");
     t.isTrue(when.slice(0, 16) == before || when.slice(0, 16) == after,
-             "the file was written now: " + when + " between " + before + " and " + after);
+             "the file was written now: \{when} between \{before} and \{after}");
   }
 
-  t.eqI32(runApplet(core, cli, dir, ["stat", dir + "/absent"]).status, 1,
+  t.eqI32(runApplet(core, cli, dir, ["stat", "\{dir}/absent"]).status, 1,
           "a missing path is an error");
 
   cli.remove(dir, true).wait();
@@ -171,23 +170,23 @@ bool isHex(string s) {
 export string test_uuid_is_version_4_and_never_repeats(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
   string[] ids = splitOn(trimEnd(runApplet(core, cli, dir, ["uuid", "-20"]).out), "\n");
   t.eqI32(ids.len(), 20, "twenty asked for");
 
   for (i32 i = 0; i < ids.len(); i++) {
     string[] parts = splitOn(ids[i], "-");
-    if (parts.len() != 5) { t.fail("not five fields: " + ids[i]); continue; }
+    if (parts.len() != 5) { t.fail("not five fields: \{ids[i]}"); continue; }
     t.isTrue(parts[0].len() == 8 && parts[1].len() == 4 && parts[2].len() == 4
-             && parts[3].len() == 4 && parts[4].len() == 12, "field widths: " + ids[i]);
-    for (i32 k = 0; k < 5; k++) { t.isTrue(isHex(parts[k]), "hex only: " + ids[i]); }
-    t.eqStr(parts[2].slice(0, 1), "4", "version 4: " + ids[i]);
+             && parts[3].len() == 4 && parts[4].len() == 12, "field widths: \{ids[i]}");
+    for (i32 k = 0; k < 5; k++) { t.isTrue(isHex(parts[k]), "hex only: \{ids[i]}"); }
+    t.eqStr(parts[2].slice(0, 1), "4", "version 4: \{ids[i]}");
     string v = parts[3].slice(0, 1);
-    t.isTrue(v == "8" || v == "9" || v == "a" || v == "b", "variant: " + ids[i]);
+    t.isTrue(v == "8" || v == "9" || v == "a" || v == "b", "variant: \{ids[i]}");
 
     // Distinct. Twenty is small enough that the quadratic comparison is cheaper than a set.
-    for (i32 k = 0; k < i; k++) { t.isTrue(ids[k] != ids[i], "twenty draws repeated: " + ids[i]); }
+    for (i32 k = 0; k < i; k++) { t.isTrue(ids[k] != ids[i], "twenty draws repeated: \{ids[i]}"); }
   }
 
   cli.remove(dir, true).wait();
@@ -206,11 +205,11 @@ export string test_uuid_is_version_4_and_never_repeats(Core core, Cli cli) {
 export string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
   Buf b = Buf.create();
-  for (i32 i = 0; i < 200; i++) { b.pushAll(("line" + itoa(i) + "\n").toBytes()); }
-  string path = dir + "/lines";
+  for (i32 i = 0; i < 200; i++) { b.pushAll("line\{i}\n".toBytes()); }
+  string path = "\{dir}/lines";
   t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote 200 lines");
 
   string first = trimEnd(runApplet(core, cli, dir, ["shuf", path]).out);
@@ -221,7 +220,7 @@ export string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli 
   // would be a second implementation of the thing that has to be right.
   i32 seen = 0;
   for (i32 i = 0; i < 200; i++) {
-    string want = "line" + itoa(i);
+    string want = "line\{i}";
     for (i32 k = 0; k < shuffled.len(); k++) { if (shuffled[k] == want) { seen++; } }
   }
   t.eqI32(seen, 200, "the same lines, each exactly once");
@@ -242,14 +241,14 @@ export string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli 
 export string test_paste_agrees_with_the_real_one(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string p1 = dir + "/p1";
-  string p2 = dir + "/p2";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string p1 = "\{dir}/p1";
+  string p2 = "\{dir}/p2";
   t.isTrue(cli.writeFile(p1, "a\nb\n".toBytes()).wait().ok(), "wrote p1");
   t.isTrue(cli.writeFile(p2, "1\n2\n3\n".toBytes()).wait().ok(), "wrote p2 — one line longer");
 
   Exec theirs = cli.exec("paste", [p1, p2], u8[]()).wait();
-  t.isTrue(theirs.error == "", "there is a real paste: " + theirs.error);
+  t.isTrue(theirs.error == "", "there is a real paste: \{theirs.error}");
   t.eqStr(runApplet(core, cli, dir, ["paste", p1, p2]).out,
           string.fromBytes(theirs.stdout), "paste over files of different lengths");
 

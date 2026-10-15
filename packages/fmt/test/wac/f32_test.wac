@@ -19,7 +19,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { ftoa32, ftoa32Bytes } from "../../src/ftoa.wac";
 import { atof32Span } from "../../src/atof.wac";
 
@@ -75,11 +74,11 @@ export string test_f32_output_round_trips_and_is_shortest(Core core, Cli cli) {
   for (i32 i = 0; i < 6000; i++) {
     f32 x = ofBits(rng.next());
     if (!isFinite32(x)) { continue; }
-    lines.add("f32 " + bits32(x) + " " + fmt(x));
+    lines.add("f32 \{bits32(x)} \{fmt(x)}");
     checked = checked + 1;
   }
-  t.isTrue(checked > 4000, "only " + itoa(checked) + " finite values were drawn");
-  checkDeno(t, cli, ORACLE, lines, itoa(checked) + " f32 values, round-tripped and minimal");
+  t.isTrue(checked > 4000, "only \{checked} finite values were drawn");
+  checkDeno(t, cli, ORACLE, lines, "\{checked} f32 values, round-tripped and minimal");
   return t.report();
 }
 
@@ -100,17 +99,17 @@ export string test_f32_the_string_and_bytes_spellings_agree() {
   i32 checked = 0;
   for (i32 i = 0; i < named.len(); i++) {
     f32 x = ofBits(named[i]);
-    t.eqStr(string.fromBytes(ftoa32Bytes(x)), ftoa32(x), "bits " + bits32(x));
+    t.eqStr(string.fromBytes(ftoa32Bytes(x)), ftoa32(x), "bits \{bits32(x)}");
     checked = checked + 1;
   }
   Rng rng = Rng(0x2545F491);
   for (i32 i = 0; i < 2000; i++) {
     f32 x = ofBits(rng.next());
     if (isNan32(x)) { continue; }
-    t.eqStr(string.fromBytes(ftoa32Bytes(x)), ftoa32(x), "bits " + bits32(x));
+    t.eqStr(string.fromBytes(ftoa32Bytes(x)), ftoa32(x), "bits \{bits32(x)}");
     checked = checked + 1;
   }
-  t.isTrue(checked > 1500, "only " + itoa(checked) + " values agreed through both spellings");
+  t.isTrue(checked > 1500, "only \{checked} values agreed through both spellings");
   return t.report();
 }
 
@@ -143,7 +142,7 @@ export string test_f32_parsing_is_correctly_rounded(Core core, Cli cli) {
   ];
   Lines lines = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) {
-    lines.add("p32 " + hex(cases[i].toBytes()) + " " + bits32(parse32(cases[i])));
+    lines.add("p32 \{hex(cases[i].toBytes())} \{bits32(parse32(cases[i]))}");
   }
   checkDeno(t, cli, ORACLE, lines, "correctly-rounded parsing");
   return t.report();
@@ -165,8 +164,8 @@ export string test_f32_parse_and_format_are_inverse() {
     if (!isFinite32(x)) { continue; }
     checked = checked + 1;
     string s = fmt(x);
-    t.eqStr(bits32(parse32(s)), bits32(x), "round trip through \"" + s + "\"");
+    t.eqStr(bits32(parse32(s)), bits32(x), "round trip through \"\{s}\"");
   }
-  t.isTrue(checked > 2500, "only " + itoa(checked) + " values survived format-then-parse");
+  t.isTrue(checked > 2500, "only \{checked} values survived format-then-parse");
   return t.report();
 }

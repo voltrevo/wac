@@ -38,7 +38,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Buf } from "core";
 import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
@@ -134,11 +133,11 @@ export Outcome[] oracle(T t, Cli cli, u8[][] cases, i32 nudgeMs) {
   payload.push(']');
 
   string[] args = nudgeMs < 0 ? [ORACLE]
-                              : [ORACLE, "--nudge-ms=" + itoa(nudgeMs)];
+                              : [ORACLE, "--nudge-ms=\{nudgeMs}"];
   Exec r = cli.exec("node", args, payload.take()).wait();
-  if (!r.ran()) { return allBroken(t, cases.len(), "the oracle could not be run: " + r.error); }
+  if (!r.ran()) { return allBroken(t, cases.len(), "the oracle could not be run: \{r.error}"); }
   if (r.status != 0) {
-    return allBroken(t, cases.len(), "the oracle failed: " + string.fromBytes(r.stderr));
+    return allBroken(t, cases.len(), "the oracle failed: \{string.fromBytes(r.stderr)}");
   }
   JsonValue? doc = parse(r.stdout);
   if (doc is null) {
@@ -151,7 +150,7 @@ export Outcome[] oracle(T t, Cli cli, u8[][] cases, i32 nudgeMs) {
   }
   if (items.len() != cases.len()) {
     return allBroken(t, cases.len(),
-                     "the oracle answered " + itoa(items.len()) + " of " + itoa(cases.len()) +
+                     "the oracle answered \{items.len()} of \{cases.len()}" +
                      " cases");
   }
 
@@ -176,11 +175,11 @@ export Outcome[] oracle(T t, Cli cli, u8[][] cases, i32 nudgeMs) {
       hung = hung + 1;
       out[i] = Outcome.Broken("the oracle's backstop fired");
     } else {
-      out[i] = Outcome.Broken("the oracle answered \"" + kind + "\", which is not an outcome");
+      out[i] = Outcome.Broken("the oracle answered \"\{kind}\", which is not an outcome");
     }
   }
   t.eqI32(hung, 0,
-          "the oracle's backstop fired on " + itoa(hung) + " of " + itoa(cases.len()) +
+          "the oracle's backstop fired on \{hung} of \{cases.len()}" +
           " cases: llhttp never decided and the connection never closed. That is a hang in the " +
           "oracle, not a parser disagreement");
   return out;

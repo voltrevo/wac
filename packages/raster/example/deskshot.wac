@@ -18,7 +18,6 @@
 // is dropped, which is honest for a screenshot: the desktop is opaque by construction.
 
 import { Change, Cli, Core, FAULT_NONE, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { Desk } from "../src/desk.wac";
 import { Surface } from "../src/surface.wac";
 
@@ -58,7 +57,7 @@ export i32 main(Sys sys) {
   d.draw(s, DESKTOP(), FRAME(), BAR(), FG(), BG());
 
   // P6: the magic, the dimensions, the maximum value, then three bytes a pixel.
-  string header = "P6\n" + itoa(W()) + " " + itoa(H()) + "\n255\n";
+  string header = "P6\n\{W()} \{H()}\n255\n";
   u8[] head = header.toBytes();
   u8[] file = u8[].filled(head.len() + W() * H() * 3, 0);
   for (i32 i = 0; i < head.len(); i++) { file[i] = head[i]; }
@@ -77,9 +76,9 @@ export i32 main(Sys sys) {
   // `Pending` was not given its members at all.
   Change wrote = cli.writeFile(out, file).wait();
   if (wrote.fault != FAULT_NONE()) {
-    core.warn("deskshot: could not write " + out + ": " + wrote.message);
+    core.warn("deskshot: could not write \{out}: \{wrote.message}");
     return 1;
   }
-  core.log("deskshot: " + itoa(W()) + "x" + itoa(H()) + " to " + out);
+  core.log("deskshot: \{W()}x\{H()} to \{out}");
   return 0;
 }

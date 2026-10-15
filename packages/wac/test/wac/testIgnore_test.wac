@@ -17,7 +17,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change } from "std";
 
 /** Three trivially passing test files, so the counts below are about the flag and nothing else. */
@@ -32,11 +31,11 @@ struct Dir {
 Dir workspace(Cli cli) {
   string dir = scratch(cli, "test-ignore");
   Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) { return Dir(false, "", "a working directory: " + made.message); }
+  if (!made.ok()) { return Dir(false, "", "a working directory: \{made.message}"); }
   string[] names = ["a_test.wac", "b_test.wac", "c_test.wac"];
   for (i32 i = 0; i < names.len(); i++) {
-    Change w = cli.writeFile(dir + "/" + names[i], ONE().toBytes()).wait();
-    if (!w.ok()) { return Dir(false, "", names[i] + ": " + w.message); }
+    Change w = cli.writeFile("\{dir}/\{names[i]}", ONE().toBytes()).wait();
+    if (!w.ok()) { return Dir(false, "", "\{names[i]}: \{w.message}"); }
   }
   return Dir(true, dir, "");
 }
@@ -65,15 +64,15 @@ export string test_a_named_file_is_dropped_and_the_count_says_so_6vp2knq(Core co
   Ran all = wacTest(cli, [d.path]);
   t.isTrue(all.started, "the binary started");
   if (!all.started) { return t.report(); }
-  t.eqI32(all.status, 0, "the baseline passes — " + all.out);
-  t.isTrue(contains(all.out, "3 files: 3 ok"), "three files without the flag — got \"" + all.out + "\"");
+  t.eqI32(all.status, 0, "the baseline passes — \{all.out}");
+  t.isTrue(contains(all.out, "3 files: 3 ok"), "three files without the flag — got \"\{all.out}\"");
   t.isFalse(contains(all.out, "--ignore"), "and the summary does not mention a flag nobody passed");
 
-  Ran less = wacTest(cli, ["--ignore", d.path + "/b_test.wac", d.path]);
-  t.eqI32(less.status, 0, "it still passes — " + less.out);
+  Ran less = wacTest(cli, ["--ignore", "\{d.path}/b_test.wac", d.path]);
+  t.eqI32(less.status, 0, "it still passes — \{less.out}");
   // Both halves: what ran, and what did not. A flag that dropped a file and said `2 files: 2 ok`
   // would satisfy the first and be the bug this is here for.
-  t.isTrue(contains(less.out, "2 files: 2 ok"), "two ran — got \"" + less.out + "\"");
+  t.isTrue(contains(less.out, "2 files: 2 ok"), "two ran — got \"\{less.out}\"");
   t.isTrue(contains(less.out, "1 not run (--ignore)"), "and one is named as excluded");
   return t.report();
 }
@@ -91,7 +90,7 @@ export string test_a_directory_excludes_what_is_under_it_6vp2knq(Core core, Cli 
   // **Excluding everything is its own message.** "No tests under <dir>" would be a wrong answer —
   // there were three — and it sends the reader looking for a naming mistake that is not there.
   t.isTrue(contains(none.out, "excluded all 3 test file(s)"),
-           "it says the flag emptied the run — got \"" + none.out + "\"");
+           "it says the flag emptied the run — got \"\{none.out}\"");
   t.isFalse(contains(none.out, "no tests under"), "rather than blaming discovery");
   t.isTrue(none.status != 0, "and it is not a silent success");
   return t.report();
@@ -106,10 +105,10 @@ export string test_the_flag_is_read_wherever_it_is_written_6vp2knq(Core core, Cl
   // Before the path and after it. `wac test` already had this rule for `--filter` and the flags
   // before it; a value-carrying flag is where it gets broken, because skipping the flag without its
   // value leaves the value looking like a target.
-  Ran before = wacTest(cli, ["--ignore", d.path + "/b_test.wac", d.path]);
-  Ran after = wacTest(cli, [d.path, "--ignore", d.path + "/b_test.wac"]);
+  Ran before = wacTest(cli, ["--ignore", "\{d.path}/b_test.wac", d.path]);
+  Ran after = wacTest(cli, [d.path, "--ignore", "\{d.path}/b_test.wac"]);
   t.eqI32(after.status, before.status, "the same status either way");
-  t.isTrue(contains(after.out, "2 files: 2 ok"), "and the same run — got \"" + after.out + "\"");
+  t.isTrue(contains(after.out, "2 files: 2 ok"), "and the same run — got \"\{after.out}\"");
   t.isTrue(contains(after.out, "1 not run (--ignore)"), "with the same count");
   // The value must not be read as a path: a run that took it as a target would report a file that
   // did not run, which reads as a failing test.
@@ -128,15 +127,15 @@ export string test_a_single_named_file_is_not_a_way_around_it_6vp2knq(Core core,
   // file, with the code contradicting its own comment one screen away. A caller building both lists
   // from one source must not get a different answer for naming a file than for naming its
   // directory.
-  string one = d.path + "/a_test.wac";
+  string one = "\{d.path}/a_test.wac";
   Ran plain = wacTest(cli, [one]);
-  t.eqI32(plain.status, 0, "the file passes when it is not excluded — " + plain.out);
-  t.isTrue(contains(plain.out, "1 passed"), "and runs — got \"" + plain.out + "\"");
+  t.eqI32(plain.status, 0, "the file passes when it is not excluded — \{plain.out}");
+  t.isTrue(contains(plain.out, "1 passed"), "and runs — got \"\{plain.out}\"");
 
   Ran skipped = wacTest(cli, ["--ignore", one, one]);
-  t.eqI32(skipped.status, 0, "excluding it is not a failure — " + skipped.out);
+  t.eqI32(skipped.status, 0, "excluding it is not a failure — \{skipped.out}");
   t.isTrue(contains(skipped.out, "not run (--ignore)"),
-           "and it says the file was excluded — got \"" + skipped.out + "\"");
+           "and it says the file was excluded — got \"\{skipped.out}\"");
   t.isFalse(contains(skipped.out, "1 passed"), "the excluded file did not run");
   return t.report();
 }

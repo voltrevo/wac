@@ -1,8 +1,12 @@
-// `itoa64` and `utoa64`, judged against `BigInt`.
+// Interpolation of `u64` and `i64`, judged against `BigInt`.
 //
-// These two are worth their own differential rather than a table, because every failure message in
-// every wac test in the repository goes through them: a wrong digit here is a wrong *diagnosis*
-// everywhere, and the shape of that failure is a test that reports the wrong number and is believed.
+// Worth its own differential rather than a table, because every failure message in every wac test in
+// the repository goes through it: a wrong digit here is a wrong *diagnosis* everywhere, and the shape
+// of that failure is a test that reports the wrong number and is believed.
+//
+// It used to judge `wactest`'s own `itoa64` and `utoa64`, when those were what every message went
+// through. Messages interpolate now (`"\{n} rows"`, through core's `toString`), the copies are gone, and
+// the file kept its name because the harness and the coverage driver name it.
 //
 // ## What the move changed
 //
@@ -20,9 +24,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa64 } from "../../src/itoa64.wac";
-import { utoa64 } from "../../src/utoa64.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 static string ORACLE = "packages/wactest/test/oracle.ts";
 
@@ -41,8 +42,9 @@ string bits(u64 v) {
 
 /** Both readings of one pattern. */
 void both(Lines lines, u64 v) {
-  lines.add("u " + bits(v) + " " + utoa64(v));
-  lines.add("i " + bits(v) + " " + itoa64(v as@ i64));
+  i64 signed = v as@ i64;
+  lines.add("u \{bits(v)} \{v}");
+  lines.add("i \{bits(v)} \{signed}");
 }
 
 export string test_itoa64_and_utoa64_agree_with_bigint(Core core, Cli cli) {
@@ -66,7 +68,7 @@ export string test_itoa64_and_utoa64_agree_with_bigint(Core core, Cli cli) {
     s = s * 6364136223846793005 + 1442695040888963407;
     both(lines, s);
   }
-  t.isTrue(lines.n > 800, "the sweep is both readings of every pattern — " + itoa(lines.n) + " rows");
-  checkDeno(t, cli, ORACLE, lines, "itoa64 and utoa64");
+  t.isTrue(lines.n > 800, "the sweep is both readings of every pattern — \{lines.n} rows");
+  checkDeno(t, cli, ORACLE, lines, "interpolating u64 and i64");
   return t.report();
 }

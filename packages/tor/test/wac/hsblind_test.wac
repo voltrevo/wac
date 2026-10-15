@@ -14,7 +14,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { onionAddress, onionPubkey, addressChecksum } from "../../src/onionaddr.wac";
 import {
   blindedPublicKey, blindingFactor, credential, subcredential,
@@ -154,10 +153,10 @@ export string test_every_address_in_the_specification_decodes(Core core, Cli cli
     idx[0] = i as@ u8;
     u8[] addr = listAt(cli, "addressExamples", i);
     u8[] key = onionPubkey(addr);
-    t.eqI32(key.len(), 32, "spec example " + itoa64(i as i64) + " decodes");
+    t.eqI32(key.len(), 32, "spec example \{i as i64} decodes");
     // And re-encodes to itself, so the checksum we computed is the one the spec's author did.
     t.isTrue(equal(onionAddress(key), addr),
-             "spec example " + itoa64(i as i64) + " round-trips through our encoder");
+             "spec example \{i as i64} round-trips through our encoder");
   }
 
   // And the one address in the specification that is *not* valid. rend-spec-v3 section 1.2 offers

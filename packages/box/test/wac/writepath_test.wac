@@ -13,11 +13,10 @@
 import { Cli, Core, FileResult } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture } from "./cases.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, differs, layFixtures, runApplet, runCase } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-writepath"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-writepath"; }
 
 /**
  * Several times the 64K chunk and not a multiple of it, so boundaries land inside the data.
@@ -45,23 +44,23 @@ i32 firstDifference(u8[] a, u8[] b) {
 export string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
 
   u8[] data = pattern(500003);
-  t.isTrue(cli.writeFile(dir + "/src", data).wait().ok(), "wrote the source");
+  t.isTrue(cli.writeFile("\{dir}/src", data).wait().ok(), "wrote the source");
 
   Ran r = runCase(core, cli, dir, "cp src dst");
-  t.eqI32(r.status, 0, "cp succeeded: " + r.err);
+  t.eqI32(r.status, 0, "cp succeeded: \{r.err}");
 
-  FileResult got = cli.readFile(dir + "/dst").wait();
+  FileResult got = cli.readFile("\{dir}/dst").wait();
   t.isTrue(got.ok, "the copy is readable");
   t.eqI32(firstDifference(data, got.bytes), 0 - 1,
           "the copy is byte-identical — -2 means the length differs");
 
   // Over an existing file, and the rename must not leave the old contents behind.
-  cli.writeFile(dir + "/dst", "stale".toBytes()).wait();
+  cli.writeFile("\{dir}/dst", "stale".toBytes()).wait();
   t.eqI32(runCase(core, cli, dir, "cp src dst").status, 0, "cp over an existing file");
-  FileResult again = cli.readFile(dir + "/dst").wait();
+  FileResult again = cli.readFile("\{dir}/dst").wait();
   t.eqI32(firstDifference(data, again.bytes), 0 - 1, "and it is the new contents, whole");
 
   cli.remove(dir, true).wait();
@@ -71,8 +70,8 @@ export string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
 export string test_a_failed_cp_leaves_no_temporary_beside_the_target(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
-  cli.writeFile(dir + "/src", "small\n".toBytes()).wait();
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  cli.writeFile("\{dir}/src", "small\n".toBytes()).wait();
 
   t.eqI32(runCase(core, cli, dir, "cp absent never").status, 1, "a missing source fails");
 
@@ -81,8 +80,8 @@ export string test_a_failed_cp_leaves_no_temporary_beside_the_target(Core core, 
   string[]? names = cli.readDir(dir).wait();
   t.isTrue(!(names is null), "the directory is readable");
   string joined = "";
-  for (i32 i = 0; i < names!.len(); i++) { joined = joined + " " + names![i]; }
-  t.eqStr(joined, " src", "only the source survives —" + joined);
+  for (i32 i = 0; i < names!.len(); i++) { joined = joined + " \{names![i]}"; }
+  t.eqStr(joined, " src", "only the source survives —\{joined}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -91,14 +90,14 @@ export string test_a_failed_cp_leaves_no_temporary_beside_the_target(Core core, 
 export string test_tee_writes_to_standard_output_and_to_the_file(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
 
   // `tee` is the first applet with two destinations at once, so both are asked.
   Ran r = runCase(core, cli, dir, "printf 'through\\n' | tee out");
-  t.eqI32(r.status, 0, "tee succeeded: " + r.err);
+  t.eqI32(r.status, 0, "tee succeeded: \{r.err}");
   t.eqStr(r.out, "through\n", "tee wrote to standard output");
 
-  FileResult f = cli.readFile(dir + "/out").wait();
+  FileResult f = cli.readFile("\{dir}/out").wait();
   t.isTrue(f.ok, "and made the file");
   t.eqStr(string.fromBytes(f.bytes), "through\n", "and wrote the same bytes to it");
 
@@ -120,14 +119,14 @@ export string test_tee_writes_to_standard_output_and_to_the_file(Core core, Cli 
 export string test_cp_leaves_no_temporary_behind(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
-  string source = cli.cwd().wait() + "/README.md";
+  string source = "\{cli.cwd().wait()}/README.md";
   u8[] want = cli.readFile(source).wait().bytes;
   t.isTrue(want.len() > 0, "README.md is readable and not empty");
 
-  t.eqI32(runApplet(core, cli, dir, ["cp", source, dir + "/copy"]).status, 0, "cp ran");
-  t.eqStr(differs(cli.readFile(dir + "/copy").wait().bytes, want), "", "cp copied it");
+  t.eqI32(runApplet(core, cli, dir, ["cp", source, "\{dir}/copy"]).status, 0, "cp ran");
+  t.eqStr(differs(cli.readFile("\{dir}/copy").wait().bytes, want), "", "cp copied it");
 
   string[]? listed = cli.readDir(dir).wait();
   if (listed is null) {
@@ -136,7 +135,7 @@ export string test_cp_leaves_no_temporary_behind(Core core, Cli cli) {
     return t.report();
   }
   string[] left = listed!;
-  t.eqI32(left.len(), 1, "a temporary file survived: " + itoa(left.len()) + " entries");
+  t.eqI32(left.len(), 1, "a temporary file survived: \{left.len()} entries");
   if (left.len() > 0) { t.eqStr(left[0], "copy", "and the one left is the copy"); }
 
   cli.remove(dir, true).wait();

@@ -39,11 +39,11 @@ export i32 main(Sys sys) {
 
   Child kid = cli.spawnSelf(argvOf(["echo", "feed"]), GRANT_NONE, "", false, false).wait();
   if (kid.unavailable()) {
-    core.warn("feed: this world cannot spawn: " + kid.error);
+    core.warn("feed: this world cannot spawn: \{kid.error}");
     return 2;
   }
   if (kid.handle < 0) {
-    core.warn("feed: the child would not start: " + kid.error);
+    core.warn("feed: the child would not start: \{kid.error}");
     return 2;
   }
 
@@ -68,7 +68,7 @@ export i32 main(Sys sys) {
     match (cli.recv(kid.handle).wait()) {
       Data(bytes): { heard = heard + string.fromBytes(bytes); }
       End: { reading = false; }
-      Failed(why): { core.warn("feed: reading the child failed: " + why); return 2; }
+      Failed(why): { core.warn("feed: reading the child failed: \{why}"); return 2; }
     }
   }
   say(cli, "the child heard what landed and nothing else", heard == "heard: kept\n");
@@ -92,7 +92,7 @@ i32 BLOCK() { return 65536; }
 bool flooded(Core core, Cli cli) {
   Child kid = cli.spawnSelf(argvOf(["flood", "feed"]), GRANT_NONE, "", false, false).wait();
   if (kid.unavailable() || kid.handle < 0) {
-    core.warn("feed: the flooding child would not start: " + kid.error);
+    core.warn("feed: the flooding child would not start: \{kid.error}");
     return false;
   }
   // **Not reading for a moment**, so the queue is certainly full before anything drains it. Without
@@ -107,7 +107,7 @@ bool flooded(Core core, Cli cli) {
     match (cli.recv(kid.handle).wait()) {
       Data(bytes): { got = got + bytes.len(); tail = string.fromBytes(bytes); }
       End: { reading = false; }
-      Failed(why): { core.warn("feed: reading the flood failed: " + why); return false; }
+      Failed(why): { core.warn("feed: reading the flood failed: \{why}"); return false; }
     }
   }
   say(cli, "a child that outruns its reader loses nothing", got == FLOOD_BYTES() + VERDICT_LEN());
@@ -173,7 +173,7 @@ i32 echo(Cli cli) {
   // `readStdin` is "all of standard input, to the end", so this call is itself the wait for the
   // feed to close — which is what makes the parent's `closeFeed` observable from in here.
   u8[] got = cli.readStdin().wait();
-  cli.write(("heard: " + string.fromBytes(got)).toBytes());
+  cli.write("heard: \{string.fromBytes(got)}".toBytes());
   return 0;
 }
 

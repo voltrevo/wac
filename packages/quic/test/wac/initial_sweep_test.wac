@@ -33,7 +33,6 @@
 // Without the control the sweep would pass just as well against a server that read nothing at all.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Client } from "../../src/client.wac";
 import { Server } from "../../src/server.wac";
 
@@ -65,23 +64,23 @@ Server serverOn(u8[] datagram) {
 
 /** Every reader on the server, called for its side effect of being reached. */
 void askEverything(T t, Server s, string what) {
-  t.isTrue(s.clientShare().len() >= 0, "clientShare " + what);
-  t.isTrue(s.shared().len() >= 0, "shared " + what);
-  t.isTrue(s.throughServerHello().len() >= 0, "throughServerHello " + what);
-  t.isTrue(s.extensions().len() >= 0, "extensions " + what);
-  t.isTrue(s.handshakeMessages().len() >= 0, "handshakeMessages " + what);
-  t.isTrue(s.throughFinished().len() >= 0, "throughFinished " + what);
+  t.isTrue(s.clientShare().len() >= 0, "clientShare \{what}");
+  t.isTrue(s.shared().len() >= 0, "shared \{what}");
+  t.isTrue(s.throughServerHello().len() >= 0, "throughServerHello \{what}");
+  t.isTrue(s.extensions().len() >= 0, "extensions \{what}");
+  t.isTrue(s.handshakeMessages().len() >= 0, "handshakeMessages \{what}");
+  t.isTrue(s.throughFinished().len() >= 0, "throughFinished \{what}");
   // The 1-RTT surface, which reaches `shared()` through `applicationKeysFor` and was the chain that
   // ended the process. A packet to open is supplied so `openApplication` is entered rather than
   // short-circuited on an empty argument.
   u8[] pkt = u8[].filled(64, 0x5A);
-  t.isTrue(s.openApplication(pkt).len() >= 0, "openApplication " + what);
-  t.isTrue(s.streamBytes(pkt, 0 as i64).len() >= 0, "streamBytes " + what);
+  t.isTrue(s.openApplication(pkt).len() >= 0, "openApplication \{what}");
+  t.isTrue(s.streamBytes(pkt, 0 as i64).len() >= 0, "streamBytes \{what}");
   bool fin = s.streamFinished(pkt, 0 as i64);
-  t.isTrue(fin || !fin, "streamFinished " + what);
+  t.isTrue(fin || !fin, "streamFinished \{what}");
   t.isTrue(s.streamPacket(0 as i64, 0 as i64, "hello".toBytes(), true, 1 as i64).len() >= 0,
-           "streamPacket " + what);
-  t.isTrue(s.handshakeDone(1 as i64).len() >= 0, "handshakeDone " + what);
+           "streamPacket \{what}");
+  t.isTrue(s.handshakeDone(1 as i64).len() >= 0, "handshakeDone \{what}");
 }
 
 /**
@@ -94,7 +93,7 @@ export string test_a_whole_client_initial_is_read() {
   T t = T.create();
   u8[] whole = clientInitial();
   t.isTrue(whole.len() > 1000, "a client Initial is padded to at least 1200 bytes; got " +
-                               itoa(whole.len()));
+                               "\{whole.len()}");
   Server s = serverOn(whole);
   t.isTrue(s.ok(), "our own client's Initial was not readable by our own server");
   t.eqI32(s.clientShare().len(), 32, "the client's x25519 share is 32 bytes once its group tag is off");
@@ -125,11 +124,11 @@ export string test_no_prefix_of_a_client_initial_is_readable() {
     u8[] cut = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { cut[i] = whole[i]; }
     Server s = serverOn(cut);
-    t.isFalse(s.ok(), "a client Initial cut to " + itoa(n) + " bytes was read as whole");
-    askEverything(t, s, "on a prefix of " + itoa(n) + " bytes");
+    t.isFalse(s.ok(), "a client Initial cut to \{n} bytes was read as whole");
+    askEverything(t, s, "on a prefix of \{n} bytes");
     checked = checked + 1;
   }
-  t.isTrue(checked > 300, "only " + itoa(checked) + " prefixes were swept");
+  t.isTrue(checked > 300, "only \{checked} prefixes were swept");
   return t.report();
 }
 
@@ -158,13 +157,13 @@ export string test_a_client_initial_whose_header_lies_is_refused() {
       if (at[k] >= bad.len()) { continue; }
       bad[at[k]] = to[j] as@ u8;
       Server s = serverOn(bad);
-      string what = "byte " + itoa(at[k]) + " set to " + itoa(to[j]);
+      string what = "byte \{at[k]} set to \{to[j]}";
       // Not asserted to be unreadable: byte 0's low bits are the packet number length and a
       // different value there is a packet this server may still read. What is asserted is that it
       // answers, and that whatever it says it says without ending the process.
       bool read = s.ok();
-      t.isTrue(read || !read, "no answer for " + what);
-      askEverything(t, s, "with " + what);
+      t.isTrue(read || !read, "no answer for \{what}");
+      askEverything(t, s, "with \{what}");
     }
   }
 

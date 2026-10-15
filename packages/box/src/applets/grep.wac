@@ -8,7 +8,6 @@ import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Feed, Line, Lines, Sink, nextLine } from "../../../platform/src/stream.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { search, slotCount } from "../../../regex/src/regex.wac";
 import { Compiled } from "../../../regex/src/compile.wac";
 import { compileExtended, compileExtendedIgnoreCase } from "../../../regex/src/posix.wac";
@@ -21,7 +20,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) {
     // GNU's own summary, and **2** rather than 1: for `grep`, 1 means "no line matched".
-    core.warn("Usage: " + a.name + " [OPTION]... PATTERNS [FILE]...");
+    core.warn("Usage: \{a.name} [OPTION]... PATTERNS [FILE]...");
     tryHelp(core, a.name);
     return 2;
   }
@@ -35,7 +34,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
   // has had this and this one did not, which is the drift wac-mono 0103 is about — four corpus scripts
   // found it the first time `packages/box`'s shell was held to the same corpus.
   if (has(a, 'x')) {
-    source = extended ? "^(" + source + ")$" : "^\\(" + source + "\\)$";
+    source = extended ? "^(\{source})$" : "^\\(\{source}\\)$";
   }
   u8[] pattern = source.toBytes();
   Compiled got = has(a, 'i')
@@ -44,7 +43,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
   // **The reason, not "bad pattern".** `grep '\(ab\)\1'` is a pattern GNU accepts and this engine
   // cannot run, and calling it bad told the caller to go and fix something that was already right.
   // Where GNU refuses too the words are GNU's; where the gap is ours the sentence says so.
-  if (got.program is null) { core.warn(a.name + ": " + got.why); return 2; }
+  if (got.program is null) { core.warn("\{a.name}: \{got.why}"); return 2; }
   Program p = got.program!;
 
   i32[] caps = i32[].filled(slotCount(p), 0);
@@ -123,7 +122,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
     // cannot answer, and it is the only honest status: neither "matched" nor "did not match" is
     // known.
       if (found == BUDGET()) {
-        core.warn(a.name + ": " + itoa(n) + ": pattern too expensive on this line, giving up");
+        core.warn("\{a.name}: \{n}: pattern too expensive on this line, giving up");
         return 2;
       }
       bool hit = found != NO_MATCH();
@@ -139,7 +138,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
       // A binary file's matching *lines* are not printed — the message below stands in for them — while
       // `-c`, `-l` and `-q` are unaffected, because a count is not a line of the file.
       if (binary || listing) { continue; }
-      if (!out.line(where + (number ? itoa(n) + ":" + text : text))) { break; }
+      if (!out.line(where + (number ? "\{n}:\{text}" : text))) { break; }
     }
     string named = in.label == "" ? "(standard input)" : in.label;
     if (listHits) {
@@ -148,7 +147,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
       if (here == 0) { out.line(named); }
     } else if (countOnly) {
       // `-c` prints a count for each file, with the name in front when there is more than one.
-      out.line(where + itoa(here));
+      out.line("\{where}\{here}");
     }
     // GNU's sentence, on standard error, once per file that matched. `(standard input)` is the name it
     // uses when there is no operand, and it uses it here even though nothing else in this applet does.

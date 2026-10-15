@@ -96,7 +96,7 @@ export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8
   // that is not the answer. Status 1, which is what a shell reports for a command that failed.
   if (got.truncated) {
     return Output.refused(
-      (name + ": output exceeded what this shell can hold for a command it runs in process; " +
+      ("\{name}: output exceeded what this shell can hold for a command it runs in process; " +
        "run it as a spawned program, where the output streams\n").toBytes(),
       1,
     );

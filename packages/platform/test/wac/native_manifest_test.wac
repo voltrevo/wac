@@ -22,7 +22,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 import { startsWith, endsWith, joined } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { jsonFile, objectOf, strOf, arrayOf } from "../../../wactest/src/jsonfile.wac";
 import { customSection } from "./section.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
@@ -67,29 +66,29 @@ i32 indexOfNamed(JsonArray items, string want) {
 export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_the_host_asks_for(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = root(cli) + "/.cache/nativemanifest";
+  string dir = "\{root(cli)}/.cache/nativemanifest";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
+  Exec r = cli.exec("\{root(cli)}/native/v8/target/release/wac",
     [
              "build", "packages/platform/example/wc.wac",
-             "--allow-read", "-o", dir + "/wc", "--quiet"
+             "--allow-read", "-o", "\{dir}/wc", "--quiet"
     ], u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
-           "wac build wrote it — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+           "wac build wrote it — \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}");
   if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
   // **Out of the module**, where the manifest lives as a `wac.manifest` section. It was a `.json`
   // beside it until 2026-08-20 — read `native/manifest` for why that went.
-  FileResult built = cli.readFile(dir + "/wc.wasm").wait();
-  t.isTrue(built.ok, "the build wrote no module — " + built.error);
+  FileResult built = cli.readFile("\{dir}/wc.wasm").wait();
+  t.isTrue(built.ok, "the build wrote no module — \{built.error}");
   if (!built.ok) { cli.remove(dir, true).wait(); return t.report(); }
   string text = customSection(built.bytes, "wac.manifest");
   t.isTrue(text.len() > 0, "the module carries no `wac.manifest` section");
   if (text.len() == 0) { cli.remove(dir, true).wait(); return t.report(); }
-  cli.writeFile(dir + "/manifest.json", text.toBytes()).wait();
-  JsonObject m = jsonFile(cli, dir + "/manifest.json");
+  cli.writeFile("\{dir}/manifest.json", text.toBytes()).wait();
+  JsonObject m = jsonFile(cli, "\{dir}/manifest.json");
   JsonArray callbacks = arrayOf(m, "callbacks");
   JsonArray structs = arrayOf(m, "structs");
   // Asserted, not assumed: an empty manifest satisfies every "no field names a missing dispatcher"
@@ -125,7 +124,7 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
   string[] firstFew = string[].filled(nUnresolved < 5 ? nUnresolved : 5, "");
   for (i32 i = 0; i < firstFew.len(); i++) { firstFew[i] = unresolved[i]; }
   t.eqI32(nUnresolved, 0,
-          itoa(nUnresolved) + " funcref field(s) name a signature the manifest has no dispatcher " +
+          "\{nUnresolved} funcref field(s) name a signature the manifest has no dispatcher " +
           "for — the host cannot wire them: " + joined(firstFew, " | "));
 
   string[] names = namesIn(structs);
@@ -152,17 +151,17 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
     string[] wanted = ["Data", "End", "Failed"];
     for (i32 i = 0; i < wanted.len(); i++) {
       i32 v = indexOfNamed(variants, wanted[i]);
-      t.isTrue(v >= 0, "Read has no " + wanted[i] + " variant in the manifest");
+      t.isTrue(v >= 0, "Read has no \{wanted[i]} variant in the manifest");
       if (v < 0) { continue; }
       string make = strOf(objectOf(variants.get(v)), "make");
       t.isTrue(startsWith(make, "$bind$"),
-               "Read." + wanted[i] + " names \"" + make + "\", which is not an export");
+               "Read.\{wanted[i]} names \"\{make}\", which is not an export");
     }
     // A payload is part of the description too: `Data(u8[] bytes)` is what makes it constructible.
     i32 d = indexOfNamed(variants, "Data");
     if (d >= 0) {
       JsonArray df = arrayOf(objectOf(variants.get(d)), "fields");
-      t.eqI32(df.len(), 1, "Read.Data carries " + itoa(df.len()) + " fields, expected one");
+      t.eqI32(df.len(), 1, "Read.Data carries \{df.len()} fields, expected one");
       if (df.len() == 1) {
         t.eqStr(strOf(objectOf(df.get(0)), "type"), "u8[]", "Read.Data's payload");
       }
@@ -173,8 +172,8 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
   // once here rather than trusted three times.
   for (i32 i = 0; i < callbacks.len(); i++) {
     JsonObject c = objectOf(callbacks.get(i));
-    t.eqStr(strOf(c, "field"), "cb" + itoa(i), "callback " + itoa(i) + "'s field");
-    t.eqStr(strOf(c, "helper"), "$bind$fnref_" + itoa(i), "callback " + itoa(i) + "'s helper");
+    t.eqStr(strOf(c, "field"), "cb\{i}", "callback \{i}'s field");
+    t.eqStr(strOf(c, "helper"), "$bind$fnref_\{i}", "callback \{i}'s helper");
   }
 
   cli.remove(dir, true).wait();
@@ -198,7 +197,7 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
  */
 export string test_a_program_declaring_a_name_platform_also_declares_still_runs(Core core, Cli cli) {
   T t = T.create();
-  string dir = root(cli) + "/.cache/nameclash";
+  string dir = "\{root(cli)}/.cache/nameclash";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
@@ -208,15 +207,15 @@ export string test_a_program_declaring_a_name_platform_also_declares_still_runs(
                "  Stat s = Stat(1);\n" +
                "  core.log(\"n=\" + (s.n == 1 ? \"1\" : \"?\"));\n" +
                "  return 0;\n}\n";
-  t.isTrue(cli.writeFile(dir + "/clash.wac", src.toBytes()).wait().ok(), "wrote the fixture");
+  t.isTrue(cli.writeFile("\{dir}/clash.wac", src.toBytes()).wait().ok(), "wrote the fixture");
 
-  Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
-    ["run", "--allow-read", dir + "/clash.wac"], u8[]()).wait();
+  Exec r = cli.exec("\{root(cli)}/native/v8/target/release/wac",
+    ["run", "--allow-read", "\{dir}/clash.wac"], u8[]()).wait();
   string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
-  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  t.isTrue(r.ran(), "wac did not run — \{r.error}");
   if (r.ran()) {
-    t.eqI32(r.status, 0, "a struct named like one in platform.wac stopped the program: " + said);
-    t.isTrue(said.indexOf("n=1") >= 0, "the program did not print n=1 — " + said);
+    t.eqI32(r.status, 0, "a struct named like one in platform.wac stopped the program: \{said}");
+    t.isTrue(said.indexOf("n=1") >= 0, "the program did not print n=1 — \{said}");
   }
 
   cli.remove(dir, true).wait();

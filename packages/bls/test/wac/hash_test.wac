@@ -11,7 +11,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -77,7 +76,7 @@ string trimmed(string s) {
 string padded(string h) {
   string bare = h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h;
   string out = bare;
-  while (out.len() < 96) { out = "0" + out; }
+  while (out.len() < 96) { out = "0\{out}"; }
   return out;
 }
 
@@ -97,7 +96,7 @@ Suite suite(T t, Cli cli) {
   Suite none = Suite(false, "", Vector[].filled(0, Vector("", string[].filled(0, ""), "", "", "", "",
                                                        "", "")));
   FileResult f = cli.readFile("packages/bls/test/vendor/hash_to_G2.json").wait();
-  t.isTrue(f.ok, "hash_to_G2.json could not be read: " + f.error);
+  t.isTrue(f.ok, "hash_to_G2.json could not be read: \{f.error}");
   if (!f.ok) { return none; }
   JsonValue? doc = parse(f.bytes);
   t.isTrue(!(doc is null), "hash_to_G2.json did not parse");
@@ -137,7 +136,7 @@ export string test_hash_to_field_matches_every_cfrg_vector(Core core, Cli cli) {
     Vector v = s.vectors[i];
     string want = "";
     for (i32 k = 0; k < v.u.len(); k++) { want = want + fp2(v.u[k]); }
-    t.eqStr(hex(blsHashToField(v.msg.toBytes(), dst)), want, "msg \"" + v.msg + "\"");
+    t.eqStr(hex(blsHashToField(v.msg.toBytes(), dst)), want, "msg \"\{v.msg}\"");
   }
   return t.report();
 }
@@ -173,10 +172,10 @@ export string test_map_to_curve_matches_q0_and_q1_in_every_cfrg_vector(Core core
       u8[] got = blsMapToCurve(decoded(coefficient(v.u[which], 0)),
                                decoded(coefficient(v.u[which], 1)));
       string name = which == 0 ? "Q0" : "Q1";
-      t.isTrue(got.len() > 0, name + " for \"" + v.msg + "\": the map refused");
+      t.isTrue(got.len() > 0, "\{name} for \"\{v.msg}\": the map refused");
       if (got.len() == 0) { continue; }
       string want = which == 0 ? pointHex(v.q0x, v.q0y) : pointHex(v.q1x, v.q1y);
-      t.eqStr(hex(got), want, name + " for \"" + v.msg + "\"");
+      t.eqStr(hex(got), want, "\{name} for \"\{v.msg}\"");
     }
   }
   return t.report();
@@ -193,7 +192,7 @@ export string test_the_maps_output_is_on_the_real_curve_not_the_isogenous_one(Co
     for (i32 k = 0; k < v.u.len(); k++) {
       t.isTrue(blsMapLandsOnCurve(decoded(coefficient(v.u[k], 0)),
                                   decoded(coefficient(v.u[k], 1))),
-               "map_to_curve left the curve for \"" + v.msg + "\"");
+               "map_to_curve left the curve for \"\{v.msg}\"");
     }
   }
   return t.report();
@@ -208,7 +207,7 @@ export string test_hash_to_g2_matches_p_in_every_cfrg_vector(Core core, Cli cli)
   u8[] dst = s.dst.toBytes();
   for (i32 i = 0; i < s.vectors.len(); i++) {
     Vector v = s.vectors[i];
-    t.eqStr(hex(blsHashToG2(v.msg.toBytes(), dst)), pointHex(v.px, v.py), "msg \"" + v.msg + "\"");
+    t.eqStr(hex(blsHashToG2(v.msg.toBytes(), dst)), pointHex(v.px, v.py), "msg \"\{v.msg}\"");
   }
   return t.report();
 }
@@ -222,7 +221,7 @@ export string test_hash_to_g2_lands_in_the_order_r_subgroup(Core core, Cli cli) 
   u8[] dst = s.dst.toBytes();
   for (i32 i = 0; i < s.vectors.len(); i++) {
     t.isTrue(blsHashToG2InSubgroup(s.vectors[i].msg.toBytes(), dst),
-             "hash_to_G2(\"" + s.vectors[i].msg + "\") is outside the subgroup");
+             "hash_to_G2(\"\{s.vectors[i].msg}\") is outside the subgroup");
   }
   return t.report();
 }
@@ -234,7 +233,7 @@ export string test_hash_to_g2_matches_the_ethereum_fixtures_too(Core core, Cli c
   // configuration. Worth having for one of them in particular: a 517-byte message, which is the
   // only case here that drives `expand_message_xmd` past a single output block.
   FileResult f = cli.readFile("packages/bls/test/vendor/eth_hash_to_G2.json").wait();
-  t.isTrue(f.ok, "eth_hash_to_G2.json could not be read: " + f.error);
+  t.isTrue(f.ok, "eth_hash_to_G2.json could not be read: \{f.error}");
   if (!f.ok) { return t.report(); }
   JsonValue? doc = parse(f.bytes);
   t.isTrue(!(doc is null), "eth_hash_to_G2.json did not parse");
@@ -260,7 +259,7 @@ export string test_hash_to_g2_matches_the_ethereum_fixtures_too(Core core, Cli c
   }
   // The long message is the reason this corpus is here at all; without it every case fits one
   // block of `expand_message_xmd` and the second block never runs.
-  t.isTrue(longest > 256, "the longest Ethereum message is " + itoa(longest) +
+  t.isTrue(longest > 256, "the longest Ethereum message is \{longest}" +
                           " bytes, so `expand_message_xmd` never went past one block");
   return t.report();
 }

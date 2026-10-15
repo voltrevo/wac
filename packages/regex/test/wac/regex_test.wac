@@ -32,7 +32,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
 import { compile, compileIgnoreCase, search, slotCount } from "../../src/regex.wac";
 import { compileFlags } from "../../src/compile.wac";
@@ -59,8 +58,8 @@ Answer matched(string pattern, u8[] input, bool ignoreCase) {
   string out = "";
   for (i32 i = 0; i + 1 < caps.len(); i = i + 2) {
     if (i > 0) { out = out + ";"; }
-    out = caps[i] < 0 || caps[i + 1] < 0 ? out + "-"
-                                         : out + itoa(caps[i]) + "," + itoa(caps[i + 1]);
+    out = caps[i] < 0 || caps[i + 1] < 0 ? "\{out}-"
+                                         : "\{out}\{caps[i]},\{caps[i + 1]}";
   }
   return Answer(out, false, false);
 }
@@ -104,14 +103,14 @@ void checkAll(T t, Cli cli, string[] patterns, u8[][] inputs, string what) {
   for (i32 p = 0; p < patterns.len(); p++) {
     for (i32 i = 0; i < inputs.len(); i++) {
       Answer a = matched(patterns[p], inputs[i], false);
-      t.isFalse(a.rejected, "/" + patterns[p] + "/ was rejected by the compiler");
-      t.isFalse(a.gaveUp, "/" + patterns[p] + "/ on subject " + itoa(i) + " ran out of steps");
+      t.isFalse(a.rejected, "/\{patterns[p]}/ was rejected by the compiler");
+      t.isFalse(a.gaveUp, "/\{patterns[p]}/ on subject \{i} ran out of steps");
       if (a.rejected || a.gaveUp) { continue; }
-      lines.add("m " + hex(patterns[p].toBytes()) + " " + hex(inputs[i]) + " " + a.text);
+      lines.add("m \{hex(patterns[p].toBytes())} \{hex(inputs[i])} \{a.text}");
       compared = compared + 1;
     }
   }
-  t.isTrue(compared > 0, what + ": nothing was compared");
+  t.isTrue(compared > 0, "\{what}: nothing was compared");
   checkDeno(t, cli, ORACLE, lines, what);
 }
 
@@ -228,14 +227,14 @@ export string test_patterns_outside_the_subset_are_rejected(Core core, Cli cli) 
     "[\\D]", "[\\W]", "[\\S]"
   ];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.isFalse(accepts(bad[i]), "/" + bad[i] + "/ was accepted and should not be");
+    t.isFalse(accepts(bad[i]), "/\{bad[i]}/ was accepted and should not be");
     lines.add("accept " + hex(bad[i].toBytes()) + " " + (accepts(bad[i]) ? "1" : "0"));
   }
   // And things that look similar but are in the subset. `{2}` is not among them any more — see
   // `test_a_leading_brace_is_a_known_divergence` below.
   string[] good = ["(?:a)", "a{2,3}", "[a-z]", "\\d", "\\.", "\\\\", "a{,2}"];
   for (i32 i = 0; i < good.len(); i++) {
-    t.isTrue(accepts(good[i]), "/" + good[i] + "/ was rejected and should not be");
+    t.isTrue(accepts(good[i]), "/\{good[i]}/ was rejected and should not be");
     lines.add("accept " + hex(good[i].toBytes()) + " " + (accepts(good[i]) ? "1" : "0"));
   }
   checkDeno(t, cli, ORACLE, lines, "the subset boundary");
@@ -319,18 +318,18 @@ void fuzz(T t, Cli cli, i32 seed, i32 rounds, bool nested, string what) {
       gaveUp = gaveUp + 1;
       continue;
     }
-    lines.add("m " + hex(pattern.toBytes()) + " " + hex(subject) + " " + a.text);
+    lines.add("m \{hex(pattern.toBytes())} \{hex(subject)} \{a.text}");
     compared = compared + 1;
   }
   // The refusal *ratio* is checked by the oracle rather than here, because the question is how many
   // patterns **JavaScript compiles** were refused — a pattern JavaScript itself rejects is not a
   // comparison this engine declined to make. Counting them here would count both, which is what
   // turned a 15% bound into a third of the corpus on the first run of this port.
-  lines.add("refusals " + itoa(rounds) + " 15");
+  lines.add("refusals \{rounds} 15");
   t.isTrue(gaveUp * 100 <= rounds * 2,
-           what + ": " + itoa(gaveUp) + "/" + itoa(rounds) +
+           "\{what}: \{gaveUp}/\{rounds}" +
            " patterns exhausted the step budget, which is more than a pathological handful");
-  t.isTrue(compared > rounds / 2, what + ": only " + itoa(compared) + " were compared");
+  t.isTrue(compared > rounds / 2, "\{what}: only \{compared} were compared");
   checkDeno(t, cli, ORACLE, lines, what);
 }
 
@@ -367,10 +366,10 @@ export string test_the_i_flag_agrees_with_regexp_over_ascii(Core core, Cli cli) 
   for (i32 p = 0; p < patterns.len(); p++) {
     for (i32 i = 0; i < subjects.len(); i++) {
       Answer a = matched(patterns[p], subjects[i].toBytes(), true);
-      t.isFalse(a.rejected, "/" + patterns[p] + "/i was rejected");
-      t.isFalse(a.gaveUp, "/" + patterns[p] + "/i on \"" + subjects[i] + "\" ran out of steps");
+      t.isFalse(a.rejected, "/\{patterns[p]}/i was rejected");
+      t.isFalse(a.gaveUp, "/\{patterns[p]}/i on \"\{subjects[i]}\" ran out of steps");
       if (a.rejected || a.gaveUp) { continue; }
-      lines.add("mi " + hex(patterns[p].toBytes()) + " " + hex(subjects[i].toBytes()) + " " +
+      lines.add("mi \{hex(patterns[p].toBytes())} \{hex(subjects[i].toBytes())} " +
                 a.text);
     }
   }
@@ -393,7 +392,7 @@ export string test_the_i_flag_changes_nothing_when_nothing_is_cased() {
       Answer plain = matched(patterns[p], subjects[i].toBytes(), false);
       Answer folded = matched(patterns[p], subjects[i].toBytes(), true);
       t.eqStr(folded.text, plain.text,
-              "/" + patterns[p] + "/ on \"" + subjects[i] + "\" differs with the i flag");
+              "/\{patterns[p]}/ on \"\{subjects[i]}\" differs with the i flag");
     }
   }
   return t.report();
@@ -412,7 +411,7 @@ export string test_a_capture_heavy_quantifier_runs_out_of_room() {
   T t = T.create();
   string body = "";
   for (i32 i = 0; i < 33; i++) { body = body + "(a)"; }
-  Program? prog = compile(("(" + body + ")*").toBytes());
+  Program? prog = compile("(\{body})*".toBytes());
   t.isTrue(!(prog is null), "the pattern compiles");
   if (prog is null) { return t.report(); }
   Program p = prog!;
@@ -422,7 +421,7 @@ export string test_a_capture_heavy_quantifier_runs_out_of_room() {
     i32 found = search(p, "aaa".toBytes(), 0, caps, budgets[i]);
     // Either it matched or it gave up; both are answers. The bug was neither.
     t.isTrue(found >= 0 || found == NO_MATCH() || found == BUDGET(),
-             "budget " + itoa(budgets[i]) + ": unexpected status " + itoa(found));
+             "budget \{budgets[i]}: unexpected status \{found}");
   }
   // And a generous budget still matches, so the reservation has not simply refused everything.
   Program? plentyProg = compile("((a)(a))*".toBytes());
@@ -516,11 +515,11 @@ export string test_the_compilers_tables_grow_and_keep_what_was_in_them(Core core
   for (i32 i = 0; i < 30; i++) { big = big + "a?"; }
 
   string[] patterns = [
-    "(" + alt + ")", "(" + alt + ")+", alt,
-    manyRanges, "(" + manyRanges + ")?",
-    "(" + big + "){2}", "(" + big + "){3}", "((" + big + "){2}){2}",
+    "(\{alt})", "(\{alt})+", alt,
+    manyRanges, "(\{manyRanges})?",
+    "(\{big}){2}", "(\{big}){3}", "((\{big}){2}){2}",
     // The two tables at once: an alternation of many branches, each with a wide class.
-    "(" + thirteen + "|" + thirteen + "|" + thirteen + "|a|b|c|d|e|f|g)"
+    "(\{thirteen}|\{thirteen}|\{thirteen}|a|b|c|d|e|f|g)"
   ];
   checkAll(t, cli, patterns, subjects(), "grown tables");
 

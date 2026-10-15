@@ -9,7 +9,6 @@
 // host: it builds an array, calls two functions and compares two integers. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { crc32, crc32Start, crc32Finish, crc32Update, crcTable8 } from "../../src/crc32.wac";
 
 /**
@@ -58,7 +57,7 @@ export string test_folding_in_pieces_equals_one_pass_over_the_whole() {
     u32 want = crc32(d);
     for (i32 b = 0; b < steps.len(); b++) {
       t.eqU32(chunked(d, steps[b]), want,
-              itoa(sizes[a]) + " bytes in steps of " + itoa(steps[b]));
+              "\{sizes[a]} bytes in steps of \{steps[b]}");
     }
   }
   return t.report();

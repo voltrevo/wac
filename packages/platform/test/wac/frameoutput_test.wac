@@ -15,7 +15,7 @@ import { Cli, Core } from "std";
 import { Frame, childCli } from "../../src/frame.wac";
 import { T } from "../../../wactest/src/assert.wac";
 
-string workDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-frameoutput"; }
+string workDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-frameoutput"; }
 
 /** What a child does when it redirects itself: open, write, and put the stream back. */
 void writeThroughRedirect(Cli child, string path, string text) {
@@ -28,8 +28,8 @@ export string test_a_child_that_redirects_its_output_writes_the_file(Core core, 
   T t = T.create();
   string dir = workDir(cli);
   cli.remove(dir, true).wait();
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string path = dir + "/out.txt";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string path = "\{dir}/out.txt";
 
   Frame f = Frame.of(["child"], u8[](), dir, false);
   Cli child = childCli(f, cli);
@@ -49,8 +49,8 @@ export string test_output_either_side_of_a_redirect_is_still_captured(Core core,
   T t = T.create();
   string dir = workDir(cli);
   cli.remove(dir, true).wait();
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string path = dir + "/middle.txt";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string path = "\{dir}/middle.txt";
 
   Frame f = Frame.of(["child"], u8[](), dir, false);
   Cli child = childCli(f, cli);
@@ -81,11 +81,11 @@ export string test_a_frames_cwd_is_absolute_however_it_was_given(Core core, Cli 
   string here = cli.cwd().wait();
 
   Frame rel = Frame.of(["child"], u8[](), ".cache/wac-relcwd", false);
-  t.eqStr(childCli(rel, cli).cwd().wait(), here + "/.cache/wac-relcwd",
+  t.eqStr(childCli(rel, cli).cwd().wait(), "\{here}/.cache/wac-relcwd",
           "a relative frame cwd is joined onto the parent's");
 
-  Frame abs = Frame.of(["child"], u8[](), here + "/.cache/wac-abscwd", false);
-  t.eqStr(childCli(abs, cli).cwd().wait(), here + "/.cache/wac-abscwd",
+  Frame abs = Frame.of(["child"], u8[](), "\{here}/.cache/wac-abscwd", false);
+  t.eqStr(childCli(abs, cli).cwd().wait(), "\{here}/.cache/wac-abscwd",
           "an absolute frame cwd is untouched");
 
   // No frame cwd is not a cwd of `""` — it means "the parent's", which is a third answer and the one
@@ -96,10 +96,10 @@ export string test_a_frames_cwd_is_absolute_however_it_was_given(Core core, Cli 
   // And the write that started the issue: a child writing a bare name into a relative frame cwd.
   string dir = ".cache/wac-relcwd";
   cli.remove(dir, true).wait();
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
   Cli child = childCli(rel, cli);
-  writeThroughRedirect(child, child.cwd().wait() + "/f", "hi\n");
-  t.eqStr(string.fromBytes(cli.readFile(dir + "/f").wait().bytes), "hi\n",
+  writeThroughRedirect(child, "\{child.cwd().wait()}/f", "hi\n");
+  t.eqStr(string.fromBytes(cli.readFile("\{dir}/f").wait().bytes), "hi\n",
           "a child wrote into a relative frame cwd");
   cli.remove(dir, true).wait();
   return t.report();

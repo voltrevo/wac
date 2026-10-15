@@ -17,7 +17,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Change, Cli, Core, Exec, Stat } from "std";
 
 /**
@@ -42,7 +41,7 @@ string plantedDir(Cli cli) {
   for (i32 i = 0; i < cwd.len(); i++) {
     h = (h * 31 + alphabet.indexOf(cwd.slice(i, i + 1)) + 2) % 900000;
   }
-  return "/tmp/wac-run-" + itoa(90000000 + h);
+  return "/tmp/wac-run-\{90000000 + h}";
 }
 
 export string test_a_fresh_run_directory_of_anothers_is_left_alone(Core core, Cli cli) {
@@ -50,14 +49,14 @@ export string test_a_fresh_run_directory_of_anothers_is_left_alone(Core core, Cl
   string planted = plantedDir(cli);
   cli.remove(planted, true).wait();
   Change made = cli.mkdir(planted, true).wait();
-  t.isTrue(made.ok(), "planted " + planted + " — " + made.message);
+  t.isTrue(made.ok(), "planted \{planted} — \{made.message}");
   if (!made.ok()) { return t.report(); }
-  Change wrote = cli.writeFile(planted + "/in-use.txt", "another run is writing here\n".toBytes()).wait();
-  t.isTrue(wrote.ok(), "and put a file in it — " + wrote.message);
+  Change wrote = cli.writeFile("\{planted}/in-use.txt", "another run is writing here\n".toBytes()).wait();
+  t.isTrue(wrote.ok(), "and put a file in it — \{wrote.message}");
 
   // Any command that builds sweeps first; `--help` does not, so this runs something.
   Exec r = cli.exec(binaryPath(cli), ["run"], u8[]()).wait();
-  t.isTrue(r.ran(), "the binary ran — " + r.error);
+  t.isTrue(r.ran(), "the binary ran — \{r.error}");
 
   Stat after = cli.stat(planted).wait();
   t.isTrue(after.isDir,

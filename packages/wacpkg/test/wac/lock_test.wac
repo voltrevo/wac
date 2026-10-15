@@ -12,7 +12,6 @@ import { Manifest, readManifest } from "../../src/manifest.wac";
 import { Lock, LockEntry, Step, USE, CREATE, REFRESH, plan, needsResolving, orphansOf,
          readLock, isFullSha, writeLock, applyPlan } from "../../src/lock.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue } from "../../../json/src/value.wac";
 
@@ -30,8 +29,8 @@ export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
                  + "  'acme': { git: 'g2', ref: 'v1', subdir: './packages/acme' },\n"
                  + "} }");
   Lock l = lok("{ imports: {\n"
-             + "  'bits': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
-             + "  'acme': { git: 'g2', ref: 'v1', subdir: './packages/acme', commit: '" + B() + "' },\n"
+             + "  'bits': { git: 'g1', ref: 'main', commit: '\{A()}' },\n"
+             + "  'acme': { git: 'g2', ref: 'v1', subdir: './packages/acme', commit: '\{B()}' },\n"
              + "} }");
   t.isTrue(m.ok, "the manifest reads");
   t.isTrue(l.ok, "the lock reads");
@@ -43,10 +42,10 @@ export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
   string[] names = ["bits", "acme"];
   string[] commits = [A(), B()];
   for (i32 i = 0; i < 2; i++) {
-    t.eqStr(steps[i].name, names[i], "step " + names[i]);
-    t.eqI32(steps[i].action, USE(), names[i] + " is USE");
-    t.eqStr(steps[i].commit, commits[i], names[i] + " keeps its commit");
-    t.eqStr(steps[i].why, "", names[i] + " has nothing to explain");
+    t.eqStr(steps[i].name, names[i], "step \{names[i]}");
+    t.eqI32(steps[i].action, USE(), "\{names[i]} is USE");
+    t.eqStr(steps[i].commit, commits[i], "\{names[i]} keeps its commit");
+    t.eqStr(steps[i].why, "", "\{names[i]} has nothing to explain");
   }
   t.isFalse(needsResolving(steps), "the network is not needed when every step is USE");
   return t.report();
@@ -55,8 +54,8 @@ export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
 export string test_no_entry_is_create_and_a_changed_input_is_refresh_that_says_which() {
   T t = T.create();
   string lockText = "{ imports: {\n"
-                  + "  'bits': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
-                  + "  'sub': { git: 'g2', ref: 'v1', subdir: './old', commit: '" + B() + "' },\n"
+                  + "  'bits': { git: 'g1', ref: 'main', commit: '\{A()}' },\n"
+                  + "  'sub': { git: 'g2', ref: 'v1', subdir: './old', commit: '\{B()}' },\n"
                   + "} }";
   Lock l = lok(lockText);
   if (!l.ok) { t.fail("the lock did not read"); return t.report(); }
@@ -75,21 +74,21 @@ export string test_no_entry_is_create_and_a_changed_input_is_refresh_that_says_w
   string[] words   = ["", "", "git", "ref", "subdir", "subdir"];
 
   for (i32 i = 0; i < entries.len(); i++) {
-    Manifest m = man("{ imports: { " + entries[i] + " } }");
-    if (!m.ok) { t.fail(entries[i] + ": the manifest did not read"); continue; }
+    Manifest m = man("{ imports: { \{entries[i]} } }");
+    if (!m.ok) { t.fail("\{entries[i]}: the manifest did not read"); continue; }
     Step[] steps = plan(m, l);
-    if (steps.len() != 1) { t.fail(entries[i] + ": " + "not one step"); continue; }
+    if (steps.len() != 1) { t.fail("\{entries[i]}: not one step"); continue; }
     Step s = steps[0];
-    t.eqStr(s.name, names[i], entries[i] + " names");
-    t.eqI32(s.action, actions[i], entries[i] + " acts");
+    t.eqStr(s.name, names[i], "\{entries[i]} names");
+    t.eqI32(s.action, actions[i], "\{entries[i]} acts");
     if (words[i] != "") {
       t.isTrue(contains(s.why, words[i]),
-               entries[i] + ": the reason names " + words[i] + " — got \"" + s.why + "\"");
+               "\{entries[i]}: the reason names \{words[i]} — got \"\{s.why}\"");
     }
-    t.eqBool(needsResolving(steps), s.action != USE(), entries[i] + ": needsResolving agrees");
+    t.eqBool(needsResolving(steps), s.action != USE(), "\{entries[i]}: needsResolving agrees");
     // A step that is not USE must not carry a commit: it is exactly the value that has been
     // decided to be untrustworthy, and a caller that reads it anyway gets the stale one.
-    if (s.action != USE()) { t.eqStr(s.commit, "", entries[i] + " carries no commit"); }
+    if (s.action != USE()) { t.eqStr(s.commit, "", "\{entries[i]} carries no commit"); }
   }
   return t.report();
 }
@@ -102,8 +101,8 @@ export string test_two_mappings_on_one_repository_lock_independently() {
   Manifest m = man("{ imports: { 'one': { git: 'same', ref: 'main' },"
                  + " 'two': { git: 'same', ref: 'stable' } } }");
   Lock l = lok("{ imports: {\n"
-             + "  'one': { git: 'same', ref: 'main', commit: '" + A() + "' },\n"
-             + "  'two': { git: 'same', ref: 'stable', commit: '" + B() + "' },\n"
+             + "  'one': { git: 'same', ref: 'main', commit: '\{A()}' },\n"
+             + "  'two': { git: 'same', ref: 'stable', commit: '\{B()}' },\n"
              + "} }");
   if (!m.ok || !l.ok) { t.fail("the inputs did not read"); return t.report(); }
   Step[] steps = plan(m, l);
@@ -118,8 +117,8 @@ export string test_an_entry_whose_mapping_is_gone_is_an_orphan_not_a_step() {
   T t = T.create();
   Manifest m = man("{ imports: { 'kept': { git: 'g', ref: 'r' } } }");
   Lock l = lok("{ imports: {\n"
-             + "  'kept': { git: 'g', ref: 'r', commit: '" + A() + "' },\n"
-             + "  'gone': { git: 'g', ref: 'r', commit: '" + B() + "' },\n"
+             + "  'kept': { git: 'g', ref: 'r', commit: '\{A()}' },\n"
+             + "  'gone': { git: 'g', ref: 'r', commit: '\{B()}' },\n"
              + "} }");
   if (!m.ok || !l.ok) { t.fail("the inputs did not read"); return t.report(); }
   Step[] steps = plan(m, l);
@@ -135,9 +134,9 @@ export string test_a_lockfile_is_rewritten_to_a_canonical_form() {
   string messy = "{\n"
     + "  // written by hand, in no order, with a comment\n"
     + "  imports: {\n"
-    + "    zeta: { git: 'https://example.invalid/z', ref: 'main', commit: '" + A() + "' },\n"
-    + "    'alpha': { git: 'https://example.invalid/a', ref: 'v1', subdir: './packages/a', commit: '" + B() + "' },\n"
-    + "    mid: { git: 'https://example.invalid/m', ref: 'tag/1.0', commit: '" + SHA() + "' },\n"
+    + "    zeta: { git: 'https://example.invalid/z', ref: 'main', commit: '\{A()}' },\n"
+    + "    'alpha': { git: 'https://example.invalid/a', ref: 'v1', subdir: './packages/a', commit: '\{B()}' },\n"
+    + "    mid: { git: 'https://example.invalid/m', ref: 'tag/1.0', commit: '\{SHA()}' },\n"
     + "  },\n"
     + "}";
   Lock first = lok(messy);
@@ -162,9 +161,9 @@ export string test_a_lockfile_is_rewritten_to_a_canonical_form() {
   // mappings write the same bytes, so a generated file is one less thing to conflict on.
   t.eqBytes(writeLock(back.entries), text, "rewriting the canonical form does not change it");
   string reordered = "{ imports: {\n"
-    + "  mid: { git: 'https://example.invalid/m', ref: 'tag/1.0', commit: '" + SHA() + "' },\n"
-    + "  zeta: { git: 'https://example.invalid/z', ref: 'main', commit: '" + A() + "' },\n"
-    + "  'alpha': { git: 'https://example.invalid/a', ref: 'v1', subdir: './packages/a', commit: '" + B() + "' },\n"
+    + "  mid: { git: 'https://example.invalid/m', ref: 'tag/1.0', commit: '\{SHA()}' },\n"
+    + "  zeta: { git: 'https://example.invalid/z', ref: 'main', commit: '\{A()}' },\n"
+    + "  'alpha': { git: 'https://example.invalid/a', ref: 'v1', subdir: './packages/a', commit: '\{B()}' },\n"
     + "} }";
   Lock other = lok(reordered);
   t.isTrue(other.ok, "the reordered lock reads");
@@ -208,15 +207,15 @@ export string test_a_commit_must_be_forty_lowercase_hex_digits() {
   ];
   for (i32 i = 0; i < good.len(); i++) {
     bool want = good[i].len() == 40;
-    t.eqBool(isFullSha(good[i]), want, "\"" + good[i] + "\" (" + itoa(good[i].len()) + " chars)");
+    t.eqBool(isFullSha(good[i]), want, "\"\{good[i]}\" (\{good[i].len()} chars)");
   }
   string[] bad = [
-                          "", "3f2a1b0c", A().slice(0, 39), A() + "a",
+                          "", "3f2a1b0c", A().slice(0, 39), "\{A()}a",
                           "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                          "gggggggggggggggggggggggggggggggggggggggg", A().slice(0, 39) + " "
+                          "gggggggggggggggggggggggggggggggggggggggg", "\{A().slice(0, 39)} "
   ];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.isFalse(isFullSha(bad[i]), "\"" + bad[i] + "\" is refused");
+    t.isFalse(isFullSha(bad[i]), "\"\{bad[i]}\" is refused");
   }
   // The check is applied when the file is read, not left to a caller: an abbreviated commit
   // resolves to *something*, and to a different something once the repository grows.
@@ -230,27 +229,27 @@ export string test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_co
   string[] empty = ["{}", "{ }", "// none yet\n{}"];
   for (i32 i = 0; i < empty.len(); i++) {
     Lock l = lok(empty[i]);
-    t.isTrue(l.ok, "\"" + empty[i] + "\" is a valid lock");
-    if (l.ok) { t.eqI32(l.entries.len(), 0, "\"" + empty[i] + "\" has no entries"); }
+    t.isTrue(l.ok, "\"\{empty[i]}\" is a valid lock");
+    if (l.ok) { t.eqI32(l.entries.len(), 0, "\"\{empty[i]}\" has no entries"); }
   }
   // Present but the wrong kind, for each field in turn. The `default:` arms for `git` and `ref` were
   // the only unreached branches in the file until every field got a case of its own.
   string[] texts = [
     "{", "[]", "{ imports: [] }", "{ imports: { a: 1 } }",
-    "{ imports: { a: { ref: 'r', commit: '" + A() + "' } } }",
-    "{ imports: { a: { git: 'g', commit: '" + A() + "' } } }",
+    "{ imports: { a: { ref: 'r', commit: '\{A()}' } } }",
+    "{ imports: { a: { git: 'g', commit: '\{A()}' } } }",
     "{ imports: { a: { git: 'g', ref: 'r' } } }",
-    "{ imports: { a: { git: 1, ref: 'r', commit: '" + A() + "' } } }",
-    "{ imports: { a: { git: 'g', ref: 1, commit: '" + A() + "' } } }",
+    "{ imports: { a: { git: 1, ref: 'r', commit: '\{A()}' } } }",
+    "{ imports: { a: { git: 'g', ref: 1, commit: '\{A()}' } } }",
     "{ imports: { a: { git: 'g', ref: 'r', commit: 1 } } }",
-    "{ imports: { a: { git: 'g', ref: 'r', commit: '" + A() + "', subdir: 1 } } }",
+    "{ imports: { a: { git: 'g', ref: 'r', commit: '\{A()}', subdir: 1 } } }",
     "{ imports: { a: { git: 'g', ref: 'r', commit: 'nope' } } }"
   ];
   i32[] codes = [1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 6];
   for (i32 i = 0; i < texts.len(); i++) {
     Lock l = lok(texts[i]);
-    t.isFalse(l.ok, texts[i] + " is refused");
-    if (!l.ok) { t.eqI32(l.code, codes[i], texts[i] + " gets its own code"); }
+    t.isFalse(l.ok, "\{texts[i]} is refused");
+    if (!l.ok) { t.eqI32(l.code, codes[i], "\{texts[i]} gets its own code"); }
   }
   return t.report();
 }
@@ -330,7 +329,7 @@ export string test_entries_sort_by_name_when_the_names_share_a_prefix() {
   i32 alpine = text.indexOf("\"alpine\"");
   i32 beta = text.indexOf("\"beta\"");
   t.isTrue(alp >= 0 && alpha >= 0 && alpine >= 0 && beta >= 0,
-           "a name went missing from the lockfile — " + text);
+           "a name went missing from the lockfile — \{text}");
   t.isTrue(alp < alpha, "`alp` sorts before `alpha`, being a prefix of it");
   t.isTrue(alpha < alpine, "`alpha` sorts before `alpine` — they differ at the fourth byte");
   t.isTrue(alpine < beta, "`alpine` sorts before `beta`");

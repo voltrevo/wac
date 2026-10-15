@@ -340,8 +340,8 @@ export i64 parseUtc(u8[] doc, i32 at, i32 end) {
 
 /** The value of a `key value` line at the start of a line, parsed as a UTC time. */
 i64 timeField(u8[] doc, string field) {
-  i32 at = findFrom(doc, "\n" + field + " ", 0);
-  i32 from = at < 0 ? findFrom(doc, field + " ", 0) : at + 1;
+  i32 at = findFrom(doc, "\n\{field} ", 0);
+  i32 from = at < 0 ? findFrom(doc, "\{field} ", 0) : at + 1;
   if (from < 0) { return -1; }
   if (from != 0 && at < 0) { return -1; }
   i32 valueAt = from + field.len() + 1;

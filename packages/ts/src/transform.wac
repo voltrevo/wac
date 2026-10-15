@@ -35,7 +35,7 @@ import { Stripped, strip } from "./strip.wac";
  */
 export u8[] transform(u8[] archive) {
   Archive a = read(archive);
-  if (a.error != "") { return fail("the archive: " + a.error); }
+  if (a.error != "") { return fail("the archive: \{a.error}"); }
   if (a.entries.len() == 0) { return fail("the archive is empty"); }
 
   string entry = "";
@@ -58,7 +58,7 @@ export u8[] transform(u8[] archive) {
     if (a.entries[i].name == "entry") { continue; }
     Stripped s = strip(a.entries[i].data);
     if (s.error != "") {
-      return fail(a.entries[i].name + ":" + itoa32(s.line) + ":" + itoa32(s.col) + ": " + s.error);
+      return fail("\{a.entries[i].name}:\{s.line}:\{s.col}: \{s.error}");
     }
     paths[at] = a.entries[i].name;
     texts[at] = s.out;
@@ -71,15 +71,5 @@ export u8[] transform(u8[] archive) {
 }
 
 /** A diagnostic, in the shape a host can recognise without parsing what it got. */
-u8[] fail(string why) { return ("wac-ts: " + why).toBytes(); }
+u8[] fail(string why) { return ("wac-ts: \{why}").toBytes(); }
 
-string itoa32(i32 v) {
-  if (v == 0) { return "0"; }
-  string s = "";
-  i32 k = v;
-  while (k > 0) {
-    s = string.fromCodepoint(48 + (k % 10)) + s;
-    k = k / 10;
-  }
-  return s;
-}

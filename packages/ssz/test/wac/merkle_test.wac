@@ -26,7 +26,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { hashPair, zeroHash, merkleize, rootBasic, rootBasicVector, rootBitvector, rootBitlist,
@@ -149,7 +148,7 @@ export string test_every_schema_free_case_merkleizes_to_ethereums_root(Core core
   }
   // Per type, so a name reader that stops matching shows up as a gap rather than as a pass.
   for (i32 k = 0; k < types.len(); k++) {
-    t.eqI32(seen[k], want[k], "drove " + itoa(seen[k]) + " " + types[k] + " cases");
+    t.eqI32(seen[k], want[k], "drove \{seen[k]} \{types[k]} cases");
   }
   return t.report();
 }
@@ -176,7 +175,7 @@ export string test_zerohash_is_the_padded_subtree_it_stands_in_for() {
   // The optimisation and the thing it replaces must agree, or every short value is wrong.
   u8[] expect = u8[].filled(32, 0);
   for (i32 d = 0; d < 6; d++) {
-    t.eqStr(hex(zeroHash(d)), hex(expect), "zeroHash(" + itoa(d) + ") is not that depth's subtree");
+    t.eqStr(hex(zeroHash(d)), hex(expect), "zeroHash(\{d}) is not that depth's subtree");
     expect = hashPair(expect, expect);
   }
   // An empty value under a limit is exactly the zero subtree.
@@ -198,7 +197,7 @@ export string test_a_bitlists_delimiter_is_measured_not_merkleized() {
   cases[5] = [0xff, 0x01] as u8[];
   i32[] bits = [0, 1, 1, 7, 8, 8];
   for (i32 i = 0; i < cases.len(); i++) {
-    t.eqI32(bitlistLength(cases[i]), bits[i], "bitlistLength(" + hex(cases[i]) + ")");
+    t.eqI32(bitlistLength(cases[i]), bits[i], "bitlistLength(\{hex(cases[i])})");
   }
   // No delimiter at all is malformed, not empty.
   t.eqI32(bitlistLength([0x00] as u8[]), -1, "a zero final byte was accepted");
@@ -231,7 +230,7 @@ u8[][][] tree(u8[][] leaves, Lines lines) {
     u8[][] next = u8[][].filled(level.len() / 2, u8[]());
     for (i32 i = 0; i < level.len(); i = i + 2) {
       next[i / 2] = hashPair(level[i], level[i + 1]);
-      lines.add("hashpair " + hex(level[i]) + " " + hex(level[i + 1]) + " " + hex(next[i / 2]));
+      lines.add("hashpair \{hex(level[i])} \{hex(level[i + 1])} \{hex(next[i / 2])}");
     }
     levels[n] = next;
     n = n + 1;
@@ -289,17 +288,17 @@ export string test_isvalidmerklebranch_accepts_every_position_and_rejects_pertur
   for (i32 i = 0; i < 8; i++) {
     u8[] branch = branchFor(levels, i);
     t.isTrue(isValidMerkleBranch(leaves[i], branch, 3, i as! u64, root),
-             "a correct branch for leaf " + itoa(i) + " was rejected");
+             "a correct branch for leaf \{i} was rejected");
     // The index is what picks the side at each level, so a wrong one must fail — this is the check
     // that would pass if the implementation hashed in a fixed order.
     t.isFalse(isValidMerkleBranch(leaves[i], branch, 3, (i ^ 1) as! u64, root),
-              "leaf " + itoa(i) + "'s branch verified at index " + itoa(i ^ 1) +
+              "leaf \{i}'s branch verified at index \{i ^ 1}" +
               ": the side bits are ignored");
     // A flipped byte anywhere in the branch must fail.
     u8[] tampered = concat(branch, u8[]());
     tampered[0] = tampered[0] ^ 1;
     t.isFalse(isValidMerkleBranch(leaves[i], tampered, 3, i as! u64, root),
-              "a tampered branch verified for leaf " + itoa(i));
+              "a tampered branch verified for leaf \{i}");
   }
   // A branch of the wrong length is a malformed proof, not a shorter one.
   t.isFalse(isValidMerkleBranch(leaves[0], prefixOf(branchFor(levels, 0), 64), 3, 0 as! u64, root),

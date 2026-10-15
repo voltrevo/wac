@@ -74,7 +74,7 @@ export string test_the_fixtures_are_what_the_tests_assume(Core core, Cli cli) {
   JsonObject top = jsonAt(cli, "packages/tor/test/data/introduce_vectors.json");
   string source = strField(top, "source");
   t.isTrue(source.indexOf("hs_cell_build_introduce1") >= 0,
-           "the INTRODUCE1 must come from tor's builder — source is " + source);
+           "the INTRODUCE1 must come from tor's builder — source is \{source}");
   t.isFalse(strField(estVectors(cli), "authPublic") == strField(introCase(cli), "introAuthKey"),
             "the two fixtures share an auth key; the unknown-id case would prove nothing");
   return t.report();

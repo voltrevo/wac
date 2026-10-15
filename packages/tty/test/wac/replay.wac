@@ -9,7 +9,6 @@
 // per mode rather than fifty-five of them.
 
 import { Cli, Core, Exec, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** One measurement: what came back when `input` was typed at a terminal in `mode`. */
 export struct Vector {
@@ -40,7 +39,7 @@ export u8[] discipline(Core core, Cli cli, string mode, u8[] input) {
 export u8[] through(Core core, Cli cli, string program, string[] args, u8[] input) {
   Exec r = cli.exec(program, args, input).wait();
   if (!r.ran()) {
-    core.warn("tty: " + program + " would not start — " + r.error);
+    core.warn("tty: \{program} would not start — \{r.error}");
     trap;
   }
   return r.stdout;
@@ -77,13 +76,13 @@ export Loaded load(Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
   if (!r.ok) {
     return Loaded(Vector[](), 0, "",
-                  "cannot read " + path + " — run `wac run --allow-read --allow-write --allow-run " +
+                  "cannot read \{path} — run `wac run --allow-read --allow-write --allow-run " +
                   "tools/wac/ttyvectors.wac` to write it");
   }
   u8[] b = r.bytes;
   Line l = lineAt(b, 0);
   if (l.text != "wac-tty-vectors 1") {
-    return Loaded(Vector[](), 0, "", "not a tty vectors file: " + l.text);
+    return Loaded(Vector[](), 0, "", "not a tty vectors file: \{l.text}");
   }
   string oracle = "";
   i32 at = l.next;
@@ -103,19 +102,19 @@ export Loaded load(Cli cli, string path) {
   for (i32 i = 0; i < count; i++) {
     Line ml = lineAt(b, at);
     i32 mlen = numberIn(ml.text, "M");
-    if (mlen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no mode"); }
+    if (mlen < 0) { return Loaded(items, n, oracle, "record \{i} has no mode"); }
     string mode = string.fromBytes(sliceOf(b, ml.next, ml.next + mlen));
     at = ml.next + mlen + 1;
 
     Line il = lineAt(b, at);
     i32 ilen = numberIn(il.text, "I");
-    if (ilen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no input"); }
+    if (ilen < 0) { return Loaded(items, n, oracle, "record \{i} has no input"); }
     u8[] input = sliceOf(b, il.next, il.next + ilen);
     at = il.next + ilen + 1;
 
     Line ol = lineAt(b, at);
     i32 olen = numberIn(ol.text, "O");
-    if (olen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no output"); }
+    if (olen < 0) { return Loaded(items, n, oracle, "record \{i} has no output"); }
     u8[] out = sliceOf(b, ol.next, ol.next + olen);
     at = ol.next + olen + 1;
 

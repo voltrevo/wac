@@ -19,7 +19,7 @@
 import { Core, Cli, Exec, Stat, Pending } from "std";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { newestInClosure } from "../../../wactest/src/built.wac";
-import { itoa, atoi } from "../../../fmt/src/itoa.wac";
+import { atoi } from "../../../fmt/src/itoa.wac";
 import { Buf } from "core";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -48,7 +48,7 @@ string envLine(Cli cli, string home) {
   string path = "/usr/bin:/bin";
   u8[]? p = cli.env("PATH").wait();
   if (p is not null) { path = string.fromBytes(p!); }
-  return "env -i LC_ALL=C " + quoted("PATH=" + path) + " " + quoted("HOME=" + home);
+  return "env -i LC_ALL=C " + quoted("PATH=\{path}") + " " + quoted("HOME=\{home}");
 }
 
 /**
@@ -62,15 +62,15 @@ string envLine(Cli cli, string home) {
  */
 export Pending<Exec> submit(Cli cli, i32 seconds, string cwd, string home, string prog,
                             string[] args, u8[] stdin) {
-  string line = "cd " + quoted(cwd) + " && exec timeout " + itoa(seconds) + " " +
-                envLine(cli, home) + " " + quoted(prog);
-  for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
+  string line = "cd \{quoted(cwd)} && exec timeout \{seconds} " +
+                "\{envLine(cli, home)} \{quoted(prog)}";
+  for (i32 i = 0; i < args.len(); i++) { line = line + " \{quoted(args[i])}"; }
   return cli.exec("/bin/sh", ["-c", line], stdin);
 }
 
 export Ran collect(Pending<Exec> p) {
   Exec r = p.wait();
-  if (!r.ran()) { return Ran(-1, "", "the shell did not run — " + r.error, false); }
+  if (!r.ran()) { return Ran(-1, "", "the shell did not run — \{r.error}", false); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status == 124);
 }
 
@@ -98,10 +98,10 @@ export Ran boundedAgain(Core core, Cli cli, string cwd, string home, string prog
 export string hangReport(string what, string[] names, Ran[] runs) {
   string stuck = "";
   for (i32 i = 0; i < runs.len() && i < names.len(); i++) {
-    if (runs[i].hung) { stuck = stuck == "" ? names[i] : stuck + " and " + names[i]; }
+    if (runs[i].hung) { stuck = stuck == "" ? names[i] : "\{stuck} and \{names[i]}"; }
   }
   if (stuck == "") { return ""; }
-  return stuck + " did not finish `" + what + "` within " + itoa(DEFAULT_SECONDS) +
+  return "\{stuck} did not finish `\{what}` within \{DEFAULT_SECONDS}" +
          "s, twice — there is no answer to compare, so nothing below was checked";
 }
 
@@ -165,13 +165,13 @@ export Ran[] denoBatch(Cli cli, i32 seconds, string entry, string[] grants, stri
   u8[] env = joinedNul(envStrings(cli, home));
   string body = "";
   for (i32 i = 0; i < cwds.len(); i++) {
-    body = body + "run " + hex(joinedNul(argvs[i])) + " " + hex(cwds[i].toBytes()) + " " +
-           hex(stdins[i]) + " " + hex(env) + "\n";
+    body = body + "run \{hex(joinedNul(argvs[i]))} \{hex(cwds[i].toBytes())} " +
+           "\{hex(stdins[i])} \{hex(env)}\n";
   }
 
-  string line = "exec timeout " + itoa(seconds) + " deno run -A harness/appRunMany.ts " +
+  string line = "exec timeout \{seconds} deno run -A harness/appRunMany.ts " +
                 quoted(entry);
-  for (i32 i = 0; i < grants.len(); i++) { line = line + " " + quoted(grants[i]); }
+  for (i32 i = 0; i < grants.len(); i++) { line = line + " \{quoted(grants[i])}"; }
   Exec r = cli.exec("/bin/sh", ["-c", line], body.toBytes()).wait();
 
   Ran[] out = Ran[].filled(cwds.len(), Ran(0, "", "", false));
@@ -195,7 +195,7 @@ export Ran[] denoBatch(Cli cli, i32 seconds, string entry, string[] grants, stri
   if (at != out.len()) {
     string why = r.ran() ? string.fromBytes(r.stderr) : r.error;
     for (i32 i = 0; i < out.len(); i++) {
-      out[i] = Ran(124, "", "the batch answered " + itoa(at) + " of " + itoa(out.len()) + " — " + why,
+      out[i] = Ran(124, "", "the batch answered \{at} of \{out.len()} — \{why}",
                    true);
     }
   }
@@ -207,7 +207,7 @@ string[] envStrings(Cli cli, string home) {
   string path = "/usr/bin:/bin";
   u8[]? p = cli.env("PATH").wait();
   if (p is not null) { path = string.fromBytes(p!); }
-  return ["LC_ALL=C", "PATH=" + path, "HOME=" + home];
+  return ["LC_ALL=C", "PATH=\{path}", "HOME=\{home}"];
 }
 
 /**
@@ -259,9 +259,9 @@ export string buildOne(Cli cli, bool native, string entry, string out, string[] 
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
-    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[]()).wait();
+    Exec r = cli.exec("\{root(cli)}/native/v8/target/release/wac", args, u8[]()).wait();
     if (!r.ran() || r.status != 0) {
-      return "wac build " + out + ": " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+      return "wac build \{out}: \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}";
     }
     return "";
   }
@@ -272,7 +272,7 @@ export string buildOne(Cli cli, bool native, string entry, string out, string[] 
   args[head.len() + grants.len()] = "-o";
   args[head.len() + grants.len() + 1] = out;
   Exec r = cli.exec("deno", args, u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return "build.ts " + out + ": " + string.fromBytes(r.stderr); }
+  if (!r.ran() || r.status != 0) { return "build.ts \{out}: \{string.fromBytes(r.stderr)}"; }
   return "";
 }
 
@@ -295,26 +295,26 @@ export struct Built {
 }
 
 export Built builds(Cli cli) {
-  string dir = root(cli) + "/" + BUILT;
+  string dir = "\{root(cli)}/\{BUILT}";
   cli.mkdir(dir, true).wait();
   Built b = Built(true, "",
                   // The native half is the module itself: `wac build` writes one artefact and both
                   // hosts read the manifest out of its `wac.manifest` section. It was a `.json`
                   // beside the module until 2026-08-20.
-                  dir + "/sealed-deno", dir + "/sealed.wasm",
-                  dir + "/granted-deno", dir + "/granted.wasm",
-                  dir + "/open-deno", dir + "/open.wasm");
+                  "\{dir}/sealed-deno", "\{dir}/sealed.wasm",
+                  "\{dir}/granted-deno", "\{dir}/granted.wasm",
+                  "\{dir}/open-deno", "\{dir}/open.wasm");
   string[] none = string[].filled(0, "");
   string[] rwe = ["--allow-read", "--allow-write", "--allow-env"];
   string why = "";
   i64 sealedNewest = newestFor(cli, SEALED);
   i64 openNewest = newestFor(cli, OPEN);
   if (stale(cli, b.sealedDeno, sealedNewest)) { why = why + buildOne(cli, false, SEALED, b.sealedDeno, none); }
-  if (stale(cli, b.sealedManifest, sealedNewest)) { why = why + buildOne(cli, true, SEALED, dir + "/sealed", none); }
+  if (stale(cli, b.sealedManifest, sealedNewest)) { why = why + buildOne(cli, true, SEALED, "\{dir}/sealed", none); }
   if (stale(cli, b.grantedDeno, sealedNewest)) { why = why + buildOne(cli, false, SEALED, b.grantedDeno, rwe); }
-  if (stale(cli, b.grantedManifest, sealedNewest)) { why = why + buildOne(cli, true, SEALED, dir + "/granted", rwe); }
+  if (stale(cli, b.grantedManifest, sealedNewest)) { why = why + buildOne(cli, true, SEALED, "\{dir}/granted", rwe); }
   if (stale(cli, b.openDeno, openNewest)) { why = why + buildOne(cli, false, OPEN, b.openDeno, rwe); }
-  if (stale(cli, b.openManifest, openNewest)) { why = why + buildOne(cli, true, OPEN, dir + "/open", rwe); }
+  if (stale(cli, b.openManifest, openNewest)) { why = why + buildOne(cli, true, OPEN, "\{dir}/open", rwe); }
   if (why != "") { b.ok = false; b.error = why; }
   return b;
 }
@@ -349,6 +349,6 @@ export Ran shell(Core core, Cli cli, string tmp, string cmd, string[] pre, strin
 export string difference(string script, Ran a, Ran b) {
   if (a.out == b.out && a.err == b.err && a.code == b.code) { return ""; }
   return script +
-         " | deno " + a.out + a.err + " (" + itoa(a.code) + ")" +
-         " | native " + b.out + b.err + " (" + itoa(b.code) + ")";
+         " | deno \{a.out}\{a.err} (\{a.code})" +
+         " | native \{b.out}\{b.err} (\{b.code})";
 }

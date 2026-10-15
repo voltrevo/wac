@@ -43,7 +43,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { containerSpans, fieldBytes, fieldRoot, rootAt, hashTreeRoot, isFixed, fixedSize,
          KIND_LIST } from "../../src/container.wac";
 import { merkleize, isValidMerkleBranch, isValidNormalizedMerkleBranch }

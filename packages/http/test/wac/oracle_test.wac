@@ -37,7 +37,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Outcome, oracle, outcomeOf } from "./nodeoracle.wac";
 
 /** The target an accepted case reported, or `""`. */
@@ -82,11 +81,11 @@ export string test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_wi
   for (i32 i = 0; i < n; i++) {
     i32 which = i % texts.len();
     t.eqStr(outcomeOf(got[i]), outcomes[which],
-            "case " + itoa(i) + " (\"" + texts[which].slice(0, 32) + "\")");
+            "case \{i} (\"\{texts[which].slice(0, 32)}\")");
     if (outcomes[which] == "ok") {
       // The target is what distinguishes the accepted cases from one another, so this is the
       // assertion that a swap between two `ok` results cannot survive.
-      t.eqStr(targetOf(got[i]), targets[which], "case " + itoa(i) + "'s target came from another");
+      t.eqStr(targetOf(got[i]), targets[which], "case \{i}'s target came from another");
     }
   }
   return t.report();
@@ -129,7 +128,7 @@ export string test_the_oracle_answers_the_same_with_no_hurry_up_window_as_with_o
   for (i32 i = 0; i < texts.len(); i++) {
     // The outcome is the load-sensitive part; the parsed detail follows from it.
     t.eqStr(outcomeOf(patient[i]), outcomeOf(hurried[i]),
-            "case " + itoa(i) + " (\"" + texts[i] + "\") changed answer when the window was " +
+            "case \{i} (\"\{texts[i]}\") changed answer when the window was " +
             "removed — the clock is still deciding");
     if (outcomeOf(hurried[i]) == "ok") { sawOk = true; }
     if (outcomeOf(hurried[i]) == "incomplete") { sawIncomplete = true; }

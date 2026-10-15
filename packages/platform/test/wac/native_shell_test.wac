@@ -37,7 +37,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { nativeBinaryPath } from "../../../wactest/src/host.wac";
 import { Change, Core, Cli, Exec, FileResult } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
 import { Ran, boundedAgain, denoBatch, hangReport, stale, newestFor, DEFAULT_SECONDS } from "./hostfs.wac";
 import { Built, OPEN, SEALED, buildOne, builds, denoAll, difference, root, shell } from "./hostfs.wac";
@@ -63,15 +62,15 @@ static i32 SAMPLE = 25;
  * is reported with the host's own words, because those are the only thing that knows.
  */
 string scratch(Core core, Cli cli, string name) {
-  string dir = root(cli) + "/.cache/hostshell-" + name;
+  string dir = "\{root(cli)}/.cache/hostshell-\{name}";
   Change gone = cli.remove(dir, true).wait();
   if (!gone.ok() && !gone.absent()) {
-    core.warn("native_shell: could not clear " + dir + " — " + gone.message);
+    core.warn("native_shell: could not clear \{dir} — \{gone.message}");
     trap;
   }
   Change made = cli.mkdir(dir, true).wait();
   if (!made.ok()) {
-    core.warn("native_shell: could not create " + dir + " — " + made.message);
+    core.warn("native_shell: could not create \{dir} — \{made.message}");
     trap;
   }
   return dir;
@@ -91,7 +90,7 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
     Core core, Cli cli) {
   T t = T.create();
   Built b = builds(cli);
-  t.isTrue(b.ok, "the shells built — " + b.error);
+  t.isTrue(b.ok, "the shells built — \{b.error}");
   if (!b.ok) { return t.report(); }
   string tmp = scratch(core, cli, "corpus");
 
@@ -144,7 +143,7 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
     return t.report();
   }
   Built b = builds(cli);
-  t.isTrue(b.ok, "the shells built — " + b.error);
+  t.isTrue(b.ok, "the shells built — \{b.error}");
   if (!b.ok) { return t.report(); }
   string tmp = scratch(core, cli, "applets");
 
@@ -168,9 +167,9 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
     Ran c = shell(core, cli, tmp, native, [b.sealedManifest], scripts[i]);
     string stuck = hangReport(scripts[i], ["deno", "native"], [a, c]);
     if (stuck != "") { t.fail(stuck); continue; }
-    t.eqStr(c.out, a.out, scripts[i] + " — stdout");
-    t.eqStr(c.err, a.err, scripts[i] + " — stderr");
-    t.eqI32(c.code, a.code, scripts[i] + " — status");
+    t.eqStr(c.out, a.out, "\{scripts[i]} — stdout");
+    t.eqStr(c.err, a.err, "\{scripts[i]} — stderr");
+    t.eqI32(c.code, a.code, "\{scripts[i]} — status");
   }
 
   // And one answer that is right rather than merely shared: `sha256sum` of "hello\n" is a number
@@ -223,7 +222,7 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
     return t.report();
   }
   Built b = builds(cli);
-  t.isTrue(b.ok, "the shells built — " + b.error);
+  t.isTrue(b.ok, "the shells built — \{b.error}");
   if (!b.ok) { return t.report(); }
   string tmp = scratch(core, cli, "seal");
 
@@ -260,7 +259,7 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
   string path = "";
   u8[]? pv = cli.env("PATH").wait();
   if (pv is not null) { path = string.fromBytes(pv!); }
-  string[] onlyHome = ["HOME=" + home, "PATH=" + path];
+  string[] onlyHome = ["HOME=\{home}", "PATH=\{path}"];
   Exec seesDeno = cli.execWith(b.openDeno, ["-c", "echo HOME=[$HOME]"], u8[](),
                                onlyHome, true, false).wait();
   t.isTrue(contains(string.fromBytes(seesDeno.stdout), home),
@@ -289,8 +288,8 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
     "head -c 4 /dev/zero | wc -c",
     // The machine's own filesystem, by the two routes a session has: a simple command, and a
     // *spawned* stage, which is the one that reads a different disk when it goes wrong (0116).
-    "cat " + file + "; echo st=$?",
-    "cat " + file + " | head -1; echo st=$?",
+    "cat \{file}; echo st=$?",
+    "cat \{file} | head -1; echo st=$?",
     "ls /"
   ];
   // Empty where there is nothing knowable to state — the two spawned-read cases, whose status is the
@@ -321,8 +320,8 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
     // way would agree with each other and be wrong, which is the failure a pure comparison cannot
     // see — and the reason every case that has a knowable answer states it.
     if (wants[i] != "") {
-      t.eqStr(a.out, wants[i], "deno " + scripts[i] + ": " + a.err);
-      t.eqStr(c.out, wants[i], "native " + scripts[i] + ": " + c.err);
+      t.eqStr(a.out, wants[i], "deno \{scripts[i]}: \{a.err}");
+      t.eqStr(c.out, wants[i], "native \{scripts[i]}: \{c.err}");
     }
     t.eqStr(difference(scripts[i], a, c), "", "the hosts differ");
   }
@@ -334,11 +333,11 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
   t.isTrue(first.len() > 0, "the host file this checks for is empty, so the check below is vacuous");
   if (first.len() > 0) {
     Ran seenDeno = shell(core, cli, tmp, b.grantedDeno, string[].filled(0, ""),
-                         "cat " + file + " | head -1");
-    t.isFalse(contains(seenDeno.out, first), "deno read " + file + ": " + seenDeno.out);
+                         "cat \{file} | head -1");
+    t.isFalse(contains(seenDeno.out, first), "deno read \{file}: \{seenDeno.out}");
     Ran seenNative = shell(core, cli, tmp, native, [b.grantedManifest],
-                           "cat " + file + " | head -1");
-    t.isFalse(contains(seenNative.out, first), "native read " + file + ": " + seenNative.out);
+                           "cat \{file} | head -1");
+    t.isFalse(contains(seenNative.out, first), "native read \{file}: \{seenNative.out}");
   }
   cli.remove(tmp, true).wait();
   return t.report();

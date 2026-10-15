@@ -41,7 +41,6 @@
 // else in this repository.
 
 import { Cli, Core, Event, Page, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { Vec } from "core";
 import { boxApplet } from "../src/shrun.wac";
 import { UNKNOWN } from "../src/box.wac";
@@ -79,11 +78,11 @@ struct Win {
 
 string cr() { return string.fromCodepoint(13); }
 string intr() { return string.fromCodepoint(3); }
-string upArrow() { return string.fromCodepoint(27) + "[A"; }
-string downArrow() { return string.fromCodepoint(27) + "[B"; }
+string upArrow() { return "\{string.fromCodepoint(27)}[A"; }
+string downArrow() { return "\{string.fromCodepoint(27)}[B"; }
 
 /** The window's title, which is also what its bar says. */
-string titleOf(Win w) { return w.kind == SHELL() ? "shell " + itoa(w.id) : "files"; }
+string titleOf(Win w) { return w.kind == SHELL() ? "shell \{w.id}" : "files"; }
 
 export i32 page(Core core, Cli cli, Page page) {
   page.title("wac desktop").wait();
@@ -157,7 +156,7 @@ export i32 page(Core core, Cli cli, Page page) {
       // **`setStyle`, not `redraw`.** One element's position changes; nothing else about the
       // document does. A `render` here would rebuild every terminal on the desktop for every pixel
       // of the drag.
-      page.setStyle("win" + itoa(moving.id), placement(moving)).wait();
+      page.setStyle("win\{moving.id}", placement(moving)).wait();
       continue;
     }
     if (e.kind == "pointerup") { dragging = -1; continue; }
@@ -191,7 +190,7 @@ export i32 page(Core core, Cli cli, Page page) {
     i32 at = indexOf(wins, idOf(e.id, 3));
     if (at < 0) { continue; }
     Win w = wins.get(at);
-    string field = "cmd" + itoa(w.id);
+    string field = "cmd\{w.id}";
 
     if (e.value == upArrow() || e.value == downArrow()) {
       page.setValue(field, w.sh.recall(e.value == upArrow())).wait();
@@ -269,7 +268,7 @@ void replace(Vec<Win> wins, Vec<Win> order) {
  * `z-index` is needed — which also means raising is "move it to the end of the list" and nothing else.
  */
 void draw(Page page, Vec<Win> wins) {
-  string body = "<style>" + css() + "</style><div id=\"desk\">" +
+  string body = "<style>\{css()}</style><div id=\"desk\">" +
     "<div id=\"launch\">" +
     "  <button class=\"lnch\" id=\"newterm\">+ terminal</button>" +
     "  <button class=\"lnch\" id=\"newfiles\">+ files</button>" +
@@ -296,7 +295,7 @@ i32 cascadeTop(i32 n) { return 60 + n * 30; }
 
 /** The style that places one window — the same string `render` writes and a drag replaces. */
 string placement(Win w) {
-  return "left: " + itoa(w.left) + "px; top: " + itoa(w.top) + "px; " +
+  return "left: \{w.left}px; top: \{w.top}px; " +
     (w.kind == SHELL()
       ? "width: min(58vw, 660px); height: min(58vh, 420px);"
       : "width: min(28vw, 300px); height: min(40vh, 280px);");
@@ -304,16 +303,16 @@ string placement(Win w) {
 
 /** One window's markup. `front` gets the accent border, which is the whole of "focused". */
 string window(Win w, i32 at, bool front) {
-  string id = itoa(w.id);
+  string id = "\{w.id}";
   string pos = placement(w);
   string inner = w.kind == SHELL()
     ? "<div class=\"bod term\">" +
-      "  <pre id=\"scr" + id + "\"></pre>" +
-      "  <div class=\"line\"><span class=\"ps1\" id=\"ps" + id + "\">$</span>" +
-      "    <input class=\"cmd\" id=\"cmd" + id + "\" autocomplete=\"off\" spellcheck=\"false\"" +
+      "  <pre id=\"scr\{id}\"></pre>" +
+      "  <div class=\"line\"><span class=\"ps1\" id=\"ps\{id}\">$</span>" +
+      "    <input class=\"cmd\" id=\"cmd\{id}\" autocomplete=\"off\" spellcheck=\"false\"" +
       "           autocapitalize=\"off\" autocorrect=\"off\"></div>" +
       "</div>"
-    : "<pre class=\"bod\" id=\"files" + id + "\"></pre>";
+    : "<pre class=\"bod\" id=\"files\{id}\"></pre>";
   // **An id on the frame**, which is what lets a drag move it with `setStyle` instead of `render`.
   // Rebuilding the document to move one window would throw away every terminal's half-typed line
   // several times a second — the cost `setText` exists to avoid for typing, and the same one here.
@@ -335,7 +334,7 @@ void redraw(Page page, Vec<Win> wins) {
   Vec<string> typed = Vec.create();
   for (i32 i = 0; i < wins.len(); i++) {
     Win w = wins.get(i);
-    typed.push(w.kind == SHELL() ? page.getValue("cmd" + itoa(w.id)).wait() : "");
+    typed.push(w.kind == SHELL() ? page.getValue("cmd\{w.id}").wait() : "");
   }
   draw(page, wins);
   paint(page, wins);
@@ -347,7 +346,7 @@ void redraw(Page page, Vec<Win> wins) {
     // anything typed into the new terminal in between. Measured, not imagined: driving the desktop,
     // the first command typed into a freshly opened terminal disappeared, every time.
     if (w.kind == SHELL() && typed.get(i) != "") {
-      page.setValue("cmd" + itoa(w.id), typed.get(i)).wait();
+      page.setValue("cmd\{w.id}", typed.get(i)).wait();
     }
   }
 }
@@ -362,12 +361,12 @@ void redraw(Page page, Vec<Win> wins) {
 void paint(Page page, Vec<Win> wins) {
   for (i32 i = 0; i < wins.len(); i++) {
     Win w = wins.get(i);
-    string id = itoa(w.id);
+    string id = "\{w.id}";
     if (w.kind == SHELL()) {
-      page.setText("scr" + id, w.sh.screen).wait();
-      page.setText("ps" + id, w.sh.prompt()).wait();
+      page.setText("scr\{id}", w.sh.screen).wait();
+      page.setText("ps\{id}", w.sh.prompt()).wait();
     } else {
-      page.setText("files" + id, listing(w.sh)).wait();
+      page.setText("files\{id}", listing(w.sh)).wait();
     }
   }
 }
@@ -375,10 +374,10 @@ void paint(Page page, Vec<Win> wins) {
 /** The shell's working directory, as a files window shows it. */
 string listing(Session s) {
   string[]? names = s.sh.fs.readDir(s.sh.cwd);
-  if (names is null) { return s.sh.cwd + "\n  (not a directory)\n"; }
+  if (names is null) { return "\{s.sh.cwd}\n  (not a directory)\n"; }
   string[] have = names!;
-  string out = s.sh.cwd + "\n";
-  for (i32 i = 0; i < have.len(); i++) { out = out + "  " + have[i] + "\n"; }
+  string out = "\{s.sh.cwd}\n";
+  for (i32 i = 0; i < have.len(); i++) { out = out + "  \{have[i]}\n"; }
   if (have.len() == 0) { out = out + "  (empty)\n"; }
   return out;
 }

@@ -20,7 +20,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Socket } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { clientFinishedPacket, flight, serverChosenId } from "./hello_probe.wac";
 import { Server, pause, receiveWithin, startServer, stopServer } from "./peer.wac";
@@ -49,7 +48,7 @@ Result exchange(T t, Core core, Cli cli, string name, string spoil) {
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
     stopServer(cli, s);
-    return Result(false, "our socket did not bind — " + sock.error, false, u8[](), u8[]());
+    return Result(false, "our socket did not bind — \{sock.error}", false, u8[](), u8[]());
   }
 
   cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid(), scid(), "localhost")).wait();
@@ -111,7 +110,7 @@ export string test_a_real_quic_server_completes_a_handshake_with_our_client(Core
   t.isTrue(r.finished.len() > 0, "we produced a Finished packet at all");
   t.isTrue(r.finished.len() < 200,
            "and did not pad it — a Handshake datagram need not be 1200: " +
-           itoa(r.finished.len()) + " bytes");
+           "\{r.finished.len()} bytes");
   t.neI32(r.finished[0] as i32 & 0x80, 0, "it is a long header");
   t.eqI32((r.finished[0] as i32 >> 4) & 3, 2, "of type 2, Handshake");
 

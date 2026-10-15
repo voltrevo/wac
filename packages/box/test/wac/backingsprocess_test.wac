@@ -23,13 +23,12 @@
 // test-lane: heavy — 1s, three builds and four processes, measured 2026-08-29
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { Core, Cli, Exec, Change, FileResult, execReason} from "std";
 import { madeDir } from "../../../wactest/src/host.wac";
 
 /** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 /** Build one box binary, and say why not if it did not build. */
 bool build(T t, Cli cli, string entry, string stem, string[] grants) {
@@ -41,35 +40,35 @@ bool build(T t, Cli cli, string entry, string stem, string[] grants) {
   for (i32 i = 0; i < grants.len(); i++) { argv[i + 4] = grants[i]; }
   Exec r = cli.exec(binary(cli), argv, u8[]()).wait();
   t.isTrue(r.ran() && r.status == 0,
-           "built " + entry + " — " + execReason(r));
+           "built \{entry} — \{execReason(r)}");
   return r.ran() && r.status == 0;
 }
 
 /** Run a built box shell over a script, and hand back what it said. */
 Exec run(Cli cli, string stem, string[] extra, string script) {
   string[] argv = string[].filled(extra.len() + 3, "");
-  argv[0] = stem + ".wasm";
+  argv[0] = "\{stem}.wasm";
   for (i32 i = 0; i < extra.len(); i++) { argv[i + 1] = extra[i]; }
   argv[extra.len() + 1] = "-c";
-  argv[extra.len() + 2] = "mkdir -p /tmp; " + script;
+  argv[extra.len() + 2] = "mkdir -p /tmp; \{script}";
   return cli.exec(binary(cli), argv, u8[]()).wait();
 }
 
 string show(Exec r) {
-  return "\"" + string.fromBytes(r.stdout) + string.fromBytes(r.stderr) + "\" (" +
-         itoa(r.status) + ")";
+  return "\"\{string.fromBytes(r.stdout)}\{string.fromBytes(r.stderr)}\" (" +
+         "\{r.status})";
 }
 
 export string test_the_image_is_a_different_thing_from_the_memory_it_agrees_with(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/backings";
+  string dir = "\{cli.cwd().wait()}/.cache/backings";
   string whyDir1 = madeDir(cli, dir);
   t.isTrue(whyDir1 == "", whyDir1);
 
-  string sealed = dir + "/sealedsh";
-  string imaged = dir + "/imaged";
-  string host = dir + "/hostsh";
+  string sealed = "\{dir}/sealedsh";
+  string imaged = "\{dir}/imaged";
+  string host = "\{dir}/hostsh";
   if (!build(t, cli, "packages/box/src/bin/sealedsh.wac", sealed, string[].filled(0, ""))) {
     return t.report();
   }
@@ -79,28 +78,28 @@ export string test_the_image_is_a_different_thing_from_the_memory_it_agrees_with
              ["--allow-read", "--allow-write", "--allow-env"])) { return t.report(); }
 
   // **What makes an image an image** is that a second process finds what the first wrote.
-  string image = dir + "/persist.img";
+  string image = "\{dir}/persist.img";
   cli.remove(image, false).wait();   // a leftover from an earlier run would make this pass for free
   Exec first = run(cli, imaged, [image], "echo kept > /keep; ls /");
   t.isTrue(contains(string.fromBytes(first.stdout), "keep"), show(first));
   Exec second = run(cli, imaged, [image], "cat /keep");
   t.eqStr(string.fromBytes(second.stdout), "kept\n",
-          "an image did not survive its own process: " + show(second));
+          "an image did not survive its own process: \{show(second)}");
 
   // **And what makes a memory session memory** is that it does not.
   Exec forgot = run(cli, sealed, string[].filled(0, ""), "cat /keep; echo status=$?");
   t.eqStr(string.fromBytes(forgot.stdout), "status=1\n",
-          "a sealed session remembered something: " + show(forgot));
+          "a sealed session remembered something: \{show(forgot)}");
 
   // The host mount is a third thing again: what it wrote is on the real disk, where the other two
   // cannot see it and this test can.
-  string work = dir + "/persist";
+  string work = "\{dir}/persist";
   string whyDir2 = madeDir(cli, work);
   t.isTrue(whyDir2 == "", whyDir2);
-  cli.remove(work + "/here", false).wait();
-  run(cli, host, string[].filled(0, ""), "cd " + work + "; echo ondisk > here");
-  FileResult wrote = cli.readFile(work + "/here").wait();
-  t.isTrue(wrote.ok, "the host mount wrote nothing to the real disk — " + wrote.error);
+  cli.remove("\{work}/here", false).wait();
+  run(cli, host, string[].filled(0, ""), "cd \{work}; echo ondisk > here");
+  FileResult wrote = cli.readFile("\{work}/here").wait();
+  t.isTrue(wrote.ok, "the host mount wrote nothing to the real disk — \{wrote.error}");
   if (!wrote.ok) { return t.report(); }
   t.eqStr(string.fromBytes(wrote.bytes), "ondisk\n", "the host mount wrote the wrong thing");
   return t.report();

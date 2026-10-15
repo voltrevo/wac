@@ -47,7 +47,6 @@ import { boxNames, boxRun } from "../../src/shrun.wac";
 // `sealedapplets_test.wac`: one definition of what `sealedsh` builds, two files measuring different
 // things on it.
 import { Ran, memoryFs, runOn } from "./memory.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
 import { reachesTheMachine } from "../../../sh/test/wac/machinepaths.wac";
@@ -87,7 +86,7 @@ bool seedImage(Core core, Cli cli, string path) {
   return save(core, cli, "backings", path, fs);
 }
 
-string workRoot(Cli cli) { return cli.cwd().wait() + "/.cache/wac-backings"; }
+string workRoot(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-backings"; }
 
 export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mount(Core core, Cli cli) {
   T t = T.create();
@@ -95,8 +94,8 @@ export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mou
   string root = workRoot(cli);
   string whyDir1 = madeDir(cli, root);
   t.isTrue(whyDir1 == "", whyDir1);
-  string seed = root + "/seed.wacimg";
-  string scratch = root + "/saved.wacimg";
+  string seed = "\{root}/seed.wacimg";
+  string scratch = "\{root}/saved.wacimg";
   t.isTrue(seedImage(core, cli, seed), "could not write the seed image");
 
   i32 agree = 0;
@@ -105,10 +104,10 @@ export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mou
   i32 differ = 0;
   string detail = "";
   for (i32 i = 0; i < scripts.len(); i++) {
-    string script = "mkdir -p /tmp; " + scripts[i];
+    string script = "mkdir -p /tmp; \{scripts[i]}";
     // A directory of its own per script, because the corpus writes files and reads them back. Absolute,
     // because a relative frame `cwd` does not resolve — `issues/system/0194`.
-    string work = root + "/host" + itoa(i);
+    string work = "\{root}/host\{i}";
     string whyDir2 = madeDir(cli, work);
     t.isTrue(whyDir2 == "", whyDir2);
 
@@ -127,34 +126,34 @@ export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mou
       if (same(memory, onImage)) { agree = agree + 1; continue; }
       differ = differ + 1;
       if (differ <= 5) {
-        detail = detail + "\n  " + show(scripts[i]) + "  (host not compared: names an absolute path)" +
-                 "\n    memory " + shape(memory) + "\n    image  " + shape(onImage);
+        detail = detail + "\n  \{show(scripts[i])}  (host not compared: names an absolute path)" +
+                 "\n    memory \{shape(memory)}\n    image  \{shape(onImage)}";
       }
       continue;
     }
     if (same(memory, onImage) && same(memory, onHost)) { agree = agree + 1; continue; }
     differ = differ + 1;
     if (differ <= 5) {
-      detail = detail + "\n  " + show(scripts[i]) +
-               "\n    memory " + shape(memory) +
-               "\n    image  " + shape(onImage) +
-               "\n    host   " + shape(onHost);
+      detail = detail + "\n  \{show(scripts[i])}" +
+               "\n    memory \{shape(memory)}" +
+               "\n    image  \{shape(onImage)}" +
+               "\n    host   \{shape(onHost)}";
     }
   }
   cli.remove(scratch, false).wait();
   cli.remove(seed, false).wait();
 
-  t.isTrue(scripts.len() > 900, "only " + itoa(scripts.len()) + " scripts — did the corpus load?");
-  t.eqI32(unsaved, 0, itoa(unsaved) + " sessions could not be written back to an image");
+  t.isTrue(scripts.len() > 900, "only \{scripts.len()} scripts — did the corpus load?");
+  t.eqI32(unsaved, 0, "\{unsaved} sessions could not be written back to an image");
   // **Said rather than applied.** A differential that silently narrows what it compares reports a better
   // number for checking less, so the two-arm cases are counted and the count is bounded: if levelling
   // starts eating the corpus, this is where it shows.
   t.isTrue(machineOnly < 40,
-           itoa(machineOnly) + " scripts were compared on memory and image only, because they name an " +
+           "\{machineOnly} scripts were compared on memory and image only, because they name an " +
            "absolute path this machine has — the host arm would answer about Linux, not about a backing");
-  t.eqI32(differ, 0, itoa(differ) + " of " + itoa(scripts.len()) +
-                     " scripts answer differently by backing (" + itoa(agree) + " agree, " +
-                     itoa(machineOnly) + " on two arms)" + detail);
+  t.eqI32(differ, 0, "\{differ} of \{scripts.len()}" +
+                     " scripts answer differently by backing (\{agree} agree, " +
+                     "\{machineOnly} on two arms)\{detail}");
   return t.report();
 }
 
@@ -174,27 +173,27 @@ export string test_each_backing_is_alive_and_answers_about_its_own_filesystem(Co
   t.isTrue(whyDir3 == "", whyDir3);
 
   Ran memory = runOn(core, cli, memoryFs(core, "sealedsh"), script);
-  t.eqStr(memory.out, "hello\n1\n", "memory: " + shape(memory));
+  t.eqStr(memory.out, "hello\n1\n", "memory: \{shape(memory)}");
 
-  string image = root + "/alive.wacimg";
+  string image = "\{root}/alive.wacimg";
   t.isTrue(seedImage(core, cli, image), "could not write the seed image");
   Ran onImage = runOn(core, cli, imageFs(core, cli, image), script);
   cli.remove(image, false).wait();
-  t.eqStr(onImage.out, "hello\n1\n", "image: " + shape(onImage));
+  t.eqStr(onImage.out, "hello\n1\n", "image: \{shape(onImage)}");
 
-  string work = root + "/alive";
+  string work = "\{root}/alive";
   string whyDir4 = madeDir(cli, work);
   t.isTrue(whyDir4 == "", whyDir4);
   Ran onHost = runHost(core, cli, work, script);
   cli.remove(work, true).wait();
-  t.eqStr(onHost.out, "hello\n1\n", "host: " + shape(onHost));
+  t.eqStr(onHost.out, "hello\n1\n", "host: \{shape(onHost)}");
   return t.report();
 }
 
 
 bool same(Ran a, Ran b) { return a.out == b.out && a.err == b.err && a.status == b.status; }
 
-string shape(Ran r) { return show(r.out + r.err) + " (" + itoa(r.status) + ")"; }
+string shape(Ran r) { return "\{show(r.out + r.err)} (\{r.status})"; }
 
 /** A string with its newlines visible, so a failure reads on one line. */
 string show(string s) {
@@ -203,5 +202,5 @@ string show(string s) {
     string ch = s.slice(i, i + 1);
     out = out + (ch == "\n" ? "\\n" : ch);
   }
-  return "\"" + out + "\"";
+  return "\"\{out}\"";
 }

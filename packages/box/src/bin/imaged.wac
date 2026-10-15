@@ -60,7 +60,7 @@ export i32 main(Sys sys) {
   for (i32 i = 0; i < cli.argCount().wait(); i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
   Booted booted = boot(core, cli, path, argv, Vec.fromArray(boxNames()));
   if (!booted.ok) {
-    core.warn("imaged: " + path + ": " + booted.error);
+    core.warn("imaged: \{path}: \{booted.error}");
     return 1;
   }
   Fs fs = booted.fs;

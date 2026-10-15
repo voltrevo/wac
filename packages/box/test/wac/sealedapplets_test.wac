@@ -22,7 +22,6 @@
 
 import { Cli, Core } from "std";
 import { Fs } from "../../../fs/src/fs.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture, cases, fixtures } from "./cases.wac";
 import { Loaded, load, show } from "./replay.wac";
@@ -34,10 +33,10 @@ string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
 bool layOn(Fs fs, Fixture[] fs_) {
   for (i32 i = 0; i < fs_.len(); i++) {
     if (fs_[i].isDir) {
-      if (!fs.mkdir("/" + fs_[i].name, true).ok()) { return false; }
+      if (!fs.mkdir("/\{fs_[i].name}", true).ok()) { return false; }
       continue;
     }
-    if (!fs.writeFile("/" + fs_[i].name, fs_[i].bytes).ok()) { return false; }
+    if (!fs.writeFile("/\{fs_[i].name}", fs_[i].bytes).ok()) { return false; }
   }
   return true;
 }
@@ -68,20 +67,20 @@ export string test_the_applets_answer_the_same_over_memory_as_the_real_tools_did
       wrong = wrong + 1;
       if (wrong <= 5) {
         detail = detail + "\n  $ " + list[i] +
-                 "\n    want " + show(v.items[i].out) + " exit " + itoa(v.items[i].status) +
-                 "\n    ours " + show(r.out) + " exit " + itoa(r.status) +
-                 (r.err == "" ? "" : "\n    err  " + show(r.err));
+                 "\n    want " + show(v.items[i].out) + " exit \{v.items[i].status}" +
+                 "\n    ours " + show(r.out) + " exit \{r.status}" +
+                 (r.err == "" ? "" : "\n    err  \{show(r.err)}");
       }
     }
   }
 
-  t.eqI32(ran, list.len(), "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+  t.eqI32(ran, list.len(), "not every case replayed — \{list.len()} cases, \{v.n}" +
                            " vectors");
-  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded script — `cases.wac` changed, so " +
+  t.eqI32(unknown, 0, "\{unknown} cases do not match the recorded script — `cases.wac` changed, so " +
                       "`wac run --allow-read --allow-write --allow-run tools/wac/appletvectors.wac` is " +
                       "what makes this file mean anything again");
-  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " invocations differ over memory from the " +
-                    "captured tools (" + v.oracle + ")" + detail);
+  t.eqI32(wrong, 0, "\{wrong} of \{ran} invocations differ over memory from the " +
+                    "captured tools (\{v.oracle})\{detail}");
   return t.report();
 }
 
@@ -98,16 +97,16 @@ export string test_nothing_of_the_host_is_reachable_over_memory(Core core, Cli c
   Fs fs = memoryFs(core, "sealedsh");
 
   Ran passwd = runOn(core, cli, fs, "cat /etc/passwd; echo rc=$?");
-  t.eqStr(passwd.out, "rc=1\n", "the host's /etc/passwd was readable: " + show(passwd.out));
+  t.eqStr(passwd.out, "rc=1\n", "the host's /etc/passwd was readable: \{show(passwd.out)}");
   t.isTrue(passwd.err.indexOf("No such file or directory") >= 0, passwd.err);
 
   Ran home = runOn(core, cli, fs, "ls /home; echo rc=$?");
-  t.eqStr(home.out, "rc=2\n", "the host's /home was listable: " + show(home.out));
+  t.eqStr(home.out, "rc=2\n", "the host's /home was listable: \{show(home.out)}");
 
   // And the world it does have is its own: what the shell wrote is what an applet reads, and `ls` sees
   // the mounts. This is the canary — a filesystem that answered "absent" to everything would satisfy
   // both assertions above.
   Ran own = runOn(core, cli, fs, "echo hi > /f; cat /f; ls /");
-  t.eqStr(own.out, "hi\nbin\ndev\nf\nproc\ntmp\n", "its own world: " + show(own.out) + own.err);
+  t.eqStr(own.out, "hi\nbin\ndev\nf\nproc\ntmp\n", "its own world: \{show(own.out)}\{own.err}");
   return t.report();
 }

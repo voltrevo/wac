@@ -24,7 +24,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult, Socket } from "std";
 import { Read } from "core";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { Held } from "../../../wactest/src/daemon.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
@@ -37,7 +36,7 @@ bool haveNode(Cli cli) {
 }
 
 string freshScratch(T t, Cli cli, string name) {
-  string dir = root(cli) + "/.cache/nodenet-" + name;
+  string dir = "\{root(cli)}/.cache/nodenet-\{name}";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   return dir;
@@ -50,7 +49,7 @@ string build(Cli cli, string out, string target) {
              "--allow-net", "--target", target, "-o", out
     ], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
-    return "greet.wac for " + target + " did not build: " + string.fromBytes(r.stderr);
+    return "greet.wac for \{target} did not build: \{string.fromBytes(r.stderr)}";
   }
   return "";
 }
@@ -85,11 +84,11 @@ struct Server {
  * that fails.
  */
 Server start(Cli cli, string dir, string name, string prog, string[] args) {
-  string log = dir + "/" + name + ".log";
-  string status = dir + "/" + name + ".status";
-  string pidfile = dir + "/" + name + ".pid";
+  string log = "\{dir}/\{name}.log";
+  string status = "\{dir}/\{name}.status";
+  string pidfile = "\{dir}/\{name}.pid";
   string line = quoted(prog);
-  for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
+  for (i32 i = 0; i < args.len(); i++) { line = line + " \{quoted(args[i])}"; }
   // **The program is backgrounded inside the subshell and writes down its own pid**, which is the
   // whole of `issues/system/0218`. `$!` out here is the *subshell's*, and killing that leaves the
   // program running and reparented to init with its port still bound — 81 of them were live across
@@ -100,13 +99,13 @@ Server start(Cli cli, string dir, string name, string prog, string[] args) {
   // so its `$!` is already the program's, and its own header says why.
   Exec r = cli.exec("/bin/sh",
     [
-                   "-c", "( " + line + " & child=$!; echo $child > " + quoted(pidfile) +
-                   "; wait $child; echo EXIT=$? > " + quoted(status) + " ) >" + quoted(log) +
+                   "-c", "( \{line} & child=$!; echo $child > \{quoted(pidfile)}" +
+                   "; wait $child; echo EXIT=$? > \{quoted(status)} ) >\{quoted(log)}" +
                    " 2>&1 & echo $!"
     ], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
     return Server(-1, log, status, pidfile,
-                  "the shell did not start it — " + string.fromBytes(r.stderr));
+                  "the shell did not start it — \{string.fromBytes(r.stderr)}");
   }
   u8[] b = r.stdout;
   i32 pid = 0;
@@ -153,12 +152,12 @@ i32 waitForPort(Core core, Cli cli, Server s, i32 millis) {
 /** Connect, read what the server sends, and close. */
 string greetedBy(Core core, Cli cli, i32 port) {
   Socket s = cli.connect("127.0.0.1", port).wait();
-  if (s.handle < 0) { return "connect failed: " + s.error; }
+  if (s.handle < 0) { return "connect failed: \{s.error}"; }
   string said = "";
   match (cli.recv(s.handle).wait()) {
     Data(bytes): { said = string.fromBytes(bytes); }
     End: { }
-    Failed(why): { said = "recv failed: " + why; }
+    Failed(why): { said = "recv failed: \{why}"; }
   }
   cli.closeSocket(s.handle);
   return said;
@@ -204,14 +203,14 @@ bool kill(Core core, Cli cli, Server s) {
   if (s.pid <= 0) { return true; }
   i32 child = childPid(core, cli, s);
   if (child > 0) {
-    cli.exec("/bin/sh", ["-c", "kill -9 " + itoa(child) + " 2>/dev/null; true"],
+    cli.exec("/bin/sh", ["-c", "kill -9 \{child} 2>/dev/null; true"],
              u8[]()).wait();
   }
-  cli.exec("/bin/sh", ["-c", "kill -9 " + itoa(s.pid) + " 2>/dev/null; true"], u8[]()).wait();
+  cli.exec("/bin/sh", ["-c", "kill -9 \{s.pid} 2>/dev/null; true"], u8[]()).wait();
   if (child <= 0) { return false; }
   // `kill -0` asks whether the pid exists without touching it; a reaped child answers no.
   for (i32 tries = 0; tries < 200; tries++) {
-    Exec alive = cli.exec("/bin/sh", ["-c", "kill -0 " + itoa(child) + " 2>/dev/null"],
+    Exec alive = cli.exec("/bin/sh", ["-c", "kill -0 \{child} 2>/dev/null"],
                           u8[]()).wait();
     if (!alive.ran() || alive.status != 0) { return true; }
     core.sleepMillis(10).wait();
@@ -252,8 +251,8 @@ export string test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_c
     return t.report();
   }
   string dir = freshScratch(t, cli, "greet");
-  string denoOut = dir + "/greet-deno";
-  string nodeOut = dir + "/greet-node";
+  string denoOut = "\{dir}/greet-deno";
+  string nodeOut = "\{dir}/greet-node";
   string why = build(cli, denoOut, "deno") + build(cli, nodeOut, "node");
   t.eqStr(why, "", "greet built for both runtimes");
   if (why != "") { return t.report(); }
@@ -265,8 +264,8 @@ export string test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_c
   t.eqStr(onDeno.error, "", "the Deno server ran");
   t.eqStr(onNode.error, "", "the Node server ran");
 
-  t.eqStr(onDeno.said, "hello 127.0.0.1\n", "deno: " + onDeno.logged);
-  t.eqStr(onNode.said, onDeno.said, "node said something default: " + onNode.logged);
+  t.eqStr(onDeno.said, "hello 127.0.0.1\n", "deno: \{onDeno.logged}");
+  t.eqStr(onNode.said, onDeno.said, "node said something default: \{onNode.logged}");
   t.eqI32(onNode.code, 0, onNode.logged);
   t.eqI32(onDeno.code, 0, onDeno.logged);
 
@@ -288,7 +287,7 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
     return t.report();
   }
   string dir = freshScratch(t, cli, "bind");
-  string nodeOut = dir + "/greet-node";
+  string nodeOut = "\{dir}/greet-node";
   string why = build(cli, nodeOut, "node");
   t.eqStr(why, "", "greet built for node");
   if (why != "") { return t.report(); }
@@ -303,8 +302,8 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
     i32 port = held.port;
     held.release(cli);
 
-    Server s = start(cli, dir, "bind" + itoa(attempt), "node",
-                     [nodeOut, "127.0.0.1", itoa(port)]);
+    Server s = start(cli, dir, "bind\{attempt}", "node",
+                     [nodeOut, "127.0.0.1", "\{port}"]);
     t.eqStr(s.error, "", "node started");
     if (s.error != "") { break; }
     i32 got = waitForPort(core, cli, s, 30000);
@@ -316,27 +315,27 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
       if (contains(log, "Address already in use") || contains(log, "EADDRINUSE")) {
         if (attempt < 3) { continue; }
       }
-      t.fail("the server never listened on " + itoa(port) + ": " + log);
+      t.fail("the server never listened on \{port}: \{log}");
       break;
     }
 
     Exec ss = cli.exec("ss", ["-ltn"], u8[]()).wait();
-    t.isTrue(ss.ran(), "ss ran — " + ss.error);
+    t.isTrue(ss.ran(), "ss ran — \{ss.error}");
     string table = string.fromBytes(ss.stdout);
     string line = "";
     string[] rows = linesOf(table);
     for (i32 i = 0; i < rows.len(); i++) {
-      if (contains(rows[i], itoa(port))) { line = rows[i]; }
+      if (contains(rows[i], "\{port}")) { line = rows[i]; }
     }
-    t.isTrue(contains(line, "127.0.0.1:" + itoa(port)),
+    t.isTrue(contains(line, "127.0.0.1:\{port}"),
              "bound elsewhere: " + (line == "" ? table : line) +
-             (log == "" ? "" : " | node said: " + log));
+             (log == "" ? "" : " | node said: \{log}"));
     // **Not tidiness — the assertion this file was missing.** The server is waiting for a connection
     // nobody is going to make, and every other assertion here has already happened, so a `kill` that
     // killed the wrapper instead of the program passed all of them. `issues/system/0218` is the 81
     // servers that left, holding 5.1 GB and 81 ports across three workspaces.
     t.isTrue(kill(core, cli, s),
-             "the node server is gone after kill — otherwise it is holding port " + itoa(port) +
+             "the node server is gone after kill — otherwise it is holding port \{port}" +
              " and 42 MB until somebody notices");
     break;
   }

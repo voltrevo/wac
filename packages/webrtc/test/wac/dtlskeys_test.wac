@@ -18,7 +18,6 @@
 // imported directly, since `wac test` walks `*_test.wac` and a probe beside this one is a helper.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -38,7 +37,7 @@ u8[] joined(u8[] a, u8[] b) {
 
 /** One `prf` line. The label travels as hex, so the empty label survives the protocol. */
 string prfLine(string secret, string label, string seed, i32 n) {
-  return "prf " + secret + " " + hex(label.toBytes()) + " " + seed + " " + itoa64(n as i64);
+  return "prf \{secret} \{hex(label.toBytes())} \{seed} \{n as i64}";
 }
 
 export string test_our_prf_is_openssls_tls1_prf_over_lengths_that_cross_the_block_boundary(
@@ -71,8 +70,8 @@ export string test_our_prf_is_openssls_tls1_prf_over_lengths_that_cross_the_bloc
   for (i32 i = 0; i < secrets.len(); i++) {
     string mine = hex(prfOf(decoded(secrets[i]), labels[i], decoded(seeds[i]), ns[i]));
     t.eqStr(mine, word(a.lines[i], 1),
-            "PRF(" + secrets[i] + ", \"" + labels[i] + "\", " + seeds[i] + ", " +
-            itoa64(ns[i] as i64) + ")");
+            "PRF(\{secrets[i]}, \"\{labels[i]}\", \{seeds[i]}, " +
+            "\{ns[i] as i64})");
   }
   return t.report();
 }
@@ -149,7 +148,7 @@ export string test_a_sealed_record_is_what_aes_gcm_opens_with_the_nonce_and_aad_
   // the fixed IV padded rather than prefixed — this fails while our own `opened` still succeeds.
   u8[] explicit = slice(fragment, 0, 8);
   Lines lines = Lines.create();
-  lines.add("gcmopen " + hex(key) + " " + hex(joined(iv, explicit)) + " " + hex(aad) + " " +
+  lines.add("gcmopen \{hex(key)} \{hex(joined(iv, explicit))} \{hex(aad)} " +
             hex(slice(fragment, 8, fragment.len())));
   Answers a = ask(t, cli, "node", [ORACLE], lines, "one sealed record");
   if (!a.ok || a.lines.len() != 1) { return t.report(); }

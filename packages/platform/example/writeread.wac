@@ -43,7 +43,7 @@ export i32 main(Sys sys) {
 
   Socket listener = cli.listen("127.0.0.1", port).wait();
   if (listener.handle < 0) {
-    core.warn("writeread: listen: " + listener.error);
+    core.warn("writeread: listen: \{listener.error}");
     return 1;
   }
 
@@ -51,15 +51,15 @@ export i32 main(Sys sys) {
   Pending<Socket> incoming = cli.accept(listener.handle);
   Socket client = cli.connect("127.0.0.1", listener.port).wait();
   if (client.handle < 0) {
-    core.warn("writeread: connect: " + client.error);
+    core.warn("writeread: connect: \{client.error}");
     return 1;
   }
   Socket server = incoming.wait();
   if (server.handle < 0) {
-    core.warn("writeread: accept: " + server.error);
+    core.warn("writeread: accept: \{server.error}");
     return 1;
   }
-  core.log("writeread: connected on port " + itoa(listener.port));
+  core.log("writeread: connected on port \{listener.port}");
 
   // The peer — `server` — never sends and never closes. So a `recv` on `client` should stay pending
   // for as long as that holds, and anything else is the thing being looked for.
@@ -87,7 +87,7 @@ export i32 main(Sys sys) {
   i32 sent = 0;
   for (i32 i = 0; i < 20; i++) {
     if (!cli.send(client.handle, payload).wait()) {
-      core.warn("writeread: send " + itoa(i) + " failed");
+      core.warn("writeread: send \{i} failed");
       break;
     }
     sent = sent + 1;
@@ -97,18 +97,18 @@ export i32 main(Sys sys) {
       match (cli.recv(server.handle).wait()) {
         Data(got): { }
         End: { core.warn("writeread: the peer's own read ended"); }
-        Failed(why): { core.warn("writeread: the peer's read failed: " + why); }
+        Failed(why): { core.warn("writeread: the peer's read failed: \{why}"); }
       }
     }
     // After each send, ask whether the outstanding read has settled. Polling with a zero deadline is
     // what `waitAny` is for — this is a question about *now*, not a wait.
     i32 which = core.waitAny(one, 0);
     if (which >= 0) {
-      core.log("writeread: the read settled after " + itoa(sent) + " sends (" +
-               itoa(sent * 498) + " bytes)");
+      core.log("writeread: the read settled after \{sent} sends (" +
+               "\{sent * 498} bytes)");
       match (pending.wait()) {
         Data(bytes): {
-          core.log("writeread: VERDICT data — " + itoa(bytes.len()) +
+          core.log("writeread: VERDICT data — \{bytes.len()}" +
                    " bytes, so the peer spoke after all");
           return 0;
         }
@@ -118,7 +118,7 @@ export i32 main(Sys sys) {
           return 3;
         }
         Failed(why): {
-          core.warn("writeread: VERDICT failed — " + why);
+          core.warn("writeread: VERDICT failed — \{why}");
           return 4;
         }
       }
@@ -131,7 +131,7 @@ export i32 main(Sys sys) {
   if (late >= 0) {
     match (pending.wait()) {
       Data(bytes): {
-        core.log("writeread: VERDICT data — " + itoa(bytes.len()) + " bytes, late");
+        core.log("writeread: VERDICT data — \{bytes.len()} bytes, late");
         return 0;
       }
       End: {
@@ -139,14 +139,14 @@ export i32 main(Sys sys) {
         return 3;
       }
       Failed(why): {
-        core.warn("writeread: VERDICT failed, late — " + why);
+        core.warn("writeread: VERDICT failed, late — \{why}");
         return 4;
       }
     }
   }
 
-  core.log("writeread: VERDICT still pending after " + itoa(sent) + " sends (" +
-           itoa(sent * 498) + " bytes). A write does not disturb a read on the same handle.");
+  core.log("writeread: VERDICT still pending after \{sent} sends (" +
+           "\{sent * 498} bytes). A write does not disturb a read on the same handle.");
   cli.closeSocket(client.handle);
   cli.closeSocket(server.handle);
   cli.closeSocket(listener.handle);
@@ -164,13 +164,3 @@ i32 parsePort(u8[] text) {
   return v;
 }
 
-string itoa(i32 n) {
-  if (n == 0) { return "0"; }
-  i32 v = n < 0 ? 0 - n : n;
-  u8[] digits = u8[].filled(12, 0);
-  i32 at = 12;
-  while (v > 0) { at--; digits[at] = ('0' + (v % 10)) as@ u8; v = v / 10; }
-  u8[] used = u8[].filled(12 - at, 0);
-  used.copyFrom(digits, at, 0, 12 - at);
-  return (n < 0 ? "-" : "") + string.fromBytes(used);
-}

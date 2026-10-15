@@ -18,13 +18,12 @@
 // its subject; this is that file for the runner.
 
 import { T } from "../../src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../src/strings.wac";
 import { Core, Cli, Exec, Change } from "std";
 import { madeDir } from "../../src/host.wac";
 
 /** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 /** Everything the binary said, both streams — a runner's verdict is not all on one of them. */
 string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
@@ -39,35 +38,35 @@ export string test_discovery_finds_every_test_export_and_runs_it(Core core, Cli 
   // tests these are, and it has had at least seven for as long as the guarantee has existed.
   T t = T.create();
   Exec r = runTest(cli, "packages/wactest/test/wac/assert_test.wac");
-  t.isTrue(r.ran(), "the binary ran — " + r.error);
+  t.isTrue(r.ran(), "the binary ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "assert_test.wac passes — " + said(r));
+  t.eqI32(r.status, 0, "assert_test.wac passes — \{said(r)}");
 
   // "7 passed" or more. Read as text because the count is what the claim is about: a runner that
   // found one test would exit 0 just as happily.
   bool enough = false;
-  for (i32 n = 7; n <= 64; n++) { if (contains(said(r), itoa(n) + " passed")) { enough = true; } }
-  t.isTrue(enough, "fewer than seven tests were discovered — " + said(r));
+  for (i32 n = 7; n <= 64; n++) { if (contains(said(r), "\{n} passed")) { enough = true; } }
+  t.isTrue(enough, "fewer than seven tests were discovered — \{said(r)}");
   return t.report();
 }
 
 export string test_a_file_with_no_tests_is_an_error_not_a_silent_pass(Core core, Cli cli) {
   // The failure mode worth guarding: a misnamed export means zero tests run and everything "passes".
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache";
+  string dir = "\{cli.cwd().wait()}/.cache";
   string whyDir1 = madeDir(cli, dir);
   t.isTrue(whyDir1 == "", whyDir1);
-  string path = dir + "/_runner_empty_test.wac";
+  string path = "\{dir}/_runner_empty_test.wac";
   Change wrote = cli.writeFile(path, "export i32 notATest() { return 1; }\n".toBytes()).wait();
   t.eqI32(wrote.fault, 0, "wrote the fixture");
   if (wrote.fault != 0) { return t.report(); }
 
   Exec r = runTest(cli, path);
-  t.isTrue(r.ran(), "the binary ran — " + r.error);
+  t.isTrue(r.ran(), "the binary ran — \{r.error}");
   if (r.ran()) {
     t.isTrue(r.status != 0, "a file exporting no tests exited 0");
     t.isTrue(contains(said(r), "exports no tests"),
-             "it did not say what was wrong — " + said(r));
+             "it did not say what was wrong — \{said(r)}");
   }
   cli.remove(path, false).wait();
   return t.report();
@@ -81,12 +80,12 @@ export string test_a_failing_assertion_surfaces_its_message(Core core, Cli cli) 
   // the suite does not go red on a file whose whole purpose is to be red.
   T t = T.create();
   Exec r = runTest(cli, "packages/wactest/test/wac/fixture_failing.wac");
-  t.isTrue(r.ran(), "the binary ran — " + r.error);
+  t.isTrue(r.ran(), "the binary ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 3, "a file whose test fails exits 3 — " + said(r));
+  t.eqI32(r.status, 3, "a file whose test fails exits 3 — \{said(r)}");
   t.isTrue(contains(said(r), "deliberate: got 1, want 2"),
-           "the assertion's own message did not come back — " + said(r));
+           "the assertion's own message did not come back — \{said(r)}");
   t.isTrue(contains(said(r), "test_deliberately_fails"),
-           "the failing test was not named — " + said(r));
+           "the failing test was not named — \{said(r)}");
   return t.report();
 }

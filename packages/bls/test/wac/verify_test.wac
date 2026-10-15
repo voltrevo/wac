@@ -28,7 +28,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -67,14 +66,14 @@ bool memberBool(JsonValue v, string key, bool missing) {
 /** The vendored fixture file as a name-keyed object, or `null`. */
 JsonObject? fixture(T t, Cli cli, string path) {
   FileResult f = cli.readFile(path).wait();
-  t.isTrue(f.ok, path + " could not be read: " + f.error);
+  t.isTrue(f.ok, "\{path} could not be read: \{f.error}");
   if (!f.ok) { return null; }
   JsonValue? doc = parse(f.bytes);
-  t.isTrue(!(doc is null), path + " did not parse");
+  t.isTrue(!(doc is null), "\{path} did not parse");
   if (doc is null) { return null; }
   match (doc!) {
     Object(members): { return members; }
-    default: { t.fail(path + " is not an object"); return null; }
+    default: { t.fail("\{path} is not an object"); return null; }
   }
 }
 
@@ -90,7 +89,7 @@ export string test_every_ethereum_verify_fixture_agrees(Core core, Cli cli) {
     string name = cases!.at(i).keyStr();
     JsonValue c = cases!.at(i).value;
     JsonValue? input = member(c, "input");
-    t.isTrue(!(input is null), name + ": no input");
+    t.isTrue(!(input is null), "\{name}: no input");
     if (input is null) { continue; }
     bool want = memberBool(c, "output", false);
     bool got = blsVerify(un(memberText(input!, "pubkey")), un(memberText(input!, "message")),
@@ -105,8 +104,8 @@ export string test_every_ethereum_verify_fixture_agrees(Core core, Cli cli) {
   t.isTrue(accepted > 0, "no accepting cases — the corpus is not what it claims");
   t.isTrue(refused > 0, "no refusing cases — the corpus is not what it claims");
   t.eqI32(failures, 0,
-          "of " + itoa(accepted + refused) + " fixtures disagree (" + itoa(accepted) +
-          " should accept, " + itoa(refused) + " should refuse)");
+          "of \{accepted + refused} fixtures disagree (\{accepted}" +
+          " should accept, \{refused} should refuse)");
   return t.report();
 }
 
@@ -122,7 +121,7 @@ export string test_every_ethereum_deserialization_fixture_agrees_g1_and_g2(Core 
   i32 checked = 0;
   for (i32 g = 0; g < groups.len(); g++) {
     JsonObject? cases = fixture(t, cli,
-                                "packages/bls/test/vendor/eth_deserialization_" + groups[g] +
+                                "packages/bls/test/vendor/eth_deserialization_\{groups[g]}" +
                                 ".json");
     if (cases is null) { continue; }
     for (i32 i = 0; i < cases!.len(); i++) {
@@ -136,11 +135,11 @@ export string test_every_ethereum_deserialization_fixture_agrees_g1_and_g2(Core 
       checked = checked + 1;
       if (got != want) {
         failures = failures + 1;
-        t.eqBool(got, want, groups[g] + " " + name);
+        t.eqBool(got, want, "\{groups[g]} \{name}");
       }
     }
   }
-  t.isTrue(checked >= 28, "only " + itoa(checked) + " deserialization fixtures were read");
+  t.isTrue(checked >= 28, "only \{checked} deserialization fixtures were read");
   t.eqI32(failures, 0, "deserialization fixtures disagreeing");
   return t.report();
 }

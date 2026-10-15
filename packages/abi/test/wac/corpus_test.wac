@@ -27,7 +27,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Parser, parseDocument } from "../../../json/src/parse.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decodeRender, roundTrip, encodeMismatch, tags } from "./probe.wac";
@@ -41,13 +40,13 @@ static string FIXTURE = "packages/abi/test/vendor/corpus.json";
 JsonValue fixture(Core core, Cli cli) {
   FileResult r = cli.readFile(FIXTURE).wait();
   if (!r.ok) {
-    core.warn("abi: cannot read " + FIXTURE + " — " + r.error);
+    core.warn("abi: cannot read \{FIXTURE} — \{r.error}");
     trap;
   }
   Parser p = Parser.create(r.bytes);
   JsonValue? doc = parseDocument(p);
   if (doc is null) {
-    core.warn("abi: " + FIXTURE + " is not valid JSON");
+    core.warn("abi: \{FIXTURE} is not valid JSON");
     trap;
   }
   return doc!;
@@ -92,7 +91,7 @@ string typesOf(JsonValue c) {
   JsonArray types = items(member(c, "types"));
   string out = "";
   for (i32 i = 0; i < types.len(); i++) {
-    out = (i == 0 ? "" : out + ",") + text(types.get(i));
+    out = (i == 0 ? "" : "\{out},") + text(types.get(i));
   }
   return out;
 }
@@ -113,13 +112,13 @@ Rendered rendered(u8[] out) {
 export string test_every_case_decodes_to_what_ethers_says_it_means(Core core, Cli cli) {
   T t = T.create();
   JsonArray cs = cases(core, cli);
-  t.isTrue(cs.len() >= 25, "only " + itoa(cs.len()) + " cases — is the vendored corpus intact?");
+  t.isTrue(cs.len() >= 25, "only \{cs.len()} cases — is the vendored corpus intact?");
   for (i32 i = 0; i < cs.len(); i++) {
     JsonValue c = cs.get(i);
     string name = text(member(c, "name"));
     Rendered got = rendered(decodeRender(unhex(text(member(c, "hex"))), schemaOf(c)));
-    t.isTrue(got.ok, name + ": " + got.text);
-    if (got.ok) { t.eqStr(got.text, text(member(c, "rendering")), name + " (" + typesOf(c) + ")"); }
+    t.isTrue(got.ok, "\{name}: \{got.text}");
+    if (got.ok) { t.eqStr(got.text, text(member(c, "rendering")), "\{name} (\{typesOf(c)})"); }
   }
   return t.report();
 }
@@ -160,7 +159,7 @@ export string test_the_nested_cases_are_actually_in_the_corpus(Core core, Cli cl
     for (i32 i = 0; i < cs.len(); i++) {
       if (typesOf(cs.get(i)) == wanted[w]) { found = true; }
     }
-    t.isTrue(found, "the corpus has no " + wanted[w] + " case");
+    t.isTrue(found, "the corpus has no \{wanted[w]} case");
   }
   return t.report();
 }
@@ -208,8 +207,8 @@ export string test_a_malformed_offset_or_length_is_refused() {
     Ints schema = Ints.create();
     writeDescriptor(schema, types[i]);
     Rendered got = rendered(decodeRender(unhex(payloads[i]), schema.take()));
-    t.isFalse(got.ok, names[i] + ": accepted, rendered " + got.text);
-    t.isTrue(got.text.len() > 0, names[i] + ": refused without saying why");
+    t.isFalse(got.ok, "\{names[i]}: accepted, rendered \{got.text}");
+    t.isTrue(got.text.len() > 0, "\{names[i]}: refused without saying why");
   }
   return t.report();
 }
@@ -258,8 +257,8 @@ export string test_a_value_that_does_not_fit_its_type_is_refused() {
   schemas[4] = [T_ARRAY, T_UINT];
   for (i32 i = 0; i < names.len(); i++) {
     Rendered got = rendered(encodeMismatch(kinds[i], schemas[i]));
-    t.isFalse(got.ok, names[i] + ": encoded anyway");
-    t.isTrue(got.text.len() > 0, names[i] + ": refused without saying why");
+    t.isFalse(got.ok, "\{names[i]}: encoded anyway");
+    t.isTrue(got.text.len() > 0, "\{names[i]}: refused without saying why");
   }
   return t.report();
 }
@@ -284,7 +283,7 @@ export string test_the_descriptor_tags_are_what_this_file_thinks() {
   t.eqI32Array(got, want, "abi.wac's tags and this file's have drifted");
   for (i32 i = 0; i < got.len(); i++) {
     for (i32 k = i + 1; k < got.len(); k++) {
-      t.neI32(got[i], got[k], "two tags share the number " + itoa(got[i]));
+      t.neI32(got[i], got[k], "two tags share the number \{got[i]}");
     }
   }
   return t.report();

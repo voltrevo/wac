@@ -34,21 +34,10 @@ export i32 main(Sys sys) {
   FileResult ra = a.wait();
   FileResult rb = b.wait();
   if (!ra.ok || !rb.ok) {
-    core.warn("overlap: " + (ra.ok ? rb.error : ra.error));
+    core.warn("overlap: \{(ra.ok ? rb.error : ra.error)}");
     return 1;
   }
-  core.log(itoa(ra.bytes.len()) + " + " + itoa(rb.bytes.len()) + " bytes");
+  core.log("\{ra.bytes.len()} + \{rb.bytes.len()} bytes");
   return 0;
 }
 
-/** Decimal, without pulling `fmt` in for a demonstration. */
-string itoa(i32 n) {
-  if (n == 0) { return "0"; }
-  i32 v = n;
-  u8[] digits = u8[].filled(12, 0);
-  i32 at = 12;
-  while (v > 0) { at--; digits[at] = ('0' + (v % 10)) as@ u8; v = v / 10; }
-  u8[] used = u8[].filled(12 - at, 0);
-  used.copyFrom(digits, at, 0, 12 - at);
-  return string.fromBytes(used);
-}

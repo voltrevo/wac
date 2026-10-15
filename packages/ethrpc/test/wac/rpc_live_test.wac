@@ -18,7 +18,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Port, freePortOr, freePort } from "../../../wactest/src/daemon.wac";
 import { Node, anvil, anvilPath, haveAnvil, runExample, stopAnvil } from "./anvil_probe.wac";
 
@@ -34,15 +33,15 @@ export string test_ethrpc_asks_a_real_node_for_its_block_number_over_a_real_sock
     Core core, Cli cli) {
   T t = T.create();
   if (!haveAnvil(cli)) {
-    core.warn("ethrpc live test: skipped — anvil not found at " + anvilPath(cli));
+    core.warn("ethrpc live test: skipped — anvil not found at \{anvilPath(cli)}");
     return t.report();
   }
   Node node = anvil(core, cli);
-  t.isTrue(node.ok(), "anvil came up — " + node.why);
+  t.isTrue(node.ok(), "anvil came up — \{node.why}");
   if (!node.ok()) { return t.report(); }
 
-  Exec r = runExample(cli, ENTRY, ["127.0.0.1", itoa(node.port)]);
-  t.eqI32(r.status, 0, "exit " + itoa(r.status) + ": " + string.fromBytes(r.stderr));
+  Exec r = runExample(cli, ENTRY, ["127.0.0.1", "\{node.port}"]);
+  t.eqI32(r.status, 0, "exit \{r.status}: \{string.fromBytes(r.stderr)}");
   // anvil starts at block zero and mines on demand, so the answer is `0x0` — checked exactly, because
   // "some hex string" would pass for an error message that happened to start with 0x.
   t.eqStr(trimmedEnd(string.fromBytes(r.stdout)), "0x0", "the block number");
@@ -50,12 +49,12 @@ export string test_ethrpc_asks_a_real_node_for_its_block_number_over_a_real_sock
   // And with nothing listening on that port, it must say so rather than printing an empty answer.
   Port deadPort = freePortOr(cli);
   i32 dead = deadPort.port;
-  t.isTrue(dead > 0, "a port nothing is listening on — " + deadPort.error);
+  t.isTrue(dead > 0, "a port nothing is listening on — \{deadPort.error}");
   if (dead > 0) {
-    Exec bad = runExample(cli, ENTRY, ["127.0.0.1", itoa(dead)]);
-    t.eqI32(bad.status, 1, "a refused connection should fail: " + string.fromBytes(bad.stdout));
+    Exec bad = runExample(cli, ENTRY, ["127.0.0.1", "\{dead}"]);
+    t.eqI32(bad.status, 1, "a refused connection should fail: \{string.fromBytes(bad.stdout)}");
     t.isTrue(string.fromBytes(bad.stderr).indexOf("blocknumber:") >= 0,
-             "the refusal does not name the program: " + string.fromBytes(bad.stderr));
+             "the refusal does not name the program: \{string.fromBytes(bad.stderr)}");
   }
 
   stopAnvil(cli, node);

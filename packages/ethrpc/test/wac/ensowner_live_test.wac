@@ -23,7 +23,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { freePort } from "../../../wactest/src/daemon.wac";
 import { Node, anvil, anvilPath, blockHash, castRpc, castRun, haveAnvil, runExample, stopAnvil }
   from "./anvil_probe.wac";
@@ -43,7 +42,7 @@ string paddedAddress(string addr) {
   string bare = addr.slice(0, 2) == "0x" ? addr.slice(2, addr.len()) : addr;
   string out = "";
   for (i32 i = bare.len(); i < 64; i++) { out = out + "0"; }
-  return "0x" + out + bare;
+  return "0x\{out}\{bare}";
 }
 
 /** `0x…` plus one, as 32 bytes. Fixture arithmetic: the resolver sits in the slot above the owner. */
@@ -62,24 +61,24 @@ string hexPlusOne(string word) {
                         : string.fromBytes([('a' + (low - 10)) as@ u8]);
     out = d + out;
   }
-  return "0x" + out;
+  return "0x\{out}";
 }
 
 export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Core core, Cli cli) {
   T t = T.create();
   if (!haveAnvil(cli)) {
-    core.warn("ensowner live test: skipped — anvil not found at " + anvilPath(cli));
+    core.warn("ensowner live test: skipped — anvil not found at \{anvilPath(cli)}");
     return t.report();
   }
   Node node = anvil(core, cli);
-  t.isTrue(node.ok(), "anvil came up — " + node.why);
+  t.isTrue(node.ok(), "anvil came up — \{node.why}");
   if (!node.ok()) { return t.report(); }
 
   // `cast` decides where the owner goes, so `packages/ens` has to agree with it to find anything.
   string namehash = castRun(cli, ["namehash", "wac.eth"]);
-  t.isTrue(namehash.len() == 66, "cast computed a namehash: \"" + namehash + "\"");
+  t.isTrue(namehash.len() == 66, "cast computed a namehash: \"\{namehash}\"");
   string slot = castRun(cli, ["index", "bytes32", namehash, "0"]);
-  t.isTrue(slot.len() == 66, "cast computed a mapping slot: \"" + slot + "\"");
+  t.isTrue(slot.len() == 66, "cast computed a mapping slot: \"\{slot}\"");
   if (slot.len() != 66) { stopAnvil(cli, node); return t.report(); }
 
   castRpc(cli, node.port,
@@ -91,34 +90,34 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
   // between them would give an owner and a resolver that never coexisted.
   string resolverSlot = hexPlusOne(slot);
   t.isTrue(resolverSlot != slot && resolverSlot.len() == slot.len(),
-           "the resolver's slot is the owner's plus one: " + slot + " -> " + resolverSlot);
+           "the resolver's slot is the owner's plus one: \{slot} -> \{resolverSlot}");
   castRpc(cli, node.port,
           ["anvil_setStorageAt", REGISTRY, resolverSlot, paddedAddress(RESOLVER)]);
   castRpc(cli, node.port, ["evm_mine"]);
 
-  Exec r = runExample(cli, ENTRY, ["wac.eth", "127.0.0.1", itoa(node.port)]);
-  t.eqI32(r.status, 0, "exit " + itoa(r.status) + ": " + string.fromBytes(r.stderr));
+  Exec r = runExample(cli, ENTRY, ["wac.eth", "127.0.0.1", "\{node.port}"]);
+  t.eqI32(r.status, 0, "exit \{r.status}: \{string.fromBytes(r.stderr)}");
   t.eqStr(firstLine(string.fromBytes(r.stdout)), OWNER, "the owner");
-  t.isTrue(string.fromBytes(r.stdout).indexOf("resolver " + RESOLVER) >= 0,
-           "the resolver is not reported: " + string.fromBytes(r.stdout));
+  t.isTrue(string.fromBytes(r.stdout).indexOf("resolver \{RESOLVER}") >= 0,
+           "the resolver is not reported: \{string.fromBytes(r.stdout)}");
   // The caveat is printed every run, because a proof against a root the same node supplied looks
   // exactly like one anchored to a verified header.
   t.isTrue(string.fromBytes(r.stderr).indexOf("state root this node also supplied") >= 0,
-           "the caveat is not printed: " + string.fromBytes(r.stderr));
+           "the caveat is not printed: \{string.fromBytes(r.stderr)}");
 
   // **Anchored to a block hash.** The program re-encodes the header it was given and hashes it, so
   // this passing means our RLP of anvil's header — field order, minimal quantities, and which of the
   // six fork-appended fields are present — reproduces the hash anvil computed itself. A differential
   // against a real client, on the one value that ties a state root to a block.
   string hash = blockHash(cli, node.port);
-  t.isTrue(hash.len() == 66, "the node gave a block hash: \"" + hash + "\"");
+  t.isTrue(hash.len() == 66, "the node gave a block hash: \"\{hash}\"");
   Exec anchored = runExample(cli, ENTRY,
-                             ["wac.eth", "127.0.0.1", itoa(node.port), REGISTRY, hash]);
+                             ["wac.eth", "127.0.0.1", "\{node.port}", REGISTRY, hash]);
   t.eqI32(anchored.status, 0,
-          "exit " + itoa(anchored.status) + ": " + string.fromBytes(anchored.stderr));
+          "exit \{anchored.status}: \{string.fromBytes(anchored.stderr)}");
   t.eqStr(firstLine(string.fromBytes(anchored.stdout)), OWNER, "the owner, anchored");
   t.isTrue(string.fromBytes(anchored.stderr).indexOf("hashing to the block hash you gave") >= 0,
-           "the anchor is not reported: " + string.fromBytes(anchored.stderr));
+           "the anchor is not reported: \{string.fromBytes(anchored.stderr)}");
 
   // A hash from somewhere else has to be refused rather than ignored, or the argument is theatre —
   // and since an anchor *selects* the block, that refusal is now at the lookup rather than at a
@@ -126,10 +125,10 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
   string madeUp = "0x";
   for (i32 i = 0; i < 32; i++) { madeUp = madeUp + "de"; }
   Exec unknown = runExample(cli, ENTRY,
-                            ["wac.eth", "127.0.0.1", itoa(node.port), REGISTRY, madeUp]);
+                            ["wac.eth", "127.0.0.1", "\{node.port}", REGISTRY, madeUp]);
   t.eqI32(unknown.status, 1, "an unknown block should fail");
   t.isTrue(string.fromBytes(unknown.stderr).indexOf("does not have the block") >= 0,
-           "the refusal does not say why: " + string.fromBytes(unknown.stderr));
+           "the refusal does not say why: \{string.fromBytes(unknown.stderr)}");
 
   // **A node that serves the latest state whatever block is asked for.** anvil does exactly this, so
   // this is not a hypothetical: mine a second block, anchor to the first, and the proof that comes
@@ -143,19 +142,19 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
   string before = blockHash(cli, node.port);
   string beefy = "0x";
   for (i32 i = 0; i < 30; i++) { beefy = beefy + "00"; }
-  castRpc(cli, node.port, ["anvil_setStorageAt", REGISTRY, slot, beefy + "beef"]);
+  castRpc(cli, node.port, ["anvil_setStorageAt", REGISTRY, slot, "\{beefy}beef"]);
   castRpc(cli, node.port, ["evm_mine"]);
   Exec stale = runExample(cli, ENTRY,
-                          ["wac.eth", "127.0.0.1", itoa(node.port), REGISTRY, before]);
+                          ["wac.eth", "127.0.0.1", "\{node.port}", REGISTRY, before]);
   t.eqI32(stale.status, 1,
-          "a historical anchor should fail here: " + string.fromBytes(stale.stdout));
+          "a historical anchor should fail here: \{string.fromBytes(stale.stdout)}");
   t.isTrue(string.fromBytes(stale.stderr).indexOf("historical proofs") >= 0,
-           "the refusal does not name historical proofs: " + string.fromBytes(stale.stderr));
+           "the refusal does not name historical proofs: \{string.fromBytes(stale.stderr)}");
 
   // A name nobody owns: absence is an answer, and the exit code says the question was answered.
   Exec none = runExample(cli, ENTRY,
-                         ["nobody-owns-this.eth", "127.0.0.1", itoa(node.port)]);
-  t.eqI32(none.status, 0, "exit " + itoa(none.status) + ": " + string.fromBytes(none.stderr));
+                         ["nobody-owns-this.eth", "127.0.0.1", "\{node.port}"]);
+  t.eqI32(none.status, 0, "exit \{none.status}: \{string.fromBytes(none.stderr)}");
   string noneOut = string.fromBytes(none.stdout);
   i32 end = noneOut.len();
   while (end > 0 && noneOut.slice(end - 1, end) == "\n") { end = end - 1; }
@@ -164,8 +163,8 @@ export string test_ensowner_resolves_a_name_against_a_live_node_and_proves_it(Co
   // And a node that is not there is a failure, not an empty answer.
   i32 dead = freePort(cli);
   if (dead > 0) {
-    Exec down = runExample(cli, ENTRY, ["wac.eth", "127.0.0.1", itoa(dead)]);
-    t.eqI32(down.status, 1, "a refused connection should fail: " + string.fromBytes(down.stdout));
+    Exec down = runExample(cli, ENTRY, ["wac.eth", "127.0.0.1", "\{dead}"]);
+    t.eqI32(down.status, 1, "a refused connection should fail: \{string.fromBytes(down.stdout)}");
   }
 
   stopAnvil(cli, node);

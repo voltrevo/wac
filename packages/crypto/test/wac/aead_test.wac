@@ -17,7 +17,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, askDeno, ask, check, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { poly1305 } from "../../src/poly1305.wac";
 import { aeadDecrypt, aeadEncrypt, aeadTag } from "../../src/aead.wac";
 import { equal } from "../../../bytes/src/slice.wac";
@@ -91,7 +90,7 @@ Answers askAead(T t, Cli cli, Lines lines, string what) {
 
 /** A `chacha` claim: the sealed output we say these inputs produce. */
 void claimSeal(Lines lines, u8[] key, u8[] nonce, u8[] aad, u8[] plain, u8[] sealed) {
-  lines.add("chacha " + hex(key) + " " + hex(nonce) + " " + hex(aad) + " " + hex(plain) + " " +
+  lines.add("chacha \{hex(key)} \{hex(nonce)} \{hex(aad)} \{hex(plain)} " +
             hex(sealed));
 }
 
@@ -147,8 +146,8 @@ export string test_the_length_fields_stop_a_block_moving(Core core, Cli cli) {
   // refusal would deny. This is the one place in this package that asks the oracle for an answer
   // rather than handing it one: the bytes were not sealed by us, so there is nothing to claim.
   Lines lines = Lines.create();
-  lines.add("open " + hex(key) + " " + hex(nonce) + " " + hex(a) + " " + hex(cat(c, split)));
-  lines.add("open " + hex(key) + " " + hex(nonce) + " " + hex(u8[]()) + " " +
+  lines.add("open \{hex(key)} \{hex(nonce)} \{hex(a)} \{hex(cat(c, split))}");
+  lines.add("open \{hex(key)} \{hex(nonce)} \{hex(u8[]())} " +
             hex(cat(cat(a, c), split)));
   Answers r = askAead(t, cli, lines, "the two framings");
   if (!r.ok) { return t.report(); }
@@ -317,7 +316,7 @@ struct Rng {
 }
 
 void claim(Lines lines, u8[] key, u8[] msg) {
-  lines.add("poly1305 " + hex(key) + " " + hex(msg) + " " + hex(poly1305(key, msg)));
+  lines.add("poly1305 \{hex(key)} \{hex(msg)} \{hex(poly1305(key, msg))}");
 }
 
 export string test_poly1305_agrees_with_the_reference_at_every_length_to_three_blocks(

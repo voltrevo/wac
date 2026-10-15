@@ -13,7 +13,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { gzipBest, gzipStored } from "../../src/gzip.wac";
 
 /**
@@ -51,12 +50,12 @@ export string test_best_never_exceeds_stored_on_either_side_of_the_threshold() {
       if (best <= stored) { continue; }
       worse = worse + 1;
       if (first == "") {
-        first = itoa(n) + " bytes over " + itoa(alpha) + " symbols: " + itoa(best) + " > " +
-                itoa(stored);
+        first = "\{n} bytes over \{alpha} symbols: \{best} > " +
+                "\{stored}";
       }
     }
   }
-  t.eqI32(worse, 0, "gzipBest expanded past stored on " + itoa(worse) + " input(s); the first is " +
+  t.eqI32(worse, 0, "gzipBest expanded past stored on \{worse} input(s); the first is " +
                     first);
   return t.report();
 }
@@ -74,9 +73,9 @@ export string test_above_the_threshold_dynamic_wins_even_when_it_did_not_compres
   i32 best = gzipBest(data).len();
   i32 stored = gzipStored(data).len();
   t.isTrue(best >= data.len(),
-           "this input was meant not to compress, but " + itoa(data.len()) + " became " + itoa(best));
+           "this input was meant not to compress, but \{data.len()} became \{best}");
   t.isTrue(best < stored,
-           "this input was meant to leave dynamic ahead of stored, got " + itoa(best) + " vs " +
-           itoa(stored));
+           "this input was meant to leave dynamic ahead of stored, got \{best} vs " +
+           "\{stored}");
   return t.report();
 }

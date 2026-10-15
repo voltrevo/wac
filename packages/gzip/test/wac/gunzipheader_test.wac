@@ -20,7 +20,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { gunzipBytes } from "../../src/inflate.wac";
 import { gzipBest } from "../../src/gzip.wac";
 
@@ -92,14 +91,14 @@ export string test_a_stream_carrying_a_filename_from_python(Core core, Cli cli) 
                              "sys.stdout.buffer.write(buf.getvalue())\n"
                     ],
                     text).wait();
-  t.isTrue(r.ran(), "python3 ran — " + r.error);
+  t.isTrue(r.ran(), "python3 ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "python succeeded: " + string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "python succeeded: \{string.fromBytes(r.stderr)}");
   if (r.status != 0) { return t.report(); }
 
   u8[] gz = r.stdout;
   t.isTrue(gz.len() > 10 && (gz[3] as i32 & FNAME) != 0,
-           "python set FNAME; FLG=" + itoa(gz.len() > 3 ? gz[3] as i32 : -1) +
+           "python set FNAME; FLG=\{gz.len() > 3 ? gz[3] as i32 : -1}" +
            " — otherwise the test would prove nothing");
   if (gz.len() > 10 && (gz[3] as i32 & FNAME) != 0) { roundTrips(t, "python FNAME", gz, text); }
   return t.report();

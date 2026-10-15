@@ -21,7 +21,6 @@ import { Cli } from "std";
 import { post, Fetched } from "../../http/src/client.wac";
 import { parse } from "../../json/src/json.wac";
 import { JsonValue, JsonObject } from "../../json/src/value.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** One call's answer. `result` is the raw JSON of the `result` member, undecoded. */
 export struct Answer {
@@ -43,26 +42,26 @@ export struct Answer {
  * nothing to correlate. Batching would need real ids and is not implemented.
  */
 export Answer call(Cli cli, string host, i32 port, string method, string params) {
-  string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + method + "\",\"params\":" + params + "}";
+  string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\{method}\",\"params\":\{params}}";
   Fetched f = post(cli, host, port, "/", body.toBytes(), "application/json");
-  if (!f.ok) { return bad(method + ": " + f.error); }
+  if (!f.ok) { return bad("\{method}: \{f.error}"); }
   if (f.response.status != 200) {
-    return bad(method + ": the node answered HTTP " + itoa(f.response.status));
+    return bad("\{method}: the node answered HTTP \{f.response.status}");
   }
 
   JsonValue? parsed = parse(f.response.body);
-  if (parsed is null) { return bad(method + ": the node's answer is not JSON"); }
+  if (parsed is null) { return bad("\{method}: the node's answer is not JSON"); }
   match (parsed!) {
     Object(members): {
       // An error member is the node refusing, and it is not the same as a transport failure: the request
       // arrived and was understood. Its message is the useful part and is passed through.
       JsonValue? err = members.get("error".toBytes());
-      if (!(err is null)) { return bad(method + ": " + describe(err!)); }
+      if (!(err is null)) { return bad("\{method}: \{describe(err!)}"); }
       JsonValue? result = members.get("result".toBytes());
-      if (result is null) { return bad(method + ": the answer has no result"); }
+      if (result is null) { return bad("\{method}: the answer has no result"); }
       return Answer.of(true, result!, "");
     }
-    default: { return bad(method + ": the answer is not a JSON object"); }
+    default: { return bad("\{method}: the answer is not a JSON object"); }
   }
 }
 

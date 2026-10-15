@@ -45,7 +45,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, FileResult, Pending } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { Ran, boundedAgain, denoBatch, hangReport, stale, newestFor, submit, collect, DEFAULT_SECONDS }
   from "./hostfs.wac";
@@ -62,7 +61,7 @@ string tooLong() {
 }
 
 string root(Cli cli) { return cli.cwd().wait(); }
-string built(Cli cli) { return root(cli) + "/" + BUILT; }
+string built(Cli cli) { return "\{root(cli)}/\{BUILT}"; }
 
 /**
  * The native host binary, or `""` — **asked for, not built here.**
@@ -110,9 +109,9 @@ string buildOne(Cli cli, bool native, string out, string[] grants) {
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
-    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[]()).wait();
+    Exec r = cli.exec("\{root(cli)}/native/v8/target/release/wac", args, u8[]()).wait();
     if (!r.ran() || r.status != 0) {
-      return "wac build " + out + ": " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+      return "wac build \{out}: \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}";
     }
     return "";
   }
@@ -124,7 +123,7 @@ string buildOne(Cli cli, bool native, string out, string[] grants) {
   args[head.len() + grants.len() + 1] = out;
   Exec r = cli.exec("deno", args, u8[]()).wait();
   if (!r.ran() || r.status != 0) {
-    return "build.ts " + out + ": " + string.fromBytes(r.stderr);
+    return "build.ts \{out}: \{string.fromBytes(r.stderr)}";
   }
   return "";
 }
@@ -133,9 +132,9 @@ Shells shells(Cli cli) {
   string dir = built(cli);
   cli.mkdir(dir, true).wait();
   // The native half is the module itself — one artefact, manifest in its `wac.manifest` section.
-  Shells s = Shells(true, "", dir + "/wacsh-deno", dir + "/wacsh.wasm",
-                    dir + "/wonly-deno", dir + "/wonly.wasm",
-                    dir + "/nogrant-deno", dir + "/nogrant.wasm");
+  Shells s = Shells(true, "", "\{dir}/wacsh-deno", "\{dir}/wacsh.wasm",
+                    "\{dir}/wonly-deno", "\{dir}/wonly.wasm",
+                    "\{dir}/nogrant-deno", "\{dir}/nogrant.wasm");
   string[] rw = ["--allow-read", "--allow-write", "--allow-env"];
   string[] w = ["--allow-write"];
   string[] none = string[].filled(0, "");
@@ -144,11 +143,11 @@ Shells shells(Cli cli) {
   // One walk of `sh.wac`'s 190-file closure, not six.
   i64 newest = newestFor(cli, ENTRY);
   if (stale(cli, s.deno, newest)) { why = why + buildOne(cli, false, s.deno, rw); }
-  if (stale(cli, s.manifest, newest)) { why = why + buildOne(cli, true, dir + "/wacsh", rw); }
+  if (stale(cli, s.manifest, newest)) { why = why + buildOne(cli, true, "\{dir}/wacsh", rw); }
   if (stale(cli, s.wonlyDeno, newest)) { why = why + buildOne(cli, false, s.wonlyDeno, w); }
-  if (stale(cli, s.wonly, newest)) { why = why + buildOne(cli, true, dir + "/wonly", w); }
+  if (stale(cli, s.wonly, newest)) { why = why + buildOne(cli, true, "\{dir}/wonly", w); }
   if (stale(cli, s.nograntDeno, newest)) { why = why + buildOne(cli, false, s.nograntDeno, none); }
-  if (stale(cli, s.nogrant, newest)) { why = why + buildOne(cli, true, dir + "/nogrant", none); }
+  if (stale(cli, s.nogrant, newest)) { why = why + buildOne(cli, true, "\{dir}/nogrant", none); }
   if (why != "") { s.ok = false; s.error = why; }
   return s;
 }
@@ -161,22 +160,22 @@ Shells shells(Cli cli) {
  * leads to itself, which is `ELOOP`, a state no corpus script could reach and which both hosts
  * reported as the operating system's sentence with `(os error 40)` still attached.
  */
-string tmpFor(Cli cli, string name) { return root(cli) + "/.cache/hostfs-" + name; }
+string tmpFor(Cli cli, string name) { return "\{root(cli)}/.cache/hostfs-\{name}"; }
 
 void fixtureAt(Cli cli, string tree) {
   cli.remove(tree, true).wait();
-  cli.mkdir(tree + "/sub", true).wait();
-  cli.writeFile(tree + "/f", ("a\nb\nc\n").toBytes()).wait();
-  cli.writeFile(tree + "/n", ("3\n1\n2\n").toBytes()).wait();
-  cli.writeFile(tree + "/sub/deep", ("x\n").toBytes()).wait();
+  cli.mkdir("\{tree}/sub", true).wait();
+  cli.writeFile("\{tree}/f", ("a\nb\nc\n").toBytes()).wait();
+  cli.writeFile("\{tree}/n", ("3\n1\n2\n").toBytes()).wait();
+  cli.writeFile("\{tree}/sub/deep", ("x\n").toBytes()).wait();
   cli.exec("/bin/sh", [
     "-c",
-    "cd " + quoted(tree) + " && ln -s f link && ln -s nosuch dangling && ln -s loop loop"
+    "cd \{quoted(tree)} && ln -s f link && ln -s nosuch dangling && ln -s loop loop"
   ],
     u8[]()).wait();
 }
 
-void fixture(Cli cli, string tmp) { fixtureAt(cli, tmp + "/tree"); }
+void fixture(Cli cli, string tmp) { fixtureAt(cli, "\{tmp}/tree"); }
 
 /**
  * One tree per answer, so the three runs of a case can be in flight together.
@@ -187,14 +186,14 @@ void fixture(Cli cli, string tmp) { fixtureAt(cli, tmp + "/tree"); }
  * clock now that `exec` returns a ticket rather than an answer (`issues/system/0211`).
  */
 string treeFor(Cli cli, string tmp, string which) {
-  string tree = tmp + "/tree-" + which;
+  string tree = "\{tmp}/tree-\{which}";
   fixtureAt(cli, tree);
   return tree;
 }
 
 /** The real tools, through bash, in the same directory the shells are told to change to. */
 Ran gnu(Core core, Cli cli, string tmp, string script) {
-  return boundedAgain(core, cli, tmp, tmp, "bash", ["-c", "cd tree; " + script], u8[](),
+  return boundedAgain(core, cli, tmp, tmp, "bash", ["-c", "cd tree; \{script}"], u8[](),
                       () => { fixture(cli, tmp); });
 }
 
@@ -202,7 +201,7 @@ Ran shell(Core core, Cli cli, string tmp, string cmd, string[] pre, string scrip
   string[] args = string[].filled(pre.len() + 2, "");
   for (i32 i = 0; i < pre.len(); i++) { args[i] = pre[i]; }
   args[pre.len()] = "-c";
-  args[pre.len() + 1] = "cd tree; " + script;
+  args[pre.len() + 1] = "cd tree; \{script}";
   return boundedAgain(core, cli, tmp, tmp, cmd, args, u8[](), () => { fixture(cli, tmp); });
 }
 
@@ -323,9 +322,9 @@ string[] agreed() {
     "cat loop",
     "wc -c loop",
     "echo x > loop",
-    "cat " + long,
-    "echo x > " + long,
-    "mkdir " + long,
+    "cat \{long}",
+    "echo x > \{long}",
+    "mkdir \{long}",
     // ── A *path* that is not a program. A name with a slash is not searched for and does not fall
     // back to a builtin, so what the shell says about it is what the filesystem says — on both hosts,
     // and the same as GNU. All four of these used to be `command not found` and 127.
@@ -342,7 +341,7 @@ string[] agreed() {
 export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(Core core, Cli cli) {
   T t = T.create();
   Shells s = shells(cli);
-  t.isTrue(s.ok, "the shells built — " + s.error);
+  t.isTrue(s.ok, "the shells built — \{s.error}");
   if (!s.ok) { return t.report(); }
   string native = nativeBinary(cli);
   string tmp = tmpFor(cli, "agreed");
@@ -361,7 +360,7 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
   string[][] denoArgv = string[][].filled(scripts.len(), string[].filled(0, ""));
   u8[][] denoIn = u8[][].filled(scripts.len(), u8[]());
   for (i32 i = 0; i < scripts.len(); i++) {
-    denoTrees[i] = treeFor(cli, tmp, "deno-" + itoa(i));
+    denoTrees[i] = treeFor(cli, tmp, "deno-\{i}");
     denoArgv[i] = ["-c", scripts[i]];
   }
   Ran[] jsAll = denoBatch(cli, DEFAULT_SECONDS * 2, ENTRY,
@@ -398,20 +397,20 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
     string stuck = hangReport(script, ["bash", "deno"], [want, js]);
     if (stuck != "") { t.fail(stuck); continue; }
 
-    t.eqStr(js.out, want.out, "deno: " + script);
+    t.eqStr(js.out, want.out, "deno: \{script}");
     // **And what it said when it failed.** Only stdout was compared against GNU here, with the two
     // hosts' stderr compared against each other below — so `ls nosuch`, `cat nosuch` and `wc -l
     // nosuch` sat in this list with the half that matters unchecked, and two hosts agreeing on a
     // sentence GNU does not use would have passed.
-    t.eqStr(strip(js.err), strip(want.err), "deno stderr: " + script);
+    t.eqStr(strip(js.err), strip(want.err), "deno stderr: \{script}");
     if (!haveNative) { continue; }
     Ran rs = collect(pr);
     if (rs.hung) { rs = shell(core, cli, tmp, native, [s.manifest], script); }
     string stuckNative = hangReport(script, ["native"], [rs]);
     if (stuckNative != "") { t.fail(stuckNative); continue; }
-    t.eqStr(rs.out, want.out, "native: " + script);
-    t.eqStr(rs.err, js.err, "native stderr: " + script);
-    t.eqI32(rs.code, js.code, "native status: " + script);
+    t.eqStr(rs.out, want.out, "native: \{script}");
+    t.eqStr(rs.err, js.err, "native stderr: \{script}");
+    t.eqI32(rs.code, js.code, "native status: \{script}");
   }
 
   // The canary: GNU must actually have answered something, or every assertion above holds vacuously.
@@ -424,7 +423,7 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
   // case rather than a broken one. The warning names it so this cannot go quiet — the nine other
   // callers of `nativeHostWhyNot` have said it this way all along.
   if (native == "") {
-    core.warn("SKIPPED the wasmtime half: " + nativeHostWhyNot(cli)
+    core.warn("SKIPPED the wasmtime half: \{nativeHostWhyNot(cli)}"
               + ". The JavaScript half above still ran and still asserted.");
   }
   cli.remove(tmp, true).wait();
@@ -447,7 +446,7 @@ export string test_the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ
   // this fails and says so — which is the right way round for a difference nobody has decided to keep.
   T t = T.create();
   Shells s = shells(cli);
-  t.isTrue(s.ok, "the shells built — " + s.error);
+  t.isTrue(s.ok, "the shells built — \{s.error}");
   if (!s.ok) { return t.report(); }
   string tmp = tmpFor(cli, "notaprogram");
   string whyDir2 = madeDir(cli, tmp);
@@ -513,7 +512,7 @@ export string test_the_two_hosts_agree_where_the_real_tool_prints_more_than_this
     return t.report();
   }
   Shells s = shells(cli);
-  t.isTrue(s.ok, "the shells built — " + s.error);
+  t.isTrue(s.ok, "the shells built — \{s.error}");
   if (!s.ok) { return t.report(); }
   string tmp = tmpFor(cli, "hostsonly");
   string whyDir3 = madeDir(cli, tmp);
@@ -526,8 +525,8 @@ export string test_the_two_hosts_agree_where_the_real_tool_prints_more_than_this
     Ran js = shell(core, cli, tmp, s.deno, string[].filled(0, ""), scripts[i]);
     fixture(cli, tmp);
     Ran rs = shell(core, cli, tmp, native, [s.manifest], scripts[i]);
-    t.eqStr(maskWhen(rs.out), maskWhen(js.out), "native: " + scripts[i]);
-    t.eqI32(rs.code, js.code, "native status: " + scripts[i]);
+    t.eqStr(maskWhen(rs.out), maskWhen(js.out), "native: \{scripts[i]}");
+    t.eqI32(rs.code, js.code, "native status: \{scripts[i]}");
   }
 
   // And one thing the mask must not have eaten.
@@ -565,7 +564,7 @@ export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_o
     return t.report();
   }
   Shells s = shells(cli);
-  t.isTrue(s.ok, "the shells built — " + s.error);
+  t.isTrue(s.ok, "the shells built — \{s.error}");
   if (!s.ok) { return t.report(); }
   string tmp = tmpFor(cli, "nogrant");
   string whyDir4 = madeDir(cli, tmp);
@@ -595,8 +594,8 @@ export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_o
   string[][] nograntArgv = string[][].filled(scripts.len(), string[].filled(0, ""));
   u8[][] nograntIn = u8[][].filled(scripts.len(), u8[]());
   for (i32 i = 0; i < scripts.len(); i++) {
-    nograntTrees[i] = treeFor(cli, tmp, "nogrant-" + itoa(i));
-    nograntArgv[i] = ["-c", scripts[i] + "; echo status=$?"];
+    nograntTrees[i] = treeFor(cli, tmp, "nogrant-\{i}");
+    nograntArgv[i] = ["-c", "\{scripts[i]}; echo status=$?"];
   }
   Ran[] jsAll = denoBatch(cli, DEFAULT_SECONDS * 2, ENTRY, string[].filled(0, ""), tmp,
                           nograntTrees, nograntArgv, nograntIn);
@@ -609,49 +608,49 @@ export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_o
     // was then satisfied by `cd`'s line whatever the script did, and the test could not fail: putting
     // `du`'s old `not found` back left it green. Found by canarying it, which is the only way this
     // kind of pass shows up.
-    string where = tmp + "/tree";
+    string where = "\{tmp}/tree";
     fixture(cli, tmp);
     Ran rs = boundedAgain(core, cli, where, tmp, native,
-                          [s.nogrant, "-c", script + "; echo status=$?"], u8[](),
+                          [s.nogrant, "-c", "\{script}; echo status=$?"], u8[](),
                           () => { fixture(cli, tmp); });
     Ran js = jsAll[i];
     if (js.hung) {
       fixture(cli, tmp);
       js = boundedAgain(core, cli, where, tmp, s.nograntDeno,
-                        ["-c", script + "; echo status=$?"], u8[](),
+                        ["-c", "\{script}; echo status=$?"], u8[](),
                         () => { fixture(cli, tmp); });
     }
 
     // It did not happen. `status=0` would mean the operation went through; the file contents are
     // checked separately because a read that succeeded prints rather than failing.
-    t.isFalse(contains(rs.out, "status=0"), "native: `" + script + "` succeeded: " + rs.out);
-    t.isFalse(contains(js.out, "status=0"), "deno: `" + script + "` succeeded: " + js.out);
-    t.isFalse(contains(rs.out, "a\nb\nc\n"), "native: `" + script + "` read the file: " + rs.out);
-    t.isFalse(contains(js.out, "a\nb\nc\n"), "deno: `" + script + "` read the file: " + js.out);
+    t.isFalse(contains(rs.out, "status=0"), "native: `\{script}` succeeded: \{rs.out}");
+    t.isFalse(contains(js.out, "status=0"), "deno: `\{script}` succeeded: \{js.out}");
+    t.isFalse(contains(rs.out, "a\nb\nc\n"), "native: `\{script}` read the file: \{rs.out}");
+    t.isFalse(contains(js.out, "a\nb\nc\n"), "deno: `\{script}` read the file: \{js.out}");
 
     // And said the same thing about it. This is the comparison that matters: the wasm is identical, so
     // a difference here is the capability layer's.
-    t.eqStr(rs.err, js.err, "the hosts word `" + script + "` differently");
-    t.eqStr(rs.out, js.out, "the hosts answer `" + script + "` differently");
+    t.eqStr(rs.err, js.err, "the hosts word `\{script}` differently");
+    t.eqStr(rs.out, js.out, "the hosts answer `\{script}` differently");
 
     // In the words `platform.wac` keeps for `FAULT_NOT_GRANTED`, which it holds apart from the
     // operating system's own denial so that "this build cannot" and "this file will not" are different
     // sentences. A host's raw message here would be a runtime leaking through the boundary.
     t.isTrue(contains(rs.err, "Not granted to this application"),
-             "`" + script + "` did not say which kind of no: " + rs.err);
+             "`\{script}` did not say which kind of no: \{rs.err}");
     // Nothing about the machine underneath, either. `cat < f` named the resolved absolute path.
-    t.isFalse(contains(rs.err, tmp), "`" + script + "` leaked a host path: " + rs.err);
+    t.isFalse(contains(rs.err, tmp), "`\{script}` leaked a host path: \{rs.err}");
   }
 
   // The canary: a *granted* build must actually do these, or every assertion above holds because the
   // shell cannot do anything at all.
   fixture(cli, tmp);
-  Ran granted = boundedAgain(core, cli, tmp + "/tree", tmp, s.deno, ["-c", "cat f"],
+  Ran granted = boundedAgain(core, cli, "\{tmp}/tree", tmp, s.deno, ["-c", "cat f"],
                              u8[](), () => { fixture(cli, tmp); });
-  t.eqStr(granted.out, "a\nb\nc\n", "the granted build could not read either: " + granted.err);
+  t.eqStr(granted.out, "a\nb\nc\n", "the granted build could not read either: \{granted.err}");
   // And that the *stderr* comparison is not comparing two empties: a refusal really did say something.
   fixture(cli, tmp);
-  Ran said = boundedAgain(core, cli, tmp + "/tree", tmp, s.nograntDeno, ["-c", "cat f"],
+  Ran said = boundedAgain(core, cli, "\{tmp}/tree", tmp, s.nograntDeno, ["-c", "cat f"],
                           u8[](), () => { fixture(cli, tmp); });
   t.isTrue(said.err.len() > 0, "a refused read said nothing at all");
   cli.remove(tmp, true).wait();
@@ -675,12 +674,12 @@ export string test_the_four_grants_are_independent_write_without_read_on_both_ho
     return t.report();
   }
   Shells s = shells(cli);
-  t.isTrue(s.ok, "the shells built — " + s.error);
+  t.isTrue(s.ok, "the shells built — \{s.error}");
   if (!s.ok) { return t.report(); }
   string tmp = tmpFor(cli, "wonly");
   string whyDir5 = madeDir(cli, tmp);
   t.isTrue(whyDir5 == "", whyDir5);
-  string where = tmp + "/tree";
+  string where = "\{tmp}/tree";
 
   string[] names = ["deno", "native"];
   for (i32 i = 0; i < 2; i++) {
@@ -694,12 +693,12 @@ export string test_the_four_grants_are_independent_write_without_read_on_both_ho
     wargs[pre.len() + 1] = "echo written > made; echo st=$?";
     Ran wrote = boundedAgain(core, cli, where, tmp, cmd, wargs, u8[](),
                              () => { fixture(cli, tmp); });
-    t.isTrue(contains(wrote.out, "st=0"), names[i] + ": could not write: " + wrote.err);
+    t.isTrue(contains(wrote.out, "st=0"), "\{names[i]}: could not write: \{wrote.err}");
     // …and the bytes really landed, which `st=0` alone would not prove — a write that silently did
     // nothing would report the same.
-    FileResult made = cli.readFile(where + "/made").wait();
+    FileResult made = cli.readFile("\{where}/made").wait();
     t.eqStr(made.ok ? string.fromBytes(made.bytes) : "", "written\n",
-            names[i] + ": nothing was written");
+            "\{names[i]}: nothing was written");
     // …and reading does not.
     string[] rargs = string[].filled(pre.len() + 2, "");
     for (i32 k = 0; k < pre.len(); k++) { rargs[k] = pre[k]; }
@@ -708,7 +707,7 @@ export string test_the_four_grants_are_independent_write_without_read_on_both_ho
     Ran read = boundedAgain(core, cli, where, tmp, cmd, rargs, u8[](),
                             () => { fixture(cli, tmp); });
     t.isTrue(contains(read.err, "Not granted to this application"),
-             names[i] + ": a write-only build read a file: " + read.out + " / " + read.err);
+             "\{names[i]}: a write-only build read a file: \{read.out} / \{read.err}");
   }
   cli.remove(tmp, true).wait();
   return t.report();
@@ -759,7 +758,7 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
     return t.report();
   }
   Shells s = shells(cli);
-  t.isTrue(s.ok, "the shells built — " + s.error);
+  t.isTrue(s.ok, "the shells built — \{s.error}");
   if (!s.ok) { return t.report(); }
   string tmp = tmpFor(cli, "stdin");
   string whyDir6 = madeDir(cli, tmp);
@@ -808,7 +807,7 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
                     inputs[i]);
   }
   for (i32 i = 0; i < n; i++) {
-    string label = "`" + scripts[i] + "` (" + itoa(inputs[i].len()) + " bytes in)";
+    string label = "`\{scripts[i]}` (\{inputs[i].len()} bytes in)";
     Ran js = collect(pjs[i]);
     Ran rs = collect(prs[i]);
     // **A run that hit its bound is asked again alone**, which is what `boundedAgain` is for and why
@@ -822,9 +821,9 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
       rs = boundedAgain(core, cli, tmp, tmp, native, [s.manifest, "-c", scripts[i]],
                         inputs[i], () => { });
     }
-    t.eqStr(rs.out, js.out, label + ": the hosts read different input");
-    t.eqStr(rs.err, js.err, label + ": stderr");
-    t.eqI32(rs.code, js.code, label + ": status");
+    t.eqStr(rs.out, js.out, "\{label}: the hosts read different input");
+    t.eqStr(rs.err, js.err, "\{label}: stderr");
+    t.eqI32(rs.code, js.code, "\{label}: status");
   }
 
   // The canary: the JavaScript host really did read the input, so the comparison above is not two
@@ -854,7 +853,7 @@ export string test_kill_percent_one_ends_a_background_job_on_both_hosts(Core cor
     return t.report();
   }
   Shells s = shells(cli);
-  t.isTrue(s.ok, "the shells built — " + s.error);
+  t.isTrue(s.ok, "the shells built — \{s.error}");
   if (!s.ok) { return t.report(); }
   string tmp = tmpFor(cli, "kill");
   string whyDir7 = madeDir(cli, tmp);
@@ -868,9 +867,9 @@ export string test_kill_percent_one_ends_a_background_job_on_both_hosts(Core cor
   Ran rs = boundedAgain(core, cli, tmp, tmp, native, [s.manifest, "-c", SCRIPT], u8[](),
                         () => { fixture(cli, tmp); });
 
-  t.isTrue(lines(js.out) < 1000, "deno: the kill did not stop it: " + itoa(lines(js.out)) + " lines");
+  t.isTrue(lines(js.out) < 1000, "deno: the kill did not stop it: \{lines(js.out)} lines");
   t.isTrue(lines(rs.out) < 1000,
-           "native: the kill did not stop it: " + itoa(lines(rs.out)) + " lines");
+           "native: the kill did not stop it: \{lines(rs.out)} lines");
   t.eqI32(rs.code, js.code, "the hosts disagree about the status");
 
   // The canary: left alone the job really does produce all of it, on both. Without this, a job that

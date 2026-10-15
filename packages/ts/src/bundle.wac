@@ -31,7 +31,6 @@
 // say it does, because there are none to count.
 
 import { Vec } from "core";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   Lexed, kEof, kIdent, kPunct, kStr,
   kindAt, lenAt, lex, lineAt, colAt, startAt, textAt, tokenCount,
@@ -68,7 +67,7 @@ export struct Import {
  */
 export Bundled bundle(string[] paths, u8[][] texts, string entry) {
   i32 at = indexOf(paths, entry);
-  if (at < 0) { return Bundled(u8[](), "the entry " + entry + " is not in the file set"); }
+  if (at < 0) { return Bundled(u8[](), "the entry \{entry} is not in the file set"); }
 
   Vec<i32> order = Vec.create();
   Vec<i32> state = Vec.create();
@@ -81,7 +80,7 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
 
   string prefix = hygienicPrefix(texts);
   string[] ns = string[].filled(paths.len(), "");
-  for (i32 k = 0; k < order.len(); k++) { ns[order.get(k)] = prefix + itoa(k); }
+  for (i32 k = 0; k < order.len(); k++) { ns[order.get(k)] = "\{prefix}\{k}"; }
 
   Vec<i32> out = Vec.create();
 
@@ -98,7 +97,7 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
       if (indexOfVec(hoisted, stmt) < 0) { hoisted.push(stmt); }
     }
   }
-  for (i32 i = 0; i < hoisted.len(); i++) { pushString(out, hoisted.get(i) + "\n"); }
+  for (i32 i = 0; i < hoisted.len(); i++) { pushString(out, "\{hoisted.get(i)}\n"); }
   if (hoisted.len() > 0) { pushString(out, "\n"); }
 
   for (i32 k = 0; k < order.len(); k++) {
@@ -117,14 +116,14 @@ export Bundled bundle(string[] paths, u8[][] texts, string entry) {
     // `$mN.name` a reader wrote would silently answer `undefined` — the wrong-answer shape again.
     bool tla = hasTopLevelAwait(texts[m]);
     if (tla && m != at) {
-      return Bundled(u8[](), paths[m] + " uses `await` at the top level, and is imported by "
+      return Bundled(u8[](), "\{paths[m]} uses `await` at the top level, and is imported by "
                             + "something. Only the entry may do that: wrapping any other module "
                             + "would make what it exports a promise.");
     }
     string open = tla ? " = await (async () => {\n" : " = (() => {\n";
-    pushString(out, "// -- " + paths[m] + "\nconst " + ns[m] + open);
+    pushString(out, "// -- \{paths[m]}\nconst \{ns[m]}\{open}");
     pushString(out, body);
-    pushString(out, "\nreturn { " + exportList(texts[m]) + " };\n})();\n\n");
+    pushString(out, "\nreturn { \{exportList(texts[m])} };\n})();\n\n");
   }
   u8[] bytes = u8[].filled(out.len(), 0);
   for (i32 i = 0; i < out.len(); i++) { bytes[i] = out.get(i) as@ u8; }
@@ -148,7 +147,7 @@ string visit(string[] paths, u8[][] texts, i32 m, Vec<i32> order, Vec<i32> state
     string want = resolve(paths[m], imports[i].spec);
     i32 to = indexOf(paths, want);
     if (to < 0) {
-      return paths[m] + " imports \"" + imports[i].spec + "\", which resolves to " + want
+      return "\{paths[m]} imports \"\{imports[i].spec}\", which resolves to \{want}"
            + " and is not in the file set";
     }
     if (state.get(to) == 1) { backFrom.push(m); backTo.push(to); continue; }
@@ -203,7 +202,7 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
     i32 to = indexOf(paths, resolve(paths[m], imports[i].spec));
     for (i32 k = 0; k + 1 < imports[i].names.len(); k = k + 2) {
       local.push(imports[i].names[k + 1]);
-      reads.push(ns[to] + "." + imports[i].names[k]);
+      reads.push("\{ns[to]}.\{imports[i].names[k]}");
       fromModule.push(to);
     }
   }
@@ -233,7 +232,7 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
       if (kindAt(l, i + 1) != kIdent()) { continue; }
       string bound = textAt(src, l, i + 1);
       if (indexOfVec(local, bound) < 0) { continue; }
-      return "ERROR:" + paths[m] + " declares `" + bound + "` and also imports it — this bundler "
+      return "ERROR:\{paths[m]} declares `\{bound}` and also imports it — this bundler "
            + "reads an imported name through its module everywhere it appears, so a local that "
            + "shadows one cannot be told apart from it. Rename the local, or import under another "
            + "name.";
@@ -307,9 +306,9 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
 
     if (fnDepth == 0 && arrowsPending == 0
         && crossesBackEdge(backFrom, backTo, m, fromModule.get(li))) {
-      return "ERROR:" + paths[m] + ":" + itoa(lineAt(l, i)) + ":" + itoa(colAt(l, i))
-           + ": `" + w + "` is evaluated here, before the module it comes from has been built. "
-           + paths[m] + " and " + paths[fromModule.get(li)] + " import each other, so one of them "
+      return "ERROR:\{paths[m]}:\{lineAt(l, i)}:\{colAt(l, i)}"
+           + ": `\{w}` is evaluated here, before the module it comes from has been built. "
+           + "\{paths[m]} and \{paths[fromModule.get(li)]} import each other, so one of them "
            + "runs first. Move the use inside a function, where every module already exists.";
     }
 
@@ -322,7 +321,7 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
                      && (textAt(src, l, i - 1) == "{" || textAt(src, l, i - 1) == ",")
                      && i + 1 < n && kindAt(l, i + 1) == kPunct()
                      && (textAt(src, l, i + 1) == "}" || textAt(src, l, i + 1) == ",");
-    pushString(out, shorthand ? w + ": " + reads.get(li) : reads.get(li));
+    pushString(out, shorthand ? "\{w}: \{reads.get(li)}" : reads.get(li));
     written = e;
   }
   copyThrough(out, src, written, src.len());
@@ -337,7 +336,7 @@ string moduleBody(string[] paths, u8[][] texts, string[] ns, i32 m,
     if (imports[i].namespace == "" || isExternal(imports[i].spec)) { continue; }
     i32 to = indexOf(paths, resolve(paths[m], imports[i].spec));
     if (to < 0) { continue; }
-    writeOver(b, imports[i].from, "const " + imports[i].namespace + " = " + ns[to] + ";");
+    writeOver(b, imports[i].from, "const \{imports[i].namespace} = \{ns[to]};");
   }
   return string.fromBytes(b);
 }
@@ -515,7 +514,7 @@ export string resolve(string from, string spec) {
     rest = rest.slice(3, rest.len());
   }
   if (rest.len() >= 2 && rest.slice(0, 2) == "./") { rest = rest.slice(2, rest.len()); }
-  return dir == "" ? rest : dir + "/" + rest;
+  return dir == "" ? rest : "\{dir}/\{rest}";
 }
 
 i32 indexOf(string[] xs, string want) {

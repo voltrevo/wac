@@ -39,7 +39,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
 import { search, slotCount } from "../../src/regex.wac";
 import { compileBasic, compileBasicIgnoreCase, toExtended } from "../../src/basic.wac";
@@ -141,7 +140,7 @@ i32[] gnuMatchesAll(Core core, Cli cli, string pattern, u8[][] lines, bool exten
     : (ignoreCase ? ["-i", "-n", "-e", pattern] : ["-n", "-e", pattern]);
   Exec r = cli.execWith("/bin/grep", args, stdin, ["LC_ALL=C"], true, false).wait();
   if (!r.ran()) {
-    core.warn("regex: grep would not start — " + r.error);
+    core.warn("regex: grep would not start — \{r.error}");
     trap;
   }
   i32[] out = i32[].filled(lines.len(), MISSED);
@@ -186,7 +185,7 @@ string showBytes(u8[] b) {
       one[0] = b[i];
       out = out + string.fromBytes(one);
     } else {
-      out = out + "<" + itoa(b[i] as i32) + ">";
+      out = out + "<\{b[i] as i32}>";
     }
   }
   return out;
@@ -224,13 +223,13 @@ export string test_basic_patterns_mean_what_gnu_grep_says(Core core, Cli cli) {
     for (i32 i = 0; i < subjects.len(); i++) {
       i32 got = run(false, patterns[p], lines[i]);
       t.eqStr(verdict(got), verdict(wants[i]),
-              "basic \"" + patterns[p] + "\" against \"" + subjects[i] + "\" — translated to \"" +
-              asExtended(patterns[p]) + "\"");
+              "basic \"\{patterns[p]}\" against \"\{subjects[i]}\" — translated to \"" +
+              "\{asExtended(patterns[p])}\"");
       checked = checked + 1;
     }
   }
   // Said rather than assumed: a loop that silently checked nothing would pass.
-  t.isTrue(checked > 700, "only " + itoa(checked) + " pairs were compared");
+  t.isTrue(checked > 700, "only \{checked} pairs were compared");
   return t.report();
 }
 
@@ -281,12 +280,12 @@ export string test_generated_basic_patterns_mean_what_gnu_grep_says(Core core, C
     for (i32 i = 0; i < subjects.len(); i++) {
       i32 got = run(false, p, lines[i]);
       t.eqStr(verdict(got), verdict(wants[i]),
-              "basic \"" + p + "\" against \"" + subjects[i] + "\" — translated to \"" +
-              asExtended(p) + "\"");
+              "basic \"\{p}\" against \"\{subjects[i]}\" — translated to \"" +
+              "\{asExtended(p)}\"");
       checked = checked + 1;
     }
   }
-  t.isTrue(checked > 3000, "only " + itoa(checked) + " pairs were compared");
+  t.isTrue(checked > 3000, "only \{checked} pairs were compared");
   return t.report();
 }
 
@@ -339,12 +338,12 @@ export string test_bracket_expressions_byte_by_byte(Core core, Cli cli) {
         i32 got = run(extended, patterns[p], lines[i]);
         t.eqStr(verdict(got), verdict(wants[i]),
                 "grep " + (extended ? "-E " : "") + "\"" + patterns[p] + "\" against byte " +
-                itoa(bytes[i]));
+                "\{bytes[i]}");
         checked = checked + 1;
       }
     }
   }
-  t.isTrue(checked > 10000, "only " + itoa(checked) + " pairs were compared");
+  t.isTrue(checked > 10000, "only \{checked} pairs were compared");
   return t.report();
 }
 
@@ -380,7 +379,7 @@ export string test_gnus_backslash_anchors_are_anchors(Core core, Cli cli) {
       }
     }
   }
-  t.isTrue(checked > 300, "only " + itoa(checked) + " pairs were compared");
+  t.isTrue(checked > 300, "only \{checked} pairs were compared");
   return t.report();
 }
 
@@ -417,23 +416,23 @@ export string test_a_refusal_says_whose_problem_it_is(Core core, Cli cli) {
   ];
   for (i32 i = 0; i < patterns.len(); i++) {
     string got = compileBasic(patterns[i].toBytes()).why;
-    t.eqStr(got, wants[i], "the reason for \"" + patterns[i] + "\"");
+    t.eqStr(got, wants[i], "the reason for \"\{patterns[i]}\"");
 
     // And the half that keeps this honest: where GNU refuses, it must be refusing for the same
     // reason, in the same words. A message copied from memory drifts from the tool it is copied from.
     Exec r = cli.execWith("/bin/grep", ["-e", patterns[i]], u8[](),
                           ["LC_ALL=C"], true, false).wait();
-    t.isTrue(r.ran(), "grep ran — " + r.error);
+    t.isTrue(r.ran(), "grep ran — \{r.error}");
     if (!r.ran()) { continue; }
     string theirs = trimmed(string.fromBytes(r.stderr));
     if (theirs.slice(0, 11) == "/bin/grep: ") { theirs = theirs.slice(11, theirs.len()); }
     if (theirs != "") {
-      t.eqStr(got, theirs, "GNU's own sentence for \"" + patterns[i] + "\"");
+      t.eqStr(got, theirs, "GNU's own sentence for \"\{patterns[i]}\"");
     } else {
       // GNU had none, so this is a gap of ours and must say so rather than blame the pattern.
       t.isTrue(got.indexOf("not implemented") >= 0,
-               "\"" + patterns[i] + "\": GNU accepts it, so the refusal must name us — got \"" +
-               got + "\"");
+               "\"\{patterns[i]}\": GNU accepts it, so the refusal must name us — got \"" +
+               "\{got}\"");
     }
   }
   return t.report();
@@ -468,11 +467,11 @@ export string test_a_leading_brace_is_a_literal_in_both_posix_dialects(Core core
     i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, false, false);
     for (i32 i = 0; i < lines.len(); i++) {
       t.eqI32(run(false, patterns[p], lines[i]), wants[i],
-              "grep \"" + patterns[p] + "\" against \"" + subjects[i] + "\"");
+              "grep \"\{patterns[p]}\" against \"\{subjects[i]}\"");
       checked = checked + 1;
     }
   }
-  t.isTrue(checked >= 15, "only " + itoa(checked) + " basic comparisons ran");
+  t.isTrue(checked >= 15, "only \{checked} basic comparisons ran");
 
   // Extended, against what this engine means to do: accept it and match the three characters. This is
   // the half the `posix` flag protects — without it `compileExtended` refuses the pattern outright.
@@ -546,14 +545,14 @@ export string test_the_i_flag_in_both_posix_dialects_agrees_with_grep(Core core,
       }
     }
   }
-  t.isTrue(checked > 1700, "only " + itoa(checked) + " folded pairs were compared");
+  t.isTrue(checked > 1700, "only \{checked} folded pairs were compared");
 
   // **The flag has to have done something.** Every assertion above would also pass if the two
   // ignore-case entry points ignored their flag and this were the case-sensitive tests run again —
   // grep would answer the same and so would we, wrongly agreeing. So the folded answers are counted
   // against the *unfolded* grep, and the number of pairs where case folding changes the verdict is
   // asserted rather than assumed. Pointing `runFolded` at `compileBasic` gives 128 failures.
-  t.isTrue(folded > 200, "case folding changed only " + itoa(folded) +
-           " of " + itoa(checked) + " verdicts, so this test cannot tell the flag was honoured");
+  t.isTrue(folded > 200, "case folding changed only \{folded}" +
+           " of \{checked} verdicts, so this test cannot tell the flag was honoured");
   return t.report();
 }

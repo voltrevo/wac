@@ -29,7 +29,6 @@
 // Every driver here comes from one template with one array literal substituted.
 
 import { Core, Cli, Exec, Change, FileResult, execReason, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { TraceSite, traceSite, withoutPrefix } from "../../wactest/src/tracesite.wac";
 
 static string CACHE = ".cache/ct-table";
@@ -68,8 +67,8 @@ i32[] keyOf(i32 which, i32 len) {
 
 string literal(i32[] v) {
   string out = "[";
-  for (i32 i = 0; i < v.len(); i++) { out = out + (i > 0 ? ", " : "") + itoa(v[i]); }
-  return out + "] as u8[]";
+  for (i32 i = 0; i < v.len(); i++) { out = out + (i > 0 ? ", " : "") + "\{v[i]}"; }
+  return "\{out}] as u8[]";
 }
 
 /** `0, 1, 2, …` — the public input, which is not a secret. */
@@ -105,7 +104,7 @@ Case[] cases() {
     Case("chachaBlock", "packages/crypto/src/chacha20.wac",
          "chachaBlock($KEY, 1, u8[].filled(12, 1))", 32, all4()),
     Case("poly1305", "packages/crypto/src/poly1305.wac",
-         "poly1305($KEY, " + block16() + ")", 32, all4()),
+         "poly1305($KEY, \{block16()})", 32, all4()),
     // Two scalars only: 1.8M events per run, and the point is made without four of them.
     Case("x25519Base", "packages/crypto/src/x25519.wac", "x25519Base($KEY)", 32, [0, 1] as i32[]),
     // **The signing row `x25519Base` was standing in for and could not stand in for.** A ladder
@@ -114,11 +113,11 @@ Case[] cases() {
     // for as long as this table had a key-exchange row and no signing one. `issues/system/0225`, and
     // the same omission as `p256Sign`'s in `issues/system/0224`.
     Case("ed25519Sign", "packages/crypto/src/ed25519.wac",
-         "ed25519Sign($KEY, " + block16() + ")", 32, [0, 1] as i32[]),
-    Case("ghash", "packages/crypto/src/ghash.wac", "ghash($KEY, " + block16() + ")", 16, all4()),
+         "ed25519Sign($KEY, \{block16()})", 32, [0, 1] as i32[]),
+    Case("ghash", "packages/crypto/src/ghash.wac", "ghash($KEY, \{block16()})", 16, all4()),
     Case("aesExpandKey", "packages/crypto/src/aes.wac", "aesExpandKey($KEY)", 16, all4()),
     Case("aesEncrypt", "packages/crypto/src/aes.wac",
-         "aesEncrypt($KEY, " + block16() + ")", 16, all4()),
+         "aesEncrypt($KEY, \{block16()})", 16, all4()),
     // **`p256PublicKey` was a row the tool could not produce**, and the README carried it as
     // `~2,000,000` with a tilde — a hand-written figure in a generated table, which is the exact
     // failure this file exists to prevent. Not the all-zero key: `curvePublicKey` traps on a scalar of
@@ -170,13 +169,13 @@ Case[] cases() {
     // question: a private exponent must not change the work. It does — and the row names
     // `packages/bignum`'s `trim`, which is more use than "not constant-time".
     Case("modExpSecret", "packages/crypto/test/wac/rsa_probe.wac",
-         "modExpSecret(" + rsaBase() + ", $KEY, " + rsaModulus() + ")", 128, [2, 3] as i32[]),
+         "modExpSecret(\{rsaBase()}, $KEY, \{rsaModulus()})", 128, [2, 3] as i32[]),
     Case("bcryptPbkdf", "packages/crypto/src/bcryptpbkdf.wac",
-         "bcryptPbkdf($KEY, " + block16() + ", 32, 1)", 16, [0, 1] as i32[])
+         "bcryptPbkdf($KEY, \{block16()}, 32, 1)", 16, [0, 1] as i32[])
   ] as Case[];
 }
 
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 /**
  * The `n`th whitespace-separated word of a line.
@@ -230,7 +229,7 @@ string[] linesOf(string s) {
 
 /** `1,542` — the table's own spelling of a count. */
 string grouped(i32 n) {
-  string d = itoa(n);
+  string d = "\{n}";
   string out = "";
   for (i32 i = 0; i < d.len(); i++) {
     if (i > 0 && (d.len() - i) % 3 == 0) { out = out + ","; }
@@ -241,27 +240,27 @@ string grouped(i32 n) {
 
 /** Build one traced driver at a given journal size; the stem, or "" when it did not build. */
 string build(Core core, Cli cli, Case c, i32 which, i32 slots, string tag) {
-  string dir = cli.cwd().wait() + "/" + CACHE;
+  string dir = "\{cli.cwd().wait()}/\{CACHE}";
   string program = "import { " + c.name + " } from \"../../" + c.src + "\";\n" +
                    "export i32 main() {\n" +
                    "  return " + replaceKey(c.call, literal(keyOf(which, c.keyLen))) + ".len();\n" +
                    "}\n";
-  string entry = dir + "/" + tag + ".wac";
+  string entry = "\{dir}/\{tag}.wac";
   Change wrote = cli.writeFile(entry, program.toBytes()).wait();
-  if (!wrote.ok()) { core.warn("ct: cannot write " + entry + " — " + wrote.message); return ""; }
+  if (!wrote.ok()) { core.warn("ct: cannot write \{entry} — \{wrote.message}"); return ""; }
 
   string[] argv = slots > 0
     ? [
-               "build", entry, "--trace", "--trace-slots", itoa(slots), "-o", dir + "/" + tag,
+               "build", entry, "--trace", "--trace-slots", "\{slots}", "-o", "\{dir}/\{tag}",
                "--quiet"
     ]
-    : ["build", entry, "--trace", "-o", dir + "/" + tag, "--quiet"];
+    : ["build", entry, "--trace", "-o", "\{dir}/\{tag}", "--quiet"];
   Exec r = cli.exec(binary(cli), argv, u8[]()).wait();
   if (!r.ran() || r.status != 0) {
-    core.warn("ct: " + c.name + " did not build — " + execReason(r));
+    core.warn("ct: \{c.name} did not build — \{execReason(r)}");
     return "";
   }
-  return dir + "/" + tag;
+  return "\{dir}/\{tag}";
 }
 
 string replaceKey(string call, string lit) {
@@ -277,9 +276,9 @@ string replaceKey(string call, string lit) {
 struct TraceStat { i32 events; i32 wanted; i32 slots; bool ok; }
 
 TraceStat statOf(Core core, Cli cli, string stem) {
-  Exec r = cli.exec(binary(cli), ["tracestat", stem + ".wasm"], u8[]()).wait();
+  Exec r = cli.exec(binary(cli), ["tracestat", "\{stem}.wasm"], u8[]()).wait();
   if (!r.ran() || r.status != 0) {
-    core.warn("ct: tracestat — " + execReason(r));
+    core.warn("ct: tracestat — \{execReason(r)}");
     return TraceStat(0, 0, 0, false);
   }
   string line = string.fromBytes(r.stdout);
@@ -306,7 +305,7 @@ bool listed(string[] all, i32 n, string want) {
 export i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
-  string dir = cli.cwd().wait() + "/" + CACHE;
+  string dir = "\{cli.cwd().wait()}/\{CACHE}";
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
 
@@ -322,7 +321,7 @@ export i32 main(Sys sys) {
     if (!s.ok) { return 1; }
     // An empty journal is not a clean routine, it is a call that never happened.
     if (s.events == 0) {
-      core.warn("ct: " + c.name + ": no events — did the call happen?");
+      core.warn("ct: \{c.name}: no events — did the call happen?");
       return 1;
     }
 
@@ -330,15 +329,15 @@ export i32 main(Sys sys) {
     i32 slots = 0;
     if (s.wanted * 2 > s.slots) {
       slots = 2 * s.wanted + 8;
-      core.warn("  " + c.name + ": " + grouped(s.wanted) + " events — retracing with " +
-                grouped(slots) + " slots");
+      core.warn("  \{c.name}: \{grouped(s.wanted)} events — retracing with " +
+                "\{grouped(slots)} slots");
       base = build(core, cli, c, c.keys[0], slots, "base");
       if (base == "") { return 1; }
       s = statOf(core, cli, base);
       if (!s.ok) { return 1; }
     }
     if (s.wanted * 2 > s.slots) {
-      core.log("| `" + c.name + "` | >" + grouped(s.slots) +
+      core.log("| `\{c.name}` | >\{grouped(s.slots)}" +
                " | **not measured** — the journal could not be made large enough |");
       continue;
     }
@@ -352,10 +351,10 @@ export i32 main(Sys sys) {
       string other = build(core, cli, c, c.keys[k], slots, "other");
       if (other == "") { return 1; }
       Exec r = cli.exec(binary(cli),
-                        ["ctcompare", "--all", base + ".wasm", other + ".wasm"],
+                        ["ctcompare", "--all", "\{base}.wasm", "\{other}.wasm"],
                         u8[]()).wait();
       if (!r.ran() || r.status != 0) {
-        core.warn("ct: ctcompare — " + execReason(r));
+        core.warn("ct: ctcompare — \{execReason(r)}");
         return 1;
       }
       string[] rows = linesOf(string.fromBytes(r.stdout));
@@ -387,7 +386,7 @@ export i32 main(Sys sys) {
 
     string n = grouped(s.events);
     if (nSites == 0 && !stopped) {
-      core.log("| `" + c.name + "` | " + n + " | uniform |");
+      core.log("| `\{c.name}` | \{n} | uniform |");
       continue;
     }
     // Two different claims: an index leak is located exactly, a path split only says where one run
@@ -400,13 +399,13 @@ export i32 main(Sys sys) {
       nIdx = nIdx + 1;
     }
     string parts = "";
-    if (nIdx > 0) { parts = "secret-dependent index at " + idx; }
+    if (nIdx > 0) { parts = "secret-dependent index at \{idx}"; }
     if (stopped) {
       parts = parts + (parts.len() > 0 ? "; " : "") + "control flow diverges" +
-              (splitAt == "" ? "" : " where one run stood at `" + splitAt + "`") +
+              (splitAt == "" ? "" : " where one run stood at `\{splitAt}`") +
               "; not examined past that";
     }
-    core.log("| `" + c.name + "` | " + n + " | **leaks** — " + parts + " |");
+    core.log("| `\{c.name}` | \{n} | **leaks** — \{parts} |");
   }
   cli.remove(dir, true).wait();
   return 0;

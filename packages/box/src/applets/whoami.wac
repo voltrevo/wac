@@ -36,7 +36,7 @@ export i32 whoami(Core core, Cli cli, Fs fs, Args a) {
   // No capability here reports the process's own identity. Saying that is the honest answer;
   // inventing one from the environment is the approximation design/0001 D6 is about.
   if (fs.isPlainHost()) {
-    core.warn(a.name + ": this filesystem is the machine's, and nothing here reports the machine's user");
+    core.warn("\{a.name}: this filesystem is the machine's, and nothing here reports the machine's user");
     return 1;
   }
 
@@ -46,7 +46,7 @@ export i32 whoami(Core core, Cli cli, Fs fs, Args a) {
   // is "cannot find name for user ID N", which names the id it could not resolve — there is no id
   // here, so the sentence says what there is instead.
   if (fs.user == "") {
-    core.warn(a.name + ": this session has no user");
+    core.warn("\{a.name}: this session has no user");
     return 1;
   }
   core.log(fs.user);

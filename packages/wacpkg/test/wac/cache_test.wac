@@ -32,7 +32,7 @@ export string test_escaping_a_repository_name_is_reversible() {
   T t = T.create();
   string[] urls = URLS();
   for (i32 i = 0; i < urls.len(); i++) {
-    t.eqStr(unescapeRepo(escapeRepo(urls[i])), urls[i], "round trip \"" + urls[i] + "\"");
+    t.eqStr(unescapeRepo(escapeRepo(urls[i])), urls[i], "round trip \"\{urls[i]}\"");
   }
   return t.report();
 }
@@ -54,12 +54,12 @@ export string test_distinct_repositories_get_distinct_directories_case_included(
   ];
   for (i32 i = 0; i < a.len(); i++) {
     t.isTrue(escapeRepo(a[i]) != escapeRepo(b[i]),
-             "\"" + a[i] + "\" and \"" + b[i] + "\" do not collide");
+             "\"\{a[i]}\" and \"\{b[i]}\" do not collide");
   }
   // And the same URL twice is the same directory, which is what makes the cache a cache.
   string[] urls = URLS();
   for (i32 i = 0; i < urls.len(); i++) {
-    t.eqStr(escapeRepo(urls[i]), escapeRepo(urls[i]), "stable for \"" + urls[i] + "\"");
+    t.eqStr(escapeRepo(urls[i]), escapeRepo(urls[i]), "stable for \"\{urls[i]}\"");
   }
   return t.report();
 }
@@ -74,10 +74,10 @@ export string test_a_directory_name_is_one_path_component() {
     string name = escapeRepo(urls[i]);
     for (i32 j = 0; j < name.len(); j++) {
       string ch = name.slice(j, j + 1);
-      t.isTrue(ch != "/", "\"" + urls[i] + "\" escapes to one component");
-      t.isTrue(ch != "\\", "\"" + urls[i] + "\" has no backslash in it");
+      t.isTrue(ch != "/", "\"\{urls[i]}\" escapes to one component");
+      t.isTrue(ch != "\\", "\"\{urls[i]}\" has no backslash in it");
     }
-    t.isTrue(name != "." && name != "..", "\"" + urls[i] + "\" is not a relative name");
+    t.isTrue(name != "." && name != "..", "\"\{urls[i]}\" is not a relative name");
   }
   return t.report();
 }
@@ -107,7 +107,7 @@ export string test_an_absolute_home_stays_absolute_and_a_trailing_slash_does_not
   string[] homes = ["/home/x/.wac", "/home/x/.wac/", "/home/x/.wac///"];
   string first = cacheRoot(homes[0]);
   for (i32 i = 0; i < homes.len(); i++) {
-    t.eqStr(cacheRoot(homes[i]), first, "\"" + homes[i] + "\" is the same root");
+    t.eqStr(cacheRoot(homes[i]), first, "\"\{homes[i]}\" is the same root");
   }
   t.eqStr(first.slice(0, 1), "/", "an absolute home stays absolute");
   // A relative home is not rewritten into an absolute one: whatever it is relative *to* is the
@@ -123,7 +123,7 @@ export string test_a_name_that_is_not_something_the_escaper_produced_is_refused(
   // than refusing, because the caller would then fetch it.
   string[] bad = ["a/b", "A", "a%", "a%zz", "a!", "a!B", "a:b", "%"];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.eqStr(unescapeRepo(bad[i]), "", "\"" + bad[i] + "\" is not a name the escaper makes");
+    t.eqStr(unescapeRepo(bad[i]), "", "\"\{bad[i]}\" is not a name the escaper makes");
   }
   return t.report();
 }

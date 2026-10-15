@@ -34,7 +34,7 @@ import { Buf } from "core";
 
 /** `$WAC_HOME/cache/git` — the directory every fetched repository lives under. */
 export string cacheRoot(string wacHome) {
-  return trimTrailingSlash(wacHome) + "/cache/git";
+  return "\{trimTrailingSlash(wacHome)}/cache/git";
 }
 
 /**
@@ -47,7 +47,7 @@ export string cacheRoot(string wacHome) {
  */
 export string cachePath(string wacHome, string git, string commit) {
   if (git == "" || commit == "") { return ""; }
-  return cacheRoot(wacHome) + "/" + escapeRepo(git) + "/" + commit;
+  return "\{cacheRoot(wacHome)}/\{escapeRepo(git)}/\{commit}";
 }
 
 /**
@@ -66,8 +66,8 @@ export string escapeRepo(string url) {
     bool plain = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
                  || c == '.' || c == '_' || c == '-';
     if (plain) { out = out + string.fromCodepoint(c); continue; }
-    if (c >= 'A' && c <= 'Z') { out = out + "!" + string.fromCodepoint(c + 32); continue; }
-    out = out + "%" + hexPair(c);
+    if (c >= 'A' && c <= 'Z') { out = out + "!\{string.fromCodepoint(c + 32)}"; continue; }
+    out = out + "%\{hexPair(c)}";
   }
   return out;
 }

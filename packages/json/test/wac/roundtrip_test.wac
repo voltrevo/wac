@@ -17,7 +17,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Canonical, canonicalize } from "../../src/json.wac";
 import { ERR_NONE, ERR_DEPTH } from "../../src/parse.wac";
 
@@ -54,9 +53,9 @@ export string test_round_trip_matches_the_hosts(Core core, Cli cli) {
   Lines lines = Lines.create();
   for (i32 i = 0; i < all.len(); i++) {
     Canonical got = canonicalize(all[i].toBytes());
-    t.eqI32(got.code, ERR_NONE(), "unexpected error for \"" + all[i] + "\"");
+    t.eqI32(got.code, ERR_NONE(), "unexpected error for \"\{all[i]}\"");
     if (!got.ok) { continue; }
-    lines.add("restringify " + hex(all[i].toBytes()) + " " + hex(got.text));
+    lines.add("restringify \{hex(all[i].toBytes())} \{hex(got.text)}");
   }
   t.eqI32(lines.n, all.len(), "every case was compared");
   checkDeno(t, cli, ORACLE, lines, "the round trip");
@@ -106,8 +105,8 @@ export string test_deep_nesting_inside_the_depth_limit(Core core, Cli cli) {
   for (i32 d = 0; d < depths.len(); d++) {
     string src = repeated("[", depths[d]) + repeated("]", depths[d]);
     Canonical got = canonicalize(src.toBytes());
-    t.eqI32(got.code, ERR_NONE(), "depth " + itoa(depths[d]) + " should parse");
-    if (got.ok) { lines.add("restringify " + hex(src.toBytes()) + " " + hex(got.text)); }
+    t.eqI32(got.code, ERR_NONE(), "depth \{depths[d]} should parse");
+    if (got.ok) { lines.add("restringify \{hex(src.toBytes())} \{hex(got.text)}"); }
   }
   checkDeno(t, cli, ORACLE, lines, "deep nesting");
   return t.report();

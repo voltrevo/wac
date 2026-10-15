@@ -23,7 +23,6 @@
 // Host-side until 2026-08-18, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { Reader } from "../../src/wire.wac";
 import { msgDisconnect, msgIgnore, msgUnimplemented, msgDebug, msgExtInfo, msgNewKeys }
@@ -231,14 +230,14 @@ export string test_a_channel_open_is_read_for_its_number_whatever_the_number_is(
   i32[] numbers = [0, 1, 7, 258, 0x7fffffff];
   for (i32 i = 0; i < numbers.len(); i++) {
     t.eqI32(readOpenChannel(channelOpen("session", numbers[i])), numbers[i],
-            "session channel " + itoa(numbers[i]) + " read back wrong");
+            "session channel \{numbers[i]} read back wrong");
   }
 
   // Anything that is not a session is refused rather than served on a guessed channel.
   string[] bad = ["x11", "direct-tcpip", "", "sessionx", "sessio"];
   for (i32 i = 0; i < bad.len(); i++) {
     t.eqI32(readOpenChannel(channelOpen(bad[i], 3)), -1,
-            "channel type \"" + bad[i] + "\" was served");
+            "channel type \"\{bad[i]}\" was served");
   }
 
   // Truncated so the *channel number itself* is incomplete. Cutting less than that is not a

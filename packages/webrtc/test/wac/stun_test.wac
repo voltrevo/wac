@@ -42,7 +42,6 @@ import { Core, Cli, Datagram, Pending, Socket } from "std";
 import { Lines, Answers, ask, check, hex, word } from "../../../wactest/src/oracle.wac";
 import { Daemon, Held, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { addFingerprint, addIntegrity, attrCount, attrOf, checkFingerprint, checkIntegrity, hasAttr,
          isSuccess, kFingerprint, kIntegrity, kSoftware, kUsername, kXorMapped, looksStun,
@@ -156,7 +155,7 @@ export string test_coturn_answers_our_binding_request(Core core, Cli cli) {
   t.eqStr(hexOf(slice(req, 0, 8)), "000100002112a442", "type, length, cookie");
 
   Exchange got = exchange(core, cli, server.port, req);
-  t.isTrue(got.ok, "coturn did not answer our Binding request — " + got.error);
+  t.isTrue(got.ok, "coturn did not answer our Binding request — \{got.error}");
   if (!got.ok) { stopCoturn(cli, server); return t.report(); }
 
   // **Everything below is about their bytes, not ours.**
@@ -191,7 +190,7 @@ export string test_and_a_message_with_an_attribute_so_the_padding_is_on_the_wire
   t.eqStr(hexOf(slice(req, 2, 4)), "000c", "and the header counts twelve, padding included");
 
   Exchange got = exchange(core, cli, server.port, req);
-  t.isTrue(got.ok, "coturn did not answer a request carrying SOFTWARE — " + got.error);
+  t.isTrue(got.ok, "coturn did not answer a request carrying SOFTWARE — \{got.error}");
   if (got.ok) {
     t.isTrue(isSuccess(got.reply),
              "coturn accepted the padded attribute — a length that disagreed with the bytes would " +
@@ -206,7 +205,7 @@ export string test_aioice_parses_what_we_build_attribute_for_attribute(Core core
   u8[] req = requestWithSoftware(tid(), ("wac-webrtc").toBytes());
   Lines lines = Lines.create();
   // Method 1 is Binding, class 0 is request.
-  lines.add("parse " + hexOf(req) + " 1 0 " + TID + " wac-webrtc");
+  lines.add("parse \{hexOf(req)} 1 0 \{TID} wac-webrtc");
   check(t, cli, "python3", [ORACLE], lines, "aioice parsing ours");
   return t.report();
 }
@@ -214,7 +213,7 @@ export string test_aioice_parses_what_we_build_attribute_for_attribute(Core core
 export string test_and_we_parse_what_aioice_builds(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  lines.add("build " + TID);
+  lines.add("build \{TID}");
   Answers a = ask(t, cli, "python3", [ORACLE], lines, "aioice building a response");
   if (!a.ok || a.lines.len() < 1) { return t.report(); }
 
@@ -239,8 +238,8 @@ export string test_an_address_survives_our_own_encode_and_decode() {
   i32[] ports = [0, 1, 0x2112, 0xDEED, 3478, 65535];
   for (i32 i = 0; i < ports.len(); i++) {
     i32[] got = roundTripAddress(1, ports[i], decoded("c0000211"), tid());
-    t.eqI32(got[1], ports[i], "port " + itoa(ports[i]));
-    t.eqStr(dotted(got), "192.0.2.17", "address for port " + itoa(ports[i]));
+    t.eqI32(got[1], ports[i], "port \{ports[i]}");
+    t.eqStr(dotted(got), "192.0.2.17", "address for port \{ports[i]}");
   }
   i32[] v6 = roundTripAddress(2, 5000, decoded("20010db8000000000000000000000001"), tid());
   t.eqI32(v6[0], 2, "IPv6 is family 2");
@@ -264,8 +263,8 @@ export string test_message_integrity_aioice_verifies_ours_and_we_verify_aioices(
   // `add_message_integrity` appends a FINGERPRINT *after* the MESSAGE-INTEGRITY, so this also proves
   // our verifier stops where it should: a hash that swept in the trailing attribute would not match.
   Lines lines = Lines.create();
-  lines.add("sign " + TID + " " + hexOf(key));
-  lines.add("verify " + hexOf(signed) + " " + hexOf(key) + " wac");
+  lines.add("sign \{TID} \{hexOf(key)}");
+  lines.add("verify \{hexOf(signed)} \{hexOf(key)} wac");
   Answers a = ask(t, cli, "python3", [ORACLE], lines, "aioice and MESSAGE-INTEGRITY");
   if (!a.ok || a.lines.len() < 1) { return t.report(); }
 
@@ -312,7 +311,7 @@ export string test_fingerprint_aioice_agrees_with_our_crc(Core core, Cli cli) {
   // aioice validates FINGERPRINT while parsing, so a message it accepts is one whose CRC it agrees
   // with — and one it rejects raises, which the oracle turns into a `FAIL`.
   Lines lines = Lines.create();
-  lines.add("fingerprint " + hexOf(msg));
+  lines.add("fingerprint \{hexOf(msg)}");
   check(t, cli, "python3", [ORACLE], lines, "aioice and FINGERPRINT");
 
   u8[] tampered = copyOf(msg);
@@ -361,23 +360,23 @@ struct Turn {
  * is one the kernel had free, and gives it up one statement before coturn takes it. wac-mono 0069.
  */
 Turn startCoturn(Cli cli) {
-  string dir = cli.cwd().wait() + "/.cache/coturn";
+  string dir = "\{cli.cwd().wait()}/.cache/coturn";
   cli.mkdir(dir, true).wait();
   Held held = Held.take(cli);
   if (held.port < 0) { return Turn(false, "no port could be bound", -1, Daemon(-1, "", ""), dir); }
   i32 port = held.port;
-  string log = dir + "/turn-" + itoa(port) + ".log";
+  string log = "\{dir}/turn-\{port}.log";
 
   held.release(cli);
   Daemon d = start(cli,
-    "turnserver -n --no-auth --no-tls --no-dtls --no-cli -L 127.0.0.1 -p " + itoa(port), log);
-  if (!d.ok()) { return Turn(false, "turnserver did not start — " + d.error, port, d, dir); }
+    "turnserver -n --no-auth --no-tls --no-dtls --no-cli -L 127.0.0.1 -p \{port}", log);
+  if (!d.ok()) { return Turn(false, "turnserver did not start — \{d.error}", port, d, dir); }
   return Turn(true, "", port, d, dir);
 }
 
 void stopCoturn(Cli cli, Turn s) {
   stop(cli, s.daemon);
-  if (s.port > 0) { cli.remove(s.dir + "/turn-" + itoa(s.port) + ".log", false).wait(); }
+  if (s.port > 0) { cli.remove("\{s.dir}/turn-\{s.port}.log", false).wait(); }
 }
 
 /** One datagram out, one back — with the port we sent from, which is what STUN reports. */
@@ -408,7 +407,7 @@ struct Exchange {
 Exchange exchange(Core core, Cli cli, i32 port, u8[] msg) {
   for (i32 attempt = 0; attempt < 20; attempt++) {
     Socket s = cli.bindDatagram("127.0.0.1", 0).wait();
-    if (s.handle < 0) { return Exchange(false, "bindDatagram: " + s.error, u8[](), -1); }
+    if (s.handle < 0) { return Exchange(false, "bindDatagram: \{s.error}", u8[](), -1); }
     i32 from = s.port;
     if (!cli.sendTo(s.handle, "127.0.0.1", port, msg).wait()) {
       cli.closeSocket(s.handle);
@@ -432,7 +431,7 @@ Exchange exchange(Core core, Cli cli, i32 port, u8[] msg) {
 /** `mappedAddress`'s tail as `a.b.c.d`. */
 string dotted(i32[] a) {
   string out = "";
-  for (i32 i = 2; i < a.len(); i++) { out = out + (i == 2 ? "" : ".") + itoa(a[i]); }
+  for (i32 i = 2; i < a.len(); i++) { out = out + (i == 2 ? "" : ".") + "\{a[i]}"; }
   return out;
 }
 

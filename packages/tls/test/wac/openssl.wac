@@ -20,7 +20,6 @@
 import { Core, Cli, Exec } from "std";
 import { Daemon, Held, start, stop, logOf, waitForPortWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** A running `s_server`, or why there is not one. */
 export struct Server {
@@ -33,7 +32,7 @@ export struct Server {
 
 /** Whether the process is still there — the one question a readiness probe cannot answer. */
 bool alive(Cli cli, i32 pid) {
-  Exec r = cli.exec("/bin/sh", ["-c", "kill -0 " + itoa(pid) + " 2>/dev/null"],
+  Exec r = cli.exec("/bin/sh", ["-c", "kill -0 \{pid} 2>/dev/null"],
                     u8[]()).wait();
   return r.ran() && r.status == 0;
 }
@@ -51,14 +50,14 @@ export Server startServer(Core core, Cli cli, string binary, string cert, string
     if (held.port < 0) { return Server(Daemon(-1, "", logPath), -1, "no free port could be bound"); }
     i32 port = held.port;
 
-    string line = quoted(binary) + " s_server -accept " + itoa(port) +
-                  " -cert " + quoted(cert) + " -key " + quoted(key) +
+    string line = "\{quoted(binary)} s_server -accept \{port}" +
+                  " -cert \{quoted(cert)} -key \{quoted(key)}" +
                   " -tls1_3 -www -quiet";
-    for (i32 i = 0; i < extra.len(); i++) { line = line + " " + quoted(extra[i]); }
+    for (i32 i = 0; i < extra.len(); i++) { line = line + " \{quoted(extra[i])}"; }
 
     held.release(cli);
-    Daemon d = start(cli, line, logPath + "." + itoa(attempt));
-    if (!d.ok()) { return Server(d, -1, "the shell did not start openssl — " + d.error); }
+    Daemon d = start(cli, line, "\{logPath}.\{attempt}");
+    if (!d.ok()) { return Server(d, -1, "the shell did not start openssl — \{d.error}"); }
 
     if (waitForPortWithin(core, cli, "127.0.0.1", port, 20000) && alive(cli, d.pid)) {
       return Server(d, port, "");
@@ -67,7 +66,7 @@ export Server startServer(Core core, Cli cli, string binary, string cert, string
     stop(cli, d);
     if (attempt == 3) {
       return Server(d, -1,
-        "openssl s_server never served on " + itoa(port) + ", three times — the port was taken " +
+        "openssl s_server never served on \{port}, three times — the port was taken " +
         "between choosing it and binding it, or the fixture cannot start at all. Its output was: " +
         logOf(cli, d));
     }
@@ -79,7 +78,7 @@ export void stopServer(Cli cli, Server s) { stop(cli, s.d); }
 
 /** Whether a program is on the path at all, so a missing one is skipped rather than failed. */
 export bool have(Cli cli, string binary) {
-  Exec r = cli.exec("/bin/sh", ["-c", "command -v " + quoted(binary) + " >/dev/null"],
+  Exec r = cli.exec("/bin/sh", ["-c", "command -v \{quoted(binary)} >/dev/null"],
                     u8[]()).wait();
   return r.ran() && r.status == 0;
 }
@@ -98,7 +97,7 @@ export string openssl35(Cli cli) {
   if (h is not null) { home = string.fromBytes(h!); }
   string[] candidates = [
     "",                                    // $OPENSSL35, filled in below
-    home + "/tools/ossl/openssl-openssl-3.5.7/apps/openssl",
+    "\{home}/tools/ossl/openssl-openssl-3.5.7/apps/openssl",
     "/tmp/ossl/openssl-openssl-3.5.7/apps/openssl"
   ];
   u8[]? named = cli.env("OPENSSL35").wait();

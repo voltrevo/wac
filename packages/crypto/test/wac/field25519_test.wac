@@ -41,7 +41,6 @@
 // while the value it stands for is right.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -99,21 +98,21 @@ export string test_the_ring_laws() {
     i64[] a = r.elem();
     i64[] b = r.elem();
     i64[] c = r.elem();
-    string at = " at round " + itoa64(i as i64);
+    string at = " at round \{i as i64}";
 
-    t.isTrue(eq(feMul(a, b), feMul(b, a)), "multiplication commutes" + at);
-    t.isTrue(eq(feAdd(a, b), feAdd(b, a)), "addition commutes" + at);
-    t.isTrue(eq(feMul(feMul(a, b), c), feMul(a, feMul(b, c))), "multiplication associates" + at);
-    t.isTrue(eq(feAdd(feAdd(a, b), c), feAdd(a, feAdd(b, c))), "addition associates" + at);
+    t.isTrue(eq(feMul(a, b), feMul(b, a)), "multiplication commutes\{at}");
+    t.isTrue(eq(feAdd(a, b), feAdd(b, a)), "addition commutes\{at}");
+    t.isTrue(eq(feMul(feMul(a, b), c), feMul(a, feMul(b, c))), "multiplication associates\{at}");
+    t.isTrue(eq(feAdd(feAdd(a, b), c), feAdd(a, feAdd(b, c))), "addition associates\{at}");
     // Distributivity is the one that breaks first when a reduction is wrong, because it
     // is the only law that mixes the two operations.
     t.isTrue(eq(feMul(a, feAdd(b, c)), feAdd(feMul(a, b), feMul(a, c))),
-             "multiplication distributes" + at);
-    t.isTrue(eq(feSub(feAdd(a, b), b), a), "subtraction undoes addition" + at);
-    t.isTrue(eq(feSquare(a), feMul(a, a)), "squaring is multiplying by itself" + at);
-    t.isTrue(eq(feAdd(a, feNeg(a)), feZero()), "a plus its negation is zero" + at);
-    t.isTrue(eq(feMul(a, feOne()), a), "one is the identity" + at);
-    t.isTrue(feIsZero(feMul(a, feZero())) == 1, "zero annihilates" + at);
+             "multiplication distributes\{at}");
+    t.isTrue(eq(feSub(feAdd(a, b), b), a), "subtraction undoes addition\{at}");
+    t.isTrue(eq(feSquare(a), feMul(a, a)), "squaring is multiplying by itself\{at}");
+    t.isTrue(eq(feAdd(a, feNeg(a)), feZero()), "a plus its negation is zero\{at}");
+    t.isTrue(eq(feMul(a, feOne()), a), "one is the identity\{at}");
+    t.isTrue(feIsZero(feMul(a, feZero())) == 1, "zero annihilates\{at}");
   }
   return t.report();
 }
@@ -148,7 +147,7 @@ export string test_the_small_multiply_matches_repeated_addition() {
       i64[] want = feZero();
       for (i64 n = 0; n < k; n++) { want = feAdd(want, a); }
       t.isTrue(eq(feMulSmall(a, k), want),
-               "mulSmall by " + itoa64(k) + " equals adding that many times");
+               "mulSmall by \{k} equals adding that many times");
     }
   }
   return t.report();
@@ -180,7 +179,7 @@ export string test_encoding_round_trips_and_canonicalises() {
     for (i32 i = 1; i < 31; i++) { near[i] = 0xFF; }
     near[31] = 0x7F;
     t.eqBytes(feToBytes(feFromBytes(near)), near,
-              "p - " + itoa64(k as i64) + " is already canonical");
+              "p - \{k as i64} is already canonical");
   }
   // And sums that land just past p, so the carry has to wrap rather than merely settle.
   u8[] pm1 = u8[].filled(32, 0);
@@ -193,7 +192,7 @@ export string test_encoding_round_trips_and_canonicalises() {
     u8[] want = u8[].filled(32, 0);
     want[0] = ((k - 1) & 0xFF) as@ u8;                    // (p-1) + k == k-1 (mod p)
     t.eqBytes(feToBytes(sum), want,
-              "(p-1) + " + itoa64(k as i64) + " wraps to " + itoa64((k - 1) as i64));
+              "(p-1) + \{k as i64} wraps to \{(k - 1) as i64}");
   }
   return t.report();
 }
@@ -221,7 +220,7 @@ export string test_a_negative_representation_encodes_as_its_positive_residue() {
     want[0] = ((0xED - k) & 0xFF) as@ u8;
     for (i32 i = 1; i < 31; i++) { want[i] = 0xFF; }
     want[31] = 0x7F;
-    t.eqBytes(feToBytes(below), want, "0 - " + itoa64(k as i64) + " encodes as p - " + itoa64(k as i64));
+    t.eqBytes(feToBytes(below), want, "0 - \{k as i64} encodes as p - \{k as i64}");
   }
   // Twice negative, so the fold has to add p on a representation that is already below zero — one
   // `feSub` leaves limb 9 negative and the second takes it further.
@@ -350,7 +349,7 @@ u8[][] corpus() {
 /** A big-endian hex literal as the 32 little-endian bytes the field decodes. */
 u8[] littleEndian(string h) {
   string padded = h;
-  while (padded.len() < 64) { padded = "0" + padded; }
+  while (padded.len() < 64) { padded = "0\{padded}"; }
   u8[] be = decoded(padded);
   u8[] le = u8[].filled(32, 0);
   for (i32 i = 0; i < 32; i++) { le[i] = be[31 - i]; }
@@ -358,7 +357,7 @@ u8[] littleEndian(string h) {
 }
 
 void claimF25(Lines lines, string what, u8[] a, u8[] b, u8[] got) {
-  lines.add("f25 " + what + " " + hex(a) + " " + hex(b) + " " + hex(got));
+  lines.add("f25 \{what} \{hex(a)} \{hex(b)} \{hex(got)}");
 }
 
 export string test_encoding_round_trips_and_reduces_a_non_canonical_input(Core core, Cli cli) {
@@ -409,7 +408,7 @@ export string test_the_small_multiply_agrees_at_every_multiplier_the_curve_uses(
   Lines lines = Lines.create();
   for (i32 i = 0; i < all.len(); i++) {
     for (i32 k = 0; k < mults.len(); k++) {
-      claimF25(lines, itoa64(mults[k]), all[i], u8[](),
+      claimF25(lines, "\{mults[k]}", all[i], u8[](),
                feToBytes(feMulSmall(feFromBytes(all[i]), mults[k])));
     }
   }
@@ -432,7 +431,7 @@ export string test_inversion_agrees_with_bigint_including_zero(Core core, Cli cl
     i64[] a = feFromBytes(all[i]);
     if (feIsZero(a) == 1) { continue; }
     t.eqI32(feEquals(feMul(a, feInvert(a)), feOne()), 1,
-            "a * 1/a is one, at corpus index " + itoa64(i as i64));
+            "a * 1/a is one, at corpus index \{i as i64}");
   }
   return t.report();
 }

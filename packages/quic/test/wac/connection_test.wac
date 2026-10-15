@@ -13,7 +13,6 @@
 // TypeScript compared counts. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Client } from "../../src/client.wac";
 import { Connection } from "../../src/connection.wac";
 
@@ -116,7 +115,7 @@ export string test_packet_numbers_are_handed_out_in_order_and_never_reused() {
   ns[0] = 0; ns[1] = 1; ns[2] = 2; ns[3] = 9; ns[4] = 40;
   for (i32 i = 0; i < 5; i++) {
     t.eqI32(numbersAscend(ns[i]), ns[i],
-            itoa(ns[i]) + " sends should leave the next number at " + itoa(ns[i]));
+            "\{ns[i]} sends should leave the next number at \{ns[i]}");
   }
   return t.report();
 }
@@ -127,7 +126,7 @@ export string test_everything_sent_is_outstanding_until_acknowledged() {
   i32[] ns = i32[].filled(7, 0);
   ns[0] = 0; ns[1] = 1; ns[2] = 5; ns[3] = 20; ns[4] = 8; ns[5] = 9; ns[6] = 17;
   for (i32 i = 0; i < 7; i++) {
-    t.eqI32(outstandingAfterSends(ns[i]), ns[i], itoa(ns[i]) + " sends outstanding");
+    t.eqI32(outstandingAfterSends(ns[i]), ns[i], "\{ns[i]} sends outstanding");
   }
   return t.report();
 }
@@ -167,7 +166,7 @@ export string test_repeated_resends_do_not_grow_the_outstanding_count() {
   i32[] times = i32[].filled(4, 0);
   times[0] = 1; times[1] = 2; times[2] = 10; times[3] = 50;
   for (i32 i = 0; i < 4; i++) {
-    t.eqI32(repeatedResends(times[i]), 1, "after " + itoa(times[i]) + " resends");
+    t.eqI32(repeatedResends(times[i]), 1, "after \{times[i]} resends");
   }
   return t.report();
 }

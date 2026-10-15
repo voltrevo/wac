@@ -18,11 +18,10 @@
 import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "core";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, runApplet } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-wcwords"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-wcwords"; }
 
 /** One code point, and what to call it when it disagrees. */
 struct Cp {
@@ -69,8 +68,8 @@ string realWc(Cli cli, string[] args) {
 export string test_wc_w_splits_words_where_the_real_wc_splits_them(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string path = dir + "/case.txt";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string path = "\{dir}/case.txt";
 
   // **The oracle has to be there**, and a missing `wc` would otherwise make every comparison below
   // agree on the empty string. `Exec.error` is non-empty only when the program could not be started.
@@ -113,8 +112,8 @@ export string test_wc_w_splits_words_where_the_real_wc_splits_them(Core core, Cl
 export string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string path = dir + "/split.txt";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string path = "\{dir}/split.txt";
 
   Cp[] wide = [Cp("em dash", 0x2014), Cp("emoji", 0x1F600)];
   u8[] word = "word ".toBytes();
@@ -137,7 +136,7 @@ export string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli
 
       Ran got = runApplet(core, cli, dir, ["wc", path]);
       t.eqStr(got.out, realWc(cli, [path]),
-              wide[i].name + " broken after " + itoa(split) + " byte(s) at the chunk boundary");
+              "\{wide[i].name} broken after \{split} byte(s) at the chunk boundary");
     }
   }
 
@@ -154,11 +153,11 @@ export string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli
  */
 export string test_wc_w_agrees_on_the_tour(Core core, Cli cli) {
   T t = T.create();
-  string tour = cli.cwd().wait() + "/spec/tour.wac";
+  string tour = "\{cli.cwd().wait()}/spec/tour.wac";
   if (!cli.stat(tour).wait().exists) {
     // Not a silent skip: this test is about a specific file, and if it is not there the run proved
     // nothing rather than proving the counts agree.
-    t.fail("spec/tour.wac is not at " + tour + " — this must run from the repository root");
+    t.fail("spec/tour.wac is not at \{tour} — this must run from the repository root");
     return t.report();
   }
 

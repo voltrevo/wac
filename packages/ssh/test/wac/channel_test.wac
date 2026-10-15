@@ -12,7 +12,6 @@
 // Host-side until 2026-08-18, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Incoming, Window, channelClose, channelData, channelEof, execRequest, extendedDataStderr,
          msgChannelData, msgChannelOpen, openSession, parse, windowAdjust }
   from "../../src/channel.wac";
@@ -106,7 +105,7 @@ export string test_channel_messages_parse_to_their_fields() {
   for (i32 i = 0; i < truncated.len(); i++) {
     Incoming p = parse(truncated[i]);
     t.isFalse(p.ok && p.kind != 0,
-              "a truncated message of " + itoa(truncated[i].len()) + " bytes parsed as valid");
+              "a truncated message of \{truncated[i].len()} bytes parsed as valid");
   }
   return t.report();
 }
@@ -133,7 +132,7 @@ export string test_channel_messages_address_the_recipients_channel_number() {
     channelData(42, ("x").toBytes())
   ];
   for (i32 i = 0; i < msgs.len(); i++) {
-    t.eqI32(u32At(msgs[i], 1), 42, names[i] + " does not address the server's number");
+    t.eqI32(u32At(msgs[i], 1), 42, "\{names[i]} does not address the server's number");
   }
   t.eqI32(channelData(42, ("x").toBytes())[0] as i32, msgChannelData(), "channelData's message number");
   return t.report();

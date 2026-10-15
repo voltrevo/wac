@@ -89,7 +89,7 @@ export u8[] writeTree(Vec<Entry> entries) {
   Buf out = Buf.create();
   for (i32 i = 0; i < entries.len(); i++) {
     Entry e = entries.get(i);
-    out.pushAll((e.mode + " " + e.name).toBytes());
+    out.pushAll("\{e.mode} \{e.name}".toBytes());
     out.push(0);
     out.pushAll(e.hash);
   }

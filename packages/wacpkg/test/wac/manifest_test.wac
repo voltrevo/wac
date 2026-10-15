@@ -20,7 +20,6 @@
 // on purpose, and it is the only place in this file where a code appears as a literal.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Manifest, Mapping, Match, Located, readManifest, matchSpecifier, locate, packageEntry,
          unsupportedTransport, M_OK, M_NOT_JSON5, M_NOT_OBJECT, M_IMPORTS_KIND, M_MAPPING_KIND,
          M_NO_GIT, M_NO_REF, M_SUBDIR_KIND, M_EMPTY_NAME, M_PREFIX_KEY, M_SUBDIR_ESCAPE,
@@ -74,8 +73,8 @@ export string test_exports_is_one_module_path() {
                   "{ exports: 3 }", "{ exports: \"\" }"];
   for (i32 i = 0; i < bad.len(); i++) {
     Manifest b = readManifest(bad[i].toBytes());
-    t.isTrue(!b.ok, "accepted: " + bad[i]);
-    if (!b.ok) { t.eqI32(b.code, M_EXPORTS_KIND(), "code for: " + bad[i]); }
+    t.isTrue(!b.ok, "accepted: \{bad[i]}");
+    if (!b.ok) { t.eqI32(b.code, M_EXPORTS_KIND(), "code for: \{bad[i]}"); }
   }
   return t.report();
 }
@@ -85,8 +84,8 @@ export string test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports() {
   string[] texts = ["{}", "{ }", "// nothing\n{}", "{ name: 'x' }"];
   for (i32 i = 0; i < texts.len(); i++) {
     Manifest m = of(texts[i]);
-    t.isTrue(m.ok, texts[i] + " is a valid manifest");
-    if (m.ok) { t.eqI32(m.imports.len(), 0, texts[i] + " declares no mappings"); }
+    t.isTrue(m.ok, "\{texts[i]} is a valid manifest");
+    if (m.ok) { t.eqI32(m.imports.len(), 0, "\{texts[i]} declares no mappings"); }
   }
   return t.report();
 }
@@ -114,8 +113,8 @@ export string test_a_mapping_is_read_whole() {
   return t.report();
 }
 
-string entryFor(string name) { return "'" + name + "': { git: 'https://x.invalid/g', ref: 'r' }"; }
-Manifest pair(string a, string b) { return of("{ imports: { " + entryFor(a) + ", " + entryFor(b) + " } }"); }
+string entryFor(string name) { return "'\{name}': { git: 'https://x.invalid/g', ref: 'r' }"; }
+Manifest pair(string a, string b) { return of("{ imports: { \{entryFor(a)}, \{entryFor(b)} } }"); }
 
 /**
  * A key ending in `/` is refused — `§wac-package-key-exact-rme93fh` — and a `/` elsewhere is not.
@@ -129,22 +128,22 @@ export string test_a_key_ending_in_a_slash_is_refused() {
   T t = T.create();
   string[] bad = ["bits/", "a/b/", "wac/packages/json/"];
   for (i32 i = 0; i < bad.len(); i++) {
-    Manifest m = of("{ imports: { " + entryFor(bad[i]) + " } }");
-    t.isFalse(m.ok, bad[i] + " is refused");
+    Manifest m = of("{ imports: { \{entryFor(bad[i])} } }");
+    t.isFalse(m.ok, "\{bad[i]} is refused");
     if (!m.ok) {
-      t.eqI32(m.code, M_PREFIX_KEY(), bad[i] + " says why");
+      t.eqI32(m.code, M_PREFIX_KEY(), "\{bad[i]} says why");
       t.eqStr(m.detail, bad[i], "and the message names it");
     }
     // Wherever it appears in the table, not only first.
     Manifest second = pair("fine", bad[i]);
-    t.isFalse(second.ok, bad[i] + " after a good key is refused too");
-    if (!second.ok) { t.eqI32(second.code, M_PREFIX_KEY(), bad[i] + " second says why"); }
+    t.isFalse(second.ok, "\{bad[i]} after a good key is refused too");
+    if (!second.ok) { t.eqI32(second.code, M_PREFIX_KEY(), "\{bad[i]} second says why"); }
   }
   // A `/` that is not the last byte is part of an ordinary name.
   string[] good = ["acme/json", "a/b", "x"];
   for (i32 i = 0; i < good.len(); i++) {
-    Manifest m = of("{ imports: { " + entryFor(good[i]) + " } }");
-    t.isTrue(m.ok, good[i] + " is an ordinary name");
+    Manifest m = of("{ imports: { \{entryFor(good[i])} } }");
+    t.isTrue(m.ok, "\{good[i]} is an ordinary name");
   }
   return t.report();
 }
@@ -164,13 +163,13 @@ export string test_names_that_once_overlapped_are_now_independent() {
   for (i32 i = 0; i < left.len(); i++) {
     Manifest one = pair(left[i], right[i]);
     Manifest two = pair(right[i], left[i]);
-    t.isTrue(one.ok, left[i] + " beside " + right[i] + " is fine");
-    t.isTrue(two.ok, right[i] + " beside " + left[i] + " is fine too");
+    t.isTrue(one.ok, "\{left[i]} beside \{right[i]} is fine");
+    t.isTrue(two.ok, "\{right[i]} beside \{left[i]} is fine too");
     if (one.ok) {
       Match a = matchSpecifier(one, left[i]);
       Match b = matchSpecifier(one, right[i]);
-      t.isTrue(a.found && a.index == 0, left[i] + " names the first");
-      t.isTrue(b.found && b.index == 1, right[i] + " names the second, not the first");
+      t.isTrue(a.found && a.index == 0, "\{left[i]} names the first");
+      t.isTrue(b.found && b.index == 1, "\{right[i]} names the second, not the first");
     }
   }
   return t.report();
@@ -200,17 +199,17 @@ export string test_a_specifier_matches_only_the_whole_name() {
   string[] hits = ["whole", "sub", "deep", "acme/json"];
   for (i32 i = 0; i < hits.len(); i++) {
     Match h = matchSpecifier(m, hits[i]);
-    t.isTrue(h.found, hits[i] + " matches");
-    if (h.found) { t.eqI32(h.index, i, hits[i] + " matches the right one"); }
+    t.isTrue(h.found, "\{hits[i]} matches");
+    if (h.found) { t.eqI32(h.index, i, "\{hits[i]} matches the right one"); }
   }
   string[] misses = ["whole/src/a.wac", "whole/", "sub/x", "acme", "acme/json/lib.wac", "other",
                      "", "./a.wac", "wholes", "whol", "Whole"];
   for (i32 i = 0; i < misses.len(); i++) {
     Match h = matchSpecifier(m, misses[i]);
-    t.isFalse(h.found, "\"" + misses[i] + "\" matches nothing");
+    t.isFalse(h.found, "\"\{misses[i]}\" matches nothing");
     // And locating a miss answers "nowhere" rather than falling through to mapping 0 — the two
     // are one call apart in every caller, so a `found` nobody rechecks reads the wrong row.
-    t.isFalse(locate(m, h).ok, "\"" + misses[i] + "\" locates nowhere");
+    t.isFalse(locate(m, h).ok, "\"\{misses[i]}\" locates nowhere");
   }
   return t.report();
 }
@@ -228,17 +227,17 @@ export string test_the_subdir_selects_the_package_directory() {
   string[] dirs  = ["", "lib/acme", "a/b", "a/b/c"];
   for (i32 i = 0; i < specs.len(); i++) {
     Located at = locate(m, matchSpecifier(m, specs[i]));
-    t.isTrue(at.ok, specs[i] + " has a directory");
-    if (at.ok) { t.eqStr(at.path, dirs[i], specs[i] + " is the directory its subdir names"); }
+    t.isTrue(at.ok, "\{specs[i]} has a directory");
+    if (at.ok) { t.eqStr(at.path, dirs[i], "\{specs[i]} is the directory its subdir names"); }
   }
 
   // A `subdir` that leaves the checkout is refused when the manifest is read, so the person who
   // wrote it is told at the line they wrote.
   string[] out = ["./..", "./../x", "./a/../..", "./a/../../b"];
   for (i32 i = 0; i < out.len(); i++) {
-    Manifest bad = of("{ imports: { 'a': { git: 'g', ref: 'r', subdir: '" + out[i] + "' } } }");
-    t.isFalse(bad.ok, "subdir " + out[i] + " is refused");
-    if (!bad.ok) { t.eqI32(bad.code, M_SUBDIR_ESCAPE(), "subdir " + out[i] + " says why"); }
+    Manifest bad = of("{ imports: { 'a': { git: 'g', ref: 'r', subdir: '\{out[i]}' } } }");
+    t.isFalse(bad.ok, "subdir \{out[i]} is refused");
+    if (!bad.ok) { t.eqI32(bad.code, M_SUBDIR_ESCAPE(), "subdir \{out[i]} says why"); }
   }
   // And `locate` checks again rather than trusting that it was handed a manifest `readManifest`
   // made: a `Manifest` is a struct anybody can build.
@@ -266,15 +265,15 @@ export string test_the_entry_is_exports_joined_to_the_package_directory() {
                    "a/b/x/y.wac"];
   for (i32 i = 0; i < dirs.len(); i++) {
     Located e = packageEntry(dirs[i], exps[i]);
-    t.isTrue(e.ok, exps[i] + " in \"" + dirs[i] + "\" is an entry");
-    if (e.ok) { t.eqStr(e.path, want[i], exps[i] + " in \"" + dirs[i] + "\" lands where it should"); }
+    t.isTrue(e.ok, "\{exps[i]} in \"\{dirs[i]}\" is an entry");
+    if (e.ok) { t.eqStr(e.path, want[i], "\{exps[i]} in \"\{dirs[i]}\" lands where it should"); }
   }
   // Out of the directory, or naming the directory itself rather than a module in it.
   string[] bad = ["../lib.wac", "./../x.wac", "src/../../x.wac", "./", ".", ""];
   for (i32 i = 0; i < bad.len(); i++) {
     Located e = packageEntry("packages/geo", bad[i]);
-    t.isFalse(e.ok, "exports \"" + bad[i] + "\" is refused");
-    if (!e.ok) { t.eqI32(e.code, M_SUBDIR_ESCAPE(), "exports \"" + bad[i] + "\" says why"); }
+    t.isFalse(e.ok, "exports \"\{bad[i]}\" is refused");
+    if (!e.ok) { t.eqI32(e.code, M_SUBDIR_ESCAPE(), "exports \"\{bad[i]}\" says why"); }
   }
   return t.report();
 }
@@ -292,8 +291,8 @@ export string test_each_malformed_shape_gets_its_own_code() {
   i32[] codes = [1, 2, 2, 3, 4, 5, 5, 6, 6, 7, 8, 8];
   for (i32 i = 0; i < texts.len(); i++) {
     Manifest m = of(texts[i]);
-    t.isFalse(m.ok, texts[i] + " is refused");
-    if (!m.ok) { t.eqI32(m.code, codes[i], texts[i] + " gets its own code"); }
+    t.isFalse(m.ok, "\{texts[i]} is refused");
+    if (!m.ok) { t.eqI32(m.code, codes[i], "\{texts[i]} gets its own code"); }
   }
   return t.report();
 }
@@ -306,7 +305,7 @@ export string test_a_url_this_toolchain_cannot_fetch_is_refused_by_name() {
                            "https://user@example.invalid:8443/a/b"
   ];
   for (i32 i = 0; i < fine.len(); i++) {
-    t.eqStr(unsupportedTransport(fine[i]), "", fine[i] + " is fetchable");
+    t.eqStr(unsupportedTransport(fine[i]), "", "\{fine[i]} is fetchable");
   }
   // Each refusal has to name what is wrong rather than say no.
   string[] bad = [
@@ -315,7 +314,7 @@ export string test_a_url_this_toolchain_cannot_fetch_is_refused_by_name() {
                           "file:///tmp/r", "example.invalid/r", ""
   ];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.isTrue(unsupportedTransport(bad[i]).len() > 0, "\"" + bad[i] + "\" is refused");
+    t.isTrue(unsupportedTransport(bad[i]).len() > 0, "\"\{bad[i]}\" is refused");
   }
   // The layering: which transports exist is the toolchain's business, not the file format's, so a
   // manifest written for a build with SSH is unsupported *here* rather than invalid.
@@ -350,15 +349,15 @@ export string test_a_mapping_of_a_reserved_name_is_refused() {
   ];
   for (i32 i = 0; i < bad.len(); i++) {
     Manifest m = of(bad[i]);
-    t.isFalse(m.ok, "accepted a reserved mapping: " + bad[i]);
-    if (!m.ok) { t.eqI32(m.code, M_RESERVED_NAME(), "code for: " + bad[i]); }
+    t.isFalse(m.ok, "accepted a reserved mapping: \{bad[i]}");
+    if (!m.ok) { t.eqI32(m.code, M_RESERVED_NAME(), "code for: \{bad[i]}"); }
   }
   // `std/` and `core/` are refused too. Which code says so is not this test's business — a key
   // ending in `/` is refused before its name is looked at — only that neither gets through.
   string[] slashed = ["std/", "core/"];
   for (i32 i = 0; i < slashed.len(); i++) {
-    t.isFalse(of("{ imports: { '" + slashed[i] + "': { git: 'g', ref: 'r' } } }").ok,
-              "accepted a reserved mapping: " + slashed[i]);
+    t.isFalse(of("{ imports: { '\{slashed[i]}': { git: 'g', ref: 'r' } } }").ok,
+              "accepted a reserved mapping: \{slashed[i]}");
   }
 
   // **The near misses, which is what stops this being a substring check.** None of these is
@@ -374,7 +373,7 @@ export string test_a_mapping_of_a_reserved_name_is_refused() {
   for (i32 i = 0; i < good.len(); i++) {
     Manifest m = of(good[i]);
     t.isTrue(m.ok, "refused a name that is not reserved: " + good[i] +
-                   (m.ok ? "" : " — code " + itoa(m.code)));
+                   (m.ok ? "" : " — code \{m.code}"));
   }
   return t.report();
 }
@@ -406,14 +405,14 @@ export string test_every_manifest_refusal_has_its_own_sentence() {
 
   for (i32 i = 0; i < codes.len(); i++) {
     string why = manifestWhy(codes[i]);
-    t.isTrue(why.len() > 0, "code " + itoa(codes[i]) + " renders to nothing");
+    t.isTrue(why.len() > 0, "code \{codes[i]} renders to nothing");
     t.isTrue(why != fallback,
-             "code " + itoa(codes[i]) + " has no row of its own — it falls through to \"" +
-             fallback + "\"");
+             "code \{codes[i]} has no row of its own — it falls through to \"" +
+             "\{fallback}\"");
     for (i32 j = 0; j < i; j++) {
       t.isTrue(why != manifestWhy(codes[j]),
-               "codes " + itoa(codes[j]) + " and " + itoa(codes[i]) + " share a sentence: \"" +
-               why + "\"");
+               "codes \{codes[j]} and \{codes[i]} share a sentence: \"" +
+               "\{why}\"");
     }
   }
 
@@ -426,7 +425,7 @@ export string test_every_manifest_refusal_has_its_own_sentence() {
     if (manifestWhy(c) != fallback) { named = named + 1; }
   }
   t.eqI32(named, codes.len(),
-          "manifestWhy renders " + itoa(named) + " codes and this test names " + itoa(codes.len()) +
+          "manifestWhy renders \{named} codes and this test names \{codes.len()}" +
           " — a refusal has been added or removed without its row here");
 
   // `M_OK` is not a refusal and must not have a sentence of its own.
@@ -448,15 +447,15 @@ export string test_a_manifest_path_must_begin_with_dot_slash() {
   ];
   for (i32 i = 0; i < bad.len(); i++) {
     Manifest m = readManifest(bad[i].toBytes());
-    t.isFalse(m.ok, bad[i] + " is refused");
-    if (!m.ok) { t.eqI32(m.code, M_PATH_FORM(), bad[i] + " says a path must begin with ./"); }
+    t.isFalse(m.ok, "\{bad[i]} is refused");
+    if (!m.ok) { t.eqI32(m.code, M_PATH_FORM(), "\{bad[i]} says a path must begin with ./"); }
   }
   // The canary: the same three, written as the spec writes them, read.
   string[] good = [
     "{ exports: './src/lib.wac' }",
     "{ imports: { geo: { git: 'https://x.invalid/g', ref: 'v1', subdir: './packages/geometry' } } }"
   ];
-  for (i32 i = 0; i < good.len(); i++) { t.isTrue(readManifest(good[i].toBytes()).ok, good[i] + " reads"); }
+  for (i32 i = 0; i < good.len(); i++) { t.isTrue(readManifest(good[i].toBytes()).ok, "\{good[i]} reads"); }
   return t.report();
 }
 
@@ -465,7 +464,7 @@ export string test_check_exclude_is_a_list_of_dot_slash_patterns_2ixx2cu_yfwkbsg
   // project and written with its `./`.
   T t = T.create();
   Manifest ok = readManifest("{ check: { exclude: [\"./fixtures/**\", \"./gen/*.wac\"] } }".toBytes());
-  t.isTrue(ok.ok, "two patterns read — code " + ok.detail);
+  t.isTrue(ok.ok, "two patterns read — code \{ok.detail}");
   t.eqI32(ok.checkExclude.len(), 2, "both kept");
   if (ok.checkExclude.len() == 2) { t.eqStr(ok.checkExclude[1], "./gen/*.wac", "as written"); }
   Manifest bare = readManifest("{ check: { exclude: [\"fixtures/**\"] } }".toBytes());

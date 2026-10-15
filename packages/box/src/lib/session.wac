@@ -18,7 +18,6 @@
 
 import { Cli, Core } from "std";
 import { Shell, runScript } from "../../../sh/src/exec.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Vec } from "core";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { boxNames, boxRun } from "../shrun.wac";
@@ -104,7 +103,7 @@ export struct Session {
     return Session(sh, "", Vec.fromArray(string[].filled(HISTORY(), "")), 0, 0);
   }
 
-  string prompt(const this) { return this.sh.cwd + " $"; }
+  string prompt(const this) { return "\{this.sh.cwd} $"; }
 
   /** Add to the screen without running anything — a banner, or an opening line. */
   void say(this, string text) { this.screen = this.screen + text; }
@@ -126,17 +125,17 @@ export struct Session {
     this.count = this.count + 1;
     if (line == "clear") { this.screen = ""; return; }
 
-    this.screen = this.screen + this.prompt() + " " + line + "\n";
+    this.screen = this.screen + "\{this.prompt()} \{line}\n";
     i32 status = runScript(this.sh, line);
     this.screen = this.screen
       + string.fromBytes(this.sh.outBuf.take())
       + string.fromBytes(this.sh.errOut.take());
-    if (status != 0) { this.screen = this.screen + "[exit " + itoa(status) + "]\n"; }
+    if (status != 0) { this.screen = this.screen + "[exit \{status}]\n"; }
   }
 
   /** `^C` at the prompt: the line is echoed, thrown away, and a fresh one begins. */
   void interrupt(this, string typed) {
-    this.screen = this.screen + this.prompt() + " " + typed + "^C\n";
+    this.screen = this.screen + "\{this.prompt()} \{typed}^C\n";
     this.cursor = 0;
   }
 

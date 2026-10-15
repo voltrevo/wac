@@ -22,7 +22,6 @@
 // the first test is what makes three vectors worth more than one.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -82,15 +81,15 @@ export string test_the_cells_are_tors_and_are_padded(Core core, Cli cli) {
   T t = T.create();
   string source = strOf(vectors(cli), "source");
   t.isTrue(source.indexOf("hs_cell_build_introduce1") >= 0,
-           "the cells must come from tor's builder, not ours — source is " + source);
+           "the cells must come from tor's builder, not ours — source is \{source}");
   i32 n = caseCount(cli);
   t.isTrue(n >= 2, "there are several cells, not one");
   for (i32 i = 0; i < n; i++) {
     t.isTrue(field(cli, i, "cell").len() >= 200,
-             "cell " + itoa(i) + " is " + itoa(field(cli, i, "cell").len()) +
+             "cell \{i} is \{field(cli, i, "cell").len()}" +
              " bytes — too short to carry the padding this pins");
     t.isTrue(field(cli, i, "linkSpecifiers")[0] >= 3,
-             "control " + itoa(i) + "'s link specifier list should carry an identity, not just an address");
+             "control \{i}'s link specifier list should carry an identity, not just an address");
   }
 
   // **And the cases have to be different cases**, which neither the wrapper nor the tests below ever
@@ -100,9 +99,9 @@ export string test_the_cells_are_tors_and_are_padded(Core core, Cli cli) {
   // another, so this is the only thing standing between three vectors and one.
   for (i32 i = 1; i < n; i++) {
     t.isFalse(equal(field(cli, i, "cell"), field(cli, 0, "cell")),
-              "case " + itoa(i) + " is a different cell from case 0");
+              "case \{i} is a different cell from case 0");
     t.isFalse(equal(field(cli, i, "introAuthKey"), field(cli, 0, "introAuthKey")),
-              "case " + itoa(i) + " is a different introduction point from case 0");
+              "case \{i} is a different introduction point from case 0");
   }
   return t.report();
 }

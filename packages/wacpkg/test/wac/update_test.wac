@@ -37,7 +37,7 @@ export string test_a_mapping_that_did_not_need_resolving_keeps_the_commit_it_had
   // everything because resolving is easier than deciding would pass exactly this.
   LockEntry[] out = updated(
     "{ imports: { 'bits': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }",
-    "{ imports: { 'bits': { git: 'g1', ref: 'main', commit: '" + OLD() + "' } } }",
+    "{ imports: { 'bits': { git: 'g1', ref: 'main', commit: '\{OLD()}' } } }",
     [WRONG(), FRESH()]);
   t.eqI32(out.len(), 2, "both mappings are written");
   if (out.len() != 2) { return t.report(); }
@@ -56,7 +56,7 @@ export string test_a_changed_input_takes_the_new_commit_and_the_new_inputs() {
   // commit and the recorded `ref` have to move, or the next run reads it as changed again for ever.
   LockEntry[] out = updated(
     "{ imports: { 'a': { git: 'g', ref: 'v2', subdir: './lib' } } }",
-    "{ imports: { 'a': { git: 'g', ref: 'v1', commit: '" + OLD() + "' } } }",
+    "{ imports: { 'a': { git: 'g', ref: 'v1', commit: '\{OLD()}' } } }",
     [FRESH()]);
   t.eqI32(out.len(), 1, "it is written");
   if (out.len() != 1) { return t.report(); }
@@ -71,8 +71,8 @@ export string test_an_entry_whose_mapping_is_gone_does_not_survive_the_write() {
   LockEntry[] out = updated(
     "{ imports: { 'kept': { git: 'g', ref: 'r' } } }",
     "{ imports: {\n"
-      + "  'kept': { git: 'g', ref: 'r', commit: '" + OLD() + "' },\n"
-      + "  'gone': { git: 'g', ref: 'r', commit: '" + OTHER() + "' },\n"
+      + "  'kept': { git: 'g', ref: 'r', commit: '\{OLD()}' },\n"
+      + "  'gone': { git: 'g', ref: 'r', commit: '\{OTHER()}' },\n"
       + "} }",
     [WRONG()]);
   t.eqI32(out.len(), 1, "only the mapping still in the manifest is written");
@@ -92,8 +92,8 @@ export string test_nothing_to_do_writes_the_same_bytes_it_read() {
     + "  'a':  { git: 'g1', ref: 'v1', subdir: './lib' },\n"
     + "} }";
   string lockText = "{ imports: {\n"
-    + "  'a':  { git: 'g1', ref: 'v1', subdir: './lib', commit: '" + OLD() + "' },\n"
-    + "  'b':  { git: 'g2', ref: 'main', commit: '" + OTHER() + "' },\n"
+    + "  'a':  { git: 'g1', ref: 'v1', subdir: './lib', commit: '\{OLD()}' },\n"
+    + "  'b':  { git: 'g2', ref: 'main', commit: '\{OTHER()}' },\n"
     + "} }";
   Lock read = readLock(lockText.toBytes());
   t.isTrue(read.ok, "the lock reads");
@@ -119,7 +119,7 @@ export string test_a_missing_commit_is_a_refusal_not_a_partial_lock() {
     [FRESH(), FRESH(), FRESH()]
   ];
   for (i32 i = 0; i < labels.len(); i++) {
-    t.eqI32(updated(manifest, "{}", cases[i]).len(), 0, labels[i] + " writes no lock at all");
+    t.eqI32(updated(manifest, "{}", cases[i]).len(), 0, "\{labels[i]} writes no lock at all");
   }
   // And the canary: the same call with both commits present must succeed, or the five above prove
   // nothing about the check and only that the call fails.

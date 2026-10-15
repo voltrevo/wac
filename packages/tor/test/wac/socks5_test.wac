@@ -54,13 +54,13 @@ export string test_every_short_prefix_says_wait() {
   T t = T.create();
   u8[] full = byName("example.com", 80);
   for (i32 i = 0; i < full.len(); i++) {
-    t.eqStr(targetOf(prefix(full, i)), "", "a name request cut at " + itoa(i));
+    t.eqStr(targetOf(prefix(full, i)), "", "a name request cut at \{i}");
   }
   t.eqStr(targetOf(full), "example.com:80", "and the whole thing parses");
 
   u8[] addr = v4(127, 0, 0, 1, 8899);
   for (i32 i = 0; i < addr.len(); i++) {
-    t.eqStr(targetOf(prefix(addr, i)), "", "an address request cut at " + itoa(i));
+    t.eqStr(targetOf(prefix(addr, i)), "", "an address request cut at \{i}");
   }
   t.eqStr(targetOf(addr), "127.0.0.1:8899", "and the whole thing parses");
   return t.report();
@@ -113,13 +113,3 @@ export string test_the_reply_is_ten_bytes_of_socks5() {
   return t.report();
 }
 
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  u8[] buf = u8[].filled(12, 0);
-  i32 n = 0;
-  i32 x = v;
-  while (x > 0) { buf[n] = ('0' + (x % 10)) as@ u8; n++; x = x / 10; }
-  u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = buf[n - 1 - i]; }
-  return string.fromBytes(out);
-}

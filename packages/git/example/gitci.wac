@@ -35,9 +35,9 @@ export i32 main(Sys sys) {
   string message = string.fromBytes(cli.arg(1).wait());
   Fs fs = Fs.onHost(cli, 0);
 
-  match (openRepo(fs, root + "/.git", root)) {
+  match (openRepo(fs, "\{root}/.git", root)) {
     NoRepo(why): {
-      core.warn("gitci: " + why);
+      core.warn("gitci: \{why}");
       return 1;
     }
     Opened(repo): {
@@ -50,7 +50,7 @@ export i32 main(Sys sys) {
       Vec<IndexEntry> index = Vec.create();
       match (writeWorkTree(repo, root, "", index)) {
         NotStored(why): {
-          core.warn("gitci: " + why);
+          core.warn("gitci: \{why}");
           return 1;
         }
         Named(tree): {
@@ -70,7 +70,7 @@ export i32 main(Sys sys) {
           // `.git/config` made this refuse to commit for very nearly everyone who has one configured.
           // `configChain` returns them lowest-precedence first and `configOf` takes the last, which is
           // git's answer per key — the local file over the dotfile over the XDG file over the system one.
-          Vec<Setting> settings = configChain(cli, fs, root + "/.git");
+          Vec<Setting> settings = configChain(cli, fs, "\{root}/.git");
           string who = configOf(settings, "user.name");
           string mail = configOf(settings, "user.email");
           if (who == "" || mail == "") {
@@ -99,10 +99,10 @@ export i32 main(Sys sys) {
             }
             if (ok) { when = parsed; }
           }
-          Who me = Who(who + " <" + mail + ">", when, zone);
+          Who me = Who("\{who} <\{mail}>", when, zone);
           match (commitTree(repo, tree, branch, me, message, index)) {
             NotStored(why): {
-              core.warn("gitci: " + why);
+              core.warn("gitci: \{why}");
               return 1;
             }
             Named(commit): {

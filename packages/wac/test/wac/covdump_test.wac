@@ -23,7 +23,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, freshDir, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std";
 import { manifestIn } from "../../../wacc/src/manifest.wac";
 
@@ -106,30 +105,30 @@ export string test_covdump_builds_a_world_so_a_grant_is_refused_rather_than_abse
   string dir = scratch(cli, "covdump-world");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  Change wrote = cli.writeFile(dir + "/reader.wac", READER.toBytes()).wait();
-  t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
+  Change wrote = cli.writeFile("\{dir}/reader.wac", READER.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the entry — \{wrote.message}");
   if (!wrote.ok()) { return t.report(); }
 
-  Exec granted = build(cli, dir + "/reader.wac", dir + "/yes", "--allow-read");
-  Exec sealed = build(cli, dir + "/reader.wac", dir + "/no", "");
-  t.eqI32(granted.status, 0, "granted build: " + string.fromBytes(granted.stderr));
-  t.eqI32(sealed.status, 0, "sealed build: " + string.fromBytes(sealed.stderr));
+  Exec granted = build(cli, "\{dir}/reader.wac", "\{dir}/yes", "--allow-read");
+  Exec sealed = build(cli, "\{dir}/reader.wac", "\{dir}/no", "");
+  t.eqI32(granted.status, 0, "granted build: \{string.fromBytes(granted.stderr)}");
+  t.eqI32(sealed.status, 0, "sealed build: \{string.fromBytes(sealed.stderr)}");
   if (granted.status != 0 || sealed.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
   // **Granted: it reads.** Instantiating with no imports could not get this far at all — the failure
   // was `an import it wants is missing`, before the program ran.
-  Exec ran = dump(cli, ["covdump", dir + "/yes.wasm"]);
-  t.isTrue(ran.ran(), "covdump did not run — " + ran.error);
+  Exec ran = dump(cli, ["covdump", "\{dir}/yes.wasm"]);
+  t.isTrue(ran.ran(), "covdump did not run — \{ran.error}");
   string said = string.fromBytes(ran.stdout) + string.fromBytes(ran.stderr);
-  t.isTrue(contains(said, "READ OK"), "a granted read should succeed: " + said);
-  t.isTrue(contains(said, "counter(s)"), "and the counters should still be printed: " + said);
+  t.isTrue(contains(said, "READ OK"), "a granted read should succeed: \{said}");
+  t.isTrue(contains(said, "counter(s)"), "and the counters should still be printed: \{said}");
 
   // **Ungranted: it is refused**, which is a different answer from not being able to ask.
-  Exec no = dump(cli, ["covdump", dir + "/no.wasm"]);
+  Exec no = dump(cli, ["covdump", "\{dir}/no.wasm"]);
   string saidNo = string.fromBytes(no.stdout) + string.fromBytes(no.stderr);
-  t.isTrue(contains(saidNo, "REFUSED"), "an ungranted read should be refused: " + saidNo);
+  t.isTrue(contains(saidNo, "REFUSED"), "an ungranted read should be refused: \{saidNo}");
   t.isTrue(!contains(saidNo, "import it wants is missing"),
-           "and refused is not the same as uninstantiable: " + saidNo);
+           "and refused is not the same as uninstantiable: \{saidNo}");
 
   // The exit status is about the dump. `main` returns 77 in both.
   t.eqI32(ran.status, 0, "a printed table is a success whatever main returned");
@@ -144,34 +143,34 @@ export string test_covdump_calls_each_named_export_and_catches_its_trap(Core cor
   string dir = scratch(cli, "covdump-exports");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  Change wrote = cli.writeFile(dir + "/trapper.wac", TRAPPER.toBytes()).wait();
-  t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
+  Change wrote = cli.writeFile("\{dir}/trapper.wac", TRAPPER.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the entry — \{wrote.message}");
   if (!wrote.ok()) { return t.report(); }
-  Exec made = build(cli, dir + "/trapper.wac", dir + "/t", "");
-  t.eqI32(made.status, 0, "build: " + string.fromBytes(made.stderr));
+  Exec made = build(cli, "\{dir}/trapper.wac", "\{dir}/t", "");
+  t.eqI32(made.status, 0, "build: \{string.fromBytes(made.stderr)}");
   if (made.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
   // `main` alone never reaches `guard`'s trap, so its `then` stays at zero.
-  Exec alone = dump(cli, ["covdump", dir + "/t.wasm"]);
-  t.isTrue(alone.ran(), "covdump did not run — " + alone.error);
+  Exec alone = dump(cli, ["covdump", "\{dir}/t.wasm"]);
+  t.isTrue(alone.ran(), "covdump did not run — \{alone.error}");
   i32 without = nonZero(string.fromBytes(alone.stdout));
 
   // **Both trapping exports, and the second one proves the first did not end the run.** A trap ends
   // the function it is in and leaves the instance usable; before this, one `main` could hold at most
   // one trapping case and everything after it was lost.
-  Exec both = dump(cli, ["covdump", dir + "/t.wasm", "first", "second"]);
-  t.isTrue(both.ran(), "covdump did not run — " + both.error);
+  Exec both = dump(cli, ["covdump", "\{dir}/t.wasm", "first", "second"]);
+  t.isTrue(both.ran(), "covdump did not run — \{both.error}");
   i32 with = nonZero(string.fromBytes(both.stdout));
   t.isTrue(with > without,
-           "calling the trapping exports should cover more: " + string.fromBytes(both.stdout));
-  t.eqI32(both.status, 0, "a caught trap is not a failure: " + string.fromBytes(both.stderr));
+           "calling the trapping exports should cover more: \{string.fromBytes(both.stdout)}");
+  t.eqI32(both.status, 0, "a caught trap is not a failure: \{string.fromBytes(both.stderr)}");
 
   // A name that is not an export is **named**, because silence reads as a package with no coverage.
-  Exec bogus = dump(cli, ["covdump", dir + "/t.wasm", "first", "zzz_nope"]);
+  Exec bogus = dump(cli, ["covdump", "\{dir}/t.wasm", "first", "zzz_nope"]);
   t.isTrue(contains(string.fromBytes(bogus.stderr), "zzz_nope"),
-           "a mistyped export should be named: " + string.fromBytes(bogus.stderr));
+           "a mistyped export should be named: \{string.fromBytes(bogus.stderr)}");
   t.isTrue(contains(string.fromBytes(bogus.stdout), "counter(s)"),
-           "and the counters still printed: " + string.fromBytes(bogus.stdout));
+           "and the counters still printed: \{string.fromBytes(bogus.stdout)}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -189,24 +188,24 @@ export string test_covdump_says_when_a_module_carries_no_counters(Core core, Cli
   string dir = scratch(cli, "covdump-plain");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  Change wrote = cli.writeFile(dir + "/m.wac",
+  Change wrote = cli.writeFile("\{dir}/m.wac",
     "export i32 main() { return 0; }\n".toBytes()).wait();
-  t.isTrue(wrote.ok(), "could not write the source — " + wrote.message);
+  t.isTrue(wrote.ok(), "could not write the source — \{wrote.message}");
   if (!wrote.ok()) { return t.report(); }
 
   // Built *without* `--coverage`, which is the whole point.
   Exec built = cli.exec(binaryPath(cli),
-    ["build", dir + "/m.wac", "-o", dir + "/m", "--quiet"], u8[]()).wait();
-  t.eqI32(built.status, 0, "build: " + string.fromBytes(built.stderr));
+    ["build", "\{dir}/m.wac", "-o", "\{dir}/m", "--quiet"], u8[]()).wait();
+  t.eqI32(built.status, 0, "build: \{string.fromBytes(built.stderr)}");
   if (built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
-  Exec r = dump(cli, ["covdump", dir + "/m.wasm"]);
+  Exec r = dump(cli, ["covdump", "\{dir}/m.wasm"]);
   t.eqI32(r.status, 1, "a module built without coverage is an error");
   t.isTrue(contains(string.fromBytes(r.stderr), "carries no counters"),
-           "and says so: " + string.fromBytes(r.stderr));
+           "and says so: \{string.fromBytes(r.stderr)}");
 
   Exec bare = dump(cli, ["covdump"]);
-  t.eqI32(bare.status, 2, "no arguments is usage, not failure: " + string.fromBytes(bare.stderr));
+  t.eqI32(bare.status, 2, "no arguments is usage, not failure: \{string.fromBytes(bare.stderr)}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -232,38 +231,38 @@ export string test_covdump_sweeps_one_export_across_a_range_of_cases(Core core, 
   string dir = scratch(cli, "covdump-sweep");
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  Change wrote = cli.writeFile(dir + "/sweeper.wac", SWEEPER.toBytes()).wait();
-  t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
+  Change wrote = cli.writeFile("\{dir}/sweeper.wac", SWEEPER.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the entry — \{wrote.message}");
   if (!wrote.ok()) { return t.report(); }
-  Exec made = build(cli, dir + "/sweeper.wac", dir + "/s", "");
-  t.eqI32(made.status, 0, "build: " + string.fromBytes(made.stderr));
+  Exec made = build(cli, "\{dir}/sweeper.wac", "\{dir}/s", "");
+  t.eqI32(made.status, 0, "build: \{string.fromBytes(made.stderr)}");
   if (made.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
   // `main` returns 0 and touches none of the cases.
-  i32 alone = nonZero(string.fromBytes(dump(cli, ["covdump", dir + "/s.wasm"]).stdout));
+  i32 alone = nonZero(string.fromBytes(dump(cli, ["covdump", "\{dir}/s.wasm"]).stdout));
 
   // One call, so exactly the `i == 1` case and its trap. Everything after it is lost, which is what
   // the range is for.
-  Exec once = dump(cli, ["covdump", dir + "/s.wasm", "sweep"]);
+  Exec once = dump(cli, ["covdump", "\{dir}/s.wasm", "sweep"]);
   i32 first = nonZero(string.fromBytes(once.stdout));
-  t.isTrue(first > alone, "calling sweep once covers more than main: " + string.fromBytes(once.stdout));
+  t.isTrue(first > alone, "calling sweep once covers more than main: \{string.fromBytes(once.stdout)}");
 
   // **Eight cases, three of which trap, and the trapping ones are not last.** A run that stopped at
   // the first trap would report the same number as the single call above.
-  Exec swept = dump(cli, ["covdump", dir + "/s.wasm", "sweep:8"]);
-  t.isTrue(swept.ran(), "covdump did not run — " + swept.error);
-  t.eqI32(swept.status, 0, "a caught trap is not a failure: " + string.fromBytes(swept.stderr));
+  Exec swept = dump(cli, ["covdump", "\{dir}/s.wasm", "sweep:8"]);
+  t.isTrue(swept.ran(), "covdump did not run — \{swept.error}");
+  t.eqI32(swept.status, 0, "a caught trap is not a failure: \{string.fromBytes(swept.stderr)}");
   i32 all = nonZero(string.fromBytes(swept.stdout));
   t.isTrue(all > first,
-           "a sweep must reach past its first trap — got " + itoa(all) + " counters against " +
-           itoa(first) + " for one call:\n" + string.fromBytes(swept.stdout) +
+           "a sweep must reach past its first trap — got \{all} counters against " +
+           "\{first} for one call:\n\{string.fromBytes(swept.stdout)}" +
            string.fromBytes(swept.stderr));
 
   // A count that is not a number is a usage error rather than a sweep of nothing.
-  Exec bad = dump(cli, ["covdump", dir + "/s.wasm", "sweep:many"]);
-  t.eqI32(bad.status, 2, "a count that is not one is usage: " + string.fromBytes(bad.stderr));
+  Exec bad = dump(cli, ["covdump", "\{dir}/s.wasm", "sweep:many"]);
+  t.eqI32(bad.status, 2, "a count that is not one is usage: \{string.fromBytes(bad.stderr)}");
   t.isTrue(contains(string.fromBytes(bad.stderr), "many"),
-           "and says what it could not read: " + string.fromBytes(bad.stderr));
+           "and says what it could not read: \{string.fromBytes(bad.stderr)}");
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -293,35 +292,35 @@ export string test_a_coverage_build_declares_its_injected_exports(Core core, Cli
   string dir = scratch(cli, "covdump-manifest");
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  t.isTrue(made.ok(), "could not make \{dir} — \{made.message}");
   if (!made.ok()) { return t.report(); }
 
-  t.eqStr(putFile(cli, dir + "/m.wac",
+  t.eqStr(putFile(cli, "\{dir}/m.wac",
                   "export i32 twice(i32 n) { if (n > 0) { return n * 2; } return 0; }\n" +
                   "export i32 main() { return twice(3); }\n"), "", "wrote the entry");
-  Exec built = build(cli, dir + "/m.wac", dir + "/m", "");
+  Exec built = build(cli, "\{dir}/m.wac", "\{dir}/m", "");
   t.isTrue(built.ran() && built.status == 0,
-           "the coverage build failed — " + built.error + string.fromBytes(built.stderr));
+           "the coverage build failed — \{built.error}\{string.fromBytes(built.stderr)}");
   if (!built.ran() || built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
-  FileResult art = cli.readFile(dir + "/m.wasm").wait();
-  t.isTrue(art.ok, "could not read the artefact — " + art.error);
+  FileResult art = cli.readFile("\{dir}/m.wasm").wait();
+  t.isTrue(art.ok, "could not read the artefact — \{art.error}");
   if (!art.ok) { cli.remove(dir, true).wait(); return t.report(); }
   string man = manifestIn(art.bytes);
   t.isTrue(man != "", "the artefact carries no wac.manifest section at all");
   // The three, by name. `__cov_init` first because it is the one with no return type, which is the
   // shape `sigsWithCounters` spells with an empty cell and the one a hand-written table gets wrong.
-  t.isTrue(contains(man, "__cov_init"), "the manifest does not declare __cov_init: " + man);
-  t.isTrue(contains(man, "__cov_len"), "the manifest does not declare __cov_len: " + man);
-  t.isTrue(contains(man, "__cov_get"), "the manifest does not declare __cov_get: " + man);
+  t.isTrue(contains(man, "__cov_init"), "the manifest does not declare __cov_init: \{man}");
+  t.isTrue(contains(man, "__cov_len"), "the manifest does not declare __cov_len: \{man}");
+  t.isTrue(contains(man, "__cov_get"), "the manifest does not declare __cov_get: \{man}");
   // The canary: a plain build must *not* declare them, or the assertions above pass on a manifest
   // that names everything and the fix could be "list these three always".
   Exec plain = cli.exec(binaryPath(cli),
-                        ["build", dir + "/m.wac", "-o", dir + "/p", "--quiet"],
+                        ["build", "\{dir}/m.wac", "-o", "\{dir}/p", "--quiet"],
                         u8[]()).wait();
-  t.isTrue(plain.ran() && plain.status == 0, "the plain build failed — " + plain.error);
+  t.isTrue(plain.ran() && plain.status == 0, "the plain build failed — \{plain.error}");
   if (plain.ran() && plain.status == 0) {
-    FileResult pl = cli.readFile(dir + "/p.wasm").wait();
+    FileResult pl = cli.readFile("\{dir}/p.wasm").wait();
     if (pl.ok) {
       t.isTrue(!contains(manifestIn(pl.bytes), "__cov_"),
                "a build with no --coverage declared counter exports it does not have");

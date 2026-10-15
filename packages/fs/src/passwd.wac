@@ -62,7 +62,7 @@ export User userNamed(Vec<User> users, string name) {
  */
 export string authorizedKeysOf(User u) {
   if (u.home == "") { return ""; }
-  return u.home + "/.ssh/authorized_keys";
+  return "\{u.home}/.ssh/authorized_keys";
 }
 
 /** A line, if it is one: at least a name and enough fields to find the home. */

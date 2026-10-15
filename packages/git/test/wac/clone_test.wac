@@ -27,7 +27,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { withEnv, quoted } from "../../../wactest/src/childenv.wac";
@@ -96,7 +95,7 @@ string fieldAfter(string[] lines, string tail, i32 which) {
     i32 sp = line.indexOf(" ");
     if (sp <= 0) { continue; }
     string rest = line.slice(sp + 1, line.len());
-    if (!startsWith(rest, tail + " ") && rest != tail) { continue; }
+    if (!startsWith(rest, "\{tail} ") && rest != tail) { continue; }
     if (which == 0) { return line.slice(0, sp); }
     return rest.len() > tail.len() ? rest.slice(tail.len() + 1, rest.len()) : "";
   }
@@ -122,13 +121,13 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
     i32 end = marker + 1;
     while (end < cwd.len() && cwd.slice(end, end + 1) != "/") { end = end + 1; }
     while (end < cwd.len() && cwd.slice(end, end + 1) == "/") { end = end + 1; }
-    suffix = "-" + cwd.slice(marker + 1, end - 1);
+    suffix = "-\{cwd.slice(marker + 1, end - 1)}";
   }
-  string dir = "/tmp/wac-git-clone" + suffix;
+  string dir = "/tmp/wac-git-clone\{suffix}";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  string wac = cwd + "/native/v8/target/release/wac";
+  string wac = "\{cwd}/native/v8/target/release/wac";
   Exec r = withEnv(cli, names, values, wac,
                    [
                                          builtProgram(cli, "packages/git/example/gitclone.wac", "gitclone",
@@ -139,7 +138,7 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
                             REMOTE, dir, "1"
                    ]);
   string warned = trimmedEnd(string.fromBytes(r.stderr));
-  t.eqI32(r.status, 0, "gitclone failed: " + warned);
+  t.eqI32(r.status, 0, "gitclone failed: \{warned}");
   if (r.status != 0) { return t.report(); }
   string[] said = splitLines(trimmedEnd(string.fromBytes(r.stdout)));
 
@@ -149,16 +148,16 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
   i32 files = count(fieldAfter(said, "files on", 0));
   string branch = fieldAfter(said, "files on", 1);
   t.isTrue(objects > 100,
-           "a pack of " + itoa(objects) + " objects is too small to be this repository's");
-  t.isTrue(files > 100, "a checkout of " + itoa(files) + " files is too small");
-  t.isTrue(startsWith(branch, "refs/heads/"), "the branch is \"" + branch + "\"");
+           "a pack of \{objects} objects is too small to be this repository's");
+  t.isTrue(files > 100, "a checkout of \{files} files is too small");
+  t.isTrue(startsWith(branch, "refs/heads/"), "the branch is \"\{branch}\"");
 
   // `git -C dir …`. No identity is needed: nothing here commits.
   string[] noNames = string[].filled(0, "");
 
   // **git's verdict on the objects.** Clean means every object is there and every link resolves.
   Exec fsck = cli.exec("git", ["-C", dir, "fsck"], u8[]()).wait();
-  t.eqI32(fsck.status, 0, "git fsck refused the clone: " + string.fromBytes(fsck.stderr));
+  t.eqI32(fsck.status, 0, "git fsck refused the clone: \{string.fromBytes(fsck.stderr)}");
 
   // **git's verdict on the working tree: nothing to report at all.**
   //
@@ -184,7 +183,7 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
   t.isTrue(executables > 0,
            "the clone's index holds no executable, so the mode is not being tested by this at all");
   t.isTrue(warned.indexOf("wanted the executable bit") < 0,
-           "the program still warns about modes it can set: " + warned);
+           "the program still warns about modes it can set: \{warned}");
 
   Exec status = cli.exec("git", ["-C", dir, "status", "--porcelain"], u8[]()).wait();
   t.eqStr(trimmedEnd(string.fromBytes(status.stdout)), "",
@@ -193,9 +192,9 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
   // And on disk rather than merely in the index, since a wrong index and a wrong file agree. `test -x`
   // because `Stat` carries no mode — `issues/system/0132`'s reading half.
   if (firstExec != "") {
-    Exec x = cli.exec("/bin/sh", ["-c", "test -x " + quoted(dir + "/" + firstExec)],
+    Exec x = cli.exec("/bin/sh", ["-c", "test -x " + quoted("\{dir}/\{firstExec}")],
                       u8[]()).wait();
-    t.eqI32(x.status, 0, firstExec + " is 100755 in the index but not executable on disk");
+    t.eqI32(x.status, 0, "\{firstExec} is 100755 in the index but not executable on disk");
   }
 
   // HEAD is symbolic and resolves — a clone whose HEAD named a branch that did not exist would still
@@ -207,7 +206,7 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
            "HEAD does not resolve: " + trimmedEnd(string.fromBytes(resolved.stdout)));
 
   // The pack is named the way git names one: the stem is the pack's own trailing SHA-1.
-  string[]? packs = cli.readDir(dir + "/.git/objects/pack").wait();
+  string[]? packs = cli.readDir("\{dir}/.git/objects/pack").wait();
   t.isTrue(packs is not null, "the pack directory is listable");
   if (packs is not null) {
     string[] entries = packs!;
@@ -218,31 +217,31 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
     }
     t.isTrue(stem != "", "no .pack in the pack directory");
     if (stem != "") {
-      FileResult packFile = cli.readFile(dir + "/.git/objects/pack/" + stem + ".pack").wait();
-      t.isTrue(packFile.ok, "the pack is readable — " + packFile.error);
+      FileResult packFile = cli.readFile("\{dir}/.git/objects/pack/\{stem}.pack").wait();
+      t.isTrue(packFile.ok, "the pack is readable — \{packFile.error}");
       if (packFile.ok) {
         u8[] b = packFile.bytes;
-        t.eqStr(stem, "pack-" + hex(slice(b, b.len() - 20, b.len())),
+        t.eqStr(stem, "pack-\{hex(slice(b, b.len() - 20, b.len()))}",
                 "the pack's name is not its own trailing hash");
       }
     }
   }
 
   // **The shape that makes this a shallow clone, and the canary that says the file matters.**
-  FileResult shallow = cli.readFile(dir + "/.git/shallow").wait();
-  t.isTrue(shallow.ok, ".git/shallow is readable — " + shallow.error);
+  FileResult shallow = cli.readFile("\{dir}/.git/shallow").wait();
+  t.isTrue(shallow.ok, ".git/shallow is readable — \{shallow.error}");
   if (shallow.ok) {
     string[] grafts = splitLines(trimmedEnd(string.fromBytes(shallow.bytes)));
     t.isTrue(grafts.len() > 0 && isObjectName(grafts[0]),
              ".git/shallow does not hold an object name");
   }
-  cli.rename(dir + "/.git/shallow", dir + "/.git/shallow.away").wait();
+  cli.rename("\{dir}/.git/shallow", "\{dir}/.git/shallow.away").wait();
   Exec without = cli.exec("git", ["-C", dir, "fsck"], u8[]()).wait();
   string complaint = string.fromBytes(without.stdout) + string.fromBytes(without.stderr);
   t.isTrue(without.status != 0 || complaint.indexOf("broken link") >= 0 ||
            complaint.indexOf("missing commit") >= 0,
            "removing .git/shallow left git happy, so that file is not what makes this clone valid");
-  cli.rename(dir + "/.git/shallow.away", dir + "/.git/shallow").wait();
+  cli.rename("\{dir}/.git/shallow.away", "\{dir}/.git/shallow").wait();
   t.eqI32(cli.exec("git", ["-C", dir, "fsck"], u8[]()).wait().status, 0,
           "putting .git/shallow back did not restore fsck");
 

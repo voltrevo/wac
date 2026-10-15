@@ -25,7 +25,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { p256Verify, p256VerifyDigest, p256Sign, p256PublicKey, p256Ecdh, p256Decodes, p256Order, p256ScalarBase,
          p256Reencode } from "../../src/p256.wac";
 import { p384Verify, p384VerifyDigest, p384Order } from "../../src/p384.wac";
@@ -90,7 +89,7 @@ export string test_public_keys_match_the_host(Core core, Cli cli) {
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < 8; i++) {
     t.eqBytes(p256PublicKey(scalarOf(a.lines[i])), pointOf(a.lines[i]),
-              "P-256 public key " + itoa64(i as i64));
+              "P-256 public key \{i as i64}");
   }
   return t.report();
 }
@@ -100,19 +99,19 @@ export string test_we_verify_the_hosts_signatures(Core core, Cli cli) {
   // it once a bit moves, or "accepts everything" would pass the first half.
   T t = T.create();
   Lines lines = Lines.create();
-  for (i32 i = 0; i < 6; i++) { lines.add("ecgensign 256 " + hex(fill(20 + i, i))); }
+  for (i32 i = 0; i < 6; i++) { lines.add("ecgensign 256 \{hex(fill(20 + i, i))}"); }
   Answers a = askEc(t, cli, lines, "six signed P-256 keypairs");
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < 6; i++) {
     u8[] pub = pointOf(a.lines[i]);
     u8[] sig = sigOf(a.lines[i]);
     u8[] msg = fill(20 + i, i);
-    t.isTrue(p256Verify(pub, msg, sig), "P-256 accepts the host's signature " + itoa64(i as i64));
+    t.isTrue(p256Verify(pub, msg, sig), "P-256 accepts the host's signature \{i as i64}");
 
     u8[] bad = u8[].filled(64, 0);
     for (i32 j = 0; j < 64; j++) { bad[j] = sig[j]; }
     bad[i % 64] = bad[i % 64] ^ 1;
-    t.isFalse(p256Verify(pub, msg, bad), "and refuses it altered " + itoa64(i as i64));
+    t.isFalse(p256Verify(pub, msg, bad), "and refuses it altered \{i as i64}");
   }
   return t.report();
 }
@@ -136,8 +135,8 @@ export string test_the_host_verifies_ours(Core core, Cli cli) {
     u8[] msg = fill(30 + i, i + 5);
     u8[] k = fill(32, i + 77);
     u8[] sig = p256Sign(priv, msg, k);
-    t.eqI32(sig.len(), 64, "signing produced a signature at round " + itoa64(i as i64));
-    lines.add("ecverify 256 " + hex(pub) + " " + hex(sig) + " " + hex(msg) + " 1");
+    t.eqI32(sig.len(), 64, "signing produced a signature at round \{i as i64}");
+    lines.add("ecverify 256 \{hex(pub)} \{hex(sig)} \{hex(msg)} 1");
   }
   askEc(t, cli, lines, "the host verifies ours");
   return t.report();
@@ -148,7 +147,7 @@ export string test_p384_verifies_the_hosts_signatures(Core core, Cli cli) {
   // verification-only here, so this is the only direction available.
   T t = T.create();
   Lines gen = Lines.create();
-  for (i32 i = 0; i < 5; i++) { gen.add("ecgensign 384 " + hex(fill(40 + i, i + 9))); }
+  for (i32 i = 0; i < 5; i++) { gen.add("ecgensign 384 \{hex(fill(40 + i, i + 9))}"); }
   Answers a = askEc(t, cli, gen, "five signed P-384 keypairs");
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < 5; i++) {
@@ -157,12 +156,12 @@ export string test_p384_verifies_the_hosts_signatures(Core core, Cli cli) {
     u8[] msg = fill(40 + i, i + 9);
     u8[] sig = sigOf(a.lines[i]);
     t.eqI32(sig.len(), 96, "P-384 signature is 96 bytes");
-    t.isTrue(p384Verify(pub, msg, sig), "P-384 accepts the host's signature " + itoa64(i as i64));
+    t.isTrue(p384Verify(pub, msg, sig), "P-384 accepts the host's signature \{i as i64}");
 
     u8[] bad = u8[].filled(96, 0);
     for (i32 j = 0; j < 96; j++) { bad[j] = sig[j]; }
     bad[(i * 7) % 96] = bad[(i * 7) % 96] ^ 1;
-    t.isFalse(p384Verify(pub, msg, bad), "and refuses it altered " + itoa64(i as i64));
+    t.isFalse(p384Verify(pub, msg, bad), "and refuses it altered \{i as i64}");
   }
   return t.report();
 }
@@ -175,7 +174,7 @@ export string test_ecdh_agrees_from_both_ends() {
     u8[] a = fill(32, i + 41);
     u8[] b = fill(32, i + 51);
     u8[] shared = p256Ecdh(a, p256PublicKey(b));
-    t.eqBytes(shared, p256Ecdh(b, p256PublicKey(a)), "both ends agree " + itoa64(i as i64));
+    t.eqBytes(shared, p256Ecdh(b, p256PublicKey(a)), "both ends agree \{i as i64}");
     t.eqI32(shared.len(), 32, "the secret is the x-coordinate alone");
     t.isFalse(equal(shared, p256Ecdh(a, p256PublicKey(fill(32, i + 61)))),
               "and a different peer gives a different secret");
@@ -330,7 +329,7 @@ u8[] oneAt(i32 width, i32 v) {
 }
 
 void claimFp(Lines lines, string curve, string what, u8[] a, u8[] b, u8[] got) {
-  lines.add("fp " + curve + " " + what + " " + hex(a) + " " + hex(b) + " " + hex(got));
+  lines.add("fp \{curve} \{what} \{hex(a)} \{hex(b)} \{hex(got)}");
 }
 
 export string test_the_fields_agree_with_bigint(Core core, Cli cli) {
@@ -370,7 +369,7 @@ export string test_inversion_agrees_with_bigint_and_undoes_multiplication(Core c
       // inversion that agreed with a wrong reference.
       if (!fpIsZero(a)) {
         t.isTrue(fpEquals(fpMul(a, fpInvert(a)), fpOne(a.len())),
-                 curves[c] + ": a times its inverse is one, at corpus index " + itoa64(i as i64));
+                 "\{curves[c]}: a times its inverse is one, at corpus index \{i as i64}");
       }
     }
   }
@@ -386,7 +385,7 @@ export string test_inversion_agrees_with_bigint_and_undoes_multiplication(Core c
 /** A 32-byte scalar from a hex literal, left-padded. */
 u8[] nistScalar(string h) {
   string padded = h;
-  while (padded.len() < 64) { padded = "0" + padded; }
+  while (padded.len() < 64) { padded = "0\{padded}"; }
   return decodedHex(padded);
 }
 
@@ -441,8 +440,8 @@ export string test_a_p384_signature_is_rejected_under_the_wrong_key(Core core, C
   T t = T.create();
   u8[] msg = "the same message under two keys".toBytes();
   Lines lines = Lines.create();
-  lines.add("ecgensign 384 " + hex(msg));
-  lines.add("ecgensign 384 " + hex(msg));
+  lines.add("ecgensign 384 \{hex(msg)}");
+  lines.add("ecgensign 384 \{hex(msg)}");
   Answers a = ask(t, cli, "node", [CRYPTO_ORACLE], lines, "two P-384 keys and signatures");
   if (!a.ok) { return t.report(); }
 
@@ -461,7 +460,7 @@ export string test_a_sha256_digest_under_a_p384_key_is_right_aligned(Core core, 
   T t = T.create();
   u8[] msg = "a short digest under a long curve".toBytes();
   Lines lines = Lines.create();
-  lines.add("ecgensign 384 " + hex(msg) + " sha256");
+  lines.add("ecgensign 384 \{hex(msg)} sha256");
   Answers a = ask(t, cli, "node", [CRYPTO_ORACLE], lines, "a SHA-256 signature on P-384");
   if (!a.ok) { return t.report(); }
   t.isTrue(p384VerifyDigest(decodedHex(word(a.lines[0], 2)), sha256(msg),
@@ -541,7 +540,7 @@ export string test_a_point_is_recognised_as_on_the_curve_or_not() {
   for (i32 k = 1; k < 6; k++) {
     u8[] pub = p256PublicKey(u8[].filled(32, k as@ u8));
     t.eqI32(pub.len(), 65, "a public key is not 65 uncompressed bytes");
-    t.isTrue(p256Decodes(pub), "a point this package generated was not recognised, k = " + itoa64(k as i64));
+    t.isTrue(p256Decodes(pub), "a point this package generated was not recognised, k = \{k as i64}");
   }
 
   u8[] good = p256PublicKey(u8[].filled(32, 0x11));

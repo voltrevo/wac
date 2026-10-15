@@ -24,14 +24,13 @@ import { tlsServerInit, tlsServerInitRsa, tlsServerFeed, tlsServerSend, tlsServe
          tlsPhase, tlsRecordNeeded } from "../../src/server.wac";
 import { clientStep, ClientStep } from "../../src/client.wac";
 import { Buf } from "core";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** What a test matches on, unless it names its own. Fixed, so an assertion can name the bytes. */
 static string DEFAULT_BODY = "hello from the wac server\n";
 
 string reply(string body) {
   return "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n" +
-         "content-length: " + itoa(body.len()) + "\r\nconnection: close\r\n\r\n" + body;
+         "content-length: \{body.len()}\r\nconnection: close\r\n\r\n\{body}";
 }
 
 /** Whole records only, the same discipline the client keeps, for the same reason. */
@@ -73,7 +72,7 @@ void serve(Core core, Cli cli, i32 handle, Identity id, string body) {
     match (cli.recv(handle).wait()) {
       Data(bytes): { raw.pushAll(bytes); more = true; }
       End: { }
-      Failed(why): { core.warn("tlsserved: recv: " + why); }
+      Failed(why): { core.warn("tlsserved: recv: \{why}"); }
     }
     if (!more) { break; }
 
@@ -91,7 +90,7 @@ void serve(Core core, Cli cli, i32 handle, Identity id, string body) {
       // What the peer asked for, on the log, because one case checks that the request *arrived* —
       // "the client got a reply" and "the server read the request" are different claims and a server
       // answering a fixed page satisfies the first without the second.
-      core.log("tlsserved: received " + firstLine(string.fromBytes(st.appData)));
+      core.log("tlsserved: received \{firstLine(string.fromBytes(st.appData))}");
       ClientStep out = clientStep(tlsServerSend(state, reply(body).toBytes()));
       state = out.state;
       cli.send(handle, out.toSend).wait();
@@ -154,27 +153,27 @@ export i32 main(Sys sys) {
     }
   } else {
     id.rsa = true;
-    id.cert = cli.readFile(rsaDir + "/cert.der").wait().bytes;
-    id.n = cli.readFile(rsaDir + "/n.bin").wait().bytes;
-    id.d = cli.readFile(rsaDir + "/d.bin").wait().bytes;
+    id.cert = cli.readFile("\{rsaDir}/cert.der").wait().bytes;
+    id.n = cli.readFile("\{rsaDir}/n.bin").wait().bytes;
+    id.d = cli.readFile("\{rsaDir}/d.bin").wait().bytes;
     if (id.cert.len() == 0 || id.n.len() == 0 || id.d.len() == 0) {
-      core.warn("tlsserved: " + rsaDir + " does not hold cert.der, n.bin and d.bin");
+      core.warn("tlsserved: \{rsaDir} does not hold cert.der, n.bin and d.bin");
       return 1;
     }
   }
 
   Socket listener = cli.listen("127.0.0.1", port).wait();
   if (listener.handle < 0) {
-    core.warn("tlsserved: listen: " + listener.error);
+    core.warn("tlsserved: listen: \{listener.error}");
     return 1;
   }
   // The port goes to standard output because the caller asked for zero and cannot otherwise learn
   // which one it got — the same reason `dird` prints its own.
-  core.log("tlsserved: listening on 127.0.0.1:" + itoa(listener.port));
+  core.log("tlsserved: listening on 127.0.0.1:\{listener.port}");
 
   for (i32 served = 0; served < 1000; served++) {
     Socket conn = cli.accept(listener.handle).wait();
-    if (conn.handle < 0) { core.warn("tlsserved: accept: " + conn.error); break; }
+    if (conn.handle < 0) { core.warn("tlsserved: accept: \{conn.error}"); break; }
     serve(core, cli, conn.handle, id, body);
   }
   cli.closeSocket(listener.handle);

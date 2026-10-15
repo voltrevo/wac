@@ -15,7 +15,6 @@
 // wants a connection object with state, which is a different shape from this function.
 
 import { Cli, Socket } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { Incoming, ParsedResponse, parseResponse } from "./incoming.wac";
 import { Headers } from "./headers.wac";
 
@@ -41,15 +40,15 @@ export struct Fetched {
 export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
                        u8[] body, string contentType) {
   Socket s = cli.connect(host, port).wait();
-  if (s.handle < 0) { return failed(host + ": " + s.error); }
+  if (s.handle < 0) { return failed("\{host}: \{s.error}"); }
 
-  string head = string.fromBytes(method) + " " + path + " HTTP/1.1\r\n"
-    + "Host: " + host + "\r\n"
+  string head = "\{string.fromBytes(method)} \{path} HTTP/1.1\r\n"
+    + "Host: \{host}\r\n"
     + "User-Agent: wac\r\n"
     + "Connection: close\r\n";
   if (body.len() > 0) {
-    head = head + "Content-Type: " + contentType + "\r\n"
-         + "Content-Length: " + itoa(body.len()) + "\r\n";
+    head = head + "Content-Type: \{contentType}\r\n"
+         + "Content-Length: \{body.len()}\r\n";
   }
   head = head + "\r\n";
 
@@ -60,7 +59,7 @@ export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
 
   if (!cli.send(s.handle, out).wait()) {
     cli.closeSocket(s.handle);
-    return failed(host + ": cannot send the request");
+    return failed("\{host}: cannot send the request");
   }
 
   u8[] all = u8[]();
@@ -76,11 +75,11 @@ export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
   cli.closeSocket(s.handle);
   // A connection that failed halfway is not a short body. With `Connection: close` the body's end is the
   // socket's end, so this is exactly the case that would otherwise parse as a whole small page.
-  if (why != "") { return failed(host + ": " + why); }
+  if (why != "") { return failed("\{host}: \{why}"); }
 
   match (parseResponse(all, method, true, 1 << 26)) {
     Incomplete: { return failed("the response ended mid-message"); }
-    Bad(code): { return failed("unparseable response (" + itoa(code) + ")"); }
+    Bad(code): { return failed("unparseable response (\{code})"); }
     Ok(res): { return Fetched.of(true, res, ""); }
   }
 }

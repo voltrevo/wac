@@ -32,7 +32,7 @@ import { SIGINT, SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber, sign
 import { Chan } from "../../fs/src/remote.wac";
 import { serveOn } from "../../fs/src/serve.wac";
 // From `fmt`, where the one implementation lives — this package used to have its own copy.
-import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
+import { atoi } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "../../fs/src/path.wac";
 import { Arith, arithNotImplemented, errorToken, evaluate } from "./arith.wac";
 import { Fs } from "../../fs/src/fs.wac";
@@ -669,14 +669,14 @@ export struct Shell {
   }
 
   string lookUp(const this, string name) {
-    if (name == "?") { return itoa(this.status); }
+    if (name == "?") { return "\{this.status}"; }
     // `$$`, which the lexer already reads as a parameter named `$` — it simply had no value, so
     // `echo $$` printed an empty line where every other shell prints a number.
-    if (name == "$") { return itoa(this.pid); }
+    if (name == "$") { return "\{this.pid}"; }
     // `$!`, the most recent background pid. Empty rather than 0 before there has been one, which is
     // what bash answers — `echo [$!]` in a fresh shell prints `[]`.
-    if (name == "!") { return this.lastBgPid == 0 ? "" : itoa(this.lastBgPid); }
-    if (name == "#") { return itoa(this.params.len()); }
+    if (name == "!") { return this.lastBgPid == 0 ? "" : "\{this.lastBgPid}"; }
+    if (name == "#") { return "\{this.params.len()}"; }
     if (name == "@" || name == "*") {
       // **`$*` joins with the first character of `$IFS`**, and `$@` with a space. That is bash: `IFS=:`
       // makes `"$*"` `a:b:c`, and an empty `IFS` joins with nothing at all. This joined with a space
@@ -723,7 +723,7 @@ export struct Shell {
 export i32 runScript(Shell sh, string src) {
   Script script = parse(src);
   if (!script.ok) {
-    sh.err(("sh: " + script.error + "\n").toBytes());
+    sh.err("sh: \{script.error}\n".toBytes());
     return 2;
   }
   runList(sh, script.lists);
@@ -849,7 +849,7 @@ Output killBuiltin(Shell sh, Vec<string> argv) {
       string spec = argv.get(i + 1);
       i32 n = a == "-n" ? atoiOr(spec, -1) : signalNumber(spec);
       if (n <= 0 || signalName(n) == "") {
-        return Output.fail(("kill: " + spec + ": invalid signal specification\n").toBytes(), 1);
+        return Output.fail("kill: \{spec}: invalid signal specification\n".toBytes(), 1);
       }
       sig = n;
       i = i + 2;
@@ -860,7 +860,7 @@ Output killBuiltin(Shell sh, Vec<string> argv) {
     if (spec == "0") { sig = 0; i = i + 1; continue; }
     i32 n = isAllDigits(spec) ? atoiOr(spec, -1) : signalNumber(spec);
     if (n <= 0 || signalName(n) == "") {
-      return Output.fail(("kill: " + spec + ": invalid signal specification\n").toBytes(), 1);
+      return Output.fail("kill: \{spec}: invalid signal specification\n".toBytes(), 1);
     }
     sig = n;
     i = i + 1;
@@ -878,20 +878,20 @@ Output killBuiltin(Shell sh, Vec<string> argv) {
     if (given.len() > 0 && given.slice(0, 1) == "%") {
       i32 index = jobIndex(sh, given);
       if (index < 0) {
-        err.pushAll(("kill: " + given + ": no such job\n").toBytes());
+        err.pushAll("kill: \{given}: no such job\n".toBytes());
         status = 1;
         continue;
       }
       pid = sh.jobs.get(index).pid;
     } else if (!isAllDigits(given)) {
-      err.pushAll(("kill: " + given + ": arguments must be process or job IDs\n").toBytes());
+      err.pushAll("kill: \{given}: arguments must be process or job IDs\n".toBytes());
       status = 1;
       continue;
     } else {
       pid = atoiOr(given, -1);
     }
     if (!sh.fs.procs.has(pid)) {
-      err.pushAll(("kill: (" + given + ") - No such process\n").toBytes());
+      err.pushAll("kill: (\{given}) - No such process\n".toBytes());
       status = 1;
       continue;
     }
@@ -903,7 +903,7 @@ Output killBuiltin(Shell sh, Vec<string> argv) {
       continue;
     }
     if (signalStops(sig)) {
-      err.pushAll(("kill: " + signalName(sig) + " is not implemented: there is no job control here "
+      err.pushAll(("kill: \{signalName(sig)} is not implemented: there is no job control here "
                  + "to resume a stopped process\n").toBytes());
       status = 1;
       continue;
@@ -923,7 +923,7 @@ Output killBuiltin(Shell sh, Vec<string> argv) {
     }
     if (!sh.fs.procs.signal(pid, sig)) {
       // Present in the table but not running: a row that has exited and not been reaped.
-      err.pushAll(("kill: (" + given + ") - No such process\n").toBytes());
+      err.pushAll("kill: (\{given}) - No such process\n".toBytes());
       status = 1;
     }
   }
@@ -938,8 +938,8 @@ Output killList(Shell sh, Vec<string> argv, i32 from) {
     // by tabs, and the last column ends the line rather than carrying a trailing tab.
     string[] all = SIGNALS();
     for (i32 i = 0; i < all.len(); i++) {
-      string n = itoa(i + 1);
-      string cell = (n.len() < 2 ? " " + n : n) + ") SIG" + all[i];
+      string n = "\{i + 1}";
+      string cell = (n.len() < 2 ? " \{n}" : n) + ") SIG" + all[i];
       out.pushAll(cell.toBytes());
       out.pushAll(((i % 5 == 4 || i == all.len() - 1) ? "\n" : "\t").toBytes());
     }
@@ -953,20 +953,20 @@ Output killList(Shell sh, Vec<string> argv, i32 from) {
     if (isAllDigits(spec)) {
       string name = signalName(atoiOr(spec, -1));
       if (name == "") {
-        err.pushAll(("kill: " + spec + ": invalid signal specification\n").toBytes());
+        err.pushAll("kill: \{spec}: invalid signal specification\n".toBytes());
         status = 1;
         continue;
       }
-      out.pushAll((name + "\n").toBytes());
+      out.pushAll("\{name}\n".toBytes());
       continue;
     }
     i32 n = signalNumber(spec);
     if (n == 0) {
-      err.pushAll(("kill: " + spec + ": invalid signal specification\n").toBytes());
+      err.pushAll("kill: \{spec}: invalid signal specification\n".toBytes());
       status = 1;
       continue;
     }
-    out.pushAll((itoa(n) + "\n").toBytes());
+    out.pushAll("\{n}\n".toBytes());
   }
   return Output(out.take(), err.take(), status, true, false);
 }
@@ -1047,13 +1047,13 @@ void runBackground(Shell sh, AndOr list) {
   // divergence worth knowing about and is in the README rather than hidden here.
   string bgName = argv.get(0);
   if (sh.funcs.has(bgName)) {
-    sh.err(("sh: " + bgName + ": a shell function cannot be backgrounded: a background job is a "
+    sh.err(("sh: \{bgName}: a shell function cannot be backgrounded: a background job is a "
           + "separate instance of this program and functions are defined in this one\n").toBytes());
     sh.status = 2;
     return;
   }
   if (isBuiltin(bgName) && !containsSlash(bgName) && !programExists(sh, bgName)) {
-    sh.err(("sh: " + bgName + ": a builtin cannot be backgrounded: a background job is a separate "
+    sh.err(("sh: \{bgName}: a builtin cannot be backgrounded: a background job is a separate "
           + "instance of this program, and this build has no program of that name\n").toBytes());
     sh.status = 2;
     return;
@@ -1061,7 +1061,7 @@ void runBackground(Shell sh, AndOr list) {
 
   PathFault badBg = pathFault(sh, argv.get(0));
   if (badBg.status != 0) {
-    sh.err(("sh: " + argv.get(0) + ": " + badBg.why + "\n").toBytes());
+    sh.err("sh: \{argv.get(0)}: \{badBg.why}\n".toBytes());
     sh.status = badBg.status;
     return;
   }
@@ -1075,7 +1075,7 @@ void runBackground(Shell sh, AndOr list) {
     return;
   }
   if (kid.handle < 0) {
-    sh.err(("sh: " + argv.get(0) + ": " + kid.error + "\n").toBytes());
+    sh.err("sh: \{argv.get(0)}: \{kid.error}\n".toBytes());
     sh.status = 126;
     return;
   }
@@ -1087,7 +1087,7 @@ void runBackground(Shell sh, AndOr list) {
   i32 pid = sh.fs.procs.start(sh.pid, argv, sh.fs.now);
   i32 num = sh.jobs.len() + 1;
   string text = argv.get(0);
-  for (i32 i = 1; i < argv.len(); i++) { text = text + " " + argv.get(i); }
+  for (i32 i = 1; i < argv.len(); i++) { text = text + " \{argv.get(i)}"; }
   sh.jobs.push(Job.of(num, pid, kid.handle, kid.errHandle, text,
                       serveFsFor(sh) && kid.fsHandle >= 0 ? Chan.of(sh.cli, kid.fsHandle) : null));
   sh.lastBgPid = pid;
@@ -1239,7 +1239,7 @@ void dropFinished(Shell sh) {
 /** `jobs` — what is running, in bash's own columns. */
 Output jobsBuiltin(Shell sh, Vec<string> argv) {
   if (argv.len() > 1) {
-    return Output.fail(("jobs: " + argv.get(1) + ": options are not implemented\n").toBytes(), 2);
+    return Output.fail("jobs: \{argv.get(1)}: options are not implemented\n".toBytes(), 2);
   }
   Buf out = Buf.create();
   for (i32 i = 0; i < sh.jobs.len(); i++) {
@@ -1251,7 +1251,7 @@ Output jobsBuiltin(Shell sh, Vec<string> argv) {
     string state = j.done ? "Done" : "Running";
     string pad = state;
     while (pad.len() < 24) { pad = pad + " "; }
-    out.pushAll(("[" + itoa(j.num) + "]" + mark + "  " + pad + j.cmd + " &\n").toBytes());
+    out.pushAll("[\{j.num}]\{mark}  \{pad}\{j.cmd} &\n".toBytes());
   }
   // **A finished job is reported once and then forgotten**, which is bash: `seq 1 2 & jobs; wait;
   // jobs` lists it, then lists nothing. A table that kept every job a script ever started would grow
@@ -1281,18 +1281,18 @@ Output waitBuiltin(Shell sh, Vec<string> argv) {
     if (spec.len() > 0 && spec.slice(0, 1) == "%") {
       index = jobIndex(sh, spec);
       if (index < 0) {
-        return Output.fail(("wait: " + spec + ": no such job\n").toBytes(), 127);
+        return Output.fail("wait: \{spec}: no such job\n".toBytes(), 127);
       }
     } else {
       if (!isAllDigits(spec)) {
-        return Output.fail(("wait: " + spec + ": not a pid or valid job spec\n").toBytes(), 2);
+        return Output.fail("wait: \{spec}: not a pid or valid job spec\n".toBytes(), 2);
       }
       i32 pid = atoiOr(spec, -1);
       for (i32 i = 0; i < sh.jobs.len(); i++) {
         if (sh.jobs.get(i).pid == pid) { index = i; }
       }
       if (index < 0) {
-        return Output.fail(("wait: pid " + spec + " is not a child of this shell\n").toBytes(), 127);
+        return Output.fail("wait: pid \{spec} is not a child of this shell\n".toBytes(), 127);
       }
     }
     reapJob(sh, index);
@@ -1527,7 +1527,7 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
       // Whatever started before this must not be left running: they would write into nothing and
       // their workers would outlive the script.
       stopAll(sh, outH, errH, n);
-      sh.err(("sh: " + argv.get(0) + ": " + kid.error + "\n").toBytes());
+      sh.err("sh: \{argv.get(0)}: \{kid.error}\n".toBytes());
       sh.status = 126;
       return true;
     }
@@ -1565,7 +1565,7 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
       // `reasonOf`, so the words are the ones GNU uses for the category rather than the host's
       // sentence: "No such file or directory", not "No such file or directory (os error 2): open
       // '/tmp/…/sub/out'". Same translation `mkdir` and `rm` go through.
-      sh.err(("sh: " + joinWord(sh, r.target) + ": " + reasonOf(opened) + "\n").toBytes());
+      sh.err("sh: \{joinWord(sh, r.target)}: \{reasonOf(opened)}\n".toBytes());
       sh.status = 1;
       stopAll(sh, outH, errH, n);
       return true;
@@ -1712,7 +1712,7 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
         if (i > 0 && outOpen[i - 1]) { stopStage(sh, outH, errH, outOpen, errOpen, stopped, i - 1); }
       }
       Failed(why): {
-        sh.err(("sh: " + why + "\n").toBytes());
+        sh.err("sh: \{why}\n".toBytes());
         outOpen[i] = false;
       }
     }
@@ -1992,7 +1992,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
         string path = sh.resolve(given);
         FileResult f = sh.fs.readFile(path);
         if (!f.ok) {
-          sh.err(("sh: " + given + ": " + readReason(f) + "\n").toBytes());
+          sh.err("sh: \{given}: \{readReason(f)}\n".toBytes());
           sh.status = 1;
           sh.stdinBytes = savedIn;
           sh.stdinPos = savedPos;
@@ -2013,7 +2013,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
         // The word, expanded now, with a newline: `cat <<< abc` writes four bytes. A word is a word —
         // quotes come off, `$x` expands — which is why this is `joinWord` rather than the here-document
         // path, whose body was fixed when the script was lexed.
-        sh.stdinBytes = (joinWord(sh, r.target) + "\n").toBytes();
+        sh.stdinBytes = "\{joinWord(sh, r.target)}\n".toBytes();
         sh.stdinPos = 0;
         sh.heldInput = true;
         ownInput = true;
@@ -2291,7 +2291,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
         string path = sh.resolve(given);
         FileResult f = sh.fs.readFile(path);
         if (!f.ok) {
-          sh.err(("sh: " + given + ": " + readReason(f) + "\n").toBytes());
+          sh.err("sh: \{given}: \{readReason(f)}\n".toBytes());
           sh.status = 1;
           return u8[]();
         }
@@ -2306,7 +2306,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
         // The word with a newline on the end, expanded now — `cat <<< "$x"` is whatever `$x` is at this
         // moment. This is the *simple command's* copy of the rule; the compound one above holds the
         // same bytes in `stdinBytes` instead, because a compound reads them through the shell.
-        input = (joinWord(sh, r.target) + "\n").toBytes();
+        input = "\{joinWord(sh, r.target)}\n".toBytes();
         hasInput = true;
       }
       default: {}
@@ -2376,7 +2376,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   if (sh.exiting) { return u8[](); }
 
   if (!result.found) {
-    sh.err(("sh: " + argv.get(0) + ": command not found\n").toBytes());
+    sh.err("sh: \{argv.get(0)}: command not found\n".toBytes());
     sh.status = 127;
     return u8[]();
   }
@@ -2480,8 +2480,8 @@ Plan planRedirs(Shell sh, Vec<Redir> redirs) {
           // bash names the descriptor that does not exist, which is the one out of range — the source
           // for `3>&1` and the target for `1>&3`. Naming the whole redirection instead was our own
           // invention and told the caller less than either.
-          string bad = r.fd > 2 ? itoa(r.fd) : target;
-          sh.err(("sh: " + bad + ": Bad file descriptor\n").toBytes());
+          string bad = r.fd > 2 ? "\{r.fd}" : target;
+          sh.err("sh: \{bad}: Bad file descriptor\n".toBytes());
           sh.status = 1;
           return Plan(one, two, false);
         }
@@ -2502,7 +2502,7 @@ Plan planRedirs(Shell sh, Vec<Redir> redirs) {
       default: { continue; }
     }
     if (r.fd > 2) {
-      sh.err(("sh: redirecting fd " + itoa(r.fd) + " is not implemented\n").toBytes());
+      sh.err("sh: redirecting fd \{r.fd} is not implemented\n".toBytes());
       sh.status = 1;
       return Plan(one, two, false);
     }
@@ -2552,7 +2552,7 @@ bool emitTo(Shell sh, Where w, u8[] data, u8[] alsoHere) {
         // `echo y > f/g` answered `sh: /abs/path/f/g: Not a directory (os error 20)` — an errno, and the
         // *resolved* path, which in a session sealed in an image is a host path the session is not
         // supposed to know exists. bash says `f/g: Not a directory` and nothing more.
-        sh.err(("sh: " + given + ": " + reasonOf(wrote) + "\n").toBytes());
+        sh.err("sh: \{given}: \{reasonOf(wrote)}\n".toBytes());
         sh.status = 1;
       }
       return true;
@@ -2595,7 +2595,7 @@ void redirsAlone(Shell sh, Simple cmd) {
         string given = joinWord(sh, r.target);
         FileResult f = sh.fs.readFile(sh.resolve(given));
         if (!f.ok) {
-          sh.err(("sh: " + given + ": " + readReason(f) + "\n").toBytes());
+          sh.err("sh: \{given}: \{readReason(f)}\n".toBytes());
           sh.status = 1;
           return;
         }
@@ -2765,7 +2765,7 @@ Output setBuiltin(Shell sh, Vec<string> argv) {
     string out = "";
     for (i32 i = 0; i < sorted.len(); i++) {
       string? v = sh.vars.get(sorted.get(i));
-      if (v is not null) { out = out + sorted.get(i) + "=" + v! + "\n"; }
+      if (v is not null) { out = out + "\{sorted.get(i)}=\{v!}\n"; }
     }
     return Output.ok(out.toBytes());
   }
@@ -2776,7 +2776,7 @@ Output setBuiltin(Shell sh, Vec<string> argv) {
   else if (flag.len() > 0 && flag.toBytes()[0] == 0x2d) {
     // `set -e`, `set -u` and the rest are bash's and are not here: "not implemented" rather than "not
     // supported", because the second reads as a decision and this is only unfinished.
-    return Output.fail(("sh: set: " + flag + ": not implemented\n").toBytes(), 2);
+    return Output.fail("sh: set: \{flag}: not implemented\n".toBytes(), 2);
   }
 
   Vec<string> params = Vec.create();
@@ -2818,7 +2818,7 @@ Output localVar(Shell sh, Vec<string> argv) {
     i32 eq = indexOfEq(word);
     string name = eq < 0 ? word : word.slice(0, eq);
     if (!isName(name)) {
-      return Output.fail(("local: `" + word + "': not a valid identifier\n").toBytes(), 1);
+      return Output.fail("local: `\{word}': not a valid identifier\n".toBytes(), 1);
     }
     // Recorded once per call: a second `local x` in the same function must not overwrite what the
     // *first* one saved, or the caller's value is lost.
@@ -2875,7 +2875,7 @@ Output breakOrContinue(Shell sh, Vec<string> argv) {
   i32 n = 1;
   if (argv.len() > 1) {
     if (!isNumber(argv.get(1))) {
-      sh.err(("sh: " + name + ": " + argv.get(1) + ": numeric argument required\n").toBytes());
+      sh.err("sh: \{name}: \{argv.get(1)}: numeric argument required\n".toBytes());
       sh.exiting = true;
       sh.exitCode = 128;
       return Output.ok(u8[]());
@@ -2885,12 +2885,12 @@ Output breakOrContinue(Shell sh, Vec<string> argv) {
       // An out-of-range count is an error **and** leaves every loop, which is bash's answer and not
       // the obvious one: `for i in 1 2; do echo $i; break 0; done` prints `1` and stops. Measured.
       sh.breaking = sh.loops;
-      return Output.fail((name + ": " + argv.get(1) + ": loop count out of range\n").toBytes(), 1);
+      return Output.fail("\{name}: \{argv.get(1)}: loop count out of range\n".toBytes(), 1);
     }
   }
   if (sh.loops == 0) {
     // bash's wording, and its status: the complaint goes to standard error and 0 stays in `$?`.
-    sh.err(("sh: " + name + ": only meaningful in a `for', `while', or `until' loop\n").toBytes());
+    sh.err("sh: \{name}: only meaningful in a `for', `while', or `until' loop\n".toBytes());
     return Output.ok(u8[]());
   }
   if (name == "break") { sh.breaking = n; } else { sh.continuing = n; }
@@ -2949,13 +2949,13 @@ Output cd(Shell sh, Vec<string> argv) {
   if (!st.exists) {
     return Output.fail(("cd: " + want + ": " + st.words("No such file or directory") + "\n").toBytes(), 1);
   }
-  if (!st.isDir) { return Output.fail(("cd: " + want + ": Not a directory\n").toBytes(), 1); }
+  if (!st.isDir) { return Output.fail("cd: \{want}: Not a directory\n".toBytes(), 1); }
 
   sh.cwd = target;
   sh.setVar("OLDPWD", previous);
   sh.setVar("PWD", target);
   // `cd -` prints where it went, as bash does; a plain `cd` says nothing.
-  return want == "-" ? Output.ok((target + "\n").toBytes()) : Output.ok(u8[]());
+  return want == "-" ? Output.ok("\{target}\n".toBytes()) : Output.ok(u8[]());
 }
 
 /**
@@ -2980,12 +2980,12 @@ Output cd(Shell sh, Vec<string> argv) {
 Output ownership(Shell sh, Vec<string> argv) {
   string name = argv.get(0);
   if (argv.len() < 3) {
-    return Output.fail((name + ": missing operand\nTry '" + name + " --help' for more information.\n").toBytes(), 1);
+    return Output.fail("\{name}: missing operand\nTry '\{name} --help' for more information.\n".toBytes(), 1);
   }
   string spec = argv.get(1);
   i32 mode = name == "chmod" ? octalMode(spec) : 0;
   if (name == "chmod" && mode < 0) {
-    return Output.fail((name + ": invalid mode: '" + spec + "'\n").toBytes(), 1);
+    return Output.fail("\{name}: invalid mode: '\{spec}'\n".toBytes(), 1);
   }
 
   Buf err = Buf.create();
@@ -3000,9 +3000,9 @@ Output ownership(Shell sh, Vec<string> argv) {
       // the frame and once in whatever category the reason came from. So that one case says what it
       // is and names no path — there is nothing wrong with the path. wac-mono 0117.
       if (done.fault == FAULT_UNSUPPORTED()) {
-        err.pushAll((name + ": " + done.message + "\n").toBytes());
+        err.pushAll("\{name}: \{done.message}\n".toBytes());
       } else {
-        err.pushAll((name + ": cannot access '" + given + "': " + reasonOf(done) + "\n").toBytes());
+        err.pushAll("\{name}: cannot access '\{given}': \{reasonOf(done)}\n".toBytes());
       }
       status = 1;
     }
@@ -3043,7 +3043,7 @@ Output mkdir(Shell sh, Vec<string> argv) {
     string given = paths.get(i);
     Change made = sh.fs.mkdir(sh.resolve(given), parents);
     if (!made.ok()) {
-      err.pushAll(("mkdir: cannot create directory '" + given + "': " + reasonOf(made) + "\n")
+      err.pushAll("mkdir: cannot create directory '\{given}': \{reasonOf(made)}\n"
         .toBytes());
       status = 1;
     }
@@ -3080,7 +3080,7 @@ Output rm(Shell sh, Vec<string> argv) {
     // Differential testing found this: `mkdir one; rm one` succeeded where bash exits 1.
     if (!recursive && sh.fs.stat(path).isDir) {
       if (!force) {
-        err.pushAll(("rm: cannot remove '" + given + "': Is a directory\n").toBytes());
+        err.pushAll("rm: cannot remove '\{given}': Is a directory\n".toBytes());
         status = 1;
       }
       continue;
@@ -3090,7 +3090,7 @@ Output rm(Shell sh, Vec<string> argv) {
     // rather than by a `stat` first, so there is no window for the file to vanish in between.
     Change gone = sh.fs.remove(path, recursive);
     if (!gone.ok() && !(force && gone.absent())) {
-      err.pushAll(("rm: cannot remove '" + given + "': " + reasonOf(gone) + "\n").toBytes());
+      err.pushAll("rm: cannot remove '\{given}': \{reasonOf(gone)}\n".toBytes());
       status = 1;
     }
   }
@@ -3152,10 +3152,10 @@ Output ls(Shell sh, Vec<string> argv) {
       // The reason comes from `stat`, which can carry one. GNU's words, and GNU's status.
       if (st.exists && st.isDir) {
         string refused = st.words("Permission denied");
-        errs.pushAll(("ls: cannot open directory '" + given + "': " + refused + "\n").toBytes());
+        errs.pushAll("ls: cannot open directory '\{given}': \{refused}\n".toBytes());
         status = 2;
       } else if (st.exists) {
-        out.pushAll((given + "\n").toBytes());
+        out.pushAll("\{given}\n".toBytes());
       } else {
         // GNU's words, which this had invented its own version of: `ls: cannot access 'x': No such file
         // or directory`. The quotes and the capital are GNU's, and the corpus compares this line now.
@@ -3168,12 +3168,12 @@ Output ls(Shell sh, Vec<string> argv) {
         // here, so `ls f/g` where `f` is a file said that where GNU says `Not a directory` — the
         // category reached this line and there was nothing asking it. `Stat.words` is the lookup.
         string why = st.words("No such file or directory");
-        errs.pushAll(("ls: cannot access '" + given + "': " + why + "\n").toBytes());
+        errs.pushAll("ls: cannot access '\{given}': \{why}\n".toBytes());
         status = 2;
       }
       continue;
     }
-    if (paths.len() > 1) { out.pushAll((given + ":\n").toBytes()); }
+    if (paths.len() > 1) { out.pushAll("\{given}:\n".toBytes()); }
     // `ls -a` lists `.` and `..` as well. The platform's `readDir` does not report them — they are
     // not entries, they are a convention about how paths are written — so a real `ls` synthesises
     // them and so does this. Without them `ls -a | sort` differed from bash by exactly two lines.
@@ -3199,7 +3199,7 @@ Output ls(Shell sh, Vec<string> argv) {
       while (k >= 0 && shown.get(k) > key) { shown.set(k + 1, shown.get(k)); k--; }
       shown.set(k + 1, key);
     }
-    for (i32 j = 0; j < shown.len(); j++) { out.pushAll((shown.get(j) + "\n").toBytes()); }
+    for (i32 j = 0; j < shown.len(); j++) { out.pushAll("\{shown.get(j)}\n".toBytes()); }
     if (paths.len() > 1 && i + 1 < paths.len()) { out.pushAll("\n".toBytes()); }
   }
   return Output(out.take(), errs.take(), status, true, false);
@@ -3271,7 +3271,7 @@ u8[] named(u8[] err, string name) {
   u8[] bytes = err;
   for (i32 i = 0; i < bytes.len(); i++) {
     if (bytes[i] == 10) {
-      out = out + prefixed(line, name) + "\n";
+      out = out + "\{prefixed(line, name)}\n";
       line = "";
     } else {
       line = line + string.fromBytes(u8[].filled(1, bytes[i]));
@@ -3297,9 +3297,9 @@ u8[] named(u8[] err, string name) {
 string prefixed(string line, string name) {
   if (line == "") { return ""; }
   if (line.len() >= 4 && line.slice(0, 4) == "sh: ") { return line; }
-  string usage = name + ": usage: ";
+  string usage = "\{name}: usage: ";
   if (line.len() >= usage.len() && line.slice(0, usage.len()) == usage) { return line; }
-  return "sh: " + line;
+  return "sh: \{line}";
 }
 
 Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
@@ -3334,7 +3334,7 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
     return Output.ok(u8[]());
   }
   if (name == "cd") { return cd(sh, argv); }
-  if (name == "pwd") { return Output.ok((sh.cwd + "\n").toBytes()); }
+  if (name == "pwd") { return Output.ok("\{sh.cwd}\n".toBytes()); }
   if (name == "ls") { return ls(sh, argv); }
   if (name == "mkdir") { return mkdir(sh, argv); }
   if (name == "chmod" || name == "chown") { return ownership(sh, argv); }
@@ -3489,7 +3489,7 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   // The path cases, before anything tries to run it — see `pathFault`.
   PathFault bad = pathFault(sh, name);
   if (bad.status != 0) {
-    return Output.fail(("sh: " + name + ": " + bad.why + "\n").toBytes(), bad.status);
+    return Output.fail("sh: \{name}: \{bad.why}\n".toBytes(), bad.status);
   }
   // A name with a slash is a path already, as in bash — `./prog` is not searched for.
   string where = containsSlash(name) ? name : searchWacPath(sh, name);
@@ -3529,7 +3529,7 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   if (child.handle < 0) {
     // It exists and would not start: that is 126, distinct from the 127 of not existing. One
     // integer cannot say both, which is why `found` is a separate field.
-    return Output.fail(("sh: " + name + ": " + child.error + "\n").toBytes(), 126);
+    return Output.fail("sh: \{name}: \{child.error}\n".toBytes(), 126);
   }
 
   return collectChild(sh, name, child, mayInherit);
@@ -3679,7 +3679,7 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   // that looks like when nobody reports it.
   if (overflowed) {
     return Output.refused(
-      (name + ": output exceeded what this shell can hold for a stage it cannot stream; "
+      ("\{name}: output exceeded what this shell can hold for a stage it cannot stream; "
        + "the pipeline it is in has a stage that must run in process — see issue 0127\n").toBytes(),
       1,
     );
@@ -3687,7 +3687,7 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   // Negative means it never ran at all, which by then is a host problem rather than the
   // program's status, so it is reported as "could not execute" rather than as success.
   if (broke != "") {
-    err.pushAll(("sh: " + name + ": " + broke + "\n").toBytes());
+    err.pushAll("sh: \{name}: \{broke}\n".toBytes());
     return Output(out.bytes(), err.bytes(), 126, true, false);
   }
   return Output(out.bytes(), err.bytes(), code < 0 ? 126 : code, true, false);
@@ -3726,7 +3726,7 @@ Output trySelf(Shell sh, Vec<string> argv, bool mayInherit) {
     .spawnSelf(args, stageGrants(sh), sh.cwd, mayInherit, serveFsFor(sh)).wait();
   if (child.unavailable()) { return Output.missing(); }
   if (child.handle < 0) {
-    return Output.fail(("sh: " + name + ": " + child.error + "\n").toBytes(), 126);
+    return Output.fail("sh: \{name}: \{child.error}\n".toBytes(), 126);
   }
   return collectChild(sh, name, child, mayInherit);
 }
@@ -3854,7 +3854,7 @@ Output echo(Vec<string> argv) {
   if (argv.len() > 1 && argv.get(1) == "-n") { newline = false; first = 2; }
   string s = "";
   for (i32 i = first; i < argv.len(); i++) {
-    s = (i == first) ? argv.get(i) : s + " " + argv.get(i);
+    s = (i == first) ? argv.get(i) : "\{s} \{argv.get(i)}";
   }
   if (newline) { s = s + "\n"; }
   return Output.ok(s.toBytes());
@@ -3926,14 +3926,14 @@ Output test(Shell sh, Vec<string> argv) {
     else if (op == "-gt") { result = atoiOr(l, 0) > atoiOr(r, 0); }
     else if (op == "-ge") { result = atoiOr(l, 0) >= atoiOr(r, 0); }
     else if (gnuBinaryOperator(op)) {
-      return Output.fail((me + ": " + op + " is not implemented\n").toBytes(), 2);
+      return Output.fail("\{me}: \{op} is not implemented\n".toBytes(), 2);
     }
     // GNU's wording, which names the word it wanted an operator in: `[ a b c ]` is
     // `[: b: binary operator expected`. "unknown operator b" was ours and said less — it does not say
     // *where* the parser was looking, which for a three-word test is the whole question.
-    else { return Output.fail((me + ": " + op + ": binary operator expected\n").toBytes(), 2); }
+    else { return Output.fail("\{me}: \{op}: binary operator expected\n".toBytes(), 2); }
   } else {
-    return Output.fail((me + ": too many arguments\n").toBytes(), 2);
+    return Output.fail("\{me}: too many arguments\n".toBytes(), 2);
   }
   return testResult(result);
 }
@@ -3972,14 +3972,14 @@ Output testAnd(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
 
 Output testPrimary(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
   i32 n = to - from;
-  if (n <= 0) { return Output.fail((me + ": expected an expression\n").toBytes(), 2); }
+  if (n <= 0) { return Output.fail("\{me}: expected an expression\n".toBytes(), 2); }
   if (a.get(from) == "!" && n > 1) {
     Output inner = testPrimary(sh, me, a, from + 1, to);
     if (inner.status == 2) { return inner; }
     return testResult(inner.status != 0);
   }
   if (a.get(from) == "(") {
-    if (a.get(to - 1) != ")") { return Output.fail((me + ": missing `)'\n").toBytes(), 2); }
+    if (a.get(to - 1) != ")") { return Output.fail("\{me}: missing `)'\n".toBytes(), 2); }
     return testExpr(sh, me, a, from + 1, to - 1);
   }
   // **Four or more words that are not an expression are `test`'s own error**, and handing them back to
@@ -3987,7 +3987,7 @@ Output testPrimary(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
   // grammar, and the grammar with nothing to fold sends it back. That was an infinite recursion and a
   // blown stack — `[ a b c d e ]` exited 70 with "Maximum call stack size exceeded" where bash says
   // "too many arguments". A recursion whose base case is another function's default is not a base case.
-  if (n > 3) { return Output.fail((me + ": too many arguments\n").toBytes(), 2); }
+  if (n > 3) { return Output.fail("\{me}: too many arguments\n".toBytes(), 2); }
   // Whatever is left is one of the plain forms, which `test` itself already knows how to answer. It is
   // handed a fresh argv rather than indices because that is the shape it takes.
   Vec<string> one = Vec.create();
@@ -4061,7 +4061,7 @@ Output unaryTest(Shell sh, string me, string op, string operand) {
     // this host, or because this program was given no read capability — is a wrong answer that a script
     // then acts on, and it is the last thing wac-mono 0065 left lying.
     if (!st.answered()) {
-      return Output.fail((me + ": " + operand + ": " + statReason(st) + "\n").toBytes(), 2);
+      return Output.fail("\{me}: \{operand}: \{statReason(st)}\n".toBytes(), 2);
     }
     if (op == "-e") { return testResult(st.exists); }
     if (op == "-f") { return testResult(st.isFile); }
@@ -4073,12 +4073,12 @@ Output unaryTest(Shell sh, string me, string op, string operand) {
   // command is wrong when this program is merely incomplete. Anything GNU has not got either keeps the
   // original wording.
   if (gnuTestOperator(op)) {
-    return Output.fail((me + ": " + op + " is not implemented\n").toBytes(), 2);
+    return Output.fail("\{me}: \{op} is not implemented\n".toBytes(), 2);
   }
   // GNU's wording for a two-word test whose first word is not a unary operator: `[ x y ]` is
   // `[: x: unary operator expected`, and `[ -q x ]` names `-q` the same way. It says which word the
   // parser wanted an operator in, which "unknown operator" does not.
-  return Output.fail((me + ": " + op + ": unary operator expected\n").toBytes(), 2);
+  return Output.fail("\{me}: \{op}: unary operator expected\n".toBytes(), 2);
 }
 
 /**
@@ -4110,11 +4110,11 @@ Output help(Shell sh) {
   // **The names `isBuiltin` answers to, not a list beside it.** The hand-written one had already lost
   // `read`, `shift` and `set`, and would have lost `printf` the moment it became a builtin — which is
   // the same shape as `packages/box`'s applet list before `appletNames` became the only copy.
-  string s = "builtins: " + wrapNames(builtinNames()) + "\n";
+  string s = "builtins: \{wrapNames(builtinNames())}\n";
 
   string[] wired = sh.externalNames();
   if (wired.len() > 0) {
-    s = s + "programs: " + wrapNames(wired) + "\n";
+    s = s + "programs: \{wrapNames(wired)}\n";
   }
 
   // There is no third list any more. This shell used to carry twelve programs of its own and name
@@ -4134,10 +4134,10 @@ string wrapNames(string[] ns) {
   string line = "";
   for (i32 i = 0; i < ns.len(); i++) {
     if (line.len() > 0 && line.len() + 1 + ns[i].len() > 66) {
-      out = out + line + "\n          ";
+      out = out + "\{line}\n          ";
       line = "";
     }
-    line = line == "" ? ns[i] : line + " " + ns[i];
+    line = line == "" ? ns[i] : "\{line} \{ns[i]}";
   }
   return out + line;
 }
@@ -4520,7 +4520,7 @@ string convertCase(Shell sh, string value, string pattern, bool up, bool all) {
  * bash prints nothing, exits 1, and does not run the rest of the line.
  */
 string substring(Shell sh, string name, string value, string spec) {
-  if (spec == "") { return badSubstitution(sh, "${" + name + ":}"); }
+  if (spec == "") { return badSubstitution(sh, "${\{name}:}"); }
 
   // Split on the first colon outside parentheses, so `${x:$((a))}` keeps its own colons if it
   // ever grows any.
@@ -4554,7 +4554,7 @@ string substring(Shell sh, string name, string value, string spec) {
     if (count < 0) {
       end = n + count;
       if (end < off) {
-        sh.err(("sh: " + itoa(count) + ": substring expression < 0\n").toBytes());
+        sh.err("sh: \{count}: substring expression < 0\n".toBytes());
         sh.exiting = true;
         sh.exitCode = 1;
         return "";
@@ -4578,7 +4578,7 @@ string substring(Shell sh, string name, string value, string spec) {
  * package is trying to avoid — something that looks like it worked.
  */
 string badSubstitution(Shell sh, string what) {
-  sh.err(("sh: " + what + ": bad substitution\n").toBytes());
+  sh.err("sh: \{what}: bad substitution\n".toBytes());
   sh.exiting = true;
   sh.exitCode = 1;
   return "";
@@ -4744,7 +4744,7 @@ string expandText(Shell sh, string text) {
     }
     string piece = "";
     for (i32 j = 0; j < t.parts.len(); j++) { piece = piece + expandPart(sh, t.parts.get(j)); }
-    out = first ? piece : out + " " + piece;
+    out = first ? piece : "\{out} \{piece}";
     first = false;
   }
   return out;
@@ -4777,7 +4777,7 @@ string expandArith(Shell sh, string text) {
   // as the caller's syntax error. Both are this shell being unfinished. `arithNotImplemented` says so.
   string missing = arithNotImplemented(text);
   if (missing != "") {
-    sh.err(("sh: " + text + ": `" + missing + "` is not implemented: assignment and increment write " +
+    sh.err(("sh: \{text}: `\{missing}` is not implemented: assignment and increment write " +
             "the value back, and this evaluator sees the expression after its names are substituted\n")
       .toBytes());
     sh.exiting = true;
@@ -4805,8 +4805,8 @@ string expandArith(Shell sh, string text) {
   if (settled && hasBareName(expanded)) { settled = false; }
   if (!settled) {
     // The surviving name is both the subject and the token, as it is in bash.
-    sh.err(("sh: " + expanded + ": expression recursion level exceeded (error token is \"" +
-            expanded + "\")\n").toBytes());
+    sh.err(("sh: \{expanded}: expression recursion level exceeded (error token is \"" +
+            "\{expanded}\")\n").toBytes());
     sh.exiting = true;
     sh.exitCode = 1;
     return "";
@@ -4821,12 +4821,12 @@ string expandArith(Shell sh, string text) {
     // actually read, which is the same thing wherever no variable was involved.
     string token = errorToken(state);
     sh.err(("sh: " + text + ": " + state.error +
-            (token == "" ? "" : " (error token is \"" + token + "\")") + "\n").toBytes());
+            (token == "" ? "" : " (error token is \"\{token}\")") + "\n").toBytes());
     sh.exiting = true;
     sh.exitCode = 1;
     return "";
   }
-  return itoa64(v);
+  return "\{v}";
 }
 
 /** Whether this text has already been through the substitution loop — see `expandArith`. */
@@ -4911,8 +4911,8 @@ string expandPart(Shell sh, Part p) {
       if (p.op == "len") {
         // `${#@}` is how *many* parameters there are, not how long they are when joined — the one
         // place where `${#…}` counts rather than measures.
-        if (p.text == "@" || p.text == "*") { return itoa(sh.params.len()); }
-        return itoa(sh.lookUp(p.text).len());
+        if (p.text == "@" || p.text == "*") { return "\{sh.params.len()}"; }
+        return "\{sh.lookUp(p.text).len()}";
       }
       if (p.op == ":") { return substring(sh, p.text, sh.lookUp(p.text), p.arg); }
 
@@ -4954,7 +4954,7 @@ string expandPart(Shell sh, Part p) {
       if (last == "?") {
         if (!absent) { return value; }
         string why = p.arg == "" ? "parameter null or not set" : expandText(sh, p.arg);
-        sh.err(("sh: " + p.text + ": " + why + "\n").toBytes());
+        sh.err("sh: \{p.text}: \{why}\n".toBytes());
         sh.exiting = true;
         // 127, which is what bash exits with here — not 1, and not the 2 a syntax error gets.
         // Measured rather than reasoned about: 127 usually means "command not found".
@@ -4964,7 +4964,7 @@ string expandPart(Shell sh, Part p) {
       // An operator nothing above recognised. Reporting it beats returning the value unchanged,
       // which is what this did before and which makes a typo look like a working expansion —
       // `${#x:1}` came back as `0`. bash calls it a bad substitution and so do we.
-      return badSubstitution(sh, "${" + p.text + p.op + p.arg + "}");
+      return badSubstitution(sh, "${\{p.text}\{p.op}\{p.arg}}");
     }
     Arith: { return expandArith(sh, p.text); }
     Cmd: {

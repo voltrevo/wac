@@ -25,7 +25,6 @@
 // `packages/tor/test/wac/capturetools_test.wac` is the `cmp`.
 
 import { Core, Cli, FileResult, Stat, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { field, hex } from "./capturejson.wac";
 
 /** Each key file is a 32-byte NUL-padded tag followed by the key material. */
@@ -49,7 +48,7 @@ string defaultNodesDir(Cli cli) {
     if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
     i32 end = i + 7;
     while (end < b.len() && b[end] != '/') { end = end + 1; }
-    return cwd.slice(0, end) + "/workspaces/chutney/net/nodes";
+    return "\{cwd.slice(0, end)}/workspaces/chutney/net/nodes";
   }
   u8[]? home = cli.env("HOME").wait();
   return (home is null ? "/root" : string.fromBytes(home!)) + "/chutney/net/nodes";
@@ -64,11 +63,11 @@ string defaultNodesDir(Cli cli) {
 u8[] readTagged(Core core, Cli cli, string path, string expect) {
   FileResult r = cli.readFile(path).wait();
   if (!r.ok) {
-    core.warn("capture-relaycert: cannot read " + path + " — " + r.error);
+    core.warn("capture-relaycert: cannot read \{path} — \{r.error}");
     trap;
   }
   if (r.bytes.len() < TAG_LEN) {
-    core.warn("capture-relaycert: " + path + " is " + itoa(r.bytes.len()) + " bytes, shorter than a tag");
+    core.warn("capture-relaycert: \{path} is \{r.bytes.len()} bytes, shorter than a tag");
     trap;
   }
   // Latin-1, and the NUL padding stripped, which is how the tag is written.
@@ -78,8 +77,8 @@ u8[] readTagged(Core core, Cli cli, string path, string expect) {
   for (i32 i = 0; i < end; i++) { tagBytes[i] = r.bytes[i]; }
   string tag = string.fromBytes(tagBytes);
   if (tag.indexOf(expect) < 0) {
-    core.warn("capture-relaycert: " + path + ": tag is '" + tag + "', expected something " +
-              "containing '" + expect + "'");
+    core.warn("capture-relaycert: \{path}: tag is '\{tag}', expected something " +
+              "containing '\{expect}'");
     trap;
   }
   u8[] body = u8[].filled(r.bytes.len() - TAG_LEN, 0);
@@ -112,7 +111,7 @@ export i32 main(Sys sys) {
 
   string[]? listing = cli.readDir(nodesDir).wait();
   if (listing is null) {
-    core.warn("capture-relaycert: no directory at " + nodesDir);
+    core.warn("capture-relaycert: no directory at \{nodesDir}");
     return 1;
   }
   string[] names = sorted(listing!);
@@ -120,24 +119,24 @@ export i32 main(Sys sys) {
   string cases = "";
   i32 n = 0;
   for (i32 i = 0; i < names.len() && n < 4; i++) {
-    string keys = nodesDir + "/" + names[i] + "/keys";
-    string cert = keys + "/ed25519_signing_cert";
+    string keys = "\{nodesDir}/\{names[i]}/keys";
+    string cert = "\{keys}/ed25519_signing_cert";
     Stat st = cli.stat(cert).wait();
     if (!st.exists || !st.isFile) { continue; }
 
-    u8[] masterPub = readTagged(core, cli, keys + "/ed25519_master_id_public_key",
+    u8[] masterPub = readTagged(core, cli, "\{keys}/ed25519_master_id_public_key",
                                 "ed25519v1-public");
     // The secret file holds an *expanded* key: 32 bytes of scalar and 32 of nonce, not a seed. Our
     // `ed25519Sign` takes a seed, so the master secret cannot be used to re-sign — which is why the
     // vector records the signing key's own secret instead, and why the rebuild check uses a keypair
     // we generate rather than tor's.
-    u8[] signingSecret = readTagged(core, cli, keys + "/ed25519_signing_secret_key",
+    u8[] signingSecret = readTagged(core, cli, "\{keys}/ed25519_signing_secret_key",
                                     "ed25519v1-secret");
     u8[] body = readTagged(core, cli, cert, "ed25519v1-cert");
 
     if (n > 0) { cases = cases + ",\n"; }
     cases = cases + "    {\n";
-    cases = cases + field(3, 2, "nickname", "test" + names[i], false);
+    cases = cases + field(3, 2, "nickname", "test\{names[i]}", false);
     cases = cases + field(3, 2, "masterIdentity", hex(masterPub), false);
     cases = cases + field(3, 2, "signingCert", hex(body), false);
     cases = cases + field(3, 2, "signingSecretExpanded", hex(signingSecret), true);
@@ -146,7 +145,7 @@ export i32 main(Sys sys) {
   }
 
   if (n == 0) {
-    core.warn("capture-relaycert: no relay in " + nodesDir + " has an ed25519_signing_cert");
+    core.warn("capture-relaycert: no relay in \{nodesDir} has an ed25519_signing_cert");
     return 1;
   }
 
@@ -168,8 +167,8 @@ export i32 main(Sys sys) {
                     "cannot be used to re-sign tor's own certificates. The byte-for-byte rebuild " +
                     "test therefore uses a keypair of our own and checks the encoding against a " +
                     "cert we can re-derive, while the verification tests use tor's.", false);
-  out = out + "  \"cases\": [\n" + cases + "\n  ]\n}\n";
+  out = out + "  \"cases\": [\n\{cases}\n  ]\n}\n";
   cli.write(out.toBytes());
-  core.warn(itoa(n) + " relay certificates");
+  core.warn("\{n} relay certificates");
   return 0;
 }

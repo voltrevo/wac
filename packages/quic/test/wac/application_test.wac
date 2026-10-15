@@ -26,7 +26,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Socket } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { applicationKeyPhase, clientFinishedPacket, firstNewCidShape, flight, frameCountIn,
          frameKinds, openApplication, receiveInto } from "./hello_probe.wac";
@@ -49,7 +48,7 @@ Completed completed(Cli cli, Core core, string name) {
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
     stopServer(cli, s);
-    return Completed(false, "our socket did not bind — " + sock.error, u8[](), u8[]());
+    return Completed(false, "our socket did not bind — \{sock.error}", u8[](), u8[]());
   }
 
   cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid(), scid(), "localhost")).wait();
@@ -140,7 +139,7 @@ export string test_the_frames_inside_are_ones_we_can_walk(Core core, Cli cli) {
   // and the first draft of this line asserted "several" — that was guessing at quinn's packing
   // again, one paragraph after saying not to.
   t.isTrue(frameCountIn(payload) >= 1,
-           "the walk did not reach the end of the payload (" + itoa(frameCountIn(payload)) + ")");
+           "the walk did not reach the end of the payload (\{frameCountIn(payload)})");
 
   // And the fields inside one, not merely its size: RFC 9000 §19.15 fixes the token at 16 bytes and
   // the id at 1 to 20. A frame whose *size* is right with the id and token misplaced within it would
@@ -148,8 +147,8 @@ export string test_the_frames_inside_are_ones_we_can_walk(Core core, Cli cli) {
   i32 shape = firstNewCidShape(payload);
   i32 cidLen = shape / 100;
   i32 tokenLen = shape % 100;
-  t.eqI32(tokenLen, 16, "a stateless-reset token is 16 bytes (shape " + itoa(shape) + ")");
-  t.isTrue(cidLen >= 1 && cidLen <= 20, "a connection id is 1..20 bytes, got " + itoa(cidLen));
+  t.eqI32(tokenLen, 16, "a stateless-reset token is 16 bytes (shape \{shape})");
+  t.isTrue(cidLen >= 1 && cidLen <= 20, "a connection id is 1..20 bytes, got \{cidLen}");
 
   // And something was read before it stopped. A walk that halted on the very first byte would set
   // the same bit and prove nothing about the payload being frames at all.
@@ -188,7 +187,7 @@ export string test_a_packet_that_does_not_open_leaves_the_window_where_it_was(Co
   // The real packet: it opens, and the window moves to the number it carried.
   i32 good = receiveInto(h.reply, h.after, dcid(), scid(), "localhost");
   t.eqI32(good % 10, 1, "the server's own packet should have opened");
-  t.isTrue(good >= 10, "and moved the window off -1: " + itoa(good));
+  t.isTrue(good >= 10, "and moved the window off -1: \{good}");
 
   // The same packet with one ciphertext byte flipped. It cannot open, so nothing is read — and the
   // window must still be -1, which is `(−1 + 1) * 10 + 0`.

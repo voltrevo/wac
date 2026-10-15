@@ -20,7 +20,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Canonical, canonicalize } from "../../src/json.wac";
 import { ERR_NONE } from "../../src/parse.wac";
 
@@ -53,7 +52,7 @@ string[] invalid() {
     "'single'", "\"a", "\"\\\"", "\"\\q\"", "\"\\u\"", "\"\\u12\"", "\"\\u12g4\"",
     "\"\\uD83D\\uDE0\"",
     // raw control bytes are not allowed unescaped
-    "\"a\nb\"", "\"a\tb\"", "\"a" + oneByte(1) + "b\"",
+    "\"a\nb\"", "\"a\tb\"", "\"a\{oneByte(1)}b\"",
     // not JSON at all
     "undefined", "function(){}", "<html>", "//comment", "/*c*/1"
   ];
@@ -73,10 +72,10 @@ export string test_invalid_documents_are_rejected(Core core, Cli cli) {
   Lines lines = Lines.create();
   for (i32 i = 0; i < bad.len(); i++) {
     t.neI32(canonicalize(bad[i].toBytes()).code, ERR_NONE(),
-            "accepted invalid input \"" + bad[i] + "\"");
+            "accepted invalid input \"\{bad[i]}\"");
     // And the corpus really is invalid, which the oracle says rather than this file assuming it: an
     // entry that quietly became valid JSON would make its own assertion above meaningless.
-    lines.add("parses " + hex(bad[i].toBytes()) + " 0");
+    lines.add("parses \{hex(bad[i].toBytes())} 0");
   }
   checkDeno(t, cli, ORACLE, lines, "the invalid corpus really is invalid");
   return t.report();
@@ -88,8 +87,8 @@ export string test_valid_documents_are_accepted(Core core, Cli cli) {
   Lines lines = Lines.create();
   for (i32 i = 0; i < good.len(); i++) {
     t.eqI32(canonicalize(good[i].toBytes()).code, ERR_NONE(),
-            "rejected valid input \"" + good[i] + "\"");
-    lines.add("parses " + hex(good[i].toBytes()) + " 1");
+            "rejected valid input \"\{good[i]}\"");
+    lines.add("parses \{hex(good[i].toBytes())} 1");
   }
   checkDeno(t, cli, ORACLE, lines, "the valid corpus really is valid");
   return t.report();
@@ -128,9 +127,9 @@ export string test_mutations_agree_with_the_host(Core core, Cli cli) {
     checked = checked + one(lines, seed + seed);
   }
 
-  core.log("  " + itoa(checked) + " mutations checked");
-  t.isTrue(checked > 5000, "only " + itoa(checked) + " mutations were generated");
-  checkDeno(t, cli, ORACLE, lines, itoa(checked) + " mutations");
+  core.log("  \{checked} mutations checked");
+  t.isTrue(checked > 5000, "only \{checked} mutations were generated");
+  checkDeno(t, cli, ORACLE, lines, "\{checked} mutations");
   return t.report();
 }
 
@@ -144,6 +143,6 @@ export string test_mutations_agree_with_the_host(Core core, Cli cli) {
 i32 one(Lines lines, string src) {
   Canonical out = canonicalize(src.toBytes());
   lines.add("parses " + hex(src.toBytes()) + " " + (out.ok ? "1" : "0"));
-  if (out.ok) { lines.add("sametree " + hex(out.text) + " " + hex(src.toBytes())); }
+  if (out.ok) { lines.add("sametree \{hex(out.text)} \{hex(src.toBytes())}"); }
   return 1;
 }

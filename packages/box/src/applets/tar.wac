@@ -15,12 +15,11 @@
 import { Cli, Core, FileResult, readReason, Stat } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
 export i32 tar(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
-  if (a.rest.len() < 1) { core.warn("usage: " + a.name + " <path>..."); return 2; }
+  if (a.rest.len() < 1) { core.warn("usage: \{a.name} <path>..."); return 2; }
   i32 code = 0;
   for (i32 i = 0; i < a.rest.len(); i++) {
     if (!add(core, cli, fs, a.rest[i], a.name)) { code = 1; }
@@ -59,7 +58,7 @@ bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
   // filesystem the path is actually on.
   Stat link = fs.linkStat(path);
   if (link.exists && link.isSymlink) {
-    core.warn(name + ": " + path + ": symbolic link, which a ustar header cannot describe");
+    core.warn("\{name}: \{path}: symbolic link, which a ustar header cannot describe");
     return false;
   }
 
@@ -76,33 +75,33 @@ bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
   // different name than the one asked for. A tar that quietly renames what it stores is worse than
   // one that declines: the mistake is only discovered when the archive is unpacked.
   // GitHub wac-mono#23.
-  string entry = st.isDir ? path + "/" : path;
+  string entry = st.isDir ? "\{path}/" : path;
   if (entry.toBytes().len() > 100) {
-    core.warn(name + ": " + path + ": name is longer than the 100 bytes a ustar header holds");
+    core.warn("\{name}: \{path}: name is longer than the 100 bytes a ustar header holds");
     return false;
   }
 
   if (depth > MAX_DEPTH()) {
-    core.warn(name + ": " + path + ": deeper than " + itoa(MAX_DEPTH()) +
+    core.warn("\{name}: \{path}: deeper than \{MAX_DEPTH()}" +
       " levels, not descending (a symlink loop, or a genuinely deep tree)");
     return false;
   }
 
   if (st.isDir) {
     // The directory's own entry first, so an empty one survives the round trip.
-    cli.write(header(path + "/", 0, st.modifiedMillis, '5'));
+    cli.write(header("\{path}/", 0, st.modifiedMillis, '5'));
     string[]? names = fs.readDir(path);
-    if (names is null) { core.warn(name + ": " + path + ": cannot list"); return false; }
+    if (names is null) { core.warn("\{name}: \{path}: cannot list"); return false; }
     string[] found = names!;
     bool ok = true;
     for (i32 i = 0; i < found.len(); i++) {
-      if (!addAt(core, cli, fs, path + "/" + found[i], name, depth + 1)) { ok = false; }
+      if (!addAt(core, cli, fs, "\{path}/\{found[i]}", name, depth + 1)) { ok = false; }
     }
     return ok;
   }
 
   FileResult f = fs.readFile(path);
-  if (!f.ok) { core.warn(name + ": " + path + ": " + readReason(f)); return false; }
+  if (!f.ok) { core.warn("\{name}: \{path}: \{readReason(f)}"); return false; }
   cli.write(header(path, f.bytes.len(), st.modifiedMillis, '0'));
   cli.write(f.bytes);
   // Pad the contents to a block. A file that is already a multiple gets nothing, which is

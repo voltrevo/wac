@@ -38,7 +38,6 @@ import { Core, Cli, Exec } from "std";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { have } from "./openssl.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
@@ -52,7 +51,7 @@ static string BODY = "hello from wac over TLS 1.3 with an RSA certificate\n";
  * layout of a PKCS#8 RSA key is not something this test should know.
  */
 u8[] field(string text, string name) {
-  i32 at = text.indexOf(name + ":");
+  i32 at = text.indexOf("\{name}:");
   if (at < 0) { return u8[](); }
   u8[] b = text.toBytes();
   i32 i = at + name.len() + 1;
@@ -93,16 +92,16 @@ u8[] field(string text, string name) {
 string identity(T t, Cli cli, string dir, i32 bits) {
   Exec gen = cli.exec("openssl",
     [
-             "req", "-x509", "-newkey", "rsa:" + itoa(bits), "-keyout", dir + "/key.pem",
-             "-out", dir + "/cert.der", "-days", "1", "-nodes", "-subj", "/CN=wac.test",
+             "req", "-x509", "-newkey", "rsa:\{bits}", "-keyout", "\{dir}/key.pem",
+             "-out", "\{dir}/cert.der", "-days", "1", "-nodes", "-subj", "/CN=wac.test",
              "-outform", "DER"
     ], u8[]()).wait();
-  if (!gen.ran() || gen.status != 0) { return "openssl req failed: " + string.fromBytes(gen.stderr); }
+  if (!gen.ran() || gen.status != 0) { return "openssl req failed: \{string.fromBytes(gen.stderr)}"; }
 
-  Exec dump = cli.exec("openssl", ["rsa", "-in", dir + "/key.pem", "-noout", "-text"],
+  Exec dump = cli.exec("openssl", ["rsa", "-in", "\{dir}/key.pem", "-noout", "-text"],
                        u8[]()).wait();
   if (!dump.ran() || dump.status != 0) {
-    return "openssl rsa -text failed: " + string.fromBytes(dump.stderr);
+    return "openssl rsa -text failed: \{string.fromBytes(dump.stderr)}";
   }
   string text = string.fromBytes(dump.stdout);
   u8[] n = field(text, "modulus");
@@ -112,9 +111,9 @@ string identity(T t, Cli cli, string dir, i32 bits) {
   // The size is asserted rather than assumed, because a generator that quietly ignored the size it was
   // given is the defect this file was carrying. Eight bits of slack: a modulus's top byte is always
   // set, so the length is exact, but the *private exponent* can be a byte short.
-  t.eqI32(n.len() * 8, bits, "the modulus is " + itoa(bits) + " bits, as asked");
-  cli.writeFile(dir + "/n.bin", n).wait();
-  cli.writeFile(dir + "/d.bin", d).wait();
+  t.eqI32(n.len() * 8, bits, "the modulus is \{bits} bits, as asked");
+  cli.writeFile("\{dir}/n.bin", n).wait();
+  cli.writeFile("\{dir}/d.bin", d).wait();
   return "";
 }
 
@@ -123,7 +122,7 @@ string oneSize(Core core, Cli cli, i32 bits) {
   t.isTrue(have(cli, "openssl"), "openssl is on the path");
   if (!have(cli, "openssl")) { return t.report(); }
 
-  string dir = cli.cwd().wait() + "/.cache/tls/rsa" + itoa(bits);
+  string dir = "\{cli.cwd().wait()}/.cache/tls/rsa\{bits}";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
@@ -131,7 +130,7 @@ string oneSize(Core core, Cli cli, i32 bits) {
   t.eqStr(why, "", "openssl made an identity");
   if (why != "") { return t.report(); }
 
-  string bin = dir + "/tlsserved";
+  string bin = "\{dir}/tlsserved";
   // **`builtProgram` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is
   // removing that builder's non-browser targets. It answers a cached `.wasm` at a stable path and
   // rebuilds only when the sources or the compiler move. A `wac app` executable to a fresh temporary
@@ -142,13 +141,13 @@ string oneSize(Core core, Cli cli, i32 bits) {
   t.isTrue(mod != "", "the server built");
   if (mod == "") { return t.report(); }
 
-  Daemon d = start(cli, quoted(binaryPath(cli)) + " " + quoted(mod) + " 0 --rsa " + quoted(dir) + " --body " + quoted(BODY),
-                   dir + "/log");
-  t.isTrue(d.ok(), "tlsserved started — " + d.error);
+  Daemon d = start(cli, "\{quoted(binaryPath(cli))} \{quoted(mod)} 0 --rsa \{quoted(dir)} --body \{quoted(BODY)}",
+                   "\{dir}/log");
+  t.isTrue(d.ok(), "tlsserved started — \{d.error}");
   if (!d.ok()) { return t.report(); }
   const string MARK = "listening on 127.0.0.1:";
   if (!waitForLogWithin(core, cli, d, MARK, 20000)) {
-    t.fail("tlsserved never listened. Its output was: " + logOf(cli, d));
+    t.fail("tlsserved never listened. Its output was: \{logOf(cli, d)}");
     stop(cli, d);
     return t.report();
   }
@@ -161,7 +160,7 @@ string oneSize(Core core, Cli cli, i32 bits) {
 
   Exec c = cli.exec("openssl",
     [
-             "s_client", "-connect", "127.0.0.1:" + itoa(port), "-tls1_3",
+             "s_client", "-connect", "127.0.0.1:\{port}", "-tls1_3",
              "-servername", "wac.test", "-quiet", "-verify_quiet"
     ],
     ("GET / HTTP/1.1\r\nHost: wac.test\r\n\r\n").toBytes()).wait();
@@ -188,12 +187,12 @@ string oneSize(Core core, Cli cli, i32 bits) {
   // That is the right trade for a check whose failure is otherwise indistinguishable from a real
   // signature bug — which is exactly how it read when it fired.
   t.isTrue(waitForLogWithin(core, cli, d, "received GET /", 20000),
-           "our server got a request — the handshake completed. openssl said: " + err);
-  t.isTrue(contains(out, BODY), "OpenSSL got the body. stdout: " + out + " stderr: " + err);
+           "our server got a request — the handshake completed. openssl said: \{err}");
+  t.isTrue(contains(out, BODY), "OpenSSL got the body. stdout: \{out} stderr: \{err}");
   // The signature scheme is the point: OpenSSL verified an RSA-PSS CertificateVerify made by us,
   // against a certificate it generated itself.
   t.isFalse(contains(err, "bad signature") || contains(err, "decrypt error"),
-            "OpenSSL rejected our signature: " + err);
+            "OpenSSL rejected our signature: \{err}");
 
   stop(cli, d);
   cli.remove(dir, true).wait();

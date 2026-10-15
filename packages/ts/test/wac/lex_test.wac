@@ -8,7 +8,6 @@
 // what breaks is somewhere else entirely.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import {
   Lexed, kEof, kIdent, kNum, kPunct, kRegex, kStr, kTemplate,
   kindAt, lenAt, lex, lineAt, colAt, startAt, textAt, tokenCount,
@@ -185,7 +184,7 @@ export string test_it_stops_rather_than_guessing() {
   // `design/system/0009` D4: an error is where it stopped, so a diagnostic can point at it.
   Lexed l = lex("var x = 1;\nvar y = 'oops".toBytes());
   t.isTrue(l.error != "", "it reports");
-  t.isTrue(l.errorAt > 10, "and says where — after the first line, at " + itoa(l.errorAt));
+  t.isTrue(l.errorAt > 10, "and says where — after the first line, at \{l.errorAt}");
   t.isTrue(tokenCount(l) > 4, "keeping the tokens it did read");
   return t.report();
 }

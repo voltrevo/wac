@@ -14,7 +14,6 @@
 // applet holds. `issues/system/0193` has the list and the reasons.
 
 import { Cli, Core, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Buf } from "core";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture, appletCases, appletFixtures } from "./cases.wac";
@@ -22,7 +21,7 @@ import { Loaded, Ran, differs, layFixtures, load, runApplet, runCase, show } fro
 import { UNKNOWN } from "../../src/box.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-applets"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-applets"; }
 
 /**
  * Three wac programs in a row, which is the thing a file-to-file tool could never do.
@@ -34,7 +33,7 @@ string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-applets"; }
 export string test_boxs_applets_compose_in_a_pipeline(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
   t.eqStr(runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u").out, "a\nb\nc\n", "sort -u");
   t.eqStr(runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u | wc -l").out, "3\n",
           "and counted");
@@ -55,13 +54,13 @@ export string test_a_count_that_cannot_make_progress_is_refused(Core core, Cli c
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(layFixtures(cli, dir, [Fixture("a.txt", "alpha\nbeta\n".toBytes(), false)]),
-           "cannot make " + dir);
+           "cannot make \{dir}");
 
   string[] refused = ["fold -w0 a.txt", "split -0 a.txt part-"];
   for (i32 i = 0; i < refused.len(); i++) {
     Ran got = runCase(core, cli, dir, refused[i]);
-    t.eqI32(got.status, 1, refused[i] + ": expected a refusal");
-    t.isTrue(got.err.indexOf("invalid number") >= 0, refused[i] + ": " + show(got.err));
+    t.eqI32(got.status, 1, "\{refused[i]}: expected a refusal");
+    t.isTrue(got.err.indexOf("invalid number") >= 0, "\{refused[i]}: \{show(got.err)}");
   }
   // And the ordinary case still works, or the refusal above is just a broken applet.
   t.eqStr(runCase(core, cli, dir, "fold -w4 a.txt").out, "alph\na\nbeta\n", "fold -w4");
@@ -89,26 +88,26 @@ export string test_the_lifted_invocations_still_answer_what_the_real_tool_answer
   string detail = "";
   for (i32 i = 0; i < list.len() && i < v.n; i++) {
     if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
-    t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make " + dir);
+    t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make \{dir}");
     Ran r = runCase(core, cli, dir, list[i]);
     ran = ran + 1;
     if (r.out != v.items[i].out || r.status != v.items[i].status) {
       wrong = wrong + 1;
       if (wrong <= 5) {
         detail = detail + "\n  $ " + list[i] +
-                 "\n    real " + show(v.items[i].out) + " exit " + itoa(v.items[i].status) +
-                 "\n    ours " + show(r.out) + " exit " + itoa(r.status) +
-                 (r.err == "" ? "" : "\n    err  " + show(r.err));
+                 "\n    real " + show(v.items[i].out) + " exit \{v.items[i].status}" +
+                 "\n    ours " + show(r.out) + " exit \{r.status}" +
+                 (r.err == "" ? "" : "\n    err  \{show(r.err)}");
       }
     }
   }
   cli.remove(dir, true).wait();
-  t.eqI32(ran, list.len(), "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+  t.eqI32(ran, list.len(), "not every case replayed — \{list.len()} cases, \{v.n}" +
                            " vectors");
-  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded invocation — recapture with " +
+  t.eqI32(unknown, 0, "\{unknown} cases do not match the recorded invocation — recapture with " +
                       "`wac run --allow-read --allow-write --allow-run tools/wac/appletvectors.wac`");
-  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " differ from the captured tools (" + v.oracle +
-                    ")" + detail);
+  t.eqI32(wrong, 0, "\{wrong} of \{ran} differ from the captured tools (\{v.oracle}" +
+                    ")\{detail}");
   return t.report();
 }
 
@@ -116,7 +115,7 @@ export string test_the_lifted_invocations_still_answer_what_the_real_tool_answer
 export string test_seq_refuses_a_zero_step(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
   Ran zero = runCase(core, cli, dir, "seq 1 0 9");
   t.eqI32(zero.status, 1, "seq 1 0 9");
   t.isTrue(zero.err.indexOf("must not be zero") >= 0, zero.err);
@@ -138,26 +137,26 @@ export string test_seq_refuses_a_zero_step(Core core, Cli cli) {
 export string test_boxs_mutation_tier(Core core, Cli cli) {
   T t = T.create();
   string root = caseDir(cli);
-  t.isTrue(layFixtures(cli, root, Fixture[]()), "cannot make " + root);
+  t.isTrue(layFixtures(cli, root, Fixture[]()), "cannot make \{root}");
 
   t.eqI32(runCase(core, cli, root, "mkdir -p a/b/c").status, 0, "mkdir -p");
-  t.isTrue(cli.stat(root + "/a/b/c").wait().isDir, "mkdir -p made the parents");
+  t.isTrue(cli.stat("\{root}/a/b/c").wait().isDir, "mkdir -p made the parents");
   // Without -p a missing parent is an error, which is the difference between them.
   t.eqI32(runCase(core, cli, root, "mkdir x/y").status, 1, "mkdir without -p needs the parent");
 
   t.eqI32(runCase(core, cli, root, "touch a/b/c/f").status, 0, "touch");
-  t.isTrue(cli.stat(root + "/a/b/c/f").wait().size == 0, "touch made it empty");
-  t.isTrue(cli.writeFile(root + "/a/b/c/f", "kept".toBytes()).wait().ok(), "cannot write the fixture");
+  t.isTrue(cli.stat("\{root}/a/b/c/f").wait().size == 0, "touch made it empty");
+  t.isTrue(cli.writeFile("\{root}/a/b/c/f", "kept".toBytes()).wait().ok(), "cannot write the fixture");
   t.eqI32(runCase(core, cli, root, "touch a/b/c/f").status, 0, "touch again");
-  t.eqStr(string.fromBytes(cli.readFile(root + "/a/b/c/f").wait().bytes), "kept",
+  t.eqStr(string.fromBytes(cli.readFile("\{root}/a/b/c/f").wait().bytes), "kept",
           "touch left an existing file alone");
 
   t.eqI32(runCase(core, cli, root, "mv a/b/c/f moved").status, 0, "mv");
-  t.isTrue(!cli.stat(root + "/a/b/c/f").wait().exists, "mv left nothing behind");
-  t.eqStr(string.fromBytes(cli.readFile(root + "/moved").wait().bytes), "kept", "mv kept the contents");
+  t.isTrue(!cli.stat("\{root}/a/b/c/f").wait().exists, "mv left nothing behind");
+  t.eqStr(string.fromBytes(cli.readFile("\{root}/moved").wait().bytes), "kept", "mv kept the contents");
 
   // `rmdir` is never recursive; that distinction is the reason it is its own command.
-  t.isTrue(cli.writeFile(root + "/a/b/c/g", "x".toBytes()).wait().ok(), "cannot write the fixture");
+  t.isTrue(cli.writeFile("\{root}/a/b/c/g", "x".toBytes()).wait().ok(), "cannot write the fixture");
   t.eqI32(runCase(core, cli, root, "rmdir a/b/c").status, 1, "rmdir refuses a non-empty directory");
   t.eqI32(runCase(core, cli, root, "rm a/b/c/g").status, 0, "rm");
   t.eqI32(runCase(core, cli, root, "rmdir a/b/c").status, 0, "rmdir takes an empty one");
@@ -167,15 +166,15 @@ export string test_boxs_mutation_tier(Core core, Cli cli) {
   t.eqI32(runCase(core, cli, root, "rm -f never").status, 0, "rm -f of what is not there");
   t.eqI32(runCase(core, cli, root, "rm a").status, 1, "rm needs -r for a directory");
   t.eqI32(runCase(core, cli, root, "rm -r a").status, 0, "rm -r");
-  t.isTrue(!cli.stat(root + "/a").wait().exists, "rm -r took the tree");
+  t.isTrue(!cli.stat("\{root}/a").wait().exists, "rm -r took the tree");
 
   // The point of the tier: `cp` writes beside its target and renames, so the destination is never seen
   // half-written and no temporary name survives a successful copy. **This could not be asserted in
   // process until `issues/system/0166`** — a frame kept the bytes `cp` redirected to its temporary, so the
   // copy printed itself and wrote nothing.
-  t.isTrue(cli.writeFile(root + "/src", "some bytes to copy\n".toBytes()).wait().ok(), "fixture");
+  t.isTrue(cli.writeFile("\{root}/src", "some bytes to copy\n".toBytes()).wait().ok(), "fixture");
   t.eqI32(runCase(core, cli, root, "cp src copy").status, 0, "cp");
-  t.eqStr(string.fromBytes(cli.readFile(root + "/copy").wait().bytes), "some bytes to copy\n",
+  t.eqStr(string.fromBytes(cli.readFile("\{root}/copy").wait().bytes), "some bytes to copy\n",
           "cp copied it");
   t.eqStr(sortedJoin(cli.readDir(root).wait()), "copy moved src", "a temporary file survived");
   cli.remove(root, true).wait();
@@ -209,7 +208,7 @@ string sortedJoin(string[]? entries) {
 export string test_urlencode_escapes_a_component(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
 
   // A slash is data here, not structure — the whole point of the applet.
   t.eqStr(one(core, cli, dir, "a/b"), "a%2Fb\n", "a slash becomes %2F");
@@ -229,7 +228,7 @@ export string test_urlencode_escapes_a_component(Core core, Cli cli) {
  *  is kept rather than trimmed — wac's strings have no `trim`, and the newline is part of what the
  *  applet writes, so asserting it is asserting more rather than less. */
 string one(Core core, Cli cli, string dir, string given) {
-  cli.writeFile(dir + "/datum", given.toBytes()).wait();
+  cli.writeFile("\{dir}/datum", given.toBytes()).wait();
   return runCase(core, cli, dir, "urlencode datum").out;
 }
 
@@ -247,8 +246,8 @@ string one(Core core, Cli cli, string dir, string given) {
 export string test_mkdir_and_rmdir_give_the_categorys_words(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
-  t.isTrue(cli.mkdir(dir + "/full/inner", true).wait().ok(), "a directory with something in it");
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  t.isTrue(cli.mkdir("\{dir}/full/inner", true).wait().ok(), "a directory with something in it");
 
   Ran twice = runCase(core, cli, dir, "mkdir full");
   t.eqI32(twice.status, 1, "mkdir over an existing directory fails");
@@ -256,8 +255,8 @@ export string test_mkdir_and_rmdir_give_the_categorys_words(Core core, Cli cli) 
   t.eqI32(notEmpty.status, 1, "rmdir of a non-empty directory fails");
 
   // GNU's wording, which is where the two strings below come from rather than from memory.
-  Exec gnuMkdir = cli.exec("mkdir", [dir + "/full"], u8[]()).wait();
-  Exec gnuRmdir = cli.exec("rmdir", [dir + "/full"], u8[]()).wait();
+  Exec gnuMkdir = cli.exec("mkdir", ["\{dir}/full"], u8[]()).wait();
+  Exec gnuRmdir = cli.exec("rmdir", ["\{dir}/full"], u8[]()).wait();
   t.isTrue(gnuMkdir.ran() && gnuRmdir.ran(), "the real tools ran");
   t.isTrue(string.fromBytes(gnuMkdir.stderr).indexOf("File exists") >= 0,
            string.fromBytes(gnuMkdir.stderr));
@@ -287,16 +286,16 @@ export string test_mkdir_and_rmdir_give_the_categorys_words(Core core, Cli cli) 
 export string test_a_pattern_that_exhausts_the_budget_is_not_a_match(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
   // Thirty `a`s and no `b`: the pattern can never succeed, and every path has to be tried to know it.
-  cli.writeFile(dir + "/patho", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n".toBytes()).wait();
+  cli.writeFile("\{dir}/patho", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n".toBytes()).wait();
 
   Ran basic = runCase(core, cli, dir, "grep '\\(a\\|a\\)*b' patho");
-  t.eqI32(basic.status, 2, "budget exhaustion exits 2 in the basic dialect: " + basic.err);
+  t.eqI32(basic.status, 2, "budget exhaustion exits 2 in the basic dialect: \{basic.err}");
   t.eqStr(basic.out, "", "and prints no matches");
 
   Ran extended = runCase(core, cli, dir, "grep -E '(a|a)*b' patho");
-  t.eqI32(extended.status, 2, "and the same pattern under -E: " + extended.err);
+  t.eqI32(extended.status, 2, "and the same pattern under -E: \{extended.err}");
   t.eqStr(extended.out, "", "and prints no matches either");
 
   cli.remove(dir, true).wait();
@@ -318,27 +317,27 @@ export string test_a_pattern_that_exhausts_the_budget_is_not_a_match(Core core, 
 export string test_splits_suffixes_are_gnus_past_zz(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
 
   string body = "";
-  for (i32 i = 0; i < 700; i++) { body = body + itoa(i) + "\n"; }
-  t.isTrue(cli.mkdir(dir + "/ours", true).wait().ok(), "made ours");
-  t.isTrue(cli.mkdir(dir + "/theirs", true).wait().ok(), "made theirs");
-  t.isTrue(cli.writeFile(dir + "/ours/seven", body.toBytes()).wait().ok(), "wrote the source");
-  t.isTrue(cli.writeFile(dir + "/theirs/seven", body.toBytes()).wait().ok(), "and its twin");
+  for (i32 i = 0; i < 700; i++) { body = body + "\{i}\n"; }
+  t.isTrue(cli.mkdir("\{dir}/ours", true).wait().ok(), "made ours");
+  t.isTrue(cli.mkdir("\{dir}/theirs", true).wait().ok(), "made theirs");
+  t.isTrue(cli.writeFile("\{dir}/ours/seven", body.toBytes()).wait().ok(), "wrote the source");
+  t.isTrue(cli.writeFile("\{dir}/theirs/seven", body.toBytes()).wait().ok(), "and its twin");
 
-  runCase(core, cli, dir + "/ours", "split -1 seven");
+  runCase(core, cli, "\{dir}/ours", "split -1 seven");
   Exec real = cli.execWithIn("split", ["-l", "1", "seven"], u8[](), string[](),
-                             false, false, dir + "/theirs").wait();
-  t.isTrue(real.ran(), "the real split ran: " + real.error);
+                             false, false, "\{dir}/theirs").wait();
+  t.isTrue(real.ran(), "the real split ran: \{real.error}");
 
-  string ours = sortedNames(cli, dir + "/ours");
-  string theirs = sortedNames(cli, dir + "/theirs");
+  string ours = sortedNames(cli, "\{dir}/ours");
+  string theirs = sortedNames(cli, "\{dir}/theirs");
   // **A floor, because two empty listings compare equal.** Counted rather than measured in
   // characters: the first version asked for 3000 bytes and 701 short names came to about 2900, so the
   // floor failed on a listing that was entirely correct.
   t.isTrue(count(theirs) > 690, "GNU produced a listing to compare against — status " +
-           itoa(real.status) + " err " + string.fromBytes(real.stderr));
+           "\{real.status} err \{string.fromBytes(real.stderr)}");
   t.eqStr(ours, theirs, "every split suffix, all 700");
 
   cli.remove(dir, true).wait();
@@ -366,7 +365,7 @@ string sortedNames(Cli cli, string dir) {
     names[j + 1] = v;
   }
   string out = "";
-  for (i32 i = 0; i < names.len(); i++) { out = out + " " + names[i]; }
+  for (i32 i = 0; i < names.len(); i++) { out = out + " \{names[i]}"; }
   return out;
 }
 
@@ -384,7 +383,7 @@ string sortedNames(Cli cli, string dir) {
 export string test_a_failed_read_is_not_an_end_of_input(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make \{dir}");
 
   Ran hex = runCase(core, cli, dir, "hex adir");
   t.eqI32(hex.status, 1, "hex of a directory fails rather than reading nothing");
@@ -417,26 +416,26 @@ export string test_a_failed_read_is_not_an_end_of_input(Core core, Cli cli) {
 export string test_find_and_du_descend(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
-  t.isTrue(cli.mkdir(dir + "/t/a/b", true).wait().ok(), "three levels");
-  cli.writeFile(dir + "/t/f", "one\n".toBytes()).wait();
-  cli.writeFile(dir + "/t/a/g", "two\n".toBytes()).wait();
-  cli.writeFile(dir + "/t/a/b/h", "three\n".toBytes()).wait();
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
+  t.isTrue(cli.mkdir("\{dir}/t/a/b", true).wait().ok(), "three levels");
+  cli.writeFile("\{dir}/t/f", "one\n".toBytes()).wait();
+  cli.writeFile("\{dir}/t/a/g", "two\n".toBytes()).wait();
+  cli.writeFile("\{dir}/t/a/b/h", "three\n".toBytes()).wait();
 
   // The guard: a walk that never descended would still match a flat tree, which is how the mutants
   // survived. `t/a/b/h` is three levels down, so an answer without it is an answer that stopped.
   Ran ours = runCase(core, cli, dir, "find t");
   t.isTrue(ours.out.indexOf("t/a/b/h") >= 0,
-           "the walk reached the deepest file — without this a MAX_DEPTH of zero passes: " + ours.out);
+           "the walk reached the deepest file — without this a MAX_DEPTH of zero passes: \{ours.out}");
 
   Exec realFind = cli.execWithIn("find", ["t"], u8[](), string[](), false, false, dir).wait();
-  t.isTrue(realFind.ran(), "the real find ran: " + realFind.error);
+  t.isTrue(realFind.ran(), "the real find ran: \{realFind.error}");
   t.eqStr(sortedLines(ours.out), sortedLines(string.fromBytes(realFind.stdout)), "find differs");
 
   // `du -sb` is the invocation box's `du` answers, and it refuses `-s` itself, so only GNU is given it.
   Ran mine = runCase(core, cli, dir, "du t");
   Exec realDu = cli.execWithIn("du", ["-sb", "t"], u8[](), string[](), false, false, dir).wait();
-  t.isTrue(realDu.ran(), "the real du ran: " + realDu.error);
+  t.isTrue(realDu.ran(), "the real du ran: \{realDu.error}");
   t.eqStr(firstField(mine.out), firstField(string.fromBytes(realDu.stdout)), "du differs from du -sb");
 
   cli.remove(dir, true).wait();
@@ -462,7 +461,7 @@ string sortedLines(string all) {
     lines[j + 1] = v;
   }
   string out = "";
-  for (i32 i = 0; i < n; i++) { out = out + lines[i] + "\n"; }
+  for (i32 i = 0; i < n; i++) { out = out + "\{lines[i]}\n"; }
   return out;
 }
 
@@ -511,10 +510,10 @@ string reasonOf(string line) {
 export string test_a_failed_read_says_what_the_real_tool_says(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
 
-  string denied = dir + "/unreadable";
-  string missing = dir + "/definitely-not-here";
+  string denied = "\{dir}/unreadable";
+  string missing = "\{dir}/definitely-not-here";
   t.isTrue(cli.writeFile(denied, "secret\n".toBytes()).wait().ok(), "wrote the file");
   t.isTrue(cli.chmod(denied, 0).wait().ok(), "and closed it");
 
@@ -527,12 +526,12 @@ export string test_a_failed_read_says_what_the_real_tool_says(Core core, Cli cli
   string[] paths = [missing, denied, missing, denied];
   for (i32 i = 0; i < applets.len(); i++) {
     string what = applets[i] + " on " + (i % 2 == 0 ? "a missing file" : "an unreadable one");
-    Ran ours = runCase(core, cli, dir, applets[i] + " " + paths[i]);
+    Ran ours = runCase(core, cli, dir, "\{applets[i]} \{paths[i]}");
     Exec theirs = cli.exec(applets[i], [paths[i]], u8[]()).wait();
-    t.isTrue(theirs.error == "", "the oracle ran: " + theirs.error);
+    t.isTrue(theirs.error == "", "the oracle ran: \{theirs.error}");
     t.eqStr(reasonOf(ours.err), reasonOf(string.fromBytes(theirs.stderr)),
-            "the reason for " + what + " differs from the real one's: " + ours.err);
-    t.eqI32(ours.status, 1, "a failed read exits 1, as " + applets[i] + " does");
+            "the reason for \{what} differs from the real one's: \{ours.err}");
+    t.eqI32(ours.status, 1, "a failed read exits 1, as \{applets[i]} does");
   }
 
   cli.chmod(denied, 384).wait();          // 0600, so the cleanup can unlink it
@@ -554,16 +553,16 @@ export string test_a_failed_read_says_what_the_real_tool_says(Core core, Cli cli
 export string test_an_unimplemented_flag_is_refused(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make \{dir}");
 
   Ran r = runApplet(core, cli, dir, ["ls", "-a", dir]);
-  t.eqI32(r.status, 2, "an unimplemented flag is a usage error: " + r.err);
+  t.eqI32(r.status, 2, "an unimplemented flag is a usage error: \{r.err}");
   t.isTrue(r.err.indexOf("not implemented") >= 0, r.err);
 
   // The control, and it is not decoration: without it a broken `ls` gives the same 2 for a different
   // reason, and the test would be asserting that `ls` does not work.
   Ran plain = runApplet(core, cli, dir, ["ls", dir]);
-  t.eqI32(plain.status, 0, "and ls itself still answers: " + plain.err);
+  t.eqI32(plain.status, 0, "and ls itself still answers: \{plain.err}");
   t.isTrue(plain.out.indexOf("m1.txt") >= 0, plain.out);
 
   // The name box does not have. `dispatch` says so with a sentinel rather than a status, because "no
@@ -593,31 +592,31 @@ export string test_an_unimplemented_flag_is_refused(Core core, Cli cli) {
 export string test_split_writes_the_same_pieces_as_the_real_split(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make " + dir);
+  t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
 
   Buf b = Buf.create();
-  for (i32 i = 1; i <= 250; i++) { b.pushAll((itoa(i) + "\n").toBytes()); }
-  string big = dir + "/big.txt";
+  for (i32 i = 1; i <= 250; i++) { b.pushAll("\{i}\n".toBytes()); }
+  string big = "\{dir}/big.txt";
   t.isTrue(cli.writeFile(big, b.bytes()).wait().ok(), "wrote 250 lines");
 
-  t.eqI32(runApplet(core, cli, dir, ["split", "-100", big, dir + "/part-"]).status, 0,
+  t.eqI32(runApplet(core, cli, dir, ["split", "-100", big, "\{dir}/part-"]).status, 0,
           "split ran");
-  Exec theirs = cli.exec("split", ["-l", "100", big, dir + "/real-"], u8[]()).wait();
-  t.isTrue(theirs.error == "", "there is a real split: " + theirs.error);
-  t.eqI32(theirs.status, 0, "and it ran: " + string.fromBytes(theirs.stderr));
+  Exec theirs = cli.exec("split", ["-l", "100", big, "\{dir}/real-"], u8[]()).wait();
+  t.isTrue(theirs.error == "", "there is a real split: \{theirs.error}");
+  t.eqI32(theirs.status, 0, "and it ran: \{string.fromBytes(theirs.stderr)}");
 
   string[] suffixes = ["aa", "ab", "ac"];
   for (i32 i = 0; i < suffixes.len(); i++) {
-    u8[] mine = cli.readFile(dir + "/part-" + suffixes[i]).wait().bytes;
-    u8[] real = cli.readFile(dir + "/real-" + suffixes[i]).wait().bytes;
-    t.isTrue(real.len() > 0, "the real split wrote real-" + suffixes[i]);
-    t.eqStr(differs(mine, real), "", "part-" + suffixes[i] + " differs");
+    u8[] mine = cli.readFile("\{dir}/part-\{suffixes[i]}").wait().bytes;
+    u8[] real = cli.readFile("\{dir}/real-\{suffixes[i]}").wait().bytes;
+    t.isTrue(real.len() > 0, "the real split wrote real-\{suffixes[i]}");
+    t.eqStr(differs(mine, real), "", "part-\{suffixes[i]} differs");
   }
 
   // No fourth piece. 250 lines at 100 is three, and an applet that opens the next output before it
   // knows there is anything to write leaves an empty one behind.
-  t.isFalse(cli.stat(dir + "/part-ad").wait().exists, "an empty fourth piece was created");
-  t.isFalse(cli.stat(dir + "/real-ad").wait().exists, "and the real one did not make one either");
+  t.isFalse(cli.stat("\{dir}/part-ad").wait().exists, "an empty fourth piece was created");
+  t.isFalse(cli.stat("\{dir}/real-ad").wait().exists, "and the real one did not make one either");
 
   cli.remove(dir, true).wait();
   return t.report();

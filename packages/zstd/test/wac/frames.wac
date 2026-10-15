@@ -12,7 +12,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
 static string ORACLE = "packages/zstd/test/oracle.ts";
@@ -31,7 +30,7 @@ export Answers askZstd(T t, Cli cli, Lines lines, string what) {
 
 /** A `compress` line for the reference: `level` below zero means its default. */
 export string compressLine(u8[] data, i32 level, bool checksum) {
-  return "compress " + (level < 0 ? "-" : itoa(level)) + " " + (checksum ? "1" : "0") + " " +
+  return "compress " + (level < 0 ? "-" : "\{level}") + " " + (checksum ? "1" : "0") + " " +
          hex(data);
 }
 

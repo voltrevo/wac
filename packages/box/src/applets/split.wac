@@ -9,7 +9,6 @@ import { Args, badNumberMessage } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";
 import { Feed, Line, Lines, emit, nextLine } from "../../../platform/src/stream.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { extraOperand } from "../lib/operands.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Buf } from "core";
@@ -18,7 +17,7 @@ export i32 split(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (extraOperand(core, a, 2)) { return 1; }
   if (a.rest.len() < 1) {
-    core.warn("usage: " + a.name + " [-<lines>] <file> [prefix]");
+    core.warn("usage: \{a.name} [-<lines>] <file> [prefix]");
     return 2;
   }
   if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
@@ -27,7 +26,7 @@ export i32 split(Core core, Cli cli, Fs fs, Args a) {
   // line lands in the first file, or — depending where the check goes — a new file is opened per line
   // for ever. `split -0` used to exit 0 having done nothing at all, which is the worst of the three.
   if (per <= 0) {
-    core.warn(a.name + ": invalid number of lines: '" + itoa(per) + "'");
+    core.warn("\{a.name}: invalid number of lines: '\{per}'");
     return 1;
   }
   string prefix = a.rest.len() > 1 ? a.rest[1] : "x";
@@ -57,7 +56,7 @@ export i32 split(Core core, Cli cli, Fs fs, Args a) {
       name = prefix + suffix(piece);
       if (streaming) {
         Change opened = cli.openOutput(name).wait();
-        if (!opened.ok()) { core.warn(a.name + ": " + name + ": " + reasonOf(opened)); return 1; }
+        if (!opened.ok()) { core.warn("\{a.name}: \{name}: \{reasonOf(opened)}"); return 1; }
       } else {
         held = Buf.create();
       }
@@ -73,7 +72,7 @@ export i32 split(Core core, Cli cli, Fs fs, Args a) {
     if (written == per) {
       if (!open || streaming) {} else {
         Change wrote = fs.writeFile(name, held.take());
-        if (!wrote.ok()) { core.warn(a.name + ": " + name + ": " + reasonOf(wrote)); return 1; }
+        if (!wrote.ok()) { core.warn("\{a.name}: \{name}: \{reasonOf(wrote)}"); return 1; }
       }
       piece++;
       open = false;
@@ -82,7 +81,7 @@ export i32 split(Core core, Cli cli, Fs fs, Args a) {
   // The last piece, which is short: the loop above only closes one that filled up.
   if (open && !streaming) {
     Change wrote = fs.writeFile(name, held.take());
-    if (!wrote.ok()) { core.warn(a.name + ": " + name + ": " + reasonOf(wrote)); return 1; }
+    if (!wrote.ok()) { core.warn("\{a.name}: \{name}: \{reasonOf(wrote)}"); return 1; }
   }
   // Back to standard output, which closes the last piece — a file left open is a file that
   // may not be on disk yet.
@@ -112,7 +111,7 @@ string suffix(i32 n) {
     span = span * 26;
     // A suffix this long means billions of pieces; the arithmetic would overflow before the
     // filesystem obliged, so stop pretending and let the caller see a name it can complain about.
-    if (span <= 0) { return "z" + itoa(n); }
+    if (span <= 0) { return "z\{n}"; }
   }
 
   i32 digits = level + 2;

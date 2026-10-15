@@ -6,7 +6,6 @@
 // One of the last packages `issues/system/0205` records as unmeasured.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
   test_itoa as asse__itoa,
@@ -208,6 +207,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED strings_test test_splitkeepingempty_keeps_every_line_the_other_one_drops");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("wactest: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("wactest: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

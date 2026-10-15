@@ -27,7 +27,7 @@ export i32 main(Sys sys) {
   // launchable things — where the code came from is the filesystem's business.
   FileResult prog = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
   if (!prog.ok) {
-    core.warn("runner: " + string.fromBytes(cli.arg(0).wait()) + ": " + prog.error);
+    core.warn("runner: \{string.fromBytes(cli.arg(0).wait())}: \{prog.error}");
     return 1;
   }
 
@@ -37,12 +37,12 @@ export i32 main(Sys sys) {
   i32 grants = cli.argCount().wait() > 2 ? grantsOf(string.fromBytes(cli.arg(2).wait())) : GRANT_NONE;
   Child kid = cli.spawn(prog.bytes, u8[][](), grants, "", INHERIT_NONE, false).wait();
   if (kid.handle < 0) {
-    core.warn("runner: " + kid.error);
+    core.warn("runner: \{kid.error}");
     return 1;
   }
 
   // Its standard input, then end it — a child reading to EOF gets one.
-  cli.send(kid.handle, (string.fromBytes(cli.arg(1).wait()) + "\n").toBytes()).wait();
+  cli.send(kid.handle, "\{string.fromBytes(cli.arg(1).wait())}\n".toBytes()).wait();
   cli.closeFeed(kid.handle);
 
   // Everything it wrote, until it stops writing.
@@ -51,26 +51,15 @@ export i32 main(Sys sys) {
     match (cli.recv(kid.handle).wait()) {
       Data(bytes): { chunk = bytes; }
       End: { }                              // the child has finished writing
-      Failed(why): { core.warn("runner: " + why); return 1; }
+      Failed(why): { core.warn("runner: \{why}"); return 1; }
     }
     if (chunk.len() == 0) { break; }
     cli.write(chunk);
   }
 
   i32 code = cli.exitCode(kid.handle).wait();
-  if (code != 0) { core.warn("runner: child exited " + itoa(code)); }
+  if (code != 0) { core.warn("runner: child exited \{code}"); }
   return code;
-}
-
-string itoa(i32 n) {
-  if (n == 0) { return "0"; }
-  i32 v = n < 0 ? 0 - n : n;
-  u8[] digits = u8[].filled(12, 0);
-  i32 at = 12;
-  while (v > 0) { at--; digits[at] = ('0' + (v % 10)) as@ u8; v = v / 10; }
-  u8[] used = u8[].filled(12 - at, 0);
-  used.copyFrom(digits, at, 0, 12 - at);
-  return (n < 0 ? "-" : "") + string.fromBytes(used);
 }
 
 /** `read,net` and friends. Unknown words are ignored rather than refused: this is an example. */

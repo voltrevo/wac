@@ -22,7 +22,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { sha256 } from "../../src/sha256.wac";
 import { sha512, sha384 } from "../../src/sha512.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -60,7 +59,7 @@ void checkSha2(T t, Cli cli, Lines lines, string what) {
 }
 
 void claim(Lines lines, i32 bits, u8[] m, u8[] digest) {
-  lines.add("sha2 " + itoa64(bits as i64) + " " + hex(m) + " " + hex(digest));
+  lines.add("sha2 \{bits as i64} \{hex(m)} \{hex(digest)}");
 }
 
 export string test_sha256_agrees_with_the_host(Core core, Cli cli) {

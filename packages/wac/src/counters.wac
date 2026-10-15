@@ -22,7 +22,6 @@
 
 import { CallResult, Cli, Core, FileResult, LoadedModule } from "std";
 import { Vec } from "core";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 import { manifestWire } from "../../wacc/src/api.wac";
 import { sigsWithCounters } from "./testrun.wac";
@@ -102,7 +101,7 @@ struct Running {
 
 Running start(Core core, Cli cli, string path) {
   FileResult f = cli.readFile(path).wait();
-  if (!f.ok) { return Running("cannot read " + path + " — " + f.error, 0 - 1, false, ""); }
+  if (!f.ok) { return Running("cannot read \{path} — \{f.error}", 0 - 1, false, ""); }
   // **A module with no manifest gets one, made here.** `Cli.load` needs a manifest because that is
   // where an export's *signature* comes from; a raw `emitFilesCovered` artefact has none, and the
   // native command could read one anyway because it instantiated by hand and reached the exports
@@ -129,7 +128,7 @@ Running start(Core core, Cli cli, string path) {
   // `\0asm`, the four bytes every wasm module starts with. Naming the file is the useful half: the
   // mistake this catches is handing a command the source instead of the artefact.
   if (bytes.len() < 4 || bytes[0] != 0 || bytes[1] != 0x61 || bytes[2] != 0x73 || bytes[3] != 0x6d) {
-    return Running(path + " is not a wasm module — did you mean the artefact `wac build` wrote?",
+    return Running("\{path} is not a wasm module — did you mean the artefact `wac build` wrote?",
                    0 - 1, false, "");
   }
   if (manifestIn(bytes) == "") {
@@ -148,7 +147,7 @@ Running start(Core core, Cli cli, string path) {
   // manifest declares none, which is right — a module with no manifest asked for nothing.
   i32 declared = declaredGrants(bytes);
   LoadedModule m = cli.load(bytes, declared < 0 ? 0 : declared);
-  if (m.handle < 0) { return Running(path + " could not be loaded — " + m.error, 0 - 1, false, ""); }
+  if (m.handle < 0) { return Running("\{path} could not be loaded — \{m.error}", 0 - 1, false, ""); }
 
   // **`__cov_init` before anything else, and its absence is the diagnosis.** The counters are
   // allocated by this call rather than by instantiation, so a module without it is not an instrumented
@@ -157,7 +156,7 @@ Running start(Core core, Cli cli, string path) {
   CallResult started = cli.call(m.handle, "__cov_init", 0);
   if (started.status == 2) {
     cli.unload(m.handle);
-    return Running(path + " carries no counters — was it built with --coverage or --trace?",
+    return Running("\{path} carries no counters — was it built with --coverage or --trace?",
                    0 - 1, false, "");
   }
 
@@ -211,7 +210,7 @@ Counters slurp(Cli cli, string path, i32 handle, Exercise[] also, bool traced,
   CallResult n = cli.call(handle, "__cov_len", 0);
   if (n.status != 0) {
     cli.unload(handle);
-    return Counters(path + " has __cov_init and no __cov_len", none, trapped, trapText, missing);
+    return Counters("\{path} has __cov_init and no __cov_len", none, trapped, trapText, missing);
   }
   Vec<i32> out = Vec.create();
   // **A trace is read to its cursor, not to its capacity.** `__cov_len` is how many slots the journal
@@ -281,12 +280,12 @@ export Digest digest(Core core, Cli cli, string path) {
   CallResult n = cli.call(r.handle, "__cov_len", 0);
   if (n.status != 0) {
     cli.unload(r.handle);
-    return Digest(path + " has __cov_init and no __cov_len", 0, 0, 0);
+    return Digest("\{path} has __cov_init and no __cov_len", 0, 0, 0);
   }
   i32 cap = n.value;
   if (cap < 2) {
     cli.unload(r.handle);
-    return Digest("a journal is at least two slots; " + path + " has " + itoa(cap), 0, 0, 0);
+    return Digest("a journal is at least two slots; \{path} has \{cap}", 0, 0, 0);
   }
   CallResult cursor = cli.call(r.handle, "__cov_get", 0);
   CallResult last = cli.call(r.handle, "__cov_get", cap - 1);
@@ -301,7 +300,7 @@ export Digest digest(Core core, Cli cli, string path) {
   if (h.status != 0) {
     // The one artefact that reaches this is one built by an older compiler, since `sigsWithCounters`
     // declares the export and `emitCoverageHelpers` injects it in the same commit.
-    return Digest(path + " carries no __cov_hash — rebuild it, or the tree it was built from " +
+    return Digest("\{path} carries no __cov_hash — rebuild it, or the tree it was built from " +
                   "predates issues/system/0274b", 0, 0, 0);
   }
   return Digest("", used, last.status == 0 ? last.value : 0 - 1, h.value);
@@ -321,12 +320,12 @@ export string agreeLine(i32 usedA, i32 wantA, i32 usedB, i32 wantB) {
   bool overflowed = wantA * 2 > usedA || wantB * 2 > usedB;
   i32 nA = usedA / 2;
   i32 nB = usedB / 2;
-  return overflowed ? "truncated " + itoa(wantA) + " " + itoa(wantB)
+  return overflowed ? "truncated \{wantA} \{wantB}"
                     // **The count, because `same` over nothing is not agreement.** A mistyped export
                     // name calls nothing and records nothing, and two empty journals match perfectly
                     // — which would report every routine in the repository as constant-time. A caller
                     // checks the number.
-                    : "same " + itoa(nA < nB ? nA : nB);
+                    : "same \{nA < nB ? nA : nB}";
 }
 
 /**
@@ -381,7 +380,7 @@ export string[] compareJournals(Vec<i32> a, Vec<i32> b, bool all) {
         // Not a leaking site: it is where *this* run happened to be when the two stopped agreeing,
         // and the other was somewhere else. Naming both is the only honest report, and nothing after
         // it is a comparison.
-        out.push("split " + itoa(i) + " " + itoa(sa) + " " + itoa(sb));
+        out.push("split \{i} \{sa} \{sb}");
         return out.toArray();
       }
       bool known = false;
@@ -389,14 +388,14 @@ export string[] compareJournals(Vec<i32> a, Vec<i32> b, bool all) {
       if (!known) {
         seen.push(sa);
         said = true;
-        out.push("site " + itoa(i) + " " + itoa(sa) + " " + itoa(va) + " " + itoa(vb));
+        out.push("site \{i} \{sa} \{va} \{vb}");
       }
     }
     // One side kept going only because the other ran out of room: that is truncation, not a split.
     bool shortTruncated = (nA < nB && wantA * 2 > usedA) || (nB < nA && wantB * 2 > usedB);
     if (nA != nB && !shortTruncated) {
       said = true;
-      out.push("longer " + itoa(n) + " " + itoa(nA > nB ? a.get(1 + 2 * n) : b.get(1 + 2 * n)));
+      out.push("longer \{n} \{nA > nB ? a.get(1 + 2 * n) : b.get(1 + 2 * n)}");
     }
     if (!said) { out.push(agreeLine(usedA, wantA, usedB, wantB)); }
     return out.toArray();
@@ -416,8 +415,8 @@ export string[] compareJournals(Vec<i32> a, Vec<i32> b, bool all) {
     i32 sb = hasB ? b.get(1 + 2 * i) : 0 - 1;
     i32 vb = hasB ? b.get(2 + 2 * i) : 0 - 1;
     if (hasA && hasB && sa == sb && va == vb) { continue; }
-    out.push("differs " + itoa(i) + " " + itoa(sa) + " " + itoa(va) + " " +
-             itoa(sb) + " " + itoa(vb));
+    out.push("differs \{i} \{sa} \{va} " +
+             "\{sb} \{vb}");
     return out.toArray();
   }
   out.push(agreeLine(usedA, wantA, usedB, wantB));

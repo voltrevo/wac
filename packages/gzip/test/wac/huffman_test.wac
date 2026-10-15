@@ -15,7 +15,6 @@
 // next to the code they describe, and the probe is gone.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Huff } from "../../src/huffman.wac";
 
 i32[] fibFreqs(i32 count) {
@@ -33,8 +32,8 @@ export string test_length_limit_is_enforced() {
   i32[] counts = [2, 3, 8, 20, 30, 40, 60, 100, 286];
   for (i32 i = 0; i < counts.len(); i++) {
     Huff h = Huff.build(fibFreqs(counts[i]), counts[i], 15);
-    t.isTrue(h.maxLen <= 15, "count " + itoa(counts[i]) + " max length " + itoa(h.maxLen));
-    t.isTrue(h.maxLen >= 1, "count " + itoa(counts[i]) + " produced a code at all");
+    t.isTrue(h.maxLen <= 15, "count \{counts[i]} max length \{h.maxLen}");
+    t.isTrue(h.maxLen >= 1, "count \{counts[i]} produced a code at all");
   }
   return t.report();
 }
@@ -45,7 +44,7 @@ export string test_the_limit_actually_binds() {
   T t = T.create();
   Huff unlimited = Huff.build(fibFreqs(40), 40, 30);
   t.isTrue(unlimited.maxLen > 15,
-    "unlimited build reaches " + itoa(unlimited.maxLen) + " bits, needs to exceed 15");
+    "unlimited build reaches \{unlimited.maxLen} bits, needs to exceed 15");
   return t.report();
 }
 
@@ -54,7 +53,7 @@ export string test_cl_alphabet_limit_is_seven_bits() {
   i32[] counts = [2, 5, 10, 19];
   for (i32 i = 0; i < counts.len(); i++) {
     Huff h = Huff.build(fibFreqs(counts[i]), counts[i], 7);
-    t.isTrue(h.maxLen <= 7, "count " + itoa(counts[i]) + " max length " + itoa(h.maxLen));
+    t.isTrue(h.maxLen <= 7, "count \{counts[i]} max length \{h.maxLen}");
   }
   return t.report();
 }
@@ -74,7 +73,7 @@ export string test_kraft_equality() {
         sum += 1 << (h.maxLen - h.len[i]);
       }
     }
-    t.eqI32(sum, 1 << h.maxLen, "kraft sum for count " + itoa(n));
+    t.eqI32(sum, 1 << h.maxLen, "kraft sum for count \{n}");
   }
   return t.report();
 }
@@ -98,7 +97,7 @@ export string test_codes_form_a_prefix_code() {
         }
       }
     }
-    t.eqI32(violations, 0, "prefix violations for count " + itoa(n));
+    t.eqI32(violations, 0, "prefix violations for count \{n}");
   }
   return t.report();
 }
@@ -115,7 +114,7 @@ export string test_codes_fit_their_stated_width() {
         overlong++;
       }
     }
-    t.eqI32(overlong, 0, "codes wider than their length, count " + itoa(n));
+    t.eqI32(overlong, 0, "codes wider than their length, count \{n}");
   }
   return t.report();
 }

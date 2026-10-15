@@ -33,8 +33,7 @@
 
 import { Core, Cli, FileResult, Sys } from "std";
 import { Network, Session, bootstrap, buildCircuitTo } from "./bootstrap.wac";
-import { fetchOverCircuit, itoa } from "./link.wac";
-import { itoa64 } from "../../wactest/src/itoa64.wac";
+import { fetchOverCircuit } from "./link.wac";
 import { Relay, attachMicrodescriptors } from "./directory.wac";
 import { onionPubkey } from "./onionaddr.wac";
 import { blindedPublicKey, subcredential } from "./hsblind.wac";
@@ -56,9 +55,9 @@ export i32 main(Sys sys) {
     return 1;
   }
   FileResult seedFile = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
-  if (!seedFile.ok) { core.warn("tor: " + seedFile.error); return 1; }
+  if (!seedFile.ok) { core.warn("tor: \{seedFile.error}"); return 1; }
   FileResult authFile = cli.readFile(string.fromBytes(cli.arg(1).wait())).wait();
-  if (!authFile.ok) { core.warn("tor: " + authFile.error); return 1; }
+  if (!authFile.ok) { core.warn("tor: \{authFile.error}"); return 1; }
   u8[] address = cli.arg(2).wait();
 
   bool testnet = false;
@@ -100,7 +99,7 @@ export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool
   }
   i64 periodNum = period[0];
   i64 periodLength = period[1];
-  core.log("time period " + itoa64(periodNum) + ", " + itoa64(periodLength) +
+  core.log("time period \{periodNum}, \{periodLength}" +
            " minutes long");
 
   // The current period pairs with the *previous* shared random value — see `consensusSharedRandom`.
@@ -128,7 +127,7 @@ export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool
     core.warn("tor: no directory could be placed on the ring — are microdescriptors attached?");
     return u8[]();
   }
-  core.log(itoa(dirs.len()) + " responsible directories");
+  core.log("\{dirs.len()} responsible directories");
 
   // Try them in turn. A descriptor is stored on more directories than a client looks at, precisely so
   // that one being down is not the end of it, and treating the first 404 as final would throw that
@@ -137,10 +136,10 @@ export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool
   u8[] body = u8[]();
   for (i32 i = 0; i < dirs.len() && body.len() == 0; i++) {
     Relay d = net.relays[dirs[i]];
-    core.log("asking " + d.nickname + " at " + d.address + ":" + itoa(d.orPort));
+    core.log("asking \{d.nickname} at \{d.address}:\{d.orPort}");
     Session s = buildCircuitTo(core, cli, net, dirs[i], 0x80000010 + i);
     if (!s.ok) { continue; }
-    core.log("  path: " + s.description);
+    core.log("  path: \{s.description}");
     body = fetchOverCircuit(s.link, s.circ, path);
     cli.closeSocket(s.link.sock);
     if (body.len() == 0) { core.log("  no descriptor there"); }
@@ -149,7 +148,7 @@ export u8[] fetchDescriptor(Core core, Cli cli, Network net, u8[] identity, bool
     core.warn("tor: no responsible directory had a descriptor for this address");
     return u8[]();
   }
-  core.log("descriptor: " + itoa(body.len()) + " bytes");
+  core.log("descriptor: \{body.len()} bytes");
 
 
   return decryptDescriptor(core, body, blinded, subcred);
@@ -202,18 +201,18 @@ u8[] decryptDescriptor(Core core, u8[] body, u8[] blinded, u8[] subcred) {
 /** Print what the decrypted descriptor names. */
 i32 report(Core core, Cli cli, u8[] second) {
   IntroPoint[] points = parseIntroPoints(second);
-  core.log(itoa(points.len()) + " introduction points");
+  core.log("\{points.len()} introduction points");
   for (i32 i = 0; i < points.len(); i++) {
     u8[] v4 = linkSpecifier(points[i].linkSpecifiers, LS_IPV4);
     string where = "?";
     if (v4.len() == 6) {
-      where = itoa(v4[0] as i32) + "." + itoa(v4[1] as i32) + "." + itoa(v4[2] as i32) + "." + itoa(v4[3] as i32) +
-              ":" + itoa((v4[4] as i32 * 256) + v4[5] as i32);
+      where = "\{v4[0] as i32}.\{v4[1] as i32}.\{v4[2] as i32}.\{v4[3] as i32}" +
+              ":\{(v4[4] as i32 * 256) + v4[5] as i32}";
     }
-    cli.write(("introduction-point " + itoa(i) + " at " + where +
-               "\n  auth-key   " + hex(points[i].authKey) +
-               "\n  enc-key    " + hex(points[i].encKey) +
-               "\n  onion-key  " + hex(points[i].onionKey) + "\n").toBytes());
+    cli.write(("introduction-point \{i} at \{where}" +
+               "\n  auth-key   \{hex(points[i].authKey)}" +
+               "\n  enc-key    \{hex(points[i].encKey)}" +
+               "\n  onion-key  \{hex(points[i].onionKey)}\n").toBytes());
   }
   return points.len() > 0 ? 0 : 1;
 }

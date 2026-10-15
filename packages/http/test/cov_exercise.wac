@@ -24,7 +24,6 @@ import { parse as parseResponse, buildRequest } from "./client_probe.wac";
 import { handle as serve } from "../../server/test/probe.wac";
 import { Rng } from "../../wactest/src/rng.wac";
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_a_body_past_the_limit_is_refused_on_every_route_into_one as lm__limits,
   test_a_message_with_more_headers_than_the_table_holds as lm__headers,
@@ -141,7 +140,7 @@ string[] cases() {
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n X: v\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX v\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n:v\r\n\r\n",
-    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX: " + SOH + "\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX: \{SOH}\r\n\r\n",
     // the framing refusals
     "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
     "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
@@ -156,11 +155,11 @@ string[] cases() {
     "\r\n\r\n", "GET\r\n\r\n", "GET /\r\n\r\n", "GET / HTTP/1.1x\r\n\r\n", "GET / HTTP/2.0\r\n\r\n",
     "GET / HTTP/1\r\n\r\n", "GET / http/1.1\r\n\r\n", " GET / HTTP/1.1\r\n\r\n",
     "GET  / HTTP/1.1\r\n\r\n", "GE T / HTTP/1.1\r\n\r\n", "GET x HTTP/1.1\r\nHost: a\r\n\r\n",
-    "GET /a" + SOH + "b HTTP/1.1\r\nHost: a\r\n\r\n",
-    "GET /" + HIGH + " HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /a\{SOH}b HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /\{HIGH} HTTP/1.1\r\nHost: a\r\n\r\n",
     "GET / HTTP/1.1\r\n: v\r\n\r\n", "GET / HTTP/1.1\r\nX Y: v\r\n\r\n",
-    "GET / HTTP/1.1\r\nNoColon\r\n\r\n", "GET / HTTP/1.1\r\nX: " + HIGH + "\r\n\r\n",
-    "GET / HTTP/1.1\r\nX: " + SOH + "\r\n\r\n",
+    "GET / HTTP/1.1\r\nNoColon\r\n\r\n", "GET / HTTP/1.1\r\nX: \{HIGH}\r\n\r\n",
+    "GET / HTTP/1.1\r\nX: \{SOH}\r\n\r\n",
     "GET / HTTP/1.1\r\nHost: a\r\n\r\nGET /2 HTTP/1.1\r\n\r\n",
     // malformed chunked
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nz\r\n\r\n",
@@ -198,7 +197,7 @@ string[] responses() {
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhelloX0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n X: v\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX v\r\n\r\n",
-    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX: " + SOH + "\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX: \{SOH}\r\n\r\n",
     // close-delimited, including a non-chunked coding
     "HTTP/1.1 200 OK\r\n\r\nuntil close",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nbytes",
@@ -211,7 +210,7 @@ string[] responses() {
     "HTTP/1.1 200 OK\r\nX: 1\r\n 2\r\n\r\n",
     "HTTP/1.1 200 OK\r\nX : 1\r\n\r\n",
     "HTTP/1.1 200 OK\r\n: 1\r\n\r\n",
-    "HTTP/1.1 200 OK\r\nX: " + SOH + "\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nX: \{SOH}\r\n\r\n",
     "HTTP/1.1 200 OK\r\nContent-Length: 99999999\r\n\r\n",
     // malformed status lines
     "HTTP/1.1\r\n\r\n",
@@ -222,7 +221,7 @@ string[] responses() {
     "HTTP/1.1200 OK\r\n\r\n",
     "HTTP/1.x 200 OK\r\n\r\n",
     "hello\r\n\r\n",
-    "HTTP/1.1 200 OK" + SOH + "\r\n\r\n"
+    "HTTP/1.1 200 OK\{SOH}\r\n\r\n"
   ];
 }
 
@@ -331,7 +330,7 @@ export i32 main(Sys sys) {
   string NUL = ctl(0);
   string[] bm = ["GET", "GET", "POST", "PUT", "DELETE"];
   string[] bt = ["/", "/", "/x", "/a?b=c", "/x"];
-  string[] bh = ["", "", "Accept" + NUL + "*/*", "A" + NUL + "1" + NUL + "B" + NUL + "2", ""];
+  string[] bh = ["", "", "Accept\{NUL}*/*", "A\{NUL}1\{NUL}B\{NUL}2", ""];
   string[] bb = ["", "", "hello", "{\"a\":1}", ""];
   bool[] bk = [true, false, true, false, true];
   for (i32 i = 0; i < bm.len(); i++) {
@@ -522,7 +521,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED response_test test_a_2xx_to_connect_has_no_body_whatever_it_claims");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("http: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("http: \{bad} test(s) failed under the coverage driver"); }
   seen = seen + bad;
 
   return seen;

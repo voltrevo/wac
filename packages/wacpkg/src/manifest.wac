@@ -76,8 +76,8 @@ export bool isReservedName(string name) {
   string[] roots = ["core", "std"];
   for (i32 i = 0; i < roots.len(); i++) {
     string r = roots[i];
-    if (name == r || name == r + "/") { return true; }
-    if (name.len() > r.len() + 1 && name.slice(0, r.len() + 1) == r + "/") { return true; }
+    if (name == r || name == "\{r}/") { return true; }
+    if (name.len() > r.len() + 1 && name.slice(0, r.len() + 1) == "\{r}/") { return true; }
   }
   return false;
 }
@@ -283,16 +283,16 @@ export string unsupportedTransport(string git) {
   if (scheme < 0) {
     // `git@host:path` is the shape that gets typed from muscle memory, and it has no `://` at all.
     return git.indexOf("@") >= 0
-      ? "`" + git + "` looks like an SSH remote; this toolchain fetches over HTTPS only"
-      : "`" + git + "` has no scheme; a `git` url must start with `https://`";
+      ? "`\{git}` looks like an SSH remote; this toolchain fetches over HTTPS only"
+      : "`\{git}` has no scheme; a `git` url must start with `https://`";
   }
   string s = git.slice(0, scheme);
   if (s == "https") { return ""; }
   if (s == "http") {
-    return "`" + git + "` is plain HTTP; a dependency is fetched over HTTPS so that what arrives "
+    return "`\{git}` is plain HTTP; a dependency is fetched over HTTPS so that what arrives "
            + "is what the host sent";
   }
-  return "`" + s + "://` is not a transport this toolchain has; HTTPS only";
+  return "`\{s}://` is not a transport this toolchain has; HTTPS only";
 }
 
 /** Which mapping a specifier names. */
@@ -336,7 +336,7 @@ export Located locate(Manifest m, Match hit) {
 export Located packageEntry(string dir, string exports) {
   string inner = normalise(exports);
   if (inner == "" || escapes(inner)) { return Located(false, M_SUBDIR_ESCAPE(), ""); }
-  return Located(true, M_OK(), dir == "" ? inner : dir + "/" + inner);
+  return Located(true, M_OK(), dir == "" ? inner : "\{dir}/\{inner}");
 }
 
 /**

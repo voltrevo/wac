@@ -38,7 +38,6 @@
 // inputs.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify } from "../src/ed25519.wac";
 import { x25519Base } from "../src/x25519.wac";
 import { p256PublicKey, p256Sign, p256Verify, p256Ecdh } from "../src/p256.wac";
@@ -73,12 +72,12 @@ u8[] e65537() {
 /** `us` per call, from a millisecond delta and an iteration count. */
 string per(i64 from, i64 to, i32 iters) {
   i32 us = (((to - from) * (1000 as i64)) / (iters as i64)) as~ i32;
-  if (us < 1000) { return itoa(us) + "µs"; }
-  return itoa(us / 1000) + "." + itoa((us % 1000) / 100) + "ms";
+  if (us < 1000) { return "\{us}µs"; }
+  return "\{us / 1000}.\{(us % 1000) / 100}ms";
 }
 
 void row(Core core, string name, i64 from, i64 to, i32 iters) {
-  core.log("| `" + name + "` | " + per(from, to, iters) + " |");
+  core.log("| `\{name}` | \{per(from, to, iters)} |");
 }
 
 export i32 main(Sys sys) {

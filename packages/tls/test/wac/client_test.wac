@@ -21,7 +21,6 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { binaryPath } from "../../../wactest/src/host.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Store } from "../../src/roots.wac";
 import { ClientStep } from "../../src/client.wac";
 import { Reply, request, rootsFrom, noRoots, fixedFirstFlight } from "./tlsclient.wac";
@@ -33,7 +32,7 @@ static string REQ = "GET / HTTP/1.1\r\nHost: wac.test\r\n\r\n";
 static string BODY = "hello from the wac server";
 
 string freshScratch(T t, Cli cli, string name) {
-  string dir = cli.cwd().wait() + "/.cache/tls/" + name;
+  string dir = "\{cli.cwd().wait()}/.cache/tls/\{name}";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   return dir;
@@ -47,7 +46,7 @@ struct Ours {
 }
 
 Ours ourServer(T t, Cli cli, Core core, string dir) {
-  string bin = dir + "/tlsserved";
+  string bin = "\{dir}/tlsserved";
   // **`builtProgram` rather than `deno run packages/platform/build.ts`** — `design/system/0009` is
   // removing that builder's non-browser targets. It answers a cached `.wasm` at a stable path and
   // rebuilds only when the sources or the compiler move, which is what keeps this cheap: a `wac app`
@@ -61,12 +60,12 @@ Ours ourServer(T t, Cli cli, Core core, string dir) {
   // environment, so `/bin/sh` starts from its own default and this checkout's binary is not on it.
   // **The binary runs the module**, which needs no `wac` on PATH and no `env` wrapper: `wac
   // <module.wasm>` is how a module with a manifest is started.
-  Daemon d = start(cli, quoted(binaryPath(cli)) + " " + quoted(mod) + " 0", dir + "/log");
-  if (!d.ok()) { return Ours(d, -1, "tlsserved did not start: " + d.error); }
+  Daemon d = start(cli, "\{quoted(binaryPath(cli))} \{quoted(mod)} 0", "\{dir}/log");
+  if (!d.ok()) { return Ours(d, -1, "tlsserved did not start: \{d.error}"); }
   const string MARK = "listening on 127.0.0.1:";
   if (!waitForLogWithin(core, cli, d, MARK, 20000)) {
     stop(cli, d);
-    return Ours(d, -1, "tlsserved never listened. Its output was: " + logOf(cli, d));
+    return Ours(d, -1, "tlsserved never listened. Its output was: \{logOf(cli, d)}");
   }
   string log = logOf(cli, d);
   u8[] b = log.toBytes();
@@ -87,10 +86,10 @@ export string test_client_talks_to_the_wac_server_end_to_end(Core core, Cli cli)
   if (s.port <= 0) { return t.report(); }
 
   Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, DATA + "/ca.pem"), REQ, nowSeconds(core));
+                    rootsFrom(cli, "\{DATA}/ca.pem"), REQ, nowSeconds(core));
   t.eqStr(r.error, "", "the exchange completed");
   t.eqI32(r.failure, 0, "the handshake succeeded");
-  t.isTrue(contains(r.response, "HTTP/1.1 200 OK"), "the server answered: " + r.response);
+  t.isTrue(contains(r.response, "HTTP/1.1 200 OK"), "the server answered: \{r.response}");
   t.isTrue(contains(r.response, BODY), "and with its body");
   stop(cli, s.d);
   cli.remove(dir, true).wait();
@@ -104,17 +103,17 @@ export string test_client_talks_to_openssls_s_server(Core core, Cli cli) {
   t.isTrue(have(cli, "openssl"), "openssl is on the path");
   if (!have(cli, "openssl")) { return t.report(); }
   string dir = freshScratch(t, cli, "ossl");
-  Server s = startServer(core, cli, "openssl", DATA + "/leaf.pem", DATA + "/leaf.key",
-                         string[].filled(0, ""), dir + "/log");
+  Server s = startServer(core, cli, "openssl", "\{DATA}/leaf.pem", "\{DATA}/leaf.key",
+                         string[].filled(0, ""), "\{dir}/log");
   t.eqStr(s.error, "", "s_server is up");
   if (!s.ok()) { return t.report(); }
 
   Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, DATA + "/ca.pem"), REQ, nowSeconds(core));
+                    rootsFrom(cli, "\{DATA}/ca.pem"), REQ, nowSeconds(core));
   t.eqStr(r.error, "", "the exchange completed");
   t.eqI32(r.failure, 0, "the handshake with openssl succeeded");
   t.isTrue(contains(r.response, "200 ok") || contains(r.response, "200 OK"),
-           "openssl answered: " + r.response.slice(0, 200));
+           "openssl answered: \{r.response.slice(0, 200)}");
   stopServer(cli, s);
   cli.remove(dir, true).wait();
   return t.report();
@@ -132,7 +131,7 @@ export string test_client_refuses_a_certificate_that_does_not_cover_the_host_ask
   if (s.port <= 0) { return t.report(); }
 
   Reply r = request(core, cli, "127.0.0.1", s.port, "not-our-name.test",
-                    rootsFrom(cli, DATA + "/ca.pem"), "GET / HTTP/1.1\r\n\r\n", nowSeconds(core));
+                    rootsFrom(cli, "\{DATA}/ca.pem"), "GET / HTTP/1.1\r\n\r\n", nowSeconds(core));
   t.neI32(r.failure, 0, "accepted a certificate for the wrong host");
   // 40 + 7: verifyChain's "no matching name".
   t.eqI32(r.failure, 47, "the name check is what failed");
@@ -151,13 +150,13 @@ export string test_client_refuses_a_certificate_from_an_issuer_it_does_not_trust
   if (s.port <= 0) { return t.report(); }
 
   Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, DATA + "/other_ca.pem"), "GET / HTTP/1.1\r\n\r\n",
+                    rootsFrom(cli, "\{DATA}/other_ca.pem"), "GET / HTTP/1.1\r\n\r\n",
                     nowSeconds(core));
   t.neI32(r.failure, 0, "accepted a certificate from an untrusted issuer");
   // 45 is "issuer name does not match the root's subject", 46 is "signature does not verify". Either
   // is a correct refusal; which one depends on whether the names collide.
   t.isTrue(r.failure == 45 || r.failure == 46,
-           "an issuer failure, got code " + itoa(r.failure));
+           "an issuer failure, got code \{r.failure}");
   stop(cli, s.d);
   cli.remove(dir, true).wait();
   return t.report();
@@ -175,7 +174,7 @@ export string test_client_refuses_when_the_certificate_is_outside_its_validity_w
 
   const i64 LONG_AGO = 631152000 as i64;    // 1990-01-01T00:00:00Z
   Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, DATA + "/ca.pem"), "GET / HTTP/1.1\r\n\r\n", LONG_AGO);
+                    rootsFrom(cli, "\{DATA}/ca.pem"), "GET / HTTP/1.1\r\n\r\n", LONG_AGO);
   t.neI32(r.failure, 0, "accepted a certificate that was not yet valid");
   t.eqI32(r.failure, 41, "the notBefore check is what failed");
   stop(cli, s.d);
@@ -212,17 +211,17 @@ string againstOpenSsl(Core core, Cli cli, string kind, string[] extra, string na
   if (!have(cli, "openssl")) { return t.report(); }
   string dir = freshScratch(t, cli, name);
   Server s = startServer(core, cli, "openssl",
-                         DATA + "/" + kind + "_leaf.pem", DATA + "/" + kind + "_leaf.key",
-                         extra, dir + "/log");
+                         "\{DATA}/\{kind}_leaf.pem", "\{DATA}/\{kind}_leaf.key",
+                         extra, "\{dir}/log");
   t.eqStr(s.error, "", "s_server is up");
   if (!s.ok()) { return t.report(); }
 
   Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, DATA + "/" + kind + "_ca.pem"), REQ, nowSeconds(core));
+                    rootsFrom(cli, "\{DATA}/\{kind}_ca.pem"), REQ, nowSeconds(core));
   t.eqStr(r.error, "", "the exchange completed");
-  t.eqI32(r.failure, 0, kind + ": the handshake succeeded");
+  t.eqI32(r.failure, 0, "\{kind}: the handshake succeeded");
   t.isTrue(contains(r.response, "200 ok") || contains(r.response, "200 OK"),
-           kind + ": openssl answered — " + r.response.slice(0, 120));
+           "\{kind}: openssl answered — \{r.response.slice(0, 120)}");
   stopServer(cli, s);
   cli.remove(dir, true).wait();
   return t.report();
@@ -269,17 +268,17 @@ export string test_client_negotiates_x25519mlkem768_against_a_post_quantum_only_
     return t.report();
   }
   string dir = freshScratch(t, cli, "mlkem");
-  Server s = startServer(core, cli, binary, DATA + "/ec_leaf.pem", DATA + "/ec_leaf.key",
-                         ["-groups", "X25519MLKEM768"], dir + "/log");
+  Server s = startServer(core, cli, binary, "\{DATA}/ec_leaf.pem", "\{DATA}/ec_leaf.key",
+                         ["-groups", "X25519MLKEM768"], "\{dir}/log");
   t.eqStr(s.error, "", "s_server is up");
   if (!s.ok()) { return t.report(); }
 
   Reply r = request(core, cli, "127.0.0.1", s.port, "wac.test",
-                    rootsFrom(cli, DATA + "/ec_ca.pem"), REQ, nowSeconds(core));
+                    rootsFrom(cli, "\{DATA}/ec_ca.pem"), REQ, nowSeconds(core));
   t.eqStr(r.error, "", "the exchange completed");
   t.eqI32(r.failure, 0, "the hybrid handshake succeeded");
   t.isTrue(contains(r.response, "200 ok") || contains(r.response, "200 OK"),
-           "openssl 3.5 answered — " + r.response.slice(0, 120));
+           "openssl 3.5 answered — \{r.response.slice(0, 120)}");
   stopServer(cli, s);
   cli.remove(dir, true).wait();
   return t.report();

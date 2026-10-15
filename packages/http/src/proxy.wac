@@ -41,7 +41,6 @@
 
 import { Cli, Socket } from "std";
 import { Buf } from "core";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** Where a proxy is. */
 export struct ProxyAt {
@@ -95,10 +94,10 @@ export ProxyAt parseProxy(string url) {
 
 /** The request that opens a tunnel to `host:port`. */
 export u8[] connectRequest(string host, i32 port) {
-  string authority = host + ":" + itoa(port);
+  string authority = "\{host}:\{port}";
   // **No `Connection: close`**, which would ask the proxy to hang up on the thing being opened.
-  string head = "CONNECT " + authority + " HTTP/1.1\r\n"
-    + "Host: " + authority + "\r\n"
+  string head = "CONNECT \{authority} HTTP/1.1\r\n"
+    + "Host: \{authority}\r\n"
     + "User-Agent: wac\r\n"
     + "\r\n";
   return head.toBytes();
@@ -163,15 +162,15 @@ i32 replyCap() { return 1 << 16; }
 export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string host, i32 port) {
   Socket s = cli.connect(proxyHost, proxyPort).wait();
   if (s.handle < 0) {
-    return Tunnel(false, -1, u8[](), "the proxy at " + proxyHost + ":" + itoa(proxyPort)
-      + " could not be reached: " + s.error);
+    return Tunnel(false, -1, u8[](), "the proxy at \{proxyHost}:\{proxyPort}"
+      + " could not be reached: \{s.error}");
   }
   if (!cli.send(s.handle, connectRequest(host, port)).wait()) {
     cli.closeSocket(s.handle);
     return Tunnel(false, -1, u8[](), "the proxy accepted a connection and not a request");
   }
 
-  string authority = host + ":" + itoa(port);
+  string authority = "\{host}:\{port}";
   Buf all = Buf.create();
   while (true) {
     match (cli.recv(s.handle).wait()) {
@@ -184,7 +183,7 @@ export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string ho
       }
       Failed(why): {
         cli.closeSocket(s.handle);
-        return Tunnel(false, -1, u8[](), "reading the proxy's reply failed: " + why);
+        return Tunnel(false, -1, u8[](), "reading the proxy's reply failed: \{why}");
       }
     }
     u8[] soFar = all.bytes();
@@ -192,18 +191,18 @@ export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string ho
       NeedMore: {
         if (all.len > replyCap()) {
           cli.closeSocket(s.handle);
-          return Tunnel(false, -1, u8[](), "the proxy sent " + itoa(all.len)
+          return Tunnel(false, -1, u8[](), "the proxy sent \{all.len}"
             + " bytes without finishing a reply");
         }
       }
       NotHttp(line): {
         cli.closeSocket(s.handle);
-        return Tunnel(false, -1, u8[](), "the proxy's reply is not HTTP: " + line);
+        return Tunnel(false, -1, u8[](), "the proxy's reply is not HTTP: \{line}");
       }
       Refused(line): {
         cli.closeSocket(s.handle);
         // The proxy's own line, verbatim. A 403 here is an allowlist, not a network.
-        return Tunnel(false, -1, u8[](), "the proxy refused " + authority + ": " + line);
+        return Tunnel(false, -1, u8[](), "the proxy refused \{authority}: \{line}");
       }
       Established(at): {
         u8[] leftover = u8[].filled(soFar.len() - at, 0);

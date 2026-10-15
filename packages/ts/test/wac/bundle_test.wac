@@ -8,7 +8,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Core, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Bundled, bundle } from "../../src/bundle.wac";
 import { Stripped, strip } from "../../src/strip.wac";
 
@@ -32,16 +31,16 @@ export string test_the_bridge_flattens(Core core, Cli cli) {
   u8[][] texts = u8[][].filled(paths.len(), u8[]());
   for (i32 i = 0; i < paths.len(); i++) {
     FileResult f = cli.readFile(paths[i]).wait();
-    if (!f.ok) { t.isTrue(false, "cannot read " + paths[i]); return t.report(); }
+    if (!f.ok) { t.isTrue(false, "cannot read \{paths[i]}"); return t.report(); }
     Stripped s = strip(f.bytes);
-    if (s.error != "") { t.isTrue(false, paths[i] + ": " + s.error); return t.report(); }
+    if (s.error != "") { t.isTrue(false, "\{paths[i]}: \{s.error}"); return t.report(); }
     texts[i] = s.out;
   }
   Bundled b = bundle(paths, texts, "packages/platform/host/deno.ts");
 
   t.eqStr(b.error, "", "the bridge flattens from deno.ts");
   if (b.error != "") { return t.report(); }
-  core.log("   bundled " + itoa(b.out.len() / 1024) + " KB from " + itoa(paths.len()) + " files");
+  core.log("   bundled \{b.out.len() / 1024} KB from \{paths.len()} files");
   t.isTrue(b.out.len() > 100000, "and it is the whole bridge, not a fragment");
   string out = string.fromBytes(b.out);
   // Nothing that names another module may survive: a leftover `import` is a runtime failure.
@@ -66,7 +65,7 @@ export string test_two_modules_that_both_declare_a_name() {
   string out = string.fromBytes(b.out);
   // **The shorthand keeps its key.** `{ EMPTY }` inside b is b's own `EMPTY`, untouched; renaming
   // the token would have made the object `{ EMPTY$b: … }`, which is the whole reason for IIFEs.
-  t.isTrue(out.indexOf("{ EMPTY }") >= 0, "b's shorthand is untouched — got:\n" + out);
+  t.isTrue(out.indexOf("{ EMPTY }") >= 0, "b's shorthand is untouched — got:\n\{out}");
   t.isTrue(out.indexOf("EMPTY$") < 0, "and no source name was renamed");
   return t.report();
 }
@@ -81,7 +80,7 @@ export string test_an_imported_name_is_read_through_its_module() {
   t.eqStr(r.error, "", "it bundles");
   if (r.error != "") { return t.report(); }
   string out = string.fromBytes(r.out);
-  t.isTrue(out.indexOf(".base()") >= 0, "the renamed import reads through its module — got:\n" + out);
+  t.isTrue(out.indexOf(".base()") >= 0, "the renamed import reads through its module — got:\n\{out}");
   t.isTrue(out.indexOf("import") < 0, "and the import statement is gone");
   return t.report();
 }
@@ -140,7 +139,7 @@ export string test_a_namespace_import_binds_the_module_itself() {
   t.eqStr(r.error, "", "it bundles");
   if (r.error != "") { return t.report(); }
   string out = string.fromBytes(r.out);
-  t.isTrue(out.indexOf("const lib = $m") >= 0, "the namespace binds the module — got:\n" + out);
+  t.isTrue(out.indexOf("const lib = $m") >= 0, "the namespace binds the module — got:\n\{out}");
   t.isTrue(out.indexOf("lib.base()") >= 0, "and uses of it are untouched");
   return t.report();
 }
@@ -158,7 +157,7 @@ export string test_an_external_import_is_hoisted_not_bundled() {
   if (r.error != "") { return t.report(); }
   string out = string.fromBytes(r.out);
   i32 imp = out.indexOf("import * as wt from \"node:worker_threads\";");
-  t.isTrue(imp >= 0, "the external import survives — got:\n" + out);
+  t.isTrue(imp >= 0, "the external import survives — got:\n\{out}");
   t.isTrue(imp < out.indexOf("const $m"), "and is hoisted above every module");
   return t.report();
 }
@@ -178,7 +177,7 @@ export string test_a_relative_import_not_in_the_set_is_refused() {
   texts[0] = "import * as lib from \"./gone.ts\";\nexport const go = () => lib.base();\n".toBytes();
   Bundled r = bundle(paths, texts, "a.ts");
   t.isTrue(r.error != "", "an import of a file that was not supplied is refused");
-  t.isTrue(r.error.indexOf("gone.ts") >= 0, "and the message names it — got: " + r.error);
+  t.isTrue(r.error.indexOf("gone.ts") >= 0, "and the message names it — got: \{r.error}");
 
   // The named form takes the same route, and used to be the worse of the two: `ns[-1]` is a trap
   // rather than a wrong answer, so this one failed loudly *somewhere* — just not here.

@@ -16,28 +16,16 @@ import { JsonValue, JsonObject, numberOf } from "../src/value.wac";
 JsonObject build(i32 n) {
   JsonObject o = JsonObject.create();
   for (i32 i = 0; i < n; i++) {
-    o.push(("k" + itoaLocal(i)).toBytes(), numberOf(i as f64));
+    o.push("k\{i}".toBytes(), numberOf(i as f64));
   }
   return o;
-}
-
-// A local itoa so the bench does not depend on packages/fmt.
-string itoaLocal(i32 v) {
-  if (v == 0) { return "0"; }
-  string out = "";
-  i32 n = v;
-  while (n > 0) {
-    out = string.fromCodepoint(48 + (n % 10)) + out;
-    n = n / 10;
-  }
-  return out;
 }
 
 /** `reps` scans, cycling through every key so the average is over all positions. */
 export i32 scanKeys(i32 n, i32 reps) {
   JsonObject o = build(n);
   u8[][] keys = u8[][].defaulted(n);
-  for (i32 i = 0; i < n; i++) { keys[i] = ("k" + itoaLocal(i)).toBytes(); }
+  for (i32 i = 0; i < n; i++) { keys[i] = "k\{i}".toBytes(); }
   i32 hits = 0;
   for (i32 r = 0; r < reps; r++) {
     JsonValue? v = o.scan(keys[r % n]);
@@ -52,7 +40,7 @@ export i32 indexedKeys(i32 n, i32 reps) {
   JsonObject o = build(n);
   o.buildIndex();
   u8[][] keys = u8[][].defaulted(n);
-  for (i32 i = 0; i < n; i++) { keys[i] = ("k" + itoaLocal(i)).toBytes(); }
+  for (i32 i = 0; i < n; i++) { keys[i] = "k\{i}".toBytes(); }
   i32 hits = 0;
   for (i32 r = 0; r < reps; r++) {
     JsonValue? v = o.get(keys[r % n]);
@@ -124,7 +112,7 @@ export i32 main(Sys sys) {
   scanKeys(8, 10000);
   indexedKeys(8, 10000);
 
-  core.log(itoaLocal(REPS()) + " lookups, cycling through every key. ns.\n");
+  core.log("\{REPS()} lookups, cycling through every key. ns.\n");
   core.log("| members | scan/lookup | indexed/lookup | index build | break-even lookups |");
   core.log("|---:|---:|---:|---:|---|");
 
@@ -136,10 +124,10 @@ export i32 main(Sys sys) {
     // How many lookups it takes for the index to repay its own construction.
     i64 saved = scan - indexed;
     string verdict = "never";
-    if (saved > 0) { verdict = itoaLocal(((build + saved - 1) / saved) as! i32); }
-    core.log("| " + itoaLocal(n) + " | " + itoaLocal(scan as! i32) + " | "
-             + itoaLocal(indexed as! i32) + " | " + itoaLocal(build as! i32) + " | "
-             + verdict + " |");
+    if (saved > 0) { verdict = "\{((build + saved - 1) / saved) as! i32}"; }
+    core.log("| \{n} | \{scan as! i32} | "
+             + "\{indexed as! i32} | \{build as! i32} | "
+             + "\{verdict} |");
   }
   return 0;
 }

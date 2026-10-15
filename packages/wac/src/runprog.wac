@@ -16,7 +16,6 @@
 
 import { Child, Cli, Core, Exec, FileResult, INHERIT_IN, INHERIT_OUT, Pending, faultWords } from "std";
 import { Read } from "core";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { parse } from "../../json/src/json.wac";
 import { manifestIn } from "../../wacc/src/manifest.wac";
@@ -197,7 +196,7 @@ export i32 runBytes(Core core, Cli cli, u8[] wasm, u8[][] args, string shown) {
     // `compile` is what produces a module with no manifest, so the sentence says which command to
     // use *instead* rather than only which one to use: without that, "build it with `wac build`" is
     // advice about a file whose provenance the reader has to work out for themselves.
-    core.warn("wac: " + shown + " carries no wac.manifest section, so it is a raw module rather "
+    core.warn("wac: \{shown} carries no wac.manifest section, so it is a raw module rather "
               + "than a program — `wac compile` writes one of these, and `wac build <entry.wac> "
               + "-o <stem>` writes one that can run");
     return 1;
@@ -208,7 +207,7 @@ export i32 runBytes(Core core, Cli cli, u8[] wasm, u8[][] args, string shown) {
     return 1;
   }
   if (kid.handle < 0) {
-    core.warn("wac: cannot run " + shown + " — " + kid.error);
+    core.warn("wac: cannot run \{shown} — \{kid.error}");
     return 1;
   }
   // **Inherited both ways, so there is nothing between the program and the terminal.** This relayed

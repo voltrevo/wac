@@ -36,7 +36,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, Stat, FileResult } from "std";
-import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../src/fs.wac";
 import { Written, Loaded, write, read, dump } from "../../src/image.wac";
 import { imageBadOps } from "./cov_probe.wac";
@@ -57,7 +56,7 @@ void walk(Fs fs, string at, string[] out, i32[] n) {
   if (names is null) { return; }
   string[] found = names!;
   for (i32 i = 0; i < found.len(); i++) {
-    string path = at + "/" + found[i];
+    string path = "\{at}/\{found[i]}";
     if (n[0] >= out.len()) { return; }
     out[n[0]] = path;
     n[0] = n[0] + 1;
@@ -74,7 +73,7 @@ void walk(Fs fs, string at, string[] out, i32[] n) {
 string describe(Fs fs, string[] mounts) {
   string out = "";
   for (i32 m = 0; m < mounts.len(); m++) {
-    out = out + "mount " + mounts[m] + "\n";
+    out = out + "mount \{mounts[m]}\n";
     string[] paths = string[].filled(4096, "");
     i32[] n = i32[].filled(1, 0);
     walk(fs, mounts[m] == "/" ? "" : mounts[m], paths, n);
@@ -84,11 +83,11 @@ string describe(Fs fs, string[] mounts) {
       if (!st.isDir) {
         FileResult r = fs.readFile(paths[i]);
         for (i32 k = 0; k < r.bytes.len(); k++) {
-          body = body + (k == 0 ? " " : ",") + itoa(r.bytes[k] as i32);
+          body = body + (k == 0 ? " " : ",") + "\{r.bytes[k] as i32}";
         }
       }
-      out = out + "  " + (st.isDir ? "d" : "-") + " " + paths[i] + " size=" + itoa64(st.size) +
-            " mtime=" + itoa64(st.modifiedMillis) + body + "\n";
+      out = out + "  " + (st.isDir ? "d" : "-") + " " + paths[i] + " size=\{st.size}" +
+            " mtime=\{st.modifiedMillis}" + body + "\n";
     }
   }
   return out;
@@ -115,7 +114,7 @@ string[] names() {
   for (i32 i = 0; i < 40; i++) { forty = forty + "z"; }
   return [
                   "a", "b c", "-x", ".hidden", "ünïcode", forty, "1", "d",
-                  oneByte(0xFF), "c" + oneByte(0xC3), oneByte(0x01) + "ctl"
+                  oneByte(0xFF), "c\{oneByte(0xC3)}", "\{oneByte(0x01)}ctl"
   ];
 }
 
@@ -143,7 +142,7 @@ Built build(i32 seed) {
   i32 rounds = 6 + rng.upto(10);
   for (i32 i = 0; i < rounds; i++) {
     string parent = dirs[rng.upto(dirCount)];
-    string path = parent + "/" + ns[rng.upto(ns.len())] + itoa(i);
+    string path = "\{parent}/\{ns[rng.upto(ns.len())]}\{i}";
     if (rng.upto(3) == 0) {
       if (fs.mkdir(path, false).fault == 0 && dirCount < dirs.len()) {
         dirs[dirCount] = path;
@@ -175,11 +174,11 @@ export string test_any_filesystem_survives_being_written_and_read_back() {
     Built b = build(seed);
     string before = describe(b.fs, b.mounts);
     Written written = write(b.fs);
-    t.eqI32(written.skipped.len(), 0, "seed " + itoa(seed) + ": nothing should have been skipped");
+    t.eqI32(written.skipped.len(), 0, "seed \{seed}: nothing should have been skipped");
     Loaded loaded = read(written.bytes, NOW);
-    t.isTrue(loaded.ok, "seed " + itoa(seed) + ": " + loaded.error);
+    t.isTrue(loaded.ok, "seed \{seed}: \{loaded.error}");
     if (!loaded.ok) { return t.report(); }
-    t.eqStr(describe(loaded.fs, b.mounts), before, "seed " + itoa(seed) + ": the filesystem changed");
+    t.eqStr(describe(loaded.fs, b.mounts), before, "seed \{seed}: the filesystem changed");
   }
   return t.report();
 }
@@ -196,9 +195,9 @@ export string test_writing_what_was_read_gives_the_same_bytes() {
     Built b = build(seed);
     u8[] first = write(b.fs).bytes;
     Loaded loaded = read(first, NOW);
-    t.isTrue(loaded.ok, "seed " + itoa(seed) + ": " + loaded.error);
+    t.isTrue(loaded.ok, "seed \{seed}: \{loaded.error}");
     if (!loaded.ok) { return t.report(); }
-    t.eqBytes(write(loaded.fs).bytes, first, "seed " + itoa(seed) + ": rewriting gave other bytes");
+    t.eqBytes(write(loaded.fs).bytes, first, "seed \{seed}: rewriting gave other bytes");
   }
   return t.report();
 }
@@ -207,21 +206,21 @@ export string test_a_name_that_is_not_text_survives_an_image() {
   T t = T.create();
   Fs fs = Fs.inMemory(NOW);
   string[] awkward = [
-    "/" + oneByte(0xFF),
-    "/lone" + oneByte(0xC3),
-    "/" + oneByte(0x01) + oneByte(0x02),
-    "/" + oneByte(0xED) + oneByte(0xA0) + oneByte(0x80)   // a surrogate, which UTF-8 forbids
+    "/\{oneByte(0xFF)}",
+    "/lone\{oneByte(0xC3)}",
+    "/\{oneByte(0x01)}\{oneByte(0x02)}",
+    "/\{oneByte(0xED)}\{oneByte(0xA0)}\{oneByte(0x80)}"   // a surrogate, which UTF-8 forbids
   ];
   for (i32 i = 0; i < awkward.len(); i++) {
     t.eqI32(fs.writeFile(awkward[i], [i as@ u8]).fault, 0, "a byte name writes");
   }
   Written w = write(fs);
   Loaded loaded = read(w.bytes, NOW);
-  t.isTrue(loaded.ok, "the image loads: " + loaded.error);
+  t.isTrue(loaded.ok, "the image loads: \{loaded.error}");
   if (!loaded.ok) { return t.report(); }
   for (i32 i = 0; i < awkward.len(); i++) {
     FileResult r = loaded.fs.readFile(awkward[i]);
-    t.isTrue(r.ok, "name " + itoa(i) + " came back: " + r.error);
+    t.isTrue(r.ok, "name \{i} came back: \{r.error}");
     if (r.ok) { t.eqI32(r.bytes.len() == 1 ? r.bytes[0] as i32 : -1, i, "with its own contents"); }
   }
   // And the bytes are canonical for these too, which is where a name normalised on the way through
@@ -248,10 +247,10 @@ export string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) 
   string work = workDir(cli);
   cli.remove(work, true).wait();
   Change made = cli.mkdir(work, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   if (!made.ok()) { return t.report(); }
 
-  string stem = work + "/saveimage";
+  string stem = "\{work}/saveimage";
   Exec built = cli.exec(binary(cli),
                         [
                                  "build", "packages/fs/example/saveimage.wac", "-o", stem,
@@ -261,27 +260,27 @@ export string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) 
            "saveimage builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
   if (!built.ran() || built.status != 0) { return t.report(); }
 
-  string out = work + "/out.wacimg";
-  Exec run = cli.exec(binary(cli), [stem + ".wasm", work, out], u8[]()).wait();
+  string out = "\{work}/out.wacimg";
+  Exec run = cli.exec(binary(cli), ["\{stem}.wasm", work, out], u8[]()).wait();
   t.isTrue(run.ran() && run.status == 0,
            "saveimage runs: " + (run.ran() ? string.fromBytes(run.stderr) : run.error));
   if (!run.ran() || run.status != 0) { return t.report(); }
   string said = string.fromBytes(run.stdout);
-  t.isTrue(said.indexOf("skipped /") >= 0, "the host mount was named:\n" + said);
+  t.isTrue(said.indexOf("skipped /") >= 0, "the host mount was named:\n\{said}");
 
   FileResult image = cli.readFile(out).wait();
-  t.isTrue(image.ok, "the image was written: " + image.error);
+  t.isTrue(image.ok, "the image was written: \{image.error}");
   if (!image.ok) { return t.report(); }
   Loaded loaded = read(image.bytes, NOW);
-  t.isTrue(loaded.ok, "the saved image loads: " + loaded.error);
+  t.isTrue(loaded.ok, "the saved image loads: \{loaded.error}");
   if (!loaded.ok) { return t.report(); }
   // And the file that lives on the host really is absent from the image, rather than merely
   // unmentioned in a list a caller might not read.
   t.isFalse(loaded.fs.readFile("/on-the-host").ok, "a host file was written into the image");
   t.isTrue(loaded.fs.readFile("/home/claude/notes").ok, "the memory mount was not written");
   string text = dump(image.bytes);
-  t.isTrue(text.indexOf("mount /home") >= 0, "one mount, at /home:\n" + text);
-  t.eqI32(countOf(text, "mount "), 1, "more than one mount in the image:\n" + text);
+  t.isTrue(text.indexOf("mount /home") >= 0, "one mount, at /home:\n\{text}");
+  t.eqI32(countOf(text, "mount "), 1, "more than one mount in the image:\n\{text}");
 
   // And this is the first filesystem in the repo with **no root mount** — which is why `mountOf` now
   // answers -1 instead of 0. It used to default to the first mount, unreachable while every
@@ -292,21 +291,21 @@ export string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) 
   for (i32 i = 0; i < outside.len(); i++) {
     string p = outside[i];
     FileResult r = loaded.fs.readFile(p);
-    t.isFalse(r.ok, p + " answered from a filesystem that does not hold it");
-    t.isTrue(r.error.indexOf("no such file") >= 0, p + ": " + r.error);
-    t.isFalse(loaded.fs.stat(p).exists, p + " claims to exist");
-    t.isTrue(loaded.fs.readDir(p) is null, p + " listed as a directory");
-    t.neI32(loaded.fs.writeFile(p, u8[].filled(1, 0)).fault, 0, p + " accepted a write");
-    t.neI32(loaded.fs.mkdir(p, false).fault, 0, p + " accepted a mkdir");
-    t.neI32(loaded.fs.remove(p, false).fault, 0, p + " accepted a remove");
-    t.neI32(loaded.fs.chmod(p, 448).fault, 0, p + " accepted a chmod");
-    t.neI32(loaded.fs.chown(p, "someone").fault, 0, p + " accepted a chown");
+    t.isFalse(r.ok, "\{p} answered from a filesystem that does not hold it");
+    t.isTrue(r.error.indexOf("no such file") >= 0, "\{p}: \{r.error}");
+    t.isFalse(loaded.fs.stat(p).exists, "\{p} claims to exist");
+    t.isTrue(loaded.fs.readDir(p) is null, "\{p} listed as a directory");
+    t.neI32(loaded.fs.writeFile(p, u8[].filled(1, 0)).fault, 0, "\{p} accepted a write");
+    t.neI32(loaded.fs.mkdir(p, false).fault, 0, "\{p} accepted a mkdir");
+    t.neI32(loaded.fs.remove(p, false).fault, 0, "\{p} accepted a remove");
+    t.neI32(loaded.fs.chmod(p, 448).fault, 0, "\{p} accepted a chmod");
+    t.neI32(loaded.fs.chown(p, "someone").fault, 0, "\{p} accepted a chown");
   }
   cli.remove(work, true).wait();
   return t.report();
 }
 
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 string workDir(Cli cli) {
   string cwd = cli.cwd().wait();
@@ -319,7 +318,7 @@ string workDir(Cli cli) {
     while (end < b.len() && b[end] != '/') { end = end + 1; }
     who = cwd.slice(i + 1, end);
   }
-  return "/tmp/wac-fs-image" + (who == "" ? "" : "-" + who);
+  return "/tmp/wac-fs-image" + (who == "" ? "" : "-\{who}");
 }
 
 i32 countOf(string s, string needle) {
@@ -352,10 +351,10 @@ export string test_a_damaged_image_says_what_is_wrong() {
   cases[4][good.len() / 2] = cases[4][good.len() / 2] ^ 0x01;
   for (i32 i = 0; i < cases.len(); i++) {
     Loaded got = read(cases[i], NOW);
-    t.isFalse(got.ok, names[i] + ": loaded when it should have been refused");
+    t.isFalse(got.ok, "\{names[i]}: loaded when it should have been refused");
     t.isTrue(got.error.indexOf(reasons[i]) >= 0,
-             names[i] + ": expected the reason to mention \"" + reasons[i] + "\", got \"" +
-             got.error + "\"");
+             "\{names[i]}: expected the reason to mention \"\{reasons[i]}\", got \"" +
+             "\{got.error}\"");
   }
   return t.report();
 }
@@ -389,8 +388,8 @@ export string test_a_flipped_byte_is_caught_wherever_it_is() {
     tried = tried + 1;
     if (read(b, NOW).ok) { missed = missed + 1; }
   }
-  t.isTrue(tried > 20, "only " + itoa(tried) + " bytes were flipped");
-  t.eqI32(missed, 0, itoa(missed) + " flipped bytes loaded as valid images");
+  t.isTrue(tried > 20, "only \{tried} bytes were flipped");
+  t.eqI32(missed, 0, "\{missed} flipped bytes loaded as valid images");
   return t.report();
 }
 
@@ -405,12 +404,12 @@ export string test_removed_nodes_are_not_written() {
   T t = T.create();
   Fs fs = Fs.inMemory(NOW);
   u8[] big = u8[].filled(4000, 0x41);
-  for (i32 i = 0; i < 20; i++) { fs.writeFile("/f" + itoa(i), big); }
+  for (i32 i = 0; i < 20; i++) { fs.writeFile("/f\{i}", big); }
   i32 full = write(fs).bytes.len();
-  for (i32 i = 0; i < 20; i++) { fs.remove("/f" + itoa(i), false); }
+  for (i32 i = 0; i < 20; i++) { fs.remove("/f\{i}", false); }
   i32 empty = write(fs).bytes.len();
   t.isTrue(empty < full / 10,
-           "removing everything left an image of " + itoa(empty) + " against " + itoa(full));
+           "removing everything left an image of \{empty} against \{full}");
   return t.report();
 }
 
@@ -424,7 +423,7 @@ export string test_dump_shows_the_metadata_that_is_the_reason_for_our_own_format
   string text = dump(write(fs).bytes);
   string[] wanted = ["mount /", "0600", "claude", "notes", "5 bytes", "d 0755"];
   for (i32 i = 0; i < wanted.len(); i++) {
-    t.isTrue(text.indexOf(wanted[i]) >= 0, "dump did not mention " + wanted[i] + ":\n" + text);
+    t.isTrue(text.indexOf(wanted[i]) >= 0, "dump did not mention \{wanted[i]}:\n\{text}");
   }
   // And a damaged image dumps its reason rather than half a tree, which would read as a small
   // filesystem.
@@ -446,10 +445,10 @@ export string test_dump_shows_the_metadata_that_is_the_reason_for_our_own_format
 export string test_the_fixture_image_still_loads(Core core, Cli cli) {
   T t = T.create();
   FileResult f = cli.readFile(FIXTURE).wait();
-  t.isTrue(f.ok, "the fixture reads: " + f.error);
+  t.isTrue(f.ok, "the fixture reads: \{f.error}");
   if (!f.ok) { return t.report(); }
   Loaded got = read(f.bytes, NOW);
-  t.isTrue(got.ok, "the committed fixture no longer loads: " + got.error);
+  t.isTrue(got.ok, "the committed fixture no longer loads: \{got.error}");
   if (!got.ok) { return t.report(); }
 
   string[] paths = ["/greeting", "/home/claude/notes", "/mnt/data"];
@@ -460,13 +459,13 @@ export string test_the_fixture_image_still_loads(Core core, Cli cli) {
   ];
   for (i32 i = 0; i < paths.len(); i++) {
     FileResult r = got.fs.readFile(paths[i]);
-    t.isTrue(r.ok, paths[i] + ": " + r.error);
+    t.isTrue(r.ok, "\{paths[i]}: \{r.error}");
     if (r.ok) { t.eqStr(string.fromBytes(r.bytes), texts[i], paths[i]); }
   }
   // The metadata, which is the part a format of our own was chosen for.
   t.eqI64(got.fs.stat("/home/claude/notes").modifiedMillis, 1754500000000, "the mtime survived");
   t.isTrue(dump(f.bytes).indexOf("0600 claude") >= 0,
-           "the fixture's mode and owner did not survive:\n" + dump(f.bytes));
+           "the fixture's mode and owner did not survive:\n\{dump(f.bytes)}");
   return t.report();
 }
 
@@ -506,9 +505,9 @@ export string test_an_image_whose_checksum_is_right_and_body_is_wrong() {
   t.eqI32(lines.len(), what.len(), "one line per case");
   if (lines.len() != what.len()) { return t.report(); }
   for (i32 i = 0; i < what.len(); i++) {
-    t.isTrue(lines[i].slice(0, what[i].len()) == what[i], "case " + itoa(i) + ": " + lines[i]);
+    t.isTrue(lines[i].slice(0, what[i].len()) == what[i], "case \{i}: \{lines[i]}");
     t.isTrue(lines[i].indexOf(reason[i]) >= 0,
-             what[i] + ": expected the reason to mention \"" + reason[i] + "\", got " + lines[i]);
+             "\{what[i]}: expected the reason to mention \"\{reason[i]}\", got \{lines[i]}");
   }
   return t.report();
 }

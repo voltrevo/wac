@@ -74,7 +74,7 @@ export i32 page(Core core, Cli cli, Page page) {
     "    <dt>drawn in</dt><dd id=\"ms\">—</dd>" +
     "  </dl>" +
     "  <footer>Every pixel here is wac. " +
-    "    <a href=\"" + SOURCE + "\">source, and how to build it yourself</a>.</footer>" +
+    "    <a href=\"\{SOURCE}\">source, and how to build it yourself</a>.</footer>" +
     "</div>"
   ).wait();
   page.on("#c", "pointermove").wait();
@@ -103,8 +103,8 @@ export i32 page(Core core, Cli cli, Page page) {
       // The escape count under the cursor, which is the check that x and y are the *canvas's*
       // coordinates rather than the page's — an off-by-a-scroll would show up here at once.
       i32 n = escapes(e.x, e.y, spanX, centreX, centreY);
-      page.setText("pos", "x=" + itoa(e.x) + " y=" + itoa(e.y) + " escapes at " +
-        (n >= MAX ? "never (inside)" : itoa(n))).wait();
+      page.setText("pos", "x=\{e.x} y=\{e.y} escapes at " +
+        (n >= MAX ? "never (inside)" : "\{n}")).wait();
     } else if (e.id == "in") {
       spanX = spanX / 2;
       drawAndReport(core, page, spanX, centreX, centreY);
@@ -132,10 +132,10 @@ void drawAndReport(Core core, Page page, i32 spanX, i32 centreX, i32 centreY) {
   i64 began = core.monotonicNanos().wait();
   draw(page, spanX, centreX, centreY);
   i64 took = (core.monotonicNanos().wait() - began) / 1000000;
-  page.setText("ms", itoa(took as~ i32) + " ms  ·  " + itoa(W * H) + " pixels").wait();
+  page.setText("ms", "\{took as~ i32} ms  ·  \{W * H} pixels").wait();
   page.setText(
     "view",
-    "span " + thousandths(spanX) + "  centre " + thousandths(centreX) + ", " + thousandths(centreY)
+    "span \{thousandths(spanX)}  centre \{thousandths(centreX)}, \{thousandths(centreY)}"
   ).wait();
 }
 
@@ -143,13 +143,13 @@ void drawAndReport(Core core, Page page, i32 spanX, i32 centreX, i32 centreY) {
 string thousandths(i32 v) {
   bool neg = v < 0;
   i32 x = neg ? 0 - v : v;
-  return (neg ? "-" : "") + itoa(x / 1000) + "." + pad3(x % 1000);
+  return (neg ? "-" : "") + "\{x / 1000}." + pad3(x % 1000);
 }
 
 string pad3(i32 v) {
-  string s = itoa(v);
-  if (v < 10) { return "00" + s; }
-  if (v < 100) { return "0" + s; }
+  string s = "\{v}";
+  if (v < 10) { return "00\{s}"; }
+  if (v < 100) { return "0\{s}"; }
   return s;
 }
 
@@ -199,7 +199,7 @@ i32 escapes(i32 px, i32 py, i32 spanX, i32 centreX, i32 centreY) {
 
 /** The same image as a PPM, which is a header and then the bytes — no encoder needed. */
 u8[] ppm(i32 spanX, i32 centreX, i32 centreY) {
-  string head = "P6\n" + itoa(W) + " " + itoa(H) + "\n255\n";
+  string head = "P6\n\{W} \{H}\n255\n";
   u8[] h = head.toBytes();
   u8[] out = u8[].filled(h.len() + W * H * 3, 0);
   out.copyFrom(h, 0, 0, h.len());
@@ -216,17 +216,3 @@ u8[] ppm(i32 spanX, i32 centreX, i32 centreY) {
   return out;
 }
 
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  // `i32::MIN` has no positive counterpart — negating it wraps back to itself — so without this the
-  // loop below never runs and the answer is the sign alone. GitHub wac-mono#6 found it in `box`;
-  // these copies had it too.
-  if (v == -2147483648) { return "-2147483648"; }
-  i32 x = v < 0 ? 0 - v : v;
-  u8[] digits = u8[].filled(12, 0);
-  i32 at = 12;
-  while (x > 0) { at--; digits[at] = ('0' + (x % 10)) as@ u8; x = x / 10; }
-  u8[] used = u8[].filled(12 - at, 0);
-  used.copyFrom(digits, at, 0, 12 - at);
-  return (v < 0 ? "-" : "") + string.fromBytes(used);
-}

@@ -32,9 +32,9 @@ export string test_the_wasmtime_host_can_run_a_test_that_takes_a_world(Core core
   T t = T.create();
   string why = nativeHostWhyNot(cli);
   if (why != "") {
-    core.log("skipped: " + why);
+    core.log("skipped: \{why}");
     // Asserted rather than returned silently, so a skip is not indistinguishable from a run.
-    t.isTrue(why != "", "the wasmtime host is not available: " + why);
+    t.isTrue(why != "", "the wasmtime host is not available: \{why}");
     return t.report();
   }
 
@@ -48,10 +48,10 @@ export string test_the_wasmtime_host_can_run_a_test_that_takes_a_world(Core core
   // The sentence itself, named, because it is the one this exists for and a future variant of it
   // would otherwise arrive as an unexplained count.
   t.isTrue(said.indexOf("built without") < 0,
-           "the host refused the module's world — `" + SUBJECT() + "` takes `Core` and `Cli`, and\n"
+           "the host refused the module's world — `\{SUBJECT()}` takes `Core` and `Cli`, and\n"
            + "  a world sized from something other than the export being called refuses exactly that.\n"
-           + "  See issues/system/0316b. It said:\n  " + said);
+           + "  See issues/system/0316b. It said:\n  \{said}");
   t.isTrue(said.indexOf("1 passed, 0 failed") >= 0,
-           "the wasmtime host reported a passing test, rather than:\n  " + said);
+           "the wasmtime host reported a passing test, rather than:\n  \{said}");
   return t.report();
 }

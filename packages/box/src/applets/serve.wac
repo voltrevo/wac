@@ -11,7 +11,6 @@
 import { Cli, Core, Socket } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { concat } from "../lib/bytes.wac";
 import { Served, serve as handle } from "../../../server/src/serve.wac";
 import { Read } from "core";
@@ -23,8 +22,8 @@ export i32 serve(Core core, Cli cli, Fs fs, Args a) {
   i32 port = a.num == 0 ? 8080 : a.num;
   // Every interface: `serve` exists to hand a file to another machine. Issue 0025.
   Socket l = cli.listen("", port).wait();
-  if (l.handle < 0) { core.warn(a.name + ": " + itoa(port) + ": " + l.error); return 1; }
-  core.warn(a.name + ": listening on port " + itoa(port));
+  if (l.handle < 0) { core.warn("\{a.name}: \{port}: \{l.error}"); return 1; }
+  core.warn("\{a.name}: listening on port \{port}");
 
   // `-o` serves one connection and exits, which is what the tests use and what makes this
   // runnable without something to stop it. Not `-1`: a leading digit is how this argument
@@ -32,7 +31,7 @@ export i32 serve(Core core, Cli cli, Fs fs, Args a) {
   bool once = has(a, 'o');
   while (true) {
     Socket c = cli.accept(l.handle).wait();
-    if (c.handle < 0) { core.warn(a.name + ": accept: " + c.error); break; }
+    if (c.handle < 0) { core.warn("\{a.name}: accept: \{c.error}"); break; }
     connection(core, cli, c.handle);
     cli.closeSocket(c.handle);
     if (once) { break; }
@@ -51,7 +50,7 @@ void connection(Core core, Cli cli, i32 sock) {
       match (cli.recv(sock).wait()) {
         Data(bytes): { buffered = concat(buffered, bytes); }
         End: { return; }
-        Failed(why): { core.warn("serve: " + why); return; }
+        Failed(why): { core.warn("serve: \{why}"); return; }
       }
       continue;
     }

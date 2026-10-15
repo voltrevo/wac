@@ -53,50 +53,50 @@ export string test_known_hosts_plain_entries_patterns_negation_markers_and_comme
   string otherB64 = base64(other);
 
   // Exact, comments and blank lines.
-  t.eqStr(look("# a comment\n\nexample.com ssh-ed25519 " + b64 + " me@here\n", "example.com", 22,
+  t.eqStr(look("# a comment\n\nexample.com ssh-ed25519 \{b64} me@here\n", "example.com", 22,
                blob, type),
           "match", "a plain entry with a trailing comment");
   // Several names on one line.
-  t.eqStr(look("a.example,b.example,c.example ssh-ed25519 " + b64 + "\n", "b.example", 22, blob,
+  t.eqStr(look("a.example,b.example,c.example ssh-ed25519 \{b64}\n", "b.example", 22, blob,
                type),
           "match", "a middle name in a list");
   // Patterns.
-  t.eqStr(look("*.example ssh-ed25519 " + b64 + "\n", "host.example", 22, blob, type),
+  t.eqStr(look("*.example ssh-ed25519 \{b64}\n", "host.example", 22, blob, type),
           "match", "* did not match");
-  t.eqStr(look("*.example ssh-ed25519 " + b64 + "\n", "example", 22, blob, type),
+  t.eqStr(look("*.example ssh-ed25519 \{b64}\n", "example", 22, blob, type),
           "unknown", "* matched too much");
-  t.eqStr(look("h??t.example ssh-ed25519 " + b64 + "\n", "host.example", 22, blob, type),
+  t.eqStr(look("h??t.example ssh-ed25519 \{b64}\n", "host.example", 22, blob, type),
           "match", "? did not match");
-  t.eqStr(look("h??t.example ssh-ed25519 " + b64 + "\n", "hoost.example", 22, blob, type),
+  t.eqStr(look("h??t.example ssh-ed25519 \{b64}\n", "hoost.example", 22, blob, type),
           "unknown", "? matched two characters");
   // A negation vetoes the whole entry even though the wildcard matches.
-  t.eqStr(look("*.example,!bad.example ssh-ed25519 " + b64 + "\n", "bad.example", 22, blob, type),
+  t.eqStr(look("*.example,!bad.example ssh-ed25519 \{b64}\n", "bad.example", 22, blob, type),
           "unknown", "a negation did not veto the entry");
-  t.eqStr(look("*.example,!bad.example ssh-ed25519 " + b64 + "\n", "good.example", 22, blob, type),
+  t.eqStr(look("*.example,!bad.example ssh-ed25519 \{b64}\n", "good.example", 22, blob, type),
           "match", "a negation vetoed an unrelated host");
   // Known host, different key.
-  t.eqStr(look("example.com ssh-ed25519 " + otherB64 + "\n", "example.com", 22, blob, type),
+  t.eqStr(look("example.com ssh-ed25519 \{otherB64}\n", "example.com", 22, blob, type),
           "mismatch", "a different key was not a mismatch");
   // A second line with the right key still matches, even after a wrong one.
-  t.eqStr(look("example.com ssh-ed25519 " + otherB64 + "\nexample.com ssh-ed25519 " + b64 + "\n",
+  t.eqStr(look("example.com ssh-ed25519 \{otherB64}\nexample.com ssh-ed25519 \{b64}\n",
                "example.com", 22, blob, type),
           "match", "a matching line after a non-matching one did not win");
   // @revoked outranks everything, wherever it appears.
-  t.eqStr(look("example.com ssh-ed25519 " + b64 + "\n@revoked example.com ssh-ed25519 " + b64 +
+  t.eqStr(look("example.com ssh-ed25519 \{b64}\n@revoked example.com ssh-ed25519 \{b64}" +
                "\n", "example.com", 22, blob, type),
           "revoked", "a revocation did not outrank a match");
   // @cert-authority describes a CA, not this host key: it must not be compared as one.
-  t.eqStr(look("@cert-authority *.example ssh-ed25519 " + otherB64 + "\n", "host.example", 22,
+  t.eqStr(look("@cert-authority *.example ssh-ed25519 \{otherB64}\n", "host.example", 22,
                blob, type),
           "unknown", "a cert-authority line was treated as a host key");
   // A non-default port uses the bracketed form.
-  t.eqStr(look("[example.com]:2222 ssh-ed25519 " + b64 + "\n", "example.com", 2222, blob, type),
+  t.eqStr(look("[example.com]:2222 ssh-ed25519 \{b64}\n", "example.com", 2222, blob, type),
           "match", "the bracketed port form");
-  t.eqStr(look("example.com ssh-ed25519 " + b64 + "\n", "example.com", 2222, blob, type),
+  t.eqStr(look("example.com ssh-ed25519 \{b64}\n", "example.com", 2222, blob, type),
           "unknown", "a bare name matched a non-default port");
   // Junk lines are ignored rather than fatal — a file may have entries we cannot read.
   t.eqStr(look("garbage\nexample.com ssh-ed25519 !!!not base64!!!\nexample.com ssh-ed25519 " +
-               b64 + "\n", "example.com", 22, blob, type),
+               "\{b64}\n", "example.com", 22, blob, type),
           "match", "an unreadable line stopped a later valid one from matching");
   t.eqStr(look("", "example.com", 22, blob, type), "unknown", "an empty file was not unknown");
   return t.report();
@@ -113,33 +113,33 @@ export string test_authorized_keys_a_key_is_found_and_options_are_refused_rather
   string b64 = base64(blob);
   u8[] type = ("ssh-ed25519").toBytes();
 
-  t.eqStr(auth("ssh-ed25519 " + b64 + " me@here\n", blob, type), "ok", "a plain line");
-  t.eqStr(auth("# comment\n\nssh-ed25519 " + b64 + "\n", blob, type), "ok", "comments broke the scan");
-  t.eqStr(auth("ssh-ed25519 " + b64 + "\n", other, type), "unknown", "a different key matched");
+  t.eqStr(auth("ssh-ed25519 \{b64} me@here\n", blob, type), "ok", "a plain line");
+  t.eqStr(auth("# comment\n\nssh-ed25519 \{b64}\n", blob, type), "ok", "comments broke the scan");
+  t.eqStr(auth("ssh-ed25519 \{b64}\n", other, type), "unknown", "a different key matched");
   t.eqStr(auth("", blob, type), "unknown", "an empty file matched");
-  t.eqStr(auth("ssh-rsa " + b64 + "\n", blob, type), "unknown", "another algorithm matched");
+  t.eqStr(auth("ssh-rsa \{b64}\n", blob, type), "unknown", "another algorithm matched");
 
   // Options are parsed and the line is refused, because a server that reads a restriction and
   // ignores it is worse than one that refuses: the operator wrote it expecting it to hold.
-  t.eqStr(auth("no-pty ssh-ed25519 " + b64 + "\n", blob, type), "restricted", "an option was ignored");
-  t.eqStr(auth("restrict,pty ssh-ed25519 " + b64 + "\n", blob, type), "restricted",
+  t.eqStr(auth("no-pty ssh-ed25519 \{b64}\n", blob, type), "restricted", "an option was ignored");
+  t.eqStr(auth("restrict,pty ssh-ed25519 \{b64}\n", blob, type), "restricted",
           "options were ignored");
 
   // `command="…"` contains spaces and commas. Splitting the options field on the first space
   // finds a key type where there is none, which reads as "this line is not for you" — so a
   // restricted key would slip through as *unknown* rather than as restricted.
-  t.eqStr(auth("command=\"echo hello world\" ssh-ed25519 " + b64 + "\n", blob, type), "restricted",
+  t.eqStr(auth("command=\"echo hello world\" ssh-ed25519 \{b64}\n", blob, type), "restricted",
           "a quoted option with spaces was mis-parsed");
-  t.eqStr(auth("command=\"a,b c\",no-pty ssh-ed25519 " + b64 + "\n", blob, type), "restricted",
+  t.eqStr(auth("command=\"a,b c\",no-pty ssh-ed25519 \{b64}\n", blob, type), "restricted",
           "a quoted option with a comma was mis-parsed");
-  t.eqStr(auth("command=\"say \\\"hi\\\" now\" ssh-ed25519 " + b64 + "\n", blob, type), "restricted",
+  t.eqStr(auth("command=\"say \\\"hi\\\" now\" ssh-ed25519 \{b64}\n", blob, type), "restricted",
           "an escaped quote inside an option was mis-parsed");
 
   // An unrestricted line elsewhere in the file wins: the key is allowed outright.
-  t.eqStr(auth("no-pty ssh-ed25519 " + b64 + "\nssh-ed25519 " + b64 + "\n", blob, type), "ok",
+  t.eqStr(auth("no-pty ssh-ed25519 \{b64}\nssh-ed25519 \{b64}\n", blob, type), "ok",
           "a plain line after a restricted one did not win");
   // Junk is skipped rather than fatal.
-  t.eqStr(auth("garbage\nssh-ed25519 !!!\nssh-ed25519 " + b64 + "\n", blob, type), "ok",
+  t.eqStr(auth("garbage\nssh-ed25519 !!!\nssh-ed25519 \{b64}\n", blob, type), "ok",
           "an unreadable line stopped a later valid one");
   return t.report();
 }

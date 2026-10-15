@@ -27,7 +27,6 @@ import { shellMain } from "../../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../src/shrun.wac";
 import { UNKNOWN, dispatch } from "../../src/box.wac";
 import { parseList } from "../../src/lib/args.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../../fs/src/image.wac";
 import { Vec } from "core";
@@ -133,11 +132,11 @@ export string[] splitOn(string text, string sep) {
  */
 export string differs(u8[] got, u8[] want) {
   if (got.len() != want.len()) {
-    return "length " + itoa(got.len()) + " want " + itoa(want.len());
+    return "length \{got.len()} want \{want.len()}";
   }
   for (i32 i = 0; i < got.len(); i++) {
     if (got[i] != want[i]) {
-      return "byte " + itoa(i) + " is " + itoa(got[i] as i32) + " want " + itoa(want[i] as i32);
+      return "byte \{i} is \{got[i] as i32} want \{want[i] as i32}";
     }
   }
   return "";
@@ -276,7 +275,7 @@ export Ran runImaged(Core core, Cli cli, string path, string script) {
   Cli l = childCli(f, cli);
   Booted booted = boot(c, l, path, argv, Vec.fromArray(boxNames()));
   if (!booted.ok) {
-    c.warn("imaged: " + path + ": " + booted.error);
+    c.warn("imaged: \{path}: \{booted.error}");
     return Ran("", string.fromBytes(f.err.bytes()), 1, u8[]());
   }
   Shell sh = Shell.onFs(c, l, booted.fs);
@@ -306,10 +305,10 @@ export bool layFixtures(Cli cli, string dir, Fixture[] fs) {
     // A directory is a fixture too: one sweep needs an operand whose *read* refuses rather than whose
     // open fails, which is a different code path and a different message in every tool.
     if (fs[i].isDir) {
-      if (!cli.mkdir(dir + "/" + fs[i].name, true).wait().ok()) { return false; }
+      if (!cli.mkdir("\{dir}/\{fs[i].name}", true).wait().ok()) { return false; }
       continue;
     }
-    if (!cli.writeFile(dir + "/" + fs[i].name, fs[i].bytes).wait().ok()) { return false; }
+    if (!cli.writeFile("\{dir}/\{fs[i].name}", fs[i].bytes).wait().ok()) { return false; }
   }
   return true;
 }
@@ -324,13 +323,13 @@ export Loaded load(Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
   if (!r.ok) {
     return Loaded(Vector[](), 0, "",
-                  "cannot read " + path + " — run `wac run --allow-read --allow-write --allow-run " +
+                  "cannot read \{path} — run `wac run --allow-read --allow-write --allow-run " +
                   "tools/wac/appletvectors.wac` to write it");
   }
   u8[] b = r.bytes;
   Line l = lineAt(b, 0);
   if (l.text != "wac-applet-vectors 1") {
-    return Loaded(Vector[](), 0, "", "not an applet vectors file: " + l.text);
+    return Loaded(Vector[](), 0, "", "not an applet vectors file: \{l.text}");
   }
   string oracle = "";
   i32 at = l.next;
@@ -350,7 +349,7 @@ export Loaded load(Cli cli, string path) {
   for (i32 i = 0; i < count; i++) {
     Line sl = lineAt(b, at);
     i32 slen = numberIn(sl.text, "S");
-    if (slen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no case"); }
+    if (slen < 0) { return Loaded(items, n, oracle, "record \{i} has no case"); }
     string script = string.fromBytes(sliceOf(b, sl.next, sl.next + slen));
     at = sl.next + slen + 1;
 
@@ -360,7 +359,7 @@ export Loaded load(Cli cli, string path) {
 
     Line ol = lineAt(b, at);
     i32 olen = numberIn(ol.text, "O");
-    if (olen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no output"); }
+    if (olen < 0) { return Loaded(items, n, oracle, "record \{i} has no output"); }
     string out = string.fromBytes(sliceOf(b, ol.next, ol.next + olen));
     at = ol.next + olen + 1;
 

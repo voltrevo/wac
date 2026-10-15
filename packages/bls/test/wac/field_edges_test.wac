@@ -24,7 +24,6 @@
 // values, of which about half turn out to have no root at all.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import {
   Fp2, fp2Zero, fp2One, fp2Add, fp2Mul, fp2Square, fp2Sqrt, fp2Equals, fp2IsZero,
   fp2Sgn0, fp2Inv0, fp2Invert, fp2Neg, fp2Sub,
@@ -66,13 +65,13 @@ export string test_a_square_root_squares_back_or_does_not_exist() {
     } else {
       roots = roots + 1;
       t.isTrue(fp2Equals(fp2Square(r!), v),
-               "fp2Sqrt returned something that is not a square root, at step " + itoa(i));
+               "fp2Sqrt returned something that is not a square root, at step \{i}");
     }
   }
 
   // Said out loud, because a function that answered `null` always would pass the loop above.
-  t.isTrue(roots > 5, "only " + itoa(roots) + " of 40 values had a square root, which is too few");
-  t.isTrue(none > 5, "only " + itoa(none) + " of 40 values had none, so the refusal is not exercised");
+  t.isTrue(roots > 5, "only \{roots} of 40 values had a square root, which is too few");
+  t.isTrue(none > 5, "only \{none} of 40 values had none, so the refusal is not exercised");
 
   // Every square has one, necessarily — the walk above cannot promise it found any particular value.
   Fp2 w = fp2One();
@@ -80,11 +79,11 @@ export string test_a_square_root_squares_back_or_does_not_exist() {
     w = fp2Add(fp2Mul(w, step), fp2One());
     Fp2 sq = fp2Square(w);
     Fp2? r = fp2Sqrt(sq);
-    t.isTrue(!(r is null), "a value that is a square by construction has no root, at step " + itoa(i));
+    t.isTrue(!(r is null), "a value that is a square by construction has no root, at step \{i}");
     if (!(r is null)) {
       // ±y both square to it, so the root is one or the other rather than a fixed one.
       t.isTrue(fp2Equals(r!, w) || fp2Equals(r!, fp2Neg(w)),
-               "the root of y² is neither y nor −y, at step " + itoa(i));
+               "the root of y² is neither y nor −y, at step \{i}");
     }
   }
   return t.report();
@@ -133,7 +132,7 @@ export string test_zero_and_the_purely_real_values() {
   for (i32 k = 1; k < 12; k++) {
     Fp2 a = Fp2(small(k), fpZero());
     t.isTrue(!(fp2Sqrt(a) is null) || !(fp2Sqrt(fp2Neg(a)) is null),
-             "neither " + itoa(k) + " nor −" + itoa(k) + " is a square, which p ≡ 3 (mod 4) forbids");
+             "neither \{k} nor −\{k} is a square, which p ≡ 3 (mod 4) forbids");
   }
   return t.report();
 }

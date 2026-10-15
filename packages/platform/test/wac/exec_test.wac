@@ -25,7 +25,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Pending, execReason } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
 
 string text(u8[] b) { return string.fromBytes(b); }
@@ -35,9 +34,9 @@ export string test_a_program_runs_and_its_output_comes_back(Core core, Cli cli) 
   T t = T.create();
   Exec r = cli.exec("/bin/echo", ["hello from the host"], u8[]()).wait();
   t.eqI32(r.status, 0, "echo exited zero");
-  t.eqI32(r.error.len(), 0, "and started, so there is no error to report: " + r.error);
+  t.eqI32(r.error.len(), 0, "and started, so there is no error to report: \{r.error}");
   t.isTrue(text(r.stdout).indexOf("hello from the host") >= 0,
-           "its stdout came back, not " + text(r.stdout));
+           "its stdout came back, not \{text(r.stdout)}");
   return t.report();
 }
 
@@ -52,7 +51,7 @@ export string test_stdin_reaches_the_program(Core core, Cli cli) {
   Exec r = cli.exec("/bin/cat", string[](), "the bytes we fed it".toBytes()).wait();
   t.eqI32(r.status, 0, "cat exited zero");
   t.eqI32(r.error.len(), 0, "it started");
-  t.isTrue(text(r.stdout) == "the bytes we fed it", "cat echoed stdin back, not " + text(r.stdout));
+  t.isTrue(text(r.stdout) == "the bytes we fed it", "cat echoed stdin back, not \{text(r.stdout)}");
   return t.report();
 }
 
@@ -84,7 +83,7 @@ export string test_a_program_that_is_not_there_says_so(Core core, Cli cli) {
   // is also a non-empty error, and a run that never reached the host would look like a run that
   // reached it and found nothing.
   t.isTrue(r.error.indexOf("/nonexistent/definitely-not-a-program") >= 0,
-           "the error names the program that could not be started: " + r.error);
+           "the error names the program that could not be started: \{r.error}");
   t.eqI32(r.stdout.len(), 0, "and produced no output");
   // Not asserted: what `status` is. There is no exit code for a program that never ran, and a
   // caller has `error` to tell the two apart, which is the whole point of keeping them separate.
@@ -100,7 +99,7 @@ export string test_arguments_are_not_a_shell_string(Core core, Cli cli) {
   Exec r = cli.exec("/bin/echo", ["a b; rm -rf /\" '"], u8[]()).wait();
   t.eqI32(r.status, 0, "it ran");
   t.isTrue(text(r.stdout) == "a b; rm -rf /\" '\n",
-           "the argument arrived whole, not split or interpreted: " + text(r.stdout));
+           "the argument arrived whole, not split or interpreted: \{text(r.stdout)}");
   return t.report();
 }
 
@@ -110,7 +109,7 @@ export string test_output_is_bytes_and_not_text(Core core, Cli cli) {
   Exec r = cli.exec("/bin/sh", ["-c", "printf '\\001\\377\\000\\376'"], u8[]()).wait();
   t.eqI32(r.status, 0, "it ran");
   t.eqI32(r.stdout.len(), 4, "four bytes came back, not a replacement character each: " +
-                             itoa(r.stdout.len()));
+                             "\{r.stdout.len()}");
   t.eqI32(r.stdout[1] as i32, 255, "0xFF survived");
   t.eqI32(r.stdout[2] as i32, 0, "and so did the zero byte, which is not a terminator here");
   return t.report();
@@ -138,7 +137,7 @@ export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, C
   u8[] big = u8[].filled(2000000, 0);
   for (i32 i = 0; i < big.len(); i++) { big[i] = i % 64 == 63 ? '\n' : 'a'; }
   Exec r = cli.exec("/bin/cat", string[](), big).wait();
-  t.isTrue(r.ran(), "cat ran — " + r.error);
+  t.isTrue(r.ran(), "cat ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "cat exited zero");
   t.eqI32(r.stdout.len(), big.len(), "every byte came back");
@@ -193,10 +192,10 @@ export string test_three_children_run_at_once(Core core, Cli cli) {
   // The canary: three sleeps that never ran would finish instantly and pass a timing assertion by
   // doing nothing at all.
   t.eqI32(ran, 3, "all three slept");
-  t.isTrue(ms >= (900 as i64), "and really took a second: " + itoa(ms as! i32) + "ms");
-  t.isTrue(ms < (2500 as i64), "three concurrent `sleep 1` in one second, not three: " + itoa(ms as! i32) + "ms");
+  t.isTrue(ms >= (900 as i64), "and really took a second: \{ms as! i32}ms");
+  t.isTrue(ms < (2500 as i64), "three concurrent `sleep 1` in one second, not three: \{ms as! i32}ms");
   t.isTrue(submitMs < (900 as i64),
-           "taking three tickets took " + itoa(submitMs as! i32) +
+           "taking three tickets took \{submitMs as! i32}" +
            "ms, so `exec` blocked at the call rather than at the wait");
   return t.report();
 }
@@ -219,11 +218,11 @@ export string test_the_child_is_handed_an_environment(Core core, Cli cli) {
   T t = T.create();
   Exec r = cli.execWith("/bin/sh", ["-c", "printf %s \"$WAC_EXEC_PROBE\""], u8[](),
                         ["WAC_EXEC_PROBE=handed over"], false, false).wait();
-  t.isTrue(r.ran(), "sh ran — " + r.error);
+  t.isTrue(r.ran(), "sh ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "it exited zero");
   t.isTrue(text(r.stdout) == "handed over",
-           "the variable reached the child, not \"" + text(r.stdout) + "\"");
+           "the variable reached the child, not \"\{text(r.stdout)}\"");
 
   // The other direction, and the one a replacing implementation would fail: a name nobody mentioned
   // is still there. `PATH` rather than a variable of our own, because it is the one whose absence
@@ -232,13 +231,13 @@ export string test_the_child_is_handed_an_environment(Core core, Cli cli) {
                            ["WAC_EXEC_PROBE=irrelevant"], false, false).wait();
   t.isTrue(keep.ran() && keep.stdout.len() > 0,
            "and the environment it would have had anyway survived: PATH is " +
-           itoa(keep.stdout.len()) + " bytes");
+           "\{keep.stdout.len()} bytes");
 
   Exec over = cli.execWith("/bin/sh", ["-c", "printf %s \"$WAC_EXEC_PROBE\""], u8[](),
                            ["WAC_EXEC_PROBE=first", "WAC_EXEC_PROBE=second"], false,
                            false).wait();
   t.isTrue(text(over.stdout) == "second",
-           "a name given twice takes the last value, not \"" + text(over.stdout) + "\"");
+           "a name given twice takes the last value, not \"\{text(over.stdout)}\"");
   return t.report();
 }
 
@@ -262,10 +261,10 @@ export string test_a_cleared_environment_is_only_what_was_passed(Core core, Cli 
   T t = T.create();
   Exec r = cli.execWith("/usr/bin/printenv", string[](), u8[](),
                         ["WAC_EXEC_PROBE=only this"], true, false).wait();
-  t.isTrue(r.ran(), "printenv ran — " + r.error);
+  t.isTrue(r.ran(), "printenv ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
   t.isTrue(text(r.stdout) == "WAC_EXEC_PROBE=only this\n",
-           "the child's whole environment is what it was passed, not \"" + text(r.stdout) + "\"");
+           "the child's whole environment is what it was passed, not \"\{text(r.stdout)}\"");
 
   // The canary, and it is the one that makes the assertion above mean something: the same program,
   // not cleared, sees the environment this process has. Without it a host that started nothing —
@@ -273,8 +272,8 @@ export string test_a_cleared_environment_is_only_what_was_passed(Core core, Cli 
   Exec had = cli.execWith("/usr/bin/printenv", string[](), u8[](),
                           ["WAC_EXEC_PROBE=only this"], false, false).wait();
   t.isTrue(had.stdout.len() > r.stdout.len() + 100,
-           "and the uncleared run sees this process's own environment: " + itoa(had.stdout.len()) +
-           " bytes against " + itoa(r.stdout.len()));
+           "and the uncleared run sees this process's own environment: \{had.stdout.len()}" +
+           " bytes against \{r.stdout.len()}");
   t.isTrue(text(had.stdout).indexOf("WAC_EXEC_PROBE=only this") >= 0,
            "with the passed name still in it");
   return t.report();
@@ -300,21 +299,21 @@ export string test_an_inherited_stream_reaches_our_own_output(Core core, Cli cli
   string mod = builtProgram(cli, "packages/platform/test/wac/exec_probe.wac", "exec-probe",
                             ["--allow-run"]);
   Exec r = cli.exec(wacBinary(cli), [mod], u8[]()).wait();
-  t.isTrue(r.ran(), "the probe ran — " + r.error);
+  t.isTrue(r.ran(), "the probe ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
   string out = text(r.stdout);
   string log = text(r.stderr);
-  t.eqI32(r.status, 0, "the probe exited zero: " + out + log);
+  t.eqI32(r.status, 0, "the probe exited zero: \{out}\{log}");
   t.isTrue(out.indexOf("from the grandchild") >= 0,
-           "the grandchild's line arrived on the probe's own stdout: \"" + out + "\"");
+           "the grandchild's line arrived on the probe's own stdout: \"\{out}\"");
   t.isTrue(log.indexOf("inherit: ran=yes status=0 buffered=0/0") >= 0,
-           "and the probe's own answer carried none of it: " + log);
+           "and the probe's own answer carried none of it: \{log}");
   // The other two parameters, from the same program, because the probe reports all three and a test
   // that read one of its lines would leave the other two to a host nothing runs.
   t.isTrue(log.indexOf("env: ran=yes handed=yes kept-others=yes") >= 0,
-           "the environment reached a child of the probe too: " + log);
+           "the environment reached a child of the probe too: \{log}");
   t.isTrue(log.indexOf("signalled: ran=yes status=-1 signalled=yes") >= 0,
-           "a child killed by a signal ran, and has no exit code:\n" + log);
+           "a child killed by a signal ran, and has no exit code:\n\{log}");
   // **And the reason names the kill.** A signalled child writes no stderr, so the phrase every caller
   // reaches for — `error` then `stderr` — renders it as nothing at all, which is a reason with no cause
   // in it. `execReason` is the one place that knows.
@@ -323,10 +322,10 @@ export string test_an_inherited_stream_reaches_our_own_output(Core core, Cli cli
            "the premise: a killed child says nothing through either of the usual channels");
   t.isTrue(execReason(killed).indexOf("killed by a signal") >= 0,
            "execReason named the kill rather than answering with an empty string: \""
-           + execReason(killed) + "\"");
+           + "\{execReason(killed)}\"");
   t.isTrue(log.indexOf("exited: ran=yes status=255 signalled=no") >= 0,
-           "and 255 is an exit code rather than the signal sentinel:\n" + log);
+           "and 255 is an exit code rather than the signal sentinel:\n\{log}");
   t.isTrue(log.indexOf("cleared: ran=yes only-what-was-passed=yes") >= 0,
-           "and clearing it reached one: " + log);
+           "and clearing it reached one: \{log}");
   return t.report();
 }

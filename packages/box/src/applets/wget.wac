@@ -14,7 +14,7 @@ import { Fs } from "../../../fs/src/fs.wac";
 export i32 wget(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 3) {
-    core.warn("usage: " + a.name + " <host> <path> <outfile> [-<port>]");
+    core.warn("usage: \{a.name} <host> <path> <outfile> [-<port>]");
     return 2;
   }
   string out = a.rest[2];
@@ -29,7 +29,7 @@ export i32 wget(Core core, Cli cli, Fs fs, Args a) {
   Frame f = Frame.of([a.name], u8[](), "", false);
   if (streaming) {
     Change opened = cli.openOutput(out).wait();
-    if (!opened.ok()) { core.warn(a.name + ": " + out + ": " + reasonOf(opened)); return 1; }
+    if (!opened.ok()) { core.warn("\{a.name}: \{out}: \{reasonOf(opened)}"); return 1; }
   }
 
   i32 code = streaming
@@ -46,14 +46,14 @@ export i32 wget(Core core, Cli cli, Fs fs, Args a) {
     // which is the one outcome worse than failing: a corrupt file that nothing says is corrupt. See
     // `Captured.truncated`.
     if (got.truncated) {
-      core.warn(a.name + ": " + out + ": the response is larger than this program can hold in memory");
+      core.warn("\{a.name}: \{out}: the response is larger than this program can hold in memory");
       return 1;
     }
     if (code == 0) {
       Change wrote = fs.writeFile(out, got.out);
-      if (!wrote.ok()) { core.warn(a.name + ": " + out + ": " + reasonOf(wrote)); return 1; }
+      if (!wrote.ok()) { core.warn("\{a.name}: \{out}: \{reasonOf(wrote)}"); return 1; }
     }
   }
-  if (code == 0) { core.warn(a.name + ": saved " + out); }
+  if (code == 0) { core.warn("\{a.name}: saved \{out}"); }
   return code;
 }

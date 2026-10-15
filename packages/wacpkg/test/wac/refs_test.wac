@@ -15,7 +15,6 @@ import { member, memberText, memberArray } from "../../../wactest/src/fixtures.w
 import { Core, Cli, FileResult } from "std";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Resolved, resolveRef, R_OK, R_NOT_FOUND, R_AMBIGUOUS, R_MALFORMED }
   from "../../src/refs.wac";
 
@@ -33,19 +32,19 @@ struct Corpus {
 Corpus load(Cli cli) {
   FileResult r = cli.readFile(CORPUS_PATH()).wait();
   if (!r.ok) {
-    return Corpus(false, CORPUS_PATH() + " is not readable — `deno run -A "
+    return Corpus(false, "\{CORPUS_PATH()} is not readable — `deno run -A "
                   + "packages/wacpkg/tools/vendorRefs.ts` rebuilds it", "",
                   string[](), string[](), JsonArray.create());
   }
   JsonValue? doc = parse(r.bytes);
   if (doc is null) {
-    return Corpus(false, CORPUS_PATH() + " is not valid JSON", "",
+    return Corpus(false, "\{CORPUS_PATH()} is not valid JSON", "",
                   string[](), string[](), JsonArray.create());
   }
   JsonArray? ad = memberArray(doc!, "advertised");
   JsonArray? qs = memberArray(doc!, "queries");
   if ((ad is null) || (qs is null)) {
-    return Corpus(false, CORPUS_PATH() + " has no `advertised`/`queries` array", "",
+    return Corpus(false, "\{CORPUS_PATH()} has no `advertised`/`queries` array", "",
                   string[](), string[](), JsonArray.create());
   }
   JsonArray rows = ad!;
@@ -84,8 +83,8 @@ export string test_every_query_agrees_with_git_or_is_a_listed_refusal(Core core,
   if (!c.ok) { return t.report(); }
   // The corpus being empty would make every assertion below vacuous, and a differential that
   // compares nothing reports perfect agreement.
-  t.isTrue(c.queries.n >= 10, "the corpus has queries in it (" + itoa(c.queries.n) + ")");
-  t.isTrue(c.names.len() >= 5, "and an advertisement (" + itoa(c.names.len()) + " rows)");
+  t.isTrue(c.queries.n >= 10, "the corpus has queries in it (\{c.queries.n})");
+  t.isTrue(c.names.len() >= 5, "and an advertisement (\{c.names.len()} rows)");
 
   // Where this deliberately answers differently from `git`, and why. Asserted to *still* differ,
   // so the entry cannot outlive the reason: a list of excuses that have quietly become true is
@@ -110,10 +109,10 @@ export string test_every_query_agrees_with_git_or_is_a_listed_refusal(Core core,
     i32 k = indexOfName(known, ref);
     if (k >= 0) { diverged[k] = true; continue; }
     t.fail("\"" + ref + "\": git says " + (want == "" ? "a refusal" : want)
-           + ", we say " + (got.ok ? got.commit : "refused (code " + itoa(got.code) + ")"));
+           + ", we say " + (got.ok ? got.commit : "refused (code \{got.code})"));
   }
   for (i32 i = 0; i < known.len(); i++) {
-    t.isTrue(diverged[i], "\"" + known[i] + "\" is listed as a known refusal but now agrees "
+    t.isTrue(diverged[i], "\"\{known[i]}\" is listed as a known refusal but now agrees "
              + "— delete the entry");
   }
   return t.report();
@@ -140,10 +139,10 @@ export string test_an_annotated_tag_resolves_to_the_commit_not_the_tag_object(Co
   string[] spellings = ["v1", "refs/tags/v1"];
   for (i32 i = 0; i < spellings.len(); i++) {
     Resolved got = resolveRef(c.names, c.commits, spellings[i]);
-    t.isTrue(got.ok, spellings[i] + " resolves");
+    t.isTrue(got.ok, "\{spellings[i]} resolves");
     if (got.ok) {
-      t.eqStr(got.commit, peeled, spellings[i] + " gives the peeled commit");
-      t.eqStr(got.via, "refs/tags/v1^{}", spellings[i] + " says which line it came from");
+      t.eqStr(got.commit, peeled, "\{spellings[i]} gives the peeled commit");
+      t.eqStr(got.via, "refs/tags/v1^{}", "\{spellings[i]} says which line it came from");
     }
   }
   // Asking for the peel by name is the same answer, and says so.
@@ -196,8 +195,8 @@ export string test_what_is_not_there_and_what_is_not_a_corpus(Core core, Cli cli
   string[] missing = ["nope", "refs/heads/nope", "", "refs/tags/v1^{}x"];
   for (i32 i = 0; i < missing.len(); i++) {
     Resolved got = resolveRef(c.names, c.commits, missing[i]);
-    t.isFalse(got.ok, "\"" + missing[i] + "\" does not resolve");
-    if (!got.ok) { t.eqI32(got.code, R_NOT_FOUND(), "\"" + missing[i] + "\" is NOT_FOUND"); }
+    t.isFalse(got.ok, "\"\{missing[i]}\" does not resolve");
+    if (!got.ok) { t.eqI32(got.code, R_NOT_FOUND(), "\"\{missing[i]}\" is NOT_FOUND"); }
   }
   // A malformed advertisement is its own answer, not "not found" — the caller's parse is what is
   // wrong, and telling it "no such ref" would send it looking in the wrong place.

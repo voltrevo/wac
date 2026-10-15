@@ -25,7 +25,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, FileResult, Stat } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
 static string ENTRY = "packages/raster/example/deskshot.wac";
@@ -38,7 +37,7 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
     Core core, Cli cli) {
   T t = T.create();
   string cwd = cli.cwd().wait();
-  string wac = cwd + "/native/v8/target/release/wac";
+  string wac = "\{cwd}/native/v8/target/release/wac";
   // **The directory is kept, and that is worth three seconds.** It used to be emptied here — and
   // wasmtime's compiled artefact lives *beside* the module it was compiled from, so wiping the
   // directory threw it away and the native half paid a cold compile every run: **3081ms, against
@@ -47,10 +46,10 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   // desk and prints nothing, where `Desk.create`, `Surface.create` and `draw` are 0ms apiece on both
   // hosts. `wac build` is deterministic, so an unchanged program produces the same bytes, the same
   // cache key and a hit. The images are removed below; the artefacts older than this build are too.
-  string dir = cwd + "/.cache/raster-hosts";
+  string dir = "\{cwd}/.cache/raster-hosts";
   string whyDir1 = madeDir(cli, dir);
   t.isTrue(whyDir1 == "", whyDir1);
-  string stem = dir + "/deskshot";
+  string stem = "\{dir}/deskshot";
   // **The directory is not emptied, and that is worth four seconds.** `wacland` caches the compiled
   // module beside the `.wasm` as `deskshot.cwasm-<key>`, keyed by content — 4.8 MB that cranelift
   // takes about four seconds to produce and twenty milliseconds to reuse. Deleting the directory
@@ -60,32 +59,32 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   //
   // What the delete was actually protecting is the comparison — two hosts that both write nothing
   // agree perfectly on last run's pixels — so the *images* still go, and only they.
-  cli.remove(dir + "/js.ppm", false).wait();
-  cli.remove(dir + "/native.ppm", false).wait();
+  cli.remove("\{dir}/js.ppm", false).wait();
+  cli.remove("\{dir}/native.ppm", false).wait();
 
   // One build, both hosts. `--allow-write` because the program writes the image it is asked for.
   Exec built = cli.exec(wac, ["build", ENTRY, "-o", stem, "--allow-write", "--quiet"],
                         u8[]()).wait();
-  t.isTrue(built.ran(), "the wac binary ran — " + built.error);
-  t.eqI32(built.status, 0, "wac build failed: " + string.fromBytes(built.stderr));
+  t.isTrue(built.ran(), "the wac binary ran — \{built.error}");
+  t.eqI32(built.status, 0, "wac build failed: \{string.fromBytes(built.stderr)}");
   if (!built.ran() || built.status != 0) { return t.report(); }
 
   // The v8 half, which runs whether or not cargo is here.
-  string jsOut = dir + "/js.ppm";
-  Exec ran = cli.exec(wac, [stem + ".wasm", jsOut], u8[]()).wait();
-  t.eqI32(ran.status, 0, "the JavaScript half failed: " + string.fromBytes(ran.stderr));
+  string jsOut = "\{dir}/js.ppm";
+  Exec ran = cli.exec(wac, ["\{stem}.wasm", jsOut], u8[]()).wait();
+  t.eqI32(ran.status, 0, "the JavaScript half failed: \{string.fromBytes(ran.stderr)}");
   if (ran.status != 0) { return t.report(); }
 
   FileResult js = cli.readFile(jsOut).wait();
-  t.isTrue(js.ok, "the JavaScript half wrote an image — " + js.error);
+  t.isTrue(js.ok, "the JavaScript half wrote an image — \{js.error}");
   if (!js.ok) { return t.report(); }
   u8[] a = js.bytes;
 
   // **Asserted, not merely captured.** Two hosts that both wrote nothing agree perfectly, so this
   // half is checked against what a 320x200 P6 must be before the other one is asked.
-  string header = "P6\n" + itoa(WIDTH) + " " + itoa(HEIGHT) + "\n255\n";
+  string header = "P6\n\{WIDTH} \{HEIGHT}\n255\n";
   string got = a.len() >= header.len() ? string.fromBytes(sliceOf(a, 0, header.len())) : "";
-  t.eqStr(got, header, "not a " + itoa(WIDTH) + "x" + itoa(HEIGHT) + " PPM");
+  t.eqStr(got, header, "not a \{WIDTH}x\{HEIGHT} PPM");
   t.eqI32(a.len(), header.len() + WIDTH * HEIGHT * 3, "the pixel data is the wrong size");
   if (got != header) { return t.report(); }
 
@@ -101,7 +100,7 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
     if (distinct < seen.len()) { seen[distinct] = colour; }
     distinct = distinct + 1;
   }
-  t.isTrue(distinct > 3, "the desktop has " + itoa(distinct) + " colours in it");
+  t.isTrue(distinct > 3, "the desktop has \{distinct} colours in it");
 
   // The host with no JavaScript in it — **asked for, not built here.** This ran its own
   // `cd native && cargo build --release --quiet`, which costs 2.6s even with nothing to do, and it
@@ -112,20 +111,20 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   string wacland = nativeHost(cli);
   string whyNot = nativeHostWhyNot(cli);
   if (whyNot != "") {
-    core.warn("SKIPPING the two-host pixel comparison: " + whyNot + ". " +
+    core.warn("SKIPPING the two-host pixel comparison: \{whyNot}. " +
               "The JavaScript half above still ran and still asserted.");
     return t.report();
   }
 
-  string nativeOut = dir + "/native.ppm";
-  Exec nran = cli.exec(cwd + "/native/target/release/wac",
-                       [stem + ".wasm", nativeOut], u8[]()).wait();
-  t.isTrue(nran.ran(), "the native host ran — " + nran.error);
-  t.eqI32(nran.status, 0, "the native half failed: " + string.fromBytes(nran.stderr));
+  string nativeOut = "\{dir}/native.ppm";
+  Exec nran = cli.exec("\{cwd}/native/target/release/wac",
+                       ["\{stem}.wasm", nativeOut], u8[]()).wait();
+  t.isTrue(nran.ran(), "the native host ran — \{nran.error}");
+  t.eqI32(nran.status, 0, "the native half failed: \{string.fromBytes(nran.stderr)}");
   if (!nran.ran() || nran.status != 0) { return t.report(); }
 
   FileResult nat = cli.readFile(nativeOut).wait();
-  t.isTrue(nat.ok, "the native half wrote an image — " + nat.error);
+  t.isTrue(nat.ok, "the native half wrote an image — \{nat.error}");
   if (!nat.ok) { return t.report(); }
   u8[] b = nat.bytes;
 
@@ -134,8 +133,8 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   i32 first = -1;
   for (i32 i = 0; i < a.len() && first < 0; i++) { if (a[i] != b[i]) { first = i; } }
   t.eqI32(first, -1, first < 0 ? "" :
-          "the two hosts disagree at byte " + itoa(first) + ": javascript " + itoa(a[first] as i32) +
-          ", native " + itoa(b[first] as i32));
+          "the two hosts disagree at byte \{first}: javascript \{a[first] as i32}" +
+          ", native \{b[first] as i32}");
 
   // **The images go; the build stays.** Removing the directory used to take the compiled artefact
   // with it — cranelift spends about three seconds producing one and twenty milliseconds reusing it —

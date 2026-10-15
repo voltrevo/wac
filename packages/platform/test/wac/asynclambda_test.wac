@@ -67,8 +67,8 @@ export string test_a_parameter_survives_the_suspension(Core core, Cli cli) {
   // a declared cell first, so what is captured is a declaration.
   fn<Ticket<string>(string)> describe = async (string p) => {
     FileResult f = await cli.readFile(p).ticket();
-    if (!f.ok) { return p + "=no"; }
-    return p + "=ok";
+    if (!f.ok) { return "\{p}=no"; }
+    return "\{p}=ok";
   };
   t.eqStr(describe("README.md").wait()!, "README.md=ok", "the parameter was still there afterwards");
   return t.report();

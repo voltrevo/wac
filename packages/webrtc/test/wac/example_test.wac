@@ -25,7 +25,6 @@ import { Lines, check } from "../../../wactest/src/oracle.wac";
 import { Daemon, Held, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains, startsWith, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { attr } from "./sdp_probe.wac";
 import { check as iceCheck, hostPref, priorityOf, reportedAddress, tidOf } from "./ice_probe.wac";
@@ -43,22 +42,22 @@ static string OFFER_PWD = "peer-password-0123456";
 string offerText() {
   return "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n" +
          "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n" +
-         "a=ice-ufrag:" + OFFER_UFRAG + "\r\na=ice-pwd:" + OFFER_PWD +
+         "a=ice-ufrag:\{OFFER_UFRAG}\r\na=ice-pwd:\{OFFER_PWD}" +
          "\r\na=setup:actpass\r\na=mid:0\r\n";
 }
 
 export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/answer";
+  string dir = "\{cli.cwd().wait()}/.cache/answer";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
-  string stem = dir + "/answer";
+  string stem = "\{dir}/answer";
 
   Exec built = cli.exec(wacBinary(cli),
                         ["build", SOURCE, "-o", stem, "--allow-net", "--quiet"],
                         u8[]()).wait();
-  t.isTrue(built.ran(), "the wac binary ran — " + built.error);
-  t.eqI32(built.status, 0, "the example did not build: " + string.fromBytes(built.stderr));
+  t.isTrue(built.ran(), "the wac binary ran — \{built.error}");
+  t.eqI32(built.status, 0, "the example did not build: \{string.fromBytes(built.stderr)}");
   if (!built.ran() || built.status != 0) { return t.report(); }
 
   // A port nobody else has. `Held` keeps it until the statement before the program takes it, which
@@ -68,22 +67,22 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   if (held.port < 0) { return t.report(); }
   i32 port = held.port;
 
-  cli.writeFile(dir + "/offer.sdp", offerText().toBytes()).wait();
+  cli.writeFile("\{dir}/offer.sdp", offerText().toBytes()).wait();
   held.release(cli);
   Daemon program = start(cli,
-    quoted(wacBinary(cli)) + " " + quoted(stem + ".wasm") + " 127.0.0.1 " + itoa(port) +
-    " < " + quoted(dir + "/offer.sdp"), dir + "/answer.log");
-  t.isTrue(program.ok(), "the program did not start — " + program.error);
+    quoted(wacBinary(cli)) + " " + quoted("\{stem}.wasm") + " 127.0.0.1 \{port}" +
+    " < " + quoted("\{dir}/offer.sdp"), "\{dir}/answer.log");
+  t.isTrue(program.ok(), "the program did not start — \{program.error}");
   if (!program.ok()) { return t.report(); }
 
   // It generates a certificate at startup, so the description takes a moment to appear.
   string said = "";
   for (i32 i = 0; i < 400 && !contains(said, "sctp-port"); i++) {
-    said = readIfPresent(cli, dir + "/answer.log");
+    said = readIfPresent(cli, "\{dir}/answer.log");
     if (!contains(said, "sctp-port")) { cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).wait(); }
   }
   t.isTrue(contains(said, "sctp-port"),
-           "the program printed no complete description. It said: " + tail(said, 800));
+           "the program printed no complete description. It said: \{tail(said, 800)}");
   if (!contains(said, "sctp-port")) {
     stop(cli, program);
     return t.report();
@@ -138,7 +137,7 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   }
 
   t.isTrue(answer.len() > 0,
-           "no answer from the program on 127.0.0.1:" + itoa(port) + ". Either it never bound, or " +
+           "no answer from the program on 127.0.0.1:\{port}. Either it never bound, or " +
            "it rejected a check built with the password it printed — and the second would mean the " +
            "description and the socket disagree, which is the failure this case exists for");
   if (answer.len() > 0) {
@@ -165,12 +164,12 @@ string readIfPresent(Cli cli, string path) {
 string tail(string s, i32 n) {
   string said = trimmed(s);
   if (said == "") { return "(nothing)"; }
-  return said.len() <= n ? said : "…" + said.slice(said.len() - n, said.len());
+  return said.len() <= n ? said : "…\{said.slice(said.len() - n, said.len())}";
 }
 
 /** `reportedAddress`'s tail as `a.b.c.d`. */
 string dotted(i32[] a) {
   string out = "";
-  for (i32 i = 2; i < a.len(); i++) { out = out + (i == 2 ? "" : ".") + itoa(a[i]); }
+  for (i32 i = 2; i < a.len(); i++) { out = out + (i == 2 ? "" : ".") + "\{a[i]}"; }
   return out;
 }

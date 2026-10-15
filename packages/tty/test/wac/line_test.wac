@@ -31,7 +31,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { ttycatBytes } from "../../example/ttycat.wac";
 import { Line, Typed } from "../../src/line.wac";
 import { DEL, EOF, INTR, QUIT, j3, join, k, sameBytes, show, t, typed,
@@ -61,15 +60,15 @@ export string test_the_oracle_is_the_configuration_this_module_implements(Core c
   // output "includes echo" is a check that cannot fail — which is the shape this repo keeps finding
   // in its own measurements and would be a poor thing to add while writing about it.
   string[] flags = tokens(said);
-  t.isTrue(hasSetting(said, "erase", "^?"), "erase is DEL in this pty: " + said);
-  t.isTrue(hasSetting(said, "kill", "^U"), "kill is ^U in this pty: " + said);
-  t.isTrue(hasSetting(said, "werase", "^W"), "werase is ^W in this pty: " + said);
+  t.isTrue(hasSetting(said, "erase", "^?"), "erase is DEL in this pty: \{said}");
+  t.isTrue(hasSetting(said, "kill", "^U"), "kill is ^U in this pty: \{said}");
+  t.isTrue(hasSetting(said, "werase", "^W"), "werase is ^W in this pty: \{said}");
   string[] on = ["icanon", "echo", "echoe", "isig"];
   for (i32 i = 0; i < on.len(); i++) {
     t.isTrue(hasToken(flags, on[i]),
-             "this pty has `" + on[i] + "`, so it is what packages/tty implements: " + said);
-    t.isFalse(hasToken(flags, "-" + on[i]),
-              "this pty has `-" + on[i] + "`, which makes the comparison below meaningless");
+             "this pty has `\{on[i]}`, so it is what packages/tty implements: \{said}");
+    t.isFalse(hasToken(flags, "-\{on[i]}"),
+              "this pty has `-\{on[i]}`, which makes the comparison below meaningless");
   }
   return t.report();
 }
@@ -96,14 +95,14 @@ export string test_every_editing_rule_answers_what_the_kernel_answers(Core core,
     u8[] ours = ttycatBytes(cases[i], "canonical");
     if (!sameBytes(want!.out, ours)) {
       differed = differed + 1;
-      t.fail(names[i] + ": typed " + show(cases[i]) + "\n    kernel " + show(want!.out) +
-             "\n    ours   " + show(ours));
+      t.fail("\{names[i]}: typed \{show(cases[i])}\n    kernel \{show(want!.out)}" +
+             "\n    ours   \{show(ours)}");
     }
   }
-  t.eqI32(missing, 0, itoa(missing) + " cases have no recorded answer — `cases.wac` has moved ahead of " +
+  t.eqI32(missing, 0, "\{missing} cases have no recorded answer — `cases.wac` has moved ahead of " +
                       "the capture, so run `wac run --allow-read --allow-write --allow-run " +
                       "tools/wac/ttyvectors.wac`");
-  t.eqI32(differed, 0, itoa(differed) + " of " + itoa(cases.len()) + " differ from " + v.oracle);
+  t.eqI32(differed, 0, "\{differed} of \{cases.len()} differ from \{v.oracle}");
 
   // **The canary.** Every assertion above is "these two agree", which a harness comparing nothing
   // would also satisfy. Two inputs that must not produce the same bytes prove both sides are live —
@@ -194,10 +193,10 @@ export string test_the_live_pty_still_answers_what_was_recorded(Core core, Cli c
     if (want is null) { continue; }
     asked = asked + 1;
     t.eqStr(show(pty(core, cli, "cat", cases[i])), show(want!.out),
-            "the live pty no longer answers what " + v.oracle + " answered for " + names[i] +
+            "the live pty no longer answers what \{v.oracle} answered for \{names[i]}" +
             " — re-run `wac run --allow-read --allow-write --allow-run tools/wac/ttyvectors.wac`");
   }
-  t.eqI32(asked, 3, "the canary asked the live pty " + itoa(asked) + " times");
+  t.eqI32(asked, 3, "the canary asked the live pty \{asked} times");
   return t.report();
 }
 

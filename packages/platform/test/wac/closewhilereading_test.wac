@@ -26,7 +26,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Socket, Pending } from "std";
 import { Read } from "core";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 /**
  * Long enough that a loopback close cannot lose a race, short enough that pinning a bug is cheap.
@@ -60,12 +59,12 @@ Saw sawClose(Core core, Cli cli, i32 h) {
   Pending<Read> p = cli.recv(h);
   if (core.waitAny([p.id], WAIT_MS) < 0) {
     p.cancel();
-    return Saw(false, true, "nothing arrived within " + itoa(WAIT_MS) + "ms");
+    return Saw(false, true, "nothing arrived within \{WAIT_MS}ms");
   }
   match (p.wait()) {
-    Data(got): { return Saw(false, false, "got " + itoa(got.len()) + " byte(s), not a close"); }
+    Data(got): { return Saw(false, false, "got \{got.len()} byte(s), not a close"); }
     End: { return Saw(true, false, "End"); }
-    Failed(why): { return Saw(true, false, "Failed: " + why); }
+    Failed(why): { return Saw(true, false, "Failed: \{why}"); }
   }
   return Saw(false, false, "unreachable");
 }
@@ -79,21 +78,21 @@ Saw sawClose(Core core, Cli cli, i32 h) {
 Saw exchange(Core core, Cli cli, T t, i32 mode, string arm) {
   Socket listener = cli.listen("127.0.0.1", 0).wait();
   if (listener.handle < 0) {
-    t.fail(arm + ": could not listen — " + listener.error);
+    t.fail("\{arm}: could not listen — \{listener.error}");
     return Saw(false, false, "no listener");
   }
 
   Pending<Socket> accepting = cli.accept(listener.handle);
   i32 client = cli.connect("127.0.0.1", listener.port).wait().handle;
   if (client < 0) {
-    t.fail(arm + ": could not connect to 127.0.0.1:" + itoa(listener.port));
+    t.fail("\{arm}: could not connect to 127.0.0.1:\{listener.port}");
     cli.closeSocket(listener.handle);
     return Saw(false, false, "no client");
   }
 
   Socket served = accepting.wait();
   if (served.handle < 0) {
-    t.fail(arm + ": accept failed — " + served.error);
+    t.fail("\{arm}: accept failed — \{served.error}");
     cli.closeSocket(client);
     cli.closeSocket(listener.handle);
     return Saw(false, false, "no accept");
@@ -127,10 +126,10 @@ export string test_a_close_reaches_the_peer_whatever_is_outstanding(Core core, C
                         plain.detail);
 
   Saw live = exchange(core, cli, t, MODE_LIVE_READ, "a live read outstanding");
-  t.isTrue(live.ended, "a close behind a *live* read reaches the peer — " + live.detail);
+  t.isTrue(live.ended, "a close behind a *live* read reaches the peer — \{live.detail}");
 
   Saw cancelled = exchange(core, cli, t, MODE_CANCELLED, "after a cancel");
-  t.isTrue(cancelled.ended, "and so does one behind a cancelled read — " + cancelled.detail +
+  t.isTrue(cancelled.ended, "and so does one behind a cancelled read — \{cancelled.detail}" +
                             ". The two arms agreeing is the finding: cancelling never mattered");
 
   return t.report();
@@ -159,13 +158,13 @@ export string test_a_close_reaches_the_peer_whatever_is_outstanding(Core core, C
 export string test_closing_a_listener_stops_it_accepting(Core core, Cli cli) {
   T t = T.create();
   Socket l = cli.listen("127.0.0.1", 0).wait();
-  t.isTrue(l.handle >= 0, "a listener was opened — " + l.error);
+  t.isTrue(l.handle >= 0, "a listener was opened — \{l.error}");
   if (l.handle < 0) { return t.report(); }
 
   Socket up = cli.connect("127.0.0.1", l.port).wait();
   t.isTrue(up.handle >= 0,
            "the control arm: dialling it while it is open succeeds, so a refusal below is the close\n"
-           + "  rather than a dial that never worked — " + up.error);
+           + "  rather than a dial that never worked — \{up.error}");
   if (up.handle >= 0) { cli.closeSocket(up.handle); }
 
   cli.closeSocket(l.handle);
@@ -173,7 +172,7 @@ export string test_closing_a_listener_stops_it_accepting(Core core, Cli cli) {
   Socket down = cli.connect("127.0.0.1", l.port).wait();
   if (down.handle >= 0) { cli.closeSocket(down.handle); }
   t.isTrue(down.handle < 0,
-           "dialling port " + itoa(l.port) + " after closing its listener was accepted — the listener\n"
+           "dialling port \{l.port} after closing its listener was accepted — the listener\n"
            + "  is still there. A readiness probe built on this reads a closed port as a live server.");
   return t.report();
 }

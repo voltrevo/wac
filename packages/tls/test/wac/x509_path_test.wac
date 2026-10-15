@@ -22,8 +22,6 @@
 // it, and that gap is why P-384 exists in this repo at all.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { verifyPath, parseCert, Cert, certVerifySignature, certMatchesHost, keyP256, keyP384, keyRsa,
          sigEcdsaSha256, sigEcdsaSha384 } from "../../src/x509.wac";
 import { Store, pemBundle } from "../../src/roots.wac";
@@ -155,7 +153,7 @@ export string test_the_host_name_is_checked_against_the_leaf(Core core, Cli cli)
   t.eqI32(check(chain, roots, "sub.wac.test", NOW, 8), 0, "the wildcard matches one label");
   string[] wrong = ["wac.test.evil.com", "evil.com", "acwac.test", "a.b.wac.test"];
   for (i32 i = 0; i < wrong.len(); i++) {
-    t.eqI32(check(chain, roots, wrong[i], NOW, 8), 7, wrong[i] + " does not match");
+    t.eqI32(check(chain, roots, wrong[i], NOW, 8), 7, "\{wrong[i]} does not match");
   }
   return t.report();
 }
@@ -317,7 +315,7 @@ string fixtureName(i32 n) {
  * uses it fail somewhere further on, in a parse, with nothing pointing back at the file.
  */
 u8[] load(Cli cli, i32 n) {
-  string path = "packages/tls/test/data/" + fixtureName(n) + ".pem";
+  string path = "packages/tls/test/data/\{fixtureName(n)}.pem";
   FileResult r = cli.readFile(path).wait();
   if (!r.ok) { trap; }
   Store s = pemBundle(r.bytes);
@@ -365,7 +363,7 @@ export string test_only_a_strict_dotted_quad_is_an_address(Core core, Cli cli) {
   ];
   for (i32 i = 0; i < notAddresses.len(); i++) {
     t.isTrue(!certMatchesHost(ec, notAddresses[i].toBytes()),
-             notAddresses[i] + " is not treated as 127.0.0.1");
+             "\{notAddresses[i]} is not treated as 127.0.0.1");
   }
   // And a leading-zero form that is a valid decimal quad is still just that quad.
   t.isTrue(!certMatchesHost(ec, "127.0.0.001".toBytes()),
@@ -395,7 +393,7 @@ export string test_the_system_trust_store_parses(Core core, Cli cli) {
 
   Store store = pemBundle(f.bytes);
   i32 n = store.offsets.len() / 2;
-  t.isTrue(n >= 50, "a real trust store, not a stub: " + itoa64(n as i64) + " certificates");
+  t.isTrue(n >= 50, "a real trust store, not a stub: \{n as i64} certificates");
 
   i32 rsa = 0;
   i32 p384 = 0;
@@ -475,7 +473,7 @@ export string test_an_rsa_chain_verifies(Core core, Cli cli) {
     for (i32 k = 0; k < leaf.len(); k++) { bad[k] = leaf[k]; }
     bad[spots[i]] = bad[spots[i]] ^ 0xFF;
     t.isTrue(check(Bundle.of1(bad), rsaRoots, "wac.test", NOW, 8) != 0,
-             "an RSA leaf with byte " + itoa(spots[i]) + " flipped still verified");
+             "an RSA leaf with byte \{spots[i]} flipped still verified");
   }
   return t.report();
 }
@@ -525,7 +523,7 @@ export string test_a_signature_scheme_is_refused_against_the_wrong_key_type(Core
     for (i32 ci = 0; ci < certs.len(); ci++) {
       if (certs[ci].keyType == wants[si]) { continue; }
       t.isFalse(certVerifySignature(certs[ci], schemes[si], content, signature),
-                "scheme " + itoa(schemes[si]) + " was accepted against a " + names[ci] + " key");
+                "scheme \{schemes[si]} was accepted against a \{names[ci]} key");
       refusals = refusals + 1;
     }
   }
@@ -543,7 +541,7 @@ export string test_a_signature_scheme_is_refused_against_the_wrong_key_type(Core
   // so this cell is not a key-type mismatch and must not be read as one.
   for (i32 ci = 0; ci < certs.len(); ci++) {
     t.isFalse(certVerifySignature(certs[ci], 0x0401, content, signature),
-              "rsa_pkcs1_sha256 was accepted in CertificateVerify against a " + names[ci] + " key");
+              "rsa_pkcs1_sha256 was accepted in CertificateVerify against a \{names[ci]} key");
   }
 
   // And a scheme nobody named at all.

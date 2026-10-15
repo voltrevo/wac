@@ -10,7 +10,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { gzipFixed } from "../../src/gzip.wac";
 import { External, gunzip, roundTrip } from "./external.wac";
 
@@ -34,7 +33,7 @@ export string test_repetitive_input_actually_compresses(Core core, Cli cli) {
   // Eighteen bytes of container overhead. Literals-only would be at least the input size, so this is
   // what says the back-references exist rather than that the stream decodes.
   t.isTrue(got < input.len() / 4,
-           "expected strong compression, got " + itoa(got) + " from " + itoa(input.len()) + " bytes");
+           "expected strong compression, got \{got} from \{input.len()} bytes");
   t.eqStr(same(cli, input, "repeated 8-byte pattern"), "", "and it round trips");
   return t.report();
 }
@@ -48,8 +47,8 @@ export string test_an_overlapping_match_at_distance_one(Core core, Cli cli) {
   T t = T.create();
   i32[] runs = [3, 4, 5, 258, 259, 260, 300, 1000, 5000];
   for (i32 i = 0; i < runs.len(); i++) {
-    t.eqStr(same(cli, filled(runs[i], 0x61), itoa(runs[i]) + " identical bytes"), "",
-            itoa(runs[i]) + " identical bytes");
+    t.eqStr(same(cli, filled(runs[i], 0x61), "\{runs[i]} identical bytes"), "",
+            "\{runs[i]} identical bytes");
   }
   // Overlap at distance 2 and 3 as well.
   t.eqStr(same(cli, repeated("ab", 3000), "ab x 3000"), "", "distance 2");
@@ -78,18 +77,18 @@ export string test_every_length_code(Core core, Cli cli) {
     External out = gunzip(cli, gzipFixed(input));
     string why = out.ok() ? "" : out.error;
     if (why == "" && out.bytes.len() != input.len()) {
-      why = "got " + itoa(out.bytes.len()) + " bytes, expected " + itoa(input.len());
+      why = "got \{out.bytes.len()} bytes, expected \{input.len()}";
     }
     if (why == "") {
       for (i32 i = 0; i < input.len(); i++) {
-        if (out.bytes[i] != input[i]) { why = "byte " + itoa(i) + " differs"; i = input.len(); }
+        if (out.bytes[i] != input[i]) { why = "byte \{i} differs"; i = input.len(); }
       }
     }
     if (why == "") { continue; }
     wrong = wrong + 1;
-    if (first == "") { first = "len " + itoa(len) + ": " + why; }
+    if (first == "") { first = "len \{len}: \{why}"; }
   }
-  t.eqI32(wrong, 0, itoa(wrong) + " of 256 length codes wrong; the first is " + first);
+  t.eqI32(wrong, 0, "\{wrong} of 256 length codes wrong; the first is \{first}");
   return t.report();
 }
 
@@ -122,12 +121,12 @@ export string test_distances_across_the_whole_window(Core core, Cli cli) {
       s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
       input[pattern.len() + i] = (0x80 | ((s >> 16) & 0x3F)) as@ u8;
     }
-    string why = roundTrip(cli, gzipFixed(input), "gap " + itoa(gap), input);
+    string why = roundTrip(cli, gzipFixed(input), "gap \{gap}", input);
     if (why == "") { continue; }
     wrong = wrong + 1;
     if (first == "") { first = why; }
   }
-  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(gaps.len()) + " distances wrong; the first is " + first);
+  t.eqI32(wrong, 0, "\{wrong} of \{gaps.len()} distances wrong; the first is \{first}");
   return t.report();
 }
 
@@ -158,8 +157,8 @@ export string test_a_text_corpus_compresses_and_round_trips(Core core, Cli cli) 
   // Under a fifth, on prose repeated thirty times. Stated as a ratio in integers, because the point
   // is the order of magnitude rather than a threshold anyone tuned.
   t.isTrue(got * 5 < input.len(),
-           "expected a ratio under 0.2 on repeated prose, got " + itoa(got) + " from " +
-           itoa(input.len()));
+           "expected a ratio under 0.2 on repeated prose, got \{got} from " +
+           "\{input.len()}");
   t.eqStr(same(cli, input, "prose"), "", "and it round trips");
   return t.report();
 }

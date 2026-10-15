@@ -31,7 +31,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec, Socket, Pending } from "std";
 
 static string PATIENCE = "packages/platform/example/patience.wac";
@@ -48,14 +47,14 @@ i32 count(string s, string needle) {
 /** `patience <host> <port> <millis>`, compiled and run in one step. */
 Pending<Exec> patience(Cli cli, i32 port, i32 millis) {
   return cli.exec(binaryPath(cli),
-    ["run", "--allow-net", PATIENCE, "--", "127.0.0.1", itoa(port), itoa(millis)],
+    ["run", "--allow-net", PATIENCE, "--", "127.0.0.1", "\{port}", "\{millis}"],
     u8[]());
 }
 
 export string test_a_peer_that_says_nothing_no_longer_wedges_the_application(Core core, Cli cli) {
   T t = T.create();
   Socket l = cli.listen("127.0.0.1", 0).wait();
-  t.isTrue(l.error == "", "could not listen — " + l.error);
+  t.isTrue(l.error == "", "could not listen — \{l.error}");
   if (l.error != "") { return t.report(); }
 
   // **The child starts before the accept is waited on.** Both tickets are in flight together, which
@@ -66,7 +65,7 @@ export string test_a_peer_that_says_nothing_no_longer_wedges_the_application(Cor
   Pending<Socket> accepting = cli.accept(l.handle);
 
   Socket peer = accepting.wait();
-  t.isTrue(peer.error == "", "the child never connected — " + peer.error);
+  t.isTrue(peer.error == "", "the child never connected — \{peer.error}");
 
   // And now nothing is sent. Six rounds of 100ms, and the program gives up.
   Exec r = running.wait();
@@ -74,18 +73,18 @@ export string test_a_peer_that_says_nothing_no_longer_wedges_the_application(Cor
 
   string out = string.fromBytes(r.stdout);
   string err = string.fromBytes(r.stderr);
-  t.isTrue(r.ran(), "the child did not run — " + r.error);
-  t.eqI32(r.status, 1, "a peer that never speaks should give up: " + out + err);
-  t.isTrue(contains(out, "giving up after 600ms"), "it should say how long it waited: " + out);
+  t.isTrue(r.ran(), "the child did not run — \{r.error}");
+  t.eqI32(r.status, 1, "a peer that never speaks should give up: \{out}\{err}");
+  t.isTrue(contains(out, "giving up after 600ms"), "it should say how long it waited: \{out}");
 
   // **Bounded is the whole claim** — before the deadline this ran until killed. Generous, because it
   // is a process launch on a box three agents share: the failure this distinguishes is "never", not
   // "slow".
-  t.isTrue(tookMs < 15000, "took " + itoa(tookMs as~ i32) + "ms, which is not bounded");
+  t.isTrue(tookMs < 15000, "took \{tookMs as~ i32}ms, which is not bounded");
 
   // Every round ran. Five `nothing yet` lines and then the verdict: a leaked slot would make the
   // count short rather than the run obviously broken, which is the failure that is hard to see.
-  t.eqI32(count(out, "nothing yet"), 5, "one line per round short of the verdict: " + out);
+  t.eqI32(count(out, "nothing yet"), 5, "one line per round short of the verdict: \{out}");
 
   if (peer.error == "") { cli.closeSocket(peer.handle); }
   cli.closeSocket(l.handle);
@@ -95,7 +94,7 @@ export string test_a_peer_that_says_nothing_no_longer_wedges_the_application(Cor
 export string test_a_peer_that_speaks_late_is_still_heard(Core core, Cli cli) {
   T t = T.create();
   Socket l = cli.listen("127.0.0.1", 0).wait();
-  t.isTrue(l.error == "", "could not listen — " + l.error);
+  t.isTrue(l.error == "", "could not listen — \{l.error}");
   if (l.error != "") { return t.report(); }
 
   // 100ms of patience per round against a peer that takes 250ms: the read wins on a later round,
@@ -103,7 +102,7 @@ export string test_a_peer_that_speaks_late_is_still_heard(Core core, Cli cli) {
   Pending<Exec> running = patience(cli, l.port, 100);
   Pending<Socket> accepting = cli.accept(l.handle);
   Socket peer = accepting.wait();
-  t.isTrue(peer.error == "", "the child never connected — " + peer.error);
+  t.isTrue(peer.error == "", "the child never connected — \{peer.error}");
   if (peer.error != "") { cli.closeSocket(l.handle); return t.report(); }
 
   core.sleepMillis(250).wait();
@@ -111,9 +110,9 @@ export string test_a_peer_that_speaks_late_is_still_heard(Core core, Cli cli) {
 
   Exec r = running.wait();
   string out = string.fromBytes(r.stdout);
-  t.eqI32(r.status, 0, "a peer that speaks late should be heard: " + out +
+  t.eqI32(r.status, 0, "a peer that speaks late should be heard: \{out}" +
                        string.fromBytes(r.stderr));
-  t.isTrue(contains(out, "peer sent 8 bytes"), "it should report what arrived: " + out);
+  t.isTrue(contains(out, "peer sent 8 bytes"), "it should report what arrived: \{out}");
 
   cli.closeSocket(peer.handle);
   cli.closeSocket(l.handle);

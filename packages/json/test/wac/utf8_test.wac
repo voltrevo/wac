@@ -19,7 +19,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Canonical, canonicalize, stringify } from "../../src/json.wac";
 import { JsonValue } from "../../src/value.wac";
 import { ERR_NONE, ERR_UTF8, ERR_EOF } from "../../src/parse.wac";
@@ -79,9 +78,9 @@ export string test_utf8_malformed_sequences_are_rejected(Core core, Cli cli) {
   Lines lines = Lines.create();
   for (i32 i = 0; i < bodies.len(); i++) {
     t.eqI32(canonicalize(doc(bodies[i])).code, ERR_UTF8(),
-            labels[i] + ": not rejected as UTF-8");
+            "\{labels[i]}: not rejected as UTF-8");
     // And the oracle agrees these are invalid, so the corpus cannot rot.
-    lines.add("utf8valid " + hex(bodies[i]) + " 0");
+    lines.add("utf8valid \{hex(bodies[i])} 0");
   }
   checkDeno(t, cli, ORACLE, lines, "the malformed corpus really is malformed");
   return t.report();
@@ -111,7 +110,7 @@ export string test_utf8_a_sequence_cut_off_by_the_end_of_input() {
     // Either verdict is defensible — the input is both truncated UTF-8 and an unterminated string —
     // but it must be one of them and never accepted.
     t.isTrue(err == ERR_UTF8() || err == ERR_EOF(),
-             labels[i] + ": got code " + itoa(err) + ", want UTF8 or EOF");
+             "\{labels[i]}: got code \{err}, want UTF8 or EOF");
   }
   return t.report();
 }
@@ -136,7 +135,7 @@ export string test_utf8_a_valid_lead_with_a_bad_later_continuation(Core core, Cl
   Lines lines = Lines.create();
   for (i32 i = 0; i < bodies.len(); i++) {
     t.eqI32(canonicalize(doc(bodies[i])).code, ERR_UTF8(), labels[i]);
-    lines.add("utf8valid " + hex(bodies[i]) + " 0");
+    lines.add("utf8valid \{hex(bodies[i])} 0");
   }
   checkDeno(t, cli, ORACLE, lines, "the host agrees these are malformed");
   return t.report();
@@ -163,8 +162,8 @@ export string test_utf8_well_formed_sequences_at_every_width(Core core, Cli cli)
   bodies[10] = [0xF4, 0x8F, 0xBF, 0xBF] as u8[];
   Lines lines = Lines.create();
   for (i32 i = 0; i < bodies.len(); i++) {
-    t.eqI32(canonicalize(doc(bodies[i])).code, ERR_NONE(), labels[i] + ": rejected");
-    lines.add("utf8valid " + hex(bodies[i]) + " 1");
+    t.eqI32(canonicalize(doc(bodies[i])).code, ERR_NONE(), "\{labels[i]}: rejected");
+    lines.add("utf8valid \{hex(bodies[i])} 1");
   }
   checkDeno(t, cli, ORACLE, lines, "the host agrees these are well-formed");
   return t.report();
@@ -178,7 +177,7 @@ export string test_utf8_multi_byte_content_survives_the_round_trip(Core core, Cl
   t.eqI32(got.code, ERR_NONE(), "the document parses");
   if (!got.ok) { return t.report(); }
   Lines lines = Lines.create();
-  lines.add("restringify " + hex(src.toBytes()) + " " + hex(got.text));
+  lines.add("restringify \{hex(src.toBytes())} \{hex(got.text)}");
   checkDeno(t, cli, ORACLE, lines, "the round trip");
   return t.report();
 }
@@ -204,9 +203,9 @@ export string test_utf8_random_byte_sequences_agree_with_a_strict_decoder(Core c
     lines.add("utf8valid " + hex(body) + " " +
               (canonicalize(doc(body)).code == ERR_NONE() ? "1" : "0"));
   }
-  t.isTrue(checked > 1000, "only " + itoa(checked) + " sequences were usable");
-  core.log("  " + itoa(checked) + " random sequences compared with the host decoder");
-  checkDeno(t, cli, ORACLE, lines, itoa(checked) + " random sequences");
+  t.isTrue(checked > 1000, "only \{checked} sequences were usable");
+  core.log("  \{checked} random sequences compared with the host decoder");
+  checkDeno(t, cli, ORACLE, lines, "\{checked} random sequences");
   return t.report();
 }
 
@@ -262,15 +261,15 @@ export string test_utf8_a_hand_built_tree_cannot_produce_invalid_json() {
 
     u8[] out = stringify(JsonValue.Str(payload));
     string text = string.fromBytes(out);
-    t.isTrue(text.len() >= 4, labels[i] + ": produced nothing");
-    t.eqStr(text.slice(0, 2), "\"a", labels[i] + ": the leading byte was disturbed");
+    t.isTrue(text.len() >= 4, "\{labels[i]}: produced nothing");
+    t.eqStr(text.slice(0, 2), "\"a", "\{labels[i]}: the leading byte was disturbed");
     t.eqStr(text.slice(text.len() - 2, text.len()), "z\"",
-            labels[i] + ": the trailing byte was disturbed");
+            "\{labels[i]}: the trailing byte was disturbed");
 
     // The other validator's verdict on what the writer produced.
     Canonical back = canonicalize(out);
     t.eqI32(back.code, ERR_NONE(),
-            labels[i] + ": the parser refused what the writer produced — " + text);
+            "\{labels[i]}: the parser refused what the writer produced — \{text}");
   }
 
   // Well-formed sequences at every width pass through untouched, which is what makes the
@@ -286,7 +285,7 @@ export string test_utf8_a_hand_built_tree_cannot_produce_invalid_json() {
   for (i32 i = 0; i < good.len(); i++) {
     u8[] out = stringify(JsonValue.Str(good[i]));
     t.eqI32(out.len(), good[i].len() + 2, "a well-formed sequence of width " +
-            itoa(good[i].len()) + " was rewritten");
+            "\{good[i].len()} was rewritten");
     t.eqI32(canonicalize(out).code, ERR_NONE(), "and the parser accepts it");
   }
   return t.report();

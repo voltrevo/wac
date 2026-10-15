@@ -18,7 +18,7 @@
 import { Cli, Core } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { atoi, itoa } from "../../../fmt/src/itoa.wac";
+import { atoi } from "../../../fmt/src/itoa.wac";
 import { Sink } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
@@ -37,15 +37,15 @@ export i32 seq(Core core, Cli cli, Fs fs, Args a) {
   // for a fourth, and "invalid floating point argument: 'x'" for anything that is not a number. This
   // said "usage: …" and exited 2 for the first two and nothing at all for the third.
   if (n < 1) {
-    core.warn(a.name + ": missing operand");
-    core.warn("Try '" + a.name + " --help' for more information.");
+    core.warn("\{a.name}: missing operand");
+    core.warn("Try '\{a.name} --help' for more information.");
     return 1;
   }
   string[] args = string[].filled(n, "");
   for (i32 i = 0; i < n; i++) { args[i] = string.fromBytes(cli.arg(i + skip).wait()); }
   if (n > 3) {
-    core.warn(a.name + ": extra operand '" + args[3] + "'");
-    core.warn("Try '" + a.name + " --help' for more information.");
+    core.warn("\{a.name}: extra operand '\{args[3]}'");
+    core.warn("Try '\{a.name} --help' for more information.");
     return 1;
   }
   for (i32 i = 0; i < n; i++) {
@@ -55,11 +55,11 @@ export i32 seq(Core core, Cli cli, Fs fs, Args a) {
     // rather than hidden" and they were not: `atoi` read `1.5` as `1` and counted from there, silently.
     // Calling it invalid would be the other error — blaming the caller for something GNU accepts.
     if (isFraction(args[i])) {
-      core.warn(a.name + ": fractions are not implemented: '" + args[i] + "'");
+      core.warn("\{a.name}: fractions are not implemented: '\{args[i]}'");
       return 1;
     }
-    core.warn(a.name + ": invalid floating point argument: '" + args[i] + "'");
-    core.warn("Try '" + a.name + " --help' for more information.");
+    core.warn("\{a.name}: invalid floating point argument: '\{args[i]}'");
+    core.warn("Try '\{a.name} --help' for more information.");
     return 1;
   }
 
@@ -69,7 +69,7 @@ export i32 seq(Core core, Cli cli, Fs fs, Args a) {
 
   // GNU refuses a zero step rather than looping forever, and so does this.
   if (step == 0) {
-    core.warn(a.name + ": step must not be zero");
+    core.warn("\{a.name}: step must not be zero");
     return 1;
   }
 
@@ -94,7 +94,7 @@ export i32 seq(Core core, Cli cli, Fs fs, Args a) {
   for (i64 k = 0; k < count; k++) {
     // The answer is not decoration: `seq 1 100000000 | head -1` ends here rather than counting to a
     // hundred million into a pipe nobody is reading.
-    if (!out.line(itoa(value))) { return 0; }
+    if (!out.line("\{value}")) { return 0; }
     value = value + step;
   }
   out.flush();

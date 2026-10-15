@@ -5,7 +5,6 @@
 // placements is observable if you pick the input carefully.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -107,14 +106,14 @@ export string test_the_vectors_are_what_the_tests_assume(Core core, Cli cli) {
     Str(bytes): {
       string source = string.fromBytes(bytes);
       t.isTrue(source.indexOf("hs_cell_build_introduce1") >= 0,
-               "the cells must come from tor's builder, not ours — source is " + source);
+               "the cells must come from tor's builder, not ours — source is \{source}");
     }
     default: { trap; }
   }
   i32 n = caseCount(cli);
   for (i32 i = 0; i < n; i++) {
     t.isTrue(namesAPrivateAddress(hexOf(cli, i, "linkSpecifiers")),
-             "case " + itoa(i) + " no longer names a private rendezvous point; " +
+             "case \{i} no longer names a private rendezvous point; " +
              "the allowPrivate cases would prove less");
   }
   return t.report();

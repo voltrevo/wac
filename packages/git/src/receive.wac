@@ -210,7 +210,7 @@ export Report readReport(u8[] b) {
   bool reading = true;
   while (reading) {
     match (readPkt(b, pos)) {
-      Broken(why): { return Report(false, "", refs, "the reply is not pkt-line: " + why); }
+      Broken(why): { return Report(false, "", refs, "the reply is not pkt-line: \{why}"); }
       Done: { reading = false; }
       Flush: { reading = false; }
       Delim: { }

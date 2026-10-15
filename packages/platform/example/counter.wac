@@ -36,13 +36,13 @@ export i32 page(Core core, Cli cli, Page page) {
     Event e = page.nextEvent().wait();
 
     if (e.kind == "input") {
-      page.setText("said", e.value == "" ? "" : "you typed: " + e.value).wait();
+      page.setText("said", e.value == "" ? "" : "you typed: \{e.value}").wait();
     } else if (e.id == "up") {
       n = n + 1;
-      page.setText("n", itoa(n)).wait();
+      page.setText("n", "\{n}").wait();
     } else if (e.id == "down") {
       n = n - 1;
-      page.setText("n", itoa(n)).wait();
+      page.setText("n", "\{n}").wait();
     } else if (e.id == "reset") {
       n = 0;
       page.setText("n", "0").wait();
@@ -51,19 +51,9 @@ export i32 page(Core core, Cli cli, Page page) {
     } else if (e.id == "quit") {
       // Returning ends the application, and the launcher prints the exit line. The page stays
       // on screen: nothing here owns the document once the program is done with it.
-      core.log("counted to " + itoa(n));
+      core.log("counted to \{n}");
       return 0;
     }
   }
 }
 
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  i32 x = v < 0 ? 0 - v : v;
-  u8[] digits = u8[].filled(12, 0);
-  i32 at = 12;
-  while (x > 0) { at--; digits[at] = ('0' + (x % 10)) as@ u8; x = x / 10; }
-  u8[] used = u8[].filled(12 - at, 0);
-  used.copyFrom(digits, at, 0, 12 - at);
-  return (v < 0 ? "-" : "") + string.fromBytes(used);
-}

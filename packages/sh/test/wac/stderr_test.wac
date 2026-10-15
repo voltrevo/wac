@@ -28,7 +28,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { startsWith, trimmed } from "../../../wactest/src/strings.wac";
 import { scratch } from "../../../wactest/src/host.wac";
 import { builtApp, wacBinary } from "../../../wactest/src/built.wac";
@@ -60,11 +59,11 @@ string loadNow(Cli cli) {
 string[] childEnv(Cli cli, string dir, string binDir) {
   u8[]? path = cli.env("PATH").wait();
   string rest = path is null ? "/usr/bin:/bin" : string.fromBytes(path!);
-  return ["LC_ALL=C", "PATH=" + binDir + ":" + rest, "HOME=" + dir];
+  return ["LC_ALL=C", "PATH=\{binDir}:\{rest}", "HOME=\{dir}"];
 }
 
 Exec once(Cli cli, string cmd, string script, string dir, string binDir, i32 seconds) {
-  return cli.execWithIn("timeout", [itoa(seconds), cmd, "-c", script], u8[](),
+  return cli.execWithIn("timeout", ["\{seconds}", cmd, "-c", script], u8[](),
                         childEnv(cli, dir, binDir), true, false, dir).wait();
 }
 
@@ -85,19 +84,19 @@ Exec once(Cli cli, string cmd, string script, string dir, string binDir, i32 sec
 string stderrOf(T t, Core core, Cli cli, string cmd, string script, string dir, string binDir) {
   Exec r = once(cli, cmd, script, dir, binDir, BOUND_S);
   if (!r.ran()) {
-    t.fail("could not run `timeout " + itoa(BOUND_S) + " " + cmd + "` — " + r.error);
+    t.fail("could not run `timeout \{BOUND_S} \{cmd}` — \{r.error}");
     return "";
   }
   if (r.status != KILLED) { return trimmed(string.fromBytes(r.stderr)); }
 
   Exec again = once(cli, cmd, script, dir, binDir, BOUND_S * 3);
   if (!again.ran() || again.status == KILLED) {
-    t.fail(cmd + " -c \"" + script + "\" was killed by its " + itoa(BOUND_S) + "s bound and again by "
-           + itoa(BOUND_S * 3) + "s alone (" + loadNow(cli) + ") — a hang rather than a busy machine.");
+    t.fail("\{cmd} -c \"\{script}\" was killed by its \{BOUND_S}s bound and again by "
+           + "\{BOUND_S * 3}s alone (\{loadNow(cli)}) — a hang rather than a busy machine.");
     return "";
   }
-  core.warn("stderr: " + cmd + " -c \"" + script + "\" hit its " + itoa(BOUND_S)
-            + "s bound and answered on the retry — " + loadNow(cli)
+  core.warn("stderr: \{cmd} -c \"\{script}\" hit its \{BOUND_S}"
+            + "s bound and answered on the retry — \{loadNow(cli)}"
             + ", so this is the machine rather than the shell");
   return trimmed(string.fromBytes(again.stderr));
 }
@@ -114,7 +113,7 @@ export string test_the_differences_from_bashs_diagnostics_are_the_ones_written_d
                                                                                     Cli cli) {
   T t = T.create();
   Diff[] rows = known();
-  t.isTrue(rows.len() > 10, "only " + itoa(rows.len()) + " rows — has the table been emptied?");
+  t.isTrue(rows.len() > 10, "only \{rows.len()} rows — has the table been emptied?");
   if (rows.len() <= 10) { return t.report(); }
 
   string binDir = binDirOf(cli);
@@ -126,8 +125,8 @@ export string test_the_differences_from_bashs_diagnostics_are_the_ones_written_d
   string wrong = "";
   i32 nWrong = 0;
   for (i32 i = 0; i < rows.len(); i++) {
-    string a = base + "/a" + itoa(i);
-    string b = base + "/b" + itoa(i);
+    string a = "\{base}/a\{i}";
+    string b = "\{base}/b\{i}";
     cli.mkdir(a, true).wait();
     cli.mkdir(b, true).wait();
     string theirs = sameName(stderrOf(t, core, cli, "bash", rows[i].script, a, binDir));
@@ -137,16 +136,16 @@ export string test_the_differences_from_bashs_diagnostics_are_the_ones_written_d
 
     if (theirs == ours) {
       nWrong = nWrong + 1;
-      wrong = wrong + "\n  \"" + rows[i].script
+      wrong = wrong + "\n  \"\{rows[i].script}"
               + "\"\n    pinned as different and now agrees — delete the row from"
               + " packages/sh/test/wac/knownstderr.wac";
       continue;
     }
     if (theirs != trimmed(rows[i].bash) || ours != trimmed(rows[i].ours)) {
       nWrong = nWrong + 1;
-      wrong = wrong + "\n  \"" + rows[i].script + "\"\n    pinned bash: \"" + rows[i].bash
-              + "\"\n    actual bash: \"" + theirs + "\"\n    pinned ours: \"" + rows[i].ours
-              + "\"\n    actual ours: \"" + ours + "\"";
+      wrong = wrong + "\n  \"\{rows[i].script}\"\n    pinned bash: \"\{rows[i].bash}"
+              + "\"\n    actual bash: \"\{theirs}\"\n    pinned ours: \"\{rows[i].ours}"
+              + "\"\n    actual ours: \"\{ours}\"";
     }
   }
 
@@ -170,7 +169,7 @@ export string test_a_builtins_diagnostic_names_the_shell_and_its_usage_line_does
           "sh: [: b: binary operator expected", "and bash's, once its own name is mapped");
 
   string usage = stderrOf(t, core, cli, shell, "printf", dir, binDir);
-  t.isTrue(startsWith(usage, "printf: usage:"), "a usage line was prefixed: " + usage);
+  t.isTrue(startsWith(usage, "printf: usage:"), "a usage line was prefixed: \{usage}");
   t.isTrue(startsWith(sameName(stderrOf(t, core, cli, "bash", "printf", dir, binDir)),
                       "printf: usage:"),
            "bash prefixes its usage line after all — the rule above it is wrong");

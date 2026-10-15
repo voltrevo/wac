@@ -6,7 +6,6 @@
 // One of the last packages `issues/system/0205` records as unmeasured.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
   test_an_image_written_on_one_host_is_the_same_system_on_the_other as arri__an_image_written_on_one_host_is_the_same_system_on_the_other,
@@ -685,6 +684,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED world_test test_the_c_locale_accounts_for_its_own_two_words");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("platform: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("platform: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

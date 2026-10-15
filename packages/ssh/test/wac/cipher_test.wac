@@ -10,7 +10,6 @@
 // Host-side until 2026-08-18, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { Opened, Plain, aeadPaddingFor, keyLength, open, peekLength, seal, tagLength }
   from "../../src/cipher.wac";
@@ -37,29 +36,29 @@ export string test_sealing_and_opening_round_trips_and_the_padding_rule_is_the_a
   i32[] sizes = [0, 1, 5, 6, 7, 8, 9, 100, 1000];
   for (i32 i = 0; i < sizes.len(); i++) {
     i32 n = sizes[i];
-    string of = "payload " + itoa(n);
+    string of = "payload \{n}";
     // The AEAD rule excludes the 4-byte length from the alignment, unlike RFC 4253's.
     i32 pad = aeadPaddingFor(n, block);
-    t.isTrue(pad >= 4, of + ": padding " + itoa(pad) + " is under the minimum");
+    t.isTrue(pad >= 4, "\{of}: padding \{pad} is under the minimum");
     t.eqI32((1 + n + pad) % block, 0,
-            of + ": (1 + " + itoa(n) + " + " + itoa(pad) + ") is not a multiple of 8");
+            "\{of}: (1 + \{n} + \{pad}) is not a multiple of 8");
     // And it is *not* the RFC rule — those differ by exactly 4 for every length, so a test that
     // only checked "some multiple" would pass with either.
     t.neI32((4 + 1 + n + pad) % block, 0,
-            of + ": padding also satisfies the non-AEAD rule, so it is ambiguous");
+            "\{of}: padding also satisfies the non-AEAD rule, so it is ambiguous");
 
     u8[] payload = ramp(n, 31, 0);
     u8[] random = ramp(pad, 13, 5);
     u8[] packet = seal(key, 7, payload, random, block);
-    t.eqI32(packet.len(), 4 + 1 + n + pad + tagLength(), of + ": packet is the wrong size");
-    t.eqI32(peekLength(key, 7, packet, 0), 1 + n + pad, of + ": peeked length is wrong");
-    t.eqI32(openCode(key, 7, packet, 0, packet.len(), MAX), 0, of + ": did not open");
+    t.eqI32(packet.len(), 4 + 1 + n + pad + tagLength(), "\{of}: packet is the wrong size");
+    t.eqI32(peekLength(key, 7, packet, 0), 1 + n + pad, "\{of}: peeked length is wrong");
+    t.eqI32(openCode(key, 7, packet, 0, packet.len(), MAX), 0, "\{of}: did not open");
     t.eqStr(hex(open(key, 7, packet, 0, packet.len(), MAX).payload), hex(payload),
-            of + ": contents changed");
-    t.eqI32(open(key, 7, packet, 0, packet.len(), MAX).used, packet.len(), of + ": used is wrong");
+            "\{of}: contents changed");
+    t.eqI32(open(key, 7, packet, 0, packet.len(), MAX).used, packet.len(), "\{of}: used is wrong");
     // One byte short is "read more", never a verdict.
     t.eqI32(openCode(key, 7, packet, 0, packet.len() - 1, MAX), 1,
-            of + ": a short packet was not incomplete");
+            "\{of}: a short packet was not incomplete");
   }
   return t.report();
 }
@@ -76,7 +75,7 @@ export string test_a_packet_does_not_open_under_the_wrong_sequence_number() {
   i32[] wrong = [0, 41, 43, 43 + 65536];
   for (i32 i = 0; i < wrong.len(); i++) {
     t.eqI32(openCode(key, wrong[i], packet, 0, packet.len(), MAX), 2,
-            "a packet sealed at 42 opened at " + itoa(wrong[i]) +
+            "a packet sealed at 42 opened at \{wrong[i]}" +
             " — the nonce is not the sequence number");
   }
   return t.report();
@@ -94,7 +93,7 @@ export string test_any_single_flipped_bit_is_caught_wherever_it_lands() {
   for (i32 i = 0; i < packet.len(); i++) {
     u8[] bad = flipped(packet, i, 0x40);
     t.neI32(openCode(key, 3, bad, 0, bad.len(), MAX), 0,
-            "flipping a bit in byte " + itoa(i) + " of " + itoa(packet.len()) + " still opened");
+            "flipping a bit in byte \{i} of \{packet.len()} still opened");
   }
 
   // And the wrong key.
@@ -136,7 +135,7 @@ export string test_an_unauthenticated_length_is_bounded_before_it_is_believed() 
   i32[] limits = [5, 7];
   for (i32 i = 0; i < limits.len(); i++) {
     t.eqI32(openCode(key, 0, packet, 0, packet.len(), limits[i]), 2,
-            "a packet longer than the " + itoa(limits[i]) + "-byte limit was accepted");
+            "a packet longer than the \{limits[i]}-byte limit was accepted");
   }
   t.eqI32(openCode(key, 0, packet, 0, packet.len(), 8), 0,
           "a packet exactly at the limit was refused; the bound is off by one");

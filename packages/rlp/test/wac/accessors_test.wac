@@ -17,7 +17,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { decode, encode, Decoded, Item, bytesOf, itemsOf, isList } from "../../src/rlp.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** The error a decode answered, or "" when it succeeded. */
 string why(u8[] input) {
@@ -86,7 +85,7 @@ export string test_a_length_prefix_must_be_canonical_and_must_fit() {
   // A prefix that says one length byte follows, and nothing does.
   t.isTrue(why([0xB8] as u8[]).len() > 0, "a truncated length prefix was accepted");
   t.isTrue(why([0xB8] as u8[]).indexOf("past the end") >= 0,
-           "the message does not say what ran out: " + why([0xB8] as u8[]));
+           "the message does not say what ran out: \{why([0xB8] as u8[])}");
 
   // A leading zero in the length: 0x00 0x38 is 56 written in two bytes instead of one.
   u8[] leadingZero = u8[].filled(60, 0);
@@ -94,21 +93,21 @@ export string test_a_length_prefix_must_be_canonical_and_must_fit() {
   leadingZero[1] = 0;
   leadingZero[2] = 56;
   t.isTrue(why(leadingZero).indexOf("leading zero") >= 0,
-           "a length with a leading zero was accepted: " + why(leadingZero));
+           "a length with a leading zero was accepted: \{why(leadingZero)}");
 
   // A length below 56, written long: `0xB8 0x01 'a'` is `'a'`, which is one byte on its own.
   t.isTrue(why([0xB8, 1, 0x61] as u8[]).indexOf("short form") >= 0,
-           "a long form that fits the short one was accepted: " + why([0xB8, 1, 0x61] as u8[]));
+           "a long form that fits the short one was accepted: \{why([0xB8, 1, 0x61] as u8[])}");
 
   // **Four bytes of length can spell four gigabytes and an i32 cannot hold it.** The alternative to
   // refusing is a negative length read as a short item, which is how a decoder is talked into reading
   // backwards.
   string big = why([0xBB, 0xFF, 0xFF, 0xFF, 0xFF] as u8[]);
-  t.isTrue(big.indexOf("32-bit") >= 0, "a four-gigabyte length was accepted: " + big);
+  t.isTrue(big.indexOf("32-bit") >= 0, "a four-gigabyte length was accepted: \{big}");
 
   // And more than four bytes of length, refused before the arithmetic rather than after it.
   string wider = why([0xBF, 1, 0, 0, 0, 0, 0, 0, 0] as u8[]);
-  t.isTrue(wider.indexOf("32-bit") >= 0, "an eight-byte length was accepted: " + wider);
+  t.isTrue(wider.indexOf("32-bit") >= 0, "an eight-byte length was accepted: \{wider}");
   return t.report();
 }
 

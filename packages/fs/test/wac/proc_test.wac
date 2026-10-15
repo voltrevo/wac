@@ -26,7 +26,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult, Pending } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Vec } from "core";
 import { Proc, Procs } from "../../src/proc.wac";
 import { Fs } from "../../src/fs.wac";
@@ -223,7 +222,7 @@ export string test_proc_status_uses_the_hosts_shape_and_only_real_keys(Core core
   if (theirs == "") { return t.report(); }
   string[] theirKeys = keysOf(theirs);
   t.isTrue(theirKeys.len() > 10,
-           "the host's status is unexpectedly short — bad oracle, " + itoa(theirKeys.len()) +
+           "the host's status is unexpectedly short — bad oracle, \{theirKeys.len()}" +
            " keys");
   // Tab-separated is the shape, taken from theirs rather than assumed.
   t.isTrue(firstLine(theirs).indexOf(":\t") >= 0, "the host writes Key:<tab>value");
@@ -242,14 +241,14 @@ export string test_proc_status_uses_the_hosts_shape_and_only_real_keys(Core core
   // field, which is the failure mode a hand-written expectation cannot see: `Threads: 1` would look
   // perfectly reasonable in a test I wrote and be a number this system does not have.
   for (i32 i = 0; i < ourKeys.len(); i++) {
-    t.isTrue(has(theirKeys, ourKeys[i]), "we print " + ourKeys[i] + " and Linux does not");
+    t.isTrue(has(theirKeys, ourKeys[i]), "we print \{ourKeys[i]} and Linux does not");
   }
   t.isTrue(ours.indexOf("State:\tR (running)") >= 0, "and our state reads as the host's do");
   // The host writes its state the same way: a letter, a space, a parenthesised word.
   string theirState = lineStartingWith(theirs, "State:");
   t.isTrue(theirState.len() > 8 && theirState.slice(6, 7) == "\t" &&
            theirState.slice(8, 9) == " " && theirState.slice(9, 10) == "(",
-           "the host's own State line has the shape this copies: " + theirState);
+           "the host's own State line has the shape this copies: \{theirState}");
   return t.report();
 }
 
@@ -278,25 +277,25 @@ export string test_proc_lists_a_pid_per_process_and_self() {
   t.eqI32(listing!.len(), 3, "one entry per process, plus self");
   if (listing!.len() == 3) {
     t.eqStr(listing![0], "1", "the first process");
-    t.eqStr(listing![1], itoa(pid), "the one just started");
+    t.eqStr(listing![1], "\{pid}", "the one just started");
     t.eqStr(listing![2], "self", "and self");
   }
-  string[]? files = f.readDir("/proc/" + itoa(pid));
+  string[]? files = f.readDir("/proc/\{pid}");
   t.isTrue(!(files is null) && files!.len() == 3, "three files per pid");
 
   // Linux reports 0 for these and this deliberately does not — a size of zero on a file `cat` then
   // reads bytes from is the sort of detail that makes a reader distrust the rest.
-  FileResult body = f.readFile("/proc/" + itoa(pid) + "/cmdline");
+  FileResult body = f.readFile("/proc/\{pid}/cmdline");
   t.isTrue(body.ok, "the cmdline reads");
-  t.eqI64(f.stat("/proc/" + itoa(pid) + "/cmdline").size, body.bytes.len() as i64,
+  t.eqI64(f.stat("/proc/\{pid}/cmdline").size, body.bytes.len() as i64,
           "and its size is the length of what it answers");
-  t.eqStr(string.fromBytes(body.bytes), "wc" + oneByte(0) + "-l" + oneByte(0), "the argv");
+  t.eqStr(string.fromBytes(body.bytes), "wc\{oneByte(0)}-l\{oneByte(0)}", "the argv");
 
   // A pid that has gone is a missing file rather than an empty one.
   f.procs.exited(pid, 0);
   f.procs.reap(pid);
-  t.isFalse(f.readFile("/proc/" + itoa(pid) + "/status").ok, "a reaped pid has no status");
-  t.isFalse(f.stat("/proc/" + itoa(pid)).exists, "and no directory");
+  t.isFalse(f.readFile("/proc/\{pid}/status").ok, "a reaped pid has no status");
+  t.isFalse(f.stat("/proc/\{pid}").exists, "and no directory");
   string[]? after = f.readDir("/proc");
   t.isTrue(!(after is null) && after!.len() == 2, "and is gone from the listing");
   return t.report();

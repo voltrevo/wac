@@ -160,7 +160,7 @@ export string test_an_await_inside_a_loop_suspends_and_resumes(Core core, Cli cl
   i32 want = 0;
   for (i32 i = 0; i < ps.len(); i++) {
     i32 one = sizeOf(cli, ps[i]);
-    t.isTrue(one > 0, "the oracle read " + ps[i]);
+    t.isTrue(one > 0, "the oracle read \{ps[i]}");
     want = want + one;
   }
   // **The case CPS cannot express without hoisting.** Three suspensions and three resumptions, all

@@ -60,7 +60,6 @@ import { Buf } from "core";
 import { crc32 } from "../../gzip/src/crc32.wac";
 import { Reader, putI64, putString } from "./wire.wac";
 import { Cli, Core, FAULT_NOT_FOUND, FileResult } from "std";
-import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { Backing, Fs, Inode, Mount, mountSystem, sortNames } from "./fs.wac";
 
 /** The version this build writes. A reader refuses anything else, by number, rather than guessing. */
@@ -156,7 +155,7 @@ export Loaded read(u8[] data, i64 now) {
   r.at = magic.len();
   i32 version = r.byte();
   if (version != VERSION()) {
-    return failed("this build reads image version " + itoa(VERSION()) + ", not " + itoa(version));
+    return failed("this build reads image version \{VERSION()}, not \{version}");
   }
 
   // Before anything is believed: the checksum covers everything but its own four bytes.
@@ -240,7 +239,7 @@ export Booted boot(Core core, Cli cli, string path, Vec<string> argv, Vec<string
 export bool save(Core core, Cli cli, string who, string path, Fs fs) {
   Written w = write(fs);
   for (i32 i = 0; i < w.skipped.len(); i++) {
-    core.warn(who + ": not saved: " + w.skipped[i]);
+    core.warn("\{who}: not saved: \{w.skipped[i]}");
   }
 
   // **Beside the target, then moved into place.** Writing over the image directly leaves it half written
@@ -251,15 +250,15 @@ export bool save(Core core, Cli cli, string who, string path, Fs fs) {
   //
   // `platform.wac` says of `rename` that it exists so "an application can write beside the target and
   // move it into place", which is this, and which this did not do.
-  string beside = path + ".new";
+  string beside = "\{path}.new";
   if (cli.writeFile(beside, w.bytes).wait().fault != 0) {
-    core.warn(who + ": " + beside + ": the session could not be saved");
+    core.warn("\{who}: \{beside}: the session could not be saved");
     return false;
   }
   if (cli.rename(beside, path).wait().fault != 0) {
     // The bytes are all there under the other name, so say which — throwing them away to keep the
     // directory tidy would be losing the session to avoid mentioning it.
-    core.warn(who + ": " + path + ": the session was written to " + beside + " and could not be moved");
+    core.warn("\{who}: \{path}: the session was written to \{beside} and could not be moved");
     return false;
   }
   return true;
@@ -278,11 +277,11 @@ export bool save(Core core, Cli cli, string who, string path, Fs fs) {
  */
 export string dump(u8[] data) {
   Loaded got = read(data, 0);
-  if (!got.ok) { return "cannot read this image: " + got.error + "\n"; }
+  if (!got.ok) { return "cannot read this image: \{got.error}\n"; }
   Buf out = Buf.create();
   for (i32 i = 0; i < got.fs.mounts.len(); i++) {
     Mount m = got.fs.mounts.get(i);
-    out.pushAll(("mount " + mountName(m.at) + "\n").toBytes());
+    out.pushAll("mount \{mountName(m.at)}\n".toBytes());
     dumpNode(out, got.fs, m.root, "  ", "/");
   }
   return string.fromBytes(out.take());
@@ -292,14 +291,14 @@ void dumpNode(Buf out, Fs fs, i32 node, string indent, string name) {
   Inode n = fs.nodes.get(node);
   string kind = n.isDir ? "d" : "-";
   string size = n.isDir
-    ? itoa(n.entries.len()) + (n.entries.len() == 1 ? " entry" : " entries")
-    : itoa(n.data.len) + (n.data.len == 1 ? " byte" : " bytes");
-  out.pushAll((indent + kind + " " + octal(n.mode) + " " + n.owner + " " + itoa64(n.mtime) + " "
-    + name + "  (" + size + ")\n").toBytes());
+    ? "\{n.entries.len()}" + (n.entries.len() == 1 ? " entry" : " entries")
+    : "\{n.data.len}" + (n.data.len == 1 ? " byte" : " bytes");
+  out.pushAll(("\{indent}\{kind} \{octal(n.mode)} \{n.owner} \{n.mtime} "
+    + "\{name}  (\{size})\n").toBytes());
   if (!n.isDir) { return; }
   string[] names = sortedNames(n);
   for (i32 i = 0; i < names.len(); i++) {
-    dumpNode(out, fs, n.entries.getOr(names[i], -1), indent + "  ", names[i]);
+    dumpNode(out, fs, n.entries.getOr(names[i], -1), "\{indent}  ", names[i]);
   }
 }
 
@@ -383,6 +382,6 @@ string[] sortedNames(Inode n) {
 /** A mode as four octal digits, which is how a person reads one and how `chmod` writes one. */
 string octal(i32 mode) {
   string out = "";
-  for (i32 i = 3; i >= 0; i--) { out = out + itoa((mode >> (i * 3)) & 7); }
+  for (i32 i = 3; i >= 0; i--) { out = out + "\{(mode >> (i * 3)) & 7}"; }
   return out;
 }

@@ -130,7 +130,7 @@ export i32 page(Core core, Cli cli, Page page) {
   // Whether the caret is showing this half-blink. Reset to *on* by any activity: a caret that is
   // mid-blink when you press a key looks like a dropped keystroke.
   bool caretOn = true;
-  s.say(s.prompt() + " ");
+  s.say("\{s.prompt()} ");
   relay(g, s.screen, typed);
   g.drawFrom(surf, 0, 0, FG(), BG(), back);
   g.drawCaret(surf, 0, 0, FG(), BG());
@@ -228,11 +228,11 @@ export i32 page(Core core, Cli cli, Page page) {
       if (first == 13) {
         // Enter: echo what was typed, run it, and start a new prompt — the order `term.wac` uses,
         // so the transcript reads the same on both.
-        s.say(typed + "\n");
+        s.say("\{typed}\n");
         s.feedLine(typed);
         typed = "";
         if (s.over()) { return s.code(); }
-        s.say(s.prompt() + " ");
+        s.say("\{s.prompt()} ");
       } else if (first == 127) {
         if (typed.len() > 0) { typed = typed.slice(0, typed.len() - 1); }
       } else {

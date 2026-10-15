@@ -30,7 +30,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Parser, parseDocument } from "../../../json/src/parse.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { AccountProof, StorageProof, accountAt, storageAt } from "../../src/account.wac";
@@ -43,13 +42,13 @@ static string FIXTURE = "packages/mpt/test/vendor/getproof.json";
 JsonValue fixture(Core core, Cli cli) {
   FileResult r = cli.readFile(FIXTURE).wait();
   if (!r.ok) {
-    core.warn("mpt: cannot read " + FIXTURE + " — " + r.error);
+    core.warn("mpt: cannot read \{FIXTURE} — \{r.error}");
     trap;
   }
   Parser p = Parser.create(r.bytes);
   JsonValue? doc = parseDocument(p);
   if (doc is null) {
-    core.warn("mpt: " + FIXTURE + " is not valid JSON");
+    core.warn("mpt: \{FIXTURE} is not valid JSON");
     trap;
   }
   return doc!;
@@ -85,7 +84,7 @@ JsonValue byNote(Core core, JsonArray cases, string needle) {
   for (i32 i = 0; i < cases.len(); i++) {
     if (text(member(cases.get(i), "note")).indexOf(needle) >= 0) { return cases.get(i); }
   }
-  core.warn("mpt: no case matching \"" + needle + "\" — the fixture has changed shape");
+  core.warn("mpt: no case matching \"\{needle}\" — the fixture has changed shape");
   trap;
 }
 
@@ -128,7 +127,7 @@ string quantity(string s) {
   while (from < t.len() && t.slice(from, from + 1) == "0") { from = from + 1; }
   string trimmed = t.slice(from, t.len());
   if (trimmed == "") { return ""; }
-  return trimmed.len() % 2 == 1 ? "0" + trimmed : trimmed;
+  return trimmed.len() % 2 == 1 ? "0\{trimmed}" : trimmed;
 }
 
 /** A JSON array of hex strings, as the node list a proof is. */
@@ -143,7 +142,7 @@ export string test_an_account_with_storage_verifies_against_a_real_state_root(Co
   T t = T.create();
   JsonValue doc = fixture(core, cli);
   JsonArray cases = items(member(doc, "cases"));
-  t.isTrue(cases.len() >= 3, "only " + itoa(cases.len()) + " cases — is the vendored file intact?");
+  t.isTrue(cases.len() >= 3, "only \{cases.len()} cases — is the vendored file intact?");
   u8[] stateRoot = unhex(text(member(doc, "stateRoot")));
   JsonValue c = byNote(core, cases, "an account with storage");
 
@@ -164,10 +163,10 @@ export string test_an_account_with_storage_verifies_against_a_real_state_root(Co
     JsonValue s = slots.get(i);
     string key = text(member(s, "key"));
     StorageProof slot = storageAt(got.account.storageRoot, unhex(key), nodes(member(s, "proof")));
-    t.isTrue(slot.ok, "slot " + key + ": " + slot.error);
+    t.isTrue(slot.ok, "slot \{key}: \{slot.error}");
     string want = quantity(text(member(s, "value")));
-    t.isTrue(slot.present == (want != ""), "slot " + key + ": presence");
-    t.eqStr(hex(slot.value), want, "slot " + key + ": value");
+    t.isTrue(slot.present == (want != ""), "slot \{key}: presence");
+    t.eqStr(hex(slot.value), want, "slot \{key}: value");
   }
   return t.report();
 }
@@ -211,13 +210,13 @@ export string test_a_funded_account_with_no_storage(Core core, Cli cli) {
     JsonArray proof = items(member(s, "proof"));
     string key = text(member(s, "key"));
     t.eqI32(proof.len(), 1,
-            "the client sends one node for an empty storage trie, not " + itoa(proof.len()));
+            "the client sends one node for an empty storage trie, not \{proof.len()}");
     if (proof.len() == 1) {
       t.eqStr(text(proof.get(0)), "0x80", "and that node is the RLP of the empty string");
     }
     StorageProof slot = storageAt(got.account.storageRoot, unhex(key), nodes(member(s, "proof")));
-    t.isTrue(slot.ok, "slot " + key + ": " + slot.error);
-    t.isFalse(slot.present, "slot " + key + ": nothing was ever written");
+    t.isTrue(slot.ok, "slot \{key}: \{slot.error}");
+    t.isFalse(slot.present, "slot \{key}: nothing was ever written");
   }
   return t.report();
 }

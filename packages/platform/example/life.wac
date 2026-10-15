@@ -21,7 +21,6 @@
 // counter is not decoration.
 
 import { Cli, Core, Event, Page, Pending, Picked } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/life.wac";
@@ -135,7 +134,7 @@ export i32 page(Core core, Cli cli, Page page) {
     "  <p class=\"dim\">generation <b id=\"gen\">0</b>, <b id=\"live\">0</b> alive," +
     "    <span id=\"ms\">0</span> ms a step</p>" +
     "  <footer>The rule, the rendering and this page are wac. " +
-    "    <a href=\"" + SOURCE + "\">source</a>.</footer>" +
+    "    <a href=\"\{SOURCE}\">source</a>.</footer>" +
     "</div>"
   ).wait();
   page.on("#go", "click").wait();
@@ -176,9 +175,9 @@ export i32 page(Core core, Cli cli, Page page) {
         i32 live = 0;
         for (i32 i = 0; i < W * H; i++) { live = live + cells[i] as i32; }
         paint(page, cells, rgba);
-        page.setText("gen", itoa(gen)).wait();
-        page.setText("live", itoa(live)).wait();
-        page.setText("ms", itoa(took as@ i32)).wait();
+        page.setText("gen", "\{gen}").wait();
+        page.setText("live", "\{live}").wait();
+        page.setText("ms", "\{took as@ i32}").wait();
       }
       continue;
     }
@@ -187,14 +186,14 @@ export i32 page(Core core, Cli cli, Page page) {
       Picked f = file.wait();
       file = page.nextFile();
       if (!f.ok) {
-        page.setText("note", "could not read it: " + f.error).wait();
+        page.setText("note", "could not read it: \{f.error}").wait();
         continue;
       }
       seed = f.bytes;
       sow(cells, seed);
       gen = 0;
       paint(page, cells, rgba);
-      page.setText("note", f.name + " — " + itoa(f.bytes.len()) + " bytes of seed").wait();
+      page.setText("note", "\{f.name} — \{f.bytes.len()} bytes of seed").wait();
       continue;
     }
 

@@ -15,7 +15,6 @@
 // saying so here is cheaper than the next person wondering why it asserts so little.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { shBuiltinCount, shBuiltinsAgree, shOut, shStatus } from "./probe.wac";
 
 export string test_the_coverage_probe_compiles_against_the_current_platform() {
@@ -42,8 +41,8 @@ export string test_helps_builtin_list_and_the_dispatcher_agree() {
   // reads `builtinNames` now, and this is what keeps that list honest against `isBuiltin`.
   i32 count = shBuiltinCount();
   t.isTrue(count >= 15,
-           "`builtinNames` lists only " + itoa(count) + " names — did it empty itself?");
+           "`builtinNames` lists only \{count} names — did it empty itself?");
   t.eqI32(shBuiltinsAgree(), 0,
-          "of " + itoa(count) + " builtin names, that many are not dispatched as builtins");
+          "of \{count} builtin names, that many are not dispatched as builtins");
   return t.report();
 }

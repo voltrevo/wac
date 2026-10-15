@@ -25,7 +25,7 @@ export i32 cut(Core core, Cli cli, Fs fs, Args a) {
   string list = byBytes ? (has(a, 'b') ? flagValue(a, 'b') : flagValue(a, 'c')) : flagValue(a, 'f');
   if (list == "") {
     // GNU says which of the several things `cut` needs was missing; "usage: cut -f<n>" did not.
-    core.warn(a.name + ": you must specify a list of bytes, characters, or fields");
+    core.warn("\{a.name}: you must specify a list of bytes, characters, or fields");
     tryHelp(core, a.name);
     return 1;
   }

@@ -20,7 +20,6 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Served, serve } from "../../src/serve.wac";
 
 /** 2020-06-15T10:00:00Z, so `/time` has one answer. */
@@ -141,7 +140,7 @@ struct Answer {
 
 Answer get(T t, string request) {
   Served s = serve(request.toBytes(), NOW());
-  t.isTrue(s.ready, "the server wanted more bytes for \"" + request + "\"");
+  t.isTrue(s.ready, "the server wanted more bytes for \"\{request}\"");
   if (!s.ready) {
     return Answer(false, Reply(-1, string[].filled(0, ""), string[].filled(0, ""), 0, "", ""), 0, false);
   }
@@ -172,8 +171,8 @@ export string test_every_route_answers() {
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }
-    t.eqI32(a.reply.status, statuses[i], "\"" + requests[i] + "\": status");
-    t.eqStr(a.reply.body, bodies[i], "\"" + requests[i] + "\": body");
+    t.eqI32(a.reply.status, statuses[i], "\"\{requests[i]}\": status");
+    t.eqStr(a.reply.body, bodies[i], "\"\{requests[i]}\": body");
   }
   return t.report();
 }
@@ -212,7 +211,7 @@ export string test_bad_input_to_a_route_is_a_400_not_a_crash() {
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }
-    t.eqI32(a.reply.status, statuses[i], "\"" + requests[i] + "\": status");
+    t.eqI32(a.reply.status, statuses[i], "\"\{requests[i]}\": status");
   }
   // 405 says what is allowed, which is the part of the status that is actually useful.
   t.eqStr(get(t, "DELETE / HTTP/1.1\r\nHost: a\r\n\r\n").reply.get("allow"), "GET, HEAD",
@@ -240,7 +239,7 @@ export string test_consumed_is_exactly_one_message_so_pipelining_works() {
   t.isTrue(both.ready, "the server wanted more bytes for a complete pair");
   if (!both.ready) { return t.report(); }
   t.eqI32(both.consumed, first.len(),
-          "consumed is not the first message's " + itoa(first.len()) + " bytes");
+          "consumed is not the first message's \{first.len()} bytes");
 
   // The remainder is the second request, untouched, and answers on its own.
   u8[] all = (first + second).toBytes();
@@ -258,7 +257,7 @@ export string test_consumed_is_exactly_one_message_so_pipelining_works() {
   Served piped = serve((post + second).toBytes(), NOW());
   t.isTrue(piped.ready, "the pipelined POST was not answered");
   if (piped.ready) {
-    t.eqI32(piped.consumed, post.len(), "consumed of a " + itoa(post.len()) + "-byte POST");
+    t.eqI32(piped.consumed, post.len(), "consumed of a \{post.len()}-byte POST");
   }
   return t.report();
 }
@@ -268,7 +267,7 @@ export string test_an_incomplete_request_is_not_an_error() {
   string full = "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}";
   for (i32 n = 0; n < full.len(); n++) {
     t.isFalse(serve(full.slice(0, n).toBytes(), NOW()).ready,
-              "answered a " + itoa(n) + "-byte prefix of a " + itoa(full.len()) + "-byte request");
+              "answered a \{n}-byte prefix of a \{full.len()}-byte request");
   }
   t.isTrue(serve(full.toBytes(), NOW()).ready, "did not answer the complete request");
   return t.report();
@@ -289,10 +288,10 @@ export string test_keep_alive_follows_the_version_and_the_connection_field() {
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }
-    t.eqBool(a.keepAlive, wants[i], "\"" + requests[i] + "\": keepAlive");
+    t.eqBool(a.keepAlive, wants[i], "\"\{requests[i]}\": keepAlive");
     // And the header says the same thing, which is what the client acts on.
     t.eqStr(a.reply.get("connection"), wants[i] ? "keep-alive" : "close",
-            "\"" + requests[i] + "\": the Connection header");
+            "\"\{requests[i]}\": the Connection header");
   }
   return t.report();
 }
@@ -312,8 +311,8 @@ export string test_a_malformed_request_is_answered_and_the_connection_closed() {
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }
-    t.eqI32(a.reply.status, 400, "\"" + requests[i] + "\": status");
-    t.isFalse(a.keepAlive, "\"" + requests[i] + "\": kept the connection open");
+    t.eqI32(a.reply.status, 400, "\"\{requests[i]}\": status");
+    t.isFalse(a.keepAlive, "\"\{requests[i]}\": kept the connection open");
   }
   return t.report();
 }
@@ -339,13 +338,13 @@ export string test_responses_are_well_formed_for_our_own_parser() {
   for (i32 i = 0; i < requests.len(); i++) {
     Answer a = get(t, requests[i]);
     if (!a.ready) { continue; }
-    t.eqI32(a.reply.count("content-length"), 1, requests[i] + ": Content-Lengths");
-    t.eqI32(a.reply.count("transfer-encoding"), 0, requests[i] + ": emitted Transfer-Encoding");
-    t.eqI32(a.reply.count("connection"), 1, requests[i] + ": Connection headers");
+    t.eqI32(a.reply.count("content-length"), 1, "\{requests[i]}: Content-Lengths");
+    t.eqI32(a.reply.count("transfer-encoding"), 0, "\{requests[i]}: emitted Transfer-Encoding");
+    t.eqI32(a.reply.count("connection"), 1, "\{requests[i]}: Connection headers");
     bool isHead = requests[i].len() >= 4 && requests[i].slice(0, 4) == "HEAD";
     if (!isHead) {
-      t.eqStr(a.reply.get("content-length"), itoa(a.reply.body.toBytes().len()),
-              requests[i] + ": Content-Length against the body");
+      t.eqStr(a.reply.get("content-length"), "\{a.reply.body.toBytes().len()}",
+              "\{requests[i]}: Content-Length against the body");
     }
   }
   return t.report();
@@ -372,7 +371,7 @@ export string test_the_status_line_carries_its_reason_phrase() {
     if (!a.ready) { continue; }
     t.eqStr(a.reply.raw.slice(0, wants[i].len() > a.reply.raw.len() ? a.reply.raw.len()
                                                                    : wants[i].len()),
-            wants[i], "\"" + requests[i] + "\": the status line");
+            wants[i], "\"\{requests[i]}\": the status line");
   }
   return t.report();
 }

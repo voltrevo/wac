@@ -18,7 +18,6 @@
 
 import { Cli, Core, Change, Exec, Stat } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { gzipBest } from "../../src/gzip.wac";
 import { Case, Rng, makeRng, buildCorpus } from "./fuzzcorpus.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
@@ -46,7 +45,7 @@ export struct Swept {
   string detail;
 }
 
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 /**
  * `corpora` streams, each corrupted `attempts` ways, each handed to the probe in a process of its own.
@@ -65,13 +64,13 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
                              i32 seed) {
   Stat bin = cli.stat(binary(cli)).wait();
   if (!bin.exists) {
-    return none("the binary that builds the probe is not at " + binary(cli));
+    return none("the binary that builds the probe is not at \{binary(cli)}");
   }
   string who = agentDir(cli);
-  string work = "/tmp/wac-gzip-fuzz-" + what + (who == "" ? "" : "-" + who);
+  string work = "/tmp/wac-gzip-fuzz-" + what + (who == "" ? "" : "-\{who}");
   Change made = cli.mkdir(work, true).wait();
-  if (!made.ok()) { return none("a working directory: " + made.message); }
-  string probe = work + "/fuzzprobe";
+  if (!made.ok()) { return none("a working directory: \{made.message}"); }
+  string probe = "\{work}/fuzzprobe";
 
   Exec built = cli.exec(binary(cli), ["build", PROBE, "-o", probe, "--allow-read"],
                         u8[]()).wait();
@@ -93,8 +92,8 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
   i32 notRan = 0;
   string detail = "";
 
-  string originalPath = work + "/original.bin";
-  string corruptPath = work + "/corrupt.gz";
+  string originalPath = "\{work}/original.bin";
+  string corruptPath = "\{work}/corrupt.gz";
 
   for (i32 c = 0; c < base.len(); c++) {
     u8[] data = base[c].data;
@@ -128,7 +127,7 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
       cases = cases + 1;
       if (!r.ran()) {
         notRan = notRan + 1;
-        if (notRan <= 3) { detail = detail + "\n  " + base[c].name + ": the probe would not start — " + r.error; }
+        if (notRan <= 3) { detail = detail + "\n  \{base[c].name}: the probe would not start — \{r.error}"; }
         continue;
       }
       // Some corruptions are genuinely benign — MTIME, XFL and the OS byte are not covered by the
@@ -136,13 +135,13 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
       if (r.status == 7) {
         wrong = wrong + 1;
         if (wrong <= 5) {
-          detail = detail + "\n  " + base[c].name + " attempt " + itoa(attempt) +
+          detail = detail + "\n  \{base[c].name} attempt \{attempt}" +
                    ": a corrupted stream decoded to the wrong bytes without trapping";
         }
       } else if (r.status == 8) {
         unreadable = unreadable + 1;
         if (unreadable <= 3) {
-          detail = detail + "\n  " + base[c].name + ": the probe could not read its inputs";
+          detail = detail + "\n  \{base[c].name}: the probe could not read its inputs";
         }
       } else if (r.status == 0) {
         decoded = decoded + 1;
@@ -153,7 +152,7 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
   }
 
   Change cleaned = cli.remove(work, true).wait();
-  if (!cleaned.ok()) { core.warn("fuzz: could not remove " + work + " — " + cleaned.message); }
+  if (!cleaned.ok()) { core.warn("fuzz: could not remove \{work} — \{cleaned.message}"); }
   return Swept(true, "", base.len(), cases, trapped, decoded, wrong, unreadable, notRan, detail);
 }
 
@@ -166,18 +165,18 @@ export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 a
 export void assertSwept(T t, Core core, Swept s, i32 attempts, string what) {
   t.isTrue(s.ok, s.error);
   if (!s.ok) { return; }
-  t.eqI32(s.notRan, 0, itoa(s.notRan) + " cases never ran" + s.detail);
-  t.eqI32(s.unreadable, 0, itoa(s.unreadable) + " cases could not be read by the probe" + s.detail);
-  t.eqI32(s.wrong, 0, itoa(s.wrong) + " of " + itoa(s.cases) +
-                      " corrupted streams decoded to the wrong bytes without trapping" + s.detail);
+  t.eqI32(s.notRan, 0, "\{s.notRan} cases never ran\{s.detail}");
+  t.eqI32(s.unreadable, 0, "\{s.unreadable} cases could not be read by the probe\{s.detail}");
+  t.eqI32(s.wrong, 0, "\{s.wrong} of \{s.cases}" +
+                      " corrupted streams decoded to the wrong bytes without trapping\{s.detail}");
   t.eqI32(s.cases, s.corpora * attempts,
-          "the sweep ran " + itoa(s.cases) + " cases, not " + itoa(s.corpora) + " x " + itoa(attempts));
+          "the sweep ran \{s.cases} cases, not \{s.corpora} x \{attempts}");
   // If corruption never triggered a trap, the mutations were not reaching the compressed payload.
   t.isTrue(s.trapped * 2 >= s.cases,
-           "only " + itoa(s.trapped) + "/" + itoa(s.cases) +
+           "only \{s.trapped}/\{s.cases}" +
            " corruptions trapped — corruption may not be effective");
-  core.log("  " + what + ": " + itoa(s.cases) + " cases, " + itoa(s.trapped) + " trapped, " +
-           itoa(s.decoded) + " benign");
+  core.log("  \{what}: \{s.cases} cases, \{s.trapped} trapped, " +
+           "\{s.decoded} benign");
 }
 
 Swept none(string why) { return Swept(false, why, 0, 0, 0, 0, 0, 0, 0, ""); }

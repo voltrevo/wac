@@ -30,7 +30,6 @@ import { Buf } from "core";
 import { ALPHABET_STANDARD, encode } from "../../codec/src/base64.wac";
 import { civilFrom, derConcat, derInteger, derSequence } from "../../tls/src/derwrite.wac";
 import { decode, encodeUpper } from "../../codec/src/hex.wac";
-import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import {
   curve25519ToEd25519Secret, ed25519PublicKey, ed25519PublicKeyExpanded, ed25519Sign,
   ed25519SignBit,
@@ -139,13 +138,13 @@ export u8[] rsaFingerprint(u8[] modulus, u8[] exponent) {
 export u8[] pemBlock(string label, u8[] der) {
   u8[] body = encode(der, ALPHABET_STANDARD(), true);
   Buf out = Buf.create();
-  out.pushAll(("-----BEGIN " + label + "-----\n").toBytes());
+  out.pushAll("-----BEGIN \{label}-----\n".toBytes());
   for (i32 i = 0; i < body.len(); i = i + 64) {
     i32 n = body.len() - i < 64 ? body.len() - i : 64;
     out.pushBytes(body, i, n);
     out.push(10);
   }
-  out.pushAll(("-----END " + label + "-----\n").toBytes());
+  out.pushAll("-----END \{label}-----\n".toBytes());
   return out.bytes();
 }
 
@@ -192,19 +191,19 @@ export struct RelayInfo {
   string exitPolicy;
 }
 
-string pad2(i64 v) { return v < 10 ? "0" + itoa64(v) : itoa64(v); }
+string pad2(i64 v) { return v < 10 ? "0\{v}" : "\{v}"; }
 
 string pad4(i64 v) {
-  string s = itoa64(v);
-  while (s.len() < 4) { s = "0" + s; }
+  string s = "\{v}";
+  while (s.len() < 4) { s = "0\{s}"; }
   return s;
 }
 
 /** `YYYY-MM-DD HH:MM:SS`, which is how a descriptor writes a time. Always UTC. */
 export string publishedTime(i64 seconds) {
   i64[] p = civilFrom(seconds);
-  return pad4(p[0]) + "-" + pad2(p[1]) + "-" + pad2(p[2]) + " " +
-         pad2(p[3]) + ":" + pad2(p[4]) + ":" + pad2(p[5]);
+  return "\{pad4(p[0])}-\{pad2(p[1])}-\{pad2(p[2])} " +
+         "\{pad2(p[3])}:\{pad2(p[4])}:\{pad2(p[5])}";
 }
 
 /**
@@ -270,28 +269,28 @@ export u8[] routerDescriptor(RelayKeys k, RelayInfo info) {
   if (onionCross.len() == 0) { return u8[](); }
 
   Buf d = Buf.create();
-  d.pushAll(("router " + info.nickname + " " + info.address + " " + itoa(info.orPort) +
-             " 0 " + itoa(info.dirPort) + "\n").toBytes());
+  d.pushAll(("router \{info.nickname} \{info.address} \{info.orPort}" +
+             " 0 \{info.dirPort}\n").toBytes());
   d.pushAll("identity-ed25519\n".toBytes());
   d.pushAll(pemBlock("ED25519 CERT", signingCert));
-  d.pushAll(("master-key-ed25519 " + b64Unpadded(masterPub) + "\n").toBytes());
+  d.pushAll("master-key-ed25519 \{b64Unpadded(masterPub)}\n".toBytes());
   d.pushAll(("platform Tor 0.4.7.13 on Linux\n").toBytes());
-  d.pushAll(("proto " + PROTO_LINE + "\n").toBytes());
-  d.pushAll(("published " + publishedTime(info.published) + "\n").toBytes());
-  d.pushAll(("fingerprint " + spacedFingerprint(fingerprint) + "\n").toBytes());
-  d.pushAll(("bandwidth " + itoa64(info.bandwidthRate) + " " + itoa64(info.bandwidthBurst) +
-             " " + itoa64(info.bandwidthObserved) + "\n").toBytes());
+  d.pushAll("proto \{PROTO_LINE}\n".toBytes());
+  d.pushAll("published \{publishedTime(info.published)}\n".toBytes());
+  d.pushAll("fingerprint \{spacedFingerprint(fingerprint)}\n".toBytes());
+  d.pushAll(("bandwidth \{info.bandwidthRate} \{info.bandwidthBurst}" +
+             " \{info.bandwidthObserved}\n").toBytes());
   d.pushAll("onion-key\n".toBytes());
   d.pushAll(pemBlock("RSA PUBLIC KEY", rsaPublicKeyDer(k.rsaOnionN, k.rsaOnionE)));
   d.pushAll("signing-key\n".toBytes());
   d.pushAll(pemBlock("RSA PUBLIC KEY", rsaPublicKeyDer(k.rsaIdentityN, k.rsaIdentityE)));
   d.pushAll("onion-key-crosscert\n".toBytes());
   d.pushAll(pemBlock("CROSSCERT", onionCross));
-  d.pushAll(("ntor-onion-key-crosscert " + itoa(ed25519SignBit(ntorEd)) + "\n").toBytes());
+  d.pushAll("ntor-onion-key-crosscert \{ed25519SignBit(ntorEd)}\n".toBytes());
   d.pushAll(pemBlock("ED25519 CERT", ntorCross));
   d.pushAll("hidden-service-dir\n".toBytes());
-  d.pushAll(("ntor-onion-key " + b64Unpadded(ntorPub) + "\n").toBytes());
-  d.pushAll((info.exitPolicy + "\n").toBytes());
+  d.pushAll("ntor-onion-key \{b64Unpadded(ntorPub)}\n".toBytes());
+  d.pushAll("\{info.exitPolicy}\n".toBytes());
   d.pushAll("tunnelled-dir-server\n".toBytes());
 
   // The ed25519 signature covers the keyword announcing it, so the keyword goes in first.

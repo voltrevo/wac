@@ -40,7 +40,6 @@
 
 import { Buf } from "core";
 import { encode } from "../../codec/src/hex.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { sha1 } from "../../crypto/src/sha1.wac";
 import { Vec } from "core";
 
@@ -95,7 +94,7 @@ export Staged parseIndex(u8[] b) {
   if (version != 2 && version != 3) {
     // Version 4 prefix-compresses paths against the previous entry. Reading it as version 2 gives one
     // correct path and then nonsense, which is worse than refusing.
-    return Staged.Unreadable("index version " + itoa(version) + " is not 2 or 3");
+    return Staged.Unreadable("index version \{version} is not 2 or 3");
   }
   i32 count = be32at(b, 8);
   if (count < 0 || count > 10000000) { return Staged.Unreadable("implausible entry count"); }

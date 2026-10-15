@@ -38,8 +38,8 @@ string MANIFEST() {
 }
 string LOCK() {
   return "{ imports: {\n"
-       + "  'bits': { git: 'https://x.invalid/g1', ref: 'main', commit: '" + A() + "' },\n"
-       + "  'gone': { git: 'https://x.invalid/g3', ref: 'r', commit: '" + B() + "' },\n"
+       + "  'bits': { git: 'https://x.invalid/g1', ref: 'main', commit: '\{A()}' },\n"
+       + "  'gone': { git: 'https://x.invalid/g3', ref: 'r', commit: '\{B()}' },\n"
        + "} }";
 }
 
@@ -103,7 +103,7 @@ export string test_the_planning_entry_points_agree_with_lock_wac() {
   t.eqI32(via.len(), direct.len(), "planFor returns the plan");
   t.eqI32(via.len(), 2, "which has two steps");
   for (i32 i = 0; i < via.len() && i < direct.len(); i++) {
-    t.eqStr(via[i].name, direct[i].name, "step " + direct[i].name + " survives the boundary");
+    t.eqStr(via[i].name, direct[i].name, "step \{direct[i].name} survives the boundary");
     t.eqI32(via[i].action, direct[i].action, "and so does its action");
   }
   // `acme` is CREATE, so this is true — a wrapper hard-wired to `false` fails here and a wrapper
@@ -113,7 +113,7 @@ export string test_the_planning_entry_points_agree_with_lock_wac() {
   t.isTrue(planNeedsResolving(MANIFEST().toBytes(), LOCK().toBytes()), "and it is true here");
   string settled = "{ imports: { 'bits': { git: 'https://x.invalid/g1', ref: 'main' } } }";
   string settledLock = "{ imports: { 'bits': { git: 'https://x.invalid/g1', ref: 'main', commit: '"
-                     + A() + "' } } }";
+                     + "\{A()}' } } }";
   t.isFalse(planNeedsResolving(settled.toBytes(), settledLock.toBytes()),
             "and false when every step is USE");
 

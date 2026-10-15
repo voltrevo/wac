@@ -41,7 +41,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { opcodes, nativeCapabilities, declaredFields, camel, has, sorted, joined, sourceOf }
   from "./conformance.wac";
 
@@ -437,12 +436,12 @@ export string test_the_readmes_capability_table_lists_every_capability_there_is(
     string[] declared = declaredFields(cli, structs[s]);
     string missing = "";
     for (i32 i = 0; i < declared.len(); i++) {
-      if (!contains(table, "`" + declared[i] + "`")) {
+      if (!contains(table, "`\{declared[i]}`")) {
         missing = missing + (missing == "" ? "" : " ") + declared[i];
       }
     }
     t.eqStr(missing, "",
-            structs[s] + ": declared in platform.wac and absent from the README's table");
+            "\{structs[s]}: declared in platform.wac and absent from the README's table");
   }
   return t.report();
 }
@@ -459,7 +458,7 @@ export string test_every_capability_the_language_declares_the_host_with_no_js_su
   T t = T.create();
   string[] caps = nativeCapabilities(cli);
   t.isTrue(caps.len() >= 30,
-           "only " + itoa(caps.len()) + " native capabilities found — has the extraction broken?");
+           "only \{caps.len()} native capabilities found — has the extraction broken?");
 
   string[] structs = ["Cli", "Core"];
   for (i32 s = 0; s < structs.len(); s++) {
@@ -467,14 +466,14 @@ export string test_every_capability_the_language_declares_the_host_with_no_js_su
     // The count first: an extraction that quietly matched nothing would make the loop below vacuous,
     // which is how this test would come to certify a surface it never read.
     t.isTrue(declared.len() >= 8,
-             "only " + itoa(declared.len()) + " " + structs[s] +
+             "only \{declared.len()} \{structs[s]}" +
              " fields found — has the extraction broken?");
     string missing = "";
     for (i32 i = 0; i < declared.len(); i++) {
       if (!has(caps, declared[i])) { missing = missing + (missing == "" ? "" : " ") + declared[i]; }
     }
     t.eqStr(missing, "",
-            structs[s] + ": the native runtime wires no arm for these, so a program that calls one " +
+            "\{structs[s]}: the native runtime wires no arm for these, so a program that calls one " +
             "traps with \"not implemented in the native runtime yet\" rather than getting an answer");
   }
 
@@ -489,7 +488,7 @@ export string test_every_capability_the_language_declares_the_host_with_no_js_su
           "a `Page` field has a native arm, which means either the host grew a page or the struct " +
           "grew a field that is not about one");
   t.eqI32(page.len(), 12,
-          "Page declares " + itoa(page.len()) + " fields; the ledger's page-only list has 12");
+          "Page declares \{page.len()} fields; the ledger's page-only list has 12");
   return t.report();
 }
 
@@ -509,7 +508,7 @@ export string test_every_opcode_on_the_two_host_surface_is_accounted_for(Core co
   T t = T.create();
   string[] ops = opcodes(cli);
   string[] caps = nativeCapabilities(cli);
-  t.isTrue(ops.len() >= 38, "only " + itoa(ops.len()) + " opcodes found — has the extraction broken?");
+  t.isTrue(ops.len() >= 38, "only \{ops.len()} opcodes found — has the extraction broken?");
 
   string[] shared = sharedOpcodes(cli, ops, caps);
   string[] pageOnly = string[].filled(ops.len() - shared.len(), "");
@@ -521,7 +520,7 @@ export string test_every_opcode_on_the_two_host_surface_is_accounted_for(Core co
   // The derivation itself, asserted: a mapping that silently stopped matching would report the whole
   // surface as page-only and this file would have nothing to say while looking complete.
   t.isTrue(shared.len() >= 35,
-           "only " + itoa(shared.len()) + " shared opcodes — has the mapping broken?");
+           "only \{shared.len()} shared opcodes — has the mapping broken?");
   // Pinned rather than derived, on purpose and against this file's own grain: a capability the native
   // host *dropped* would arrive here looking exactly like a page-only one, so this is the assertion
   // that has to be a written-down expectation. It was wrong when first typed — `GET_VALUE` was
@@ -577,16 +576,16 @@ export string test_the_ledger_says_how_much_of_the_surface_is_actually_compared(
   // comparison` was true and was taken for *the hosts agree*; there are four hosts and no entry
   // compares all of them. The two below are derived from what the tests spawn, so they cannot drift
   // from the tests the way a written-down host list would — `issues/system/0268a`.
-  core.log("    conformance: " + itoa(covered) + " of " + itoa(shared.len()) +
-           " opcodes have a comparison; " + itoa(shared.len() - covered) + " are named gaps");
-  core.log("                 " + itoa(withNode) + " include the Node host; " + itoa(withoutV8) +
+  core.log("    conformance: \{covered} of \{shared.len()}" +
+           " opcodes have a comparison; \{shared.len() - covered} are named gaps");
+  core.log("                 \{withNode} include the Node host; \{withoutV8}" +
            " do not include the V8 binary");
 
   // A floor rather than a target: this is allowed to go up without editing the test, and a change
   // that takes it *down* — a comparison deleted, an opcode added with a gap entry and forgotten — has
   // to be deliberate.
   t.isTrue(covered >= 24,
-           "only " + itoa(covered) + " opcodes are compared across hosts; this was 19 when the " +
+           "only \{covered} opcodes are compared across hosts; this was 19 when the " +
            "ledger was written");
   return t.report();
 }
@@ -623,11 +622,11 @@ export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Core
       for (i32 j = 0; j < all.len(); j++) {
         if (all[j].op == all[i].ref && all[j].kind == "where") { found = true; }
       }
-      t.isTrue(found, all[i].op + " borrows " + all[i].ref + ", which is not a `where` entry");
+      t.isTrue(found, "\{all[i].op} borrows \{all[i].ref}, which is not a `where` entry");
     }
     string hosts = hostsOf(cli, all, all[i]);
     if (hosts == "") { silent[n] = all[i].op; n = n + 1; continue; }
-    everySeen = everySeen + "+" + hosts;
+    everySeen = everySeen + "+\{hosts}";
   }
   t.eqI32(n, 0, "these entries name a test that drives no host this can recognise — a spelling the "
                 + "pattern list is missing, not an absence of coverage: " + joined(silent, ", "));
@@ -650,10 +649,10 @@ export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Core
       if (files[f] == "") { continue; }
       string src = sourceOf(cli, files[f]);
       if (contains(src, "cli.exec(\"node\"") && !contains(hosts, "node")) {
-        t.fail(all[i].op + ": " + files[f] + " spawns node and the derive did not say so");
+        t.fail("\{all[i].op}: \{files[f]} spawns node and the derive did not say so");
       }
       if (contains(src, "cli.exec(\"deno\"") && !contains(hosts, "deno")) {
-        t.fail(all[i].op + ": " + files[f] + " spawns deno and the derive did not say so");
+        t.fail("\{all[i].op}: \{files[f]} spawns deno and the derive did not say so");
       }
     }
   }
@@ -666,7 +665,7 @@ export string test_every_entry_names_a_file_that_says_which_hosts_it_drives(Core
     if (contains(everySeen, names[i])) { distinct = distinct + 1; }
   }
   t.isTrue(distinct >= 3,
-           "the whole ledger derives only " + itoa(distinct) + " distinct host(s) — it compared "
+           "the whole ledger derives only \{distinct} distinct host(s) — it compared "
            + "wasmtime, v8 and deno when this was written");
   return t.report();
 }

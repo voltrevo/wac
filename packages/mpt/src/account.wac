@@ -31,7 +31,6 @@
 import { verify, Proved, emptyTrieRoot } from "./proof.wac";
 import { decode, Decoded, Item, itemsOf, bytesOf, isList } from "../../rlp/src/rlp.wac";
 import { keccak256 } from "../../crypto/src/keccak.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** An account as the state trie stores it. Numbers stay as bytes — see the header. */
 export struct Account {
@@ -93,7 +92,7 @@ export AccountProof accountAt(u8[] stateRoot, u8[] address, u8[][] nodes) {
 
   Decoded d = decode(p.value);
   if (!d.ok) {
-    return AccountProof.of(false, false, emptyAccount(), "the account is not RLP: " + d.error);
+    return AccountProof.of(false, false, emptyAccount(), "the account is not RLP: \{d.error}");
   }
   if (!isList(d.item)) {
     return AccountProof.of(false, false, emptyAccount(), "an account is a list of four items");
@@ -101,7 +100,7 @@ export AccountProof accountAt(u8[] stateRoot, u8[] address, u8[][] nodes) {
   Item[] parts = itemsOf(d.item);
   if (parts.len() != 4) {
     return AccountProof.of(false, false, emptyAccount(),
-      "an account has four items, and this one has " + itoa(parts.len()));
+      "an account has four items, and this one has \{parts.len()}");
   }
   // Every field of an account is a byte string. A list in any of them used to read as empty — which for
   // the nonce and the balance means *zero*, an account that has never sent a transaction and holds
@@ -109,7 +108,7 @@ export AccountProof accountAt(u8[] stateRoot, u8[] address, u8[][] nodes) {
   for (i32 i = 0; i < 4; i++) {
     if (isList(parts[i])) {
       return AccountProof.of(false, false, emptyAccount(),
-        "an account's " + fieldName(i) + " is a byte string, and this one is a list");
+        "an account's \{fieldName(i)} is a byte string, and this one is a list");
     }
   }
   u8[] root = bytesOf(parts[2]);
@@ -118,11 +117,11 @@ export AccountProof accountAt(u8[] stateRoot, u8[] address, u8[][] nodes) {
   // about a proof, which sends the reader to the wrong file.
   if (root.len() != 32) {
     return AccountProof.of(false, false, emptyAccount(),
-      "an account's storage root is 32 bytes, and this one is " + itoa(root.len()));
+      "an account's storage root is 32 bytes, and this one is \{root.len()}");
   }
   if (code.len() != 32) {
     return AccountProof.of(false, false, emptyAccount(),
-      "an account's code hash is 32 bytes, and this one is " + itoa(code.len()));
+      "an account's code hash is 32 bytes, and this one is \{code.len()}");
   }
   return AccountProof.of(true, true,
     Account.of(bytesOf(parts[0]), bytesOf(parts[1]), root, code), "");
@@ -148,7 +147,7 @@ export StorageProof storageAt(u8[] storageRoot, u8[] slot, u8[][] nodes) {
 
   Decoded d = decode(p.value);
   if (!d.ok) {
-    return StorageProof.of(false, false, u8[](), "the slot's value is not RLP: " + d.error);
+    return StorageProof.of(false, false, u8[](), "the slot's value is not RLP: \{d.error}");
   }
   if (isList(d.item)) {
     return StorageProof.of(false, false, u8[](), "a slot holds a byte string, not a list");
@@ -156,7 +155,7 @@ export StorageProof storageAt(u8[] storageRoot, u8[] slot, u8[][] nodes) {
   u8[] v = bytesOf(d.item);
   if (v.len() > 32) {
     return StorageProof.of(false, false, u8[](),
-      "a slot holds at most 32 bytes, and this one claims " + itoa(v.len()));
+      "a slot holds at most 32 bytes, and this one claims \{v.len()}");
   }
   // A stored value is minimal — `0x00…01` would be a second encoding of 1, and the trie is canonical.
   if (v.len() > 0 && v[0] == 0) {

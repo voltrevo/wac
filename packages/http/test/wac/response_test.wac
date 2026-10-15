@@ -22,7 +22,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Outcome, oracle, wire } from "./nodeoracle.wac";
 import { ResponseOutcome, responseOracle, responseOutcomeOf } from "./responseoracle.wac";
 import { Incoming, ParsedResponse, parseResponse, ERR_STATUS } from "../../src/incoming.wac";
@@ -100,7 +99,7 @@ string describe(string method, string text) {
       out = out + text.slice(i, i + 1);
     }
   }
-  return method + " \"" + out + "\"";
+  return "\{method} \"\{out}\"";
 }
 
 void check(T t, Cli cli, string[] texts, string[] methods) {
@@ -121,7 +120,7 @@ void check(T t, Cli cli, string[] texts, string[] methods) {
     if (wacOutcome(got) == "ok" && consumedOf(got) < cases[i].len()) { continue; }
 
     if (isStricter(texts[i])) {
-      t.eqStr(wacOutcome(got), "bad", label + ": listed as deliberately stricter");
+      t.eqStr(wacOutcome(got), "bad", "\{label}: listed as deliberately stricter");
       continue;
     }
 
@@ -130,12 +129,12 @@ void check(T t, Cli cli, string[] texts, string[] methods) {
         compareOk(t, label, got, status, version, rawHeaders, body);
       }
       Refused(code): {
-        t.isFalse(wacOutcome(got) == "ok", label + ": llhttp rejected (" + code + "), wac accepted");
+        t.isFalse(wacOutcome(got) == "ok", "\{label}: llhttp rejected (\{code}), wac accepted");
       }
       // llhttp "incomplete" is not compared: its client gives up on a timer, which says nothing
       // about the bytes.
       Incomplete: { }
-      Broken(why): { t.fail(label + ": " + why); }
+      Broken(why): { t.fail("\{label}: \{why}"); }
     }
   }
 }
@@ -144,19 +143,19 @@ void compareOk(T t, string label, ParsedResponse got, i32 status, string version
                string[] rawHeaders, u8[] body) {
   match (got) {
     Ok(res) : {
-      t.eqI32(res.status, status, label + ": status");
-      t.eqStr("1." + itoa(res.minor), version, label + ": version");
-      t.eqStr(string.fromBytes(res.body), string.fromBytes(body), label + ": body");
+      t.eqI32(res.status, status, "\{label}: status");
+      t.eqStr("1.\{res.minor}", version, "\{label}: version");
+      t.eqStr(string.fromBytes(res.body), string.fromBytes(body), "\{label}: body");
       i32 pairs = rawHeaders.len() / 2;
       i32 n = res.headers.count < pairs ? res.headers.count : pairs;
       for (i32 k = 0; k < n; k++) {
         t.eqStr(string.fromBytes(res.headers.names[k]), rawHeaders[k * 2],
-                label + ": header " + itoa(k) + " name");
+                "\{label}: header \{k} name");
         t.eqStr(string.fromBytes(res.headers.values[k]), rawHeaders[k * 2 + 1],
-                label + ": header " + itoa(k) + " value");
+                "\{label}: header \{k} value");
       }
     }
-    default: { t.fail(label + ": llhttp accepted, wac said " + wacOutcome(got)); }
+    default: { t.fail("\{label}: llhttp accepted, wac said \{wacOutcome(got)}"); }
   }
 }
 
@@ -300,13 +299,13 @@ export string test_incomplete_responses_are_not_rejections() {
   string full = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
   for (i32 n = 0; n < full.len(); n++) {
     t.eqStr(wacOutcome(parseResponse(wire(full.slice(0, n)), "GET".toBytes(), false, MAX_BODY())),
-            "incomplete", "a " + itoa(n) + "-byte prefix");
+            "incomplete", "a \{n}-byte prefix");
   }
   string chunked = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
   for (i32 n = 0; n < chunked.len(); n++) {
     t.eqStr(wacOutcome(parseResponse(wire(chunked.slice(0, n)), "GET".toBytes(), false,
                                      MAX_BODY())),
-            "incomplete", "a " + itoa(n) + "-byte chunked prefix");
+            "incomplete", "a \{n}-byte chunked prefix");
   }
   return t.report();
 }
@@ -331,12 +330,12 @@ export string test_the_request_writer_produces_what_our_own_parser_reads_back(Co
   for (i32 i = 0; i < methods.len(); i++) {
     match (parsed[i]) {
       Ok(method, target, _, _, body, _): {
-        t.eqStr(method, methods[i], methods[i] + " " + targets[i] + ": method");
-        t.eqStr(target, targets[i], methods[i] + " " + targets[i] + ": target");
-        t.eqStr(string.fromBytes(body), bodies[i], methods[i] + " " + targets[i] + ": body");
+        t.eqStr(method, methods[i], "\{methods[i]} \{targets[i]}: method");
+        t.eqStr(target, targets[i], "\{methods[i]} \{targets[i]}: target");
+        t.eqStr(string.fromBytes(body), bodies[i], "\{methods[i]} \{targets[i]}: body");
       }
       default: {
-        t.fail(methods[i] + " " + targets[i] + ": llhttp refused our request:\n" +
+        t.fail("\{methods[i]} \{targets[i]}: llhttp refused our request:\n" +
                string.fromBytes(requests[i]));
       }
     }
@@ -360,8 +359,8 @@ export string test_a_malformed_status_line_says_so_specifically() {
   ];
   for (i32 i = 0; i < texts.len(); i++) {
     ParsedResponse got = parseResponse(wire(texts[i]), "GET".toBytes(), true, MAX_BODY());
-    t.eqStr(wacOutcome(got), "bad", "\"" + texts[i] + "\"");
-    t.eqI32(codeOf(got), ERR_STATUS(), "\"" + texts[i] + "\": the reported code");
+    t.eqStr(wacOutcome(got), "bad", "\"\{texts[i]}\"");
+    t.eqI32(codeOf(got), ERR_STATUS(), "\"\{texts[i]}\": the reported code");
   }
   return t.report();
 }
@@ -438,11 +437,11 @@ export string test_every_reason_phrase_is_the_one_node_writes(Core core, Cli cli
   string[] args = string[].filled(codes.len() + 2, "");
   args[0] = "-e";
   args[1] = script;
-  for (i32 i = 0; i < codes.len(); i++) { args[i + 2] = itoa(codes[i]); }
+  for (i32 i = 0; i < codes.len(); i++) { args[i + 2] = "\{codes[i]}"; }
   Exec r = cli.exec("node", args, u8[]()).wait();
-  t.isTrue(r.ran(), "node ran — " + r.error);
+  t.isTrue(r.ran(), "node ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "node exited cleanly — " + string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "node exited cleanly — \{string.fromBytes(r.stderr)}");
 
   string said = string.fromBytes(r.stdout);
   i32 checked = 0;
@@ -467,7 +466,7 @@ export string test_every_reason_phrase_is_the_one_node_writes(Core core, Cli cli
               "node has caught up with RFC 9110 — delete this exception and the row above it");
       differed = differed + 1;
     } else {
-      t.eqStr(ours, theirs, "the reason phrase for " + itoa(code));
+      t.eqStr(ours, theirs, "the reason phrase for \{code}");
     }
     checked = checked + 1;
   }

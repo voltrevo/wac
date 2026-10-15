@@ -45,7 +45,6 @@ import { Core, Cli } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 import { sha256 } from "../../src/sha256.wac";
 import { Big } from "../../../bignum/src/big.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { rsaVerifyPkcs1, rsaVerifyPss, rsaSignPkcs1, rsaSignRawPkcs1, rsaRecoverPkcs1, rsaSignPss,
          modPow, modPowSecret, fromBytes, toBytes } from "../../src/rsa.wac";
 import { slice } from "../../../bytes/src/slice.wac";
@@ -83,9 +82,9 @@ export string test_pkcs1_signatures_from_the_host(Core core, Cli cli) {
   // stateful in line order, so the interleaving is the point rather than a compromise.
   Lines lines = Lines.create();
   for (i32 b = 0; b < bits.len(); b++) {
-    lines.add("rsakeygen " + itoa64(bits[b] as i64));
+    lines.add("rsakeygen \{bits[b] as i64}");
     for (i32 h = 0; h < hashes.len(); h++) {
-      lines.add("rsasign " + itoa64(hashes[h] as i64) + " " + hex(fill(50 + h, b * 3 + h)));
+      lines.add("rsasign \{hashes[h] as i64} \{hex(fill(50 + h, b * 3 + h))}");
     }
   }
   Answers a = askRsa(t, cli, lines, "two keys and six signatures");
@@ -93,12 +92,12 @@ export string test_pkcs1_signatures_from_the_host(Core core, Cli cli) {
 
   for (i32 b = 0; b < bits.len(); b++) {
     Key k = Key.of(a.lines[b * 4]);
-    t.eqI32(k.n.len(), bits[b] / 8, "modulus is " + itoa64(bits[b] as i64) + " bits");
+    t.eqI32(k.n.len(), bits[b] / 8, "modulus is \{bits[b] as i64} bits");
     for (i32 h = 0; h < hashes.len(); h++) {
       u8[] msg = fill(50 + h, b * 3 + h);
       t.isTrue(rsaVerifyPkcs1(k.n, k.e, msg, valueOf(a.lines[b * 4 + 1 + h]), hashes[h]),
-               "pkcs1 sha-" + itoa64((hashes[h] * 8) as i64) + " at " +
-               itoa64(bits[b] as i64) + " bits");
+               "pkcs1 sha-\{(hashes[h] * 8) as i64} at " +
+               "\{bits[b] as i64} bits");
     }
   }
   return t.report();
@@ -120,7 +119,7 @@ export string test_pkcs1_refuses_a_block_that_is_not_exact(Core core, Cli cli) {
   u8[] msg = "a message to sign".toBytes();
   Lines lines = Lines.create();
   lines.add("rsakeygen 2048");
-  lines.add("rsasign 32 " + hex(msg));
+  lines.add("rsasign 32 \{hex(msg)}");
   Answers a = askRsa(t, cli, lines, "a key and one signature");
   if (!a.ok) { return t.report(); }
   Key k = Key.of(a.lines[0]);
@@ -137,7 +136,7 @@ export string test_pkcs1_refuses_a_block_that_is_not_exact(Core core, Cli cli) {
     for (i32 j = 0; j < sig.len(); j++) { bad[j] = sig[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
     t.isFalse(rsaVerifyPkcs1(k.n, k.e, msg, bad, 32),
-              "a signature altered at byte " + itoa64(spots[i] as i64) + " is refused");
+              "a signature altered at byte \{spots[i] as i64} is refused");
   }
   // And the wrong hash length, which is a different DER prefix entirely.
   t.isFalse(rsaVerifyPkcs1(k.n, k.e, msg, sig, 48), "the wrong digest size is refused");
@@ -155,8 +154,8 @@ export string test_pss_at_every_salt_length(Core core, Cli cli) {
   lines.add("rsakeygen 2048");
   for (i32 s = 0; s < salts.len(); s++) {
     // Twice each, because two signatures over one message must differ or the salt is unused.
-    lines.add("rsapss 32 " + itoa64(salts[s] as i64) + " " + hex(msg));
-    lines.add("rsapss 32 " + itoa64(salts[s] as i64) + " " + hex(msg));
+    lines.add("rsapss 32 \{salts[s] as i64} \{hex(msg)}");
+    lines.add("rsapss 32 \{salts[s] as i64} \{hex(msg)}");
   }
   Answers a = askRsa(t, cli, lines, "a key and six PSS signatures");
   if (!a.ok) { return t.report(); }
@@ -164,7 +163,7 @@ export string test_pss_at_every_salt_length(Core core, Cli cli) {
   for (i32 s = 0; s < salts.len(); s++) {
     u8[] sig = valueOf(a.lines[1 + s * 2]);
     t.isTrue(rsaVerifyPss(k.n, k.e, msg, sig, 32, salts[s]),
-             "pss with a " + itoa64(salts[s] as i64) + "-byte salt");
+             "pss with a \{salts[s] as i64}-byte salt");
     u8[] again = valueOf(a.lines[2 + s * 2]);
     if (salts[s] > 0) {
       // Branchless, for the reason the other comparison in this file is: the *equal* side of
@@ -184,7 +183,7 @@ export string test_pss_refuses_tampering(Core core, Cli cli) {
   u8[] msg = "tamper with this".toBytes();
   Lines lines = Lines.create();
   lines.add("rsakeygen 2048");
-  lines.add("rsapss 32 32 " + hex(msg));
+  lines.add("rsapss 32 32 \{hex(msg)}");
   Answers a = askRsa(t, cli, lines, "a key and one PSS signature");
   if (!a.ok) { return t.report(); }
   Key k = Key.of(a.lines[0]);
@@ -197,7 +196,7 @@ export string test_pss_refuses_tampering(Core core, Cli cli) {
     for (i32 j = 0; j < sig.len(); j++) { bad[j] = sig[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
     t.isFalse(rsaVerifyPss(k.n, k.e, msg, bad, 32, 32),
-              "pss altered at byte " + itoa64(spots[i] as i64) + " is refused");
+              "pss altered at byte \{spots[i] as i64} is refused");
   }
   t.isFalse(rsaVerifyPss(k.n, k.e, "another message".toBytes(), sig, 32, 32),
             "a different message is refused");
@@ -221,10 +220,10 @@ export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(Core core,
   i32[] hashes = [32, 48, 64];
   Lines lines = Lines.create();
   for (i32 b = 0; b < bits.len(); b++) {
-    lines.add("rsakeygen " + itoa64(bits[b] as i64));
+    lines.add("rsakeygen \{bits[b] as i64}");
     lines.add("rsaprivate");
     for (i32 h = 0; h < hashes.len(); h++) {
-      lines.add("rsasign " + itoa64(hashes[h] as i64) + " " + hex(fill(64 + h, b * 5 + h)));
+      lines.add("rsasign \{hashes[h] as i64} \{hex(fill(64 + h, b * 5 + h))}");
     }
   }
   Answers a = askRsa(t, cli, lines, "two keys, their exponents and six signatures");
@@ -237,11 +236,11 @@ export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(Core core,
       u8[] msg = fill(64 + h, b * 5 + h);
       u8[] theirs = valueOf(a.lines[b * 5 + 2 + h]);
       u8[] ours = rsaSignPkcs1(k.n, d, msg, hashes[h]);
-      t.eqI32(ours.len(), theirs.len(), "signature width at " + itoa64(bits[b] as i64) + " bits");
+      t.eqI32(ours.len(), theirs.len(), "signature width at \{bits[b] as i64} bits");
       i32 diff = 0;
       for (i32 i = 0; i < theirs.len() && i < ours.len(); i++) { diff = diff | (ours[i] as i32 ^ theirs[i] as i32); }
-      t.eqI32(diff, 0, "sha-" + itoa64((hashes[h] * 8) as i64) + " at " +
-              itoa64(bits[b] as i64) + " bits is byte-identical to node's");
+      t.eqI32(diff, 0, "sha-\{(hashes[h] * 8) as i64} at " +
+              "\{bits[b] as i64} bits is byte-identical to node's");
     }
   }
   return t.report();
@@ -267,8 +266,8 @@ export string test_the_host_accepts_what_we_signed(Core core, Cli cli) {
   // The second round is what the host judges. Both claims travel together, so the batch says
   // "accept this one and refuse that one" and a verifier answering the same to both fails once.
   Lines judged = Lines.create();
-  judged.add("rsapub " + hex(k.n) + " " + hex(k.e));
-  judged.add("rsaverify 32 " + hex(sig) + " " + hex(msg) + " 1");
+  judged.add("rsapub \{hex(k.n)} \{hex(k.e)}");
+  judged.add("rsaverify 32 \{hex(sig)} \{hex(msg)} 1");
   // And it is a signature over *this* message, not merely a well-formed block. Without this the
   // test would pass for a signer that ignored its input.
   judged.add("rsaverify 32 " + hex(sig) + " " +
@@ -301,9 +300,9 @@ export string test_a_raw_signature_carries_exactly_the_payload(Core core, Cli cl
   u8[] p32 = fill(32, 4);
 
   Lines second = Lines.create();
-  second.add("rsapub " + hex(k.n) + " " + hex(k.e));
-  second.add("rsarecover " + hex(sig));
-  second.add("rsarecover " + hex(rsaSignRawPkcs1(k.n, d, p32)));
+  second.add("rsapub \{hex(k.n)} \{hex(k.e)}");
+  second.add("rsarecover \{hex(sig)}");
+  second.add("rsarecover \{hex(rsaSignRawPkcs1(k.n, d, p32))}");
   Answers r = askRsa(t, cli, second, "what node recovers");
   if (!r.ok) { return t.report(); }
 
@@ -441,13 +440,13 @@ export string test_our_pss_signatures_verify_elsewhere(Core core, Cli cli) {
 
   i32[] salts = [0, 20, 32];
   Lines judged = Lines.create();
-  judged.add("rsapub " + hex(k.n) + " " + hex(k.e));
+  judged.add("rsapub \{hex(k.n)} \{hex(k.e)}");
   for (i32 s = 0; s < salts.len(); s++) {
     u8[] salt = u8[].filled(salts[s], 0);
     for (i32 i = 0; i < salt.len(); i++) { salt[i] = ((i * 47 + 13) & 0xFF) as@ u8; }
     u8[] sig = rsaSignPss(k.n, d, msg, 32, salt);
     t.eqI32(sig.len(), k.n.len(), "a signature the width of the modulus");
-    judged.add("rsapssverify 32 " + itoa64(salts[s] as i64) + " " + hex(sig) + " " + hex(msg) +
+    judged.add("rsapssverify 32 \{salts[s] as i64} \{hex(sig)} \{hex(msg)}" +
                " 1");
 
     // And our own verifier agrees, which is the weaker claim and worth stating as such: it would hold
@@ -659,7 +658,7 @@ export string test_modular_exponentiation_agrees_with_bigint(Core core, Cli cli)
     u8[] e = wide(cases[i].exp);
     u8[] m = wide(cases[i].mod);
     u8[] got = toBytes(modPow(fromBytes(b), fromBytes(e), fromBytes(m)), 32);
-    lines.add("modexp " + hex(b) + " " + hex(e) + " " + hex(m) + " " + hex(got));
+    lines.add("modexp \{hex(b)} \{hex(e)} \{hex(m)} \{hex(got)}");
   }
   check(t, cli, "node", [ORACLE], lines, "nine modular exponentiations");
   return t.report();
@@ -669,7 +668,7 @@ export string test_modular_exponentiation_agrees_with_bigint(Core core, Cli cli)
 u8[] wide(string h) {
   string body = h.slice(3, h.len());        // the ellipsis is three bytes in UTF-8
   string padded = body;
-  while (padded.len() < 64) { padded = "0" + padded; }
+  while (padded.len() < 64) { padded = "0\{padded}"; }
   return decoded(padded);
 }
 
@@ -824,7 +823,7 @@ export string test_a_negative_salt_length_is_rejected(Core core, Cli cli) {
   u8[] msg = "a negative salt length".toBytes();
   Lines lines = Lines.create();
   lines.add("rsakeygen 2048");
-  lines.add("rsapss 32 32 " + hex(msg));
+  lines.add("rsapss 32 32 \{hex(msg)}");
   Answers a = askRsa(t, cli, lines, "a key and one PSS signature");
   if (!a.ok) { return t.report(); }
   Key k = Key.of(a.lines[0]);

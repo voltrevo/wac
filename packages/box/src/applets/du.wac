@@ -8,7 +8,6 @@
 import { Cli, Core, Stat } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
 /** As in `find`: a bound rather than a cycle check, because `stat` cannot see a symlink. */
@@ -31,30 +30,30 @@ export i32 du(Core core, Cli cli, Fs fs, Args a) {
     return 1;
   }
   if (!st.isDir) {
-    core.log(itoa64(st.size) + "\t" + root);
+    core.log("\{st.size}\t\{root}");
     return 0;
   }
   Sum s = sizeOf(core, cli, fs, a.name, root, 0);
-  core.log(itoa64(s.bytes) + "\t" + root);
+  core.log("\{s.bytes}\t\{root}");
   return s.complete ? 0 : 1;
 }
 
 Sum sizeOf(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
   if (depth > MAX_DEPTH()) {
-    core.warn(name + ": " + dir + ": deeper than " + itoa(MAX_DEPTH()) +
+    core.warn("\{name}: \{dir}: deeper than \{MAX_DEPTH()}" +
       " levels, not counting further");
     return Sum(0, false);
   }
   string[]? names = fs.readDir(dir);
   if (names is null) {
-    core.warn(name + ": " + dir + ": cannot read directory");
+    core.warn("\{name}: \{dir}: cannot read directory");
     return Sum(0, false);
   }
   string[] found = names!;
   i64 total = 0;
   bool complete = true;
   for (i32 i = 0; i < found.len(); i++) {
-    string path = dir + "/" + found[i];
+    string path = "\{dir}/\{found[i]}";
     Stat st = fs.stat(path);
     if (st.isDir) {
       Sum sub = sizeOf(core, cli, fs, name, path, depth + 1);

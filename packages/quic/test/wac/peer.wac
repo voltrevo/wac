@@ -16,7 +16,6 @@ import { Core, Cli, Datagram, FileResult, Pending, Socket }
   from "std";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { clientFinishedPacket, flight } from "./hello_probe.wac";
 
 static string SERVER = "packages/quic/test/quicserver.ts";
@@ -30,7 +29,7 @@ export struct Server {
   Daemon daemon;
 
   /** One of the files it publishes, or empty when it has not written that one yet. */
-  string file(const this, Cli cli, string name) { return readIfPresent(cli, this.dir + "/" + name); }
+  string file(const this, Cli cli, string name) { return readIfPresent(cli, "\{this.dir}/\{name}"); }
 }
 
 export string readIfPresent(Cli cli, string path) {
@@ -48,17 +47,17 @@ export void pause(Cli cli) { cli.exec("/bin/sh", ["-c", "sleep 0.05"], u8[]()).w
  * tells the server's answer from its own request coming back off a buffer.
  */
 export Server startServer(Cli cli, string name, bool upper) {
-  string dir = cli.cwd().wait() + "/.cache/quic/" + name;
+  string dir = "\{cli.cwd().wait()}/.cache/quic/\{name}";
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   string line = "deno run -A --unstable-net " + quoted(SERVER) + " " + quoted(dir) +
                 (upper ? " --upper" : "");
-  Daemon d = start(cli, line, dir + "/server.log");
-  if (!d.ok()) { return Server(false, "the QUIC server did not start — " + d.error, dir, -1, d); }
+  Daemon d = start(cli, line, "\{dir}/server.log");
+  if (!d.ok()) { return Server(false, "the QUIC server did not start — \{d.error}", dir, -1, d); }
 
   // Deno takes a moment to boot; the port appears when it is listening.
   for (i32 i = 0; i < 400; i++) {
-    string ready = readIfPresent(cli, dir + "/ready.json");
+    string ready = readIfPresent(cli, "\{dir}/ready.json");
     if (ready != "") {
       i32 port = numberIn(ready, "port");
       if (port > 0) { return Server(true, "", dir, port, d); }
@@ -66,7 +65,7 @@ export Server startServer(Cli cli, string name, bool upper) {
     pause(cli);
   }
   return Server(false, "the QUIC server never published a port — " +
-                       readIfPresent(cli, dir + "/server.log"), dir, -1, d);
+                       readIfPresent(cli, "\{dir}/server.log"), dir, -1, d);
 }
 
 export void stopServer(Cli cli, Server s) {
@@ -101,7 +100,7 @@ export u8[] ask(T t, Core core, Cli cli, string name, u8[] datagram, i32 ms) {
   }
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
-    t.fail("our socket did not bind — " + sock.error);
+    t.fail("our socket did not bind — \{sock.error}");
     stopServer(cli, s);
     return u8[]();
   }
@@ -131,7 +130,7 @@ export u8[] handshake(Core core, Cli cli, Socket sock, Server s, u8[] dcid, u8[]
 
 /** `"key": 123` out of a flat object. -1 when absent. */
 export i32 numberIn(string json, string key) {
-  i32 at = json.indexOf("\"" + key + "\"");
+  i32 at = json.indexOf("\"\{key}\"");
   if (at < 0) { return -1; }
   string rest = json.slice(at + key.len() + 2, json.len());
   i32 v = -1;

@@ -14,7 +14,6 @@ import { T } from "../../src/assert.wac";
 import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForPort,
          waitForPortWithin } from "../../src/daemon.wac";
 import { quoted } from "../../src/childenv.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli } from "std";
 import { madeDir } from "../../src/host.wac";
 
@@ -22,7 +21,7 @@ export string test_a_started_server_answers_and_a_stopped_one_does_not(Core core
   T t = T.create();
   Port got = freePortOr(cli);
   i32 port = got.port;
-  t.isTrue(port > 0, "the kernel gave a free port — " + got.error);
+  t.isTrue(port > 0, "the kernel gave a free port — \{got.error}");
   if (port <= 0) { return t.report(); }
 
   // Nothing is listening yet. This is the control: without it, a `waitForPort` that answered `true`
@@ -30,15 +29,15 @@ export string test_a_started_server_answers_and_a_stopped_one_does_not(Core core
   t.isTrue(!waitForPort(cli, "127.0.0.1", port, 20),
            "something is already listening on the port we were told was free");
 
-  string log = cli.cwd().wait() + "/.cache/daemon_test.log";
-  string whyDir1 = madeDir(cli, cli.cwd().wait() + "/.cache");
+  string log = "\{cli.cwd().wait()}/.cache/daemon_test.log";
+  string whyDir1 = madeDir(cli, "\{cli.cwd().wait()}/.cache");
   t.isTrue(whyDir1 == "", whyDir1);
-  Daemon d = start(cli, "python3 -m http.server " + itoa(port) + " --bind 127.0.0.1", log);
-  t.isTrue(d.ok(), "the server started — " + d.error);
+  Daemon d = start(cli, "python3 -m http.server \{port} --bind 127.0.0.1", log);
+  t.isTrue(d.ok(), "the server started — \{d.error}");
   if (!d.ok()) { return t.report(); }
 
   t.isTrue(waitForPort(cli, "127.0.0.1", port, 20000),
-           "the server never came up — it said: " + logOf(cli, d));
+           "the server never came up — it said: \{logOf(cli, d)}");
 
   // **Polled, because `kill` returns before the process is gone.** Twenty connects take microseconds
   // and all twenty landed while the server was still winding down, which read as "stop does not
@@ -57,11 +56,11 @@ export string test_a_command_that_cannot_start_is_reported(Core core, Cli cli) {
   // backgrounds successfully and *then* the command fails, so `start` can hand back a pid whatever
   // happens — which is why a caller has to check `waitForPort` and not just `ok()`.
   T t = T.create();
-  string log = cli.cwd().wait() + "/.cache/daemon_missing.log";
-  string whyDir2 = madeDir(cli, cli.cwd().wait() + "/.cache");
+  string log = "\{cli.cwd().wait()}/.cache/daemon_missing.log";
+  string whyDir2 = madeDir(cli, "\{cli.cwd().wait()}/.cache");
   t.isTrue(whyDir2 == "", whyDir2);
   i32 port = freePort(cli);
-  Daemon d = start(cli, "definitely-not-a-program-" + itoa(port), log);
+  Daemon d = start(cli, "definitely-not-a-program-\{port}", log);
 
   // It "started" — the shell did. Nothing answers, and that is the answer a caller must read.
   t.isTrue(!waitForPort(cli, "127.0.0.1", port, 20),
@@ -102,7 +101,7 @@ export string test_a_deadline_wait_waits_for_the_deadline(Core core, Cli cli) {
   T t = T.create();
   Port got = freePortOr(cli);
   i32 port = got.port;
-  t.isTrue(port > 0, "the kernel gave a free port — " + got.error);
+  t.isTrue(port > 0, "the kernel gave a free port — \{got.error}");
   if (port <= 0) { return t.report(); }
 
   // Nothing will ever listen here, so both calls must answer false — and the interesting part is how
@@ -118,12 +117,12 @@ export string test_a_deadline_wait_waits_for_the_deadline(Core core, Cli cli) {
   t.isFalse(spun, "something answered on a port nothing is listening on");
   t.isFalse(waited, "something answered on a port nothing is listening on");
   t.isTrue(waitMillis >= 300,
-           "the deadline wait gave up after " + itoa(waitMillis as~ i32) + "ms of a 300ms deadline");
+           "the deadline wait gave up after \{waitMillis as~ i32}ms of a 300ms deadline");
   // Four hundred attempts against nothing, in well under the same 300ms — the assertion that the old
   // bound was not a bound in time. Generous, because a loaded machine is exactly when it is slowest:
   // the claim is only that attempts and milliseconds are different units.
   t.isTrue(spinMillis < 250,
-           "400 attempts took " + itoa(spinMillis as~ i32) + "ms, so attempts and milliseconds are not " +
+           "400 attempts took \{spinMillis as~ i32}ms, so attempts and milliseconds are not " +
            "as different as this test claims — check the connect path before trusting either bound");
   return t.report();
 }

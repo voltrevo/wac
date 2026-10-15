@@ -42,7 +42,6 @@ import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, F
   FAULT_IS_DIR, FAULT_NOT_A_DIR, FAULT_OTHER, FAULT_READ_ONLY, FAULT_UNSUPPORTED, FileResult,
   PARENT_FS, Pending, Stat }
   from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { Chan, parentUser, remoteChmod, remoteChown, remoteSetExecutable, remoteCloseOut, remoteIsHostPath, remoteMkdir,
   remoteOpenOut, remoteReadDir, remoteReadFile, remoteReadSome, remoteRemove, remoteRename,
   remoteLinkStat, remoteStat, remoteWriteFile, remoteWriteOut } from "./remote.wac";
@@ -1309,10 +1308,10 @@ i32 synthKind(Fs fs, Mount m, string path) {
  */
 string procStatus(Proc p) {
   string state = p.state == PROC_RUN() ? "R (running)" : "Z (zombie)";
-  return "Name:\t" + p.comm() + "\n"
-    + "State:\t" + state + "\n"
-    + "Pid:\t" + itoa(p.pid) + "\n"
-    + "PPid:\t" + itoa(p.ppid) + "\n";
+  return "Name:\t\{p.comm()}\n"
+    + "State:\t\{state}\n"
+    + "Pid:\t\{p.pid}\n"
+    + "PPid:\t\{p.ppid}\n";
 }
 
 /**
@@ -1358,7 +1357,7 @@ FileResult synthRead(Fs fs, Mount m, string path, fn<Pending<u8[]>(i32)> randomB
  * run it gets a text file that explains itself, which is the failure worth having.
  */
 u8[] programBytes(string name) {
-  return (name + " is built into this program; there is no file here to copy elsewhere.\n").toBytes();
+  return ("\{name} is built into this program; there is no file here to copy elsewhere.\n").toBytes();
 }
 
 /**
@@ -1376,7 +1375,7 @@ u8[] procBytes(Fs fs, Mount m, string path, i32 kind) {
   if (found is null) { return u8[](); }
   Proc p = found!;
   if (kind == SYNTH_CMDLINE()) { return p.cmdline().toBytes(); }
-  if (kind == SYNTH_COMM()) { return (p.comm() + "\n").toBytes(); }
+  if (kind == SYNTH_COMM()) { return ("\{p.comm()}\n").toBytes(); }
   return procStatus(p).toBytes();
 }
 
@@ -1413,7 +1412,7 @@ string[]? synthDir(Fs fs, Mount m, string path) {
   // has not got are absent rather than empty.
   i32[] pids = fs.procs.pids();
   string[] names = string[].filled(pids.len() + 1, "");
-  for (i32 i = 0; i < pids.len(); i++) { names[i] = itoa(pids[i]); }
+  for (i32 i = 0; i < pids.len(); i++) { names[i] = "\{pids[i]}"; }
   names[pids.len()] = "self";
   sortNames(names);
   return names;

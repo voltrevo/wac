@@ -103,14 +103,14 @@ bool isJson(string name) {
 i32 corpus(Core core, Cli cli) {
   string[]? entries = cli.readDir(SUITE).wait();
   if (entries is null) {
-    core.warn("json coverage: cannot list " + SUITE + " — is --allow-read granted?");
+    core.warn("json coverage: cannot list \{SUITE} — is --allow-read granted?");
     return 0;
   }
   string[] names = entries!;
   i32 seen = 0;
   for (i32 i = 0; i < names.len(); i++) {
     if (!isJson(names[i])) { continue; }
-    FileResult f = cli.readFile(SUITE + "/" + names[i]).wait();
+    FileResult f = cli.readFile("\{SUITE}/\{names[i]}").wait();
     if (!f.ok) { continue; }
     canonicalize(f.bytes);
     canonicalizeJson5(f.bytes);
@@ -272,26 +272,14 @@ i32 shapes() {
   string arr = "";
   string obj = "";
   for (i32 i = 0; i < 200; i++) {
-    string n = itoaLocal(i);
+    string n = "\{i}";
     arr = arr + (i > 0 ? "," : "") + n;
     obj = obj + (i > 0 ? "," : "") + "\"k" + n + "\":" + n;
   }
-  canonicalize(("[" + arr + "]").toBytes());
-  canonicalize(("{" + obj + "}").toBytes());
+  canonicalize("[\{arr}]".toBytes());
+  canonicalize("{\{obj}}".toBytes());
   canonicalize("{\"a\":1,\"a\":2}".toBytes());
   return seen + 3;
-}
-
-/** Base ten, locally, so this file needs nothing from `packages/fmt`. */
-string itoaLocal(i32 n) {
-  if (n == 0) { return "0"; }
-  string out = "";
-  i32 v = n;
-  while (v > 0) {
-    out = string.fromCodepoint(48 + (v % 10)) + out;
-    v = v / 10;
-  }
-  return out;
 }
 
 export i32 main(Sys sys) {
@@ -474,7 +462,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED utf8_test test_utf8_random_byte_sequences_agree_with_a_strict_decoder");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("json: " + itoaLocal(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("json: \{bad} test(s) failed under the coverage driver"); }
   seen = seen + bad;
 
   return seen;

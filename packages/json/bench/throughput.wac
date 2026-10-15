@@ -88,19 +88,7 @@ string oneDecimal(i64 tenths) {
   i64 whole = tenths / 10;
   i64 frac = tenths - whole * 10;
   if (frac < 0) { frac = 0 - frac; }
-  return itoa64(whole) + "." + itoa64(frac);
-}
-
-string itoa64(i64 v) {
-  if (v == 0) { return "0"; }
-  bool neg = v < 0;
-  i64 n = neg ? 0 - v : v;
-  string out = "";
-  while (n > 0) {
-    out = string.fromCodepoint(48 + ((n % 10) as! i32)) + out;
-    n = n / 10;
-  }
-  return neg ? "-" + out : out;
+  return "\{whole}.\{frac}";
 }
 
 /** MB/s in tenths, from a byte count and the best time in nanoseconds. */
@@ -126,8 +114,8 @@ export i32 main(Sys sys) {
       Canonical out = canonicalize(bytes);
       i64 dt = core.monotonicNanos().wait() - t0;
       if (!out.ok) {
-        core.warn(labels[s] + ": parse failed with code " + itoa64(out.code as i64)
-                  + " at " + itoa64(out.pos as i64));
+        core.warn("\{labels[s]}: parse failed with code \{out.code as i64}"
+                  + " at \{out.pos as i64}");
         return 1;
       }
       if (i == 0 || dt < best) { best = dt; }
@@ -154,7 +142,7 @@ export i32 main(Sys sys) {
       JsonValue? v = parse(bytes);
       i64 dt = core.monotonicNanos().wait() - t0;
       if (v is null) {
-        core.warn(labels[s] + ": parse returned null");
+        core.warn("\{labels[s]}: parse returned null");
         return 1;
       }
       if (i == 0 || dt < best) { best = dt; }

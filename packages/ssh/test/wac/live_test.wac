@@ -16,7 +16,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { ALPHABET_STANDARD, decode as b64Decode } from "../../../codec/src/base64.wac";
 import { startsWith, contains, trimmed, splitLines } from "../../../wactest/src/strings.wac";
@@ -60,20 +59,20 @@ export string test_connect_to_a_real_openssh_server_and_authenticate_with_a_publ
   if (!haveSshd(cli)) { return t.report(); }
   Sshd s = startSshd(t, core, cli, "ssh-live-connect");
   if (!s.ok) {
-    t.fail("sshd did not come up — " + s.error);
+    t.fail("sshd did not come up — \{s.error}");
     stopSshd(cli, s);
     return t.report();
   }
 
   Session r = handshake(cli, s.dir, s.port, whoami(cli));
-  t.isTrue(r.ok, "the handshake did not complete — " + r.error);
+  t.isTrue(r.ok, "the handshake did not complete — \{r.error}");
   if (!r.ok) {
     stopSshd(cli, s);
     return t.report();
   }
 
   t.isTrue(startsWith(string.fromBytes(r.serverVersion), "SSH-2.0-OpenSSH"),
-           "expected an OpenSSH server, got " + string.fromBytes(r.serverVersion));
+           "expected an OpenSSH server, got \{string.fromBytes(r.serverVersion)}");
   t.isTrue(speaksV2(r.serverVersion), "the server is not SSH-2.0");
 
   // Our choice must be our own first preference that the server supports — client order decides,
@@ -93,7 +92,7 @@ export string test_connect_to_a_real_openssh_server_and_authenticate_with_a_publ
     // Sanity that we parsed the server's lists rather than our own: OpenSSH offers several key
     // exchanges, and a single-entry list would mean we read back what we sent.
     string theirKex = string.fromBytes(theirs!.kex);
-    t.isTrue(contains(theirKex, ","), "the server's kex list looks wrong: " + theirKex);
+    t.isTrue(contains(theirKex, ","), "the server's kex list looks wrong: \{theirKex}");
     t.isTrue(contains(theirKex, "kex-strict-s-v00@openssh.com"),
              "the server did not offer strict KEX, so the sequence numbers do not reset");
   }
@@ -104,11 +103,11 @@ export string test_connect_to_a_real_openssh_server_and_authenticate_with_a_publ
 
   // A verifying signature only proves the peer holds the key it presented — it says nothing about
   // *which* peer. So the host key goes through known_hosts, as a real client does.
-  string wantBlob = publicBlobText(cli, s.dir + "/hostkey.pub");
+  string wantBlob = publicBlobText(cli, "\{s.dir}/hostkey.pub");
   t.isTrue(wantBlob != "", "hostkey.pub had no key in it");
   u8[] host = ("127.0.0.1").toBytes();
   u8[] keyType = ("ssh-ed25519").toBytes();
-  string entry = "[127.0.0.1]:" + itoa(s.port) + " ssh-ed25519 " + wantBlob + "\n";
+  string entry = "[127.0.0.1]:\{s.port} ssh-ed25519 \{wantBlob}\n";
   t.eqStr(verdictName(knownHost(entry.toBytes(), host, s.port, keyType, r.hostKeyBlob)), "match",
           "known_hosts did not recognise the host key");
   t.eqStr(verdictName(knownHost(u8[](), host, s.port, keyType, r.hostKeyBlob)), "unknown",
@@ -120,7 +119,7 @@ export string test_connect_to_a_real_openssh_server_and_authenticate_with_a_publ
 
   // The blob we parsed out of the private key must be the one in the .pub file, or we would be
   // offering a key the server never heard of and reading its refusal as our own bug.
-  string wantPub = publicBlobText(cli, s.dir + "/clientkey.pub");
+  string wantPub = publicBlobText(cli, "\{s.dir}/clientkey.pub");
   u8[]? pubBytes = b64Decode(wantPub.toBytes());
   t.isTrue(pubBytes is not null, "clientkey.pub is not base64");
   if (pubBytes is not null) {
@@ -147,12 +146,12 @@ export string test_run_a_command_on_a_real_openssh_server_and_read_its_output(Co
   if (!haveSshd(cli)) { return t.report(); }
   Sshd s = startSshd(t, core, cli, "ssh-live-exec");
   if (!s.ok) {
-    t.fail("sshd did not come up — " + s.error);
+    t.fail("sshd did not come up — \{s.error}");
     stopSshd(cli, s);
     return t.report();
   }
   Session r = handshake(cli, s.dir, s.port, whoami(cli));
-  t.isTrue(r.ok, "the handshake did not complete — " + r.error);
+  t.isTrue(r.ok, "the handshake did not complete — \{r.error}");
   if (!r.ok) {
     stopSshd(cli, s);
     return t.report();
@@ -169,14 +168,14 @@ export string test_run_a_command_on_a_real_openssh_server_and_read_its_output(Co
   for (i32 i = 0; i < 8 && serverChannel < 0 && r.conn.ok; i++) {
     Incoming p = parse(r.conn.next(cli));
     if (p.kind == msgChannelOpenFailure()) {
-      t.fail("channel open refused: " + string.fromBytes(p.data));
+      t.fail("channel open refused: \{string.fromBytes(p.data)}");
       break;
     }
     if (p.kind != msgChannelOpenConfirmation()) { continue; }
     t.eqI32(p.channel, OUR_CHANNEL, "the confirmation was addressed to another channel");
     serverChannel = p.senderChannel;
   }
-  t.isTrue(serverChannel >= 0, "no channel open confirmation — " + r.conn.error);
+  t.isTrue(serverChannel >= 0, "no channel open confirmation — \{r.conn.error}");
   if (serverChannel < 0) {
     r.conn.close(cli);
     stopSshd(cli, s);
@@ -217,7 +216,7 @@ export string test_run_a_command_on_a_real_openssh_server_and_read_its_output(Co
     }
   }
 
-  t.isTrue(closed, "the channel never closed — " + r.conn.error);
+  t.isTrue(closed, "the channel never closed — \{r.conn.error}");
   t.eqI32(exitStatus, 3, "the exit status");
   t.eqStr(trimmed(stderr.toStr()), "done", "stderr");
 
@@ -231,7 +230,7 @@ export string test_run_a_command_on_a_real_openssh_server_and_read_its_output(Co
   // The point of the large output: without window adjustments this would hang rather than fail,
   // so assert the path was actually taken.
   t.isTrue(adjustments >= 5,
-           "only " + itoa(adjustments) + " window adjustments for " + itoa(out.len()) + " bytes");
+           "only \{adjustments} window adjustments for \{out.len()} bytes");
 
   r.conn.send(cli, channelClose(serverChannel));
   r.conn.close(cli);
@@ -250,7 +249,7 @@ export string test_a_known_hosts_written_by_the_real_ssh_client_is_read_correctl
   if (!haveSshd(cli)) { return t.report(); }
   Sshd s = startSshd(t, core, cli, "ssh-live-knownhosts");
   if (!s.ok) {
-    t.fail("sshd did not come up — " + s.error);
+    t.fail("sshd did not come up — \{s.error}");
     stopSshd(cli, s);
     return t.report();
   }
@@ -262,21 +261,21 @@ export string test_a_known_hosts_written_by_the_real_ssh_client_is_read_correctl
   string[] hashed = ["no", "yes"];
   u8[][] files = u8[][].filled(2, u8[]());
   for (i32 i = 0; i < 2; i++) {
-    string path = s.dir + "/known_hosts_" + which[i];
+    string path = "\{s.dir}/known_hosts_\{which[i]}";
     Exec run = cli.exec("ssh",
       [
-               "-F", "/dev/null", "-i", s.dir + "/clientkey", "-p", itoa(s.port),
-               "-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=" + path,
-               "-o", "HashKnownHosts=" + hashed[i], "-o", "BatchMode=yes", "127.0.0.1", "true"
+               "-F", "/dev/null", "-i", "\{s.dir}/clientkey", "-p", "\{s.port}",
+               "-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=\{path}",
+               "-o", "HashKnownHosts=\{hashed[i]}", "-o", "BatchMode=yes", "127.0.0.1", "true"
       ],
       u8[]()).wait();
-    t.eqI32(run.status, 0, "ssh (" + which[i] + "): " + string.fromBytes(run.stderr));
+    t.eqI32(run.status, 0, "ssh (\{which[i]}): \{string.fromBytes(run.stderr)}");
     if (run.status != 0) {
       stopSshd(cli, s);
       return t.report();
     }
     FileResult f = cli.readFile(path).wait();
-    t.isTrue(f.ok, "ssh wrote no " + which[i] + " known_hosts — " + f.error);
+    t.isTrue(f.ok, "ssh wrote no \{which[i]} known_hosts — \{f.error}");
     files[i] = f.bytes;
   }
 
@@ -284,13 +283,13 @@ export string test_a_known_hosts_written_by_the_real_ssh_client_is_read_correctl
   // the same test twice.
   t.isFalse(contains(string.fromBytes(files[0]), "|1|"), "the plain file is hashed");
   t.isTrue(contains(string.fromBytes(files[1]), "|1|"),
-           "expected a hashed entry, got: " + string.fromBytes(files[1]));
+           "expected a hashed entry, got: \{string.fromBytes(files[1])}");
   // The plain form pins the `[host]:port` spelling that also gets hashed.
-  t.isTrue(startsWith(string.fromBytes(files[0]), "[127.0.0.1]:" + itoa(s.port) + " ssh-ed25519 "),
-           "unexpected plain entry: " + string.fromBytes(files[0]));
+  t.isTrue(startsWith(string.fromBytes(files[0]), "[127.0.0.1]:\{s.port} ssh-ed25519 "),
+           "unexpected plain entry: \{string.fromBytes(files[0])}");
 
   // The host key blob, as it appears in the exchange, taken from the .pub file.
-  u8[]? blobOrNull = b64Decode(publicBlobText(cli, s.dir + "/hostkey.pub").toBytes());
+  u8[]? blobOrNull = b64Decode(publicBlobText(cli, "\{s.dir}/hostkey.pub").toBytes());
   t.isTrue(blobOrNull is not null, "hostkey.pub is not base64");
   if (blobOrNull is null) {
     stopSshd(cli, s);
@@ -302,21 +301,21 @@ export string test_a_known_hosts_written_by_the_real_ssh_client_is_read_correctl
   u8[] host = ("127.0.0.1").toBytes();
 
   for (i32 i = 0; i < 2; i++) {
-    string what = which[i] + ": ";
+    string what = "\{which[i]}: ";
     t.eqStr(verdictName(knownHost(files[i], host, s.port, type, blob)), "match",
-            what + "the entry ssh just wrote was not recognised");
+            "\{what}the entry ssh just wrote was not recognised");
     // One byte different is the case the file exists to catch, and must not read as unknown.
     t.eqStr(verdictName(knownHost(files[i], host, s.port, type, changed)), "mismatch",
-            what + "a changed host key was not reported as a mismatch");
+            "\{what}a changed host key was not reported as a mismatch");
     // The same key on another port is a different entry — the port is part of the name, and for
     // the hashed form that means it is inside the hash.
     t.eqStr(verdictName(knownHost(files[i], host, s.port + 1, type, blob)), "unknown",
-            what + "a lookup on the wrong port matched");
+            "\{what}a lookup on the wrong port matched");
     t.eqStr(verdictName(knownHost(files[i], ("example.com").toBytes(), s.port, type, blob)),
-            "unknown", what + "a lookup for another host matched");
+            "unknown", "\{what}a lookup for another host matched");
     // A different algorithm says nothing about this key — a host may have several.
     t.eqStr(verdictName(knownHost(files[i], host, s.port, ("ssh-rsa").toBytes(), blob)), "unknown",
-            what + "an entry for another algorithm was treated as authoritative");
+            "\{what}an entry for another algorithm was treated as authoritative");
   }
 
   stopSshd(cli, s);
@@ -337,14 +336,14 @@ export string test_the_orphan_reaper_selects_a_server_of_this_shape(Core core, C
   // whose parent were still alive would be rejected for the right reason and prove nothing.
   T t = T.create();
   string dir = freshScratch(t, cli, "ssh-reap-canary");
-  string config = dir + "/sshd_config";
+  string config = "\{dir}/sshd_config";
   cli.writeFile(config, ("# not a real server\n").toBytes()).wait();
-  cli.writeFile(dir + "/sshd", ("#!/bin/sh\nsleep 30\n").toBytes()).wait();
-  cli.setExecutable(dir + "/sshd", true).wait();
+  cli.writeFile("\{dir}/sshd", ("#!/bin/sh\nsleep 30\n").toBytes()).wait();
+  cli.setExecutable("\{dir}/sshd", true).wait();
 
   cli.exec("/bin/sh", [
     "-c",
-    "setsid " + quoted(dir + "/sshd") + " -D -f " + quoted(config) + " >/dev/null 2>&1 </dev/null &"
+    "setsid " + quoted("\{dir}/sshd") + " -D -f " + quoted(config) + " >/dev/null 2>&1 </dev/null &"
   ],
     u8[]()).wait();
 
@@ -357,7 +356,7 @@ export string test_the_orphan_reaper_selects_a_server_of_this_shape(Core core, C
 
   cli.exec("/bin/sh", [
     "-c",
-    "pkill -f " + quoted(dir + "/sshd -D -f") + " 2>/dev/null; true"
+    "pkill -f " + quoted("\{dir}/sshd -D -f") + " 2>/dev/null; true"
   ], u8[]()).wait();
   cli.remove(dir, true).wait();
   return t.report();

@@ -17,7 +17,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Loaded, json, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { hashTreeRoot, isFixed, fixedSize } from "../../src/container.wac";
@@ -78,7 +77,7 @@ export string test_every_light_client_container_merkleizes_to_ethereums_root(Cor
     JsonValue c = cases!.get(i);
     string container = memberText(c, "container");
     i32 at = indexOfContainer(container);
-    t.isTrue(at >= 0, "no descriptor for " + container);
+    t.isTrue(at >= 0, "no descriptor for \{container}");
     if (at < 0) { continue; }
     per[at] = per[at] + 1;
     u8[]? got = beaconRoot(types[at], decoded(memberText(c, "ssz")));
@@ -92,7 +91,7 @@ export string test_every_light_client_container_merkleizes_to_ethereums_root(Cor
   // Five cases per container, nine containers. Asserted so a container vanishing from the fixture is a
   // failure rather than a smaller, greener run.
   for (i32 i = 0; i < names.len(); i++) {
-    t.eqI32(per[i], 5, "drove " + itoa(per[i]) + " " + names[i] + " cases");
+    t.eqI32(per[i], 5, "drove \{per[i]} \{names[i]} cases");
   }
   return t.report();
 }
@@ -124,12 +123,12 @@ export string test_the_descriptors_serialized_sizes_are_ethereums(Core core, Cli
   i32[] t2 = beaconTypesMainnet();
   i32[] fl = beaconFields();
   for (i32 i = 0; i < names.len(); i++) {
-    t.isFalse(disagree[i], names[i] + " fixtures disagree on the serialized size");
-    t.isTrue(seen[i] >= 0, names[i] + " has no fixture to take a size from");
+    t.isFalse(disagree[i], "\{names[i]} fixtures disagree on the serialized size");
+    t.isTrue(seen[i] >= 0, "\{names[i]} has no fixture to take a size from");
     if (seen[i] < 0 || disagree[i]) { continue; }
-    t.isTrue(isFixed(t2, fl, types[i]), names[i] + " was classified variable-size");
+    t.isTrue(isFixed(t2, fl, types[i]), "\{names[i]} was classified variable-size");
     t.eqI32(fixedSize(t2, fl, types[i]), seen[i],
-            names[i] + ": the descriptor against Ethereum's cases");
+            "\{names[i]}: the descriptor against Ethereum's cases");
   }
   // The five figures the spec pins, so a re-vendor that changed config would be caught here too.
   string[] pinned = [
@@ -140,7 +139,7 @@ export string test_the_descriptors_serialized_sizes_are_ethereums(Core core, Cli
   i32[] want = [112, 280, 584, 24896, 25368];
   for (i32 i = 0; i < pinned.len(); i++) {
     t.eqI32(fixedSize(t2, fl, types[indexOfContainer(pinned[i])]), want[i],
-            pinned[i] + " for mainnet Altair");
+            "\{pinned[i]} for mainnet Altair");
   }
   return t.report();
 }
@@ -219,10 +218,10 @@ export string test_every_named_intermediate_type_is_the_shape_its_name_claims() 
   i32[] types = beaconTypesMainnet();
   for (i32 i = 0; i < names.len(); i++) {
     for (i32 j = 0; j < i; j++) {
-      t.isFalse(tys[i] == tys[j], names[i] + " shares a type index with " + names[j]);
+      t.isFalse(tys[i] == tys[j], "\{names[i]} shares a type index with \{names[j]}");
     }
-    t.eqI32(types[tys[i] * 4], kinds[i], names[i] + ": kind");
-    t.eqI32(types[tys[i] * 4 + 1], params[i], names[i] + ": param");
+    t.eqI32(types[tys[i] * 4], kinds[i], "\{names[i]}: kind");
+    t.eqI32(types[tys[i] * 4 + 1], params[i], "\{names[i]}: param");
   }
   // The byte vectors must all point at uint8 as their element, or their roots are over the wrong
   // packing. That is the one cross-reference the shapes above cannot catch.
@@ -230,7 +229,7 @@ export string test_every_named_intermediate_type_is_the_shape_its_name_claims() 
   string[] byteVectorNames = ["Bytes32", "Bytes48", "Bytes96"];
   for (i32 i = 0; i < byteVectors.len(); i++) {
     t.eqI32(types[byteVectors[i] * 4 + 2], TY_UINT8(),
-            byteVectorNames[i] + " does not have uint8 elements");
+            "\{byteVectorNames[i]} does not have uint8 elements");
   }
   return t.report();
 }

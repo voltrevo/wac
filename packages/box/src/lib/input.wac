@@ -95,13 +95,13 @@ string cannotOpen(string name, string path, string why) {
   // `sort` says "cannot read"; coreutils' rest — `cat`, `wc`, `cut`, `nl`, `fold`, `uniq`, `paste`,
   // `shuf`, `base64`, `od` — say the name and the reason. Getting this from the majority would have been
   // wrong for six of the sixteen tools here, and each line below was read off the tool itself.
-  if (name == "rev") { return name + ": cannot open " + path + ": " + why; }
+  if (name == "rev") { return "\{name}: cannot open \{path}: \{why}"; }
   if (name == "head" || name == "tail" || name == "split") {
-    return name + ": cannot open '" + path + "' for reading: " + why;
+    return "\{name}: cannot open '\{path}' for reading: \{why}";
   }
-  if (name == "tac") { return name + ": failed to open '" + path + "' for reading: " + why; }
-  if (name == "sort") { return name + ": cannot read: " + path + ": " + why; }
-  return name + ": " + path + ": " + why;
+  if (name == "tac") { return "\{name}: failed to open '\{path}' for reading: \{why}"; }
+  if (name == "sort") { return "\{name}: cannot read: \{path}: \{why}"; }
+  return "\{name}: \{path}: \{why}";
 }
 
 /**
@@ -243,10 +243,10 @@ export Chunk nextChunk(Core core, Cli cli, Feed fed, Args a, string label) {
  * then refuses to be read is just a file they could not read.
  */
 export string readFailed(string name, string label, string why) {
-  if (label == "") { return name + ": " + why; }
-  if (name == "head" || name == "tail") { return name + ": error reading '" + label + "': " + why; }
-  if (name == "sort") { return name + ": read failed: " + label + ": " + why; }
-  return name + ": " + label + ": " + why;
+  if (label == "") { return "\{name}: \{why}"; }
+  if (name == "head" || name == "tail") { return "\{name}: error reading '\{label}': \{why}"; }
+  if (name == "sort") { return "\{name}: read failed: \{label}: \{why}"; }
+  return "\{name}: \{label}: \{why}";
 }
 
 /**

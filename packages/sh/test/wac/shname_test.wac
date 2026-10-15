@@ -75,8 +75,8 @@ export string test_the_typescript_copy_spells_the_same_rule(Core core, Cli cli) 
   if (!f.ok) { return t.report(); }
 
   string ts = string.fromBytes(f.bytes);
-  t.isTrue(contains(ts, "/" + pattern() + "/gm"),
-           "the TypeScript's regex is not `/" + pattern() + "/gm` any more, so the two copies of this"
+  t.isTrue(contains(ts, "/\{pattern()}/gm"),
+           "the TypeScript's regex is not `/\{pattern()}/gm` any more, so the two copies of this"
            + " rule have drifted. Change both, or read `shname.wac`'s header for why there are two.");
   return t.report();
 }

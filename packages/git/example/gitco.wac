@@ -14,7 +14,6 @@
 
 import { Cli, Core, FAULT_NONE, Sys } from "std";
 import { Fs } from "../../fs/src/fs.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { RepoAt, Written, checkout, head, openRepo, treeOfCommit } from "../src/repo.wac";
 
 export i32 main(Sys sys) {
@@ -28,9 +27,9 @@ export i32 main(Sys sys) {
   string root = string.fromBytes(cli.arg(0).wait());
   Fs fs = Fs.onHost(cli, 0);
 
-  match (openRepo(fs, root + "/.git", root)) {
+  match (openRepo(fs, "\{root}/.git", root)) {
     NoRepo(why): {
-      core.warn("gitco: " + why);
+      core.warn("gitco: \{why}");
       return 1;
     }
     Opened(repo): {
@@ -46,22 +45,22 @@ export i32 main(Sys sys) {
       }
       match (checkout(repo, tree!, root)) {
         Stopped(why): {
-          core.warn("gitco: " + why);
+          core.warn("gitco: \{why}");
           return 1;
         }
         Files(count, modesUnset, linksAsFiles): {
-          core.log(itoa(count) + " files");
+          core.log("\{count} files");
           // Said before the mode warning because it is the larger difference: a mode is wrong, a
           // symlink is the wrong *kind* of thing on disk.
           if (linksAsFiles > 0) {
-            core.warn("gitco: " + itoa(linksAsFiles) +
+            core.warn("gitco: \{linksAsFiles}" +
               " symlink(s) were written as ordinary files holding their target" +
               " — this filesystem cannot create one, and git will report them as typechanged");
           }
           if (modesUnset > 0) {
             // Said rather than swallowed: `git status` would otherwise be the first thing to mention
             // it, and it would blame the file. issues/system/0132.
-            core.warn("gitco: " + itoa(modesUnset) +
+            core.warn("gitco: \{modesUnset}" +
               " file(s) wanted the executable bit and this filesystem cannot set it" +
               " — git will report them as modified");
           }

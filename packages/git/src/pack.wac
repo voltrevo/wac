@@ -41,7 +41,6 @@ import { Index, PackIndex, find, parseIdx } from "./idx.wac";
 import { Inflation, inflate, inflateAt } from "../../gzip/src/inflate.wac";
 import { crc32 } from "../../gzip/src/crc32.wac";
 import { zlibCompress } from "./zlib.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { Vec } from "core";
 
 /** A pack and its index, ready to be read from. */
@@ -102,19 +101,19 @@ export Opened openPack(u8[] pack, u8[] idxBytes) {
   }
   i32 version = (pack[4] as i32 << 24) | (pack[5] as i32 << 16) | (pack[6] as i32 << 8) | pack[7] as i32;
   if (version != 2 && version != 3) {
-    return Opened.Refused("pack version " + itoa(version) + " is not 2 or 3");
+    return Opened.Refused("pack version \{version} is not 2 or 3");
   }
   i32 count = (pack[8] as i32 << 24) | (pack[9] as i32 << 16) | (pack[10] as i32 << 8) | pack[11] as i32;
 
   match (parseIdx(idxBytes)) {
-    Rejected(why): { return Opened.Refused("index: " + why); }
+    Rejected(why): { return Opened.Refused("index: \{why}"); }
     Loaded(idx): {
       // **The two files must agree about how many objects there are.** They are written together and
       // a mismatch means one of them belongs to a different pack — which otherwise shows up as
       // offsets that land in the middle of an object.
       if (idx.count != count) {
-        return Opened.Refused("the pack holds " + itoa(count) + " objects and the index describes " +
-          itoa(idx.count));
+        return Opened.Refused("the pack holds \{count} objects and the index describes " +
+          "\{idx.count}");
       }
       i64[] sorted = i64[].filled(idx.count, 0);
       for (i32 i = 0; i < idx.count; i++) { sorted[i] = idx.offsets[i]; }
@@ -165,7 +164,7 @@ export Raw rawAt(const Pack p, i64 off) {
     shift = shift + 7;
     at = at + 1;
   }
-  if (kind == 0 || kind == 5) { return Raw.Damaged("object type " + itoa(kind) + " is not defined"); }
+  if (kind == 0 || kind == 5) { return Raw.Damaged("object type \{kind} is not defined"); }
 
   i64 base = 0;
   u8[] baseName = u8[]();
@@ -206,7 +205,7 @@ export Raw rawAt(const Pack p, i64 off) {
   // **The header's size is checked against what came out**, which is the one place a misread varint
   // shows up immediately rather than as a wrong answer later.
   if (data.len() != size) {
-    return Raw.Damaged("header says " + itoa(size) + " bytes and " + itoa(data.len()) + " inflated");
+    return Raw.Damaged("header says \{size} bytes and \{data.len()} inflated");
   }
 
   if (kind == 6) { return Raw.FromOffset(base, data); }
@@ -384,7 +383,7 @@ export Indexed indexPack(u8[] pack) {
       shift = shift + 7;
       at = at + 1;
     }
-    if (kind == 0 || kind == 5) { return Indexed.Unindexable("object type " + itoa(kind) + " is not defined"); }
+    if (kind == 0 || kind == 5) { return Indexed.Unindexable("object type \{kind} is not defined"); }
 
     i64 base = 0;
     u8[] refName = u8[]();
@@ -411,8 +410,8 @@ export Indexed indexPack(u8[] pack) {
     // is the four bytes after that.
     Inflation got = inflateAt(pack, at + 2);
     if (got.bytes.len() != size) {
-      return Indexed.Unindexable("an object's header says " + itoa(size) + " bytes and " +
-        itoa(got.bytes.len()) + " inflated");
+      return Indexed.Unindexable("an object's header says \{size} bytes and " +
+        "\{got.bytes.len()} inflated");
     }
     at = got.end + 4;
 

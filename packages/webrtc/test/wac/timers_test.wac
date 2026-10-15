@@ -13,7 +13,6 @@
 // Host-side until 2026-08-17, `issues/system/0161`. Both probes are imported rather than bound.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Association } from "../../src/sctp.wac";
 import { Peer } from "../../src/peer.wac";
 import { newAssociation, associationReceive, associationSend, associationDue, associationInFlight,
@@ -197,14 +196,14 @@ export string test_the_congestion_window_paces_a_large_message() {
 
   u8[][] sent = associationSendLarge(a, 0, 51, filled(20000, 65), 1100, 0);
   t.isTrue(sent.len() < 5,
-           itoa64(sent.len() as i64) + " chunks went out at once; 4,380 bytes of window holds " +
+           "\{sent.len() as i64} chunks went out at once; 4,380 bytes of window holds " +
            "about three");
   t.isTrue(associationWaiting(a) > 10,
            "and the rest is queued — built and numbered, waiting for the path to allow it");
   // Not zero: there is room left, just less than the next chunk needs. A window is a byte count and
   // a chunk is indivisible, so "full" means "the next one does not fit" rather than "nothing left".
   t.isTrue(associationAvailable(a) < 1100,
-           itoa64(associationAvailable(a) as i64) + " bytes remain, which is less than one more " +
+           "\{associationAvailable(a) as i64} bytes remain, which is less than one more " +
            "chunk");
 
   // **An acknowledgement opens it.** In slow start the window grows by the bytes acknowledged,
@@ -230,7 +229,7 @@ export string test_and_a_timeout_closes_it_hard() {
     associationFlush(a, 10);
   }
   i32 grown = associationWindow(a);
-  t.isTrue(grown > 4380, "the window grew to " + itoa64(grown as i64));
+  t.isTrue(grown > 4380, "the window grew to \{grown as i64}");
 
   // Now let a timer expire.
   t.isTrue(associationDue(a, 100000, 1000).len() > 0, "something was resent");

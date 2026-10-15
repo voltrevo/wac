@@ -48,7 +48,7 @@ export string test_a_script_runs_in_this_process_and_its_bytes_come_back(Core co
   T t = T.create();
   Ran r = runScript(core, cli, "echo hi");
   t.eqStr(r.out, "hi\n", "a plain echo");
-  t.eqI32(r.status, 0, "and it succeeded: " + r.err);
+  t.eqI32(r.status, 0, "and it succeeded: \{r.err}");
   return t.report();
 }
 

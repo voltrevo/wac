@@ -184,7 +184,7 @@ export struct Proc {
    */
   string cmdline(const this) {
     string out = "";
-    for (i32 i = 0; i < this.argv.len(); i++) { out = out + this.argv.get(i) + "\0"; }
+    for (i32 i = 0; i < this.argv.len(); i++) { out = out + "\{this.argv.get(i)}\0"; }
     return out;
   }
 }

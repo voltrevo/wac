@@ -22,18 +22,17 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, Stat } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { agentDir } from "../../../wactest/src/host.wac";
 import { isSpace, trimmed } from "../../../wactest/src/strings.wac";
 
 static string OPS = "packages/fs/example/ops.wac";
 
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 string workDir(Cli cli) {
   string who = agentDir(cli);
-  return "/tmp/wac-fs-ops" + (who == "" ? "" : "-" + who);
+  return "/tmp/wac-fs-ops" + (who == "" ? "" : "-\{who}");
 }
 
 /**
@@ -67,12 +66,12 @@ string run(Core core, Cli cli, string stem, string[] args, string script) {
   for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
   Exec r = cli.exec(binary(cli), argv, script.toBytes()).wait();
   if (!r.ran()) {
-    core.warn("fs: ops would not start — " + r.error);
+    core.warn("fs: ops would not start — \{r.error}");
     trap;
   }
   string err = string.fromBytes(r.stderr);
   if (trimmed(err).len() > 0) {
-    core.warn("fs: ops " + args[0] + ": " + err);
+    core.warn("fs: ops \{args[0]}: \{err}");
     trap;
   }
   return string.fromBytes(r.stdout);
@@ -92,7 +91,7 @@ i32 lineCount(string s) {
 
 string joined(string[] lines) {
   string out = "";
-  for (i32 i = 0; i < lines.len(); i++) { out = (i == 0 ? "" : out + "\n") + lines[i]; }
+  for (i32 i = 0; i < lines.len(); i++) { out = (i == 0 ? "" : "\{out}\n") + lines[i]; }
   return out;
 }
 
@@ -105,10 +104,10 @@ string joined(string[] lines) {
  */
 void bothWays(T t, Core core, Cli cli, string stem, string name, string[] lines) {
   string script = joined(lines);
-  string dir = workDir(cli) + "/" + name;
+  string dir = "\{workDir(cli)}/\{name}";
   Change gone = cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), name + ": a directory for the host run — " + made.message);
+  t.isTrue(made.ok(), "\{name}: a directory for the host run — \{made.message}");
   if (!made.ok()) { return; }
 
   string inMemory = run(core, cli, stem, ["mem"], script);
@@ -127,14 +126,14 @@ void bothWays(T t, Core core, Cli cli, string stem, string name, string[] lines)
   // does say a program ran and answered every question it was asked.
   i32 asked = lineCount(script);
   t.eqI32(lineCount(inMemory), asked,
-          name + ": the memory run answered " + itoa(lineCount(inMemory)) + " of " + itoa(asked) +
+          "\{name}: the memory run answered \{lineCount(inMemory)} of \{asked}" +
           " commands");
   t.eqI32(lineCount(onHost), asked,
-          name + ": the host run answered " + itoa(lineCount(onHost)) + " of " + itoa(asked) +
+          "\{name}: the host run answered \{lineCount(onHost)} of \{asked}" +
           " commands");
   // The host's transcript names the temp directory nowhere — the answers are categories, sizes and
   // listings — so the two are comparable directly.
-  t.eqStr(inMemory, onHost, name + "\n--- script ---\n" + script);
+  t.eqStr(inMemory, onHost, "\{name}\n--- script ---\n\{script}");
   cli.remove(dir, true).wait();
 }
 
@@ -162,10 +161,10 @@ export string test_the_transcript_is_what_it_says_it_is(Core core, Cli cli) {
     "ls [a d]", ""
   ]);
   t.eqStr(run(core, cli, stem, ["mem"], script), want, "the in-memory transcript");
-  string dir = workDir(cli) + "/pinned";
+  string dir = "\{workDir(cli)}/pinned";
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a directory for the host run — " + made.message);
+  t.isTrue(made.ok(), "a directory for the host run — \{made.message}");
   if (made.ok()) {
     t.eqStr(run(core, cli, stem, ["host", dir], script), want, "the same on a real disk");
     cli.remove(dir, true).wait();

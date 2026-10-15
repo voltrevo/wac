@@ -7,7 +7,6 @@
 import { Cli, Core, Stat } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { itoa64 } from "../../../fmt/src/itoa.wac";
 import { format } from "../../../datetime/src/rfc3339.wac";
 import { missingOperand } from "../lib/operands.wac";
 import { Fs } from "../../../fs/src/fs.wac";
@@ -30,7 +29,7 @@ export i32 stat(Core core, Cli cli, Fs fs, Args a) {
       continue;
     }
     string kind = st.isDir ? "directory" : (st.isFile ? "file" : "other");
-    core.log(a.rest[i] + " " + kind + " " + itoa64(st.size) + " "
+    core.log(a.rest[i] + " " + kind + " \{st.size} "
            + string.fromBytes(format(st.modifiedMillis)));
   }
   return code;

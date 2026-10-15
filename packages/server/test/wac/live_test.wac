@@ -27,7 +27,7 @@ import { Core, Cli, Exec, Socket, Pending } from "std";
 import { Read } from "core";
 import { Daemon, Held, start, stop, waitForLogWithin, logOf } from "../../../wactest/src/daemon.wac";
 import { contains, startsWith, splitLines, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa, atoi } from "../../../fmt/src/itoa.wac";
+import { atoi } from "../../../fmt/src/itoa.wac";
 
 static string SERVE = "packages/server/host/serve.ts";
 static string FETCH = "packages/server/test/fetchclient.ts";
@@ -45,14 +45,14 @@ struct Server {
 
 /** Start `serve.ts` on a port of its own and wait for it to say it is listening. */
 Server startServer(T t, Core core, Cli cli, string name, string flags) {
-  string log = root(cli) + "/.cache/serverlive-" + name + ".log";
+  string log = "\{root(cli)}/.cache/serverlive-\{name}.log";
   cli.remove(log, false).wait();
   Held h = Held.take(cli);
   i32 port = h.port;
   h.release(cli);
-  Daemon d = start(cli, "deno run -A " + SERVE + " " + itoa(port) + flags, log);
+  Daemon d = start(cli, "deno run -A \{SERVE} \{port}\{flags}", log);
   bool up = waitForLogWithin(core, cli, d, "listening on", 30000);
-  t.isTrue(up, name + ": the server started — " + logOf(cli, d));
+  t.isTrue(up, "\{name}: the server started — \{logOf(cli, d)}");
   return Server(d, up ? port : -1);
 }
 
@@ -72,7 +72,7 @@ string readOnce(Core core, Cli cli, i32 handle, i32 millis) {
   match (p.wait()) {
     Data(bytes): { return string.fromBytes(bytes); }
     End: { return ""; }
-    Failed(why): { return "<failed: " + why + ">"; }
+    Failed(why): { return "<failed: \{why}>"; }
   }
 }
 
@@ -123,7 +123,7 @@ i32 statusOf(string s, i32 n) {
  */
 string exchange(Core core, Cli cli, i32 port, string request, i32 want) {
   Socket s = cli.connect("127.0.0.1", port).wait();
-  if (s.handle < 0) { return "<connect failed: " + s.error + ">"; }
+  if (s.handle < 0) { return "<connect failed: \{s.error}>"; }
   cli.send(s.handle, request.toBytes()).wait();
   string out = "";
   for (i32 guard = 0; guard < 64 && responses(out) < want; guard++) {
@@ -141,7 +141,7 @@ Exec fetchGet(Cli cli, i32 port, string[] paths) {
   argv[0] = "run";
   argv[1] = "-A";
   argv[2] = FETCH;
-  argv[3] = "http://127.0.0.1:" + itoa(port);
+  argv[3] = "http://127.0.0.1:\{port}";
   argv[4] = "get";
   for (i32 i = 0; i < paths.len(); i++) { argv[5 + i] = paths[i]; }
   return cli.exec("deno", argv, u8[]()).wait();
@@ -184,38 +184,38 @@ export string test_fetch_is_satisfied_by_every_route(Core core, Cli cli) {
   ];
 
   Exec r = fetchGet(cli, s.port, paths);
-  t.isTrue(r.ran() && r.status == 0, "the fetch client ran — " + string.fromBytes(r.stderr));
+  t.isTrue(r.ran() && r.status == 0, "the fetch client ran — \{string.fromBytes(r.stderr)}");
   if (r.ran() && r.status == 0) {
     string[] got = splitLines(string.fromBytes(r.stdout));
-    t.eqI32(got.len(), paths.len(), "one line per path: " + string.fromBytes(r.stdout));
+    t.eqI32(got.len(), paths.len(), "one line per path: \{string.fromBytes(r.stdout)}");
     for (i32 i = 0; i < paths.len() && i < got.len(); i++) {
-      t.eqStr(statusPart(got[i]), status[i], paths[i] + ": status");
-      t.eqStr(bodyPart(got[i]), body[i], paths[i] + ": body");
+      t.eqStr(statusPart(got[i]), status[i], "\{paths[i]}: status");
+      t.eqStr(bodyPart(got[i]), body[i], "\{paths[i]}: body");
     }
   }
 
   // A POST with a body, which is the path that exercises Content-Length in both directions.
   Exec p = cli.exec("deno",
     [
-             "run", "-A", FETCH, "http://127.0.0.1:" + itoa(s.port), "post", "/json",
+             "run", "-A", FETCH, "http://127.0.0.1:\{s.port}", "post", "/json",
              "{\"b\":1,\"a\":[1,2]}"
     ], u8[]()).wait();
-  t.isTrue(p.ran() && p.status == 0, "the POST ran — " + string.fromBytes(p.stderr));
+  t.isTrue(p.ran() && p.status == 0, "the POST ran — \{string.fromBytes(p.stderr)}");
   if (p.ran() && p.status == 0) {
     string[] got = splitLines(string.fromBytes(p.stdout));
     t.isTrue(got.len() > 0 && bodyPart(got[0]) == "{\"b\":1,\"a\":[1,2]}",
-             "the json route lost something: " + string.fromBytes(p.stdout));
+             "the json route lost something: \{string.fromBytes(p.stdout)}");
   }
 
   // And that the reported time is a time, **parsed back by the platform rather than by us** — which
   // is why the client does the parsing and answers with the skew.
   Exec time = cli.exec("deno",
-    ["run", "-A", FETCH, "http://127.0.0.1:" + itoa(s.port), "time"], u8[]()).wait();
+    ["run", "-A", FETCH, "http://127.0.0.1:\{s.port}", "time"], u8[]()).wait();
   t.isTrue(time.ran() && time.status == 0,
-           "/time was a time — " + string.fromBytes(time.stderr) + string.fromBytes(time.stdout));
+           "/time was a time — \{string.fromBytes(time.stderr)}\{string.fromBytes(time.stdout)}");
   if (time.ran() && time.status == 0) {
     i32 skew = atoi(trimmed(string.fromBytes(time.stdout)));
-    t.isTrue(skew < 60000, "/time is an hour out: " + itoa(skew) + "ms of skew");
+    t.isTrue(skew < 60000, "/time is an hour out: \{skew}ms of skew");
   }
   stop(cli, s.d);
   return t.report();
@@ -229,17 +229,17 @@ export string test_nodes_http_client_is_satisfied_too(Core core, Cli cli) {
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
   Exec r = cli.exec("node",
-    [NODE, itoa(s.port), "/", "/time", "/echo?a=1", "/nope"], u8[]()).wait();
-  t.isTrue(r.ran() && r.status == 0, "the node client ran — " + string.fromBytes(r.stderr));
+    [NODE, "\{s.port}", "/", "/time", "/echo?a=1", "/nope"], u8[]()).wait();
+  t.isTrue(r.ran() && r.status == 0, "the node client ran — \{string.fromBytes(r.stderr)}");
   if (r.ran() && r.status == 0) {
     string[] got = splitLines(string.fromBytes(r.stdout));
-    t.eqI32(got.len(), 4, "one line per path: " + string.fromBytes(r.stdout));
+    t.eqI32(got.len(), 4, "one line per path: \{string.fromBytes(r.stdout)}");
     if (got.len() == 4) {
-      t.isTrue(startsWith(got[0], "200\t"), "node: / did not return 200 — " + got[0]);
-      t.isTrue(contains(got[1], "application/json"), "node: /time content type — " + got[1]);
-      t.isTrue(startsWith(got[3], "404\t"), "node: /nope did not return 404 — " + got[3]);
+      t.isTrue(startsWith(got[0], "200\t"), "node: / did not return 200 — \{got[0]}");
+      t.isTrue(contains(got[1], "application/json"), "node: /time content type — \{got[1]}");
+      t.isTrue(startsWith(got[3], "404\t"), "node: /nope did not return 404 — \{got[3]}");
       // A body, rather than a 200 with nothing in it.
-      t.isTrue(!contains(got[0], "\t0"), "node: / had no body — " + got[0]);
+      t.isTrue(!contains(got[0], "\t0"), "node: / had no body — \{got[0]}");
     }
   }
   stop(cli, s.d);
@@ -252,17 +252,17 @@ export string test_keep_alive_two_requests_one_connection(Core core, Cli cli) {
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
   Socket sock = cli.connect("127.0.0.1", s.port).wait();
-  t.isTrue(sock.handle >= 0, "connected — " + sock.error);
+  t.isTrue(sock.handle >= 0, "connected — \{sock.error}");
   if (sock.handle >= 0) {
     cli.send(sock.handle, "GET / HTTP/1.1\r\nHost: a\r\n\r\n".toBytes()).wait();
     string first = readOnce(core, cli, sock.handle, PATIENCE);
-    t.isTrue(startsWith(first, "HTTP/1.1 200"), "first response: " + first);
+    t.isTrue(startsWith(first, "HTTP/1.1 200"), "first response: \{first}");
 
     // The same connection, a second request. If `consumed` were wrong this would time out or answer
     // nonsense, and no amount of testing the function in isolation would have shown it.
     cli.send(sock.handle, "GET /nope HTTP/1.1\r\nHost: a\r\n\r\n".toBytes()).wait();
     string second = readOnce(core, cli, sock.handle, PATIENCE);
-    t.isTrue(startsWith(second, "HTTP/1.1 404"), "second response: " + second);
+    t.isTrue(startsWith(second, "HTTP/1.1 404"), "second response: \{second}");
     cli.closeSocket(sock.handle);
   }
   stop(cli, s.d);
@@ -278,7 +278,7 @@ export string test_pipelining_two_requests_in_one_packet(Core core, Cli cli) {
 
   string out = exchange(core, cli, s.port,
     "GET / HTTP/1.1\r\nHost: a\r\n\r\nGET /nope HTTP/1.1\r\nHost: a\r\n\r\n", 2);
-  t.eqI32(responses(out), 2, "got " + itoa(responses(out)) + " responses: " + out);
+  t.eqI32(responses(out), 2, "got \{responses(out)} responses: \{out}");
   if (responses(out) == 2) {
     t.eqI32(statusOf(out, 0), 200, "the first pipelined status");
     t.eqI32(statusOf(out, 1), 404, "the second pipelined status");
@@ -293,7 +293,7 @@ export string test_a_request_split_across_packets_is_answered_once_it_is_whole(C
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
   Socket sock = cli.connect("127.0.0.1", s.port).wait();
-  t.isTrue(sock.handle >= 0, "connected — " + sock.error);
+  t.isTrue(sock.handle >= 0, "connected — \{sock.error}");
   if (sock.handle >= 0) {
     const string FULL = "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}";
     // One byte at a time, which is the shape that catches a server treating "not yet" as "no".
@@ -303,9 +303,9 @@ export string test_a_request_split_across_packets_is_answered_once_it_is_whole(C
     }
     string out = readOnce(core, cli, sock.handle, PATIENCE);
     cli.closeSocket(sock.handle);
-    t.isTrue(startsWith(out, "HTTP/1.1 200"), "byte-at-a-time request: " + out);
+    t.isTrue(startsWith(out, "HTTP/1.1 200"), "byte-at-a-time request: \{out}");
     t.isTrue(out.len() >= 7 && out.slice(out.len() - 7, out.len()) == "{\"a\":1}",
-             "byte-at-a-time body: " + out);
+             "byte-at-a-time body: \{out}");
   }
   stop(cli, s.d);
   return t.report();
@@ -317,11 +317,11 @@ export string test_http_1_0_gets_one_response_and_a_closed_connection(Core core,
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
   string out = exchange(core, cli, s.port, "GET / HTTP/1.0\r\n\r\n", 1);
-  t.isTrue(startsWith(out, "HTTP/1.1 200"), "1.0 response: " + out);
-  t.isTrue(contains(out, "Connection: close"), "1.0 was not told the connection closes: " + out);
+  t.isTrue(startsWith(out, "HTTP/1.1 200"), "1.0 response: \{out}");
+  t.isTrue(contains(out, "Connection: close"), "1.0 was not told the connection closes: \{out}");
 
   string kept = exchange(core, cli, s.port, "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n", 1);
-  t.isTrue(contains(kept, "Connection: keep-alive"), "1.0 keep-alive was refused: " + kept);
+  t.isTrue(contains(kept, "Connection: keep-alive"), "1.0 keep-alive was refused: \{kept}");
   stop(cli, s.d);
   return t.report();
 }
@@ -338,9 +338,9 @@ export string test_a_smuggling_shaped_request_gets_400_and_the_connection_closes
   // Asked for two, so a server that answered the smuggled request would be read and caught rather
   // than stopped at one by the test's own bookkeeping.
   string out = exchange(core, cli, s.port, SMUGGLE, 2);
-  t.eqI32(responses(out), 1, "answered " + itoa(responses(out)) + " messages: " + out);
+  t.eqI32(responses(out), 1, "answered \{responses(out)} messages: \{out}");
   t.eqI32(statusOf(out, 0), 400, "the status");
-  t.isTrue(contains(out, "Connection: close"), "did not say the connection closes: " + out);
+  t.isTrue(contains(out, "Connection: close"), "did not say the connection closes: \{out}");
   stop(cli, s.d);
   return t.report();
 }
@@ -352,7 +352,7 @@ export string test_a_client_that_disappears_mid_request_does_not_take_the_server
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
   Socket sock = cli.connect("127.0.0.1", s.port).wait();
-  t.isTrue(sock.handle >= 0, "connected — " + sock.error);
+  t.isTrue(sock.handle >= 0, "connected — \{sock.error}");
   if (sock.handle >= 0) {
     cli.send(sock.handle,
       "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n{".toBytes()).wait();
@@ -361,11 +361,11 @@ export string test_a_client_that_disappears_mid_request_does_not_take_the_server
 
   // The next request proves the server is still there.
   Exec r = fetchGet(cli, s.port, ["/"]);
-  t.isTrue(r.ran() && r.status == 0, "the fetch client ran — " + string.fromBytes(r.stderr));
+  t.isTrue(r.ran() && r.status == 0, "the fetch client ran — \{string.fromBytes(r.stderr)}");
   if (r.ran() && r.status == 0) {
     string[] got = splitLines(string.fromBytes(r.stdout));
     t.isTrue(got.len() > 0 && statusPart(got[0]) == "200",
-             "the server did not survive: " + string.fromBytes(r.stdout));
+             "the server did not survive: \{string.fromBytes(r.stdout)}");
   }
   stop(cli, s.d);
   return t.report();
@@ -386,17 +386,17 @@ export string test_a_silent_client_is_dropped_rather_than_held_forever(Core core
 
   // Connects, sends half a request, then stops. The server should give up and say why.
   Socket half = cli.connect("127.0.0.1", s.port).wait();
-  t.isTrue(half.handle >= 0, "connected — " + half.error);
+  t.isTrue(half.handle >= 0, "connected — \{half.error}");
   if (half.handle >= 0) {
     cli.send(half.handle, "GET / HTTP/1.1\r\nHost: a\r\n".toBytes()).wait();
     string out = readOnce(core, cli, half.handle, PATIENCE);
     cli.closeSocket(half.handle);
-    t.isTrue(startsWith(out, "HTTP/1.1 408"), "a stalled request got: " + out);
+    t.isTrue(startsWith(out, "HTTP/1.1 408"), "a stalled request got: \{out}");
   }
 
   // And a connection that says nothing at all is simply dropped — there is no request to answer.
   Socket quiet = cli.connect("127.0.0.1", s.port).wait();
-  t.isTrue(quiet.handle >= 0, "connected — " + quiet.error);
+  t.isTrue(quiet.handle >= 0, "connected — \{quiet.error}");
   if (quiet.handle >= 0) {
     string out = readOnce(core, cli, quiet.handle, PATIENCE);
     cli.closeSocket(quiet.handle);
@@ -408,7 +408,7 @@ export string test_a_silent_client_is_dropped_rather_than_held_forever(Core core
   if (r.ran() && r.status == 0) {
     string[] got = splitLines(string.fromBytes(r.stdout));
     t.isTrue(got.len() > 0 && statusPart(got[0]) == "200",
-             "the server did not survive: " + string.fromBytes(r.stdout));
+             "the server did not survive: \{string.fromBytes(r.stdout)}");
   }
   stop(cli, s.d);
   return t.report();

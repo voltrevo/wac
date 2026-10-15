@@ -20,7 +20,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -68,7 +67,7 @@ JsonArray? memberArray(JsonValue v, string key) {
 Case[] cases(T t, Cli cli) {
   Case[] none = Case[].filled(0, Case("", "", u8[](), u8[](), string[].filled(0, "")));
   FileResult f = cli.readFile("packages/bls/test/pairing.json").wait();
-  t.isTrue(f.ok, "pairing.json could not be read: " + f.error);
+  t.isTrue(f.ok, "pairing.json could not be read: \{f.error}");
   if (!f.ok) { return none; }
   JsonValue? doc = parse(f.bytes);
   t.isTrue(!(doc is null), "pairing.json did not parse");
@@ -103,7 +102,7 @@ string coefficient(u8[] b, i32 i) {
   return hex(out);
 }
 
-string where(Case c) { return "(" + c.a + "," + c.b + ")"; }
+string where(Case c) { return "(\{c.a},\{c.b})"; }
 
 export string test_the_miller_loop_matches_coefficient_by_coefficient(Core core, Cli cli) {
   T t = T.create();
@@ -111,10 +110,10 @@ export string test_the_miller_loop_matches_coefficient_by_coefficient(Core core,
   if (all.len() == 0) { return t.report(); }
   for (i32 i = 0; i < all.len(); i++) {
     u8[] got = blsMillerLoop(all[i].p, all[i].q);
-    t.isTrue(got.len() > 0, where(all[i]) + ": a point was refused");
+    t.isTrue(got.len() > 0, "\{where(all[i])}: a point was refused");
     if (got.len() == 0) { continue; }
     for (i32 k = 0; k < 12; k++) {
-      t.eqStr(coefficient(got, k), all[i].miller[k], where(all[i]) + " coefficient " + itoa(k));
+      t.eqStr(coefficient(got, k), all[i].miller[k], "\{where(all[i])} coefficient \{k}");
     }
   }
   return t.report();
@@ -129,7 +128,7 @@ export string test_e_p_q_times_e_minus_p_q_is_one_so_the_final_exponentiation_is
   Case[] all = cases(t, cli);
   if (all.len() == 0) { return t.report(); }
   for (i32 i = 0; i < all.len(); i++) {
-    t.isTrue(blsPairingInverse(all[i].p, all[i].q), where(all[i]) + ": e(P,Q)·e(−P,Q) != 1");
+    t.isTrue(blsPairingInverse(all[i].p, all[i].q), "\{where(all[i])}: e(P,Q)·e(−P,Q) != 1");
   }
   return t.report();
 }
@@ -170,12 +169,12 @@ export string test_cyclotomic_squaring_agrees_on_the_subgroup_and_not_off_it(Cor
   i32 differed = 0;
   for (i32 i = 0; i < all.len(); i++) {
     u8[] raw = blsMillerLoop(all[i].p, all[i].q);
-    t.isTrue(raw.len() > 0, where(all[i]) + ": a point was refused");
+    t.isTrue(raw.len() > 0, "\{where(all[i])}: a point was refused");
     if (raw.len() == 0) { continue; }
 
     u8[] cyc = easyPart(raw);
     t.eqStr(hex(blsFp12Op(cyc, cyc, OP_CYCSQUARE())), hex(blsFp12Op(cyc, cyc, OP_SQUARE())),
-            where(all[i]) + " cyclotomic square disagrees on the subgroup");
+            "\{where(all[i])} cyclotomic square disagrees on the subgroup");
     agreed = agreed + 1;
 
     // The raw Miller loop output is not cyclotomic — the easy part is what puts it there.
@@ -186,7 +185,7 @@ export string test_cyclotomic_squaring_agrees_on_the_subgroup_and_not_off_it(Cor
   t.isTrue(agreed > 0, "no cases ran");
   t.eqI32(differed, agreed,
           "cyclotomic squaring matched general squaring off the subgroup in " +
-          itoa(agreed - differed) + "/" + itoa(agreed) + " cases — it cannot be subgroup-specific, " +
+          "\{agreed - differed}/\{agreed} cases — it cannot be subgroup-specific, " +
           "so this test is vacuous");
   return t.report();
 }
@@ -212,12 +211,12 @@ export string test_the_two_pair_miller_loop_equals_the_product_of_two_single_loo
     Case c = all[i];
     Case d = all[i + 1];
     u8[] shared = blsMillerLoopTwo(c.p, c.q, d.p, d.q);
-    t.isTrue(shared.len() > 0, "case " + itoa(i) + ": a point was refused");
+    t.isTrue(shared.len() > 0, "case \{i}: a point was refused");
     if (shared.len() == 0) { continue; }
     u8[] product = blsFp12Op(blsMillerLoop(c.p, c.q), blsMillerLoop(d.p, d.q), OP_MUL());
     for (i32 k = 0; k < 12; k++) {
       t.eqStr(coefficient(shared, k), coefficient(product, k),
-              "case " + itoa(i) + ": shared loop against the product, coefficient " + itoa(k));
+              "case \{i}: shared loop against the product, coefficient \{k}");
     }
     ran = ran + 1;
   }

@@ -42,7 +42,7 @@ export i32 sha256sum(Core core, Cli cli, Fs fs, Args a) {
     // and GNU prints only the complaint.
     if (unread) { continue; }
     string name = in.label == "" ? "-" : in.label;
-    core.log(string.fromBytes(hexencode(h.finish())) + "  " + name);
+    core.log("\{string.fromBytes(hexencode(h.finish()))}  \{name}");
   }
 
   return status;

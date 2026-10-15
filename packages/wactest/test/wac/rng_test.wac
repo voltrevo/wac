@@ -17,7 +17,6 @@
 
 import { T } from "../../src/assert.wac";
 import { Rng } from "../../src/rng.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** The body of the twenty-five copies that landed on this side, character for character. */
 struct Local {
@@ -73,13 +72,13 @@ export string test_the_shared_rng_draws_what_the_copies_drew() {
     Local b = Local(seeds[s]);
     for (i32 i = 0; i < 200; i++) {
       i32 n = WIDTHS[i % WIDTHS.len()];
-      t.eqI32(a.upto(n), b.upto(n), "seed " + itoa(s) + " draw " + itoa(i) + " of " + itoa(n));
+      t.eqI32(a.upto(n), b.upto(n), "seed \{s} draw \{i} of \{n}");
     }
   }
   Rng ra = Rng(99);
   Local rb = Local(99);
   for (i32 i = 0; i < 100; i++) {
-    t.eqI32(ra.next() as@ i32, rb.next() as@ i32, "raw draw " + itoa(i));
+    t.eqI32(ra.next() as@ i32, rb.next() as@ i32, "raw draw \{i}");
   }
   return t.report();
 }
@@ -99,7 +98,7 @@ export string test_the_signed_family_would_have_drawn_a_different_corpus() {
   i32 signedRem = state % 10;
   i32 foldedWay = signedRem < 0 ? signedRem + 10 : signedRem;
   t.isTrue(unsignedWay != foldedWay,
-           "the header's state 0xC6E5747A lands on " + itoa(unsignedWay) + " both ways at n = 10, " +
+           "the header's state 0xC6E5747A lands on \{unsignedWay} both ways at n = 10, " +
            "so the two families no longer differ where it says they do");
 
   i32 differ = 0;
@@ -113,7 +112,7 @@ export string test_the_signed_family_would_have_drawn_a_different_corpus() {
   }
   // Pinned to what it measures, not to a rounded claim: a drift here means one of the two bodies
   // moved, which is exactly what this file exists to notice.
-  t.eqI32(differ, 3984, "the two families differ on " + itoa(differ) + " of " + itoa(total) +
+  t.eqI32(differ, 3984, "the two families differ on \{differ} of \{total}" +
                         " draws, not 3984");
   return t.report();
 }
@@ -133,7 +132,7 @@ export string test_a_signed_remainder_is_a_different_remainder() {
     u32 raw = a.next();
     if (((raw as@ i32) % 10) != ((raw % 10) as@ i32)) { differ = differ + 1; }
   }
-  t.eqI32(differ, 21, "the two remainders differ in " + itoa(differ) + " of 40, not 21");
+  t.eqI32(differ, 21, "the two remainders differ in \{differ} of 40, not 21");
   return t.report();
 }
 
@@ -162,7 +161,7 @@ export string test_dropping_the_mask_changes_the_generator() {
   for (i32 i = 0; i < 200; i++) {
     if ((a.next() as@ i32) != (b.next() as@ i32)) { differ = differ + 1; }
   }
-  t.isTrue(differ > 150, "removing the sign-extension mask changed only " + itoa(differ) +
+  t.isTrue(differ > 150, "removing the sign-extension mask changed only \{differ}" +
                          " of 200 draws — the mask may no longer be doing what the header says");
   return t.report();
 }
@@ -193,7 +192,7 @@ export string test_a_free_function_can_extend_the_shared_rng() {
   Rng r = Rng(12345);
   for (i32 i = 0; i < 50; i++) {
     i32 p = pick(r);
-    t.isTrue(p >= 0 && p < 0x100, "pick drew " + itoa(p) + ", outside its own range");
+    t.isTrue(p >= 0 && p < 0x100, "pick drew \{p}, outside its own range");
   }
   return t.report();
 }
@@ -221,7 +220,7 @@ export string test_intTop_is_a_different_draw_from_upto() {
   Rng r = Rng(99);
   for (i32 i = 0; i < 200; i++) {
     i32 v = r.intTop(7);
-    t.isTrue(v >= 0 && v < 7, "intTop(7) drew " + itoa(v) + ", outside its own range");
+    t.isTrue(v >= 0 && v < 7, "intTop(7) drew \{v}, outside its own range");
   }
   return t.report();
 }

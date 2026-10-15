@@ -108,7 +108,7 @@ export Record recordOf(u8[] stateRoot, u8[] registry, u8[] name,
 /** One address-valued slot of one account, both walks and the padding. */
 Resolved slotOf(u8[] stateRoot, u8[] registry, u8[] slot, u8[][] accountNodes, u8[][] storageNodes) {
   AccountProof a = accountAt(stateRoot, registry, accountNodes);
-  if (!a.ok) { return Resolved.of(false, false, u8[](), "the registry's account: " + a.error); }
+  if (!a.ok) { return Resolved.of(false, false, u8[](), "the registry's account: \{a.error}"); }
   if (!a.present) {
     // Not the same as "the name has no owner": there is no registry at that address on this chain.
     return Resolved.of(false, false, u8[](), "there is no account at the registry address");
@@ -117,7 +117,7 @@ Resolved slotOf(u8[] stateRoot, u8[] registry, u8[] slot, u8[][] accountNodes, u
   // The storage root comes out of the account proof and is never supplied by the caller — that is the
   // composition. A root from anywhere else proves something true about a different contract.
   StorageProof s = storageAt(a.account.storageRoot, slot, storageNodes);
-  if (!s.ok) { return Resolved.of(false, false, u8[](), "the registry's storage: " + s.error); }
+  if (!s.ok) { return Resolved.of(false, false, u8[](), "the registry's storage: \{s.error}"); }
   if (!s.present) { return Resolved.of(true, false, u8[](), ""); }
 
   return addressOfSlot(s.value);

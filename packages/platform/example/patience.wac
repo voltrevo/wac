@@ -54,7 +54,7 @@ export i32 main(Sys sys) {
   // deadline on the waiter rather than on each capability.
   Pending<Socket> pc = cli.connect(host, port);
   if (core.waitAny([pc.id], ms) < 0) {
-    core.warn("patience: connect to " + host + " did not answer within " + itoa(ms) + "ms");
+    core.warn("patience: connect to \{host} did not answer within \{ms}ms");
     // **The dial may already have succeeded**, which is the case this comment used to deny. If
     // it completed as the deadline passed, the answer is in hand: a real socket, in the host's
     // table, with the peer holding an open line. Cancelling *closes* such a socket, so the peer
@@ -69,7 +69,7 @@ export i32 main(Sys sys) {
   }
   Socket s = pc.wait();
   if (s.handle < 0) {
-    core.warn("patience: " + s.error);
+    core.warn("patience: \{s.error}");
     return 1;
   }
 
@@ -87,21 +87,21 @@ export i32 main(Sys sys) {
       // closed, a connection that broke, and bytes that arrived all used to be two cases.
       match (r.wait()) {
         Data(bytes): {
-          core.log("peer sent " + itoa(bytes.len()) + " bytes after " + itoa(waited) + "ms");
+          core.log("peer sent \{bytes.len()} bytes after \{waited}ms");
         }
-        End: { core.log("peer closed after " + itoa(waited) + "ms"); }
-        Failed(why): { core.log("connection failed after " + itoa(waited) + "ms: " + why); }
+        End: { core.log("peer closed after \{waited}ms"); }
+        Failed(why): { core.log("connection failed after \{waited}ms: \{why}"); }
       }
       cli.closeSocket(s.handle);
       return 0;
     }
 
     if (round + 1 < ROUNDS) {
-      core.log("waited " + itoa(waited) + "ms, nothing yet");
+      core.log("waited \{waited}ms, nothing yet");
     }
   }
 
-  core.log("giving up after " + itoa(waited) + "ms");
+  core.log("giving up after \{waited}ms");
   // Giving up for real. Cancelling says the answer is unwanted; closing the socket is what
   // makes the read finish, and the slot returns when it does. Without the close, the ring is
   // short a slot for as long as the peer keeps the connection open.
@@ -120,13 +120,3 @@ i32 atoi(string s) {
   return n;
 }
 
-string itoa(i32 n) {
-  if (n == 0) { return "0"; }
-  i32 v = n < 0 ? 0 - n : n;
-  u8[] digits = u8[].filled(12, 0);
-  i32 at = 12;
-  while (v > 0) { at--; digits[at] = ('0' + (v % 10)) as@ u8; v = v / 10; }
-  u8[] used = u8[].filled(12 - at, 0);
-  used.copyFrom(digits, at, 0, 12 - at);
-  return (n < 0 ? "-" : "") + string.fromBytes(used);
-}

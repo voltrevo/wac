@@ -33,7 +33,6 @@ import { Attr, attrFingerprint, attrIceControlled, attrIceControlling, attrMessa
          bindingSuccess, encode, integrityOk, isRequest, isSuccessResponse, parse, withFingerprint, withIntegrity,
          xorMappedValue } from "./stun.wac";
 import { Message } from "./stun.wac";
-import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 
 /**
  * A candidate: one address an agent can be reached at, and how much it likes it.
@@ -95,13 +94,13 @@ export i64 pairPriority(i64 controlling, i64 controlled) {
 
 /** The `a=candidate:` line's value, which is what an SDP carries and what a peer parses. */
 export string candidateLine(Candidate c) {
-  return c.foundation + " " + itoa(c.component) + " " + c.transport + " " +
-         itoa64(c.priority) + " " + c.host + " " + itoa(c.port) + " typ " + c.kind;
+  return "\{c.foundation} \{c.component} \{c.transport} " +
+         "\{c.priority} \{c.host} \{c.port} typ \{c.kind}";
 }
 
 /** The username a check carries: the peer's fragment, a colon, then ours. */
 export string checkUsername(string peerUfrag, string ourUfrag) {
-  return peerUfrag + ":" + ourUfrag;
+  return "\{peerUfrag}:\{ourUfrag}";
 }
 
 /**

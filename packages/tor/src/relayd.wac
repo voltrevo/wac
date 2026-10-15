@@ -85,10 +85,9 @@ import { PUB_OK } from "./hsstore.wac";
 static i32 MAX_STORED_DESCRIPTORS = 32;
 import { microdescDigests } from "./microdesc.wac";
 import {
-  Link, chunkRequest, connectRelay, feedLink, handshakeTls, itoa, linkHandshake, pump, sendCells,
+  Link, chunkRequest, connectRelay, feedLink, handshakeTls, linkHandshake, pump, sendCells,
   takeCell,
 } from "./link.wac";
-import { itoa64 } from "../../wactest/src/itoa64.wac";
 import {
   INTRO_ACK_SUCCESS, INTRO_ACK_UNKNOWN_ID, IntroPoints, Introduced, establishIntro,
   forgetCircuit, forgetConnection, introduce1, introduceAckBody,
@@ -443,7 +442,7 @@ export i32 main(Sys sys) {
   // relay anybody can be told about.
   FileResult seedFile = cli.readFile(seedPath).wait();
   if (!seedFile.ok) {
-    core.warn("relayd: " + seedFile.error + " — write 32 random bytes there first");
+    core.warn("relayd: \{seedFile.error} — write 32 random bytes there first");
     return 1;
   }
   if (seedFile.bytes.len() < 32) {
@@ -460,8 +459,8 @@ export i32 main(Sys sys) {
     core.warn("relayd: could not derive an identity from that seed");
     return 1;
   }
-  core.log("relayd: fingerprint " + hex(id.fingerprint));
-  core.log("relayd: ntor onion key " + hex(x25519Base(id.onionPrivate)));
+  core.log("relayd: fingerprint \{hex(id.fingerprint)}");
+  core.log("relayd: ntor onion key \{hex(x25519Base(id.onionPrivate))}");
 
 
   // A relay serves directory documents over RELAY_BEGIN_DIR, and a bootstrapping tor asks *any* relay
@@ -488,10 +487,10 @@ export i32 main(Sys sys) {
   string complained = "";
   if (wantDir && !hasDir) {
     if (loaded.problem != "") {
-      core.warn("relayd: " + loaded.problem);
+      core.warn("relayd: \{loaded.problem}");
       complained = loaded.problem;
     } else {
-      core.log("relayd: waiting for " + consensusPath +
+      core.log("relayd: waiting for \{consensusPath}" +
                " — serving no directory documents until it is there");
     }
   }
@@ -504,10 +503,10 @@ export i32 main(Sys sys) {
 
   Socket listener = cli.listen(bind, port).wait();
   if (listener.handle < 0) {
-    core.warn("relayd: listen: " + listener.error);
+    core.warn("relayd: listen: \{listener.error}");
     return 1;
   }
-  core.log("relayd: listening on " + bind + ":" + itoa(listener.port));
+  core.log("relayd: listening on \{bind}:\{listener.port}");
 
   // `--descriptor` writes what an authority should publish about this relay, **after binding**, and
   // then carries on serving.
@@ -530,15 +529,15 @@ export i32 main(Sys sys) {
   // happened. A launcher's description cannot hold any of them, and a human copying them out of the
   // log is the step this removes.
   if (seedLineOut != "") {
-    string line = bind + " " + itoa(listener.port) + " " + hex(id.fingerprint) + " " +
+    string line = bind + " \{listener.port} " + hex(id.fingerprint) + " " +
                   string.fromBytes(base64Encode(x25519Base(id.onionPrivate), ALPHABET_STANDARD(),
                                                 false)) + "\n";
     Change wroteSeed = cli.writeFile(seedLineOut, line.toBytes()).wait();
     if (!wroteSeed.ok()) {
-      core.warn("relayd: " + seedLineOut + ": " + wroteSeed.message);
+      core.warn("relayd: \{seedLineOut}: \{wroteSeed.message}");
       return 1;
     }
-    core.log("relayd: wrote a seed line for this relay to " + seedLineOut);
+    core.log("relayd: wrote a seed line for this relay to \{seedLineOut}");
   }
 
   if (descriptorOut != "") {
@@ -551,11 +550,11 @@ export i32 main(Sys sys) {
     }
     Change wrote = cli.writeFile(descriptorOut, desc).wait();
     if (!wrote.ok()) {
-      core.warn("relayd: " + descriptorOut + ": " + wrote.message);
+      core.warn("relayd: \{descriptorOut}: \{wrote.message}");
       return 1;
     }
-    core.log("relayd: wrote a " + itoa(desc.len()) + "-byte descriptor for port " +
-             itoa(listener.port) + " to " + descriptorOut);
+    core.log("relayd: wrote a \{desc.len()}-byte descriptor for port " +
+             "\{listener.port} to \{descriptorOut}");
   }
 
 
@@ -602,7 +601,7 @@ export i32 main(Sys sys) {
         x.docs = again.docs;
         x.hasDir = true;
       } else if (again.problem != "" && again.problem != x.complained) {
-        core.warn("relayd: " + again.problem);
+        core.warn("relayd: \{again.problem}");
         x.complained = again.problem;
       }
       continue;
@@ -862,18 +861,18 @@ async void armAccept(Core core, Cli cli, Relay x, Socket listener) {
   while (x.accepting) {
     Socket fresh = await cli.accept(listener.handle).ticket();
     if (fresh.handle < 0) {
-      core.warn("relayd: accept: " + fresh.error + " — no longer accepting");
+      core.warn("relayd: accept: \{fresh.error} — no longer accepting");
       x.accepting = false;
       return;
     }
     if (x.live >= MAX_CONNS) {
       // Refusing is the honest answer. A relay that accepts every connection offered holds them all
       // and dies on the first burst, which is worse for the network than one refusal.
-      core.warn("relayd: at " + itoa(MAX_CONNS) + " connections, refusing " + fresh.peer);
+      core.warn("relayd: at \{MAX_CONNS} connections, refusing \{fresh.peer}");
       cli.closeSocket(fresh.handle);
       continue;
     }
-    core.log("relayd: connection " + itoa(x.nextConnId + 1) + " from " + fresh.peer);
+    core.log("relayd: connection \{x.nextConnId + 1} from \{fresh.peer}");
     x.nextConnId = x.nextConnId + 1;
     x.conns[x.live] = newConn(core, cli, fresh, x.id, x.nextConnId);
     x.live = x.live + 1;
@@ -995,8 +994,8 @@ void dropCirc(Core core, Cli cli, Conn c, i32 slot, IntroPoints intros, RendPoin
   forgetCircuit(intros, c.id, k.circId);
   forgetRendCircuit(rends, c.id, k.circId);
   if (k.forwardedOut > 0 || k.forwardedBack > 0) {
-    core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) + " carried " +
-             itoa(k.forwardedOut) + " cells out, " + itoa(k.forwardedBack) + " back");
+    core.log("relayd: [\{c.id}]  circuit \{k.circId} carried " +
+             "\{k.forwardedOut} cells out, \{k.forwardedBack} back");
   }
   // Callers each explain *why* they are dropping; this says that one happened at all, so a circuit
   // that vanishes is never a silent event.
@@ -1009,8 +1008,8 @@ void dropCirc(Core core, Cli cli, Conn c, i32 slot, IntroPoints intros, RendPoin
 
 /** Everything a closing connection holds: its own socket, and every circuit's. */
 void dropConn(Core core, Cli cli, Conn c, IntroPoints intros, RendPoints rends) {
-  core.log("relayd: [" + itoa(c.id) + "]  dropping a connection carrying " + itoa(c.circCount) + " circuit(s), " +
-           itoa(c.droppedCircs) + " already torn down");
+  core.log("relayd: [\{c.id}]  dropping a connection carrying \{c.circCount} circuit(s), " +
+           "\{c.droppedCircs} already torn down");
   while (c.circCount > 0) { dropCirc(core, cli, c, c.circCount - 1, intros, rends); }
   forgetConnection(intros, c.id);
   forgetRendConnection(rends, c.id);
@@ -1123,14 +1122,14 @@ string verifiedAgainst(u8[] consensus, u8[] certFile, i64 now, string what) {
   AuthorityCert[] certs = parseCertificates(certFile, trusted);
   if (certs.len() == 0) {
     return "the certificate does not verify against its own identity key, so it says nothing about " +
-           "who signed the " + what;
+           "who signed the \{what}";
   }
   Verdict v = verifyConsensus(consensus, certs, trusted, now);
   if (!v.ok) {
     string why = v.stale != "" ? v.stale
-                               : itoa(v.goodSignatures) + " good signature(s), " + itoa(v.needed) +
+                               : "\{v.goodSignatures} good signature(s), \{v.needed}" +
                                  " needed";
-    return "the " + what + " is not signed by " + fp + " — " + why;
+    return "the \{what} is not signed by \{fp} — \{why}";
   }
   return "";
 }
@@ -1155,18 +1154,18 @@ DirLoad loadDocuments(Core core, Cli cli, string consensusPath, string certPath,
     return DirLoad(none(), false, "");
   }
   if (!startsWith(cf.bytes, "network-status-version")) {
-    return DirLoad(none(), false, consensusPath + " is not a consensus — it does not begin " +
+    return DirLoad(none(), false, "\{consensusPath} is not a consensus — it does not begin " +
                                   "\"network-status-version\"");
   }
   if (!startsWith(kf.bytes, "dir-key-certificate-version")) {
-    return DirLoad(none(), false, certPath + " is not an authority certificate — it does not begin " +
+    return DirLoad(none(), false, "\{certPath} is not an authority certificate — it does not begin " +
                                   "\"dir-key-certificate-version\"");
   }
   // The check that matters: this relay does not serve a consensus the authority it was configured
   // with did not sign. See `verifiedAgainst`.
   i64 now = core.nowMillis().wait() / 1000;
   string bad = verifiedAgainst(cf.bytes, kf.bytes, now, "consensus");
-  if (bad != "") { return DirLoad(none(), false, consensusPath + ": " + bad); }
+  if (bad != "") { return DirLoad(none(), false, "\{consensusPath}: \{bad}"); }
   // The descriptors too, because tor asks for them over BEGIN_DIR as readily as for the consensus.
   // Leaving them out did not make it ask elsewhere: it read our 404's ten-byte body as "server info"
   // eight times over and stayed at 0/2 usable descriptors.
@@ -1199,20 +1198,20 @@ DirLoad loadDocuments(Core core, Cli cli, string consensusPath, string certPath,
     // relay that checked one flavour and served the other unchecked would have done the work and kept
     // the hole — ours is the flavour our own client asks for.
     if (!startsWith(mcf.bytes, "network-status-version")) {
-      return DirLoad(none(), false, microConsensusPath + " is not a consensus — it does not begin " +
+      return DirLoad(none(), false, "\{microConsensusPath} is not a consensus — it does not begin " +
                                     "\"network-status-version\"");
     }
     string badMicro = verifiedAgainst(mcf.bytes, kf.bytes, now, "microdesc consensus");
-    if (badMicro != "") { return DirLoad(none(), false, microConsensusPath + ": " + badMicro); }
+    if (badMicro != "") { return DirLoad(none(), false, "\{microConsensusPath}: \{badMicro}"); }
     microCons = mcf.bytes;
     micros = mdf.bytes;
     microDigests = microdescDigests(micros);
   }
 
-  core.log("relayd: serving the consensus, certificate and " + itoa(descPaths.len()) +
+  core.log("relayd: serving the consensus, certificate and \{descPaths.len()}" +
            " descriptor(s) over BEGIN_DIR" +
            (micros.len() == 0 ? ""
-                              : ", plus " + itoa(microDigests.len()) + " microdescriptor(s)"));
+                              : ", plus \{microDigests.len()} microdescriptor(s)"));
   return DirLoad(DirDocuments(cf.bytes, microCons, kf.bytes, descriptors, digests,
                               dirSourceFingerprint(cf.bytes), micros, microDigests, u8[][](),
                               u8[][]()), true, "");
@@ -1237,7 +1236,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
         Data(bytes): { payload = bytes; open = true; }
         End: { }
         Failed(why): {
-          core.warn("relayd: [" + itoa(c.id) + "]  the stream failed: " + why);
+          core.warn("relayd: [\{c.id}]  the stream failed: \{why}");
           failed = true;
         }
       }
@@ -1249,9 +1248,9 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
                                     failed ? endMisc() : endReason()));
         cli.closeSocket(k.streamSock);
         k.hasStream = false;
-        core.log("relayd: [" + itoa(c.id) + "]  stream " + itoa(k.streamId) + " on handle " +
-                 itoa(k.streamSock) + " closed by the far end after " +
-                 itoa(k.streamIn) + " bytes in, " + itoa(k.streamOut) + " bytes out");
+        core.log("relayd: [\{c.id}]  stream \{k.streamId} on handle " +
+                 "\{k.streamSock} closed by the far end after " +
+                 "\{k.streamIn} bytes in, \{k.streamOut} bytes out");
         // The stream is gone; the circuit is not. A client reuses a circuit for the next stream, so
         // tearing down the connection here would cost it a fresh three-hop build per request.
         return;
@@ -1281,10 +1280,10 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
       match (r) {
         Data(bytes): { alive = feedLink(k.next, bytes); }
         End: { }
-        Failed(why): { core.warn("relayd: [" + itoa(c.id) + "]  the next hop failed: " + why); }
+        Failed(why): { core.warn("relayd: [\{c.id}]  the next hop failed: \{why}"); }
       }
       if (!alive) {
-        core.warn("relayd: [" + itoa(c.id) + "]  the next hop closed the connection");
+        core.warn("relayd: [\{c.id}]  the next hop closed the connection");
         c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_NONE));
         dropCirc(core, cli, c, slot, x.intros, x.rends);
         return;
@@ -1297,7 +1296,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
         i32 backCommand = cellCommand(back, 0, ID_WIDE);
         if (backCommand == cmdPadding()) { continue; }
         if (backCommand == cmdDestroy()) {
-          core.log("relayd: [" + itoa(c.id) + "]  the next hop destroyed its leg of the circuit");
+          core.log("relayd: [\{c.id}]  the next hop destroyed its leg of the circuit");
           c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_NONE));
           dropCirc(core, cli, c, slot, x.intros, x.rends);
           return;
@@ -1324,8 +1323,8 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
       // A connection ending was silent, which made "the peer went away" indistinguishable from
       // "nothing happened" in a log — and a circuit dying at the client with no line here is exactly
       // what issue 0089 looked like from the outside.
-      End: { core.log("relayd: [" + itoa(c.id) + "]  the initiator closed the connection"); }
-      Failed(why): { core.warn("relayd: [" + itoa(c.id) + "]  the connection failed: " + why); }
+      End: { core.log("relayd: [\{c.id}]  the initiator closed the connection"); }
+      Failed(why): { core.warn("relayd: [\{c.id}]  the connection failed: \{why}"); }
     }
     if (!live) {
       // The client is gone, so every circuit it built over this connection is too. `dropConn` in the
@@ -1346,13 +1345,13 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
     c.tls = fed.state;
     if (fed.toSend.len() > 0) { cli.send(c.sock, fed.toSend).wait(); }
     if (tlsPhase(c.tls) == phaseFailed()) {
-      core.warn("relayd: [" + itoa(c.id) + "]  the TLS handshake failed");
+      core.warn("relayd: [\{c.id}]  the TLS handshake failed");
       c.live = false;
       return;
     }
     if (!c.established && tlsPhase(c.tls) == phaseEstablished()) {
       c.established = true;
-      core.log("relayd: [" + itoa(c.id) + "]  TLS established");
+      core.log("relayd: [\{c.id}]  TLS established");
     }
     c.buf = concat(c.buf, fed.appData);
 
@@ -1371,22 +1370,22 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
 
       if (!c.versionsSeen) {
         if (command != cmdVersions()) {
-          core.warn("relayd: [" + itoa(c.id) + "]  first cell was not VERSIONS");
+          core.warn("relayd: [\{c.id}]  first cell was not VERSIONS");
           c.live = false;
           return;
         }
         i32 version = responderVersion(cell);
         if (version < 0) {
-          core.warn("relayd: [" + itoa(c.id) + "]  no link protocol version in common");
+          core.warn("relayd: [\{c.id}]  no link protocol version in common");
           c.live = false;
           return;
         }
-        core.log("relayd: [" + itoa(c.id) + "]  link protocol " + itoa(version));
+        core.log("relayd: [\{c.id}]  link protocol \{version}");
         c.versionsSeen = true;
         u8[] reply = relayHandshakeReply(x.certs, core.randomBytes(32).wait(),
                                          peerIpv4(c.sockObj.peer), core.nowMillis().wait() / 1000);
         if (reply.len() == 0) {
-          core.warn("relayd: [" + itoa(c.id) + "]  could not build the handshake reply");
+          core.warn("relayd: [\{c.id}]  could not build the handshake reply");
           c.live = false;
           return;
         }
@@ -1397,10 +1396,10 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
       if (command == cmdNetinfo()) {
         u8[] mine = netinfoOtherAddress(cell);
         if (mine.len() == 4) {
-          core.log("relayd: [" + itoa(c.id) + "]  the initiator sees us as " + itoa(mine[0] as i32) + "." + itoa(mine[1] as i32) +
-                   "." + itoa(mine[2] as i32) + "." + itoa(mine[3] as i32));
+          core.log("relayd: [\{c.id}]  the initiator sees us as \{mine[0] as i32}.\{mine[1] as i32}" +
+                   ".\{mine[2] as i32}.\{mine[3] as i32}");
         }
-        core.log("relayd: [" + itoa(c.id) + "]  link established");
+        core.log("relayd: [\{c.id}]  link established");
         continue;
       }
 
@@ -1418,7 +1417,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
         c.circs[c.circCount] = newCirc(core, cli, cellCircId(cell, 0, ID_WIDE), fast.hop, c.fromClient, fast.kh);
         c.circCount = c.circCount + 1;
         c.tls = sendCell(cli, c.sockObj, c.tls, fast.cell);
-        core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(cellCircId(cell, 0, ID_WIDE)) + " created (CREATE_FAST)");
+        core.log("relayd: [\{c.id}]  circuit \{cellCircId(cell, 0, ID_WIDE)} created (CREATE_FAST)");
         continue;
       }
 
@@ -1428,14 +1427,14 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
                                        x.id.fingerprint, x.id.onionPrivate,
                                        clampScalar(core.randomBytes(32).wait()));
         if (answer.cell.len() == 0) {
-          core.warn("relayd: [" + itoa(c.id) + "]  the CREATE2 was not one we could answer");
+          core.warn("relayd: [\{c.id}]  the CREATE2 was not one we could answer");
           c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(cellCircId(cell, 0, ID_WIDE), DESTROY_PROTOCOL));
           continue;
         }
         c.circs[c.circCount] = newCirc(core, cli, cellCircId(cell, 0, ID_WIDE), answer.hop, c.fromClient, answer.kh);
         c.circCount = c.circCount + 1;
         c.tls = sendCell(cli, c.sockObj, c.tls, answer.cell);
-        core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(cellCircId(cell, 0, ID_WIDE)) + " created");
+        core.log("relayd: [\{c.id}]  circuit \{cellCircId(cell, 0, ID_WIDE)} created");
         continue;
       }
 
@@ -1457,14 +1456,14 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           if (!k.hasNext && k.spliceConn >= 0) {
             if (!sendToSplice(core, cli, x.conns, x.live, k.spliceConn, k.spliceCirc,
                               inbound.payload)) {
-              core.warn("relayd: [" + itoa(c.id) + "]  the far side of the rendezvous is gone");
+              core.warn("relayd: [\{c.id}]  the far side of the rendezvous is gone");
               c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
               dropCirc(core, cli, c, slotOf, x.intros, x.rends);
             }
             continue;
           }
           if (!k.hasNext) {
-            core.warn("relayd: [" + itoa(c.id) + "]  a cell for a later hop, but nothing has been extended to");
+            core.warn("relayd: [\{c.id}]  a cell for a later hop, but nothing has been extended to");
             c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
             dropCirc(core, cli, c, slotOf, x.intros, x.rends);
             continue;
@@ -1474,7 +1473,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           // without a line per cell.
           if (!k.forwardedAny) {
             k.forwardedAny = true;
-            core.log("relayd: [" + itoa(c.id) + "]  forwarding cells for a later hop on circuit " + itoa(k.circId));
+            core.log("relayd: [\{c.id}]  forwarding cells for a later hop on circuit \{k.circId}");
           }
           k.forwardedOut = k.forwardedOut + 1;
           sendCells(k.next, encodeFixed(k.nextCircId, cmdRelay(), inbound.payload));
@@ -1483,7 +1482,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
 
         if (inbound.command == relayExtend2()) {
           if (k.hasNext) {
-            core.warn("relayd: [" + itoa(c.id) + "]  a second EXTEND2 on one circuit is not supported");
+            core.warn("relayd: [\{c.id}]  a second EXTEND2 on one circuit is not supported");
             c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
             dropCirc(core, cli, c, slotOf, x.intros, x.rends);
             continue;
@@ -1502,8 +1501,8 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           c.tls = sendCell(cli, c.sockObj, c.tls,
                          sendToClient(k.hop, k.circId, relayExtended2(), 0,
                                       extended2Body(done.reply)));
-          core.log("relayd: [" + itoa(c.id) + "]  extended circuit " + itoa(k.circId) + " to the next hop as " +
-                   itoa(k.nextCircId));
+          core.log("relayd: [\{c.id}]  extended circuit \{k.circId} to the next hop as " +
+                   "\{k.nextCircId}");
           continue;
         }
 
@@ -1518,14 +1517,14 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           // and claiming it would be promising to deliver cells we cannot deliver.
           u8[] filed = establishIntro(x.intros, inbound.data, k.kh, c.id, k.circId, !k.hasNext);
           if (filed.len() == 0) {
-            core.warn("relayd: [" + itoa(c.id) + "]  an ESTABLISH_INTRO we would not accept");
+            core.warn("relayd: [\{c.id}]  an ESTABLISH_INTRO we would not accept");
             c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
             dropCirc(core, cli, c, slotOf, x.intros, x.rends);
             continue;
           }
           c.tls = sendCell(cli, c.sockObj, c.tls,
                            sendToClient(k.hop, k.circId, relayIntroEstablished(), 0, u8[]()));
-          core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) +
+          core.log("relayd: [\{c.id}]  circuit \{k.circId}" +
                    " is an introduction point");
           continue;
         }
@@ -1554,21 +1553,21 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           c.tls = sendCell(cli, c.sockObj, c.tls,
                            sendToClient(k.hop, k.circId, relayIntroduceAck(), 0,
                                         introduceAckBody(status)));
-          core.log("relayd: [" + itoa(c.id) + "]  an introduction, status " + itoa(status));
+          core.log("relayd: [\{c.id}]  an introduction, status \{status}");
           continue;
         }
 
         if (inbound.command == relayEstablishRendezvous()) {
           i32 held = establishRendezvous(x.rends, inbound.data, c.id, k.circId, !k.hasNext);
           if (held != RV_OK) {
-            core.warn("relayd: [" + itoa(c.id) + "]  an ESTABLISH_RENDEZVOUS we would not accept");
+            core.warn("relayd: [\{c.id}]  an ESTABLISH_RENDEZVOUS we would not accept");
             c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
             dropCirc(core, cli, c, slotOf, x.intros, x.rends);
             continue;
           }
           c.tls = sendCell(cli, c.sockObj, c.tls,
                            sendToClient(k.hop, k.circId, relayRendezvousEstablished(), 0, u8[]()));
-          core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) +
+          core.log("relayd: [\{c.id}]  circuit \{k.circId}" +
                    " is waiting at a rendezvous");
           continue;
         }
@@ -1578,14 +1577,14 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           if (join.error != RV_OK) {
             // An unknown cookie is ordinary rather than suspicious — tor's own note is that a client
             // which gave up after INTRODUCE1 leaves exactly this.
-            core.warn("relayd: [" + itoa(c.id) + "]  a RENDEZVOUS1 with nothing waiting for it");
+            core.warn("relayd: [\{c.id}]  a RENDEZVOUS1 with nothing waiting for it");
             c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
             dropCirc(core, cli, c, slotOf, x.intros, x.rends);
             continue;
           }
           if (!sendToSlot(core, cli, x.conns, x.live, join.connId, join.circId,
                           relayRendezvous2(), join.rendezvous2)) {
-            core.warn("relayd: [" + itoa(c.id) + "]  the waiting circuit went away");
+            core.warn("relayd: [\{c.id}]  the waiting circuit went away");
             c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
             dropCirc(core, cli, c, slotOf, x.intros, x.rends);
             continue;
@@ -1595,14 +1594,14 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           k.spliceConn = join.connId;
           k.spliceCirc = join.circId;
           spliceBack(x.conns, x.live, join.connId, join.circId, c.id, k.circId);
-          core.log("relayd: [" + itoa(c.id) + "]  rendezvous joined: circuit " + itoa(k.circId) +
-                   " to " + itoa(join.circId));
+          core.log("relayd: [\{c.id}]  rendezvous joined: circuit \{k.circId}" +
+                   " to \{join.circId}");
           continue;
         }
 
         if (inbound.command == relayBegin()) {
           if (k.hasStream) {
-            core.warn("relayd: [" + itoa(c.id) + "]  a second stream on one circuit is not supported");
+            core.warn("relayd: [\{c.id}]  a second stream on one circuit is not supported");
             c.tls = sendCell(cli, c.sockObj, c.tls,
                            sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId,
                                         endResourceLimit()));
@@ -1610,7 +1609,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           }
           Begin want = parseBegin(inbound.data);
           if (!want.ok) {
-            core.warn("relayd: [" + itoa(c.id) + "]  a BEGIN we could not read");
+            core.warn("relayd: [\{c.id}]  a BEGIN we could not read");
             c.tls = sendCell(cli, c.sockObj, c.tls,
                            sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId,
                                         endProtocol()));
@@ -1620,7 +1619,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           string host = want.ownAddress ? "127.0.0.1" : want.host;
           Socket target = cli.connect(host, want.port).wait();
           if (target.handle < 0) {
-            core.log("relayd: [" + itoa(c.id) + "]  " + host + ":" + itoa(want.port) + " refused: " + target.error);
+            core.log("relayd: [\{c.id}]  \{host}:\{want.port} refused: \{target.error}");
             // **The one END a client can act on.** `socks5.wac` turns CONNECTREFUSED into "connection
             // refused", NOROUTE into "network unreachable" and TIMEOUT into "TTL expired"; DONE is in
             // none of its rows, so this site alone was sending every failed connect to a person as
@@ -1642,8 +1641,8 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           k.fromStream = cli.recv(k.streamSock);
           c.tls = sendCell(cli, c.sockObj, c.tls,
                          sendToClient(k.hop, k.circId, relayConnected(), k.streamId, connectedBody()));
-          core.log("relayd: [" + itoa(c.id) + "]  stream " + itoa(k.streamId) + " open to " + host + ":" +
-                   itoa(want.port) + " on handle " + itoa(k.streamSock));
+          core.log("relayd: [\{c.id}]  stream \{k.streamId} open to \{host}:" +
+                   "\{want.port} on handle \{k.streamSock}");
           continue;
         }
 
@@ -1656,8 +1655,8 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
             // Stream x.id 0 is what makes it circuit-level rather than about one stream.
             c.tls = sendCell(cli, c.sockObj, c.tls,
                            sendToClient(k.hop, k.circId, relaySendme(), 0, u8[]()));
-            core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) + " SENDME after " +
-                     itoa(k.cellsInCirc) + " cells");
+            core.log("relayd: [\{c.id}]  circuit \{k.circId} SENDME after " +
+                     "\{k.cellsInCirc} cells");
           }
         }
 
@@ -1669,7 +1668,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           }
           k.streamIn = k.streamIn + inbound.data.len();
           if (!cli.send(k.streamSock, inbound.data).wait()) {
-            core.warn("relayd: [" + itoa(c.id) + "]  the stream would not take the data");
+            core.warn("relayd: [\{c.id}]  the stream would not take the data");
             // `MISC` rather than `CONNRESET`: `cli.send` answers a bool, so there is nothing here
             // saying the peer reset as against the write failing for another reason, and claiming
             // the more specific code would be inventing the evidence for it.
@@ -1682,8 +1681,8 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
         }
 
         if (inbound.command == relayEnd() && k.hasStream && inbound.streamId == k.streamId) {
-          core.log("relayd: [" + itoa(c.id) + "]  the client ended stream " + itoa(k.streamId) + " after " +
-                   itoa(k.streamIn) + " bytes in, " + itoa(k.streamOut) + " bytes out");
+          core.log("relayd: [\{c.id}]  the client ended stream \{k.streamId} after " +
+                   "\{k.streamIn} bytes in, \{k.streamOut} bytes out");
           cli.closeSocket(k.streamSock);
           k.hasStream = false;
           continue;
@@ -1696,7 +1695,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
             c.tls = sendCell(cli, c.sockObj, c.tls,
                            sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId,
                                         endNotDirectory()));
-            core.log("relayd: [" + itoa(c.id) + "]  a BEGIN_DIR, refused: no documents to serve");
+            core.log("relayd: [\{c.id}]  a BEGIN_DIR, refused: no documents to serve");
             continue;
           }
           k.dirStream = inbound.streamId;
@@ -1705,7 +1704,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           // BEGIN it otherwise resembles.
           c.tls = sendCell(cli, c.sockObj, c.tls,
                          sendToClient(k.hop, k.circId, relayConnected(), k.dirStream, u8[]()));
-          core.log("relayd: [" + itoa(c.id) + "]  a directory stream opened as " + itoa(k.dirStream));
+          core.log("relayd: [\{c.id}]  a directory stream opened as \{k.dirStream}");
           continue;
         }
 
@@ -1719,11 +1718,11 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           if (act.ready) {
             if (act.descriptor.len() > 0) {
               x.docs = filed(x.docs, act.descriptor, act.blindedKey, MAX_STORED_DESCRIPTORS);
-              core.log("relayd: [" + itoa(c.id) + "]  filed an onion service descriptor, " +
-                       itoa(x.docs.hsDescriptors.len()) + " held");
+              core.log("relayd: [\{c.id}]  filed an onion service descriptor, " +
+                       "\{x.docs.hsDescriptors.len()} held");
             } else if (act.refusedFor != PUB_OK) {
-              core.warn("relayd: [" + itoa(c.id) + "]  refused a descriptor, reason " +
-                        itoa(act.refusedFor));
+              core.warn("relayd: [\{c.id}]  refused a descriptor, reason " +
+                        "\{act.refusedFor}");
             }
             // 498 bytes to a cell, which is what `chunkRequest` splits at — named for the client's
             // side of the same operation, and the same arithmetic in this direction.
@@ -1734,21 +1733,21 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
             }
             c.tls = sendCell(cli, c.sockObj, c.tls,
                            sendToClient(k.hop, k.circId, relayEnd(), k.dirStream, endReason()));
-            core.log("relayd: [" + itoa(c.id) + "]  answered a directory request with " +
-                     itoa(act.response.len()) + " bytes in " + itoa(parts.len()) + " cells");
+            core.log("relayd: [\{c.id}]  answered a directory request with " +
+                     "\{act.response.len()} bytes in \{parts.len()} cells");
             k.dirStream = -1;
           }
           continue;
         }
 
-        core.log("relayd: [" + itoa(c.id) + "]  relay command " + itoa(inbound.command) + " on stream " +
-                 itoa(inbound.streamId) + " (this circuit has " +
-                 (k.hasStream ? "stream " + itoa(k.streamId) : "no stream") + ")");
+        core.log("relayd: [\{c.id}]  relay command \{inbound.command} on stream " +
+                 "\{inbound.streamId} (this circuit has " +
+                 (k.hasStream ? "stream \{k.streamId}" : "no stream") + ")");
         continue;
       }
 
       if (command == cmdDestroy()) {
-        core.log("relayd: [" + itoa(c.id) + "]  the initiator destroyed circuit " + itoa(cellCircId(cell, 0, ID_WIDE)));
+        core.log("relayd: [\{c.id}]  the initiator destroyed circuit \{cellCircId(cell, 0, ID_WIDE)}");
         i32 gone = findCirc(c, cellCircId(cell, 0, ID_WIDE));
         if (gone >= 0) { dropCirc(core, cli, c, gone, x.intros, x.rends); }
         continue;
@@ -1789,18 +1788,18 @@ bool roomForCirc(Core core, Cli cli, Conn c, i32 circId, Conn?[] conns, i32 live
   // **The ring, before the per-connection cap.** `accepting` is not threaded down here, so this
   // counts the accept whether or not one is outstanding: an overestimate of one, on the safe side.
   if (!ringHasRoom(outstanding(conns, live, true))) {
-    core.warn("relayd: [" + itoa(c.id) + "]  at " + itoa(outstanding(conns, live, true)) +
-              " outstanding calls of " + itoa(CALL_SLOTS) + ", refusing a circuit");
+    core.warn("relayd: [\{c.id}]  at \{outstanding(conns, live, true)}" +
+              " outstanding calls of \{CALL_SLOTS}, refusing a circuit");
     c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(circId, DESTROY_RESOURCELIMIT));
     return false;
   }
   if (findCirc(c, circId) >= 0) {
-    core.warn("relayd: [" + itoa(c.id) + "]  circuit " + itoa(circId) + " is already open on this connection");
+    core.warn("relayd: [\{c.id}]  circuit \{circId} is already open on this connection");
     c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(circId, DESTROY_PROTOCOL));
     return false;
   }
   if (c.circCount >= MAX_CIRCS) {
-    core.warn("relayd: [" + itoa(c.id) + "]  at " + itoa(MAX_CIRCS) + " circuits on one connection, refusing another");
+    core.warn("relayd: [\{c.id}]  at \{MAX_CIRCS} circuits on one connection, refusing another");
     c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(circId, DESTROY_RESOURCELIMIT));
     return false;
   }
@@ -1857,19 +1856,19 @@ Extended extendCircuit(Core core, Cli cli, u8[] extendBody, Identity id) {
     core.warn("relayd:   asked to extend to ourselves; refusing");
     return bad;
   }
-  string host = itoa(target[0] as i32) + "." + itoa(target[1] as i32) + "." + itoa(target[2] as i32) + "." +
-                itoa(target[3] as i32);
+  string host = "\{target[0] as i32}.\{target[1] as i32}.\{target[2] as i32}." +
+                "\{target[3] as i32}";
   i32 port = target[4] as i32 * 256 + target[5] as i32;
-  core.log("relayd:   extending to " + host + ":" + itoa(port));
+  core.log("relayd:   extending to \{host}:\{port}");
 
   Link next = connectRelay(core, cli, host, port);
   if (next.dead) {
-    core.warn("relayd:   could not reach " + host + ":" + itoa(port));
+    core.warn("relayd:   could not reach \{host}:\{port}");
     return bad;
   }
   handshakeTls(next);
   if (next.dead || !linkHandshake(next, host)) {
-    core.warn("relayd:   the link handshake with " + host + " failed");
+    core.warn("relayd:   the link handshake with \{host} failed");
     cli.closeSocket(next.sock);
     return bad;
   }
@@ -1898,7 +1897,7 @@ Extended extendCircuit(Core core, Cli cli, u8[] extendBody, Identity id) {
     i32 command = cellCommand(cell, 0, ID_WIDE);
     if (command == cmdPadding()) { continue; }
     if (command != cmdCreated2() || cellCircId(cell, 0, ID_WIDE) != nextCircId) {
-      core.warn("relayd:   the next hop answered with cell command " + itoa(command));
+      core.warn("relayd:   the next hop answered with cell command \{command}");
       cli.closeSocket(next.sock);
       return bad;
     }

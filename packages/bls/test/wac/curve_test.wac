@@ -25,7 +25,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -138,15 +137,15 @@ Vectors vectors(T t, Cli cli, i32 g) {
   Vectors none = Vectors(false, Good[].filled(0, Good("", "", "")), Bad[].filled(0, Bad("", "")));
   string path = "packages/bls/test/" + (g == G1() ? "g1.json" : "g2.json");
   FileResult f = cli.readFile(path).wait();
-  t.isTrue(f.ok, path + " could not be read: " + f.error);
+  t.isTrue(f.ok, "\{path} could not be read: \{f.error}");
   if (!f.ok) { return none; }
   JsonValue? doc = parse(f.bytes);
-  t.isTrue(!(doc is null), path + " did not parse");
+  t.isTrue(!(doc is null), "\{path} did not parse");
   if (doc is null) { return none; }
 
   JsonArray? goods = memberArray(doc!, "good");
   JsonArray? bads = memberArray(doc!, "bad");
-  t.isTrue(!(goods is null) && !(bads is null), path + " has no `good` or `bad`");
+  t.isTrue(!(goods is null) && !(bads is null), "\{path} has no `good` or `bad`");
   if ((goods is null) || (bads is null)) { return none; }
 
   Good[] good = Good[].filled(goods!.len(), Good("", "", ""));
@@ -169,15 +168,15 @@ export string test_valid_points_decompress_to_the_coordinates_python_computed(Co
   for (i32 g = 0; g < 2; g++) {
     Vectors v = vectors(t, cli, g);
     if (!v.ok) { continue; }
-    t.isTrue(v.good.len() > 3, groupName(g) + ": only " + itoa(v.good.len()) + " good vectors");
+    t.isTrue(v.good.len() > 3, "\{groupName(g)}: only \{v.good.len()} good vectors");
     for (i32 i = 0; i < v.good.len(); i++) {
       u8[] s = decoded(v.good[i].hexBytes);
       i32 status = statusOf(g, s);
-      t.eqI32(status, 0, groupName(g) + " " + v.good[i].hexBytes.slice(0, 16) + "… was refused");
+      t.eqI32(status, 0, "\{groupName(g)} \{v.good[i].hexBytes.slice(0, 16)}… was refused");
       if (status != 0) { continue; }
       if (v.good[i].x.len() == 0) { continue; }        // infinity has no affine coordinates
-      t.eqStr(hex(xOf(g, s)), v.good[i].x, groupName(g) + " x");
-      t.eqStr(hex(yOf(g, s)), v.good[i].y, groupName(g) + " y");
+      t.eqStr(hex(xOf(g, s)), v.good[i].x, "\{groupName(g)} x");
+      t.eqStr(hex(yOf(g, s)), v.good[i].y, "\{groupName(g)} y");
     }
   }
   return t.report();
@@ -195,7 +194,7 @@ export string test_compression_round_trips_so_there_is_one_encoding_per_point(Co
     if (!v.ok) { continue; }
     for (i32 i = 0; i < v.good.len(); i++) {
       t.eqStr(hex(roundTripOf(g, decoded(v.good[i].hexBytes))), v.good[i].hexBytes,
-              groupName(g) + " round trip");
+              "\{groupName(g)} round trip");
     }
   }
   return t.report();
@@ -211,16 +210,16 @@ export string test_every_malformed_encoding_is_refused_and_refused_as_malformed(
   for (i32 g = 0; g < 2; g++) {
     Vectors v = vectors(t, cli, g);
     if (!v.ok) { continue; }
-    t.isTrue(v.bad.len() > 0, groupName(g) + ": no bad vectors");
+    t.isTrue(v.bad.len() > 0, "\{groupName(g)}: no bad vectors");
     for (i32 i = 0; i < v.bad.len(); i++) {
       i32 status = statusOf(g, decoded(v.bad[i].hexBytes));
-      t.isFalse(status == 0, groupName(g) + " accepted: " + v.bad[i].why);
-      t.eqI32(status, 1, groupName(g) + " " + v.bad[i].why + ": expected an encoding refusal");
+      t.isFalse(status == 0, "\{groupName(g)} accepted: \{v.bad[i].why}");
+      t.eqI32(status, 1, "\{groupName(g)} \{v.bad[i].why}: expected an encoding refusal");
     }
     // Wrong lengths too, since the caller controls those.
     for (i32 i = 0; i < lengths[g].len(); i++) {
       t.isFalse(statusOf(g, u8[].filled(lengths[g][i], 0)) == 0,
-                groupName(g) + ": a " + itoa(lengths[g][i]) + "-byte input was accepted");
+                "\{groupName(g)}: a \{lengths[g][i]}-byte input was accepted");
     }
   }
   return t.report();
@@ -244,9 +243,9 @@ export string test_scalar_multiples_of_the_generators_match_python(Core core, Cl
   for (i32 g = 0; g < 2; g++) {
     Vectors v = vectors(t, cli, g);
     if (!v.ok || v.good.len() < 4) { continue; }
-    t.eqStr(hex(generatorOf(g)), v.good[1].hexBytes, groupName(g) + " generator");
-    t.eqStr(hex(mulGeneratorOf(g, scalar(2))), v.good[2].hexBytes, groupName(g) + " 2·G");
-    t.eqStr(hex(mulGeneratorOf(g, scalar(3))), v.good[3].hexBytes, groupName(g) + " 3·G");
+    t.eqStr(hex(generatorOf(g)), v.good[1].hexBytes, "\{groupName(g)} generator");
+    t.eqStr(hex(mulGeneratorOf(g, scalar(2))), v.good[2].hexBytes, "\{groupName(g)} 2·G");
+    t.eqStr(hex(mulGeneratorOf(g, scalar(3))), v.good[3].hexBytes, "\{groupName(g)} 3·G");
   }
   return t.report();
 }

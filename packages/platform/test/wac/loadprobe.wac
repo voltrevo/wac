@@ -8,7 +8,6 @@
 // One line per call, in a fixed order, so a diff says which shape moved.
 
 import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule, Sys } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** Every shape in the closed set, plus the two refusals — in the order the report prints them. */
 string[] shapes() {
@@ -28,7 +27,7 @@ export i32 main(Sys sys) {
   string path = string.fromBytes(cli.arg(0).wait());
   FileResult f = cli.readFile(path).wait();
   if (!f.ok) {
-    core.warn("loadprobe: cannot read " + path + " — " + f.error);
+    core.warn("loadprobe: cannot read \{path} — \{f.error}");
     return 1;
   }
 
@@ -40,7 +39,7 @@ export i32 main(Sys sys) {
     return 0;
   }
   if (m.handle < 0) {
-    core.warn("loadprobe: " + m.error);
+    core.warn("loadprobe: \{m.error}");
     return 1;
   }
 
@@ -49,7 +48,7 @@ export i32 main(Sys sys) {
     // `21` for every call, so `twice` answering 42 is the argument having arrived rather than a
     // constant that happens to match.
     CallResult c = cli.call(m.handle, names[i], 21);
-    core.log(names[i] + " " + itoa(c.status) + " " + itoa(c.value) + " " + c.text);
+    core.log("\{names[i]} \{c.status} \{c.value} \{c.text}");
   }
   cli.unload(m.handle);
 
@@ -57,6 +56,6 @@ export i32 main(Sys sys) {
   // mistake rather than a crash, and the handle is gone rather than stale — 2, as for any name the
   // module does not have.
   CallResult after = cli.call(m.handle, "answer", 0);
-  core.log("after-unload " + itoa(after.status));
+  core.log("after-unload \{after.status}");
   return 0;
 }

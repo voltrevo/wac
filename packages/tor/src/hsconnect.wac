@@ -38,9 +38,7 @@ import {
 } from "./bootstrap.wac";
 import {
   Link, connectRelay, handshakeTls, linkHandshake, createCircuit, extendTo, sendCells, nextCell,
-  itoa,
 } from "./link.wac";
-import { itoa64 } from "../../wactest/src/itoa64.wac";
 import {
   Circuit, Received, gotNothing, gotData, gotEnd, gotConnected, gotDestroyed, gotBroken,
 } from "./circuit.wac";
@@ -77,9 +75,9 @@ export i32 main(Sys sys) {
     return 1;
   }
   FileResult seedFile = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
-  if (!seedFile.ok) { core.warn("tor: " + seedFile.error); return 1; }
+  if (!seedFile.ok) { core.warn("tor: \{seedFile.error}"); return 1; }
   FileResult authFile = cli.readFile(string.fromBytes(cli.arg(1).wait())).wait();
-  if (!authFile.ok) { core.warn("tor: " + authFile.error); return 1; }
+  if (!authFile.ok) { core.warn("tor: \{authFile.error}"); return 1; }
   u8[] address = cli.arg(2).wait();
   i32 port = parsePort(string.fromBytes(cli.arg(3).wait()));
   if (port <= 0) { core.warn("tor: the port must be a positive number"); return 1; }
@@ -106,7 +104,7 @@ export i32 main(Sys sys) {
     core.warn("tor: the descriptor names no usable introduction point");
     return 1;
   }
-  core.log(itoa(points.len()) + " introduction points");
+  core.log("\{points.len()} introduction points");
 
   // The subcredential again — `fetchDescriptor` needed it to decrypt and the handshake needs it to
   // authenticate. Recomputed rather than threaded back out, because the period could have rolled
@@ -130,7 +128,7 @@ i32 connect(Core core, Cli cli, Network net, IntroPoint[] points, u8[] subcred, 
   u8[] cookie = core.randomBytes(20).wait();
   Session rend = buildCircuit(core, cli, net, 0, 0x80000020);
   if (!rend.ok) { core.warn("tor: could not build a rendezvous circuit"); return 1; }
-  core.log("rendezvous circuit: " + rend.description);
+  core.log("rendezvous circuit: \{rend.description}");
 
   i32 rendRelay = lastHopOf(net, rend.description);
   if (rendRelay < 0) {
@@ -145,7 +143,7 @@ i32 connect(Core core, Cli cli, Network net, IntroPoint[] points, u8[] subcred, 
     cli.closeSocket(rend.link.sock);
     return 1;
   }
-  core.log("rendezvous established at " + net.relays[rendRelay].nickname);
+  core.log("rendezvous established at \{net.relays[rendRelay].nickname}");
 
   // ── 2. An introduction circuit, and the one cell that goes over it ──────────
   //
@@ -173,7 +171,7 @@ i32 introduceVia(Core core, Cli cli, Network net, IntroPoint p, u8[] subcred, u8
                  i32 rendRelay, Session rend, i32 which) {
   i32 introRelay = relayByEd25519(net, linkSpecifier(p.linkSpecifiers, LS_ED25519_ID));
   if (introRelay < 0) {
-    core.warn("tor: introduction point " + itoa(which) + " is not a relay in this consensus");
+    core.warn("tor: introduction point \{which} is not a relay in this consensus");
     return 1;
   }
 
@@ -204,7 +202,7 @@ i32 introduceVia(Core core, Cli cli, Network net, IntroPoint p, u8[] subcred, u8
     core.warn("tor: could not reach the introduction point");
     return 1;
   }
-  core.log("introduction circuit: " + intro.description);
+  core.log("introduction circuit: \{intro.description}");
   sendCells(intro.link, intro.circ.onionCell(relayIntroduce1(), cell));
   Awaited ack = awaitCommand(core, intro.link, intro.circ, relayIntroduceAck());
   cli.closeSocket(intro.link.sock);
@@ -215,7 +213,7 @@ i32 introduceVia(Core core, Cli cli, Network net, IntroPoint p, u8[] subcred, u8
   // INTRODUCE_ACK's status is two bytes; anything but zero is a refusal with a reason.
   if (ack.data.len() >= 2 && (ack.data[0] != 0 || ack.data[1] != 0)) {
     core.warn("tor: the introduction point refused the cell, status " +
-              itoa((ack.data[0] as i32 * 256) + ack.data[1] as i32));
+              "\{(ack.data[0] as i32 * 256) + ack.data[1] as i32}");
     return 1;
   }
   core.log("introduction acknowledged");
@@ -246,7 +244,7 @@ i32 introduceVia(Core core, Cli cli, Network net, IntroPoint p, u8[] subcred, u8
     return 1;
   }
   rend.circ.addRendezvousHop(rendezvousCircuitKeys(slice(out, 32, 64)));
-  core.log("joined: the service is hop " + itoa(rend.circ.length()));
+  core.log("joined: the service is hop \{rend.circ.length()}");
 
   return 0;
 }
@@ -260,7 +258,7 @@ i32 afterJoin(Core core, Cli cli, Session rend, i32 port) {
   // general one. Sending `127.0.0.1:port` instead is accepted by nothing and refused silently — the
   // service simply never answers, which reads as a broken circuit.
   i32 sid = rend.circ.beginStream();
-  sendCells(rend.link, rend.circ.beginCell(sid, ":" + itoa(port)));
+  sendCells(rend.link, rend.circ.beginCell(sid, ":\{port}"));
   u8[] body = readStream(core, rend.link, rend.circ, sid, port);
   cli.closeSocket(rend.link.sock);
   if (body.len() == 0) { return 1; }
@@ -284,7 +282,7 @@ u8[] readStream(Core core, Link l, Circuit c, i32 sid, i32 port) {
       // means the service's own target port is not listening, which is a problem at the far end and
       // not with the circuit that just took four hops to build.
       core.warn("tor: the service refused the stream, reason " +
-                (got.data.len() > 0 ? itoa(got.data[0] as i32) : "unstated"));
+                (got.data.len() > 0 ? "\{got.data[0] as i32}" : "unstated"));
       break;
     }
     if (got.kind == gotConnected() && !connected) {

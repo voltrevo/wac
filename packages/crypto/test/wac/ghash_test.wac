@@ -18,7 +18,6 @@
 // No oracle: the field's algebra is the check.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { ghash } from "../../src/ghash.wac";
 
 /** A deterministic 16-byte block. An LCG, so the corpus costs three lines to store. */
@@ -54,7 +53,7 @@ export string test_multiplication_is_bilinear() {
     u8[] x = r.block();
     u8[] y = r.block();
     t.eqBytes(mul(h, xorBlocks(x, y)), xorBlocks(mul(h, x), mul(h, y)),
-              "bilinear at round " + itoa64(i as i64));
+              "bilinear at round \{i as i64}");
   }
   return t.report();
 }
@@ -65,7 +64,7 @@ export string test_multiplication_commutes() {
   for (i32 i = 0; i < 200; i++) {
     u8[] a = r.block();
     u8[] b = r.block();
-    t.eqBytes(mul(a, b), mul(b, a), "commutes at round " + itoa64(i as i64));
+    t.eqBytes(mul(a, b), mul(b, a), "commutes at round \{i as i64}");
   }
   return t.report();
 }
@@ -99,7 +98,7 @@ export string test_it_is_associative_over_three_blocks() {
     u8[] b = r.block();
     u8[] c = r.block();
     t.eqBytes(mul(mul(a, b), c), mul(a, mul(b, c)),
-              "associative at round " + itoa64(i as i64));
+              "associative at round \{i as i64}");
   }
   return t.report();
 }

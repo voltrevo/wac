@@ -27,7 +27,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
 import { hex } from "../../../wactest/src/oracle.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Big, DivMod, add, mul, divmod } from "../../../bignum/src/big.wac";
 import { fromBytes, toBytes } from "../../src/rsa.wac";
 import { sha256 } from "../../src/sha256.wac";
@@ -81,7 +80,7 @@ void compareMultiplies(T t, string curve, u8[] orderBE) {
     u8[] ar = scnToBytes(scnReduce(o, scnFromBytes(a)));
     u8[] br = scnToBytes(scnReduce(o, scnFromBytes(b)));
     t.eqBytes(mulModByMontgomery(o, ar, br), mulModByDivision(ar, br, orderBE),
-              curve + " #" + itoa(i) + ": " + hex(ar) + " * " + hex(br));
+              "\{curve} #\{i}: \{hex(ar)} * \{hex(br)}");
   }
 }
 
@@ -101,7 +100,7 @@ void compareEdges(T t, string curve, u8[] orderBE) {
   one[len - 1] = 1;
   // n itself must reduce to zero, which is the one input `scnReduce`'s single conditional
   // subtraction is exactly on the boundary of.
-  t.isTrue(scnIsZero(scnReduce(o, scnFromBytes(orderBE))), curve + ": n did not reduce to zero");
+  t.isTrue(scnIsZero(scnReduce(o, scnFromBytes(orderBE))), "\{curve}: n did not reduce to zero");
 
   i64[] top = scnFromBytes(orderBE);
   i64[] minusOne = i64[].filled(len / 4, 0);
@@ -114,7 +113,7 @@ void compareEdges(T t, string curve, u8[] orderBE) {
   u8[][] rhs = [zero, one, one, nm1, nm1];
   for (i32 i = 0; i < names.len(); i++) {
     t.eqBytes(mulModByMontgomery(o, lhs[i], rhs[i]), mulModByDivision(lhs[i], rhs[i], orderBE),
-              curve + " " + names[i]);
+              "\{curve} \{names[i]}");
   }
 }
 
@@ -131,12 +130,12 @@ void checkRoundTrip(T t, string curve, u8[] orderBE) {
   for (i32 i = 0; i < 8; i++) {
     u8[] a = scnToBytes(scnReduce(o, scnFromBytes(sample(100 + i, len))));
     u8[] back = scnToBytes(scnLeave(o, scnEnter(o, scnFromBytes(a))));
-    t.eqBytes(back, a, curve + " #" + itoa(i) + ": entering and leaving the form changed it");
+    t.eqBytes(back, a, "\{curve} #\{i}: entering and leaving the form changed it");
   }
   // And `scnOne` is 1 in the form: leaving it must give plain 1.
   u8[] one = u8[].filled(len, 0);
   one[len - 1] = 1;
-  t.eqBytes(scnToBytes(scnLeave(o, scnOne(o))), one, curve + ": scnOne is not one");
+  t.eqBytes(scnToBytes(scnLeave(o, scnOne(o))), one, "\{curve}: scnOne is not one");
 }
 
 export string test_a_value_survives_entering_and_leaving_the_form(Core core, Cli cli) {
@@ -157,7 +156,7 @@ void checkInverses(T t, string curve, u8[] orderBE) {
     i64[] am = scnEnter(o, a);
     i64[] inv = scnInvert(o, am);
     t.eqBytes(scnToBytes(scnLeave(o, scnMont(o, am, inv))), one,
-              curve + " #" + itoa(i) + ": a * (1/a) is not 1");
+              "\{curve} #\{i}: a * (1/a) is not 1");
   }
 }
 
@@ -179,7 +178,7 @@ void checkAdds(T t, string curve, u8[] orderBE) {
     // `bignum`'s own add, then one division: a sum of two values below n is below 2n.
     Big sum = add(fromBytes(scnToBytes(a)), fromBytes(scnToBytes(b)));
     t.eqBytes(got, toBytes(divmod(sum, n).r, len),
-              curve + " #" + itoa(i) + ": " + hex(scnToBytes(a)) + " + " + hex(scnToBytes(b)));
+              "\{curve} #\{i}: \{hex(scnToBytes(a))} + \{hex(scnToBytes(b))}");
   }
 }
 

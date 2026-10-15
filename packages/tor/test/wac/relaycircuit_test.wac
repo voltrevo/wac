@@ -17,7 +17,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Circuit } from "../../src/circuit.wac";
 import { NTOR_KEY_MATERIAL } from "../../src/relay.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
 import {
   Created, Inbound, answerCreate2, create2Handshake, created2Cell, destroyCell,

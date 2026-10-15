@@ -15,7 +15,6 @@
 // `*_test.wac`. `issues/system/0161`.
 
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** What an external tool said: its bytes, or why it refused. */
 export struct External {
@@ -37,7 +36,7 @@ export External pythonGzip(Cli cli, u8[] data, i32 level) {
                  [
                           "-c",
                           "import sys,gzip; sys.stdout.buffer.write(gzip.compress(" +
-                          "sys.stdin.buffer.read(), " + itoa(level) + "))"
+                          "sys.stdin.buffer.read(), \{level}))"
                  ],
                  data);
 }
@@ -54,7 +53,7 @@ export External pythonGzipNamed(Cli cli, u8[] data, string name) {
                           "-c",
                           "import sys,gzip,io\n" +
                           "b = io.BytesIO()\n" +
-                          "with gzip.GzipFile(\"" + name + "\", \"wb\", 6, b, 0) as f:\n" +
+                          "with gzip.GzipFile(\"\{name}\", \"wb\", 6, b, 0) as f:\n" +
                           "    f.write(sys.stdin.buffer.read())\n" +
                           "sys.stdout.buffer.write(b.getvalue())\n"
                  ],
@@ -71,8 +70,8 @@ export External pythonZlib(Cli cli, u8[] data, i32 level, i32 wbits) {
   return through(cli, "python3",
                  [
                           "-c",
-                          "import sys,zlib; c=zlib.compressobj(" + itoa(level) +
-                          ",zlib.DEFLATED," + itoa(wbits) + "); " +
+                          "import sys,zlib; c=zlib.compressobj(\{level}" +
+                          ",zlib.DEFLATED,\{wbits}); " +
                           "sys.stdout.buffer.write(c.compress(sys.stdin.buffer.read())+c.flush())"
                  ],
                  data);
@@ -81,10 +80,10 @@ export External pythonZlib(Cli cli, u8[] data, i32 level, i32 wbits) {
 /** One program, fed `input` on standard input, run to completion. */
 External through(Cli cli, string program, string[] args, u8[] input) {
   Exec r = cli.exec(program, args, input).wait();
-  if (!r.ran()) { return External(u8[](), program + " would not start: " + r.error); }
+  if (!r.ran()) { return External(u8[](), "\{program} would not start: \{r.error}"); }
   if (r.status != 0) {
     return External(u8[](),
-                    program + " refused the stream (exit " + itoa(r.status) + "): " +
+                    "\{program} refused the stream (exit \{r.status}): " +
                     string.fromBytes(r.stderr));
   }
   return External(r.stdout, "");
@@ -107,15 +106,15 @@ export i32 firstDifference(u8[] a, u8[] b) {
 /** `gz` decompressed by the system gunzip, required to equal `input` — as a message or "". */
 export string roundTrip(Cli cli, u8[] gz, string name, u8[] input) {
   External out = gunzip(cli, gz);
-  if (!out.ok()) { return name + ": " + out.error; }
+  if (!out.ok()) { return "\{name}: \{out.error}"; }
   i32 diff = firstDifference(out.bytes, input);
   if (diff == -2) {
-    return name + ": gunzip gave " + itoa(out.bytes.len()) + " bytes, expected " +
-           itoa(input.len());
+    return "\{name}: gunzip gave \{out.bytes.len()} bytes, expected " +
+           "\{input.len()}";
   }
   if (diff >= 0) {
-    return name + ": byte " + itoa(diff) + " differs — got " + itoa(out.bytes[diff] as i32) +
-           ", expected " + itoa(input[diff] as i32);
+    return "\{name}: byte \{diff} differs — got \{out.bytes[diff] as i32}" +
+           ", expected \{input[diff] as i32}";
   }
   return "";
 }

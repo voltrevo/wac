@@ -27,7 +27,6 @@
 // conventionally sent as DTLS 1.0 whatever the negotiated version, which RFC 6347 §4.2.1 admits is
 // an oddity and requires anyway.
 
-import { itoa } from "../../fmt/src/itoa.wac";
 
 /** The record's content types. */
 export i32 typeChangeCipherSpec() { return 20; }
@@ -563,5 +562,5 @@ export u8[] clientPublic(u8[] body) {
 /** A short description of a record, for a test's failure message rather than for a program. */
 export string describe(Record r) {
   if (!r.ok) { return "not a record"; }
-  return "type " + itoa(r.kind) + " epoch " + itoa(r.epoch) + " len " + itoa(r.fragment.len());
+  return "type \{r.kind} epoch \{r.epoch} len \{r.fragment.len()}";
 }

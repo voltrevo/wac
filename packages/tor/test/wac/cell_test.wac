@@ -10,7 +10,6 @@
 // The interop check that these are the bytes a real relay accepts is the link handshake test.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   encodeFixed, encodeVar, cellSize, cellCommand, cellCircId, cellPayload, isVarLength,
   encodePaddingNegotiate, encodePadding, cmdPaddingNegotiate,
@@ -54,7 +53,7 @@ export string test_a_fixed_cell_is_always_514_bytes() {
   i32[] lens = [0, 1, 100, 508, 509];
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] cell = encodeFixed(0x12345678, cmdRelay(), fill(lens[i], i));
-    t.eqI32(cell.len(), cellLen(), "a " + itoa64(lens[i] as i64) + "-byte payload still fills a cell");
+    t.eqI32(cell.len(), cellLen(), "a \{lens[i] as i64}-byte payload still fills a cell");
     t.eqI32(cellSize(cell, 0, ID_WIDE), cellLen(), "and cellSize agrees");
     t.eqI32(cellCommand(cell, 0, ID_WIDE), cmdRelay(), "the command survives");
     t.eqI32(cellCircId(cell, 0, ID_WIDE), 0x12345678, "and the four-byte circuit id");
@@ -128,7 +127,7 @@ export string test_a_partial_cell_is_reported_as_incomplete() {
   i32[] shortLens = [0, 1, 4, 5, 100, 513];
   for (i32 i = 0; i < shortLens.len(); i++) {
     t.eqI32(cellSize(slice(fixed, 0, shortLens[i]), 0, ID_WIDE), -1,
-            itoa64(shortLens[i] as i64) + " bytes is not yet a cell");
+            "\{shortLens[i] as i64} bytes is not yet a cell");
   }
   t.eqI32(cellSize(fixed, 0, ID_WIDE), 514, "and 514 is");
 
@@ -136,7 +135,7 @@ export string test_a_partial_cell_is_reported_as_incomplete() {
   i32[] varShort = [0, 3, 6, 7, 200, 306];
   for (i32 i = 0; i < varShort.len(); i++) {
     t.eqI32(cellSize(slice(var, 0, varShort[i]), 0, ID_WIDE), -1,
-            itoa64(varShort[i] as i64) + " bytes is not yet a variable cell");
+            "\{varShort[i] as i64} bytes is not yet a variable cell");
   }
   t.eqI32(cellSize(var, 0, ID_WIDE), 307, "and 307 is");
   return t.report();

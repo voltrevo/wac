@@ -6,7 +6,6 @@
 // One of the packages `issues/system/0205` records as unmeasured.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
   test_namehash_and_dns_encoding_match_ethers as ens__namehash_and_dns_encoding_match_ethers,
@@ -139,6 +138,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED traps_test test_the_limit_and_the_ordinary_calls_do_not_trap");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("ens: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("ens: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

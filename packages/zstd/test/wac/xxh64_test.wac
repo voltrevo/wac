@@ -19,7 +19,6 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { xxh64, xxh64Low } from "../../src/xxh64.wac";
 import { streamed, ragged } from "./xxh64_probe.wac";
 
@@ -56,7 +55,7 @@ export string test_the_published_vectors() {
   string[] want = vectorDigests();
   for (i32 i = 0; i < texts.len(); i++) {
     u8[] d = texts[i].toBytes();
-    t.eqStr(hex64(xxh64(d, 0, d.len())), want[i], "\"" + texts[i] + "\"");
+    t.eqStr(hex64(xxh64(d, 0, d.len())), want[i], "\"\{texts[i]}\"");
   }
   return t.report();
 }
@@ -73,7 +72,7 @@ export string test_every_length_across_the_stripe_and_tail_boundaries() {
   for (i32 n = 0; n <= 100; n++) {
     string h = hex64(xxh64(data, 0, n));
     for (i32 k = 0; k < n; k++) {
-      t.isFalse(seen[k] == h, "length " + itoa(n) + " hashes the same as " + itoa(k));
+      t.isFalse(seen[k] == h, "length \{n} hashes the same as \{k}");
     }
     seen[n] = h;
   }
@@ -131,9 +130,9 @@ export string test_streamed_in_every_chunk_size_the_digest_is_the_one_shots() {
     i32 most = (len < 1 ? 1 : len) + 1;
     for (i32 cut = 1; cut <= most; cut++) {
       t.eqStr(hex64(streamed(d, cut)), want,
-              "length " + itoa(len) + " cut every " + itoa(cut));
+              "length \{len} cut every \{cut}");
     }
-    t.eqStr(hex64(ragged(d)), want, "length " + itoa(len) + " in ragged pieces");
+    t.eqStr(hex64(ragged(d)), want, "length \{len} in ragged pieces");
   }
   return t.report();
 }
@@ -152,7 +151,7 @@ export string test_and_the_published_vectors_survive_being_cut_up() {
     u8[] d = texts[i].toBytes();
     for (i32 c = 0; c < cuts.len(); c++) {
       t.eqStr(hex64(streamed(d, cuts[c])), want[i],
-              "\"" + texts[i] + "\" cut every " + itoa(cuts[c]));
+              "\"\{texts[i]}\" cut every \{cuts[c]}");
     }
   }
   return t.report();

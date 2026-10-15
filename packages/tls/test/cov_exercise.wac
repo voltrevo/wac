@@ -20,7 +20,6 @@
 // the question worth asking of the first number rather than answering in advance.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_every_single_byte_tampering_is_refused as c__every_single_byte_tampering_is_refused,
 } from "./wac/certtamper_test.wac";
@@ -678,7 +677,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED x509gen_test test_time_crosses_the_utc_boundary_correctly");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("tls: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("tls: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }
 

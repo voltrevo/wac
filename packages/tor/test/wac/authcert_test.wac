@@ -42,12 +42,12 @@ AuthorityKeys keysFrom(JsonObject v) {
 
 /** The PEM body between `label`'s BEGIN and END lines, decoded — or empty. */
 u8[] blockAfter(u8[] doc, string keyword, string label) {
-  i32 at = indexOfLine(doc, keyword + "\n");
+  i32 at = indexOfLine(doc, "\{keyword}\n");
   if (at < 0) { return u8[](); }
-  i32 begin = indexOfFrom(doc, "-----BEGIN " + label + "-----\n", at);
+  i32 begin = indexOfFrom(doc, "-----BEGIN \{label}-----\n", at);
   if (begin < 0) { return u8[](); }
-  i32 bodyAt = begin + ("-----BEGIN " + label + "-----\n").toBytes().len();
-  i32 end = indexOfFrom(doc, "-----END " + label + "-----\n", bodyAt);
+  i32 bodyAt = begin + "-----BEGIN \{label}-----\n".toBytes().len();
+  i32 end = indexOfFrom(doc, "-----END \{label}-----\n", bodyAt);
   if (end < 0) { return u8[](); }
   return base64Of(doc, bodyAt, end);
 }
@@ -107,7 +107,7 @@ export string test_each_signature_was_made_by_the_key_that_should_have_made_it(C
 
   // The `fingerprint` line has to be that digest, unbroken and uppercase — tor recomputes it from the
   // identity key it just read and refuses the document if they differ.
-  t.isTrue(indexOfLine(cert, "fingerprint " + plainFingerprint(fingerprint) + "\n") >= 0,
+  t.isTrue(indexOfLine(cert, "fingerprint \{plainFingerprint(fingerprint)}\n") >= 0,
            "the fingerprint line is the identity digest in unbroken hex");
 
   // The crosscert: recovered with the *signing* key, and the payload is the fingerprint. Nothing about

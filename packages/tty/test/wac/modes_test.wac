@@ -50,7 +50,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { ttycatBytes } from "../../example/ttycat.wac";
 import { DEL, KILL, REPRINT, SHARED, j3, j4, k, modeCases, modeCaseNames, modes, sameBytes, show,
          t } from "./cases.wac";
@@ -89,11 +88,11 @@ export string test_the_pty_harness_reproduces_the_oracle_line_test_trusts(Core c
         continue;
       }
       t.eqStr(show(v.items[j].out), show(first),
-              "the two oracles disagree about " + names[i] + " — the capture should have refused");
+              "the two oracles disagree about \{names[i]} — the capture should have refused");
     }
     if (seen >= 2) { pairs = pairs + 1; }
   }
-  t.eqI32(pairs, SHARED, itoa(pairs) + " of " + itoa(SHARED) + " shared cases were recorded from both " +
+  t.eqI32(pairs, SHARED, "\{pairs} of \{SHARED} shared cases were recorded from both " +
                          "oracles — with one record each there is nothing here to compare");
 
   // And one asked live, so this is not only a claim about the day of the capture: `discipline.py` in
@@ -170,13 +169,13 @@ export string test_line_answers_what_the_kernel_answers_in_every_mode(Core core,
         continue;
       }
       compared = compared + 1;
-      t.eqStr(show(ttycatBytes(all[i], ms[m])), show(want!.out), ms[m] + ": " + names[i]);
+      t.eqStr(show(ttycatBytes(all[i], ms[m])), show(want!.out), "\{ms[m]}: \{names[i]}");
     }
   }
-  t.eqI32(missing, 0, itoa(missing) + " cases have no recorded answer — run `wac run --allow-read " +
+  t.eqI32(missing, 0, "\{missing} cases have no recorded answer — run `wac run --allow-read " +
                       "--allow-write --allow-run tools/wac/ttyvectors.wac`");
   t.eqI32(compared, ms.len() * all.len(),
-          itoa(compared) + " of " + itoa(ms.len() * all.len()) + " comparisons happened");
+          "\{compared} of \{ms.len() * all.len()} comparisons happened");
   return t.report();
 }
 
@@ -201,10 +200,10 @@ export string test_the_live_pty_still_answers_what_was_recorded_in_each_mode(Cor
     if (want is null) { continue; }
     asked = asked + 1;
     t.eqStr(show(discipline(core, cli, ms[m], kill)), show(want!.out),
-            "the live pty in " + ms[m] + " no longer answers what " + v.oracle + " answered — re-run " +
+            "the live pty in \{ms[m]} no longer answers what \{v.oracle} answered — re-run " +
             "`wac run --allow-read --allow-write --allow-run tools/wac/ttyvectors.wac`");
   }
-  t.eqI32(asked, ms.len(), "the canary asked the live pty " + itoa(asked) + " times");
+  t.eqI32(asked, ms.len(), "the canary asked the live pty \{asked} times");
   return t.report();
 }
 
@@ -212,7 +211,7 @@ export string test_the_live_pty_still_answers_what_was_recorded_in_each_mode(Cor
 string recorded(T t, Loaded v, string mode, u8[] input) {
   Vector? got = find(v, mode, input);
   if (got is null) {
-    t.isTrue(false, "no recorded " + mode + " answer for " + show(input));
+    t.isTrue(false, "no recorded \{mode} answer for \{show(input)}");
     return "";
   }
   return show(got!.out);

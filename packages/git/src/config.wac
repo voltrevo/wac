@@ -91,7 +91,7 @@ export Vec<Setting> parseConfig(u8[] text) {
           sub.push(text[i]);
           i = i + 1;
         }
-        sec = sec + "." + sub.toStr();
+        sec = sec + ".\{sub.toStr()}";
       }
       section = sec;
       continue;
@@ -113,7 +113,7 @@ export Vec<Setting> parseConfig(u8[] text) {
       key.push(lower(text[i] as i32) as@ u8);
     }
     if (key.len == 0) { continue; }
-    string full = section == "" ? key.toStr() : section + "." + key.toStr();
+    string full = section == "" ? key.toStr() : "\{section}.\{key.toStr()}";
 
     if (eq < 0) {
       out.push(Setting(full, "", false));

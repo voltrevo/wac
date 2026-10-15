@@ -36,11 +36,10 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std";
 import { contains, splitLines, startsWith, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 string sourceOf(T t, Cli cli, string path) {
   FileResult f = cli.readFile(path).wait();
-  t.isTrue(f.ok, path + " is readable — " + f.error);
+  t.isTrue(f.ok, "\{path} is readable — \{f.error}");
   return f.ok ? string.fromBytes(f.bytes) : "";
 }
 
@@ -128,7 +127,7 @@ export string test_the_reserved_handles_are_the_same_numbers_on_the_wac_side_and
                        stdinV8, parentV8, floorV8
   ];
   for (i32 i = 0; i < names.len() && i < values.len(); i++) {
-    t.neI32(values[i], -1, names[i] + " is not declared where this expects it");
+    t.neI32(values[i], -1, "\{names[i]} is not declared where this expects it");
   }
 
   t.eqI32(stdinWac, 0, "standard input's handle is 0 in platform.wac");
@@ -142,7 +141,7 @@ export string test_the_reserved_handles_are_the_same_numbers_on_the_wac_side_and
   // **The floor is above every reserved number**, which is the property the two constants exist for.
   i32 highest = stdinWac > parentWac ? stdinWac : parentWac;
   t.isTrue(floorJs > highest,
-           "FIRST_FREE_HANDLE is " + itoa(floorJs) + ", which is not past " + itoa(highest));
+           "FIRST_FREE_HANDLE is \{floorJs}, which is not past \{highest}");
   t.eqI32(floorRs, floorJs, "the native host's first free handle is not the JavaScript hosts'");
   t.eqI32(floorV8, floorJs,
           "native/v8's first free handle is not the JavaScript hosts' — 0148 was exactly this");
@@ -157,10 +156,10 @@ export string test_every_hosts_allocation_counter_starts_at_the_floor_rather_tha
   // for one reserved number and silently wrong for two.
   string[] hosts = ["deno.ts", "node.ts", "browser.ts"];
   for (i32 i = 0; i < hosts.len(); i++) {
-    string src = sourceOf(t, cli, "packages/platform/host/" + hosts[i]);
+    string src = sourceOf(t, cli, "packages/platform/host/\{hosts[i]}");
     string[] starts = nextHandleStarts(src);
     t.eqStrArray(starts, ["FIRST_FREE_HANDLE"],
-                 hosts[i] + " starts its handle counter at a literal");
+                 "\{hosts[i]} starts its handle counter at a literal");
   }
 
   // The native host has no counter — its table is a `Vec` and a handle is an index — so what it
@@ -180,7 +179,7 @@ export string test_every_hosts_allocation_counter_starts_at_the_floor_rather_tha
   string v8 = sourceOf(t, cli, "native/v8/src/main.rs");
   bool fromDigit = false;
   for (i32 d = 0; d <= 9; d++) {
-    if (contains(v8, "next_handle: " + itoa(d))) { fromDigit = true; }
+    if (contains(v8, "next_handle: \{d}")) { fromDigit = true; }
   }
   t.isFalse(fromDigit, "native/v8 initialises its handle counter from a number — 0148 was the literal 1");
   t.isTrue(contains(v8, "next_handle: FIRST_FREE_HANDLE,"),

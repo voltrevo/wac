@@ -35,7 +35,6 @@ import { builtByDeno, builtProgram, wacBinary } from "../../../wactest/src/built
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { Server, pause, receiveWithin, startServer, stopServer } from "./peer.wac";
 
@@ -78,7 +77,7 @@ Ran against(T t, Cli cli, string name, string program, string[] argsBefore) {
   string[] args = string[].filled(argsBefore.len() + 3, "");
   for (i32 i = 0; i < argsBefore.len(); i++) { args[i] = argsBefore[i]; }
   args[argsBefore.len()] = "127.0.0.1";
-  args[argsBefore.len() + 1] = itoa(s.port);
+  args[argsBefore.len() + 1] = "\{s.port}";
   args[argsBefore.len() + 2] = "localhost";
 
   Exec r = cli.exec(program, args, u8[]()).wait();
@@ -102,15 +101,15 @@ Ran against(T t, Cli cli, string name, string program, string[] argsBefore) {
  */
 void assertHandshook(T t, Ran r, string label) {
   t.isTrue(r.accepted,
-           label + ": the server did not complete the handshake. Our Finished is an HMAC over the " +
+           "\{label}: the server did not complete the handshake. Our Finished is an HMAC over the " +
            "transcript through the server's own Finished, keyed by the client's handshake secret — " +
            "so this is that transcript, that secret, the packet's destination id, or the Handshake " +
-           "keys it is sealed under. The program said:\n" + r.said);
-  t.eqI32(r.status, 0, label + ": the program did not report success:\n" + r.said);
+           "keys it is sealed under. The program said:\n\{r.said}");
+  t.eqI32(r.status, 0, "\{label}: the program did not report success:\n\{r.said}");
   t.isTrue(contains(r.said, "the server's Finished verifies"),
-           label + ": the client never verified the server's Finished:\n" + r.said);
+           "\{label}: the client never verified the server's Finished:\n\{r.said}");
   t.isTrue(contains(r.said, "the handshake is complete"),
-           label + ": the client never saw the application epoch:\n" + r.said);
+           "\{label}: the client never saw the application epoch:\n\{r.said}");
 }
 
 export string test_a_wac_program_completes_a_quic_handshake_on_its_own_socket(Core core, Cli cli) {
@@ -123,7 +122,7 @@ export string test_a_wac_program_completes_a_quic_handshake_on_its_own_socket(Co
   // has always worked this way, so the two halves now differ only in the host.
   T t = T.create();
   string built = builtByDeno(cli, ENTRY, "quic-handshake-deno", ["--allow-net"], "deno", false);
-  t.isTrue(built != "", "the Deno build of " + ENTRY + " failed");
+  t.isTrue(built != "", "the Deno build of \{ENTRY} failed");
   if (built == "") { return t.report(); }
   assertHandshook(t, against(t, cli, "prog-deno", built, string[].filled(0, "")), "deno");
   return t.report();
@@ -152,7 +151,7 @@ export string test_a_fresh_key_every_run(Core core, Cli cli) {
   // destination, so the only thing left to differ is what the host's entropy gave them.
   T t = T.create();
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
-  t.isTrue(sock.handle >= 0, "our socket did not bind — " + sock.error);
+  t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
   if (sock.handle < 0) { return t.report(); }
 
   string[] seen = string[].filled(2, "");
@@ -162,17 +161,17 @@ export string test_a_fresh_key_every_run(Core core, Cli cli) {
     // rather than an `exec` for exactly that reason: `exec` would wait for a program that is parked
     // in `receiveFrom`.
     Daemon d = start(cli,
-      quoted(wacBinary(cli)) + " " + quoted(handshakeModule(cli)) + " 127.0.0.1 " +
-      itoa(sock.port) + " localhost",
-      cli.cwd().wait() + "/.cache/quic-fresh-" + itoa(i) + ".log");
+      "\{quoted(wacBinary(cli))} \{quoted(handshakeModule(cli))} 127.0.0.1 " +
+      "\{sock.port} localhost",
+      "\{cli.cwd().wait()}/.cache/quic-fresh-\{i}.log");
     if (!d.ok()) {
-      t.fail("the program did not start — " + d.error);
+      t.fail("the program did not start — \{d.error}");
       break;
     }
     u8[] got = receiveWithin(core, cli, sock, 15000);
     seen[i] = string.fromBytes(hexEncode(got));
     stop(cli, d);
-    cli.remove(cli.cwd().wait() + "/.cache/quic-fresh-" + itoa(i) + ".log", false).wait();
+    cli.remove("\{cli.cwd().wait()}/.cache/quic-fresh-\{i}.log", false).wait();
   }
   cli.closeSocket(sock.handle);
 

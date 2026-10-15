@@ -9,7 +9,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { flight, flightMismatched, helloOnly, publicKey } from "./hello_probe.wac";
 import { closeCodeIn, closeReasonIn, handshakeTypeIn, kindsIn, streamLen } from "./frame_probe.wac";
@@ -30,7 +29,7 @@ export string test_the_clienthello_we_write_is_one_we_can_read() {
   T t = T.create();
   u8[] hello = helloOnly(scid(), "localhost");
   t.eqI32(hello[0] as i32, 1, "handshake type 1 is client_hello");
-  t.isTrue(hello.len() > 150, "and it is a real message: " + itoa(hello.len()) + " bytes");
+  t.isTrue(hello.len() > 150, "and it is a real message: \{hello.len()} bytes");
 
   // A key share whose private half we hold. x25519 public keys are 32 bytes, and a wrong length here
   // is the difference between a share a server can use and one it reports as a decode error.
@@ -57,7 +56,7 @@ export string test_a_real_quic_server_accepts_a_first_flight_we_authored(Core co
 
   i32 kinds = kindsIn(payload);
   t.eqI32(kinds & HAS_CLOSE, 0,
-          "not a refusal — code " + itoa(closeCodeIn(payload)) + " " + closeReasonIn(payload));
+          "not a refusal — code \{closeCodeIn(payload)} \{closeReasonIn(payload)}");
   t.neI32(kinds & HAS_ACK, 0, "it acknowledges the packet we sent");
   t.neI32(kinds & HAS_CRYPTO, 0, "and carries handshake bytes");
 
@@ -65,7 +64,7 @@ export string test_a_real_quic_server_accepts_a_first_flight_we_authored(Core co
   // x25519 and AES-128-GCM, accepted `h3`, and validated transport parameters we encoded.
   t.eqI32(handshakeTypeIn(payload), 2, "the handshake message is a ServerHello");
   t.isTrue(streamLen(payload) > 30,
-           "a ServerHello is tens of bytes: " + itoa(streamLen(payload)));
+           "a ServerHello is tens of bytes: \{streamLen(payload)}");
   return t.report();
 }
 
@@ -88,6 +87,6 @@ export string test_initial_source_connection_id_is_checked(Core core, Cli cli) {
   // 0x08 is TRANSPORT_PARAMETER_ERROR. The reason quinn writes is `CID authentication failure`,
   // which is not asserted: prose a peer may reword, where the code is the protocol's own word.
   t.eqI32(closeCodeIn(payload), 0x08,
-          "TRANSPORT_PARAMETER_ERROR, reason " + closeReasonIn(payload));
+          "TRANSPORT_PARAMETER_ERROR, reason \{closeReasonIn(payload)}");
   return t.report();
 }

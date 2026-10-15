@@ -21,19 +21,19 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runApplet, runAppletIn } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-fsdump"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-fsdump"; }
 
 export string test_fsdump_reads_an_image_names_its_operands_and_refuses_what_is_not_one(Core core,
                                                                                         Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
-  string img = cli.cwd().wait() + "/packages/fs/test/fixtures/image-v1.wacimg";
-  t.isTrue(cli.stat(img).wait().exists, "the image fixture is at " + img);
+  string img = "\{cli.cwd().wait()}/packages/fs/test/fixtures/image-v1.wacimg";
+  t.isTrue(cli.stat(img).wait().exists, "the image fixture is at \{img}");
 
   Ran dumped = runApplet(core, cli, dir, ["fsdump", img]);
-  t.eqI32(dumped.status, 0, "fsdump ran: " + dumped.err);
+  t.eqI32(dumped.status, 0, "fsdump ran: \{dumped.err}");
   t.isTrue(dumped.out.indexOf("mount /mnt") >= 0, dumped.out);
   t.isTrue(dumped.out.indexOf("0600 claude") >= 0, dumped.out);
 
@@ -45,11 +45,11 @@ export string test_fsdump_reads_an_image_names_its_operands_and_refuses_what_is_
   // Two operands are labelled. This is the property wac-mono 0096 was about, in the one applet that
   // could not be captured: reading only the first would print half of this and exit 0.
   Ran twice = runApplet(core, cli, dir, ["fsdump", img, img]);
-  t.eqStr(twice.out, img + ":\n" + dumped.out + img + ":\n" + dumped.out, "two images are labelled");
+  t.eqStr(twice.out, "\{img}:\n\{dumped.out}\{img}:\n\{dumped.out}", "two images are labelled");
 
   // And something that is not an image fails, rather than printing an empty tree — which is what a
   // reader that trusted its input would do, and is indistinguishable from an image with nothing in it.
-  string notAnImage = dir + "/plain.txt";
+  string notAnImage = "\{dir}/plain.txt";
   t.isTrue(cli.writeFile(notAnImage, "alpha\nbeta\n".toBytes()).wait().ok(), "wrote a plain file");
   Ran refused = runApplet(core, cli, dir, ["fsdump", notAnImage]);
   t.eqI32(refused.status, 1, "a file that is not an image should fail");

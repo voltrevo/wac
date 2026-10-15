@@ -1,69 +1,19 @@
-// Integer to decimal string.
+// Integer to decimal string, and back.
 //
-// Lives here with ftoa because it is the same job for the other numeric type, and
-// wactest — which needed it first, for failure messages — is a test library rather
-// than the natural home for number formatting.
-//
-// wac has no number-to-string conversion and `string + i32` is deliberately a
-// compile error. This works because indexing a string yields a one-character
-// string, so a digit table can be indexed directly.
+// Interpolation does the first job: `"\{n}"` is the decimal of any integer, through core's `toString`,
+// and is what new code should write. `itoa`, `itoa64` and `utoa64` stay because `tools/` and other
+// callers still name them; each is that interpolation. They used to be digit loops, written when wac
+// had no number-to-string conversion — and the hand-written copies of them around the repository had
+// drifted at the minimum values (`issues/system/0325a`).
 
-/**
- * Decimal representation of `n`, with a leading `-` when negative.
- *
- * i32 minimum is special-cased: negating it overflows back to itself, so the
- * loop below would never terminate on it.
- */
-export string itoa(i32 n) {
-  if (n == 0) { return "0"; }
-  // 0x80000000 rather than -2147483648: the decimal literal 2147483648 exceeds
-  // i32, so it types as i64 and negating it stays i64. Hex is a bit pattern, so
-  // this is the i32 minimum directly.
-  if (n == 0x80000000) { return "-2147483648"; }
+/** Decimal representation of `n`, with a leading `-` when negative. */
+export string itoa(i32 n) { return "\{n}"; }
 
-  string digits = "0123456789";
-  bool negative = n < 0;
-  i32 m = negative ? -n : n;
-
-  string out = "";
-  while (m > 0) {
-    out = digits[m % 10] + out;
-    m /= 10;
-  }
-
-  if (negative) { return "-" + out; }
-  return out;
-}
-
-/**
- * Decimal representation of a 64-bit `n`, with a leading `-` when negative.
- *
- * i64's minimum needs no special case, unlike `itoa`'s: negating it does overflow back to itself, but
- * those same bits read as unsigned are exactly its magnitude, which is what `utoa64` wants. Two's
- * complement does the work.
- *
- * Moved here from packages/box/src/lib/num.wac, which had a third copy of it — with the special case
- * spelled out as a literal — because a program that counts bytes needs this and `box` sits above the
- * things that count. `packages/wactest` still has its own pair; see the note at the end of this file.
- */
-export string itoa64(i64 n) {
-  if (n >= 0) { return utoa64(n as! u64); }
-  return "-" + utoa64((0 - n) as@ u64);
-}
+/** Decimal representation of a 64-bit `n`, with a leading `-` when negative. */
+export string itoa64(i64 n) { return "\{n}"; }
 
 /** Decimal representation of `n`. Never signed — a u64 has no negative values. */
-export string utoa64(u64 n) {
-  if (n == 0) { return "0"; }
-  string digits = "0123456789";
-  string out = "";
-  u64 m = n;
-  while (m > 0) {
-    // The remainder is 0..9, so the narrowing cannot trap; `as!` says so.
-    out = digits[(m % 10) as! i32] + out;
-    m /= 10;
-  }
-  return out;
-}
+export string utoa64(u64 n) { return "\{n}"; }
 
 /**
  * Leading digits only, zero when there are none — a command line is not a parser.
@@ -90,9 +40,3 @@ export i32 atoi(string s) {
   }
   return negative ? 0 - v : v;
 }
-
-// **One copy left, and it is deliberate for now.** `packages/wactest/src/itoa64.wac` and `utoa64.wac`
-// hold the same two functions. wac has no re-export — importing a symbol from a file that merely
-// imports it is a compile error — so unifying them means editing the import line of all forty-odd wac
-// test files that use them, several of which another agent is actively writing today. The bodies here
-// are the ones to keep; that move is a mechanical change waiting for a quiet moment. wac-mono 0072.

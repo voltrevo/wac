@@ -19,7 +19,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { hmacSha1, hmacSha256 } from "../../src/hmac.wac";
 import { hkdf, hkdfExtract } from "../../src/hkdf.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
@@ -96,7 +95,7 @@ void checkHmac(T t, Cli cli, Lines lines, string what) {
 }
 
 void claimHmac(Lines lines, u8[] key, u8[] data, u8[] mac) {
-  lines.add("hmac " + hex(key) + " " + hex(data) + " " + hex(mac));
+  lines.add("hmac \{hex(key)} \{hex(data)} \{hex(mac)}");
 }
 
 export string test_the_key_length_boundaries(Core core, Cli cli) {
@@ -165,7 +164,7 @@ export string test_expand_chains_across_blocks(Core core, Cli cli) {
   for (i32 li = 0; li < lens.len(); li++) {
     i32 len = lens[li];
     u8[] out = hkdf(salt, ikm, info, len);
-    t.eqI32(out.len(), len, "expand to " + itoa64(len as i64) + " bytes");
+    t.eqI32(out.len(), len, "expand to \{len as i64} bytes");
     if (out.len() != len) { continue; }
     u8[] prev = u8[]();
     i32 done = 0;
@@ -228,7 +227,7 @@ export string test_the_255_block_cap_matches_webcrypto(Core core, Cli cli) {
   T t = T.create();
   string path = "packages/crypto/test/data/hkdfcap_vectors.json";
   FileResult r = cli.readFile(path).wait();
-  t.isTrue(r.ok, "the captured vector is readable: " + r.error);
+  t.isTrue(r.ok, "the captured vector is readable: \{r.error}");
   if (!r.ok) { return t.report(); }
   JsonValue? v = parse(r.bytes);
   if (v is null) { trap; }

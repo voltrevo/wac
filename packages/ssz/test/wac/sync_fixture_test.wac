@@ -19,7 +19,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
-import { itoa, utoa64 } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { hashTreeRoot, fixedSize, fieldBytes, fieldRoot } from "../../src/container.wac";
@@ -99,14 +98,14 @@ export string test_every_sync_case_has_the_steps_and_updates_the_vendoring_recor
     for (i32 k = 0; k < names.len(); k++) {
       if (names[k] == name) { at = k; }
     }
-    t.isTrue(at >= 0, "unexpected case " + name);
+    t.isTrue(at >= 0, "unexpected case \{name}");
     if (at < 0) { continue; }
     JsonArray? theSteps = memberArray(c, "steps");
     JsonObject? theUpdates = memberObject(c, "updates");
-    t.isTrue(!(theSteps is null) && !(theUpdates is null), name + ": no steps or no updates");
+    t.isTrue(!(theSteps is null) && !(theUpdates is null), "\{name}: no steps or no updates");
     if ((theSteps is null) || (theUpdates is null)) { continue; }
-    t.eqI32(theSteps!.len(), steps[at], name + ": steps — did the parser drop one?");
-    t.eqI32(theUpdates!.len(), updates[at], name + ": updates");
+    t.eqI32(theSteps!.len(), steps[at], "\{name}: steps — did the parser drop one?");
+    t.eqI32(theUpdates!.len(), updates[at], "\{name}: updates");
   }
   return t.report();
 }
@@ -127,33 +126,33 @@ export string test_every_step_is_one_the_sync_protocol_defines_and_names_data_th
     if ((theSteps is null) || (theUpdates is null)) { continue; }
     for (i32 j = 0; j < theSteps!.len(); j++) {
       JsonValue s = theSteps!.get(j);
-      string at = name + "[" + itoa(j) + "]";
+      string at = "\{name}[\{j}]";
       string kind = memberText(s, "kind");
       bool known = false;
       for (i32 k = 0; k < kinds.len(); k++) {
         if (kinds[k] == kind) { known = true; }
       }
-      t.isTrue(known, at + ": unknown step kind " + kind);
+      t.isTrue(known, "\{at}: unknown step kind \{kind}");
       // Every step drives the store to a slot, and every step asserts something about it — a step
       // with no checks would run and verify nothing.
-      t.isTrue(isDigits(memberText(s, "current_slot")), at + ": no current_slot");
+      t.isTrue(isDigits(memberText(s, "current_slot")), "\{at}: no current_slot");
       JsonValue? checks = member(s, "checks");
-      t.isTrue(!(checks is null), at + ": no checks, so it would assert nothing");
+      t.isTrue(!(checks is null), "\{at}: no checks, so it would assert nothing");
       if (checks is null) { continue; }
       for (i32 k = 0; k < headers.len(); k++) {
         JsonValue? h = member(checks!, headers[k]);
-        t.isTrue(!(h is null), at + ": no " + headers[k] + " check");
+        t.isTrue(!(h is null), "\{at}: no \{headers[k]} check");
         if (h is null) { continue; }
         t.isTrue(isDigits(memberText(h!, "slot")),
                  at + ": " + headers[k] + ".slot is " + memberText(h!, "slot"));
         t.isTrue(isHexOf(memberText(h!, "beacon_root"), 64),
-                 at + ": " + headers[k] + ".beacon_root is not 32 bytes");
+                 "\{at}: \{headers[k]}.beacon_root is not 32 bytes");
       }
       if (kind == "process_update") {
         string named = memberText(s, "update");
-        t.isTrue(named.len() > 0, at + ": a process_update with no update named");
+        t.isTrue(named.len() > 0, "\{at}: a process_update with no update named");
         t.isTrue(!(theUpdates!.getStr(named) is null),
-                 at + ": names update " + named + ", which was not vendored");
+                 "\{at}: names update \{named}, which was not vendored");
       }
     }
   }
@@ -175,16 +174,16 @@ export string test_the_bootstrap_and_updates_are_minimal_config_sizes(Core core,
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
     string name = memberText(c, "case");
-    t.eqI32(memberText(c, "bootstrap").len() / 2, BOOTSTRAP, name + ": bootstrap size");
+    t.eqI32(memberText(c, "bootstrap").len() / 2, BOOTSTRAP, "\{name}: bootstrap size");
     JsonObject? theUpdates = memberObject(c, "updates");
     if (theUpdates is null) { continue; }
     for (i32 j = 0; j < theUpdates!.len(); j++) {
       match (theUpdates!.at(j).value) {
         Str(bytes): {
           t.eqI32(string.fromBytes(bytes).len() / 2, UPDATE,
-                  name + "/" + theUpdates!.at(j).keyStr() + ": update size for minimal config");
+                  "\{name}/\{theUpdates!.at(j).keyStr()}: update size for minimal config");
         }
-        default: { t.fail(name + ": an update is not a hex string"); }
+        default: { t.fail("\{name}: an update is not a hex string"); }
       }
     }
   }
@@ -203,15 +202,15 @@ export string test_the_metadata_carries_what_initialising_a_store_needs(Core cor
     JsonValue c = cases!.get(i);
     string name = memberText(c, "case");
     JsonValue? meta = member(c, "meta");
-    t.isTrue(!(meta is null), name + ": no meta");
+    t.isTrue(!(meta is null), "\{name}: no meta");
     if (meta is null) { continue; }
     for (i32 k = 0; k < roots.len(); k++) {
       t.isTrue(isHexOf(memberText(meta!, roots[k]), 64),
-               name + ": meta." + roots[k] + " is not a 32-byte root");
+               "\{name}: meta.\{roots[k]} is not a 32-byte root");
     }
     for (i32 k = 0; k < digests.len(); k++) {
       t.isTrue(isHexOf(memberText(meta!, digests[k]), 8),
-               name + ": meta." + digests[k] + " is not a 4-byte fork digest");
+               "\{name}: meta.\{digests[k]} is not a 4-byte fork digest");
     }
   }
   return t.report();
@@ -268,7 +267,7 @@ export string test_every_vendored_bootstrap_and_update_merkleizes_under_the_mini
     u8[]? root = hashTreeRoot(minimal, fields, TY_LIGHT_CLIENT_BOOTSTRAP(),
                               decoded(memberText(c, "bootstrap")));
     t.isTrue(!(root is null) && root!.len() == 32,
-             name + ": the bootstrap was refused under the minimal table");
+             "\{name}: the bootstrap was refused under the minimal table");
     n = n + 1;
     JsonObject? theUpdates = memberObject(c, "updates");
     if (theUpdates is null) { continue; }
@@ -278,9 +277,9 @@ export string test_every_vendored_bootstrap_and_update_merkleizes_under_the_mini
           u8[]? r = hashTreeRoot(minimal, fields, TY_LIGHT_CLIENT_UPDATE(),
                                  decoded(string.fromBytes(bytes)));
           t.isTrue(!(r is null) && r!.len() == 32,
-                   name + "/" + theUpdates!.at(j).keyStr() + ": the update was refused");
+                   "\{name}/\{theUpdates!.at(j).keyStr()}: the update was refused");
         }
-        default: { t.fail(name + ": an update is not a hex string"); }
+        default: { t.fail("\{name}: an update is not a hex string"); }
       }
       n = n + 1;
     }
@@ -293,7 +292,7 @@ export string test_every_vendored_bootstrap_and_update_merkleizes_under_the_mini
 string slotOf(u8[] eightBytes) {
   u64 v = 0 as! u64;
   for (i32 i = 7; i >= 0; i--) { v = v * (256 as! u64) + (eightBytes[i] as u64); }
-  return utoa64(v);
+  return "\{v}";
 }
 
 export string test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_own_checks(
@@ -341,25 +340,25 @@ export string test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_o
 
       u8[] header = fieldBytes(minimal, fields, TY_LIGHT_CLIENT_UPDATE(), update,
                                UPDATE_ATTESTED_HEADER());
-      t.isTrue(header.len() > 0, name + ": could not read attested_header");
+      t.isTrue(header.len() > 0, "\{name}: could not read attested_header");
       if (header.len() == 0) { continue; }
       u8[] beacon = fieldBytes(minimal, fields, TY_LIGHT_CLIENT_HEADER(), header, HEADER_BEACON());
       u8[] slotBytes = fieldBytes(minimal, fields, TY_BEACON_BLOCK_HEADER(), beacon, BEACON_SLOT());
-      t.eqI32(slotBytes.len(), 8, name + ": slot width");
+      t.eqI32(slotBytes.len(), 8, "\{name}: slot width");
       if (slotBytes.len() != 8) { continue; }
       seen = seen + 1;
 
       string slot = slotOf(slotBytes);
       if (slot != memberText(want!, "slot")) { continue; }   // a past update; the store kept its own
       u8[]? root = fieldRoot(minimal, fields, TY_LIGHT_CLIENT_HEADER(), header, HEADER_BEACON());
-      t.eqStr(root is null ? "(refused)" : "0x" + hex(root!), memberText(want!, "beacon_root"),
-              name + " @ slot " + slot + ": attested beacon root");
+      t.eqStr(root is null ? "(refused)" : "0x\{hex(root!)}", memberText(want!, "beacon_root"),
+              "\{name} @ slot \{slot}: attested beacon root");
       matched = matched + 1;
     }
   }
-  t.isTrue(seen >= 15, "only " + itoa(seen) + " process_update steps found");
+  t.isTrue(seen >= 15, "only \{seen} process_update steps found");
   t.isTrue(matched >= 12,
-           "only " + itoa(matched) + " of " + itoa(seen) + " steps had the store adopt the " +
+           "only \{matched} of \{seen} steps had the store adopt the " +
            "update's header — too few for this to be testing extraction rather than skipping");
   return t.report();
 }
@@ -386,12 +385,12 @@ export string test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_re
   if (slotBytes.len() != 8) { return t.report(); }
   // The spec requires signature_slot > attested_slot, so it is a real slot rather than zero padding.
   string slot = slotOf(slotBytes);
-  t.isTrue(slot != "0" && slot.len() <= 9, "signature_slot is implausible: " + slot);
+  t.isTrue(slot != "0" && slot.len() <= 9, "signature_slot is implausible: \{slot}");
 
   i32[] bad = [-1, 7, 99];
   for (i32 i = 0; i < bad.len(); i++) {
     t.eqI32(fieldBytes(minimal, fields, TY_LIGHT_CLIENT_UPDATE(), update, bad[i]).len(), 0,
-            "field index " + itoa(bad[i]) + " returned bytes for a 7-field container");
+            "field index \{bad[i]} returned bytes for a 7-field container");
   }
   return t.report();
 }

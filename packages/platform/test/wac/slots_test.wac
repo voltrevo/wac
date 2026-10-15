@@ -21,14 +21,13 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 
 static string WAC = "std/platform.wac";
 static string LAYOUT = "packages/platform/host/layout.ts";
 
 string readOr(T t, Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
-  t.isTrue(r.ok, path + " — " + r.error);
+  t.isTrue(r.ok, "\{path} — \{r.error}");
   return r.ok ? string.fromBytes(r.bytes) : "";
 }
 
@@ -63,7 +62,7 @@ export string test_platform_wacs_call_slots_is_the_rings_real_size(Core core, Cl
   if (guest < 0 || host < 0) { return t.report(); }
 
   t.eqI32(guest, host,
-          "platform.wac says " + itoa(guest) + " and layout.ts says " + itoa(host) +
+          "platform.wac says \{guest} and layout.ts says \{host}" +
           "; a guest sizing itself from the wrong one deadlocks");
   return t.report();
 }

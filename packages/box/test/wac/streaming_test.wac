@@ -19,11 +19,10 @@
 import { Cli, Core, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "core";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, realOut, runApplet, runAppletIn } from "./replay.wac";
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-streaming"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-streaming"; }
 
 /** One 64 KiB read. The fixture is sized against this rather than against a round number. */
 static i32 CHUNK = 65536;
@@ -35,7 +34,7 @@ static i32 CHUNK = 65536;
 u8[] spanningText() {
   Buf b = Buf.create();
   for (i32 i = 0; i < 5000; i++) {
-    b.pushAll(("word" + itoa(i) + " alpha beta gamma delta epsilon\n").toBytes());
+    b.pushAll("word\{i} alpha beta gamma delta epsilon\n".toBytes());
   }
   return b.bytes();
 }
@@ -64,11 +63,11 @@ string cols(string s) {
 export string test_streaming_applets_agree_across_chunk_boundaries(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
   u8[] text = spanningText();
-  t.isTrue(text.len() > 3 * CHUNK, "the fixture must span several chunks: " + itoa(text.len()));
-  string path = dir + "/spanning.txt";
+  t.isTrue(text.len() > 3 * CHUNK, "the fixture must span several chunks: \{text.len()}");
+  string path = "\{dir}/spanning.txt";
   t.isTrue(cli.writeFile(path, text).wait().ok(), "wrote the fixture");
 
   t.eqStr(cols(runApplet(core, cli, dir, ["wc", path]).out),
@@ -96,8 +95,8 @@ export string test_streaming_applets_agree_across_chunk_boundaries(Core core, Cl
 export string test_a_run_spanning_three_chunks_is_one_string(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
-  string path = dir + "/run.bin";
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
+  string path = "\{dir}/run.bin";
 
   // NUL, 200,000 'A's, NUL: the terminators are what make it a *run* to `strings` rather than the
   // whole file, so the boundaries it reports are the ones under test.
@@ -125,7 +124,7 @@ export string test_a_run_spanning_three_chunks_is_one_string(Core core, Cli cli)
 export string test_tr_uppercases_across_chunks(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
   u8[] text = spanningText();
   Buf want = Buf.create();
@@ -135,7 +134,7 @@ export string test_tr_uppercases_across_chunks(Core core, Cli cli) {
   }
 
   Ran got = runAppletIn(core, cli, dir, ["tr", "a-z", "A-Z"], text);
-  t.eqI32(got.status, 0, "tr ran: " + got.err);
+  t.eqI32(got.status, 0, "tr ran: \{got.err}");
   t.eqStr(got.out, want.toStr(), "tr across chunks");
 
   cli.remove(dir, true).wait();
@@ -154,10 +153,10 @@ export string test_tr_uppercases_across_chunks(Core core, Cli cli) {
 export string test_crc32_is_order_dependent_across_chunks(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
-  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
   u8[] text = spanningText();
-  string path = dir + "/crc.txt";
+  string path = "\{dir}/crc.txt";
   t.isTrue(cli.writeFile(path, text).wait().ok(), "wrote the fixture");
 
   u32[] table = u32[].filled(256, 0);
@@ -183,7 +182,7 @@ export string test_crc32_is_order_dependent_across_chunks(Core core, Cli cli) {
 
   Ran got = runApplet(core, cli, dir, ["crc32", path]);
   i32 sp = got.out.indexOf(" ");
-  t.eqStr(sp < 0 ? got.out : got.out.slice(0, sp), want, "crc32 across chunks: " + got.out);
+  t.eqStr(sp < 0 ? got.out : got.out.slice(0, sp), want, "crc32 across chunks: \{got.out}");
 
   cli.remove(dir, true).wait();
   return t.report();

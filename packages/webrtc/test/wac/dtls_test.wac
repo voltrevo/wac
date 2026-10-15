@@ -17,8 +17,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, FAULT_OTHER, Pending, Socket } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { alertAt, cookieAt, describeAt, epochAt, handshakeKindAt, hello, hClientHello,
          hServerHello, hVerifyRequest, kAlert, kHandshake, kindAt, messageSeqAt, seqAt, sizeAt,
@@ -71,12 +69,12 @@ struct Bench {
 Bench bench(T t, Cli cli, string name) {
   Dtls s = startServer(t, cli, name);
   if (!s.ok) {
-    t.fail("the DTLS server did not start — " + s.error);
+    t.fail("the DTLS server did not start — \{s.error}");
     return Bench(false, s, Socket.of(-1, "", "", 0, FAULT_OTHER()));
   }
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
-    t.fail("our socket did not bind — " + sock.error);
+    t.fail("our socket did not bind — \{sock.error}");
     stopServer(cli, s);
     return Bench(false, s, sock);
   }
@@ -102,7 +100,7 @@ void release(Cli cli, Bench b) {
  */
 u8[] firstVerify(T t, Core core, Cli cli, Bench b, u8[] first) {
   if (!waitForBind(cli, b.server, 200)) {
-    t.fail("openssl never bound " + itoa(b.server.port) + " — " + b.server.said(cli));
+    t.fail("openssl never bound \{b.server.port} — \{b.server.said(cli)}");
     return u8[]();
   }
   return exchange(core, cli, b.sock, b.server.port, first, 5000);
@@ -126,7 +124,7 @@ export string test_openssl_answers_our_clienthello_with_a_helloverifyrequest(Cor
   if (verify.len() == 0) { release(cli, b); return t.report(); }
 
   t.eqI32(kindAt(verify, 0), kHandshake(),
-          "expected a handshake record, got: " + describeAt(verify, 0));
+          "expected a handshake record, got: \{describeAt(verify, 0)}");
   t.eqI32(handshakeKindAt(verify, 0), hVerifyRequest(),
           "a server that has not issued a cookie answers with HelloVerifyRequest, not ServerHello");
   t.eqI32(epochAt(verify, 0), 0, "still epoch zero — nothing is encrypted yet");
@@ -172,27 +170,27 @@ export string test_openssl_answers_our_clienthello_with_a_helloverifyrequest(Cor
       i32 size = sizeAt(current, at);
       if (size < 0) { break; }
       i32 kind = handshakeKindAt(current, at);
-      kinds = kinds + (kinds == "" ? "" : ", ") + itoa(kind);
+      kinds = kinds + (kinds == "" ? "" : ", ") + "\{kind}";
       if (kind == 11) { sawCertificate = true; }
       if (kind == 12) { sawKeyExchange = true; }
       if (kind == 14) { sawDone = true; }
       at = at + size;
     }
     t.eqI32(at, current.len(),
-            "datagram " + itoa(datagrams) + ": the records did not exactly fill it, " + itoa(at) +
-            " of " + itoa(current.len()));
+            "datagram \{datagrams}: the records did not exactly fill it, \{at}" +
+            " of \{current.len()}");
     if (sawDone) { break; }
     current = receiveWithin(core, cli, b.sock, 5000);
     if (current.len() == 0) {
-      t.fail("the flight stopped after " + itoa(datagrams) + " datagram(s) without a " +
-             "ServerHelloDone; handshake types seen: " + kinds);
+      t.fail("the flight stopped after \{datagrams} datagram(s) without a " +
+             "ServerHelloDone; handshake types seen: \{kinds}");
       break;
     }
     datagrams = datagrams + 1;
   }
-  t.isTrue(sawCertificate, "Certificate is in the flight: " + kinds);
-  t.isTrue(sawKeyExchange, "and a ServerKeyExchange, since the suite is ECDHE: " + kinds);
-  t.isTrue(sawDone, "and ServerHelloDone ends it: " + kinds);
+  t.isTrue(sawCertificate, "Certificate is in the flight: \{kinds}");
+  t.isTrue(sawKeyExchange, "and a ServerKeyExchange, since the suite is ECDHE: \{kinds}");
+  t.isTrue(sawDone, "and ServerHelloDone ends it: \{kinds}");
 
   release(cli, b);
   return t.report();
@@ -206,7 +204,7 @@ export string test_a_clienthello_with_a_wrong_cookie_is_refused(Core core, Cli c
   if (!b.ok) { return t.report(); }
 
   u8[] verify = firstVerify(t, core, cli, b, hello(random32(), u8[](), 0, 0));
-  t.isTrue(verify.len() > 0, "no HelloVerifyRequest — " + b.server.said(cli));
+  t.isTrue(verify.len() > 0, "no HelloVerifyRequest — \{b.server.said(cli)}");
   if (verify.len() == 0) { release(cli, b); return t.report(); }
 
   u8[] wrong = cookieAt(verify, 0);
@@ -233,7 +231,7 @@ export string test_the_framing_round_trips_and_says_when_a_record_is_not_whole()
   u8[] h = hello(random32(), three, 5, 0x0102030405);
   t.eqI32(kindAt(h, 0), 22, "a handshake record");
   t.eqI32(epochAt(h, 0), 0, "epoch zero");
-  t.eqStr(itoa64(seqAt(h, 0)), itoa64(0x0102030405),
+  t.eqStr("\{seqAt(h, 0)}", "\{0x0102030405 as i64}",
           "forty-eight bits of sequence number, which is why it is an i64 and not an i32");
   t.eqI32(messageSeqAt(h, 0), 5, "the message sequence");
   t.isTrue(wholeAt(h, 0), "the record is whole");
@@ -261,7 +259,7 @@ export string test_the_abandoned_server_pattern_discriminates(Core core, Cli cli
     "/usr/sbin/sshd -D"
   ];
   for (i32 i = 0; i < others.len(); i++) {
-    t.isFalse(wouldReap(cli, others[i]), "the pattern matches something it must not: " + others[i]);
+    t.isFalse(wouldReap(cli, others[i]), "the pattern matches something it must not: \{others[i]}");
   }
   return t.report();
 }
@@ -331,7 +329,7 @@ export string test_a_clientkeyexchange_of_the_wrong_width_is_refused() {
     // Reaching the next line is the assertion: a trap kills the test.
     peerReceive(p, inDtlsRecord(16, 1, body));
     t.isFalse(peerEstablished(p),
-              "a ClientKeyExchange of " + itoa(widths[i]) + " bytes established a connection");
+              "a ClientKeyExchange of \{widths[i]} bytes established a connection");
   }
 
   // A length that overruns the message, which `clientPublic` refuses by returning empty — and empty

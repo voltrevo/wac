@@ -17,7 +17,6 @@ import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, Span, nextSpan, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Buf } from "core";
 import { Fs } from "../../../fs/src/fs.wac";
 
@@ -29,8 +28,8 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
   for (i32 i = 0; i < flags.len(); i++) {
     if (!known(flags[i] as i32)) {
       u8[] one = u8[].filled(1, flags[i]);
-      core.warn(a.name + ": invalid option -- '" + string.fromBytes(one) + "'");
-      core.warn("Try '" + a.name + " --help' for more information.");
+      core.warn("\{a.name}: invalid option -- '\{string.fromBytes(one)}'");
+      core.warn("Try '\{a.name} --help' for more information.");
       return 1;
     }
   }
@@ -144,10 +143,10 @@ bool known(i32 letter) {
 
 /** GNU's number column: six wide, right-aligned, then a tab. */
 string numberField(i32 n) {
-  string s = itoa(n);
+  string s = "\{n}";
   string pad = "";
   for (i32 i = s.len(); i < 6; i++) { pad = pad + " "; }
-  return pad + s + "\t";
+  return "\{pad}\{s}\t";
 }
 
 /**

@@ -11,7 +11,6 @@
 // None of the 76 tests expects a trap.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
   test_openssl_answers_our_clienthello_with_a_helloverifyrequest as dtl__openssl_answers_our_clienthello_with_a_helloverifyrequest,
@@ -433,6 +432,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED timers_test test_and_a_timeout_closes_it_hard");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("webrtc: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("webrtc: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

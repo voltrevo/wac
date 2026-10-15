@@ -24,7 +24,6 @@
 // else, and `test_traps_*` is how a test says it wants one. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   deriveSecret, earlySecret, emptyHash, expandLabel, finishedVerify, handshakeSecret,
   masterSecret, nextTrafficSecret, trafficKeyIv,
@@ -52,7 +51,7 @@ u8[] fill(i32 n, i32 a, i32 b) {
  * implementation.
  */
 u8[] refInfo(string label, u8[] ctx, i32 len) {
-  u8[] full = ("tls13 " + label).toBytes();
+  u8[] full = "tls13 \{label}".toBytes();
   u8[] info = u8[].filled(2 + 1 + full.len() + 1 + ctx.len(), 0);
   info[0] = ((len >> 8) & 0xFF) as@ u8;
   info[1] = (len & 0xFF) as@ u8;
@@ -97,7 +96,7 @@ bool refExpand(T t, Cli cli, Expansion[] e) {
       for (i32 j = 0; j < e[i].prev.len(); j++) { input[j] = e[i].prev[j]; }
       for (i32 j = 0; j < e[i].info.len(); j++) { input[e[i].prev.len() + j] = e[i].info[j]; }
       input[input.len() - 1] = e[i].block as@ u8;
-      lines.add("hmac256 " + hex(e[i].secret) + " " + hex(input));
+      lines.add("hmac256 \{hex(e[i].secret)} \{hex(input)}");
       which[n] = i;
       n = n + 1;
     }
@@ -163,7 +162,7 @@ export string test_expand_label_agrees_with_an_independent_build(Core core, Cli 
   for (i32 i = 0; i < labels.len(); i++) {
     t.eqBytes(expandLabel(secret, labels[i].toBytes(), fill(ctxLens[i], 13, 1), outLens[i]),
               want[i].out,
-              "expandLabel " + labels[i] + " len " + itoa64(outLens[i] as i64));
+              "expandLabel \{labels[i]} len \{outLens[i] as i64}");
   }
   return t.report();
 }
@@ -190,7 +189,7 @@ export string test_traffic_keys_come_from_the_pinned_secret(Core core, Cli cli) 
     bool ok = true;
     for (i32 i = 0; i < keyLen; i++) { if (got[i] != wantKey[i]) { ok = false; } }
     for (i32 i = 0; i < 12; i++) { if (got[keyLen + i] != wantIv[i]) { ok = false; } }
-    t.isTrue(ok, "traffic key and iv at keyLen " + itoa64(keyLen as i64));
+    t.isTrue(ok, "traffic key and iv at keyLen \{keyLen as i64}");
   }
   return t.report();
 }

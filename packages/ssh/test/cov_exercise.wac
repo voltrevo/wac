@@ -25,7 +25,6 @@
 // the whole-buffer forms, which is why the offset forms exist and are driven separately.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { decoded } from "../../codec/src/hex.wac";
 
 import { sshClientVersion, sshClientVersionLine, sshScanStatus, sshScanUsed, sshScanLine,
@@ -424,9 +423,9 @@ u8[] armour(u8[] blob) {
     i32 to = i + 70 < b64.len() ? i + 70 : b64.len();
     u8[] piece = u8[].filled(to - i, 0);
     for (i32 k = 0; k < piece.len(); k++) { piece[k] = b64[i + k]; }
-    body = body + string.fromBytes(piece) + "\n";
+    body = body + "\{string.fromBytes(piece)}\n";
   }
-  return ("-----BEGIN OPENSSH PRIVATE KEY-----\n" + body +
+  return ("-----BEGIN OPENSSH PRIVATE KEY-----\n\{body}" +
           "-----END OPENSSH PRIVATE KEY-----\n").toBytes();
 }
 
@@ -569,28 +568,28 @@ void knownHosts() {
     "# just a comment\n",
     "\n\n",
     "   \n",                                                    // whitespace only
-    "example.com ssh-ed25519 " + k + "\n",
-    "example.com ssh-ed25519 " + k + "\r\n",                     // CR LF
-    "example.com ssh-ed25519 " + k + " a comment\n",
-    "a.example,b.example ssh-ed25519 " + k + "\n",
-    "*.example ssh-ed25519 " + k + "\n",
-    "*.exa*ple ssh-ed25519 " + k + "\n",                         // two stars
-    "h??t.example ssh-ed25519 " + k + "\n",
-    "*.example,!bad.example ssh-ed25519 " + k + "\n",
-    ",,example.com,, ssh-ed25519 " + k + "\n",                   // empty list entries
-    "example.com ssh-rsa " + k + "\n",                           // another algorithm
-    "[example.com]:2222 ssh-ed25519 " + k + "\n",
-    "@revoked example.com ssh-ed25519 " + k + "\n",
-    "@cert-authority *.example ssh-ed25519 " + k + "\n",
+    "example.com ssh-ed25519 \{k}\n",
+    "example.com ssh-ed25519 \{k}\r\n",                     // CR LF
+    "example.com ssh-ed25519 \{k} a comment\n",
+    "a.example,b.example ssh-ed25519 \{k}\n",
+    "*.example ssh-ed25519 \{k}\n",
+    "*.exa*ple ssh-ed25519 \{k}\n",                         // two stars
+    "h??t.example ssh-ed25519 \{k}\n",
+    "*.example,!bad.example ssh-ed25519 \{k}\n",
+    ",,example.com,, ssh-ed25519 \{k}\n",                   // empty list entries
+    "example.com ssh-rsa \{k}\n",                           // another algorithm
+    "[example.com]:2222 ssh-ed25519 \{k}\n",
+    "@revoked example.com ssh-ed25519 \{k}\n",
+    "@cert-authority *.example ssh-ed25519 \{k}\n",
     "@revoked\n",                                                // a marker and nothing else
     "example.com ssh-ed25519 !!!\n",                             // unreadable base64
     "example.com\n",                                             // no key at all
     "example.com ssh-ed25519\n",                                 // no blob
-    "|1|bad ssh-ed25519 " + k + "\n",                            // hashed, no second bar
-    "|2|c2FsdA==|aGFzaA== ssh-ed25519 " + k + "\n",              // an unknown revision
-    "|1|!!!|!!! ssh-ed25519 " + k + "\n",                        // hashed, unreadable base64
-    "|1|c2FsdA==|aGFzaA== ssh-ed25519 " + k + "\n",              // hashed, the wrong hash
-    "\texample.com ssh-ed25519 " + k + "\n"                    // a leading tab
+    "|1|bad ssh-ed25519 \{k}\n",                            // hashed, no second bar
+    "|2|c2FsdA==|aGFzaA== ssh-ed25519 \{k}\n",              // an unknown revision
+    "|1|!!!|!!! ssh-ed25519 \{k}\n",                        // hashed, unreadable base64
+    "|1|c2FsdA==|aGFzaA== ssh-ed25519 \{k}\n",              // hashed, the wrong hash
+    "\texample.com ssh-ed25519 \{k}\n"                    // a leading tab
   ];
   // The host each line is asked about, and the port. A pattern is only interesting against a name it
   // does and does not match, which is why some lines appear twice with different hosts.
@@ -613,32 +612,32 @@ void knownHosts() {
     sshKnownHost(f, host, ports[i], "ssh-rsa".toBytes(), blob);
   }
   // The wildcards against a name they do *not* match, and the bracketed port against the wrong port.
-  sshKnownHost(("*.example ssh-ed25519 " + k + "\n").toBytes(), "example".toBytes(), 22, khType, blob);
-  sshKnownHost(("h??t.example ssh-ed25519 " + k + "\n").toBytes(), "hoost.example".toBytes(), 22,
+  sshKnownHost("*.example ssh-ed25519 \{k}\n".toBytes(), "example".toBytes(), 22, khType, blob);
+  sshKnownHost("h??t.example ssh-ed25519 \{k}\n".toBytes(), "hoost.example".toBytes(), 22,
                khType, blob);
-  sshKnownHost(("*.example,!bad.example ssh-ed25519 " + k + "\n").toBytes(), "ok.example".toBytes(),
+  sshKnownHost("*.example,!bad.example ssh-ed25519 \{k}\n".toBytes(), "ok.example".toBytes(),
                22, khType, blob);
-  sshKnownHost(("[example.com]:2222 ssh-ed25519 " + k + "\n").toBytes(), "example.com".toBytes(), 22,
+  sshKnownHost("[example.com]:2222 ssh-ed25519 \{k}\n".toBytes(), "example.com".toBytes(), 22,
                khType, blob);
   // A multi-digit port, and port 0 — not a real port, but what the digit loop's zero guard exists for.
-  sshKnownHost(("example.com ssh-ed25519 " + k + "\n").toBytes(), "example.com".toBytes(), 65535,
+  sshKnownHost("example.com ssh-ed25519 \{k}\n".toBytes(), "example.com".toBytes(), 65535,
                khType, blob);
-  sshKnownHost(("[example.com]:0 ssh-ed25519 " + k + "\n").toBytes(), "example.com".toBytes(), 0,
+  sshKnownHost("[example.com]:0 ssh-ed25519 \{k}\n".toBytes(), "example.com".toBytes(), 0,
                khType, blob);
 
   // **A marker and a key type the *same length* as the ones being compared but different.** Everything
   // above differs in length and is rejected before the bytes are looked at, so without these the
   // byte-comparison loop never takes its mismatch branch — the third time that exact gap has turned up
   // in this package, which is why it is called out here as well as in `kexInits` and `keyExchange`.
-  sshKnownHost(("@revoke1 example.com ssh-ed25519 " + k + "\n").toBytes(), "example.com".toBytes(),
+  sshKnownHost("@revoke1 example.com ssh-ed25519 \{k}\n".toBytes(), "example.com".toBytes(),
                22, khType, blob);
-  sshKnownHost(("example.com ssh-ed25518 " + k + "\n").toBytes(), "example.com".toBytes(), 22,
+  sshKnownHost("example.com ssh-ed25518 \{k}\n".toBytes(), "example.com".toBytes(), 22,
                khType, blob);
 
   // A match after a mismatch, and a revocation after a match: the whole file is read either way.
-  sshKnownHost(("example.com ssh-ed25519 " + ko + "\nexample.com ssh-ed25519 " + k + "\n").toBytes(),
+  sshKnownHost("example.com ssh-ed25519 \{ko}\nexample.com ssh-ed25519 \{k}\n".toBytes(),
                "example.com".toBytes(), 22, khType, blob);
-  sshKnownHost(("example.com ssh-ed25519 " + k + "\n@revoked example.com ssh-ed25519 " + k +
+  sshKnownHost(("example.com ssh-ed25519 \{k}\n@revoked example.com ssh-ed25519 \{k}" +
                 "\n").toBytes(), "example.com".toBytes(), 22, khType, blob);
 }
 
@@ -759,23 +758,23 @@ void authorizedKeys() {
     "# comment only\n",
     "\n\n",
     "   \n",
-    "ssh-ed25519 " + k + "\n",
-    "ssh-ed25519 " + k + "\r\n",
-    "ssh-ed25519 " + k + " me@here\n",
-    "\tssh-ed25519 " + k + "\n",                                 // a leading tab
-    "ssh-rsa " + k + "\n",                                       // another algorithm
-    "ssh-ed2551a " + k + "\n",                                   // the same length, different
-    "no-pty ssh-ed25519 " + k + "\n",                            // an option
-    "restrict,pty ssh-ed25519 " + k + "\n",
-    "command=\"echo hello world\" ssh-ed25519 " + k + "\n",       // spaces inside quotes
-    "command=\"a,b c\",no-pty ssh-ed25519 " + k + "\n",           // a comma inside quotes
-    "command=\"say \\\"hi\\\" now\" ssh-ed25519 " + k + "\n",     // an escaped quote
-    "command=\"unterminated ssh-ed25519 " + k + "\n",             // a quote that never closes
-    "no-pty ssh-rsa " + k + "\n",                                // options then another algorithm
+    "ssh-ed25519 \{k}\n",
+    "ssh-ed25519 \{k}\r\n",
+    "ssh-ed25519 \{k} me@here\n",
+    "\tssh-ed25519 \{k}\n",                                 // a leading tab
+    "ssh-rsa \{k}\n",                                       // another algorithm
+    "ssh-ed2551a \{k}\n",                                   // the same length, different
+    "no-pty ssh-ed25519 \{k}\n",                            // an option
+    "restrict,pty ssh-ed25519 \{k}\n",
+    "command=\"echo hello world\" ssh-ed25519 \{k}\n",       // spaces inside quotes
+    "command=\"a,b c\",no-pty ssh-ed25519 \{k}\n",           // a comma inside quotes
+    "command=\"say \\\"hi\\\" now\" ssh-ed25519 \{k}\n",     // an escaped quote
+    "command=\"unterminated ssh-ed25519 \{k}\n",             // a quote that never closes
+    "no-pty ssh-rsa \{k}\n",                                // options then another algorithm
     "no-pty\n",                                                  // options and nothing else
     "ssh-ed25519\n",                                             // no blob
     "ssh-ed25519 !!!\n",                                         // unreadable base64
-    "no-pty ssh-ed25519 " + k + "\nssh-ed25519 " + k + "\n"    // restricted then plain
+    "no-pty ssh-ed25519 \{k}\nssh-ed25519 \{k}\n"    // restricted then plain
   ];
   for (i32 i = 0; i < files.len(); i++) {
     u8[] f = files[i].toBytes();
@@ -1057,7 +1056,7 @@ export i32 main(Sys sys) {
   if (transport__negotiation_takes_the_clients_preference_not_the_servers().len() > 0) { core.warn("error: FAILED transport_test test_negotiation_takes_the_clients_preference_not_the_servers"); bad = bad + 1; }
   if (transport__no_overlap_is_an_empty_answer_rather_than_a_default().len() > 0) { core.warn("error: FAILED transport_test test_no_overlap_is_an_empty_answer_rather_than_a_default"); bad = bad + 1; }
   if (bad > 0) {
-    core.warn("error: " + itoa(bad) + " test(s) failed, so this measured a broken package");
+    core.warn("error: \{bad} test(s) failed, so this measured a broken package");
     return 1;
   }
   return 0;

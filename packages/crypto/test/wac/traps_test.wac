@@ -504,7 +504,7 @@ export string test_traps_mlkem_refuses_a_coefficient_at_or_above_q() {
 /** A 32-byte scalar from a hex literal, left-padded. */
 u8[] scalar(string h) {
   string padded = h;
-  while (padded.len() < 64) { padded = "0" + padded; }
+  while (padded.len() < 64) { padded = "0\{padded}"; }
   return decoded(padded);
 }
 
@@ -693,7 +693,7 @@ export string test_traps_p256_on_an_x_that_is_x_plus_p() {
 /** A 48-byte field element from a hex literal, left-padded. */
 u8[] wide48(string h) {
   string padded = h;
-  while (padded.len() < 96) { padded = "0" + padded; }
+  while (padded.len() < 96) { padded = "0\{padded}"; }
   return decoded(padded);
 }
 

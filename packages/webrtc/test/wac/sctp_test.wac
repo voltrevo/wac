@@ -26,7 +26,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { Association, chunkAbort, chunkShutdown, chunkShutdownAck, chunkShutdownComplete,
          dataFlagBegin, dataFlagEnd, dataPayload, dataPpid, dataStreamId, dataStreamSeq, dataTsn,
@@ -68,7 +67,7 @@ export string test_crc32c_is_castagnolis_not_the_one_packages_gzip_has(Core core
   string[] inputs = ["", "a", "hello world", repeated("x", 300)];
   Lines lines = Lines.create();
   for (i32 i = 0; i < inputs.len(); i++) {
-    lines.add("crc32c " + hex(inputs[i].toBytes()) + " " + h32(crcOf(inputs[i].toBytes())));
+    lines.add("crc32c \{hex(inputs[i].toBytes())} \{h32(crcOf(inputs[i].toBytes()))}");
   }
   ask(t, cli, lines, "google-crc32c");
   return t.report();
@@ -85,8 +84,8 @@ export string test_aiortc_parses_our_init_checksum_and_all(Core core, Cli cli) {
   // getting a chunk back at all is the assertion. It is also what checks the little-endian
   // placement, which the CRC vector cannot see. 5000 is the port WebRTC fixes and ignores.
   Lines lines = Lines.create();
-  lines.add("initchunk " + hexOf(packet) + " 5000 5000 " + h32(0) + " " + h32(0x12345678) +
-            " 65536 16 16 " + h32(1));
+  lines.add("initchunk \{hexOf(packet)} 5000 5000 \{h32(0)} \{h32(0x12345678)}" +
+            " 65536 16 16 \{h32(1)}");
   ask(t, cli, lines, "aiortc's INIT");
   return t.report();
 }
@@ -101,7 +100,7 @@ export string test_and_refuses_one_whose_checksum_we_corrupt(Core core, Cli cli)
   u8[] badCrc = copyOf(packet);
   badCrc[8] = badCrc[8] ^ 1;
   t.isFalse(crcVerifies(badCrc), "we refuse it too");
-  lines.add("refused " + hexOf(badCrc));
+  lines.add("refused \{hexOf(badCrc)}");
 
   // **And a big-endian checksum**, which is the mistake worth pinning: every other field in SCTP is
   // network order and this one is not, so writing it the obvious way produces a packet that verifies
@@ -113,7 +112,7 @@ export string test_and_refuses_one_whose_checksum_we_corrupt(Core core, Cli cli)
   swapped[11] = packet[8];
   if (hexOf(swapped) != hexOf(packet)) {       // a palindromic checksum would make this vacuous
     t.isFalse(crcVerifies(swapped), "the bytes reversed is not the same checksum");
-    lines.add("refused " + hexOf(swapped));
+    lines.add("refused \{hexOf(swapped)}");
   }
   ask(t, cli, lines, "aiortc refusing a corrupt checksum");
   return t.report();
@@ -135,7 +134,7 @@ export string test_a_cookie_echo_carries_the_peers_tag_and_the_cookie_unchanged(
           "the value read back is the cookie without the padding");
 
   Lines lines = Lines.create();
-  lines.add("cookie " + hexOf(packet) + " " + hexOf(cookie));
+  lines.add("cookie \{hexOf(packet)} \{hexOf(cookie)}");
   ask(t, cli, lines, "aiortc's COOKIE-ECHO");
   return t.report();
 }
@@ -182,7 +181,7 @@ export string test_aiortc_reads_our_data_chunk_field_for_field(Core core, Cli cl
 
   // Flags 3 is begin and end together: a whole message in one chunk.
   Lines lines = Lines.create();
-  lines.add("datachunk " + hexOf(packet) + " " + h32(7) + " 3 5 51 3 " + hexOf(payload));
+  lines.add("datachunk \{hexOf(packet)} \{h32(7)} 3 5 51 3 \{hexOf(payload)}");
   ask(t, cli, lines, "aiortc's DATA");
   return t.report();
 }
@@ -195,7 +194,7 @@ export string test_and_our_sack_which_is_a_cumulative_point_and_not_a_list(Core 
   // No gaps and no duplicates — which is correct and slow, because a receiver that never reports a
   // gap makes the sender resend what it could have been told arrived.
   Lines lines = Lines.create();
-  lines.add("sackchunk " + hexOf(packet) + " " + h32(42) + " 65536 0 0");
+  lines.add("sackchunk \{hexOf(packet)} \{h32(42)} 65536 0 0");
   ask(t, cli, lines, "aiortc's SACK");
   return t.report();
 }
@@ -211,7 +210,7 @@ export string test_a_data_channel_is_opened_by_a_dcep_message_inside_a_data_chun
 
   // Message type 3 is DATA_CHANNEL_OPEN and channel type 0 is reliable and ordered.
   Lines lines = Lines.create();
-  lines.add("dcep " + hexOf(packet) + " 50 3 0 chat");
+  lines.add("dcep \{hexOf(packet)} 50 3 0 chat");
   ask(t, cli, lines, "aiortc's DCEP");
 
   // And the ACK, which is one byte.
@@ -316,7 +315,7 @@ export string test_an_acknowledgement_clears_what_it_covers_across_2_31() {
   t.eqI32(a.inFlight(), 3, "three sent and unacknowledged");
 
   i32 lastTsn = dataTsn(firstChunkValue(third));
-  t.isTrue(lastTsn < 0, "the third TSN wrapped past 2^31 as expected: " + itoa(lastTsn));
+  t.isTrue(lastTsn < 0, "the third TSN wrapped past 2^31 as expected: \{lastTsn}");
   t.isTrue(dataTsn(firstChunkValue(first)) > 0, "and the first did not");
 
   a.receive(sackPacket(0x11111111, lastTsn, 65536), u8[](), 1);
@@ -350,14 +349,14 @@ export string test_a_sack_reports_the_chunks_that_arrived_out_of_order() {
   Association a = newAssociation(0x11111111, 1, 65536);
   i32[] arrived = [1, 2, 3, 4];
   for (i32 i = 0; i < arrived.len(); i++) {
-    t.isTrue(a.accept(arrived[i]), "TSN " + itoa(arrived[i]) + " is in order");
+    t.isTrue(a.accept(arrived[i]), "TSN \{arrived[i]} is in order");
   }
   t.eqI32(sackGaps(a.sack()), 0, "nothing is missing yet");
 
   // 5 is lost; 6, 7, 8 arrive, then 10 after a second hole at 9.
   i32[] early = [6, 7, 8, 10];
   for (i32 i = 0; i < early.len(); i++) {
-    t.isFalse(a.accept(early[i]), "TSN " + itoa(early[i]) + " is early");
+    t.isFalse(a.accept(early[i]), "TSN \{early[i]} is early");
   }
   u8[] sack = a.sack();
   t.eqI32(sackCumulative(sack), 4, "the cumulative point is still 4 — 5 never came");
@@ -427,7 +426,7 @@ export string test_aiortc_reads_our_gap_blocks_back_as_the_runs_we_meant(Core co
   // Three runs above 4 — 6-8, 10 and 13-14 — as offsets from the cumulative TSN. `0` duplicates,
   // and the count must say so or the gaps would be read four bytes further on.
   Lines lines = Lines.create();
-  lines.add("sackbody " + hexOf(a.sack()) + " " + h32(4) + " 65536 0 2-4,6-6,9-10");
+  lines.add("sackbody \{hexOf(a.sack())} \{h32(4)} 65536 0 2-4,6-6,9-10");
   ask(t, cli, lines, "aiortc's gap blocks");
   return t.report();
 }
@@ -442,7 +441,7 @@ export string test_and_a_sack_with_nothing_out_of_order_still_parses(Core core, 
   t.eqI32(sack.len(), 12, "twelve bytes of value; the four-byte chunk header is added around it");
 
   Lines lines = Lines.create();
-  lines.add("sackbody " + hexOf(sack) + " " + h32(1) + " 65536 0 -");
+  lines.add("sackbody \{hexOf(sack)} \{h32(1)} 65536 0 -");
   ask(t, cli, lines, "aiortc's empty SACK");
   return t.report();
 }
@@ -462,14 +461,14 @@ export string test_an_association_shuts_down_in_three_chunks(Core core, Cli cli)
   t.isFalse(a.closed(), "asked for, not finished — the peer must answer");
 
   Lines lines = Lines.create();
-  lines.add("chunkkind " + hexOf(shutdown) + " ShutdownChunk " + h32(3));
+  lines.add("chunkkind \{hexOf(shutdown)} ShutdownChunk \{h32(3)}");
 
   // The peer answers, and we finish the exchange.
   u8[][] done = a.receive(shutdownAckPacket(0x11111111), u8[](), 1);
   t.eqI32(done.len(), 1, "one packet back");
   if (done.len() == 1) {
     t.eqI32(firstChunkKind(done[0]), chunkShutdownComplete(), "SHUTDOWN_COMPLETE, and now it is over");
-    lines.add("chunkkind " + hexOf(done[0]) + " ShutdownCompleteChunk");
+    lines.add("chunkkind \{hexOf(done[0])} ShutdownCompleteChunk");
   }
   t.isTrue(a.closed(), "the association is closed");
   ask(t, cli, lines, "aiortc's shutdown exchange");
@@ -565,7 +564,7 @@ export string test_the_peers_declared_first_tsn_is_believed_over_the_first_to_ar
   t.isTrue(sacks.len() > 0, "a DATA chunk was not acknowledged at all");
   i32 cumulative = sackCumulative(firstChunkValue(sacks[0]));
   t.eqI32(cumulative, 99,
-          "the SACK claims everything through " + itoa(cumulative) + " arrived, but the peer said " +
+          "the SACK claims everything through \{cumulative} arrived, but the peer said " +
           "it starts at 100 and 100 has not arrived");
   t.eqI32(sackGaps(firstChunkValue(sacks[0])), 1, "101 was not reported as a gap");
 

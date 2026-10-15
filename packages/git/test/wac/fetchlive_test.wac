@@ -31,7 +31,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
 import { builtProgram } from "../../../wactest/src/built.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 
 static string REMOTE = "https://github.com/ethereum/eth2.0-specs.git";
@@ -108,11 +107,11 @@ export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for
   string firstLine = trimmedEnd(string.fromBytes(ls.stdout));
   i32 tab = firstLine.indexOf("\t");
   string wantSha = tab < 0 ? firstLine : firstLine.slice(0, tab);
-  t.isTrue(isObjectName(wantSha), "git gave no HEAD for " + REMOTE + ": " + wantSha);
+  t.isTrue(isObjectName(wantSha), "git gave no HEAD for \{REMOTE}: \{wantSha}");
   if (!isObjectName(wantSha)) { return t.report(); }
 
   // Read for the trust store, net for the socket, env for the proxy. No write.
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string wac = "\{cli.cwd().wait()}/native/v8/target/release/wac";
   Exec r = withEnv(cli, names, values, wac,
                    [
                                          builtProgram(cli, "packages/git/example/gitfetch.wac", "gitfetch",
@@ -123,17 +122,17 @@ export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for
                             REMOTE, "1"
                    ]);
   string err = trimmedEnd(string.fromBytes(r.stderr));
-  t.eqI32(r.status, 0, "gitfetch failed: " + err);
+  t.eqI32(r.status, 0, "gitfetch failed: \{err}");
   t.eqStr(err, "", "gitfetch warned");
   if (r.status != 0) { return t.report(); }
 
   // `<n> bytes, <m> objects, HEAD <sha> is a commit of <k> bytes`, read positionally.
   string out = trimmedEnd(string.fromBytes(r.stdout));
   string[] w = words(out);
-  t.eqI32(w.len(), 12, "gitfetch said \"" + out + "\"");
+  t.eqI32(w.len(), 12, "gitfetch said \"\{out}\"");
   if (w.len() != 12) { return t.report(); }
-  t.eqStr(w[1] + " " + w[3] + " " + w[4] + " " + w[6] + " " + w[8] + " " + w[11],
-          "bytes, objects, HEAD is commit bytes", "gitfetch's report changed shape: " + out);
+  t.eqStr("\{w[1]} \{w[3]} \{w[4]} \{w[6]} \{w[8]} \{w[11]}",
+          "bytes, objects, HEAD is commit bytes", "gitfetch's report changed shape: \{out}");
 
   i32 bytes = count(w[0]);
   i32 objects = count(w[2]);
@@ -147,8 +146,8 @@ export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for
   // The shape: a pack of one object would exercise no tree and no blob, and a commit of nothing
   // would mean the object came back empty rather than parsed.
   t.isTrue(objects > 100,
-           "a pack of " + itoa(objects) + " objects is too small to be this repository's");
-  t.isTrue(bytes > 100000, itoa(bytes) + " bytes is too small to be a real pack");
-  t.isTrue(commitBytes > 100, "a commit of " + itoa(commitBytes) + " bytes is not a commit");
+           "a pack of \{objects} objects is too small to be this repository's");
+  t.isTrue(bytes > 100000, "\{bytes} bytes is too small to be a real pack");
+  t.isTrue(commitBytes > 100, "a commit of \{commitBytes} bytes is not a commit");
   return t.report();
 }

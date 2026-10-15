@@ -16,7 +16,6 @@
 import { exec, accepts, execBasic, execExtended, basicAsExtended, whyBasic,
          whyExtended, execBudget } from "./probe.wac";
 import { Rng } from "../../wactest/src/rng.wac";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { Core, Cli, Sys } from "std";
 import {
   test_literals_dot_and_anchors as rx__literals_dot_and_anchors,
@@ -120,7 +119,7 @@ string piece(Rng r, string[] ats, string[] qs, i32 depth) {
       for (i32 j = 0; j < n; j++) { inner = inner + piece(r, ats, qs, depth - 1); }
     }
     string open = r.upto(2) == 0 ? "(" : "(?:";
-    return open + inner + ")" + qs[r.upto(qs.len())];
+    return "\{open}\{inner})\{qs[r.upto(qs.len())]}";
   }
   return ats[r.upto(ats.len())] + qs[r.upto(qs.len())];
 }
@@ -340,7 +339,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED basic_test test_the_i_flag_in_both_posix_dialects_agrees_with_grep");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("regex: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("regex: \{bad} test(s) failed under the coverage driver"); }
   seen = seen + bad;
 
   return seen;

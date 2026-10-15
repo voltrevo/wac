@@ -16,7 +16,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
 import { Daemon } from "../../../wactest/src/daemon.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Said, Wacsshd, buildClient, buildServer, ourSsh, realSsh, reapSelectsServers,
          startWacsshd, stopWacsshd, typedInto, typedIntoWatching } from "./wacsshd.wac";
 import { haveSshd, freshScratch, wouldReap } from "./fixture.wac";
@@ -30,7 +29,7 @@ Wacsshd server(T t, Core core, Cli cli, string name, string[] extra, bool writab
     return Wacsshd(false, "the server did not build", "", -1, Daemon(-1, "", ""));
   }
   Wacsshd s = startWacsshd(t, core, cli, name, extra, binary);
-  if (!s.ok) { t.fail("our sshd did not come up — " + s.error); }
+  if (!s.ok) { t.fail("our sshd did not come up — \{s.error}"); }
   return s;
 }
 
@@ -39,10 +38,10 @@ export string test_openssh_client_connects_authenticates_and_runs_a_command(Core
   if (!haveSshd(cli)) { return t.report(); }
   Wacsshd s = server(t, core, cli, "wacsshd-basic", string[].filled(0, ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
-  string key = s.dir + "/clientkey";
+  string key = "\{s.dir}/clientkey";
 
   Said hello = realSsh(cli, s, "echo hello from the wac server", key, string[].filled(0, ""));
-  t.eqI32(hello.status, 0, "the first command exited non-zero: " + hello.stderr);
+  t.eqI32(hello.status, 0, "the first command exited non-zero: \{hello.stderr}");
   t.eqStr(hello.stdout, "hello from the wac server\n", "stdout");
   // A clean end. Closing the socket without waiting for the client's CHANNEL_CLOSE makes ssh report
   // "Connection closed by remote host", and sending DISCONNECT instead makes it throw the output
@@ -54,14 +53,14 @@ export string test_openssh_client_connects_authenticates_and_runs_a_command(Core
   i32[] wanted = [0, 1, 127];
   for (i32 i = 0; i < commands.len(); i++) {
     t.eqI32(realSsh(cli, s, commands[i], key, string[].filled(0, "")).status, wanted[i],
-            "`" + commands[i] + "` exit status");
+            "`\{commands[i]}` exit status");
   }
 
   // The two streams stay apart.
   Said missing = realSsh(cli, s, "frobnicate", key, string[].filled(0, ""));
   t.eqStr(missing.stdout, "", "an error message went to stdout");
   t.isTrue(contains(missing.stderr, "command not found"),
-           "stderr was \"" + missing.stderr + "\"");
+           "stderr was \"\{missing.stderr}\"");
 
   // The command is run by `packages/sh`, so what arrives over the channel is a shell script rather
   // than a name the server knows. Each of these needs a different part of it.
@@ -87,7 +86,7 @@ export string test_openssh_client_connects_authenticates_and_runs_a_command(Core
   }
 
   // A file read through the capability world.
-  Said cat = realSsh(cli, s, "cat " + s.dir + "/.ssh/authorized_keys", key, string[].filled(0, ""));
+  Said cat = realSsh(cli, s, "cat \{s.dir}/.ssh/authorized_keys", key, string[].filled(0, ""));
   t.isTrue(cat.stdout.len() >= 12 && cat.stdout.slice(0, 12) == "ssh-ed25519 ",
            "cat gave " + cat.stdout.slice(0, cat.stdout.len() < 40 ? cat.stdout.len() : 40));
 
@@ -97,14 +96,14 @@ export string test_openssh_client_connects_authenticates_and_runs_a_command(Core
 
   // A key that is not in authorized_keys does not get in. This is the check that the signature
   // verification and the key lookup are both doing something.
-  string other = s.dir + "/otherkey";
+  string other = "\{s.dir}/otherkey";
   keygen(t, cli, other);
   restrict(cli, other);
   Said refused = realSsh(cli, s, "echo should not run", other, string[].filled(0, ""));
   t.neI32(refused.status, 0, "an unauthorized key was let in");
   t.eqStr(refused.stdout, "", "an unauthorized key ran a command");
   t.isTrue(contains(refused.stderr, "Permission denied"),
-           "unexpected refusal: " + refused.stderr);
+           "unexpected refusal: \{refused.stderr}");
 
   stopWacsshd(cli, s);
   return t.report();
@@ -135,11 +134,11 @@ export string test_with_a_pty_the_server_does_the_line_editing(Core core, Cli cl
   // The echo, with the erase in it: three bytes back for the one that was typed.
   // Spelled from bytes because wac has no `\b`: `echo hX`, backspace, space, backspace, `i`, CR LF.
   string erase = string.fromBytes([8] as u8[]);
-  t.isTrue(contains(r.stdout, "echo hX" + erase + " " + erase + "i\r\n"),
-           "no echo with an erase in it: \"" + r.stdout + "\"");
+  t.isTrue(contains(r.stdout, "echo hX\{erase} \{erase}i\r\n"),
+           "no echo with an erase in it: \"\{r.stdout}\"");
   // …and the corrected command ran, with its output wound back to the left margin.
   t.isTrue(contains(r.stdout, "hi\r\n"),
-           "the corrected command did not run: \"" + r.stdout + "\"");
+           "the corrected command did not run: \"\{r.stdout}\"");
 
   stopWacsshd(cli, s);
   return t.report();
@@ -195,10 +194,10 @@ export string test_control_c_ends_a_running_command_and_the_session_carries_on(C
   // bound is gone where there is a terminal to interrupt from, and this is the assertion that says
   // so rather than trusting the timing.
   t.isFalse(contains(r.stderr, "loop ran 100000 times"),
-            "the loop stopped itself, so the interrupt proved nothing: " + r.stderr);
+            "the loop stopped itself, so the interrupt proved nothing: \{r.stderr}");
   t.isTrue(contains(r.stdout, "alive=130"),
-           "`^C` did not end the command and leave a live session at 130: " + tail(r.stdout, 400) +
-           " err=" + tail(r.stderr, 300));
+           "`^C` did not end the command and leave a live session at 130: \{tail(r.stdout, 400)}" +
+           " err=\{tail(r.stderr, 300)}");
 
   stopWacsshd(cli, s);
   return t.report();
@@ -227,8 +226,8 @@ export string test_a_client_that_closes_its_stdin_does_not_interrupt_the_command
   // keeps the case honest about its own timing — 200,000 iterations is a second and a half in this
   // shell, so the EOF cannot arrive at the prompt instead, which is the case that always passed.
   t.isTrue(contains(r.stdout, "done=0 ran=200000"),
-           "the command did not survive the client's EOF: " + tail(r.stdout, 300) +
-           " err=" + tail(r.stderr, 200));
+           "the command did not survive the client's EOF: \{tail(r.stdout, 300)}" +
+           " err=\{tail(r.stderr, 200)}");
 
   stopWacsshd(cli, s);
   return t.report();
@@ -265,7 +264,7 @@ export string test_a_line_typed_while_a_command_is_running_is_still_a_command(Co
     "seen 'done=200000'; seen typed-ahead 2; printf '\\004'");
 
   t.isTrue(contains(r.stdout, "typed-ahead"),
-           "a line typed during a command was lost: " + tail(r.stdout, 300));
+           "a line typed during a command was lost: \{tail(r.stdout, 300)}");
   // …and in order: the running command's answer comes before the typed line *runs*.
   //
   // `lastIndexOf`, and the reason is worth keeping: `typed-ahead` appears twice, and the first is
@@ -275,9 +274,9 @@ export string test_a_line_typed_while_a_command_is_running_is_still_a_command(Co
   // **And the marker has to be there**, or the comparison below is -1 against anything — which is how
   // this assertion spent its life passing after its command stopped printing.
   t.isTrue(contains(r.stdout, "done=200000"),
-           "the command did not finish, so there is no ordering to check: " + tail(r.stdout, 400));
+           "the command did not finish, so there is no ordering to check: \{tail(r.stdout, 400)}");
   t.isTrue(r.stdout.indexOf("done=200000") <= lastIndexOf(r.stdout, "typed-ahead"),
-           "type-ahead ran before the command it was typed during: " + tail(r.stdout, 400));
+           "type-ahead ran before the command it was typed during: \{tail(r.stdout, 400)}");
 
   stopWacsshd(cli, s);
   return t.report();
@@ -309,15 +308,15 @@ export string test_the_orphan_reaper_selects_a_server_of_this_shape(Core core, C
   // review. Asserted against a planted process of the shape it is meant to find.
   T t = T.create();
   string dir = freshScratch(t, cli, "wacsshd-reap-canary");
-  string fake = dir + "/.cache/wacsshd/sshd.wasm";
-  string whyDir1 = madeDir(cli, dir + "/.cache/wacsshd");
+  string fake = "\{dir}/.cache/wacsshd/sshd.wasm";
+  string whyDir1 = madeDir(cli, "\{dir}/.cache/wacsshd");
   t.isTrue(whyDir1 == "", whyDir1);
-  cli.writeFile(dir + "/wac", ("#!/bin/sh\nsleep 30\n").toBytes()).wait();
-  cli.setExecutable(dir + "/wac", true).wait();
+  cli.writeFile("\{dir}/wac", ("#!/bin/sh\nsleep 30\n").toBytes()).wait();
+  cli.setExecutable("\{dir}/wac", true).wait();
 
   cli.exec("/bin/sh", [
     "-c",
-    "setsid " + dir + "/wac " + fake + " -p 1 >/dev/null 2>&1 </dev/null &"
+    "setsid \{dir}/wac \{fake} -p 1 >/dev/null 2>&1 </dev/null &"
   ], u8[]()).wait();
 
   string selected = "";
@@ -330,13 +329,13 @@ export string test_the_orphan_reaper_selects_a_server_of_this_shape(Core core, C
            "the reaper's pattern selected nothing of this shape — it would report a clean machine " +
            "whatever was abandoned");
 
-  cli.exec("/bin/sh", ["-c", "pkill -f " + fake + " 2>/dev/null; true"], u8[]()).wait();
+  cli.exec("/bin/sh", ["-c", "pkill -f \{fake} 2>/dev/null; true"], u8[]()).wait();
   cli.remove(dir, true).wait();
   return t.report();
 }
 
 /** The last `n` characters, for a message about a long transcript. */
-string tail(string s, i32 n) { return s.len() <= n ? s : "…" + s.slice(s.len() - n, s.len()); }
+string tail(string s, i32 n) { return s.len() <= n ? s : "…\{s.slice(s.len() - n, s.len())}"; }
 
 /** `string` has `indexOf` and no `lastIndexOf`; the ordering check above needs the last one. */
 i32 lastIndexOf(string haystack, string needle) {
@@ -363,12 +362,12 @@ export string test_a_client_that_sends_environment_requests_first_still_runs(Cor
   if (!haveSshd(cli)) { return t.report(); }
   Wacsshd s = server(t, core, cli, "wacsshd-sendenv", string[].filled(0, ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
-  string key = s.dir + "/clientkey";
+  string key = "\{s.dir}/clientkey";
   string[] sendEnv = ["-o", "SendEnv=LANG LC_*"];
 
   Said r = realSsh(cli, s, "echo env-first", key, sendEnv);
-  t.eqStr(r.stdout, "env-first\n", "the command did not run: " + r.stderr);
-  t.eqI32(r.status, 0, "exit status: " + r.stderr);
+  t.eqStr(r.stdout, "env-first\n", "the command did not run: \{r.stderr}");
+  t.eqI32(r.status, 0, "exit status: \{r.stderr}");
 
   // And the same again with a command whose status is not zero, so the reply pairing is checked
   // rather than just the happy path.
@@ -393,9 +392,9 @@ export string test_a_refused_subsystem_is_answered_because_it_wanted_a_reply(Cor
   Wacsshd s = server(t, core, cli, "wacsshd-subsystem", string[].filled(0, ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
-  Said r = realSsh(cli, s, "sftp", s.dir + "/clientkey", ["-s"]);
+  Said r = realSsh(cli, s, "sftp", "\{s.dir}/clientkey", ["-s"]);
   t.isTrue(contains(r.stderr, "subsystem request failed"),
-           "no refusal reached the client. stderr: \"" + r.stderr + "\"");
+           "no refusal reached the client. stderr: \"\{r.stderr}\"");
 
   stopWacsshd(cli, s);
   return t.report();
@@ -415,9 +414,9 @@ export string test_the_server_announces_the_port_it_is_actually_listening_on(Cor
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   string said = s.said(cli);
-  string want = "sshd: listening on port " + itoa(s.port);
+  string want = "sshd: listening on port \{s.port}";
   t.isTrue(contains(said, want),
-           "expected \"" + want + "\", the server said \"" + trimmed(said) + "\"");
+           "expected \"\{want}\", the server said \"\{trimmed(said)}\"");
 
   stopWacsshd(cli, s);
   return t.report();
@@ -434,7 +433,7 @@ export string test_the_abandoned_sshd_pattern_matches_what_ps_actually_prints(Co
   T t = T.create();
   string listener =
     "sshd: /usr/sbin/sshd -D -f /tmp/tmp.VPs8c9aLpd/sshd_config [listener] 0 of 10-100 startups";
-  t.isTrue(wouldReap(cli, listener), "the pattern does not match a real listener:\n  " + listener);
+  t.isTrue(wouldReap(cli, listener), "the pattern does not match a real listener:\n  \{listener}");
 
   // And what it must not match: the machine's own sshd, configured from `/etc`, and a client.
   string[] others = [
@@ -443,7 +442,7 @@ export string test_the_abandoned_sshd_pattern_matches_what_ps_actually_prints(Co
     "ssh -p 2222 -o StrictHostKeyChecking=no user@127.0.0.1 true"
   ];
   for (i32 i = 0; i < others.len(); i++) {
-    t.isFalse(wouldReap(cli, others[i]), "the pattern matches something it must not:\n  " + others[i]);
+    t.isFalse(wouldReap(cli, others[i]), "the pattern matches something it must not:\n  \{others[i]}");
   }
   return t.report();
 }
@@ -460,20 +459,20 @@ export string test_our_own_client_talks_to_our_own_server_both_ends_in_wac(Core 
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   // A HOME for the client, with the server's host key recorded so it will proceed.
-  string home = s.dir + "/clienthome";
-  string whyDir2 = madeDir(cli, home + "/.ssh");
+  string home = "\{s.dir}/clienthome";
+  string whyDir2 = madeDir(cli, "\{home}/.ssh");
   t.isTrue(whyDir2 == "", whyDir2);
-  copyPreserving(cli, s.dir + "/clientkey", home + "/.ssh/id_ed25519");
-  restrict(cli, home + "/.ssh/id_ed25519");
-  string hostBlob = publicBlobText(cli, s.dir + "/.ssh/ssh_host_ed25519_key.pub");
+  copyPreserving(cli, "\{s.dir}/clientkey", "\{home}/.ssh/id_ed25519");
+  restrict(cli, "\{home}/.ssh/id_ed25519");
+  string hostBlob = publicBlobText(cli, "\{s.dir}/.ssh/ssh_host_ed25519_key.pub");
   t.isTrue(hostBlob != "", "the server's host key could not be read");
-  cli.writeFile(home + "/.ssh/known_hosts",
-                ("[127.0.0.1]:" + itoa(s.port) + " ssh-ed25519 " + hostBlob + "\n").toBytes())
+  cli.writeFile("\{home}/.ssh/known_hosts",
+                "[127.0.0.1]:\{s.port} ssh-ed25519 \{hostBlob}\n".toBytes())
      .wait();
 
   Said r = ourSsh(cli, client, home,
-                  ["-p", itoa(s.port), "127.0.0.1", "echo", "both", "ends", "in", "wac"]);
-  t.eqI32(r.status, 0, "our client exited " + itoa(r.status) + ": " + r.stderr);
+                  ["-p", "\{s.port}", "127.0.0.1", "echo", "both", "ends", "in", "wac"]);
+  t.eqI32(r.status, 0, "our client exited \{r.status}: \{r.stderr}");
   t.eqStr(r.stdout, "both ends in wac\n", "what our client read back");
 
   stopWacsshd(cli, s);

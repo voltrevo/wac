@@ -104,7 +104,7 @@ export i32 main(Sys sys) {
   i32 code = dispatch(core, cli, Fs.onHost(cli, 0), parseArgs(cli), applet);
   if (code != UNKNOWN) { return code; }
 
-  core.warn("box: unknown applet '" + applet + "'");
+  core.warn("box: unknown applet '\{applet}'");
   return usage(core);
 }
 
@@ -262,10 +262,10 @@ export string wrapped(string[] ns, string lead, i32 width) {
   for (i32 i = 0; i < ns.len(); i++) {
     // The first name on a line always goes on it, however long: wrapping to nothing would loop.
     if (line.len() > lead.len() && line.len() + 1 + ns[i].len() > width) {
-      out = out + line + "\n";
+      out = out + "\{line}\n";
       line = lead;
     }
-    line = line == lead ? line + ns[i] : line + " " + ns[i];
+    line = line == lead ? line + ns[i] : "\{line} \{ns[i]}";
   }
   return line == lead ? out : out + line;
 }

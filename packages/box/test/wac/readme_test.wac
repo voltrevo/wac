@@ -12,7 +12,6 @@
 // the dispatcher.
 
 import { Cli, Core, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { joinWith, sortedOf, splitOn } from "./replay.wac";
 
@@ -23,16 +22,16 @@ export string test_the_readme_states_the_applet_count_the_dispatcher_has(Core co
   T t = T.create();
   string dispatch = readText(cli, dispatchPath());
   string readme = readText(cli, readmePath());
-  t.isTrue(dispatch.len() > 0, "cannot read " + dispatchPath());
-  t.isTrue(readme.len() > 0, "cannot read " + readmePath());
+  t.isTrue(dispatch.len() > 0, "cannot read \{dispatchPath()}");
+  t.isTrue(readme.len() > 0, "cannot read \{readmePath()}");
   if (dispatch.len() == 0 || readme.len() == 0) { return t.report(); }
 
   string[] dispatched = sortedOf(quotedAfter(dispatch, "if (applet == \""));
-  t.isTrue(dispatched.len() > 50, "only " + itoa(dispatched.len()) +
+  t.isTrue(dispatched.len() > 50, "only \{dispatched.len()}" +
                                   " dispatched names — is the dispatcher being read?");
   i32 claimed = numberBefore(readme, " applets");
   t.eqI32(claimed, dispatched.len(),
-          "the README says " + itoa(claimed) + " applets, box.wac dispatches " + itoa(dispatched.len()));
+          "the README says \{claimed} applets, box.wac dispatches \{dispatched.len()}");
 
   // And the list the usage message prints must be the same list. It was not: `help` was dispatched and
   // unlisted, so `box help` worked and nothing said so.
@@ -62,7 +61,7 @@ export string test_the_readmes_list_is_the_list_the_dispatcher_has(Core core, Cl
   string[] dispatched = sortedOf(quotedAfter(dispatch, "if (applet == \""));
   string fence = between(readme, "```\nbase32", "```");
   t.isTrue(fence.len() > 0, "the README's fence of tools has moved or gone");
-  string[] inReadme = sortedOf(wordsIn("base32" + fence));
+  string[] inReadme = sortedOf(wordsIn("base32\{fence}"));
 
   string want = "";
   for (i32 i = 0; i < dispatched.len(); i++) {
@@ -85,7 +84,7 @@ export string test_the_count_is_written_as_a_digit(Core core, Cli cli) {
   T t = T.create();
   string readme = readText(cli, readmePath());
   if (readme.len() == 0) {
-    t.isTrue(false, "cannot read " + readmePath());
+    t.isTrue(false, "cannot read \{readmePath()}");
     return t.report();
   }
   // **Searched from the phrase, not from the word.** Looking up each spelling and checking its first
@@ -107,7 +106,7 @@ export string test_the_count_is_written_as_a_digit(Core core, Cli cli) {
     string before = readme.slice(from, hit);
     for (i32 i = 0; i < spellings.len(); i++) {
       t.isTrue(before.indexOf(spellings[i]) < 0,
-               "the count before \"entry points\" is spelled out in \"" + before + "\" — write it as a " +
+               "the count before \"entry points\" is spelled out in \"\{before}\" — write it as a " +
                "digit, for the reason the README gives");
     }
     at = hit + 12;

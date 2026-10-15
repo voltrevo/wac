@@ -14,7 +14,6 @@
 // does the wrong thing — which is the failure D4 exists to make impossible.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Stripped, strip } from "../../src/strip.wac";
 
 /**
@@ -27,7 +26,7 @@ import { Stripped, strip } from "../../src/strip.wac";
  */
 string js(string src) {
   Stripped s = strip(src.toBytes());
-  if (s.error != "") { return "ERROR: " + s.error; }
+  if (s.error != "") { return "ERROR: \{s.error}"; }
   string out = "";
   bool space = false;
   i32 last = 0;

@@ -30,7 +30,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { freshDir, nativeBinaryPath } from "../../../wactest/src/host.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { Daemon, Held, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { keygen, restrict, publicLine } from "../../../wactest/src/keys.wac";
@@ -78,16 +77,16 @@ struct Said {
 
 Said ssh(Cli cli, string tmp, i32 port, string key, string user, string script) {
   Exec r = cli.exec("ssh", [
-    "-p", itoa(port),
-    "-i", tmp + "/" + key,
+    "-p", "\{port}",
+    "-i", "\{tmp}/\{key}",
     "-o", "StrictHostKeyChecking=no",
     "-o", "UserKnownHostsFile=/dev/null",
     "-o", "LogLevel=ERROR",
     "-o", "ConnectTimeout=10",
-    user + "@127.0.0.1",
+    "\{user}@127.0.0.1",
     script
   ], u8[]()).wait();
-  if (!r.ran()) { return Said(-1, "", "ssh did not run — " + r.error); }
+  if (!r.ran()) { return Said(-1, "", "ssh did not run — \{r.error}"); }
   return Said(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
 
@@ -113,22 +112,22 @@ Server serve(Core core, Cli cli, string tmp, string cmd, string[] pre, string im
     i32 port = held.port;
 
     string line = quoted(cmd);
-    for (i32 i = 0; i < pre.len(); i++) { line = line + " " + quoted(pre[i]); }
-    line = line + " -p " + itoa(port) +
-           " -h " + quoted(tmp + "/hostkey") +
-           " -a " + quoted(tmp + "/authorized_keys") +
+    for (i32 i = 0; i < pre.len(); i++) { line = line + " \{quoted(pre[i])}"; }
+    line = line + " -p \{port}" +
+           " -h " + quoted("\{tmp}/hostkey") +
+           " -a " + quoted("\{tmp}/authorized_keys") +
            " -i " + quoted(image);
 
     held.release(cli);
-    Daemon d = start(cli, line, log + "." + itoa(attempt));
-    if (!d.ok()) { return Server(d, -1, "the shell did not start sshd — " + d.error); }
-    if (waitForLogWithin(core, cli, d, "listening on port " + itoa(port), 20000)) {
+    Daemon d = start(cli, line, "\{log}.\{attempt}");
+    if (!d.ok()) { return Server(d, -1, "the shell did not start sshd — \{d.error}"); }
+    if (waitForLogWithin(core, cli, d, "listening on port \{port}", 20000)) {
       return Server(d, port, "");
     }
     stop(cli, d);
     if (attempt == 3) {
       return Server(d, -1,
-        "the server never said it was listening on " + itoa(port) + ", three times: " + logOf(cli, d));
+        "the server never said it was listening on \{port}, three times: \{logOf(cli, d)}");
     }
   }
   return Server(Daemon(-1, "", log), -1, "unreachable");
@@ -142,7 +141,7 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
     core.warn("arrival_users: skipped — no ssh or ssh-keygen on this machine, so there is no client");
     return t.report();
   }
-  string tmp = root(cli) + "/.cache/arrival-users";
+  string tmp = "\{root(cli)}/.cache/arrival-users";
   string whyDir = freshDir(cli, tmp);
   t.isTrue(whyDir == "", whyDir);
 
@@ -153,14 +152,14 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
 
   string[] keys = ["hostkey", "admin", "ada", "grace"];
   for (i32 i = 0; i < keys.len(); i++) {
-    if (!keygen(t, cli, tmp + "/" + keys[i])) { return t.report(); }
-    restrict(cli, tmp + "/" + keys[i]);
+    if (!keygen(t, cli, "\{tmp}/\{keys[i]}")) { return t.report(); }
+    restrict(cli, "\{tmp}/\{keys[i]}");
   }
-  cli.writeFile(tmp + "/authorized_keys", (publicLine(cli, tmp + "/admin.pub") + "\n").toBytes()).wait();
-  string image = tmp + "/system.wacimg";
+  cli.writeFile("\{tmp}/authorized_keys", (publicLine(cli, "\{tmp}/admin.pub") + "\n").toBytes()).wait();
+  string image = "\{tmp}/system.wacimg";
 
   // ── The JavaScript host writes the world ────────────────────────────────
-  Server first = serve(core, cli, tmp, denoBin, string[].filled(0, ""), image, tmp + "/deno.log");
+  Server first = serve(core, cli, tmp, denoBin, string[].filled(0, ""), image, "\{tmp}/deno.log");
   t.eqStr(first.error, "", "the Deno sshd is up");
   if (first.port <= 0) { return t.report(); }
 
@@ -170,15 +169,15 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
       "> /etc/passwd; " +
     "mkdir /home; mkdir /home/ada; mkdir /home/ada/.ssh; " +
       "mkdir /home/grace; mkdir /home/grace/.ssh; " +
-    "printf '%s\\n' '" + publicLine(cli, tmp + "/ada.pub") + "' > /home/ada/.ssh/authorized_keys; " +
-    "printf '%s\\n' '" + publicLine(cli, tmp + "/grace.pub") + "' > /home/grace/.ssh/authorized_keys; " +
+    "printf '%s\\n' '" + publicLine(cli, "\{tmp}/ada.pub") + "' > /home/ada/.ssh/authorized_keys; " +
+    "printf '%s\\n' '" + publicLine(cli, "\{tmp}/grace.pub") + "' > /home/grace/.ssh/authorized_keys; " +
     "echo the difference engine > /home/ada/secret; " +
     "echo the first compiler > /home/grace/secret; " +
     "chmod 600 /home/ada/secret; chown ada /home/ada/secret; " +
     "chmod 600 /home/grace/secret; chown grace /home/grace/secret; " +
     "chown ada /home/ada; chown grace /home/grace";
   Said made = ssh(cli, tmp, first.port, "admin", "root", build);
-  t.eqI32(made.code, 0, "building the world: " + made.err);
+  t.eqI32(made.code, 0, "building the world: \{made.err}");
   // **No second connection.** This used to need one: the image was written after the connection was
   // over, so killing the server as soon as `ssh` returned could beat the save and the next host booted
   // an empty world (0108). A session writes before it tells the client the command finished now, so
@@ -204,17 +203,17 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
 
   // ── …and the host with no JavaScript in it serves the same file ─────────
   Server second = serve(core, cli, tmp, native, [mod], image,
-                        tmp + "/native.log");
+                        "\{tmp}/native.log");
   t.eqStr(second.error, "", "the native sshd is up");
   if (second.port <= 0) { cli.remove(tmp, true).wait(); return t.report(); }
 
   // Each key lands in its own home, with its own name, without the server being told either.
   Said ada = ssh(cli, tmp, second.port, "ada", "ada", "pwd; echo $USER");
-  t.eqStr(ada.out, "/home/ada\nada\n", ada.out + " / " + ada.err);
+  t.eqStr(ada.out, "/home/ada\nada\n", "\{ada.out} / \{ada.err}");
   // Grace logs in *after* ada, so this also says the server reads policy as the system rather than as
   // whoever it served last.
   Said grace = ssh(cli, tmp, second.port, "grace", "grace", "pwd; echo $USER");
-  t.eqStr(grace.out, "/home/grace\ngrace\n", grace.out + " / " + grace.err);
+  t.eqStr(grace.out, "/home/grace\ngrace\n", "\{grace.out} / \{grace.err}");
 
   // Each reads their own.
   Said own = ssh(cli, tmp, second.port, "ada", "ada", "cat /home/ada/secret");
@@ -224,7 +223,7 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
   // image. The mode and the owner are **in the image**: the whole thing is one file owned by whoever
   // ran the process, so the operating system could not enforce this even if it tried.
   Said theirs = ssh(cli, tmp, second.port, "ada", "ada", "cat /home/grace/secret; echo status=$?");
-  t.isTrue(contains(theirs.out, "status=1"), theirs.out + " / " + theirs.err);
+  t.isTrue(contains(theirs.out, "status=1"), "\{theirs.out} / \{theirs.err}");
   t.isFalse(contains(theirs.out, "the first compiler"), "ada read grace's secret");
   t.isTrue(contains(theirs.err, "Permission denied"), theirs.err);
 

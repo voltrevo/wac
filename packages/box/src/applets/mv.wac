@@ -21,6 +21,6 @@ export i32 mv(Core core, Cli cli, Fs fs, Args a) {
   // `mv f f/g` reported `mv: f: Not a directory` about a file that is perfectly fine and said nothing
   // about `f/g`, which is the operand at fault. Naming both is what GNU does and is the only version of
   // this line that cannot mislead, since a `rename` failure can come from either end.
-  core.warn(a.name + ": cannot move '" + a.rest[0] + "' to '" + a.rest[1] + "': " + reasonOf(c));
+  core.warn("\{a.name}: cannot move '\{a.rest[0]}' to '\{a.rest[1]}': \{reasonOf(c)}");
   return 1;
 }

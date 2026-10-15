@@ -33,7 +33,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
@@ -70,29 +69,29 @@ i32 runWith(Cli cli, string dir) {
                "test", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
                SUBJECT
       ],
-      u8[](), ["WAC_HOME=" + dir], false, false).wait();
+      u8[](), ["WAC_HOME=\{dir}"], false, false).wait();
   return r.ran() ? r.status : 0 - 1;
 }
 
 export string test_a_directory_that_imports_core_is_cached(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/testmod-probe";
+  string dir = "\{cli.cwd().wait()}/.cache/testmod-probe";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
   // First run: an empty cache, so this compiles and remembers.
   i32 first = runWith(cli, dir);
   t.eqI32(first, 0, "the subject directory did not pass, so the cache claim is about a broken run");
-  i32 cold = entriesIn(cli, dir + "/cache/build");
+  i32 cold = entriesIn(cli, "\{dir}/cache/build");
   t.isTrue(cold > 0,
-      "no entry was written, so `wac test` compiled " + SUBJECT + " and remembered nothing — either "
+      "no entry was written, so `wac test` compiled \{SUBJECT} and remembered nothing — either "
       + "`buildCachePath` is refusing this command line or `rememberBuild` is not reached on the "
       + "test path");
 
   // Second run: the same sources, so the same key, so no *additional* entry.
   i32 second = runWith(cli, dir);
   t.eqI32(second, 0, "the subject directory did not pass on the second run");
-  t.eqI32(entriesIn(cli, dir + "/cache/build"), cold,
+  t.eqI32(entriesIn(cli, "\{dir}/cache/build"), cold,
       "a second run of unchanged sources wrote another entry, so the key is not stable — the most "
       + "likely thing to have got into it is the generated aggregate's own path, which carries the "
       + "clock so that two runs never collide, and so makes every key a miss");

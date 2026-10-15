@@ -113,10 +113,10 @@ export Step[] plan(Manifest m, Lock l) {
  * again to say which.
  */
 string firstDifference(Mapping map, LockEntry e) {
-  if (map.git != e.git) { return "git changed from \"" + e.git + "\" to \"" + map.git + "\""; }
-  if (map.ref != e.ref) { return "ref changed from \"" + e.ref + "\" to \"" + map.ref + "\""; }
+  if (map.git != e.git) { return "git changed from \"\{e.git}\" to \"\{map.git}\""; }
+  if (map.ref != e.ref) { return "ref changed from \"\{e.ref}\" to \"\{map.ref}\""; }
   if (map.subdir != e.subdir) {
-    return "subdir changed from \"" + e.subdir + "\" to \"" + map.subdir + "\"";
+    return "subdir changed from \"\{e.subdir}\" to \"\{map.subdir}\"";
   }
   return "";
 }
@@ -303,13 +303,13 @@ export u8[] writeLock(LockEntry[] entries) {
   out.pushAll("{\n  \"imports\": {\n".toBytes());
   for (i32 i = 0; i < sorted.len(); i++) {
     LockEntry e = sorted[i];
-    out.pushAll(("    " + quoted(e.name) + ": {\n").toBytes());
-    out.pushAll(("      \"git\": " + quoted(e.git) + ",\n").toBytes());
-    out.pushAll(("      \"ref\": " + quoted(e.ref) + ",\n").toBytes());
+    out.pushAll("    \{quoted(e.name)}: {\n".toBytes());
+    out.pushAll("      \"git\": \{quoted(e.git)},\n".toBytes());
+    out.pushAll("      \"ref\": \{quoted(e.ref)},\n".toBytes());
     if (e.subdir != "") {
-      out.pushAll(("      \"subdir\": " + quoted(e.subdir) + ",\n").toBytes());
+      out.pushAll("      \"subdir\": \{quoted(e.subdir)},\n".toBytes());
     }
-    out.pushAll(("      \"commit\": " + quoted(e.commit) + "\n").toBytes());
+    out.pushAll("      \"commit\": \{quoted(e.commit)}\n".toBytes());
     out.pushAll(("    }" + (i + 1 < sorted.len() ? "," : "") + "\n").toBytes());
   }
   out.pushAll("  }\n}\n".toBytes());
@@ -334,7 +334,7 @@ string quoted(string s) {
     if (c == "\r") { out = out + "\\r"; continue; }
     out = out + c;
   }
-  return out + "\"";
+  return "\{out}\"";
 }
 
 /** `entries` by name, byte-wise. Insertion sort: a manifest has tens of mappings, not thousands. */

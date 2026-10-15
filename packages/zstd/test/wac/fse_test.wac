@@ -30,7 +30,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, Answers, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { askZstd, compressLine, frameAt, weightBytes } from "./frames.wac";
 import { FseTable, decompress, buildFromCounts, readTable } from "../../src/fse.wac";
@@ -67,7 +66,7 @@ u8[][] samples() {
                           400);
   string json = "[";
   for (i32 i = 0; i < 2000; i++) {
-    json = json + (i == 0 ? "" : ",") + "{\"id\":" + itoa(i) + ",\"name\":\"item" + itoa(i) +
+    json = json + (i == 0 ? "" : ",") + "{\"id\":\{i},\"name\":\"item\{i}" +
            "\",\"tags\":[\"a\",\"b\"]}";
   }
   json = json + "]";
@@ -77,7 +76,7 @@ u8[][] samples() {
     one[0] = (33 + i) as@ u8;
     punctuation = punctuation + string.fromBytes(one);
   }
-  string mixed = repeated("Lorem ipsum dolor sit amet 12345 " + punctuation, 300);
+  string mixed = repeated("Lorem ipsum dolor sit amet 12345 \{punctuation}", 300);
   return [prose.toBytes(), json.toBytes(), mixed.toBytes()];
 }
 
@@ -105,17 +104,17 @@ export string test_weights_decoded_from_real_frames_complete_a_huffman_code(Core
 
     // maxSymbol 255 and accuracy log at most 6: what the format allows for weights.
     i32[] weights = decompress(bytes, 255, 6, 256);
-    t.isTrue(weights.len() > 0, names[i] + ": no weights decoded");
+    t.isTrue(weights.len() > 0, "\{names[i]}: no weights decoded");
     if (weights.len() == 0) { continue; }
     bool inRange = true;
     for (i32 k = 0; k < weights.len(); k++) {
       if (weights[k] < 0 || weights[k] > 12) { inRange = false; }
     }
-    t.isTrue(inRange, names[i] + ": a weight is out of range");
+    t.isTrue(inRange, "\{names[i]}: a weight is out of range");
 
     i32 left = huffmanRemainder(weights);
     t.isTrue(left > 0 && (left & (left - 1)) == 0,
-             names[i] + ": " + itoa(weights.len()) + " weights leave " + itoa(left) +
+             "\{names[i]}: \{weights.len()} weights leave \{left}" +
              ", which is not a power of two — so they are not a Huffman code and the FSE decode " +
              "is wrong");
     checked = checked + 1;
@@ -135,7 +134,7 @@ export string test_the_same_frame_decodes_the_same_way_every_time(Core core, Cli
   if (bytes.len() == 0) { return t.report(); }
   i32[] first = decompress(bytes, 255, 6, 256);
   for (i32 i = 0; i < 3; i++) {
-    t.eqI32Array(decompress(bytes, 255, 6, 256), first, "run " + itoa(i));
+    t.eqI32Array(decompress(bytes, 255, 6, 256), first, "run \{i}");
   }
   return t.report();
 }
@@ -174,11 +173,11 @@ export string test_the_predefined_distributions_build_usable_tables() {
     i32 log = logs[which];
     i32 sum = 0;
     for (i32 i = 0; i < counts.len(); i++) { sum = sum + (counts[i] < 0 ? 1 : counts[i]); }
-    t.eqI32(sum, 1 << log, names[which] + ": the counts' sum");
+    t.eqI32(sum, 1 << log, "\{names[which]}: the counts' sum");
 
     FseTable table = buildFromCounts(counts, counts.len() - 1, log);
     i32 size = 1 << log;
-    t.eqI32(table.symbol.len(), size, names[which] + ": states");
+    t.eqI32(table.symbol.len(), size, "\{names[which]}: states");
     if (table.symbol.len() != size) { continue; }
 
     // Every state must name a real symbol, read a possible number of bits, and land inside the
@@ -188,22 +187,22 @@ export string test_the_predefined_distributions_build_usable_tables() {
     for (i32 u = 0; u < size; u++) {
       i32 s = table.symbol[u];
       t.isTrue(s >= 0 && s < counts.len(),
-               names[which] + ": state " + itoa(u) + " names symbol " + itoa(s));
+               "\{names[which]}: state \{u} names symbol \{s}");
       if (s < 0 || s >= counts.len()) { continue; }
       seen[s] = seen[s] + 1;
       i32 bits = table.nbBits[u];
       t.isTrue(bits >= 0 && bits <= log,
-               names[which] + ": state " + itoa(u) + " reads " + itoa(bits) + " bits");
+               "\{names[which]}: state \{u} reads \{bits} bits");
       i32 lo = table.newState[u];
       i32 hi = lo + (1 << bits) - 1;
       t.isTrue(lo >= 0 && hi < size,
-               names[which] + ": state " + itoa(u) + " goes to " + itoa(lo) + ".." + itoa(hi) +
-               ", outside 0.." + itoa(size - 1));
+               "\{names[which]}: state \{u} goes to \{lo}..\{hi}" +
+               ", outside 0..\{size - 1}");
     }
     // And each symbol must occupy exactly as many states as its count claimed.
     for (i32 s = 0; s < counts.len(); s++) {
       t.eqI32(seen[s], counts[s] < 0 ? 1 : counts[s],
-              names[which] + ": symbol " + itoa(s) + " holds this many states");
+              "\{names[which]}: symbol \{s} holds this many states");
     }
   }
   return t.report();
@@ -228,15 +227,15 @@ export string test_traps_a_log_with_no_stream() {
 /** A `writedesc` line: the counts, comma-separated, at an accuracy log. */
 string writeDescLine(i32[] counts, i32 log) {
   string csv = "";
-  for (i32 i = 0; i < counts.len(); i++) { csv = csv + (i == 0 ? "" : ",") + itoa(counts[i]); }
-  return "writedesc " + itoa(log) + " " + csv;
+  for (i32 i = 0; i < counts.len(); i++) { csv = csv + (i == 0 ? "" : ",") + "\{counts[i]}"; }
+  return "writedesc \{log} \{csv}";
 }
 
 /** Every field of two tables, compared entry by entry. */
 void sameTable(T t, string name, FseTable read, FseTable built) {
-  t.eqI32Array(read.symbol, built.symbol, name + ": symbol");
-  t.eqI32Array(read.nbBits, built.nbBits, name + ": nbBits");
-  t.eqI32Array(read.newState, built.newState, name + ": newState");
+  t.eqI32Array(read.symbol, built.symbol, "\{name}: symbol");
+  t.eqI32Array(read.nbBits, built.nbBits, "\{name}: nbBits");
+  t.eqI32Array(read.newState, built.newState, "\{name}: newState");
 }
 
 export string test_a_description_written_from_counts_reads_back_as_those_counts(
@@ -275,13 +274,13 @@ export string test_a_description_written_from_counts_reads_back_as_those_counts(
 
   for (i32 i = 0; i < cases.len(); i++) {
     u8[] desc = decoded(word(a.lines[i], 1));
-    t.isTrue(desc.len() > 0, names[i] + ": the writer produced nothing");
+    t.isTrue(desc.len() > 0, "\{names[i]}: the writer produced nothing");
     if (desc.len() == 0) { continue; }
     FseTable read = readTable(desc, 0, cases[i].len() - 1, logs[i]);
     FseTable built = buildFromCounts(cases[i], cases[i].len() - 1, logs[i]);
-    t.eqI32(read.log, logs[i], names[i] + ": the log read back");
+    t.eqI32(read.log, logs[i], "\{names[i]}: the log read back");
     sameTable(t, names[i], read, built);
-    t.eqI32(read.bytesUsed, desc.len(), names[i] + ": bytes the reader consumed");
+    t.eqI32(read.bytesUsed, desc.len(), "\{names[i]}: bytes the reader consumed");
   }
   return t.report();
 }
@@ -345,14 +344,14 @@ export string test_fuzz_any_distribution_the_format_can_express_survives_the_rou
   for (i32 i = 0; i < n; i++) { lines.add(writeDescLine(kept[i], keptLogs[i])); }
   Answers a = askZstd(t, cli, lines, "the description writer");
   if (!a.ok) { return t.report(); }
-  t.isTrue(n > 100, "only " + itoa(n) + " of " + itoa(trials) + " trials were usable");
-  core.log("  " + itoa(n) + " random distributions round-tripped");
+  t.isTrue(n > 100, "only \{n} of \{trials} trials were usable");
+  core.log("  \{n} random distributions round-tripped");
 
   for (i32 i = 0; i < n; i++) {
     u8[] desc = decoded(word(a.lines[i], 1));
     FseTable read = readTable(desc, 0, kept[i].len() - 1, keptLogs[i]);
     FseTable built = buildFromCounts(kept[i], kept[i].len() - 1, keptLogs[i]);
-    sameTable(t, "trial " + itoa(i) + " (log " + itoa(keptLogs[i]) + ")", read, built);
+    sameTable(t, "trial \{i} (log \{keptLogs[i]})", read, built);
   }
   return t.report();
 }

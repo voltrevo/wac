@@ -16,7 +16,7 @@ import { nativeHost, nativeHostWhyNot } from "./built.wac";
 
 /** Where `wac task seed` puts the binary, absolute, so `exec` does not depend on a PATH. */
 export string binaryPath(Cli cli) {
-  return cli.cwd().wait() + "/native/v8/target/release/wac";
+  return "\{cli.cwd().wait()}/native/v8/target/release/wac";
 }
 
 /**
@@ -28,7 +28,7 @@ export string binaryPath(Cli cli) {
  * root; `packages/wacpkg/src/root.wac` owns the general one and is tested on those edges.
  */
 export string binaryDir(Cli cli) {
-  return cli.cwd().wait() + "/native/v8/target/release";
+  return "\{cli.cwd().wait()}/native/v8/target/release";
 }
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
@@ -54,7 +54,7 @@ export string agentDir(Cli cli) {
  */
 export string scratch(Cli cli, string name) {
   string who = agentDir(cli);
-  return "/tmp/wac-" + name + (who == "" ? "" : "-" + who);
+  return "/tmp/wac-" + name + (who == "" ? "" : "-\{who}");
 }
 
 /**
@@ -85,7 +85,7 @@ export string nativeBinaryPath(Core core, Cli cli, string who) {
   // `Cargo.toml` was ever watched, in the helper that ten test files share.
   string why = nativeHostWhyNot(cli);
   if (why != "") {
-    core.warn(who + ": SKIPPING the native half — " + why);
+    core.warn("\{who}: SKIPPING the native half — \{why}");
     return "";
   }
   return nativeHost(cli);
@@ -129,13 +129,13 @@ export string putFile(Cli cli, string path, string text) {
     if (why != "") { return why; }
   }
   Change wrote = cli.writeFile(path, text.toBytes()).wait();
-  if (!wrote.ok()) { return "could not write " + path + " — " + wrote.message; }
+  if (!wrote.ok()) { return "could not write \{path} — \{wrote.message}"; }
   return "";
 }
 
 export string madeDir(Cli cli, string dir) {
   Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) { return "could not create " + dir + " — " + made.message; }
+  if (!made.ok()) { return "could not create \{dir} — \{made.message}"; }
   return "";
 }
 
@@ -155,9 +155,9 @@ export string madeDir(Cli cli, string dir) {
 export string freshDir(Cli cli, string dir) {
   Change gone = cli.remove(dir, true).wait();
   if (!gone.ok() && !gone.absent()) {
-    return "could not empty " + dir + " — " + gone.message;
+    return "could not empty \{dir} — \{gone.message}";
   }
   Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) { return "could not create " + dir + " — " + made.message; }
+  if (!made.ok()) { return "could not create \{dir} — \{made.message}"; }
   return "";
 }

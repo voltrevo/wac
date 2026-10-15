@@ -33,7 +33,6 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Core, Cli, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode, encodeUpper as hexEncodeUpper, decode as hexDecode }
   from "../../src/hex.wac";
 import { encode as b64Encode, decode as b64Decode, ALPHABET_STANDARD, ALPHABET_URL }
@@ -83,11 +82,11 @@ export string test_rfc_4648_test_vectors_encoding() {
   for (i32 i = 0; i < vs.len(); i++) {
     Vector v = vs[i];
     u8[] data = v.input.toBytes();
-    string where = " of \"" + v.input + "\"";
-    t.eqStr(text(hexEncodeUpper(data)), v.b16, "base16" + where);
-    t.eqStr(text(b32Encode(data, B32_STANDARD(), true)), v.b32, "base32" + where);
-    t.eqStr(text(b32Encode(data, B32_HEX(), true)), v.b32hex, "base32hex" + where);
-    t.eqStr(text(b64Encode(data, ALPHABET_STANDARD(), true)), v.b64, "base64" + where);
+    string where = " of \"\{v.input}\"";
+    t.eqStr(text(hexEncodeUpper(data)), v.b16, "base16\{where}");
+    t.eqStr(text(b32Encode(data, B32_STANDARD(), true)), v.b32, "base32\{where}");
+    t.eqStr(text(b32Encode(data, B32_HEX(), true)), v.b32hex, "base32hex\{where}");
+    t.eqStr(text(b64Encode(data, ALPHABET_STANDARD(), true)), v.b64, "base64\{where}");
   }
   return t.report();
 }
@@ -97,17 +96,17 @@ export string test_rfc_4648_test_vectors_decoding() {
   Vector[] vs = rfcVectors();
   for (i32 i = 0; i < vs.len(); i++) {
     Vector v = vs[i];
-    string where = " of \"" + v.input + "\"";
-    t.eqStr(decoded(hexDecode(v.b16.toBytes())), v.input, "base16" + where);
-    t.eqStr(decoded(hexDecode(lower(v.b16).toBytes())), v.input, "base16 lowercase" + where);
-    t.eqStr(decoded(b32Decode(v.b32.toBytes(), B32_STANDARD())), v.input, "base32" + where);
+    string where = " of \"\{v.input}\"";
+    t.eqStr(decoded(hexDecode(v.b16.toBytes())), v.input, "base16\{where}");
+    t.eqStr(decoded(hexDecode(lower(v.b16).toBytes())), v.input, "base16 lowercase\{where}");
+    t.eqStr(decoded(b32Decode(v.b32.toBytes(), B32_STANDARD())), v.input, "base32\{where}");
     // Lowercase, which RFC 4648 requires a decoder to accept even though it never emits it.
     t.eqStr(decoded(b32Decode(lower(v.b32).toBytes(), B32_STANDARD())), v.input,
-            "base32 lowercase" + where);
-    t.eqStr(decoded(b32Decode(v.b32hex.toBytes(), B32_HEX())), v.input, "base32hex" + where);
+            "base32 lowercase\{where}");
+    t.eqStr(decoded(b32Decode(v.b32hex.toBytes(), B32_HEX())), v.input, "base32hex\{where}");
     t.eqStr(decoded(b32Decode(lower(v.b32hex).toBytes(), B32_HEX())), v.input,
-            "base32hex lowercase" + where);
-    t.eqStr(decoded(b64Decode(v.b64.toBytes())), v.input, "base64" + where);
+            "base32hex lowercase\{where}");
+    t.eqStr(decoded(b64Decode(v.b64.toBytes())), v.input, "base64\{where}");
   }
   return t.report();
 }
@@ -153,13 +152,13 @@ export string test_base64_encoding_matches_an_external_encoder(Core core, Cli cl
   for (i32 len = 0; len < corpus.len(); len++) {
     u8[] data = corpus[len];
     string std = text(b64Encode(data, ALPHABET_STANDARD(), true));
-    t.eqStr(std, want[len], "base64 of " + itoa(len) + " bytes");
+    t.eqStr(std, want[len], "base64 of \{len} bytes");
     // base64url is the same string with two substitutions and the padding optional.
     string wantUrl = replaceAll(replaceAll(want[len], "+", "-"), "/", "_");
     t.eqStr(text(b64Encode(data, ALPHABET_URL(), true)), wantUrl,
-            "base64url of " + itoa(len) + " bytes");
+            "base64url of \{len} bytes");
     t.eqStr(text(b64Encode(data, ALPHABET_URL(), false)), replaceAll(wantUrl, "=", ""),
-            "unpadded base64url of " + itoa(len) + " bytes");
+            "unpadded base64url of \{len} bytes");
   }
   return t.report();
 }
@@ -235,9 +234,9 @@ export string test_hex_encoding_matches_a_reference() {
   for (i32 len = 0; len <= 200; len++) {
     u8[] data = randomBytes(rng, len);
     string want = referenceHex(data, "0123456789abcdef");
-    t.eqStr(text(hexEncode(data)), want, "hex of " + itoa(len) + " bytes");
+    t.eqStr(text(hexEncode(data)), want, "hex of \{len} bytes");
     t.eqStr(text(hexEncodeUpper(data)), referenceHex(data, "0123456789ABCDEF"),
-            "uppercase hex of " + itoa(len) + " bytes");
+            "uppercase hex of \{len} bytes");
   }
   return t.report();
 }
@@ -266,22 +265,22 @@ export string test_every_encoding_round_trips_random_bytes_at_every_length() {
   Rng rng = Rng(0x77aa11bb);
   for (i32 len = 0; len <= 300; len++) {
     u8[] d = randomBytes(rng, len);
-    string at = " at " + itoa(len) + " bytes";
-    t.isTrue(sameBytes(hexDecode(hexEncode(d)), d), "hex" + at);
-    t.isTrue(sameBytes(hexDecode(hexEncodeUpper(d)), d), "hex upper" + at);
-    t.isTrue(sameBytes(b64Decode(b64Encode(d, ALPHABET_STANDARD(), true)), d), "base64" + at);
+    string at = " at \{len} bytes";
+    t.isTrue(sameBytes(hexDecode(hexEncode(d)), d), "hex\{at}");
+    t.isTrue(sameBytes(hexDecode(hexEncodeUpper(d)), d), "hex upper\{at}");
+    t.isTrue(sameBytes(b64Decode(b64Encode(d, ALPHABET_STANDARD(), true)), d), "base64\{at}");
     t.isTrue(sameBytes(b64Decode(b64Encode(d, ALPHABET_STANDARD(), false)), d),
-             "base64 unpadded" + at);
-    t.isTrue(sameBytes(b64Decode(b64Encode(d, ALPHABET_URL(), true)), d), "base64url" + at);
+             "base64 unpadded\{at}");
+    t.isTrue(sameBytes(b64Decode(b64Encode(d, ALPHABET_URL(), true)), d), "base64url\{at}");
     t.isTrue(sameBytes(b64Decode(b64Encode(d, ALPHABET_URL(), false)), d),
-             "base64url unpadded" + at);
+             "base64url unpadded\{at}");
     t.isTrue(sameBytes(b32Decode(b32Encode(d, B32_STANDARD(), true), B32_STANDARD()), d),
-             "base32" + at);
+             "base32\{at}");
     t.isTrue(sameBytes(b32Decode(b32Encode(d, B32_STANDARD(), false), B32_STANDARD()), d),
-             "base32 unpadded" + at);
-    t.isTrue(sameBytes(b32Decode(b32Encode(d, B32_HEX(), true), B32_HEX()), d), "base32hex" + at);
+             "base32 unpadded\{at}");
+    t.isTrue(sameBytes(b32Decode(b32Encode(d, B32_HEX(), true), B32_HEX()), d), "base32hex\{at}");
     t.isTrue(sameBytes(b32Decode(b32Encode(d, B32_HEX(), false), B32_HEX()), d),
-             "base32hex unpadded" + at);
+             "base32hex unpadded\{at}");
   }
   return t.report();
 }
@@ -315,13 +314,13 @@ export string test_base64_decoding_is_strict_where_atob_is_not() {
   ];
   for (i32 i = 0; i < bad.len(); i++) {
     t.isTrue(b64Decode(bad[i].toBytes()) is null,
-             "accepted \"" + bad[i] + "\", but " + why[i]);
+             "accepted \"\{bad[i]}\", but \{why[i]}");
   }
   // Unpadded input at a valid length is accepted, which is the other half of the rule.
   string[] good = ["", "AA", "QQ", "Zm9v", "Zm9vYg", "Zm9vYmE"];
   for (i32 i = 0; i < good.len(); i++) {
     t.isTrue(!(b64Decode(good[i].toBytes()) is null),
-             "rejected well-formed unpadded \"" + good[i] + "\"");
+             "rejected well-formed unpadded \"\{good[i]}\"");
   }
   return t.report();
 }
@@ -339,7 +338,7 @@ export string test_the_canonical_encoding_rule() {
   string[] nonZero = ["QR==", "QS==", "QV==", "Zm9vYmG="];
   for (i32 i = 0; i < nonZero.len(); i++) {
     t.isTrue(b64Decode(nonZero[i].toBytes()) is null,
-             nonZero[i] + " has non-zero unused bits and should be rejected");
+             "\{nonZero[i]} has non-zero unused bits and should be rejected");
   }
   // And the same rule in base32, where a short group leaves up to four spare bits.
   t.eqStr(decoded(b32Decode("MY======".toBytes(), B32_STANDARD())), "f", "MY====== decodes to 'f'");
@@ -349,7 +348,7 @@ export string test_the_canonical_encoding_rule() {
     if (got is null) { continue; }
     // Accepted, so it has to re-encode to itself — otherwise it was not canonical.
     t.eqStr(text(b32Encode(got!, B32_STANDARD(), true)), b32NonZero[i],
-            b32NonZero[i] + " decoded but does not re-encode as itself");
+            "\{b32NonZero[i]} decoded but does not re-encode as itself");
   }
   return t.report();
 }
@@ -359,12 +358,12 @@ export string test_base32_decoding_rejects_impossible_group_lengths() {
   // 1, 3 and 6 digits cannot end a base32 group: the valid counts are 2, 4, 5, 7 and 8.
   string[] bad = ["A", "AAA", "AAAAAA", "AAAAAAAAA", "A=======", "AAA====="];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.isTrue(b32Decode(bad[i].toBytes(), B32_STANDARD()) is null, "accepted \"" + bad[i] + "\"");
+    t.isTrue(b32Decode(bad[i].toBytes(), B32_STANDARD()) is null, "accepted \"\{bad[i]}\"");
   }
   string[] good = ["", "AA", "AAAA", "AAAAA", "AAAAAAA", "AAAAAAAA"];
   for (i32 i = 0; i < good.len(); i++) {
     t.isTrue(!(b32Decode(good[i].toBytes(), B32_STANDARD()) is null),
-             "rejected well-formed unpadded \"" + good[i] + "\"");
+             "rejected well-formed unpadded \"\{good[i]}\"");
   }
   // Padding must match the digit count exactly.
   string[] padded = ["MY======", "MY=====", "MY=======", "MZXW6===", "MZXW6=="];
@@ -381,11 +380,11 @@ export string test_hex_decoding_is_strict_about_length_and_digits() {
   T t = T.create();
   string[] bad = ["0", "abc", "0g", "0 0", "0x00", "00 ", " 00"];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.isTrue(hexDecode(bad[i].toBytes()) is null, "accepted \"" + bad[i] + "\"");
+    t.isTrue(hexDecode(bad[i].toBytes()) is null, "accepted \"\{bad[i]}\"");
   }
   string[] good = ["", "00", "ff", "FF", "aA", "0123456789abcdefABCDEF"];
   for (i32 i = 0; i < good.len(); i++) {
-    t.isTrue(!(hexDecode(good[i].toBytes()) is null), "rejected \"" + good[i] + "\"");
+    t.isTrue(!(hexDecode(good[i].toBytes()) is null), "rejected \"\{good[i]}\"");
   }
   t.eqStr(decoded(hexDecode("48690a".toBytes())), "Hi\n", "a mixed decode");
   u8[]? mixedCase = hexDecode("aAbB".toBytes());

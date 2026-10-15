@@ -11,7 +11,6 @@
 // buffer and an implementation that assumes alignment is right until it is not.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   leWord32, beWord32, beWord64, storeLE32, storeBE32, storeBE64, padTo16,
 } from "../../src/layout.wac";
@@ -58,15 +57,15 @@ export string test_reads_and_stores_are_inverses_at_every_offset() {
       if (beBytes[i] != buf[off + i]) { okBe = false; }
       if (leBytes[i] != buf[off + i]) { okLe = false; }
     }
-    t.isTrue(okBe, "storeBE32 undoes beWord32 at offset " + itoa64(off as i64));
-    t.isTrue(okLe, "storeLE32 undoes leWord32 at offset " + itoa64(off as i64));
+    t.isTrue(okBe, "storeBE32 undoes beWord32 at offset \{off as i64}");
+    t.isTrue(okLe, "storeLE32 undoes leWord32 at offset \{off as i64}");
   }
   for (i32 off = 0; off + 8 <= buf.len(); off++) {
     u8[] back = u8[].filled(8, 0);
     storeBE64(beWord64(buf, off), back, 0);
     bool ok = true;
     for (i32 i = 0; i < 8; i++) { if (back[i] != buf[off + i]) { ok = false; } }
-    t.isTrue(ok, "storeBE64 undoes beWord64 at offset " + itoa64(off as i64));
+    t.isTrue(ok, "storeBE64 undoes beWord64 at offset \{off as i64}");
   }
   return t.report();
 }
@@ -95,8 +94,8 @@ export string test_pad_to_16_is_the_distance_to_the_next_boundary() {
   T t = T.create();
   for (i32 n = 0; n < 80; n++) {
     i32 pad = padTo16(n);
-    t.isTrue(pad >= 0 && pad < 16, "padding for " + itoa64(n as i64) + " is in [0, 16)");
-    t.eqI32((n + pad) % 16, 0, "padding for " + itoa64(n as i64) + " reaches a boundary");
+    t.isTrue(pad >= 0 && pad < 16, "padding for \{n as i64} is in [0, 16)");
+    t.eqI32((n + pad) % 16, 0, "padding for \{n as i64} reaches a boundary");
     if (n % 16 == 0) { t.eqI32(pad, 0, "an aligned length needs none"); }
   }
   return t.report();

@@ -22,7 +22,7 @@ export i32 touch(Core core, Cli cli, Fs fs, Args a) {
     if (c.ok()) { continue; }
     // GNU's frame: `touch: cannot touch 'f/g': Not a directory`. This said `touch: f/g: …`, which is
     // the shape most of these applets had before anything compared them against the real tool.
-    core.warn(a.name + ": cannot touch '" + a.rest[i] + "': " + reasonOf(c));
+    core.warn("\{a.name}: cannot touch '\{a.rest[i]}': \{reasonOf(c)}");
     code = 1;
   }
   return code;

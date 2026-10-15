@@ -20,7 +20,6 @@
 // an ordinary array and the cursor is checked directly.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change } from "std";
 import { Vec } from "core";
 import { Pkt, readPkt, writePkt, writeText, flushPkt } from "../../src/pktline.wac";
@@ -136,22 +135,22 @@ Vec<u8[]> none() { return Vec.create(); }
 
 string workDir(Cli cli, string name) {
   string who = agentDir(cli);
-  return "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  return "/tmp/wac-git-" + name + (who == "" ? "" : "-\{who}");
 }
 
 Git served(T t, Cli cli, string name) {
   string dir = workDir(cli, name);
   cli.remove(dir, true).wait();
   Change made = cli.mkdir(dir, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
+  t.isTrue(made.ok(), "a working directory: \{made.message}");
   Git g = Git(cli, dir);
   if (!made.ok()) { return g; }
 
   g.run(["init", "-q", "-b", "main"], u8[]());
-  string whyDir1 = madeDir(cli, dir + "/sub");
+  string whyDir1 = madeDir(cli, "\{dir}/sub");
   t.isTrue(whyDir1 == "", whyDir1);
-  cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
-  cli.writeFile(dir + "/sub/b.txt", "two\n".toBytes()).wait();
+  cli.writeFile("\{dir}/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile("\{dir}/sub/b.txt", "two\n".toBytes()).wait();
   g.run(["add", "-A"], u8[]());
   g.run(["commit", "-qm", "one"], u8[]());
   // A second branch, so the advertisement has more than one ref and the first-line-only capability
@@ -165,7 +164,7 @@ Advertised advertised(T t, Git g) {
   match (parseAdvertisement(g.advertisement())) {
     Said(ad): { return ad; }
     Garbled(why): {
-      t.isTrue(false, "the advertisement did not parse: " + why);
+      t.isTrue(false, "the advertisement did not parse: \{why}");
       Vec<AdRef> empty = Vec.create();
       return Advertised(empty, "");
     }
@@ -186,19 +185,19 @@ export string test_an_advertisement_parses_to_the_refs_show_ref_lists(Core core,
   for (i32 i = 0; i < shown.len(); i++) { want[i + 1] = splitOn(shown[i], " ")[1]; }
   t.eqStr(joined(got, ","), joined(want, ","), "our refs are the ones git advertises");
   t.isTrue(got.len() >= 3,
-           "the fixture advertised " + itoa64(got.len() as i64) + " refs, so more than one-ref " +
+           "the fixture advertised \{got.len() as i64} refs, so more than one-ref " +
            "parsing was tested");
 
   // Targets, against `rev-parse`.
   for (i32 i = 0; i < a.refs.len(); i++) {
     AdRef r = a.refs.get(i);
-    t.eqStr(hexName(r.target), g.text(["rev-parse", r.name]), r.name + "'s target");
+    t.eqStr(hexName(r.target), g.text(["rev-parse", r.name]), "\{r.name}'s target");
   }
 
   // **Capabilities come off the first line only, after a NUL.** A parser that split on spaces would
   // have produced a ref name with the list glued to it, which the name check above would catch —
   // this checks the list itself arrived.
-  t.isTrue(offers(a, "ofs-delta"), "ofs-delta is offered: " + a.capabilities);
+  t.isTrue(offers(a, "ofs-delta"), "ofs-delta is offered: \{a.capabilities}");
   t.isTrue(offers(a, "side-band-64k"), "side-band-64k is offered");
   // Whole words only: a prefix or a suffix of a real capability must not match.
   t.isFalse(offers(a, "ofs-delt"), "a capability is not matched on a prefix");
@@ -226,7 +225,7 @@ export string test_a_want_we_built_is_answered_with_a_packfile(Core core, Cli cl
   t.isTrue(reply.len() > 0, "git upload-pack answered something");
 
   match (findPack(reply)) {
-    NoPack(why): { t.isTrue(false, "no pack in the reply: " + why); }
+    NoPack(why): { t.isTrue(false, "no pack in the reply: \{why}"); }
     Packfile(pack): {
       t.eqStr(string.fromBytes(pack).slice(0, 4), "PACK", "what we extracted begins PACK");
       // The object count in the pack header, against what git said it was sending. One commit over
@@ -235,7 +234,7 @@ export string test_a_want_we_built_is_answered_with_a_packfile(Core core, Cli cl
       t.eqI64(count as i64, atoi64(g.text(["count-objects", "-v"])),
               "the pack holds every object the repository has");
       t.isTrue(count >= 5,
-               "a pack of " + itoa64(count as i64) + " objects exercised trees and blobs");
+               "a pack of \{count as i64} objects exercised trees and blobs");
     }
   }
 
@@ -267,9 +266,9 @@ i64 atoi64(string s) {
  */
 Git servedDeep(T t, Cli cli, string name) {
   Git g = served(t, cli, name);
-  cli.writeFile(g.dir + "/a.txt", "one\ntwo\n".toBytes()).wait();
+  cli.writeFile("\{g.dir}/a.txt", "one\ntwo\n".toBytes()).wait();
   g.run(["commit", "-qam", "two"], u8[]());
-  cli.writeFile(g.dir + "/a.txt", "one\ntwo\nthree\n".toBytes()).wait();
+  cli.writeFile("\{g.dir}/a.txt", "one\ntwo\nthree\n".toBytes()).wait();
   g.run(["commit", "-qam", "three"], u8[]());
   return g;
 }
@@ -292,7 +291,7 @@ export string test_a_deepened_want_gets_a_shallow_pack(Core core, Cli cli) {
   u8[] shallowBody = wantRequest(one(head), none(), "ofs-delta", 1);
   string shallowText = string.fromBytes(shallowBody);
   t.isTrue(contains(shallowText, "ofs-delta\n") && contains(shallowText, "deepen 1\n0000"),
-           "deepen sits between the wants and their flush: " + shallowText);
+           "deepen sits between the wants and their flush: \{shallowText}");
 
   u8[] shallowReply = g.uploadPack(shallowBody);
   // **The server honoured it**, which is the assertion that stops this passing on a full pack: a
@@ -307,8 +306,8 @@ export string test_a_deepened_want_gets_a_shallow_pack(Core core, Cli cli) {
 
   // The effect, not the label: a depth that changed nothing would leave these equal.
   t.isTrue(shallowCount < fullCount,
-           "the shallow pack holds " + itoa64(shallowCount as i64) + " objects and the full one " +
-           itoa64(fullCount as i64));
+           "the shallow pack holds \{shallowCount as i64} objects and the full one " +
+           "\{fullCount as i64}");
 
   cli.remove(g.dir, true).wait();
   return t.report();
@@ -318,7 +317,7 @@ i32 countIn(T t, u8[] reply, string what) {
   match (findPack(reply)) {
     Packfile(pack): { return packCount(pack); }
     NoPack(why): {
-      t.isTrue(false, "no pack in " + what + ": " + why);
+      t.isTrue(false, "no pack in \{what}: \{why}");
       return -1;
     }
   }
@@ -394,7 +393,7 @@ export string test_a_reply_that_is_not_a_pack_says_why(Core core, Cli cli) {
   // A server refusing a want says so in a packet. That message should reach the caller rather than
   // becoming "not a pack: the magic is missing" three layers down.
   string err = whyNoPack(findPack("0020ERR upload-pack: not our ref".toBytes()));
-  t.isTrue(contains(err, "upload-pack: not our ref"), "the server's words reach the caller: " + err);
+  t.isTrue(contains(err, "upload-pack: not our ref"), "the server's words reach the caller: \{err}");
 
   t.eqStr(whyNoPack(findPack("0008NAK\nnotapack".toBytes())) == "" ? "accepted" : "refused",
           "refused", "bytes after NAK that are not a pack are refused");
@@ -418,10 +417,10 @@ export string test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_git
   // indexer cannot handle by walking alone, since a delta cannot be named until its base is.
   string body = "";
   for (i32 i = 0; i < 300; i++) { body = body + "a shared line\n"; }
-  cli.writeFile(g.dir + "/big.txt", body.toBytes()).wait();
+  cli.writeFile("\{g.dir}/big.txt", body.toBytes()).wait();
   g.run(["add", "-A"], u8[]());
   g.run(["commit", "-qm", "big"], u8[]());
-  cli.writeFile(g.dir + "/big.txt", (body + "extra\n").toBytes()).wait();
+  cli.writeFile("\{g.dir}/big.txt", "\{body}extra\n".toBytes()).wait();
   g.run(["add", "-A"], u8[]());
   g.run(["commit", "-qm", "bigger"], u8[]());
   g.run(["gc", "-q"], u8[]());
@@ -432,7 +431,7 @@ export string test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_git
   match (findPack(g.uploadPack(wantRequest(one(a.refs.get(0).target), none(), "ofs-delta", 0)))) {
     Packfile(pack): { fetched = pack; }
     NoPack(why): {
-      t.isTrue(false, "no pack in the reply: " + why);
+      t.isTrue(false, "no pack in the reply: \{why}");
       return t.report();
     }
   }
@@ -441,7 +440,7 @@ export string test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_git
   // so walking it means knowing where each object's compressed bytes stop, and only the inflater
   // knows that.
   match (indexPack(fetched)) {
-    Unindexable(why): { t.isTrue(false, "could not index the fetched pack: " + why); }
+    Unindexable(why): { t.isTrue(false, "could not index the fetched pack: \{why}"); }
     Thin(bases): { t.isTrue(false, "the fetched pack came back thin"); }
     Built(idx): {
       Pack p = openIndexed(fetched, idx);
@@ -454,12 +453,12 @@ export string test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_git
         }
         match (objectAt(p, idx.offsets[i], 64)) {
           Absent(why): {
-            t.isTrue(false, idx.hexAt(i) + " did not resolve through our own index");
+            t.isTrue(false, "\{idx.hexAt(i)} did not resolve through our own index");
           }
           Found(kind, data): {
             // The name we computed while indexing must be the hash of what reading it back produces.
             t.eqStr(nameOf(kindOfCode(kind), data), idx.hexAt(i),
-                    "the object at " + itoa64(idx.offsets[i]) + " hashes to the name we indexed it " +
+                    "the object at \{idx.offsets[i]} hashes to the name we indexed it " +
                     "under");
           }
         }
@@ -475,11 +474,11 @@ export string test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_git
 
       // The commit itself, read out of a pack that arrived over the wire.
       match (objectNamed(p, decodedName(g.text(["rev-parse", "HEAD"])))) {
-        Absent(why): { t.isTrue(false, "HEAD is not in the fetched pack: " + why); }
+        Absent(why): { t.isTrue(false, "HEAD is not in the fetched pack: \{why}"); }
         Found(kind, data): {
           match (parseCommit(data)) {
             Malformed(why): {
-              t.isTrue(false, "the commit from the fetched pack did not parse: " + why);
+              t.isTrue(false, "the commit from the fetched pack did not parse: \{why}");
             }
             Understood(c): {
               t.eqStr(splitOn(c.message, "\n")[0], g.text(["log", "-1", "--format=%s"]),
@@ -497,7 +496,7 @@ export string test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_git
 
 /** Every object name `git verify-pack` lists for the repository's own pack. */
 string[] namesInRepo(T t, Cli cli, Git g) {
-  string pd = g.dir + "/.git/objects/pack";
+  string pd = "\{g.dir}/.git/objects/pack";
   string[]? listing = cli.readDir(pd).wait();
   string stem = "";
   if (!(listing is null)) {
@@ -510,7 +509,7 @@ string[] namesInRepo(T t, Cli cli, Git g) {
   t.isTrue(stem != "", "the repository has a pack of its own");
   if (stem == "") { return string[].filled(0, ""); }
 
-  string[] lines = splitOn(g.text(["verify-pack", "-v", pd + "/" + stem + ".idx"]), "\n");
+  string[] lines = splitOn(g.text(["verify-pack", "-v", "\{pd}/\{stem}.idx"]), "\n");
   i32 count = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     if (splitOn(lines[i], " ")[0].len() == 40) { count = count + 1; }

@@ -16,7 +16,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { closeCodeIn, closeReasonIn, cryptoOf, handshakeType, handshakeTypeIn, kindsIn, streamLen }
   from "./frame_probe.wac";
@@ -82,7 +81,7 @@ export string test_a_real_quic_server_accepts_a_packet_we_built(Core core, Cli c
   // rather than answering out of a cache: RFC 9000 §17.2 puts the destination id length at byte 5.
   t.eqI32(reply[5] as i32, b.scid.len(), "the reply's destination id is as long as the source we sent");
   for (i32 i = 0; i < b.scid.len(); i++) {
-    t.eqI32(reply[6 + i] as i32, b.scid[i] as i32, "byte " + itoa(i) + " of the reply's destination id is ours");
+    t.eqI32(reply[6 + i] as i32, b.scid[i] as i32, "byte \{i} of the reply's destination id is ours");
   }
 
   // **Both directions, now.** The server's Initial is protected with keys derived from the id *we*
@@ -100,7 +99,7 @@ export string test_a_real_quic_server_accepts_a_packet_we_built(Core core, Cli c
   // 2 is `server_hello`. This is the answer to the ClientHello we relayed, which means quinn read
   // our framing, our padding and our length field and found a whole TLS message where we said.
   t.eqI32(handshakeTypeIn(payload), 2, "the handshake message is a ServerHello");
-  t.isTrue(streamLen(payload) > 30, "a ServerHello is tens of bytes: " + itoa(streamLen(payload)));
+  t.isTrue(streamLen(payload) > 30, "a ServerHello is tens of bytes: \{streamLen(payload)}");
   return t.report();
 }
 
@@ -125,7 +124,7 @@ export string test_a_source_id_the_borrowed_clienthello_does_not_name_is_refused
   // 0x08 is TRANSPORT_PARAMETER_ERROR. The reason quinn writes is "CID authentication failure" —
   // not asserted, because it is prose a peer may reword, where the code is the protocol's own word.
   t.eqI32(closeCodeIn(payload), 0x08,
-          "TRANSPORT_PARAMETER_ERROR, reason " + closeReasonIn(payload));
+          "TRANSPORT_PARAMETER_ERROR, reason \{closeReasonIn(payload)}");
   return t.report();
 }
 

@@ -24,7 +24,6 @@
 // top does it to the result.
 
 import { Cli, FileResult } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import { splitLines, startsWith } from "./strings.wac";
 
 /** One row of a `.trace` table, resolved. */
@@ -49,10 +48,10 @@ export struct TraceSite {
  * absolute ones.
  */
 export TraceSite traceSite(Cli cli, string stem, i32 site) {
-  FileResult f = cli.readFile(stem + ".trace").wait();
+  FileResult f = cli.readFile("\{stem}.trace").wait();
   if (!f.ok) { return TraceSite("", "", "", "", false); }
   string[] rows = splitLines(string.fromBytes(f.bytes));
-  string want = itoa(site) + "\t";
+  string want = "\{site}\t";
   for (i32 i = 0; i < rows.len(); i++) {
     if (!startsWith(rows[i], want)) { continue; }
     string[] parts = string[].filled(5, "");
@@ -65,7 +64,7 @@ export TraceSite traceSite(Cli cli, string stem, i32 site) {
     }
     if (n < 5) { return TraceSite("", "", "", "", false); }
     string file = parts[4];
-    string here = cli.cwd().wait() + "/";
+    string here = "\{cli.cwd().wait()}/";
     if (startsWith(file, here)) { file = file.slice(here.len(), file.len()); }
     return TraceSite(parts[3], file, parts[1], parts[2], true);
   }
@@ -75,7 +74,7 @@ export TraceSite traceSite(Cli cli, string stem, i32 site) {
 /** `<kind>@<file>:<line>`, which is how an assertion names a site. */
 export string describeSite(TraceSite s) {
   if (!s.ok) { return "<no such site>"; }
-  return s.kind + "@" + s.file + ":" + s.line;
+  return "\{s.kind}@\{s.file}:\{s.line}";
 }
 
 /**

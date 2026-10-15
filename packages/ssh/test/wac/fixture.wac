@@ -32,7 +32,6 @@ import { Daemon, Held, start, stop, waitForPortWithin } from "../../../wactest/s
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { copyPreserving, keygen, publicBlobText, restrict }
   from "../../../wactest/src/keys.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
 
 /** Everything a test needs from a running sshd, so the setup is written once. */
@@ -49,7 +48,7 @@ export bool haveSshd(Cli cli) { return cli.stat("/usr/sbin/sshd").wait().isFile;
 
 /** A scratch directory of our own, emptied first so a previous run cannot supply a file. */
 export string freshScratch(T t, Cli cli, string name) {
-  string dir = cli.cwd().wait() + "/.cache/" + name;
+  string dir = "\{cli.cwd().wait()}/.cache/\{name}";
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   return dir;
@@ -75,7 +74,7 @@ export string freshScratch(T t, Cli cli, string name) {
  */
 void reapAbandoned(Cli cli) {
   cli.exec("/bin/sh", [
-                               "-c", REAP + "kill \"$pid\" 2>/dev/null; " +
+                               "-c", "\{REAP}kill \"$pid\" 2>/dev/null; " +
                                "case \"$dir\" in /tmp/*|*/.cache/*) rm -rf \"$dir\";; esac; " +
                                "done; true"
   ], u8[]()).wait();
@@ -120,7 +119,7 @@ static string REAP =
 
 /** Which pids `reapAbandoned` would kill, one per line — for the test that it selects anything. */
 export string reapSelects(Cli cli) {
-  Exec r = cli.exec("/bin/sh", ["-c", REAP + "echo \"$pid $dir\"; done"], u8[]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "\{REAP}echo \"$pid $dir\"; done"], u8[]()).wait();
   return string.fromBytes(r.stdout);
 }
 
@@ -132,7 +131,7 @@ export string reapSelects(Cli cli) {
  * own sshd would kill it. Literally the same `ours` function `REAP` uses — see `ARMS`.
  */
 export bool wouldReap(Cli cli, string line) {
-  Exec r = cli.exec("/bin/sh", ["-c", ARMS + "ours \"$1\"", "sh", line], u8[]()).wait();
+  Exec r = cli.exec("/bin/sh", ["-c", "\{ARMS}ours \"$1\"", "sh", line], u8[]()).wait();
   return r.ran() && r.status == 0;
 }
 
@@ -155,32 +154,32 @@ export Sshd startSshd(T t, Core core, Cli cli, string name) {
 
   string[] keys = ["hostkey", "clientkey"];
   for (i32 i = 0; i < keys.len(); i++) {
-    if (!keygen(t, cli, dir + "/" + keys[i])) {
+    if (!keygen(t, cli, "\{dir}/\{keys[i]}")) {
       held.release(cli);
-      return Sshd(false, "ssh-keygen failed for " + keys[i], dir, held.port, Daemon(-1, "", ""));
+      return Sshd(false, "ssh-keygen failed for \{keys[i]}", dir, held.port, Daemon(-1, "", ""));
     }
-    restrict(cli, dir + "/" + keys[i]);
+    restrict(cli, "\{dir}/\{keys[i]}");
   }
-  copyPreserving(cli, dir + "/clientkey.pub", dir + "/authorized_keys");
-  restrict(cli, dir + "/authorized_keys");
+  copyPreserving(cli, "\{dir}/clientkey.pub", "\{dir}/authorized_keys");
+  restrict(cli, "\{dir}/authorized_keys");
 
   string config =
-    "Port " + itoa(held.port) + "\n" +
+    "Port \{held.port}\n" +
     "ListenAddress 127.0.0.1\n" +
-    "HostKey " + dir + "/hostkey\n" +
-    "AuthorizedKeysFile " + dir + "/authorized_keys\n" +
+    "HostKey \{dir}/hostkey\n" +
+    "AuthorizedKeysFile \{dir}/authorized_keys\n" +
     "StrictModes no\n" +
     "UsePAM no\n" +
     "PasswordAuthentication no\n" +
     "KbdInteractiveAuthentication no\n" +
     "PidFile none\n";
-  cli.writeFile(dir + "/sshd_config", config.toBytes()).wait();
+  cli.writeFile("\{dir}/sshd_config", config.toBytes()).wait();
 
   // Released here and nowhere earlier: the next statement is the bind.
   held.release(cli);
   // Foreground (`-D`), so killing the child actually stops the server.
-  Daemon d = start(cli, "/usr/sbin/sshd -D -f " + quoted(dir + "/sshd_config"), dir + "/sshd.log");
-  if (!d.ok()) { return Sshd(false, "sshd did not start — " + d.error, dir, held.port, d); }
+  Daemon d = start(cli, "/usr/sbin/sshd -D -f " + quoted("\{dir}/sshd_config"), "\{dir}/sshd.log");
+  if (!d.ok()) { return Sshd(false, "sshd did not start — \{d.error}", dir, held.port, d); }
 
   // `waitForPortWithin` connects, which is a real client as far as sshd is concerned — harmless here,
   // because sshd accepts many and simply logs a connection that says nothing.
@@ -190,7 +189,7 @@ export Sshd startSshd(T t, Core core, Cli cli, string name) {
   // never accepted" on a normally-starting server the moment four `wac test` workers shared the
   // machine. A deadline costs nothing when the server is quick.
   if (!waitForPortWithin(core, cli, "127.0.0.1", held.port, 5000)) {
-    return Sshd(false, "sshd never accepted on " + itoa(held.port), dir, held.port, d);
+    return Sshd(false, "sshd never accepted on \{held.port}", dir, held.port, d);
   }
   return Sshd(true, "", dir, held.port, d);
 }

@@ -9,7 +9,6 @@ import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { cmpBytes } from "../lib/lines.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { extraOperand } from "../lib/operands.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
@@ -20,7 +19,7 @@ export i32 uniq(Core core, Cli cli, Fs fs, Args a) {
   // where GNU starts complaining. Writing it is not implemented; saying which of the two that is beats
   // both the old message and quietly ignoring it.
   if (a.rest.len() == 2) {
-    core.warn(a.name + ": writing to a second operand is not implemented; redirect instead");
+    core.warn("\{a.name}: writing to a second operand is not implemented; redirect instead");
     return 1;
   }
   if (extraOperand(core, a, 2)) { return 1; }
@@ -67,8 +66,8 @@ void show(Sink out, u8[] line, i32 run, bool counting, bool nl, bool onlyRepeate
   if (onlyUnique && run > 1) { return; }
   if (!counting) { emitTo(out, line, true); return; }
   // The real one right-aligns the count in a field of seven, then a space.
-  string n = itoa(run);
+  string n = "\{run}";
   string pad = "";
   for (i32 i = n.toBytes().len(); i < 7; i++) { pad = pad + " "; }
-  emitTo(out, (pad + n + " " + string.fromBytes(line)).toBytes(), true);
+  emitTo(out, "\{pad}\{n} \{string.fromBytes(line)}".toBytes(), true);
 }

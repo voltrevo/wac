@@ -22,9 +22,6 @@
 // Differential tests against another implementation, or interop with a real tool,
 // cannot run inside wasm and belong in a host-side test.
 
-import { itoa } from "../../fmt/src/itoa.wac";
-import { itoa64 } from "./itoa64.wac";
-import { utoa64 } from "./utoa64.wac";
 import { ftoa } from "../../fmt/src/ftoa.wac";
 
 export struct T {
@@ -65,13 +62,13 @@ export struct T {
 
   void isTrue(this, bool cond, string what) {
     if (!cond) {
-      this.fail(what + ": expected true");
+      this.fail("\{what}: expected true");
     }
   }
 
   void isFalse(this, bool cond, string what) {
     if (cond) {
-      this.fail(what + ": expected false");
+      this.fail("\{what}: expected false");
     }
   }
 
@@ -90,21 +87,19 @@ export struct T {
 
   void eqI32(this, i32 got, i32 want, string what) {
     if (got != want) {
-      this.fail(what + ": got " + itoa(got) + ", want " + itoa(want));
+      this.fail("\{what}: got \{got}, want \{want}");
     }
   }
 
-  // A u32 above i32's range would print as a negative through itoa, so it gets
-  // its own formatter.
   void eqU32(this, u32 got, u32 want, string what) {
     if (got != want) {
-      this.fail(what + ": got " + utoa64(got as u64) + ", want " + utoa64(want as u64));
+      this.fail("\{what}: got \{got}, want \{want}");
     }
   }
 
   void neI32(this, i32 got, i32 unwanted, string what) {
     if (got == unwanted) {
-      this.fail(what + ": got " + itoa(got) + ", wanted anything else");
+      this.fail("\{what}: got \{got}, wanted anything else");
     }
   }
 
@@ -118,19 +113,19 @@ export struct T {
    */
   void eqF64(this, f64 got, f64 want, string what) {
     if (f64.toBits(got) != f64.toBits(want)) {
-      this.fail(what + ": got " + ftoa(got) + ", want " + ftoa(want));
+      this.fail("\{what}: got \{ftoa(got)}, want \{ftoa(want)}");
     }
   }
 
   void eqI64(this, i64 got, i64 want, string what) {
     if (got != want) {
-      this.fail(what + ": got " + itoa64(got) + ", want " + itoa64(want));
+      this.fail("\{what}: got \{got}, want \{want}");
     }
   }
 
   void eqU64(this, u64 got, u64 want, string what) {
     if (got != want) {
-      this.fail(what + ": got " + utoa64(got) + ", want " + utoa64(want));
+      this.fail("\{what}: got \{got}, want \{want}");
     }
   }
 
@@ -140,27 +135,27 @@ export struct T {
     if (diff < 0.0) { diff = -diff; }
     // A NaN comparison is false either way, so this also rejects NaN.
     if (!(diff <= tol)) {
-      this.fail(what + ": got " + ftoa(got) + ", want " + ftoa(want)
-        + " within " + ftoa(tol));
+      this.fail("\{what}: got \{ftoa(got)}, want \{ftoa(want)}"
+        + " within \{ftoa(tol)}");
     }
   }
 
   void eqStr(this, string got, string want, string what) {
     if (got != want) {
-      this.fail(what + ": got \"" + got + "\", want \"" + want + "\"");
+      this.fail("\{what}: got \"\{got}\", want \"\{want}\"");
     }
   }
 
   /** Every element must match, and the lengths must agree. */
   void eqI32Array(this, i32[] got, i32[] want, string what) {
     if (got.len() != want.len()) {
-      this.fail(what + ": length " + itoa(got.len()) + ", want " + itoa(want.len()));
+      this.fail("\{what}: length \{got.len()}, want \{want.len()}");
       return;
     }
     for (i32 i = 0; i < got.len(); i++) {
       if (got[i] != want[i]) {
-        this.fail(what + ": element " + itoa(i) + " is " + itoa(got[i])
-          + ", want " + itoa(want[i]));
+        this.fail("\{what}: element \{i} is \{got[i]}"
+          + ", want \{want[i]}");
         return;   // one differing element is enough; the rest is noise
       }
     }
@@ -175,14 +170,14 @@ export struct T {
    */
   void eqStrArray(this, string[] got, string[] want, string what) {
     if (got.len() != want.len()) {
-      this.fail(what + ": length " + itoa(got.len()) + ", want " + itoa(want.len())
-        + " (" + joinq(got) + " vs " + joinq(want) + ")");
+      this.fail("\{what}: length \{got.len()}, want \{want.len()}"
+        + " (\{joinq(got)} vs \{joinq(want)})");
       return;
     }
     for (i32 i = 0; i < got.len(); i++) {
       if (got[i] != want[i]) {
-        this.fail(what + ": element " + itoa(i) + " is \"" + got[i]
-          + "\", want \"" + want[i] + "\"");
+        this.fail("\{what}: element \{i} is \"\{got[i]}"
+          + "\", want \"\{want[i]}\"");
         return;
       }
     }
@@ -191,13 +186,13 @@ export struct T {
   /** Same, for byte arrays. Reads are zero-extended, so these compare as 0..255. */
   void eqBytes(this, u8[] got, u8[] want, string what) {
     if (got.len() != want.len()) {
-      this.fail(what + ": length " + itoa(got.len()) + ", want " + itoa(want.len()));
+      this.fail("\{what}: length \{got.len()}, want \{want.len()}");
       return;
     }
     for (i32 i = 0; i < got.len(); i++) {
       if (got[i] != want[i]) {
-        this.fail(what + ": byte " + itoa(i) + " is " + itoa(got[i] as i32)
-          + ", want " + itoa(want[i] as i32));
+        this.fail("\{what}: byte \{i} is \{got[i] as i32}"
+          + ", want \{want[i] as i32}");
         return;
       }
     }
@@ -210,8 +205,8 @@ export struct T {
     if (this.failed == 0) {
       return "";
     }
-    string tail = this.failed > 8 ? " (and " + itoa(this.failed - 8) + " more)" : "";
-    return itoa(this.failed) + " failed: " + this.messages + tail;
+    string tail = this.failed > 8 ? " (and \{this.failed - 8} more)" : "";
+    return "\{this.failed} failed: \{this.messages}\{tail}";
   }
 }
 
@@ -221,5 +216,5 @@ string joinq(string[] xs) {
   for (i32 i = 0; i < xs.len(); i++) {
     out = out + (i == 0 ? "" : ", ") + "\"" + xs[i] + "\"";
   }
-  return out + "]";
+  return "\{out}]";
 }

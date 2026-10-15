@@ -47,7 +47,6 @@ import { builtProgram } from "../../../wactest/src/built.wac";
 import { binaryPath, freshDir } from "../../../wactest/src/host.wac";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 
 static i32 RELAYS = 3;
@@ -83,7 +82,7 @@ Built programs(Cli cli) {
 
 /** `<binary> <module> <args>`, which is how a built program is run. */
 string line(Cli cli, string mod, string args) {
-  return quoted(binaryPath(cli)) + " " + quoted(mod) + " " + args;
+  return "\{quoted(binaryPath(cli))} \{quoted(mod)} \{args}";
 }
 
 /** What came back through the proxy, or why nothing did. */
@@ -125,7 +124,7 @@ struct Opened {
  */
 Opened opened(Core core, Cli cli, i32 proxy, i32 target) {
   i32 h = cli.connect("127.0.0.1", proxy).wait().handle;
-  if (h < 0) { return Opened(false, "could not connect to the proxy on " + itoa(proxy), -1); }
+  if (h < 0) { return Opened(false, "could not connect to the proxy on \{proxy}", -1); }
 
   cli.send(h, [0x05, 0x01, 0x00] as u8[]).wait();
   u8[] hello = readSome(core, cli, h, 2);
@@ -145,7 +144,7 @@ Opened opened(Core core, Cli cli, i32 proxy, i32 target) {
   }
   if (reply[1] != 0x00) {
     cli.closeSocket(h);
-    return Opened(false, "the proxy refused the CONNECT with reply code " + itoa(reply[1] as i32), -1);
+    return Opened(false, "the proxy refused the CONNECT with reply code \{reply[1] as i32}", -1);
   }
   return Opened(true, "", h);
 }
@@ -160,7 +159,7 @@ Carried answered(Core core, Cli cli, i32 h, string request) {
     if (core.waitAny([p.id], READ_MS) < 0) {
       p.cancel();
       cli.closeSocket(h);
-      return Carried(false, "went quiet after " + itoa(all.len()) + " byte(s)", all);
+      return Carried(false, "went quiet after \{all.len()} byte(s)", all);
     }
     match (p.wait()) {
       Data(got): { all = all + string.fromBytes(got); }
@@ -174,7 +173,7 @@ Carried answered(Core core, Cli cli, i32 h, string request) {
 
 Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
   i32 h = cli.connect("127.0.0.1", proxy).wait().handle;
-  if (h < 0) { return Carried(false, "could not connect to the proxy on " + itoa(proxy), ""); }
+  if (h < 0) { return Carried(false, "could not connect to the proxy on \{proxy}", ""); }
 
   // VER 5, one method, and that method is 0 — no authentication.
   cli.send(h, [0x05, 0x01, 0x00] as u8[]).wait();
@@ -198,7 +197,7 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
     cli.closeSocket(h);
     // The reply code is the *reason*, and it travels: `replyForEndReason` maps a relay's END byte
     // onto exactly these, so a failure here names which end refused rather than saying "no".
-    return Carried(false, "the proxy refused the CONNECT with reply code " + itoa(reply[1] as i32), "");
+    return Carried(false, "the proxy refused the CONNECT with reply code \{reply[1] as i32}", "");
   }
 
   cli.send(h, request.toBytes()).wait();
@@ -214,7 +213,7 @@ Carried carry(Core core, Cli cli, i32 proxy, i32 target, string request) {
     if (core.waitAny([p.id], READ_MS) < 0) {
       p.cancel();
       cli.closeSocket(h);
-      return Carried(false, "the proxy went quiet after " + itoa(all.len()) +
+      return Carried(false, "the proxy went quiet after \{all.len()}" +
                             " byte(s) of the response", all);
     }
     match (p.wait()) {
@@ -279,7 +278,7 @@ i32 portFrom(string log, string marker) {
 
 export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/socksnet";
+  string dir = "\{cli.cwd().wait()}/.cache/socksnet";
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
   if (whyDir != "") { return t.report(); }
@@ -291,7 +290,7 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
   // Distinct random seeds: two relays given the same one derive the same identity, and a consensus
   // with two identical fingerprints is not a network.
   for (i32 i = 0; i < RELAYS; i++) {
-    cli.writeFile(dir + "/s" + itoa(i + 1), core.randomBytes(32).wait()).wait();
+    cli.writeFile("\{dir}/s\{i + 1}", core.randomBytes(32).wait()).wait();
   }
 
   // ── Stage one: the relays bind and write their descriptors ──────────────────
@@ -303,31 +302,31 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
   // would spawn a process and write a log for a slot that is about to be overwritten three times.
   Daemon[] relays = Daemon[].filled(RELAYS, Daemon(0, "", ""));
   for (i32 i = 0; i < RELAYS; i++) {
-    string n = itoa(i + 1);
+    string n = "\{i + 1}";
     relays[i] = start(cli,
-      line(cli, b.relayd, quoted(dir + "/s" + n) + " -p 0 -n wacnet" + n +
-                          " --descriptor " + quoted(dir + "/r" + n + ".desc") +
-                          (i == 0 ? " --seedline " + quoted(dir + "/seed.txt") : "") +
-                          " -C " + quoted(dir + "/v.consensus") +
+      line(cli, b.relayd, quoted("\{dir}/s\{n}") + " -p 0 -n wacnet" + n +
+                          " --descriptor " + quoted("\{dir}/r\{n}.desc") +
+                          (i == 0 ? " --seedline " + quoted("\{dir}/seed.txt") : "") +
+                          " -C " + quoted("\{dir}/v.consensus") +
                           // **`-M` and `-m` as well as `-C`.** A client asks for
                           // `consensus-microdesc`, not `consensus`: `socks.wac` bootstraps from the
                           // microdescriptor consensus, and serving only the full one answers its
                           // first request with a 404. `gendesc` writes both — `v.consensus.micro`
                           // and the `.mds` beside it — so this costs nothing but saying so.
-                          " -M " + quoted(dir + "/v.consensus.micro") +
-                          " -m " + quoted(dir + "/v.consensus.mds") +
-                          " -K " + quoted(dir + "/cert.cert") +
-                          " -D " + quoted(dir + "/r1.desc") +
-                          " -D " + quoted(dir + "/r2.desc") +
-                          " -D " + quoted(dir + "/r3.desc")),
-      dir + "/relay" + n + ".log");
-    t.isTrue(relays[i].ok(), "relay " + n + " started — " + relays[i].error);
+                          " -M " + quoted("\{dir}/v.consensus.micro") +
+                          " -m " + quoted("\{dir}/v.consensus.mds") +
+                          " -K " + quoted("\{dir}/cert.cert") +
+                          " -D " + quoted("\{dir}/r1.desc") +
+                          " -D " + quoted("\{dir}/r2.desc") +
+                          " -D " + quoted("\{dir}/r3.desc")),
+      "\{dir}/relay\{n}.log");
+    t.isTrue(relays[i].ok(), "relay \{n} started — \{relays[i].error}");
   }
 
   bool bound = true;
   for (i32 i = 0; i < RELAYS; i++) {
     if (!waitForLogWithin(core, cli, relays[i], "-byte descriptor for port", 60000)) {
-      t.fail("relay " + itoa(i + 1) + " never wrote a descriptor. It said: " +
+      t.fail("relay \{i + 1} never wrote a descriptor. It said: " +
              logOf(cli, relays[i]));
       bound = false;
     }
@@ -341,13 +340,13 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
     line(cli, b.gendesc, "keys.json cert vote v - r1.desc r2.desc r3.desc")
   ], u8[]()).wait();
   t.isTrue(vote.ran() && vote.status == 0,
-           "the authority signed a consensus — " + string.fromBytes(vote.stderr));
+           "the authority signed a consensus — \{string.fromBytes(vote.stderr)}");
   if (!vote.ran() || vote.status != 0) { return stopAll(t, cli, relays); }
 
   // ── Stage three: each relay finds the documents and begins serving ─────────
   for (i32 i = 0; i < RELAYS; i++) {
     if (!waitForLogWithin(core, cli, relays[i], "serving the consensus", 60000)) {
-      t.fail("relay " + itoa(i + 1) + " never served the consensus. It said: " +
+      t.fail("relay \{i + 1} never served the consensus. It said: " +
              logOf(cli, relays[i]));
       return stopAll(t, cli, relays);
     }
@@ -358,16 +357,16 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
   // a line beginning `cd …` becomes `exec cd …` and the shell answers *exec: cd: not found* — which
   // is what the first run of this said, after every relay had come up correctly.
   Daemon proxy = start(cli,
-    line(cli, b.socks, quoted(dir + "/seed.txt") + " " + quoted(dir + "/cert.fingerprint") + " 0"),
-    dir + "/socks.log");
-  t.isTrue(proxy.ok(), "socks started — " + proxy.error);
+    line(cli, b.socks, quoted("\{dir}/seed.txt") + " " + quoted("\{dir}/cert.fingerprint") + " 0"),
+    "\{dir}/socks.log");
+  t.isTrue(proxy.ok(), "socks started — \{proxy.error}");
   if (!proxy.ok()) { return stopAll(t, cli, relays); }
 
   // It bootstraps from the seed line relay 1 wrote, fetches the consensus through it, picks a guard
   // and says which. That is the whole of `bootstrap` and `connectGuard` — the part of `socks.wac`
   // that runs before its wait loop does anything.
   bool guarded = waitForLogWithin(core, cli, proxy, "guard: ", 60000);
-  t.isTrue(guarded, "socks bootstrapped and pinned a guard. It said: " + logOf(cli, proxy));
+  t.isTrue(guarded, "socks bootstrapped and pinned a guard. It said: \{logOf(cli, proxy)}");
   if (guarded) {
     t.isTrue(contains(logOf(cli, proxy), "wacnet"),
              "and the guard it pinned is one of ours, not a name from somewhere else");
@@ -378,11 +377,11 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
     // noticed because the only caller that had ever started it passed a fixed port. Asserted here
     // rather than left to the next reader, since the case that catches it is the one that binds 0.
     bool listening = waitForLogWithin(core, cli, proxy, "socks5 on 127.0.0.1:", 20000);
-    t.isTrue(listening, "socks said it was listening. It said: " + logOf(cli, proxy));
+    t.isTrue(listening, "socks said it was listening. It said: \{logOf(cli, proxy)}");
     if (listening) {
       i32 got = portFrom(logOf(cli, proxy), "socks5 on 127.0.0.1:");
       t.isTrue(got > 0, "and named the port the kernel gave it, rather than the 0 it asked for — " +
-                        "got " + itoa(got));
+                        "got \{got}");
 
       // ── Stage five: a stream through the circuit, which is the multiplexer ──
       //
@@ -401,14 +400,14 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
         t.isTrue(dirdMod != "", "the target server built");
         if (dirdMod != "") {
           Daemon target = start(cli,
-            line(cli, dirdMod, quoted(dir + "/v.consensus") + " " + quoted(dir + "/cert.cert") +
-                               " " + quoted(dir + "/r1.desc") + " 0"),
-            dir + "/dird.log");
-          t.isTrue(target.ok(), "the target started — " + target.error);
+            line(cli, dirdMod, quoted("\{dir}/v.consensus") + " " + quoted("\{dir}/cert.cert") +
+                               " " + quoted("\{dir}/r1.desc") + " 0"),
+            "\{dir}/dird.log");
+          t.isTrue(target.ok(), "the target started — \{target.error}");
           if (target.ok()) {
             bool up = waitForLogWithin(core, cli, target, "serving the directory on 127.0.0.1:",
                                        20000);
-            t.isTrue(up, "the target listened. It said: " + logOf(cli, target));
+            t.isTrue(up, "the target listened. It said: \{logOf(cli, target)}");
             if (up) {
               i32 tport = portFrom(logOf(cli, target), "serving the directory on 127.0.0.1:");
               Carried r = carry(core, cli, got, tport,
@@ -418,11 +417,11 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // `0304b` made it unassertable, so the case checked the bytes and the proxy's own
               // account instead rather than turn the shared suite red for a filed bug. That is the
               // whole of what it cost to have a test in the lane that runs while the fix was found.
-              t.isTrue(r.ok, "the proxy carried a stream — " + r.why +
-                                         ". socks said: " + logOf(cli, proxy));
+              t.isTrue(r.ok, "the proxy carried a stream — \{r.why}" +
+                                         ". socks said: \{logOf(cli, proxy)}");
               t.isTrue(contains(r.body, "200") || contains(r.body, "network-status-version"),
                        "and what came back is the document the target serves, not an empty " +
-                       "stream — got " + itoa(r.body.len()) + " bytes");
+                       "stream — got \{r.body.len()} bytes");
               // The multiplexer's own account of the same exchange, so a passing case cannot be one
               // where the bytes came from somewhere other than a circuit.
               t.isTrue(contains(logOf(cli, proxy), "stream 1 ended: done"),
@@ -499,23 +498,23 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // stream on that circuit. Rounds 1 and 2 are the regression — they read 0 bytes
               // before the fix and the full answer after.
               Socket mine = cli.listen("127.0.0.1", 0).wait();
-              t.isTrue(mine.handle >= 0, "the case's own target listened — " + mine.error);
+              t.isTrue(mine.handle >= 0, "the case's own target listened — \{mine.error}");
               for (i32 round = 0; round < 3 && mine.handle >= 0; round++) {
                 Opened o = opened(core, cli, got, mine.port);
-                t.isTrue(o.ok, "round " + itoa(round) + " connected through the proxy — " + o.why);
+                t.isTrue(o.ok, "round \{round} connected through the proxy — \{o.why}");
                 if (!o.ok) { continue; }
                 cli.send(o.handle, "GET / HTTP/1.0\r\n\r\n".toBytes()).wait();
                 Socket from = cli.accept(mine.handle).wait();
-                t.isTrue(from.handle >= 0, "round " + itoa(round) + ": the exit dialled the target");
+                t.isTrue(from.handle >= 0, "round \{round}: the exit dialled the target");
                 if (from.handle < 0) { cli.closeSocket(o.handle); continue; }
                 u8[] arrived = readSome(core, cli, from.handle, 6);
-                t.isTrue(arrived.len() > 0, "round " + itoa(round) + ": the request arrived");
+                t.isTrue(arrived.len() > 0, "round \{round}: the request arrived");
                 cli.send(from.handle, "HTTP/1.0 200 OK\r\n\r\nhi".toBytes()).wait();
                 cli.closeSocket(from.handle);
                 Carried back = answered(core, cli, o.handle, "");
                 t.isTrue(contains(back.body, "hi"),
-                         "round " + itoa(round) + ": and the answer came back down the same circuit "
-                         + "— " + back.why + ", " + itoa(back.body.len()) + " bytes");
+                         "round \{round}: and the answer came back down the same circuit "
+                         + "— \{back.why}, \{back.body.len()} bytes");
               }
               if (mine.handle >= 0) { cli.closeSocket(mine.handle); }
 
@@ -535,14 +534,14 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // which is also the more interesting case: it exercises building a second circuit
               // while the first is live.
               Daemon second = start(cli,
-                line(cli, dirdMod, quoted(dir + "/v.consensus") + " " + quoted(dir + "/cert.cert") +
-                                   " " + quoted(dir + "/r1.desc") + " 0"),
-                dir + "/dird2.log");
-              t.isTrue(second.ok(), "a second target started — " + second.error);
+                line(cli, dirdMod, quoted("\{dir}/v.consensus") + " " + quoted("\{dir}/cert.cert") +
+                                   " " + quoted("\{dir}/r1.desc") + " 0"),
+                "\{dir}/dird2.log");
+              t.isTrue(second.ok(), "a second target started — \{second.error}");
               bool up2 = second.ok() &&
                          waitForLogWithin(core, cli, second, "serving the directory on 127.0.0.1:",
                                           20000);
-              t.isTrue(up2, "and listened. It said: " + logOf(cli, second));
+              t.isTrue(up2, "and listened. It said: \{logOf(cli, second)}");
               i32 tport2 = up2 ? portFrom(logOf(cli, second), "serving the directory on 127.0.0.1:")
                                : -1;
 
@@ -553,7 +552,7 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // walks straight into the case that used to fail.
               Opened a = opened(core, cli, got, tport);  // the originally-reported case: the already-used dird
               Opened bb = up2 ? opened(core, cli, got, tport2) : Opened(false, "no second target", -1);
-              t.isTrue(a.ok && bb.ok, "two clients both got a CONNECT reply — " + a.why + bb.why);
+              t.isTrue(a.ok && bb.ok, "two clients both got a CONNECT reply — \{a.why}\{bb.why}");
               if (a.ok && bb.ok) {
                 cli.send(a.handle, ("GET /tor/status-vote/current/consensus HTTP/1.0\r\n" +
                                     "Host: 127.0.0.1\r\n\r\n").toBytes()).wait();
@@ -562,11 +561,11 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
                 Carried ra = answered(core, cli, a.handle, "");
                 Carried rb = answered(core, cli, bb.handle, "");
                 t.isTrue(contains(ra.body, "network-status-version"),
-                         "the client that asked for the consensus got the consensus — " + ra.why +
-                         ", " + itoa(ra.body.len()) + " bytes");
+                         "the client that asked for the consensus got the consensus — \{ra.why}" +
+                         ", \{ra.body.len()} bytes");
                 t.isTrue(contains(rb.body, "404"),
                          "and the one that asked for nothing got the 404, rather than the other " +
-                         "client's document — " + rb.why + ", " + itoa(rb.body.len()) + " bytes");
+                         "client's document — \{rb.why}, \{rb.body.len()} bytes");
                 t.isTrue(!contains(rb.body, "network-status-version"),
                          "and no part of the consensus reached the wrong connection");
               }

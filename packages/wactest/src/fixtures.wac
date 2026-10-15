@@ -148,12 +148,12 @@ export Fixture bytes(Core core, Cli cli, string pkg, string name, string manifes
   Manifest want = manifestOf(cli, manifestPath, name);
   if (!want.found) {
     return Fixture(false, u8[](),
-                   pkg + ": no fixture set named " + name + " in " + manifestPath);
+                   "\{pkg}: no fixture set named \{name} in \{manifestPath}");
   }
 
   // Content-addressed by the *expected* hash, so changing the manifest changes the path and a stale
   // cache entry can never be read as a current one.
-  string path = CACHE_DIR + "/" + pkg + "-" + name + "-" + want.sha256.slice(0, 16) + ".json";
+  string path = "\{CACHE_DIR}/\{pkg}-\{name}-\{want.sha256.slice(0, 16)}.json";
   FileResult cached = cli.readFile(path).wait();
   if (cached.ok) {
     string got = lowerHex(sha256(cached.bytes));
@@ -164,18 +164,18 @@ export Fixture bytes(Core core, Cli cli, string pkg, string name, string manifes
     //
     // The *full* hash goes in the message on purpose: printing the truncation would reprint the
     // filename, which is the one thing the reader can already see.
-    core.warn("fixtures: " + path + " holds " + got + ", not what the manifest asks for; rebuilding");
+    core.warn("fixtures: \{path} holds \{got}, not what the manifest asks for; rebuilding");
   }
 
   Exec built = cli.exec("python3",
                         [
-                                 "packages/" + pkg + "/tools/vendor.py", name, "--commit",
+                                 "packages/\{pkg}/tools/vendor.py", name, "--commit",
                                  want.commit, "--stdout"
                         ], u8[]()).wait();
   if (!built.ran()) {
     return Fixture(false, u8[](),
-                   "fixtures: cannot run the generator for " + pkg + "/" + name + ": " +
-                   built.error + "\n  " + want.rebuild);
+                   "fixtures: cannot run the generator for \{pkg}/\{name}: " +
+                   "\{built.error}\n  \{want.rebuild}");
   }
   if (built.status != 0) {
     return Fixture(false, u8[](),
@@ -189,9 +189,9 @@ export Fixture bytes(Core core, Cli cli, string pkg, string name, string manifes
   string got = lowerHex(sha256(built.stdout));
   if (got != want.sha256) {
     return Fixture(false, u8[](),
-                   "fixtures: " + pkg + "/" + name + " does not match the manifest.\n" +
-                   "  expected " + want.sha256 + "\n  produced " + got + "\n" +
-                   "  The generator, the upstream data at " + want.commit.slice(0, 12) +
+                   "fixtures: \{pkg}/\{name} does not match the manifest.\n" +
+                   "  expected \{want.sha256}\n  produced \{got}\n" +
+                   "  The generator, the upstream data at \{want.commit.slice(0, 12)}" +
                    ", or the manifest is wrong.\n" +
                    "  If the generator changed deliberately, update the sha256 in the manifest.");
   }
@@ -214,7 +214,7 @@ export Loaded json(Core core, Cli cli, string pkg, string name, string manifestP
   JsonValue? doc = parseDocument(p);
   if (doc is null) {
     return Loaded(false, JsonValue.Null,
-                  "fixtures: " + pkg + "/" + name + " is not valid JSON");
+                  "fixtures: \{pkg}/\{name} is not valid JSON");
   }
   return Loaded(true, doc!, "");
 }
@@ -231,6 +231,6 @@ string lastLines(string s, i32 n) {
   }
   string out = "";
   i32 start = count > n ? count - n : 0;
-  for (i32 i = start; i < count; i++) { out = (i == start ? "" : out + "\n  ") + all[i]; }
+  for (i32 i = start; i < count; i++) { out = (i == start ? "" : "\{out}\n  ") + all[i]; }
   return out;
 }

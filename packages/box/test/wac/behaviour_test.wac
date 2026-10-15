@@ -13,7 +13,6 @@
 // answer to that is a canary rather than 104 of them.
 
 import { Cli, Core, Exec } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { cases, fixtures } from "./cases.wac";
 import { Loaded, Ran, layFixtures, load, runCase, show } from "./replay.wac";
@@ -21,7 +20,7 @@ import { Loaded, Ran, layFixtures, load, runCase, show } from "./replay.wac";
 string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
 
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
-string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-behaviour"; }
+string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-behaviour"; }
 
 export string test_every_implemented_flag_still_answers_what_the_real_tool_answered(Core core, Cli cli) {
   T t = T.create();
@@ -41,7 +40,7 @@ export string test_every_implemented_flag_still_answers_what_the_real_tool_answe
     // and report a hundred applet bugs.
     if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
     if (!layFixtures(cli, dir, fixtures())) {
-      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
     Ran r = runCase(core, cli, dir, list[i]);
@@ -50,9 +49,9 @@ export string test_every_implemented_flag_still_answers_what_the_real_tool_answe
       wrong = wrong + 1;
       if (wrong <= 5) {
         detail = detail + "\n  $ " + list[i] +
-                 "\n    want " + show(v.items[i].out) + " exit " + itoa(v.items[i].status) +
-                 "\n    ours " + show(r.out) + " exit " + itoa(r.status) +
-                 (r.err == "" ? "" : "\n    err  " + show(r.err));
+                 "\n    want " + show(v.items[i].out) + " exit \{v.items[i].status}" +
+                 "\n    ours " + show(r.out) + " exit \{r.status}" +
+                 (r.err == "" ? "" : "\n    err  \{show(r.err)}");
       }
     }
   }
@@ -62,13 +61,13 @@ export string test_every_implemented_flag_still_answers_what_the_real_tool_answe
   // fixed — a frame kept the bytes an applet redirected to a file, so `split` wrote its pieces to standard
   // output and left them empty. The count is what announced the fix: it had to be raised here before this
   // file would pass again.
-  t.eqI32(ran, list.len(), "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+  t.eqI32(ran, list.len(), "not every case replayed — \{list.len()} cases, \{v.n}" +
                            " vectors");
-  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded script — `cases.wac` changed, so " +
+  t.eqI32(unknown, 0, "\{unknown} cases do not match the recorded script — `cases.wac` changed, so " +
                       "`wac run --allow-read --allow-write --allow-run tools/wac/appletvectors.wac` is " +
                       "what makes this file mean anything again");
-  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " invocations differ from the captured tools (" +
-                    v.oracle + ")" + detail);
+  t.eqI32(wrong, 0, "\{wrong} of \{ran} invocations differ from the captured tools (" +
+                    "\{v.oracle})\{detail}");
   return t.report();
 }
 
@@ -87,33 +86,33 @@ export string test_the_live_tools_still_agree_on_a_handful(Core core, Cli cli) {
   for (i32 k = 0; k < 10; k++) {
     i32 i = (k * list.len()) / 10;
     if (!layFixtures(cli, dir, fixtures())) {
-      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
     Exec want = cli.exec("env",
                          [
                                   "-i",
                                   "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                                  "LC_ALL=C", "HOME=" + dir,
+                                  "LC_ALL=C", "HOME=\{dir}",
                                   "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
                                   "bash", dir, list[i]
                          ],
                          u8[]()).wait();
     if (!want.ran()) {
       // No bash here is not a failure of the applets: say so and stop, rather than passing quietly.
-      t.isTrue(checked > 0, "bash would not start: " + want.error);
+      t.isTrue(checked > 0, "bash would not start: \{want.error}");
       return t.report();
     }
     if (!layFixtures(cli, dir, fixtures())) {
-      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
     Ran ours = runCase(core, cli, dir, list[i]);
     checked = checked + 1;
-    t.eqStr(ours.out, string.fromBytes(want.stdout), "the live tools disagree: $ " + list[i]);
-    t.eqI32(ours.status, want.status, "the live tools' status disagrees: $ " + list[i]);
+    t.eqStr(ours.out, string.fromBytes(want.stdout), "the live tools disagree: $ \{list[i]}");
+    t.eqI32(ours.status, want.status, "the live tools' status disagrees: $ \{list[i]}");
   }
   cli.remove(dir, true).wait();
-  t.isTrue(checked >= 9, "not every canary ran: " + itoa(checked));
+  t.isTrue(checked >= 9, "not every canary ran: \{checked}");
   return t.report();
 }

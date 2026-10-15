@@ -10,7 +10,6 @@
 // is a fixture file nobody reads.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Varint, decode, encode, encodedLength } from "../../src/varint.wac";
 // `packages/codec`'s, rather than a second hex decoder in a test: the vectors below are quoted from
 // the RFC as hex and something has to turn them into bytes, but that something should not be code
@@ -71,12 +70,12 @@ export string test_round_trips_at_every_boundary() {
 
   for (i32 i = 0; i < values.len(); i++) {
     i64 v = values[i];
-    t.eqI32(encodedLength(v), widths[i], "width of " + itoa64(v));
+    t.eqI32(encodedLength(v), widths[i], "width of \{v}");
     u8[] buf = u8[].filled(8, 0);
     i32 n = encode(buf, 0, v);
-    t.eqI32(n, widths[i], "encode wrote its own width for " + itoa64(v));
+    t.eqI32(n, widths[i], "encode wrote its own width for \{v}");
     Varint got = decode(buf, 0);
-    t.eqI64(got.value, v, "round trip of " + itoa64(v));
+    t.eqI64(got.value, v, "round trip of \{v}");
     t.eqI32(got.size, widths[i], "and read back the same width");
   }
 

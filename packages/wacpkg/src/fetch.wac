@@ -27,7 +27,6 @@
 // the whole point of a lockfile; the loop below skips a `USE` step before it looks at the network.
 
 import { Change, Cli, Core, FileResult, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 // `decode` as well as `encode`: the first version of this had its own `hexBytes` and `nib`,
 // which is a third implementation of a rule `packages/codec` already owns.
 import { decode, encode } from "../../codec/src/hex.wac";
@@ -72,21 +71,21 @@ export i32 main(Sys sys) {
 export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
   FileResult mf = cli.readFile(join(dir, MANIFEST_NAME())).wait();
   if (!mf.ok) {
-    core.warn("wacfetch: " + join(dir, MANIFEST_NAME()) + " could not be read, so " + dir
+    core.warn("wacfetch: \{join(dir, MANIFEST_NAME())} could not be read, so \{dir}"
               + " is not a project");
     return 1;
   }
   Manifest m = readManifest(mf.bytes);
   if (!m.ok) {
-    core.warn("wacfetch: " + MANIFEST_NAME() + " is not valid: code " + itoa(m.code)
-              + (m.detail == "" ? "" : " (" + m.detail + ")"));
+    core.warn("wacfetch: " + MANIFEST_NAME() + " is not valid: code \{m.code}"
+              + (m.detail == "" ? "" : " (\{m.detail})"));
     return 1;
   }
   FileResult lf = cli.readFile(join(dir, "wac.lock")).wait();
   Lock l = lf.ok ? readLock(lf.bytes) : Lock.empty();
   if (!l.ok) {
-    core.warn("wacfetch: wac.lock is not valid: code " + itoa(l.code)
-              + (l.detail == "" ? "" : " (" + l.detail + ")"));
+    core.warn("wacfetch: wac.lock is not valid: code \{l.code}"
+              + (l.detail == "" ? "" : " (\{l.detail})"));
     return 1;
   }
 
@@ -97,7 +96,7 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
     string why = unsupportedTransport(m.imports[i].git);
     if (why == "") { continue; }
     refused = refused + 1;
-    core.warn("wacfetch: " + m.imports[i].name + ": " + why);
+    core.warn("wacfetch: \{m.imports[i].name}: \{why}");
   }
   if (refused > 0) { return 1; }
 
@@ -120,7 +119,7 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
       // absent-cache case is a *restore*: fetch the commit the lock already chose, without
       // consulting the ref, and leave the lock exactly as it was.
       string at = cachePath(wacHome, map.git, steps[i].commit);
-      if (at != "" && cli.stat(at + "/pack.pack").wait().isFile) {
+      if (at != "" && cli.stat("\{at}/pack.pack").wait().isFile) {
         // Not consulted, not counted. The lock covers it and a branch that moved is not a reason.
         resolved[i] = steps[i].commit;
         continue;
@@ -144,15 +143,15 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
     return 1;
   }
   if (fetched == 0) {
-    core.log("wacfetch: nothing to fetch; " + itoa(steps.len()) + " mapping(s) already locked");
+    core.log("wacfetch: nothing to fetch; \{steps.len()} mapping(s) already locked");
     return 0;
   }
   Change wrote = cli.writeFile(join(dir, "wac.lock"), writeLock(next)).wait();
   if (!wrote.ok()) {
-    core.warn("wacfetch: cannot write wac.lock: " + wrote.message);
+    core.warn("wacfetch: cannot write wac.lock: \{wrote.message}");
     return 1;
   }
-  core.log("wacfetch: " + itoa(fetched) + " fetched, " + itoa(steps.len() - fetched)
+  core.log("wacfetch: \{fetched} fetched, \{steps.len() - fetched}"
            + " already locked");
   return 0;
 }
@@ -178,17 +177,17 @@ export i32 fetchAll(Core core, Cli cli, string dir, string wacHome) {
  */
 string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping map, string why,
                 string pin) {
-  string what = map.name + " (" + map.git + " @ " + map.ref + ")";
-  core.log("wacfetch: " + what + (why == "" ? "" : " — " + why));
+  string what = "\{map.name} (\{map.git} @ \{map.ref})";
+  core.log("wacfetch: " + what + (why == "" ? "" : " — \{why}"));
 
   Remote r = parseRemote(map.git);
-  if (!r.ok) { core.warn("wacfetch: " + map.name + ": " + map.git + " is not an https url"); return ""; }
+  if (!r.ok) { core.warn("wacfetch: \{map.name}: \{map.git} is not an https url"); return ""; }
 
   Answer refs = request(core, cli, store, r.host,
-    r.path + "/info/refs?service=git-upload-pack", u8[](), "");
-  if (!refs.ok) { core.warn("wacfetch: " + map.name + ": " + refs.error); return ""; }
+    "\{r.path}/info/refs?service=git-upload-pack", u8[](), "");
+  if (!refs.ok) { core.warn("wacfetch: \{map.name}: \{refs.error}"); return ""; }
   if (refs.status != 200) {
-    core.warn("wacfetch: " + map.name + ": " + r.host + " answered " + itoa(refs.status)
+    core.warn("wacfetch: \{map.name}: \{r.host} answered \{refs.status}"
               + " for the advertisement");
     return "";
   }
@@ -198,7 +197,7 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   string caps = "agent=wac/0";
   match (parseAdvertisement(refs.body)) {
     Garbled(why2): {
-      core.warn("wacfetch: " + map.name + ": the advertisement did not parse: " + why2);
+      core.warn("wacfetch: \{map.name}: the advertisement did not parse: \{why2}");
       return "";
     }
     Said(ad) : {
@@ -221,7 +220,7 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
     return "";
   }
   core.log("  " + map.ref + " -> " + hit.commit.slice(0, 12)
-           + (hit.via == "" ? " (an object name)" : " via " + hit.via));
+           + (hit.via == "" ? " (an object name)" : " via \{hit.via}"));
 
   // **Already here?** The pack below is 8.75 MB for this repository and the checkout it writes is a
   // pure function of the repository and the commit — so a second project mapping the same commit was
@@ -238,8 +237,8 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   // The ref is still resolved first, because a lockfile that does not yet name a commit cannot say
   // which directory to look in. This saves the pack, not the round trip.
   string have = cachePath(wacHome, map.git, hit.commit);
-  if (have != "" && cli.stat(have + "/pack.pack").wait().isFile) {
-    core.log("  " + hit.commit.slice(0, 12) + " is already in the cache -> " + have);
+  if (have != "" && cli.stat("\{have}/pack.pack").wait().isFile) {
+    core.log("  \{hit.commit.slice(0, 12)} is already in the cache -> \{have}");
     return hit.commit;
   }
 
@@ -247,7 +246,7 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   // a null rather than by trapping, and answering it is cheaper than explaining why it is safe.
   u8[]? raw = decode(hit.commit.toBytes());
   if (raw is null) {
-    core.warn("wacfetch: " + map.name + ": " + hit.commit + " is not an object name");
+    core.warn("wacfetch: \{map.name}: \{hit.commit} is not an object name");
     return "";
   }
   u8[] want = raw!;
@@ -255,18 +254,18 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   Vec<u8[]> wants = Vec.create();
   wants.push(want);
   Vec<u8[]> haves = Vec.create();
-  Answer packed = request(core, cli, store, r.host, r.path + "/git-upload-pack",
+  Answer packed = request(core, cli, store, r.host, "\{r.path}/git-upload-pack",
     wantRequest(wants, haves, caps, depth()), "application/x-git-upload-pack-request");
-  if (!packed.ok) { core.warn("wacfetch: " + map.name + ": " + packed.error); return ""; }
+  if (!packed.ok) { core.warn("wacfetch: \{map.name}: \{packed.error}"); return ""; }
   if (packed.status != 200) {
-    core.warn("wacfetch: " + map.name + ": " + r.host + " answered " + itoa(packed.status)
+    core.warn("wacfetch: \{map.name}: \{r.host} answered \{packed.status}"
               + " for the pack");
     return "";
   }
   u8[] pack = u8[]();
   match (findPack(packed.body)) {
     NoPack(why3): {
-      core.warn("wacfetch: " + map.name + ": no pack in the reply: " + why3);
+      core.warn("wacfetch: \{map.name}: no pack in the reply: \{why3}");
       return "";
     }
     Packfile(bytes): { pack = bytes; }
@@ -278,20 +277,20 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   // **Where it goes, decided before the pack is opened**, so the checkout can use the `Pack` the
   // verification below already has. Indexing a pack twice is half a million objects twice.
   string into = cachePath(wacHome, map.git, hit.commit);
-  if (into == "") { core.warn("wacfetch: " + map.name + ": no cache path"); return ""; }
+  if (into == "") { core.warn("wacfetch: \{map.name}: no cache path"); return ""; }
   Change made = cli.mkdir(into, true).wait();
-  if (!made.ok()) { core.warn("wacfetch: cannot make " + into + ": " + made.message); return ""; }
+  if (!made.ok()) { core.warn("wacfetch: cannot make \{into}: \{made.message}"); return ""; }
 
   match (indexPack(pack)) {
     Unindexable(why4): {
-      core.warn("wacfetch: " + map.name + ": the pack did not index: " + why4);
+      core.warn("wacfetch: \{map.name}: the pack did not index: \{why4}");
       return "";
     }
     // Not reachable while every request sends no `have` — a server with nothing to delta against
     // sends a complete pack. Answered rather than left to fall through, because the day this asks
     // for an incremental fetch it will be, and a thin pack is not a damaged one.
     Thin(bases): {
-      core.warn("wacfetch: " + map.name + ": a thin pack, wanting " + itoa(bases.len())
+      core.warn("wacfetch: \{map.name}: a thin pack, wanting \{bases.len()}"
                 + " object(s) we did not ask about");
       return "";
     }
@@ -300,14 +299,14 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
       Pack p = openIndexed(pack, idx);
       match (objectNamed(p, want)) {
         Absent(why5): {
-          core.warn("wacfetch: " + map.name + ": the pack does not contain "
-                    + hit.commit.slice(0, 12) + ": " + why5);
+          core.warn("wacfetch: \{map.name}: the pack does not contain "
+                    + "\{hit.commit.slice(0, 12)}: \{why5}");
           return "";
         }
         Found(kind, data): {
           if (kind != 1) {
-            core.warn("wacfetch: " + map.name + ": " + hit.commit.slice(0, 12)
-                      + " came back as kind " + itoa(kind) + " rather than a commit");
+            core.warn("wacfetch: \{map.name}: \{hit.commit.slice(0, 12)}"
+                      + " came back as kind \{kind} rather than a commit");
             return "";
           }
           // **And the files, because a pack is not something the compiler can read.** Fetching that
@@ -318,12 +317,12 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
           Parsed c = parseCommit(data);
           match (c) {
             Malformed(why6): {
-              core.warn("wacfetch: " + map.name + ": unreadable commit: " + why6);
+              core.warn("wacfetch: \{map.name}: unreadable commit: \{why6}");
               return "";
             }
             Understood(commit): {
               if (!writeTreeOut(core, cli, p, commit.tree, into)) { return ""; }
-              core.log("  checked out " + commit.treeHex().slice(0, 8) + " -> " + into);
+              core.log("  checked out \{commit.treeHex().slice(0, 8)} -> \{into}");
             }
           }
         }
@@ -331,13 +330,13 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
     }
   }
 
-  Change wrotePack = cli.writeFile(into + "/pack.pack", pack).wait();
+  Change wrotePack = cli.writeFile("\{into}/pack.pack", pack).wait();
   if (!wrotePack.ok()) {
-    core.warn("wacfetch: cannot write " + into + "/pack.pack: " + wrotePack.message);
+    core.warn("wacfetch: cannot write \{into}/pack.pack: \{wrotePack.message}");
     return "";
   }
-  core.log("  " + itoa(pack.len()) + " bytes, " + itoa(objects) + " objects -> "
-           + into + "/pack.pack");
+  core.log("  \{pack.len()} bytes, \{objects} objects -> "
+           + "\{into}/pack.pack");
 
   return hit.commit;
 }
@@ -365,22 +364,22 @@ bool writeTreeOut(Core core, Cli cli, Pack pk, u8[] treeHash, string into) {
   Got got = objectNamed(pk, treeHash);
   match (got) {
     Absent(why): {
-      core.warn("wacfetch: a tree is missing from the pack: " + why);
+      core.warn("wacfetch: a tree is missing from the pack: \{why}");
       return false;
     }
     Found(kind, data): {
       Tree t = parseTree(data);
       match (t) {
-        Bad(why): { core.warn("wacfetch: unreadable tree: " + why); return false; }
+        Bad(why): { core.warn("wacfetch: unreadable tree: \{why}"); return false; }
         Ok(entries): {
           for (i32 i = 0; i < entries.len(); i++) {
             Entry e = entries.get(i);
-            string at = into + "/" + e.name;
+            string at = "\{into}/\{e.name}";
             if (e.mode == "160000") { continue; }
             if (e.isTree()) {
               Change made = cli.mkdir(at, true).wait();
               if (!made.ok()) {
-                core.warn("wacfetch: cannot make " + at + ": " + made.message);
+                core.warn("wacfetch: cannot make \{at}: \{made.message}");
                 return false;
               }
               if (!writeTreeOut(core, cli, pk, e.hash, at)) { return false; }
@@ -389,13 +388,13 @@ bool writeTreeOut(Core core, Cli cli, Pack pk, u8[] treeHash, string into) {
             Got blob = objectNamed(pk, e.hash);
             match (blob) {
               Absent(why2): {
-                core.warn("wacfetch: " + e.name + " is missing from the pack: " + why2);
+                core.warn("wacfetch: \{e.name} is missing from the pack: \{why2}");
                 return false;
               }
               Found(k2, bytes): {
                 Change wrote = cli.writeFile(at, bytes).wait();
                 if (!wrote.ok()) {
-                  core.warn("wacfetch: cannot write " + at + ": " + wrote.message);
+                  core.warn("wacfetch: cannot write \{at}: \{wrote.message}");
                   return false;
                 }
               }
@@ -410,5 +409,5 @@ bool writeTreeOut(Core core, Cli cli, Pack pk, u8[] treeHash, string into) {
 
 string join(string dir, string name) {
   if (dir == "" || dir == ".") { return name; }
-  return dir.slice(dir.len() - 1, dir.len()) == "/" ? dir + name : dir + "/" + name;
+  return dir.slice(dir.len() - 1, dir.len()) == "/" ? dir + name : "\{dir}/\{name}";
 }

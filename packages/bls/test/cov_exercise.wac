@@ -22,7 +22,6 @@
 // None of the fifty-three tests expects a trap.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_valid_points_decompress_to_the_coordinates_python_computed as cu__valid_points_decompress_to_the_coordinates_python_computed,
   test_compression_round_trips_so_there_is_one_encoding_per_point as cu__compression_round_trips_so_there_is_one_encoding_per_point,
@@ -328,6 +327,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED fpkernel_generated_test test_src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("bls: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("bls: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

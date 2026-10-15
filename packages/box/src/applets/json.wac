@@ -8,7 +8,6 @@ import { Cli, Core } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, readAll } from "../lib/input.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { withNewline } from "../lib/bytes.wac";
 
 import { Canonical, canonicalize } from "../../../json/src/json.wac";
@@ -21,7 +20,7 @@ export i32 json(Core core, Cli cli, Fs fs, Args a) {
   if (!in.ok) { return 1; }
   Canonical c = canonicalize(in.bytes);
   if (!c.ok) {
-    core.warn(a.name + ": invalid JSON at byte " + itoa(c.pos) + " (code " + itoa(c.code) + ")");
+    core.warn("\{a.name}: invalid JSON at byte \{c.pos} (code \{c.code})");
     return 1;
   }
   // Without `-c` this is a validator: exit 0 and say nothing, so it composes in a test.

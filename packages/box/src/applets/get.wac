@@ -11,7 +11,7 @@ import { Fs } from "../../../fs/src/fs.wac";
 export i32 get(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) {
-    core.warn("usage: " + a.name + " <host> [path] [-<port>] [-i]");
+    core.warn("usage: \{a.name} <host> [path] [-<port>] [-i]");
     return 2;
   }
   return fetch(core, cli, a.name, a.rest[0],

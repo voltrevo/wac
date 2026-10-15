@@ -13,7 +13,6 @@
 // TypeScript was converting strings to bytes and back. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Inflation, inflate, inflateAt } from "../../src/inflate.wac";
 import { deflateDynamic } from "../../src/deflate.wac";
 import { equal } from "../../../bytes/src/slice.wac";
@@ -39,13 +38,13 @@ string bothWays(T t, u8[] one, u8[] two, string what) {
   u8[] both = join(a, b);
 
   Inflation first = inflateAt(both, 0);
-  t.isTrue(equal(first.bytes, one), what + ": the first stream came back");
+  t.isTrue(equal(first.bytes, one), "\{what}: the first stream came back");
   t.eqI32(first.end, a.len(),
-          what + ": end reported " + itoa(first.end) + ", the first stream is " + itoa(a.len()) + " bytes");
+          "\{what}: end reported \{first.end}, the first stream is \{a.len()} bytes");
 
   Inflation second = inflateAt(both, first.end);
-  t.isTrue(equal(second.bytes, two), what + ": the second inflated from the reported end");
-  t.eqI32(second.end, both.len(), what + ": the second stream ended at the end of the buffer");
+  t.isTrue(equal(second.bytes, two), "\{what}: the second inflated from the reported end");
+  t.eqI32(second.end, both.len(), "\{what}: the second stream ended at the end of the buffer");
   return "";
 }
 
@@ -70,7 +69,7 @@ export string test_it_agrees_with_inflate_about_the_bytes() {
   for (i32 i = 0; i < texts.len(); i++) {
     u8[] stream = deflateDynamic(texts[i]);
     t.isTrue(equal(inflate(stream), inflateAt(stream, 0).bytes),
-             "the two agree on payload " + itoa(i) + " of " + itoa(texts[i].len()) + " bytes");
+             "the two agree on payload \{i} of \{texts[i].len()} bytes");
   }
   return t.report();
 }

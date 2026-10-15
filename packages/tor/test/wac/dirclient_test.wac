@@ -8,13 +8,12 @@
 // rather than sampled.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { microdescPath, certificatePath, splitResponse, isIdentity, refreshAt,
          validUntil, microdescBatches, Response } from "../../src/dirclient.wac";
 
 u8[] doc(string after, string fresh, string until) {
-  return ("network-status-version 3\nvalid-after " + after +
-          "\nfresh-until " + fresh + "\nvalid-until " + until + "\n").toBytes();
+  return ("network-status-version 3\nvalid-after \{after}" +
+          "\nfresh-until \{fresh}\nvalid-until \{until}\n").toBytes();
 }
 
 // An hour fresh, three hours valid — a typical consensus.
@@ -62,7 +61,7 @@ export string test_the_refresh_time_is_spread_across_the_window() {
   i32 distinct = 0;
   for (i32 i = 0; i < 20; i++) {
     i64 v = refreshAt(hourly(), i * 500);
-    t.isTrue(v >= FRESH && v < VALID, "sample " + itoa64(i as i64) + " is inside the window");
+    t.isTrue(v >= FRESH && v < VALID, "sample \{i as i64} is inside the window");
     if (v != last) { distinct++; }
     last = v;
   }
@@ -89,7 +88,7 @@ export string test_a_short_lived_consensus_still_lands_inside_its_life() {
   i64 close = validUntil(short_);
   for (i32 i = 0; i <= 10; i++) {
     i64 v = refreshAt(short_, i * 1000);
-    t.isTrue(v >= open && v < close, "sample " + itoa64(i as i64) + " is inside forty seconds");
+    t.isTrue(v >= open && v < close, "sample \{i as i64} is inside forty seconds");
   }
   return t.report();
 }

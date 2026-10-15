@@ -78,7 +78,7 @@ Exec sh(Cli cli, string script) {
  * silently and read as a pass.
  */
 string oneHost(Core core, Cli cli, T t, string host, string runtime) {
-  string dir = scratch(cli, "bootstrap-" + host);
+  string dir = scratch(cli, "bootstrap-\{host}");
   string why = freshDir(cli, dir);
   t.isTrue(why == "", why);
   if (why != "") { return ""; }
@@ -86,34 +86,34 @@ string oneHost(Core core, Cli cli, T t, string host, string runtime) {
   // **Skipped rather than failed where the runtime is absent**, which is the honest answer: this
   // tests what `--host <x>` does, and a machine without `<x>` is not one where that is broken. The
   // native hosts are what such a machine builds, and they have their own tests.
-  Exec have = sh(cli, "command -v " + runtime + " >/dev/null 2>&1 && echo yes || echo no");
+  Exec have = sh(cli, "command -v \{runtime} >/dev/null 2>&1 && echo yes || echo no");
   if (trimmed(string.fromBytes(have.stdout)) != "yes") {
-    core.log("   no " + runtime + " on this machine — skipping --host " + host);
+    core.log("   no \{runtime} on this machine — skipping --host \{host}");
     return "";
   }
 
-  string out = dir + "/wac";
-  Exec built = sh(cli, "bash bootstrap.sh --host " + host + " -o '" + out + "' 2>&1");
+  string out = "\{dir}/wac";
+  Exec built = sh(cli, "bash bootstrap.sh --host \{host} -o '\{out}' 2>&1");
   t.eqI32(built.status, 0,
-          "bootstrap.sh --host " + host + " failed:\n" + string.fromBytes(built.stdout));
+          "bootstrap.sh --host \{host} failed:\n\{string.fromBytes(built.stdout)}");
   if (built.status != 0) { return ""; }
 
   // It reached a fixed point rather than merely finishing — the script refuses to write a command
   // that never settles, so this checks the script said so rather than trusting the exit code.
   t.isTrue(contains(string.fromBytes(built.stdout), "fixed point"),
-           host + ": no fixed point reported:\n" + string.fromBytes(built.stdout));
+           "\{host}: no fixed point reported:\n\{string.fromBytes(built.stdout)}");
 
-  Change wrote = cli.writeFile(dir + "/hello.wac", PROGRAM.toBytes()).wait();
-  t.isTrue(wrote.ok(), "could not write the program — " + wrote.message);
+  Change wrote = cli.writeFile("\{dir}/hello.wac", PROGRAM.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the program — \{wrote.message}");
   if (!wrote.ok()) { return ""; }
 
   // **The question a user asks.** Everything above is machinery; this is whether the artefact is a
   // compiler. `--allow-read` because the program is on disk and the command has no ambient authority.
-  Exec ran = sh(cli, "'" + out + "' run --allow-read '" + dir + "/hello.wac' 2>&1");
-  t.eqI32(ran.status, 0, host + ": the built command could not run a program: "
+  Exec ran = sh(cli, "'\{out}' run --allow-read '\{dir}/hello.wac' 2>&1");
+  t.eqI32(ran.status, 0, "\{host}: the built command could not run a program: "
                        + string.fromBytes(ran.stdout));
   t.eqStr(trimmed(string.fromBytes(ran.stdout)), "it compiled and it ran",
-          host + " printed: " + string.fromBytes(ran.stdout));
+          "\{host} printed: \{string.fromBytes(ran.stdout)}");
 
   sameAnswerOnBothHosts(core, cli, t, host, dir, out);
 
@@ -143,37 +143,37 @@ string oneHost(Core core, Cli cli, T t, string host, string runtime) {
  * checked for the line the probe is known to print.
  */
 void sameAnswerOnBothHosts(Core core, Cli cli, T t, string host, string dir, string jsWac) {
-  Change wrote = cli.writeFile(dir + "/probe.wac", PROBE.toBytes()).wait();
-  t.isTrue(wrote.ok(), "could not write the probe — " + wrote.message);
+  Change wrote = cli.writeFile("\{dir}/probe.wac", PROBE.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the probe — \{wrote.message}");
   if (!wrote.ok()) { return; }
 
   // Built **once**, by the binary running this test, and run by both. That is the whole point.
   Exec made = cli.exec(binaryPath(cli),
                        [
-                                "app", dir + "/probe.wac", "--allow-read", "--allow-write",
-                                "-o", dir + "/probe"
+                                "app", "\{dir}/probe.wac", "--allow-read", "--allow-write",
+                                "-o", "\{dir}/probe"
                        ],
                        u8[]()).wait();
-  t.eqI32(made.status, 0, "wac app failed: " + string.fromBytes(made.stderr));
+  t.eqI32(made.status, 0, "wac app failed: \{string.fromBytes(made.stderr)}");
   if (made.status != 0) { return; }
 
   // `cd` into the directory so the probe's relative `probe.out` lands somewhere writable, and so both
   // runs stand in the same place — a difference in *where* they ran would read as a host difference.
-  string native = "cd '" + dir + "' && '" + binaryPath(cli) + "' app-run ./probe 2>&1";
+  string native = "cd '\{dir}' && '\{binaryPath(cli)}' app-run ./probe 2>&1";
   // **The JS command is named outright rather than found on PATH.** A `wac app` artefact resolves
   // its runtime with `command -v wac`, and putting the JS one there would decide *both* runs — the
   // point is to name the host each time and keep everything else the same.
-  string js = "cd '" + dir + "' && '" + jsWac + "' app-run ./probe 2>&1";
+  string js = "cd '\{dir}' && '\{jsWac}' app-run ./probe 2>&1";
   Exec a = sh(cli, native);
   Exec b = sh(cli, js);
 
   string sa = trimmed(string.fromBytes(a.stdout));
   string sb = trimmed(string.fromBytes(b.stdout));
-  t.eqStr(sb, sa, host + ": the two hosts disagree about what the program did");
-  t.eqI32(b.status, a.status, host + ": and about its status");
+  t.eqStr(sb, sa, "\{host}: the two hosts disagree about what the program did");
+  t.eqI32(b.status, a.status, "\{host}: and about its status");
   // The canary. Both hosts losing the redirect would agree on an empty file and pass the line above.
   t.isTrue(contains(sa, "file holds: redirected"),
-           "neither host redirected — the comparison above is worth nothing: " + sa);
+           "neither host redirected — the comparison above is worth nothing: \{sa}");
 }
 
 export string test_bootstrap_host_deno_builds_a_working_wac(Core core, Cli cli) {

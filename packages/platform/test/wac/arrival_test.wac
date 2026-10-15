@@ -40,7 +40,6 @@ import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, FileResult, Stat } from "std";
 import { builtByDeno, builtProgram, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, boundedAgain, hangReport } from "./hostfs.wac";
 
 static string ENTRY = "packages/box/src/bin/imaged.wac";
@@ -57,7 +56,7 @@ string root(Cli cli) { return cli.cwd().wait(); }
 string nativeBinary(Core core, Cli cli) {
   string why = nativeHostWhyNot(cli);
   if (why != "") {
-    core.warn("arrival: SKIPPING the native half — " + why);
+    core.warn("arrival: SKIPPING the native half — \{why}");
     return "";
   }
   return nativeHost(cli);
@@ -72,9 +71,9 @@ string buildOne(Cli cli, bool native, string out) {
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
-    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[]()).wait();
+    Exec r = cli.exec("\{root(cli)}/native/v8/target/release/wac", args, u8[]()).wait();
     if (!r.ran() || r.status != 0) {
-      return "wac build imaged: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+      return "wac build imaged: \{string.fromBytes(r.stderr)}\{string.fromBytes(r.stdout)}";
     }
     return "";
   }
@@ -85,7 +84,7 @@ string buildOne(Cli cli, bool native, string out) {
   args[head.len() + grants.len()] = "-o";
   args[head.len() + grants.len() + 1] = out;
   Exec r = cli.exec("deno", args, u8[]()).wait();
-  if (!r.ran() || r.status != 0) { return "build.ts imaged: " + string.fromBytes(r.stderr); }
+  if (!r.ran() || r.status != 0) { return "build.ts imaged: \{string.fromBytes(r.stderr)}"; }
   return "";
 }
 
@@ -108,7 +107,7 @@ struct World {
  * restores the executable bit, because the Deno half is run as a program.
  */
 World world(Cli cli, string name) {
-  string dir = root(cli) + "/.cache/arrival-" + name;
+  string dir = "\{root(cli)}/.cache/arrival-\{name}";
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   string[] grants = ["--allow-read", "--allow-write"];
@@ -118,9 +117,9 @@ World world(Cli cli, string name) {
                                    ["--allow-read", "--allow-write", "--quiet"]);
   if (madeDeno == "") { return World(false, "imaged did not build for deno", dir, "", ""); }
 
-  string deno = dir + "/imaged-deno";
+  string deno = "\{dir}/imaged-deno";
   if (!copyBuilt(cli, madeDeno, deno, true)) {
-    return World(false, "the deno build did not copy into " + dir, dir, "", "");
+    return World(false, "the deno build did not copy into \{dir}", dir, "", "");
   }
   // The native half is a module plus a manifest, and **the manifest names the module by the name it was
   // built under** — so the copy keeps that name rather than renaming to `imaged`. Renaming it was the
@@ -131,10 +130,10 @@ World world(Cli cli, string name) {
   for (i32 i = 0; i < base.len(); i++) { if (base.slice(i, i + 1) == "/") { slash = i; } }
   if (slash >= 0) { base = base.slice(slash + 1, base.len()); }
   string stem = base.slice(0, base.len() - 5);
-  if (!copyBuilt(cli, madeNative, dir + "/" + base, false)) {
-    return World(false, "the native build did not copy into " + dir, dir, "", "");
+  if (!copyBuilt(cli, madeNative, "\{dir}/\{base}", false)) {
+    return World(false, "the native build did not copy into \{dir}", dir, "", "");
   }
-  return World(true, "", dir, deno, dir + "/" + stem + ".wasm");
+  return World(true, "", dir, deno, "\{dir}/\{stem}.wasm");
 }
 
 /** One session over `image`, from the world's directory, bounded and asked twice if it wedges. */
@@ -171,7 +170,7 @@ export string test_an_image_written_on_one_host_is_the_same_system_on_the_other(
     Core core, Cli cli) {
   T t = T.create();
   World w = world(cli, "same");
-  t.isTrue(w.ok, "imaged built for both hosts — " + w.error);
+  t.isTrue(w.ok, "imaged built for both hosts — \{w.error}");
   if (!w.ok) { return t.report(); }
   const string IMG = "home.wacimg";
 
@@ -185,8 +184,8 @@ export string test_an_image_written_on_one_host_is_the_same_system_on_the_other(
   t.eqStr(made.out, "n\nnote\n", made.err);
   // The canary for the whole file: an image nobody wrote to would make every read below pass by
   // agreeing about nothing.
-  Stat s = cli.stat(w.dir + "/" + IMG).wait();
-  t.isTrue(s.size > (100 as i64), "the image is " + itoa(s.size as~ i32) + " bytes — nothing written");
+  Stat s = cli.stat("\{w.dir}/\{IMG}").wait();
+  t.isTrue(s.size > (100 as i64), "the image is \{s.size as~ i32} bytes — nothing written");
 
   string native = nativeBinary(core, cli);
   if (native == "") { cli.remove(w.dir, true).wait(); return t.report(); }
@@ -235,7 +234,7 @@ export string test_a_session_that_changes_nothing_writes_the_same_bytes_on_eithe
   string native = nativeBinary(core, cli);
   if (native == "") { return t.report(); }
   World w = world(cli, "twice");
-  t.isTrue(w.ok, "imaged built for both hosts — " + w.error);
+  t.isTrue(w.ok, "imaged built for both hosts — \{w.error}");
   if (!w.ok) { return t.report(); }
 
   Ran made = session(core, cli, w, w.deno, string[].filled(0, ""), "twice.wacimg",
@@ -244,7 +243,7 @@ export string test_a_session_that_changes_nothing_writes_the_same_bytes_on_eithe
 
   cli.exec("/bin/sh", [
     "-c",
-    "cd '" + w.dir + "' && cp twice.wacimg js.wacimg && cp twice.wacimg rs.wacimg"
+    "cd '\{w.dir}' && cp twice.wacimg js.wacimg && cp twice.wacimg rs.wacimg"
   ],
     u8[]()).wait();
   Ran a = session(core, cli, w, w.deno, string[].filled(0, ""), "js.wacimg", "true");
@@ -255,15 +254,15 @@ export string test_a_session_that_changes_nothing_writes_the_same_bytes_on_eithe
   t.eqI32(a.code, 0, a.err);
   t.eqI32(b.code, 0, b.err);
 
-  FileResult js = cli.readFile(w.dir + "/js.wacimg").wait();
-  FileResult rs = cli.readFile(w.dir + "/rs.wacimg").wait();
+  FileResult js = cli.readFile("\{w.dir}/js.wacimg").wait();
+  FileResult rs = cli.readFile("\{w.dir}/rs.wacimg").wait();
   t.isTrue(js.ok && rs.ok, "both images are readable");
   if (!js.ok || !rs.ok) { cli.remove(w.dir, true).wait(); return t.report(); }
   // Byte for byte. Anything that differed here would be the machine leaking into the image: a
   // directory order, a clock, an allocator's padding.
   t.eqBytes(rs.bytes, js.bytes, "the two hosts wrote different images");
   // The canary again, and it is not the same one: an image of zero bytes is also byte-identical.
-  t.isTrue(js.bytes.len() > 100, "the image is " + itoa(js.bytes.len()) + " bytes");
+  t.isTrue(js.bytes.len() > 100, "the image is \{js.bytes.len()} bytes");
   cli.remove(w.dir, true).wait();
   return t.report();
 }
@@ -282,7 +281,7 @@ export string test_neither_host_reaches_the_disk_except_through_the_grants_the_i
   string native = nativeBinary(core, cli);
   if (native == "") { return t.report(); }
   World w = world(cli, "sealed");
-  t.isTrue(w.ok, "imaged built for both hosts — " + w.error);
+  t.isTrue(w.ok, "imaged built for both hosts — \{w.error}");
   if (!w.ok) { return t.report(); }
   const string IMG = "sealed.wacimg";
 
@@ -296,9 +295,9 @@ export string test_neither_host_reaches_the_disk_except_through_the_grants_the_i
     string cmd = i == 0 ? w.deno : native;
     string[] extra = i == 0 ? string[].filled(0, "") : [w.manifest];
     Ran r = session(core, cli, w, cmd, extra, IMG, "cat /etc/hostname");
-    t.eqStr(r.out, "inside-the-image\n", names[i] + ": " + r.out + r.err);
+    t.eqStr(r.out, "inside-the-image\n", "\{names[i]}: \{r.out}\{r.err}");
     if (theirs.len() > 0) {
-      t.isFalse(contains(r.out, theirs), names[i] + " read the machine's hostname");
+      t.isFalse(contains(r.out, theirs), "\{names[i]} read the machine's hostname");
     }
   }
   cli.remove(w.dir, true).wait();

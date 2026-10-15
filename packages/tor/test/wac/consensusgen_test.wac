@@ -10,7 +10,6 @@
 // Host-side until 2026-08-17, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { AuthorityKeys } from "../../src/authcert.wac";
 import { ConsensusInfo, ConsensusVoter, consensusDocument, microdescConsensusDocument }
          from "../../src/consensusgen.wac";
@@ -223,12 +222,12 @@ export string test_the_microdesc_flavour_differs_from_the_plain_one_in_four_stat
       known = true; pi = pi + 1; mi = mi + 1;
     }
     if (!known) {
-      t.isTrue(false, "a line differs for no stated reason:\n  plain: " + p + "\n  micro: " + m);
+      t.isTrue(false, "a line differs for no stated reason:\n  plain: \{p}\n  micro: \{m}");
       pi = pi + 1;
       mi = mi + 1;
     }
   }
-  t.isTrue(same > 8, "only " + itoa(same) + " lines were identical, so the walk above lost its place");
+  t.isTrue(same > 8, "only \{same} lines were identical, so the walk above lost its place");
   t.eqI32(plain.len() - pi, 0, "the plain document has lines past the end of the microdesc one");
   t.eqI32(micro.len() - mi, 0, "the microdesc document has lines past the end of the plain one");
 

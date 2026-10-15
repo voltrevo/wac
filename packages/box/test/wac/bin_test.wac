@@ -22,7 +22,6 @@ import { Cli, Core } from "std";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Vec } from "core";
 import { boxNames } from "../../src/shrun.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runSealed, show } from "./replay.wac";
 
@@ -34,11 +33,11 @@ export string test_bin_lists_exactly_the_programs_this_build_has(Core core, Cli 
   // person reads. Comparing the two without this reports every name as wrong from the first that moves.
   string[] names = sorted(boxNames());
   string want = "";
-  for (i32 i = 0; i < names.len(); i++) { want = want + names[i] + "\n"; }
+  for (i32 i = 0; i < names.len(); i++) { want = want + "\{names[i]}\n"; }
   t.eqStr(listing.out, want, "/bin is not the program list");
   // The canary: a `/bin` of nothing would also be "exactly the programs" if the list were empty, and
   // this file would pass while the machine had no programs at all.
-  t.isTrue(names.len() > 50, "only " + itoa(names.len()) + " names — is the list being read?");
+  t.isTrue(names.len() > 50, "only \{names.len()} names — is the list being read?");
   return t.report();
 }
 
@@ -54,8 +53,8 @@ export string test_a_program_in_bin_is_a_file_with_a_mode_and_a_size(Core core, 
           "what /bin/wc says");
   // `stat` and `cat` agree about the length, which is the pair that would drift apart unnoticed.
   Ran counted = runSealed(core, cli, "cat /bin/wc | wc -c");
-  t.isTrue(one.out.indexOf(" " + trimmedOf(counted.out) + " ") >= 0,
-           "stat and cat disagree about the length: " + show(one.out) + " vs " + show(counted.out));
+  t.isTrue(one.out.indexOf(" \{trimmedOf(counted.out)} ") >= 0,
+           "stat and cat disagree about the length: \{show(one.out)} vs \{show(counted.out)}");
 
   // And a name that is not a program is absent rather than empty — the two are different answers.
   Ran missing = runSealed(core, cli, "cat /bin/nosuch");
@@ -77,7 +76,7 @@ export string test_a_path_into_bin_runs_the_program_however_it_is_spelled(Core c
   t.isTrue(nope.err.indexOf("No such file or directory") >= 0, nope.err);
   // A directory that merely looks like it: `/binary/wc` must not be treated as `/bin`'s.
   Ran near = runSealed(core, cli, "mkdir /binary; /binary/wc; echo status=$?");
-  t.isTrue(near.out.indexOf("status=127") >= 0, show(near.out) + " / " + show(near.err));
+  t.isTrue(near.out.indexOf("status=127") >= 0, "\{show(near.out)} / \{show(near.err)}");
   return t.report();
 }
 
@@ -110,12 +109,12 @@ export string test_bin_is_read_only_like_every_other_synthesised_mount(Core core
   T t = T.create();
   string[] refused = ["echo x > /bin/wc", "rm /bin/wc", "mkdir /bin/d"];
   for (i32 i = 0; i < refused.len(); i++) {
-    t.isTrue(runSealed(core, cli, refused[i]).status != 0, refused[i] + " was allowed");
+    t.isTrue(runSealed(core, cli, refused[i]).status != 0, "\{refused[i]} was allowed");
   }
   // A program cannot be added by writing one either, which is the same statement from the other side:
   // what is in `/bin` is what this build has.
   Ran added = runSealed(core, cli, "echo x > /bin/newthing; ls /bin | wc -l");
-  t.eqStr(trimmedOf(added.out), itoa(boxNames().len()), added.err);
+  t.eqStr(trimmedOf(added.out), "\{boxNames().len()}", added.err);
   return t.report();
 }
 

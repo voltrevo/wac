@@ -22,7 +22,6 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { shiftTest, mulTest, sumTest, subTest, cmpTest, addTest } from "../bigops.wac";
 
 /**
@@ -70,7 +69,7 @@ export string test_fixedbig_shift_left_across_every_limb_boundary(Core core, Cli
   Lines lines = Lines.create();
   for (i32 v = 0; v < values.len(); v++) {
     for (i32 s = 0; s < shifts.len(); s++) {
-      lines.add("shift " + u64Hex(values[v]) + " " + itoa(shifts[s]) + " " +
+      lines.add("shift \{u64Hex(values[v])} \{shifts[s]} " +
                 hex(shiftTest(values[v], shifts[s])));
     }
   }
@@ -92,8 +91,8 @@ export string test_fixedbig_mul_small_carries(Core core, Cli cli) {
   i32[] times = [1, 19, 340, 17, 17, 30, 3, 100];
   Lines lines = Lines.create();
   for (i32 i = 0; i < v.len(); i++) {
-    lines.add("mul " + u64Hex(v[i]) + " " + itoa(bits[i]) + " " + itoa(mul[i] as@ i32) + " " +
-              itoa(times[i]) + " " + hex(mulTest(v[i], bits[i], mul[i], times[i])));
+    lines.add("mul " + u64Hex(v[i]) + " \{bits[i]} \{mul[i] as@ i32} " +
+              "\{times[i]} " + hex(mulTest(v[i], bits[i], mul[i], times[i])));
   }
   checkDeno(t, cli, ORACLE, lines, "mulSmall");
   return t.report();
@@ -108,22 +107,22 @@ export string test_fixedbig_random_add_subtract_and_compare(Core core, Cli cli) 
     u64 b = next64(rng);
     i32 ashift = rng.upto(600);
     i32 bshift = rng.upto(600);
-    lines.add("sum " + u64Hex(a) + " " + itoa(ashift) + " " + u64Hex(b) + " " + itoa(bshift) +
-              " " + hex(sumTest(a, ashift, b, bshift)));
+    lines.add("sum \{u64Hex(a)} \{ashift} \{u64Hex(b)} \{bshift}" +
+              " \{hex(sumTest(a, ashift, b, bshift))}");
     // `sub` requires the minuend to be the larger, which is the contract — so the *order* is decided
     // here, by asking the operation being tested which way round they go. That is not circular: the
     // oracle checks the comparison itself on the next line, so a wrong `cmp` shows up there and a
     // wrong order shows up as the subtraction the oracle refuses.
     i32 order = cmpTest(a, ashift, b, bshift);
     if (order >= 0) {
-      lines.add("sub " + u64Hex(a) + " " + itoa(ashift) + " " + u64Hex(b) + " " + itoa(bshift) +
-                " " + hex(subTest(a, ashift, b, bshift)));
+      lines.add("sub \{u64Hex(a)} \{ashift} \{u64Hex(b)} \{bshift}" +
+                " \{hex(subTest(a, ashift, b, bshift))}");
     } else {
-      lines.add("sub " + u64Hex(b) + " " + itoa(bshift) + " " + u64Hex(a) + " " + itoa(ashift) +
-                " " + hex(subTest(b, bshift, a, ashift)));
+      lines.add("sub \{u64Hex(b)} \{bshift} \{u64Hex(a)} \{ashift}" +
+                " \{hex(subTest(b, bshift, a, ashift))}");
     }
-    lines.add("cmp " + u64Hex(a) + " " + itoa(ashift) + " " + u64Hex(b) + " " + itoa(bshift) +
-              " " + itoa(order));
+    lines.add("cmp \{u64Hex(a)} \{ashift} \{u64Hex(b)} \{bshift}" +
+              " \{order}");
   }
   checkDeno(t, cli, ORACLE, lines, "add, subtract and compare");
   return t.report();
@@ -140,7 +139,7 @@ export string test_fixedbig_subtraction_that_borrows_across_zero_limbs(Core core
   i32[] bits = [32, 33, 64, 96, 128, 500, 1024];
   Lines lines = Lines.create();
   for (i32 i = 0; i < bits.len(); i++) {
-    lines.add("sub 0000000000000001 " + itoa(bits[i]) + " 0000000000000001 0 " +
+    lines.add("sub 0000000000000001 \{bits[i]} 0000000000000001 0 " +
               hex(subTest(1, bits[i], 1, 0)));
   }
   checkDeno(t, cli, ORACLE, lines, "borrowing subtraction");
@@ -150,17 +149,17 @@ export string test_fixedbig_subtraction_that_borrows_across_zero_limbs(Core core
 export string test_fixedbig_zero_and_equality_edge_cases(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
-  lines.add("sum 0000000000000000 0 0000000000000000 0 " + hex(sumTest(0, 0, 0, 0)));
-  lines.add("sub 0000000000000005 0 0000000000000005 0 " + hex(subTest(5, 0, 5, 0)));
-  lines.add("cmp 0000000000000000 0 0000000000000000 0 " + itoa(cmpTest(0, 0, 0, 0)));
-  lines.add("cmp 0000000000000001 0 0000000000000000 0 " + itoa(cmpTest(1, 0, 0, 0)));
-  lines.add("cmp 0000000000000000 0 0000000000000001 0 " + itoa(cmpTest(0, 0, 1, 0)));
+  lines.add("sum 0000000000000000 0 0000000000000000 0 \{hex(sumTest(0, 0, 0, 0))}");
+  lines.add("sub 0000000000000005 0 0000000000000005 0 \{hex(subTest(5, 0, 5, 0))}");
+  lines.add("cmp 0000000000000000 0 0000000000000000 0 \{cmpTest(0, 0, 0, 0)}");
+  lines.add("cmp 0000000000000001 0 0000000000000000 0 \{cmpTest(1, 0, 0, 0)}");
+  lines.add("cmp 0000000000000000 0 0000000000000001 0 \{cmpTest(0, 0, 1, 0)}");
   // The same magnitude reached two ways: 2^32 shifted 32, and 1 shifted 64. Both operands stay
   // inside u64, and they compare equal only if the limb count is normalised after every operation.
   lines.add("cmp 0000000100000000 32 0000000000000001 64 " +
-            itoa(cmpTest(0x100000000, 32, 1, 64)));
+            "\{cmpTest(0x100000000, 32, 1, 64)}");
   lines.add("cmp ffffffffffffffff 0 0000000000000001 64 " +
-            itoa(cmpTest(0xFFFFFFFFFFFFFFFF, 0, 1, 64)));
+            "\{cmpTest(0xFFFFFFFFFFFFFFFF, 0, 1, 64)}");
   checkDeno(t, cli, ORACLE, lines, "zero and equality");
   // And `5 - 5` normalises to zero rather than to a one-limb zero, which the limb dump shows
   // directly and the oracle cannot: `00000000` and `` are the same number.
@@ -189,15 +188,15 @@ export string test_fixedbig_add_in_place_agrees_with_the_three_operand_sum() {
   i32 longer = 0;
   for (i32 i = 0; i < lshift.len(); i++) {
     t.eqBytes(addTest(x, lshift[i], y, rshift[i]), sumTest(x, lshift[i], y, rshift[i]),
-              "add and setSum disagree with shifts " + itoa(lshift[i]) + " and " + itoa(rshift[i]));
+              "add and setSum disagree with shifts \{lshift[i]} and \{rshift[i]}");
     // And the other way round, which is addition being commutative and also the arm swap.
     t.eqBytes(addTest(y, rshift[i], x, lshift[i]), sumTest(x, lshift[i], y, rshift[i]),
-              "add is not commutative at shifts " + itoa(lshift[i]) + " and " + itoa(rshift[i]));
+              "add is not commutative at shifts \{lshift[i]} and \{rshift[i]}");
     if (lshift[i] > rshift[i]) { longer = longer + 1; }
   }
   // Said out loud: without a case where the receiver is the longer operand this test would pass while
   // measuring only the shape `mulU64` already produces.
-  t.isTrue(longer >= 2, "only " + itoa(longer) + " cases put the longer value on the left");
+  t.isTrue(longer >= 2, "only \{longer} cases put the longer value on the left");
 
   // A carry that runs off the end of the shorter operand and keeps going through the longer one.
   t.eqBytes(addTest(0xFFFFFFFFFFFFFFFF, 128, 1, 0), sumTest(0xFFFFFFFFFFFFFFFF, 128, 1, 0),

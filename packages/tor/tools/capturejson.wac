@@ -49,7 +49,7 @@ export string escaped(string text) {
     else if ((c & 240) == 224) { cp = c & 15; len = 3; }
     else { trap; }
     for (i32 k = 1; k < len; k++) { cp = (cp << 6) | (b[i + k] as i32 & 63); }
-    out = out + "\\u" + hex4(cp);
+    out = out + "\\u\{hex4(cp)}";
     i = i + len;
   }
   return out;
@@ -102,7 +102,7 @@ export string boolOf(bool v) { return v ? "true" : "false"; }
  * fatal to the `cmp`.
  */
 export string arrayField(i32 depth, i32 width, string key, string[] items, bool last) {
-  string out = pad(depth, width) + "\"" + key + "\": [\n";
+  string out = "\{pad(depth, width)}\"\{key}\": [\n";
   for (i32 i = 0; i < items.len(); i++) {
     out = out + pad(depth + 1, width) + items[i] + (i + 1 < items.len() ? "," : "") + "\n";
   }
@@ -110,7 +110,7 @@ export string arrayField(i32 depth, i32 width, string key, string[] items, bool 
 }
 
 /** A JSON string, quoted and escaped — for an array element or a nested value. */
-export string quoted(string text) { return "\"" + escaped(text) + "\""; }
+export string quoted(string text) { return "\"\{escaped(text)}\""; }
 
 /** One `"key": "value",` line, as `json.dump(indent=width)` writes it. */
 export string field(i32 depth, i32 width, string key, string value, bool last) {

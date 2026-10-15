@@ -16,7 +16,6 @@
 // None of the nine tests expects a trap.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 import {
   test_a_bool_is_a_padded_zero_or_one_and_nothing_else as al__a_bool_is_a_padded_zero_or_one_and_nothing_else,
   test_an_element_offset_cannot_point_into_the_head_or_past_the_end as al__an_element_offset_cannot_point_into_the_head_or_past_the_end,
@@ -100,6 +99,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED strictness_test test_the_table_of_what_the_real_tools_do_is_still_true");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("abi: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("abi: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

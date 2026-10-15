@@ -16,7 +16,6 @@
 // None of the 313 tests expects a trap.
 
 import { Core, Cli, Sys } from "std";
-import { itoa } from "../../fmt/src/itoa.wac";
 
 import {
   test_the_certificate_tor_accepted_is_reproduced as auth__the_certificate_tor_accepted_is_reproduced,
@@ -1707,6 +1706,6 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED votestatus_test test_the_r_line_skips_the_descriptors_dead_field");
     bad = bad + 1;
   }
-  if (bad > 0) { core.warn("tor: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  if (bad > 0) { core.warn("tor: \{bad} test(s) failed under the coverage driver"); }
   return bad;
 }

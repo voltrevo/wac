@@ -18,7 +18,6 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, Stat, FileResult } from "std";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { gzipBest, gzipDynamic } from "../../src/gzip.wac";
 import { gunzipBytes } from "../../src/inflate.wac";
 import { firstDifference } from "./external.wac";
@@ -32,17 +31,17 @@ static i32 SEED = 20260731;
 static string ORACLE = "packages/gzip/test/fuzz/oracle.py";
 static string PROBE = "packages/gzip/test/wac/fuzzprobe.wac";
 
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 string workDir(Cli cli, string what) {
   string who = agentDir(cli);
-  return "/tmp/wac-gzip-fuzz-" + what + (who == "" ? "" : "-" + who);
+  return "/tmp/wac-gzip-fuzz-" + what + (who == "" ? "" : "-\{who}");
 }
 
 string sameBytes(u8[] got, u8[] want) {
   i32 diff = firstDifference(got, want);
-  if (diff == -2) { return "length " + itoa(got.len()) + ", want " + itoa(want.len()); }
-  if (diff >= 0) { return "byte " + itoa(diff) + " differs"; }
+  if (diff == -2) { return "length \{got.len()}, want \{want.len()}"; }
+  if (diff >= 0) { return "byte \{diff} differs"; }
   return "";
 }
 
@@ -58,43 +57,43 @@ export string test_python_reads_everything_we_write_and_the_reverse(Core core, C
   Case[] corpus = buildCorpus(CORPUS_SIZE, SEED);
   string work = workDir(cli, "differential");
   Change gone = cli.remove(work, true).wait();      // a leftover `theirs/` would be read as fresh
-  Change made = cli.mkdir(work + "/in", true).wait();
-  Change made2 = cli.mkdir(work + "/ours", true).wait();
-  t.isTrue(made.ok() && made2.ok(), "a working directory: " + made.message + made2.message);
+  Change made = cli.mkdir("\{work}/in", true).wait();
+  Change made2 = cli.mkdir("\{work}/ours", true).wait();
+  t.isTrue(made.ok() && made2.ok(), "a working directory: \{made.message}\{made2.message}");
   if (!made.ok() || !made2.ok()) { return t.report(); }
 
   for (i32 i = 0; i < corpus.len(); i++) {
-    cli.writeFile(work + "/in/" + itoa(i) + ".bin", corpus[i].data).wait();
-    cli.writeFile(work + "/ours/" + itoa(i) + ".gz", gzipBest(corpus[i].data)).wait();
+    cli.writeFile("\{work}/in/\{i}.bin", corpus[i].data).wait();
+    cli.writeFile("\{work}/ours/\{i}.gz", gzipBest(corpus[i].data)).wait();
   }
 
-  Exec r = cli.exec("python3", [ORACLE, work, itoa(corpus.len())], u8[]()).wait();
-  t.isTrue(r.ran(), "the oracle ran — " + r.error);
+  Exec r = cli.exec("python3", [ORACLE, work, "\{corpus.len()}"], u8[]()).wait();
+  t.isTrue(r.ran(), "the oracle ran — \{r.error}");
   if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "the oracle exited zero: " + string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "the oracle exited zero: \{string.fromBytes(r.stderr)}");
   if (r.status != 0) { return t.report(); }
 
   string[] lines = splitLines(string.fromBytes(r.stdout));
-  t.isTrue(lines.len() > 0 && lines[lines.len() - 1] == "DONE " + itoa(corpus.len()),
+  t.isTrue(lines.len() > 0 && lines[lines.len() - 1] == "DONE \{corpus.len()}",
            "the oracle finished cleanly, last line: " +
            (lines.len() > 0 ? lines[lines.len() - 1] : "(no output)"));
   // Name the generator that produced each failing case — the index alone does not say what shape
   // broke.
   for (i32 i = 0; i + 1 < lines.len(); i++) {
-    t.fail(lines[i] + "  [" + nameOfCase(corpus, lines[i]) + "]");
+    t.fail("\{lines[i]}  [\{nameOfCase(corpus, lines[i])}]");
   }
 
   // Now the other direction: read python's output with our decompressor.
   for (i32 i = 0; i < corpus.len(); i++) {
-    FileResult theirs = cli.readFile(work + "/theirs/" + itoa(i) + ".gz").wait();
-    t.isTrue(theirs.ok, itoa(i) + " [" + corpus[i].name + "]: the oracle wrote it — " + theirs.error);
+    FileResult theirs = cli.readFile("\{work}/theirs/\{i}.gz").wait();
+    t.isTrue(theirs.ok, "\{i} [\{corpus[i].name}]: the oracle wrote it — \{theirs.error}");
     if (!theirs.ok) { continue; }
     t.eqStr(sameBytes(gunzipBytes(theirs.bytes), corpus[i].data), "",
-            itoa(i) + " [" + corpus[i].name + "] level " + itoa(i % 10));
+            "\{i} [\{corpus[i].name}] level \{i % 10}");
   }
 
   Change cleaned = cli.remove(work, true).wait();
-  if (!cleaned.ok()) { core.warn("fuzz: could not remove " + work + " — " + cleaned.message); }
+  if (!cleaned.ok()) { core.warn("fuzz: could not remove \{work} — \{cleaned.message}"); }
   return t.report();
 }
 
@@ -139,10 +138,10 @@ export string test_our_own_round_trip_over_the_same_corpus() {
   T t = T.create();
   Case[] corpus = buildCorpus(CORPUS_SIZE, SEED ^ 0x5A5A);
   for (i32 i = 0; i < corpus.len(); i++) {
-    string where = itoa(i) + " [" + corpus[i].name + "]";
-    t.eqStr(sameBytes(gunzipBytes(gzipBest(corpus[i].data)), corpus[i].data), "", "best " + where);
+    string where = "\{i} [\{corpus[i].name}]";
+    t.eqStr(sameBytes(gunzipBytes(gzipBest(corpus[i].data)), corpus[i].data), "", "best \{where}");
     t.eqStr(sameBytes(gunzipBytes(gzipDynamic(corpus[i].data)), corpus[i].data), "",
-            "dynamic " + where);
+            "dynamic \{where}");
   }
   return t.report();
 }

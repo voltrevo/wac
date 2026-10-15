@@ -52,7 +52,7 @@ u8[] rLines(u8[] doc) {
     if (i - at > 2 && doc[at] == 'r' && doc[at + 1] == 32) {
       u8[] line = u8[].filled(i - at, 0);
       for (i32 j = 0; j < line.len(); j++) { line[j] = doc[at + j]; }
-      out = out == "" ? string.fromBytes(line) : out + "\n" + string.fromBytes(line);
+      out = out == "" ? string.fromBytes(line) : "\{out}\n\{string.fromBytes(line)}";
     }
     at = i + 1;
   }
@@ -160,9 +160,9 @@ u8[] identityOf(u8[] line) {
  * for the identity, and `router-signature` because the descriptor digest's span ends there.
  */
 u8[] stubDescriptor(string nickname, string fingerprintHex) {
-  return ("router " + nickname + " 127.0.0.1 1 0 2\n" +
+  return ("router \{nickname} 127.0.0.1 1 0 2\n" +
           "published 2026-01-01 00:00:00\n" +
-          "fingerprint " + fingerprintHex + "\n" +
+          "fingerprint \{fingerprintHex}\n" +
           "router-signature\n").toBytes();
 }
 
