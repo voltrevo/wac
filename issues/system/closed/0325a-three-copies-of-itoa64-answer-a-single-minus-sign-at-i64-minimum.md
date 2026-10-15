@@ -1,6 +1,7 @@
 # 0325a — three copies of `itoa64` answer a single minus sign at `i64` minimum
 
 - **Status:** closed
+- **Fixed in:** 494b71e10
 - **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-09-04
