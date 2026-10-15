@@ -1749,7 +1749,7 @@ void daRead(C c, string name, i32 line, i32 col, DA st) {
     string[] ms = tupleMembers(t);
     string missing = "";
     for (i32 i = 0; i < ms.len() && missing == ""; i++) {
-      string k = "\{i}";
+      string k = countText(i);
       if (st.hasPart(name + "." + k)) { continue; }
       if (hasDefaultValue(c, ms[i], 0)) { continue; }
       missing = k;
