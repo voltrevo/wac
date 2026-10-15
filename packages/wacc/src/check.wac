@@ -6766,6 +6766,13 @@ void checkExpr(C c, Expr e) {
       // **An interpolated value converts to text** (spec ch23); the `+` the lexer wrote for `\{`
       // asks only that it can.
       if (k == kPlus() && isInterpPlusTok(c, op)) {
+        // **A literal has no type to convert from** — `"\{5}"` could be any width's spelling, and
+        // there is no default (spec ch09 `§wac-literal-no-fallback-9pffhd9`). The emitter took it
+        // for a string and wrote a module the engine refused.
+        if (holdsUntypedNumber(c, right)) {
+          c.reportWith(errUntypedLiteral(), right.line, right.col, "unresolved numeric type — write the type");
+          return;
+        }
         checkToText(c, right);
         return;
       }

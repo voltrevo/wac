@@ -1,4 +1,4 @@
-// The negative half of the corpus: 45 ill-typed programs that must all be refused — 38 single-file,
+// The negative half of the corpus: 47 ill-typed programs that must all be refused — 40 single-file,
 // and 7 that are only ill-typed across an import boundary.
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/illtyped_test.wac
@@ -72,7 +72,11 @@ string[] names() {
     // `§wac-generic-unused-param-unbound-k4p2xqz`); these checked clean and the emitter answered
     // *unresolved name Box*. The second has an argument that would bind `T`, which the language does
     // not read: the slot is where a template's static takes its instantiation.
-    "a40 Box.size() using T, no slot", "a41 Box.make(3).v, no slot"
+    "a40 Box.size() using T, no slot", "a41 Box.make(3).v, no slot",
+    // A **literal interpolated**, which nothing gives a type: `"\{5}"` could be any width's spelling,
+    // and there is no default (spec ch09 `§wac-literal-no-fallback-9pffhd9`). Both checked clean and
+    // emitted a module the engine refused — the conversion was skipped as if the value were a string.
+    "a42 \"\\{5}\" (an untyped literal)", "a43 \"\\{b ? 16 : 8}\" (literals in a ternary)"
   ];
 }
 
@@ -115,7 +119,9 @@ string[] programs() {
     "struct S<T> { T v; i32 g() { return 1; } }\nexport i32 f() { i32 x = S.nosuch(1); return x; }\n",
     "struct S<T> { T v; i32 g(this) { return this.nosuch(); } }\nexport i32 f() { return S<i32>(1).g(); }\n",
     "struct Box<T> { T v; i32 size() { return typeref(T).tupleMembers().len(); } }\nexport i32 f() { return Box.size(); }\n",
-    "struct Box<T> { T v; Box<T> make(T x) { return Box(x); } }\nexport i32 f() { i32 n = Box.make(3 as i32).v; return n; }\n"
+    "struct Box<T> { T v; Box<T> make(T x) { return Box(x); } }\nexport i32 f() { i32 n = Box.make(3 as i32).v; return n; }\n",
+    "export string f() { return \"n \\{5}\"; }\n",
+    "export string f(bool b) { return \"n \\{b ? 16 : 8}\"; }\n"
   ];
 }
 
