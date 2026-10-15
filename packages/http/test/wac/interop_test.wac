@@ -23,12 +23,13 @@
 // `src/serve.wac` to route and answer. So the wac server here is started as a program, the way
 // `wac task serve` starts it, and what is under test is the routing and the response writer.
 
-import { T } from "../../../wactest/src/assert.wac";
+import { T, okOf } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
-import { Fetched, request } from "../../src/client.wac";
+import { request } from "../../src/client.wac";
+import { Result } from "core";
 import { Incoming } from "../../src/incoming.wac";
 import { jsonFile, numOf, strOf } from "../../../wactest/src/jsonfile.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
@@ -119,7 +120,7 @@ string lowered(string s) {
   return string.fromBytes(out);
 }
 
-Fetched get(Cli cli, i32 port, string path) {
+Result<Incoming, string> get(Cli cli, i32 port, string path) {
   return request(cli, ("GET").toBytes(), "127.0.0.1", port, path, u8[](), "");
 }
 
@@ -132,36 +133,37 @@ export string test_wac_client_to_node_server_the_response_parser_against_a_real_
   t.eqStr(node.error, "", "the node server is up");
   if (node.port <= 0) { return t.report(); }
 
-  Fetched plain = get(cli, node.port, "/plain");
-  t.isTrue(plain.ok, "/plain: \{plain.error}");
-  t.eqI32(plain.response.status, 200, "/plain status");
-  t.eqStr(bodyOf(plain.response), "hello", "/plain body");
+  if (Incoming plain matches okOf(t, get(cli, node.port, "/plain"), "/plain")) {
+    t.eqI32(plain.status, 200, "/plain status");
+    t.eqStr(bodyOf(plain), "hello", "/plain body");
+  }
 
   // Node chose chunked here, because it did not know the length in advance. That is the coding path,
   // exercised by a server that picked it rather than by a test that asked for it.
-  Fetched chunked = get(cli, node.port, "/chunked");
-  t.isTrue(chunked.ok, "/chunked: \{chunked.error}");
-  t.eqStr(bodyOf(chunked.response), "chunked", "/chunked body");
-  t.isTrue(hasHeader(chunked.response, "transfer-encoding"),
-           "/chunked was not actually chunked, so this proves nothing");
+  if (Incoming chunked matches okOf(t, get(cli, node.port, "/chunked"), "/chunked")) {
+    t.eqStr(bodyOf(chunked), "chunked", "/chunked body");
+    t.isTrue(hasHeader(chunked, "transfer-encoding"),
+             "/chunked was not actually chunked, so this proves nothing");
+  }
 
-  Fetched empty = get(cli, node.port, "/empty");
-  t.isTrue(empty.ok && empty.response.status == 204, "/empty: \{empty.error}");
-  t.eqStr(bodyOf(empty.response), "", "/empty had a body");
+  if (Incoming empty matches okOf(t, get(cli, node.port, "/empty"), "/empty")) {
+    t.eqI32(empty.status, 204, "/empty status");
+    t.eqStr(bodyOf(empty), "", "/empty had a body");
+  }
 
   // Rule 5, from a server that really does close the connection to end the message.
-  Fetched closed = get(cli, node.port, "/close");
-  t.isTrue(closed.ok, "/close: \{closed.error}");
-  t.eqStr(bodyOf(closed.response), "until close", "/close body");
-  t.isTrue(closed.response.closeDelimited, "/close was not reported as close-delimited");
+  if (Incoming closed matches okOf(t, get(cli, node.port, "/close"), "/close")) {
+    t.eqStr(bodyOf(closed), "until close", "/close body");
+    t.isTrue(closed.closeDelimited, "/close was not reported as close-delimited");
+  }
 
-  Fetched headers = get(cli, node.port, "/headers");
-  t.isTrue(headers.ok, "/headers: \{headers.error}");
-  t.isTrue(hasHeader(headers.response, "x-one") && hasHeader(headers.response, "x-two"),
-           "/headers lost fields");
+  if (Incoming headers matches okOf(t, get(cli, node.port, "/headers"), "/headers")) {
+    t.isTrue(hasHeader(headers, "x-one") && hasHeader(headers, "x-two"), "/headers lost fields");
+  }
 
-  Fetched missing = get(cli, node.port, "/nope");
-  t.isTrue(missing.ok && missing.response.status == 404, "/nope was not a 404");
+  if (Incoming missing matches okOf(t, get(cli, node.port, "/nope"), "/nope")) {
+    t.eqI32(missing.status, 404, "/nope was not a 404");
+  }
   stop(cli, node.d);
   cli.remove(dir, true).wait();
   return t.report();
@@ -177,16 +179,17 @@ export string test_wac_client_to_node_server_head_has_no_body_however_long_the_h
   t.eqStr(node.error, "", "the node server is up");
   if (node.port <= 0) { return t.report(); }
 
-  Fetched head = request(cli, ("HEAD").toBytes(), "127.0.0.1", node.port, "/echo-method",
-                         u8[](), "");
-  t.isTrue(head.ok, "HEAD: \{head.error}");
-  t.eqStr(bodyOf(head.response), "", "HEAD returned a body");
-  string cl = headerValue(head.response, "content-length");
-  t.isTrue(cl != "" && cl != "0",
-           "the server did not send a non-zero Content-Length, so this proves nothing");
+  if (Incoming head matches okOf(t, request(cli, "HEAD".toBytes(), "127.0.0.1", node.port,
+                                             "/echo-method", u8[](), ""), "HEAD")) {
+    t.eqStr(bodyOf(head), "", "HEAD returned a body");
+    string cl = headerValue(head, "content-length");
+    t.isTrue(cl != "" && cl != "0",
+             "the server did not send a non-zero Content-Length, so this proves nothing");
+  }
 
-  Fetched g = get(cli, node.port, "/echo-method");
-  t.isTrue(g.ok && bodyOf(g.response) == "GET", "GET: \{g.error}\{bodyOf(g.response)}");
+  if (Incoming g matches okOf(t, get(cli, node.port, "/echo-method"), "GET")) {
+    t.eqStr(bodyOf(g), "GET", "GET body");
+  }
   stop(cli, node.d);
   cli.remove(dir, true).wait();
   return t.report();
@@ -201,21 +204,20 @@ export string test_wac_client_to_wac_server_the_loop_closes(Core core, Cli cli) 
   t.eqStr(wac.error, "", "the wac server is up");
   if (wac.port <= 0) { return t.report(); }
 
-  Fetched rootPage = get(cli, wac.port, "/");
-  t.isTrue(rootPage.ok, "/: \{rootPage.error}");
-  t.eqStr(bodyOf(rootPage.response), "wac http server\n", "/ body");
-
-  Fetched echo = get(cli, wac.port, "/echo?a=1&b=two");
-  t.isTrue(echo.ok, "/echo: \{echo.error}");
-  t.eqStr(bodyOf(echo.response), "{\"a\":\"1\",\"b\":\"two\"}", "/echo body");
-
-  Fetched posted = request(cli, ("POST").toBytes(), "127.0.0.1", wac.port, "/json",
-                           ("{\"z\":[1,2],\"a\":null}").toBytes(), "application/json");
-  t.isTrue(posted.ok, "/json: \{posted.error}");
-  t.eqStr(bodyOf(posted.response), "{\"z\":[1,2],\"a\":null}", "/json body");
-
-  Fetched missing = get(cli, wac.port, "/nope");
-  t.isTrue(missing.ok && missing.response.status == 404, "/nope was not a 404");
+  if (Incoming rootPage matches okOf(t, get(cli, wac.port, "/"), "/")) {
+    t.eqStr(bodyOf(rootPage), "wac http server\n", "/ body");
+  }
+  if (Incoming echo matches okOf(t, get(cli, wac.port, "/echo?a=1&b=two"), "/echo")) {
+    t.eqStr(bodyOf(echo), "{\"a\":\"1\",\"b\":\"two\"}", "/echo body");
+  }
+  if (Incoming posted matches okOf(t, request(cli, "POST".toBytes(), "127.0.0.1", wac.port, "/json",
+                                              "{\"z\":[1,2],\"a\":null}".toBytes(), "application/json"),
+                                   "/json")) {
+    t.eqStr(bodyOf(posted), "{\"z\":[1,2],\"a\":null}", "/json body");
+  }
+  if (Incoming missing matches okOf(t, get(cli, wac.port, "/nope"), "/nope")) {
+    t.eqI32(missing.status, 404, "/nope was not a 404");
+  }
   stop(cli, wac.d);
   cli.remove(dir, true).wait();
   return t.report();
@@ -266,13 +268,11 @@ export string test_the_same_request_bytes_are_accepted_by_both_servers(Core core
 
   string[] targets = ["/", "/plain", "/nope"];
   for (i32 i = 0; i < targets.len(); i++) {
-    Fetched fromWac = get(cli, wac.port, targets[i]);
-    Fetched fromNode = get(cli, node.port, targets[i]);
-    t.isTrue(fromWac.ok, "the wac server refused \{targets[i]}: \{fromWac.error}");
-    t.isTrue(fromNode.ok, "the node server refused \{targets[i]}: \{fromNode.error}");
+    Incoming? fromWac = okOf(t, get(cli, wac.port, targets[i]), "the wac server refused \{targets[i]}");
+    Incoming? fromNode = okOf(t, get(cli, node.port, targets[i]), "the node server refused \{targets[i]}");
+    if (fromWac is null || fromNode is null) { continue; }
     // Both answered something; the statuses differ because the routes differ, and that is fine.
-    t.isTrue(fromWac.response.status != 0 && fromNode.response.status != 0,
-             "\{targets[i]}: a server did not produce a status");
+    t.isTrue(fromWac!.status != 0 && fromNode!.status != 0, "\{targets[i]}: a server did not produce a status");
   }
   stop(cli, node.d);
   stop(cli, wac.d);

@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0377a](open/0377a-a-leaving-match-arm-in-a-function-whose-error-type-is-gathered-emits-invalid-wasm.md) | In a function answering `Result<T>` (error type gathered), `Err(e): return Result.Err(…)` as a match-expression arm checks clean and emits a module the engine refuses — *a null in a never slot* for a `main`. Written `Result<T, string>` it works (case 0527), so the arm's `Err` seems not to reach what the union gathers | bug | invalid wasm |
 | [0376a](open/0376a-manyfiles-test-traps-at-every-commit-since-the-spec-rewrite.md) | `manyfiles_test`'s first test, *more files than the linker's tables used to hold*, traps in about a second on `origin/master`, at `d59a48df0` and at `a93934733` (2026-10-03); older sources do not compile with today's compiler, and the test file last changed on 2026-10-01. The other four tests in the file pass | bug | trap |
 | [0375a](open/0375a-an-async-method-without-a-receiver-is-not-lowered.md) | An `async` method without a receiver is not lowered | missing feature | check clean, build exit 1 |
 | [0374a](open/0374a-a-reference-typed-static-local-in-a-method-instance-is-declined.md) | A reference-typed `static` local in a method instance is declined | bug | compile error |
@@ -103,7 +104,7 @@ has been fixed and why.
 
 ## Closed
 
-290 issues, 229 closed.
+291 issues, 229 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

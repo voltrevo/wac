@@ -75,11 +75,12 @@ export string test_a_proxy_variable_parses_the_way_http_proxy_is_actually_writte
   ];
   i32[] ports = [3128, 3128, 3128, 3128, 3128, 8080, 0, 0, 0, 0, 0, 0];
   for (i32 i = 0; i < urls.len(); i++) {
-    ProxyAt got = parseProxy(urls[i]);
-    t.eqBool(got.ok, oks[i], "\"\{urls[i]}\": ok");
-    if (!oks[i]) { continue; }
-    t.eqStr(got.host, hosts[i], "\"\{urls[i]}\": host");
-    t.eqI32(got.port, ports[i], "\"\{urls[i]}\": port");
+    ProxyAt? got = parseProxy(urls[i]);
+    t.eqBool(got is not null, oks[i], "\"\{urls[i]}\": parsed");
+    if (ProxyAt at matches got) {
+      t.eqStr(at.host, hosts[i], "\"\{urls[i]}\": host");
+      t.eqI32(at.port, ports[i], "\"\{urls[i]}\": port");
+    }
   }
   return t.report();
 }

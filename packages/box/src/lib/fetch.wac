@@ -7,25 +7,30 @@
 // and the exit code.
 
 import { Cli, Core } from "std";
-import { get, Fetched } from "../../../http/src/client.wac";
+import { get } from "../../../http/src/client.wac";
+import { Incoming } from "../../../http/src/incoming.wac";
 
 /** The exit code the applet should return. */
 export i32 fetch(Core core, Cli cli, string name, string host, string path, i32 port, bool headers) {
-  Fetched f = get(cli, host, port, path);
-  if (!f.ok) {
-    core.warn("\{name}: \{f.error}");
-    return 1;
-  }
+  Incoming response = match (get(cli, host, port, path)) {
+    Ok(r): r,
+    Err(e): return failed(core, "\{name}: \{e}"),
+  };
 
   if (headers) {
-    core.log("HTTP \{f.response.status}");
-    for (i32 i = 0; i < f.response.headers.count; i++) {
-      core.log(string.fromBytes(f.response.headers.nameAt(i)) + ": "
-             + string.fromBytes(f.response.headers.valueAt(i)));
+    core.log("HTTP \{response.status}");
+    for (i32 i = 0; i < response.headers.count; i++) {
+      core.log(string.fromBytes(response.headers.nameAt(i)) + ": "
+             + string.fromBytes(response.headers.valueAt(i)));
     }
     core.log("");
   }
-  cli.write(f.response.body);
+  cli.write(response.body);
   // A 4xx or 5xx is a fetch that worked and a request that did not, which is what `wget` reports too.
-  return f.response.status >= 400 ? 1 : 0;
+  return response.status >= 400 ? 1 : 0;
+}
+
+i32 failed(Core core, string why) {
+  core.warn(why);
+  return 1;
 }

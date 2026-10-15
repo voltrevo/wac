@@ -16,31 +16,20 @@
 
 import { Cli, Socket } from "std";
 import { Incoming, ParsedResponse, parseResponse } from "./incoming.wac";
-import { Headers } from "./headers.wac";
-
-/** What one request produced. `ok` false means there is no response, and `error` says why. */
-export struct Fetched {
-  bool ok;
-  /** The parsed response, when `ok`. */
-  Incoming response;
-  /** Why there is no response: a socket failure, or how the parse refused. */
-  string error;
-
-  Fetched of(bool ok, Incoming response, string error) {
-    return Fetched(ok, response, error);
-  }
-}
+import { Result } from "core";
 
 /**
  * `method` `path` to `host:port`, with `body` if there is one, and the whole response back.
  *
+ * The response, or why there is none: a socket failure, or how the parse refused.
+ *
  * `contentType` is ignored when `body` is empty — a GET carries no `Content-Type`, and sending one is the
  * kind of detail a server is entitled to reject.
  */
-export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
-                       u8[] body, string contentType) {
+export Result<Incoming, string> request(Cli cli, u8[] method, string host, i32 port, string path,
+                                         u8[] body, string contentType) {
   Socket s = cli.connect(host, port).wait();
-  if (s.handle < 0) { return failed("\{host}: \{s.error}"); }
+  if (s.handle < 0) { return Result.Err("\{host}: \{s.error}"); }
 
   string head = "\{string.fromBytes(method)} \{path} HTTP/1.1\r\n"
     + "Host: \{host}\r\n"
@@ -59,7 +48,7 @@ export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
 
   if (!cli.send(s.handle, out).wait()) {
     cli.closeSocket(s.handle);
-    return failed("\{host}: cannot send the request");
+    return Result.Err("\{host}: cannot send the request");
   }
 
   u8[] all = u8[]();
@@ -75,35 +64,23 @@ export Fetched request(Cli cli, u8[] method, string host, i32 port, string path,
   cli.closeSocket(s.handle);
   // A connection that failed halfway is not a short body. With `Connection: close` the body's end is the
   // socket's end, so this is exactly the case that would otherwise parse as a whole small page.
-  if (why != "") { return failed("\{host}: \{why}"); }
+  if (why != "") { return Result.Err("\{host}: \{why}"); }
 
   match (parseResponse(all, method, true, 1 << 26)) {
-    Incomplete: { return failed("the response ended mid-message"); }
-    Bad(code): { return failed("unparseable response (\{code})"); }
-    Ok(res): { return Fetched.of(true, res, ""); }
+    Incomplete: { return Result.Err("the response ended mid-message"); }
+    Bad(code): { return Result.Err("unparseable response (\{code})"); }
+    Ok(res): { return Result.Ok(res); }
   }
 }
 
 /** A GET, which is what most callers want. */
-export Fetched get(Cli cli, string host, i32 port, string path) {
+export Result<Incoming, string> get(Cli cli, string host, i32 port, string path) {
   return request(cli, "GET".toBytes(), host, port, path, u8[](), "");
 }
 
 /** A POST with a body — `packages/ethrpc` is the caller this exists for. */
-export Fetched post(Cli cli, string host, i32 port, string path, u8[] body, string contentType) {
+export Result<Incoming, string> post(Cli cli, string host, i32 port, string path, u8[] body, string contentType) {
   return request(cli, "POST".toBytes(), host, port, path, body, contentType);
-}
-
-Fetched failed(string why) {
-  // A `Fetched` that is not `ok` still has to carry *an* `Incoming` — an empty one, which a caller
-  // that checks `ok` never looks at.
-  //
-  // This said "wac has no nullable struct field worth using here", and the first half is wrong:
-  // a struct may hold one, and one written with an initialiser — `Incoming? body = null;` — may be
-  // left out of a named construction (spec ch12 `§wac-field-initialiser-default-28c4ffw`). `Incoming? body` would say what this comment says.
-  // The shape that says it properly is `Fetched` being an enum of two arms rather than a struct with
-  // an `ok` flag, which is a change to the type every caller matches on.
-  return Fetched.of(false, Incoming(0, 1, u8[](), Headers.create(), u8[](), 0, false), why);
 }
 
 u8[] append(u8[] a, u8[] b) {

@@ -105,12 +105,14 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
     if (direct.handle < 0) { return Answer(false, 0, u8[](), "\{host}: \{direct.error}"); }
     handle = direct.handle;
   } else {
-    ProxyAt at = parseProxy(string.fromBytes(proxyVar!));
-    if (!at.ok) {
+    ProxyAt? at = parseProxy(string.fromBytes(proxyVar!));
+    if (at is null) {
       return Answer(false, 0, u8[](), "HTTP_PROXY is not a proxy this can parse");
     }
-    Tunnel t = connectThrough(cli, at.host, at.port, host, 443);
-    if (!t.ok) { return Answer(false, 0, u8[](), t.error); }
+    Tunnel t = match (connectThrough(cli, at!.host, at!.port, host, 443)) {
+      Ok(open): open,
+      Err(e): return Answer(false, 0, u8[](), e),
+    };
     handle = t.handle;
     buffered = t.leftover;   // **First, before any recv.** See the header.
   }

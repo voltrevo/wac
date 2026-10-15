@@ -17,6 +17,7 @@
 // honest about being one step short. Printed on every run, because a proof that is not anchored looks
 // exactly like one that is.
 
+import { Result } from "core";
 import { Cli, Core, Sys } from "std";
 import { proofOfSlots, Proof } from "../src/getproof.wac";
 import { recordOf, Record } from "../../ens/src/verified.wac";
@@ -27,13 +28,13 @@ import { encode as hexEncode } from "../../codec/src/hex.wac";
 /** The ENS registry, at the address it has had since 2017. */
 string REGISTRY() { return "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e"; }
 
-export i32 main(Sys sys) {
+export Result<i32, string> main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
   if (n < 1) {
     core.warn("usage: ensowner <name> [host] [port] [registry] [expected-block-hash]");
-    return 2;
+    return Result.Ok(2);
   }
   u8[] name = cli.arg(0).wait();
   string host = n > 1 ? string.fromBytes(cli.arg(1).wait()) : "127.0.0.1";
@@ -51,19 +52,21 @@ export i32 main(Sys sys) {
     "0x" + string.fromBytes(hexEncode(ownerSlot(node))),
     "0x" + string.fromBytes(hexEncode(resolverSlot(node)))
   ];
-  Proof p = proofOfSlots(cli, host, port, registry, slots, expected);
-  if (!p.ok) { core.warn("ensowner: \{p.error}"); return 1; }
+  Proof p = match (proofOfSlots(cli, host, port, registry, slots, expected)) {
+    Ok(v): v,
+    Err(e): return Result.Err("ensowner: \{e}"),
+  };
 
   u8[] registryBytes = hexOf(registry);
-  if (registryBytes.len() != 20) { core.warn("ensowner: the registry address is not 20 bytes"); return 2; }
+  if (registryBytes.len() != 20) { core.warn("ensowner: the registry address is not 20 bytes"); return Result.Ok(2); }
 
   Record r = recordOf(p.stateRoot, registryBytes, name, p.accountNodes, p.slots[0], p.slots[1]);
-  if (!r.ok) { core.warn("ensowner: \{r.error}"); return 1; }
+  if (!r.ok) { return Result.Err("ensowner: \{r.error}"); }
   if (!r.present) {
     core.log("no owner");
     // Absence is an answer and the exit code says so: 0, because the question was answered.
     core.warn(anchorNote(expected));
-    return 0;
+    return Result.Ok(0);
   }
   core.log("0x\{string.fromBytes(hexEncode(r.owner))}");
   // The resolver, when the name has one — proved from the same account and the same block as the owner.
@@ -71,7 +74,7 @@ export i32 main(Sys sys) {
     core.log("resolver 0x\{string.fromBytes(hexEncode(r.resolver))}");
   }
   core.warn(anchorNote(expected));
-  return 0;
+  return Result.Ok(0);
 }
 
 /** What the answer rests on, said every run, because the two cases look identical in the output. */

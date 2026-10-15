@@ -46,21 +46,26 @@ export i32 main(Sys sys) {
     return 1;
   }
   string url = string.fromBytes(proxyVar!);
-  ProxyAt at = parseProxy(url);
-  if (!at.ok) {
+  ProxyAt? parsed = parseProxy(url);
+  if (parsed is null) {
     core.warn("tunnel: HTTP_PROXY is \{url}, which is not a proxy this can parse");
     return 1;
   }
+  ProxyAt at = parsed!;
 
-  Tunnel t = connectThrough(cli, at.host, at.port, host, port);
-  if (!t.ok) {
-    core.warn("tunnel: \{t.error}");
-    return 1;
-  }
+  Tunnel t = match (connectThrough(cli, at.host, at.port, host, port)) {
+    Ok(open): open,
+    Err(e): return failed(core, "tunnel: \{e}"),
+  };
   // The leftover count is printed because it is the thing most likely to be zero everywhere it is
   // tried and non-zero somewhere it matters — see the note in `src/proxy.wac`.
   core.log("open to \{host}:\{port} via \{at.host}:\{at.port}"
     + ", \{t.leftover.len()} byte(s) already through");
   cli.closeSocket(t.handle);
   return 0;
+}
+
+i32 failed(Core core, string why) {
+  core.warn(why);
+  return 1;
 }

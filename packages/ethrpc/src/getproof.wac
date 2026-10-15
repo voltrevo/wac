@@ -10,7 +10,8 @@
 // nothing and looks like a bad proof.
 
 import { Cli } from "std";
-import { call, Answer } from "./rpc.wac";
+import { call } from "./rpc.wac";
+import { Result } from "core";
 import { JsonValue } from "../../json/src/value.wac";
 import { memberOf, memberData, hexArray, fromHexData, isNull, stringOf as jsonString } from "./jsonhex.wac";
 import { encode as hexOf } from "../../codec/src/hex.wac";
@@ -19,7 +20,6 @@ import { keccak256 } from "../../crypto/src/keccak.wac";
 
 /** A proof, in the shape `packages/mpt` takes. */
 export struct Proof {
-  bool ok;
   /** The state root the proofs are against — see the README on where this may and may not come from. */
   u8[] stateRoot;
   /** The account trie's nodes, root first. */
@@ -35,17 +35,16 @@ export struct Proof {
    * resolver is two slots of one contract, which is the case this exists for.
    */
   u8[][][] slots;
-  string error;
 
-  Proof of(bool ok, u8[] stateRoot, u8[][] accountNodes, u8[][] storageNodes, string error) {
+  Proof of(u8[] stateRoot, u8[][] accountNodes, u8[][] storageNodes) {
     u8[][][] one = u8[][][].filled(1, u8[][].filled(0, u8[]()));
     one[0] = storageNodes;
-    return Proof(ok, stateRoot, accountNodes, storageNodes, one, error);
+    return Proof(stateRoot, accountNodes, storageNodes, one);
   }
 
-  Proof many(bool ok, u8[] stateRoot, u8[][] accountNodes, u8[][][] slots, string error) {
+  Proof many(u8[] stateRoot, u8[][] accountNodes, u8[][][] slots) {
     u8[][] first = slots.len() > 0 ? slots[0] : u8[][].filled(0, u8[]());
-    return Proof(ok, stateRoot, accountNodes, first, slots, error);
+    return Proof(stateRoot, accountNodes, first, slots);
   }
 }
 
@@ -62,7 +61,7 @@ export struct Proof {
  * So a hash is looked up with `eth_getBlockByHash` and the proof is taken *at that block's number*. The
  * anchored path therefore answers about the past, deliberately — that is what having a trusted hash means.
  */
-export Proof proofOf(Cli cli, string host, i32 port, string address, string slot, u8[] expectedHash) {
+export Result<Proof, string> proofOf(Cli cli, string host, i32 port, string address, string slot, u8[] expectedHash) {
   string[] one = [slot];
   return proofOfSlots(cli, host, port, address, one, expectedHash);
 }
@@ -74,28 +73,26 @@ export Proof proofOf(Cli cli, string host, i32 port, string address, string slot
  * question from the one put to it, and is refused rather than matched up by key: a caller that indexes by
  * position and a node that reorders is a silent mix-up between two slots of the same contract.
  */
-export Proof proofOfSlots(Cli cli, string host, i32 port, string address, string[] slots,
-                          u8[] expectedHash) {
+export Result<Proof, string> proofOfSlots(Cli cli, string host, i32 port, string address,
+                                          string[] slots, u8[] expectedHash) {
   bool anchored = expectedHash.len() == 32;
   string where = anchored
     ? "[\"0x\{string.fromBytes(hexOf(expectedHash))}\",false]"
     : "[\"latest\",false]";
-  Answer block = call(cli, host, port,
-                      anchored ? "eth_getBlockByHash" : "eth_getBlockByNumber", where);
-  if (!block.ok) { return failed(block.error); }
-  if (isNull(block.result)) { return failed("this node does not have the block you anchored to"); }
+  JsonValue block = try call(cli, host, port,
+                             anchored ? "eth_getBlockByHash" : "eth_getBlockByNumber", where);
+  if (isNull(block)) { return failed("this node does not have the block you anchored to"); }
 
   // **The root comes out of a header that was re-encoded and hashed**, not straight out of the JSON. With
   // an `expectedHash` from somewhere else that makes the root trustworthy; without one it catches a node
   // whose block does not hash to the hash it reported, which is a bug rather than a lie.
-  Header h = headerOf(block.result, expectedHash);
-  if (!h.ok) { return failed(h.error); }
+  Header h = try headerOf(block, expectedHash);
   u8[] root = h.stateRoot;
   if (root.len() != 32) { return failed("the block has no usable stateRoot"); }
 
   // The proof has to be about the same block as the root, which is the whole point: `latest` here with an
   // anchored root above would verify a fresh trie against an old root and report every slot as absent.
-  JsonValue numberAt = memberOf(block.result, "number");
+  JsonValue numberAt = memberOf(block, "number");
   string at = anchored ? "\"\{string.fromBytes(jsonString(numberAt))}\"" : "\"latest\"";
   if (anchored && jsonString(numberAt).len() == 0) { return failed("the block has no number"); }
 
@@ -104,10 +101,9 @@ export Proof proofOfSlots(Cli cli, string host, i32 port, string address, string
     list = list + (i > 0 ? "," : "") + "\"" + slots[i] + "\"";
   }
   string params = "[\"\{address}\",[\{list}],\{at}]";
-  Answer got = call(cli, host, port, "eth_getProof", params);
-  if (!got.ok) { return failed(got.error); }
+  JsonValue got = try call(cli, host, port, "eth_getProof", params);
 
-  u8[][] accountNodes = hexArray(memberOf(got.result, "accountProof"));
+  u8[][] accountNodes = hexArray(memberOf(got, "accountProof"));
 
   // **The proof has to be about the block the root came from**, and the first node is where that is
   // checkable: an account proof's root node hashes to the state root by definition. Checking it here turns
@@ -127,7 +123,7 @@ export Proof proofOfSlots(Cli cli, string host, i32 port, string address, string
         : "the node's proof does not match the state root of the block it sent");
     }
   }
-  JsonValue storageProof = memberOf(got.result, "storageProof");
+  JsonValue storageProof = memberOf(got, "storageProof");
   match (storageProof) {
     Array(items): {
       if (items.len() != slots.len()) {
@@ -148,12 +144,10 @@ export Proof proofOfSlots(Cli cli, string host, i32 port, string address, string
         }
         out[i] = hexArray(memberOf(entry, "proof"));
       }
-      return Proof.many(true, root, accountNodes, out, "");
+      return Result.Ok(Proof.many(root, accountNodes, out));
     }
     default: { return failed("the answer has no storageProof array"); }
   }
 }
 
-Proof failed(string why) {
-  return Proof.many(false, u8[](), u8[][].filled(0, u8[]()), u8[][][].filled(0, u8[][].filled(0, u8[]())), why);
-}
+Result<Proof, string> failed(string why) { return Result.Err(why); }

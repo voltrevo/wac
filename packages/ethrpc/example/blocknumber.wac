@@ -5,20 +5,24 @@
 //
 //     wac task app:build packages/ethrpc/example/blocknumber.wac --allow-net -o blocknumber
 //     ./blocknumber 127.0.0.1 8545
+import { Result } from "core";
 import { Cli, Core, Sys } from "std";
-import { call, stringOf, Answer } from "../src/rpc.wac";
+import { call, stringOf } from "../src/rpc.wac";
+import { JsonValue } from "../../json/src/value.wac";
 
-export i32 main(Sys sys) {
+export Result<i32, string> main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
   string host = n > 0 ? string.fromBytes(cli.arg(0).wait()) : "127.0.0.1";
   i32 port = n > 1 ? atoiOr(string.fromBytes(cli.arg(1).wait()), 8545) : 8545;
 
-  Answer a = call(cli, host, port, "eth_blockNumber", "[]");
-  if (!a.ok) { core.warn("blocknumber: \{a.error}"); return 1; }
-  core.log(string.fromBytes(stringOf(a.result)));
-  return 0;
+  JsonValue number = match (call(cli, host, port, "eth_blockNumber", "[]")) {
+    Ok(v): v,
+    Err(e): return Result.Err("blocknumber: \{e}"),
+  };
+  core.log(string.fromBytes(stringOf(number)));
+  return Result.Ok(0);
 }
 
 i32 atoiOr(string s, i32 fallback) {

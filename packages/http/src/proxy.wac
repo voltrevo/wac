@@ -40,11 +40,10 @@
 // host. A caller reporting "connection failed" sends somebody to look at the wrong thing.
 
 import { Cli, Socket } from "std";
-import { Buf } from "core";
+import { Buf, Result } from "core";
 
 /** Where a proxy is. */
 export struct ProxyAt {
-  bool ok;
   string host;
   i32 port;
 }
@@ -56,14 +55,16 @@ export struct ProxyAt {
  * not "speak TLS to the proxy", and treating it as the latter is a well-worn mistake. A missing port is
  * 3128 rather than 80, because nothing in this container listens on 80 and a default that dials the
  * wrong port produces a timeout where a message would do.
+ *
+ * Null for anything that does not name a host and a port in range.
  */
-export ProxyAt parseProxy(string url) {
+export ProxyAt? parseProxy(string url) {
   string rest = url;
   i32 scheme = rest.indexOf("://");
   if (scheme >= 0) { rest = rest.slice(scheme + 3, rest.len()); }
   i32 slash = rest.indexOf("/");
   if (slash >= 0) { rest = rest.slice(0, slash); }
-  if (rest.len() == 0) { return ProxyAt(false, "", 0); }
+  if (rest.len() == 0) { return null; }
 
   // The **last** colon, scanned by hand because wac has `indexOf` and no `lastIndexOf`.
   //
@@ -75,21 +76,21 @@ export ProxyAt parseProxy(string url) {
   for (i32 i = 0; i < restBytes.len(); i++) {
     if (restBytes[i] == ':') { colon = i; }
   }
-  if (colon < 0) { return ProxyAt(true, rest, 3128); }
+  if (colon < 0) { return ProxyAt(rest, 3128); }
 
   string host = rest.slice(0, colon);
   string portText = rest.slice(colon + 1, rest.len());
-  if (host.len() == 0 || portText.len() == 0) { return ProxyAt(false, "", 0); }
+  if (host.len() == 0 || portText.len() == 0) { return null; }
   i32 port = 0;
   u8[] digits = portText.toBytes();
   for (u8 digit in digits) {
     i32 c = digit as i32;
-    if (c < '0' || c > '9') { return ProxyAt(false, "", 0); }
+    if (c < '0' || c > '9') { return null; }
     port = port * 10 + (c - '0');
-    if (port > 65535) { return ProxyAt(false, "", 0); }
+    if (port > 65535) { return null; }
   }
-  if (port == 0) { return ProxyAt(false, "", 0); }
-  return ProxyAt(true, host, port);
+  if (port == 0) { return null; }
+  return ProxyAt(host, port);
 }
 
 /** The request that opens a tunnel to `host:port`. */
@@ -136,10 +137,9 @@ export ProxyReply readReply(u8[] b) {
   return ProxyReply.Established(end);
 }
 
-/** A tunnel, or why there is not one. */
+/** An open tunnel. */
 export struct Tunnel {
-  bool ok;
-  /** Still open when `ok`, with the proxy's reply consumed and nothing more. `-1` otherwise. */
+  /** Still open, with the proxy's reply consumed and nothing more. */
   i32 handle;
   /**
    * Whatever arrived after the proxy's blank line, belonging to the tunnelled protocol.
@@ -147,7 +147,6 @@ export struct Tunnel {
    * Usually empty. A caller must feed these to its protocol **before** reading the socket again.
    */
   u8[] leftover;
-  string error;
 }
 
 /** How much of a reply to read before deciding the proxy will not finish one. */
@@ -157,17 +156,17 @@ i32 replyCap() { return 1 << 16; }
  * Open a tunnel to `host:port` through the proxy at `proxyHost:proxyPort`.
  *
  * The only thing here that owns a socket, and deliberately the only thing that is not a pure function of
- * its arguments. It is closed on every failure path, so a caller that gets `ok` false owns nothing.
+ * its arguments. It is closed on every failure path, so a caller that gets an error owns nothing.
  */
-export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string host, i32 port) {
+export Result<Tunnel, string> connectThrough(Cli cli, string proxyHost, i32 proxyPort, string host, i32 port) {
   Socket s = cli.connect(proxyHost, proxyPort).wait();
   if (s.handle < 0) {
-    return Tunnel(false, -1, u8[](), "the proxy at \{proxyHost}:\{proxyPort}"
+    return Result.Err("the proxy at \{proxyHost}:\{proxyPort}"
       + " could not be reached: \{s.error}");
   }
   if (!cli.send(s.handle, connectRequest(host, port)).wait()) {
     cli.closeSocket(s.handle);
-    return Tunnel(false, -1, u8[](), "the proxy accepted a connection and not a request");
+    return Result.Err("the proxy accepted a connection and not a request");
   }
 
   string authority = "\{host}:\{port}";
@@ -179,11 +178,11 @@ export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string ho
         cli.closeSocket(s.handle);
         // Distinct from a refusal on purpose: nothing was said, so there is no status to report and the
         // cause is upstream of any policy the proxy has.
-        return Tunnel(false, -1, u8[](), "the proxy closed the connection before answering");
+        return Result.Err("the proxy closed the connection before answering");
       }
       Failed(why): {
         cli.closeSocket(s.handle);
-        return Tunnel(false, -1, u8[](), "reading the proxy's reply failed: \{why}");
+        return Result.Err("reading the proxy's reply failed: \{why}");
       }
     }
     u8[] soFar = all.bytes();
@@ -191,28 +190,28 @@ export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string ho
       NeedMore: {
         if (all.len > replyCap()) {
           cli.closeSocket(s.handle);
-          return Tunnel(false, -1, u8[](), "the proxy sent \{all.len}"
+          return Result.Err("the proxy sent \{all.len}"
             + " bytes without finishing a reply");
         }
       }
       NotHttp(line): {
         cli.closeSocket(s.handle);
-        return Tunnel(false, -1, u8[](), "the proxy's reply is not HTTP: \{line}");
+        return Result.Err("the proxy's reply is not HTTP: \{line}");
       }
       Refused(line): {
         cli.closeSocket(s.handle);
         // The proxy's own line, verbatim. A 403 here is an allowlist, not a network.
-        return Tunnel(false, -1, u8[](), "the proxy refused \{authority}: \{line}");
+        return Result.Err("the proxy refused \{authority}: \{line}");
       }
       Established(at): {
         u8[] leftover = u8[].filled(soFar.len() - at, 0);
-        for (i32 i = 0; i < leftover.len(); i++) { leftover[i] = soFar[at + i]; }
-        return Tunnel(true, s.handle, leftover, "");
+        leftover.copyFrom(soFar, at, 0, leftover.len());
+        return Result.Ok(Tunnel(s.handle, leftover));
       }
     }
   }
   // Unreachable: every arm above either returns or loops.
-  return Tunnel(false, -1, u8[](), "unreachable");
+  return Result.Err("unreachable");
 }
 
 /** One past the `\r\n\r\n` that ends a reply's head, or -1. */

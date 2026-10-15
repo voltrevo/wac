@@ -18,21 +18,11 @@
 // because a composition that looks verified and is not is worse than one that admits it.
 
 import { Cli } from "std";
-import { post, Fetched } from "../../http/src/client.wac";
+import { post } from "../../http/src/client.wac";
+import { Incoming } from "../../http/src/incoming.wac";
+import { Result } from "core";
 import { parse } from "../../json/src/json.wac";
 import { JsonValue, JsonObject } from "../../json/src/value.wac";
-
-/** One call's answer. `result` is the raw JSON of the `result` member, undecoded. */
-export struct Answer {
-  bool ok;
-  /** The `result` value, when `ok` — a `Str` for most `eth_` methods, an `Object` for `eth_getProof`. */
-  JsonValue result;
-  string error;
-
-  Answer of(bool ok, JsonValue result, string error) {
-    return Answer(ok, result, error);
-  }
-}
 
 /**
  * `method` with `params` — the params as JSON text, brackets included, because building them is the
@@ -40,16 +30,21 @@ export struct Answer {
  *
  * The id is always 1: these are synchronous single calls over a connection that closes, so there is
  * nothing to correlate. Batching would need real ids and is not implemented.
+ *
+ * Answers the `result` member, raw and undecoded — a `Str` for most `eth_` methods, an `Object` for
+ * `eth_getProof` — or why there is none.
  */
-export Answer call(Cli cli, string host, i32 port, string method, string params) {
+export Result<JsonValue, string> call(Cli cli, string host, i32 port, string method, string params) {
   string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\{method}\",\"params\":\{params}}";
-  Fetched f = post(cli, host, port, "/", body.toBytes(), "application/json");
-  if (!f.ok) { return bad("\{method}: \{f.error}"); }
-  if (f.response.status != 200) {
-    return bad("\{method}: the node answered HTTP \{f.response.status}");
+  Incoming response = match (post(cli, host, port, "/", body.toBytes(), "application/json")) {
+    Ok(r): r,
+    Err(e): return bad("\{method}: \{e}"),
+  };
+  if (response.status != 200) {
+    return bad("\{method}: the node answered HTTP \{response.status}");
   }
 
-  JsonValue? parsed = parse(f.response.body);
+  JsonValue? parsed = parse(response.body);
   if (parsed is null) { return bad("\{method}: the node's answer is not JSON"); }
   match (parsed!) {
     Object(members): {
@@ -59,7 +54,7 @@ export Answer call(Cli cli, string host, i32 port, string method, string params)
       if (!(err is null)) { return bad("\{method}: \{describe(err!)}"); }
       JsonValue? result = members.get("result".toBytes());
       if (result is null) { return bad("\{method}: the answer has no result"); }
-      return Answer.of(true, result!, "");
+      return Result.Ok(result!);
     }
     default: { return bad("\{method}: the answer is not a JSON object"); }
   }
@@ -88,4 +83,4 @@ export u8[] stringOf(JsonValue v) {
   }
 }
 
-Answer bad(string why) { return Answer.of(false, JsonValue.Null, why); }
+Result<JsonValue, string> bad(string why) { return Result.Err(why); }

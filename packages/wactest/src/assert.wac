@@ -23,6 +23,27 @@
 // cannot run inside wasm and belong in a host-side test.
 
 import { ftoa } from "../../fmt/src/ftoa.wac";
+import { Result } from "core";
+
+/**
+ * The value `r` holds, or null having failed `t` with `what` and the error.
+ *
+ * For an API that answers a `Result`: `if (Incoming got matches okOf(t, get(…), "/plain")) { … }` asserts
+ * and unwraps in one line, and the checks that need the value are skipped when there is none — which a
+ * struct with an `ok` flag allowed only by handing back an empty value to check against.
+ *
+ * A free function rather than a method of `T` because a generic method on a non-generic struct cannot
+ * be emitted yet (`issues/lang/0319a`).
+ */
+export R? okOf<R>(T t, Result<R, string> r, string what) {
+  match (r) {
+    Ok(v): { return v; }
+    Err(e): {
+      t.fail("\{what}: \{e}");
+      return null;
+    }
+  }
+}
 
 export struct T {
   i32 failed;
