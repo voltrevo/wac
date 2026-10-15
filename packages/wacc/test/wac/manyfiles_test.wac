@@ -183,3 +183,45 @@ export string test_and_inside_the_queue_it_links(Core core, Cli cli) {
   t.eqStr(blockedFiles(paths, sources, "/main.wac"), "", "a 201-file program was refused");
   return t.report();
 }
+
+// **One queue entry per file, not per edge.** The queue used to take a slot for every import edge
+// followed, duplicates included — they were only dropped when dequeued — and a file with an
+// interpolation or an `async` body queued `core` again for itself. So a program of a few hundred
+// files ran out: `packages/wac/src/wac.wac`, once its messages interpolated, has 233 files and more
+// than 1024 edges. The limit is meant to be on files, which is what `seen` beside it counts.
+export string test_files_that_interpolate_queue_core_once(Core core, Cli cli) {
+  T t = T.create();
+  i32 n = 600;
+  string[] paths = string[].filled(n + 1, "");
+  string[] sources = string[].filled(n + 1, "");
+  string entry = "";
+  for (i32 i = 0; i < n; i++) {
+    paths[i] = "/f\{i}.wac";
+    sources[i] = "export string g\{i}(i32 x) { return \"v\\{x}\"; }\n";
+    entry = entry + "import { g\{i} } from \"./f\{i}.wac\";\n";
+  }
+  paths[n] = "/main.wac";
+  sources[n] = entry + "export i32 main() { return g0(1).len(); }\n";
+  t.eqStr(blockedFiles(paths, sources, "/main.wac"), "", "601 files that interpolate were refused");
+  return t.report();
+}
+
+/** And a file many others import is queued once, not once per importer. */
+export string test_a_shared_import_is_queued_once(Core core, Cli cli) {
+  T t = T.create();
+  i32 n = 600;
+  string[] paths = string[].filled(n + 2, "");
+  string[] sources = string[].filled(n + 2, "");
+  string entry = "";
+  for (i32 i = 0; i < n; i++) {
+    paths[i] = "/f\{i}.wac";
+    sources[i] = "import { one } from \"./common.wac\";\nexport i32 g\{i}() { return one(); }\n";
+    entry = entry + "import { g\{i} } from \"./f\{i}.wac\";\n";
+  }
+  paths[n] = "/common.wac";
+  sources[n] = "export i32 one() { return 1; }\n";
+  paths[n + 1] = "/main.wac";
+  sources[n + 1] = entry + "export i32 main() { return g0(); }\n";
+  t.eqStr(blockedFiles(paths, sources, "/main.wac"), "", "602 files sharing one import were refused");
+  return t.report();
+}

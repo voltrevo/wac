@@ -3906,6 +3906,21 @@ i32 countLines(string s) {
 /** How many files the linker's walk can have queued — see `queue` in `linkFiles`. */
 i32 linkQueueSize() { return 1024; }
 
+/**
+ * Whether `path` is already among the first `qn` entries of the link queue.
+ *
+ * **The queue holds files, not edges.** It took a slot for every import followed, duplicates dropped
+ * only when dequeued, and every file with an interpolation or an `async` body queued `core` again — so
+ * `packages/wac/src/wac.wac`, 233 files, ran out once its messages interpolated. Asked before every
+ * enqueue, which makes the limit the one `seen` beside it already states: 1024 files.
+ */
+bool queuedAlready(string[] queue, i32 qn, string path) {
+  for (i32 i = 0; i < qn; i++) {
+    if (queue[i] == path) { return true; }
+  }
+  return false;
+}
+
 bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i32[] starts,
                  i32[] edges, string[] names, string[] filePaths,
                  u8[][] outSrc, Lexed?[] outLexed, Program?[] outProg) {
@@ -3929,9 +3944,9 @@ bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i3
   // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
   // was not supplied"* — the same `return ""` a genuinely missing file takes, so the message named
   // the wrong cause and six of box's programs looked like they had a broken import [issue 0106].
-  // **1024, and `linkFailure` says so when this fills.** One entry per file *to visit*, which is one
-  // per import edge followed, so a program whose entry imports 1024 files fills it before the walk is
-  // done. `linkQueueSize()` rather than a literal so the message cannot drift from the array.
+  // **1024, and `linkFailure` says so when this fills.** One entry per file *to visit* — an import of
+  // a file already queued takes no slot (`queuedAlready`) — so a program whose entry imports 1024 files
+  // fills it before the walk is done. `linkQueueSize()` rather than a literal so the message cannot drift from the array.
   string[] queue = string[].defaulted(linkQueueSize());
   // **Who asked, and how they spelled it — parallel to `queue`.** When a queued file turns out not to
   // be supplied, the specifier that queued it was in the *importer's* source two iterations earlier,
@@ -4048,7 +4063,7 @@ bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i3
     // an `i32` — so a file with one needs core linked whether or not it imports anything from it.
     // **And so does an `async` body**, whose lowering builds core's `Ticket` and `__wacMachine`
     // (spec ch35) — `spec/cases/0319` is what that cost while the ticket type lived in `std`.
-    if (hasInterpolation(b, lexed) || hasAsync(b, lexed)) {
+    if ((hasInterpolation(b, lexed) || hasAsync(b, lexed)) && !queuedAlready(queue, qn, " core")) {
       if (qn >= queue.len()) { starts[0] = 2; return false; }
       queue[qn] = " core";
       queueSpec[qn] = "core";
@@ -4062,11 +4077,13 @@ bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i3
           // instead, under a path no source can spell, which makes it a file to everything below.
           if (prefixTok >= 0) {
             if (tokenTextOf(b, lexed, prefixTok) != "core") { continue; }
-            if (qn >= queue.len()) { starts[0] = 2; return false; }
-            queue[qn] = " core";
-            queueSpec[qn] = "core";
-            queueFrom[qn] = path;
-            qn = qn + 1;
+            if (!queuedAlready(queue, qn, " core")) {
+              if (qn >= queue.len()) { starts[0] = 2; return false; }
+              queue[qn] = " core";
+              queueSpec[qn] = "core";
+              queueFrom[qn] = path;
+              qn = qn + 1;
+            }
             for (i32 it = 0; it < items.len(); it++) {
               // **Refused, not skipped.** A dropped edge links: the module comes out with a name
               // resolved to nothing, which is `issues/lang/0130`'s shape and worse than a refusal.
@@ -4081,7 +4098,6 @@ bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i3
           }
           string quoted = tokenTextOf(b, lexed, pathTok);
           if (quoted.len() < 2) { continue; }
-          if (qn >= queue.len()) { starts[0] = 2; return false; }
           // **The reader's answer where it has one.** A mapping cannot be resolved here — it needs a
           // manifest, a lockfile and a cache, and this function opens nothing — so `Res` carries
           // what `gather` worked out and this looks it up. `design/lang/0009` predicted exactly this
@@ -4097,10 +4113,13 @@ bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i3
           // the specifier, and a resolver that quietly returned something else would disagree with
           // it in the one place nothing compares them. `design/lang/0009` D5.
           if (target == "core") { target = " core"; }
-          queue[qn] = target;
-          queueSpec[qn] = quoted.slice(1, quoted.len() - 1);
-          queueFrom[qn] = path;
-          qn = qn + 1;
+          if (!queuedAlready(queue, qn, target)) {
+            if (qn >= queue.len()) { starts[0] = 2; return false; }
+            queue[qn] = target;
+            queueSpec[qn] = quoted.slice(1, quoted.len() - 1);
+            queueFrom[qn] = path;
+            qn = qn + 1;
+          }
           // The edge is recorded by *path*, and turned into file indices once every file has one:
           // an import often names a file this walk has not reached yet.
           // One edge per *name*, plus one for the file itself, so a type reached through another
@@ -4132,11 +4151,13 @@ bool linkFiles(string[] paths, string[] sources, const Res res, string entry, i3
           string rspec = string.fromBytes(stringLiteralBytes(b, lexed, pathTok));
           string rtarget = resolveVia(res, paths, path, rspec);
           if (rtarget == "core") { rtarget = " core"; }
-          if (qn >= queue.len()) { starts[0] = 2; return false; }
-          queue[qn] = rtarget;
-          queueSpec[qn] = rspec;
-          queueFrom[qn] = path;
-          qn = qn + 1;
+          if (!queuedAlready(queue, qn, rtarget)) {
+            if (qn >= queue.len()) { starts[0] = 2; return false; }
+            queue[qn] = rtarget;
+            queueSpec[qn] = rspec;
+            queueFrom[qn] = path;
+            qn = qn + 1;
+          }
           if (en >= fromPath.len()) { starts[0] = 3; return false; }
           fromPath[en] = path;
           toPath[en] = rtarget;
@@ -16581,7 +16602,7 @@ string linkFailure(string[] paths, string[] sources, const Res res, string entry
   }
   if (starts[0] == 2) {
     return "more files to visit than the linker's queue holds (at most " + numText(linkQueueSize())
-        + ", which is one per import edge followed)";
+        + " files)";
   }
   if (starts[0] == 3) {
     return "more import edges in one program than the linker was given room for (at most "
