@@ -40,7 +40,7 @@ import { endsWith, Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } 
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind,
   Field, Method, NamedArg,
-  Param, Pattern, Program, Stmt, StmtKind, Ty, TyKind, lvalueExpr, TupleBinding,
+  Param, Pattern, Program, Stmt, StmtKind, Ty, TyKind, lvalueExpr, TupleBinding, safeCallReceiver,
 } from "./ast.wac";
 import {
   kAsync, kIdent, kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
@@ -3000,6 +3000,14 @@ export struct Env {
    * Everywhere else `const` is the checker's: the same wasm type, so the emitter drops it.
    */
   i32 inUnionArgs;
+  /**
+   * The receiver of the `p?.m(a)` being emitted and the local it was evaluated into: the carried call
+   * reaches `p` through its `Unwrap`, and `emitExprAt` reads the local instead of evaluating `p` again.
+   * `safeDepth` counts the ones open, so a `?.` call in an argument gets a local of its own.
+   */
+  Expr? safeHeld;
+  i32 safeHeldLocal;
+  i32 safeDepth;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -3313,7 +3321,8 @@ export struct Env {
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
-               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";", 0, "", "", 0);
+               Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";", 0, "", "", 0,
+               null, 0 - 1, 0);
   }
 
   
@@ -10364,6 +10373,11 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
  * the wanted type is passed down every arm rather than special-cased at the few places one is likely.
  */
 void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
+  // **The receiver of the `p?.m(a)` being emitted is already in a local** — see `emitSafeCall`.
+  if (env.safeHeld is not null && e is env.safeHeld!) {
+    fb.byte(32); fb.u32leb(env.safeHeldLocal);   // local.get
+    return;
+  }
   // **Into a union, a value enters its alternative** (spec ch18): emitted as that type, and boxed
   // when it is a number. A union already is the `anyref`.
   if (isUnionName(want) && !isNullLit(e)) {
@@ -11392,6 +11406,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.u32leb(env.fieldIndex(ot2, tokenTextOf(src, lexed, nameTok)));
     }
     SafeMember(obj, nameTok): { emitSafeMember(fb, src, lexed, env, obj, nameTok); }
+    SafeCall(call): { emitSafeCall(fb, src, lexed, env, call); }
     // `s is Circle` is a **tag comparison**. No cast and no test instruction: a variant and its enum
     // are the same wasm type here, so what distinguishes them is the value in slot 0 and nothing else.
     Matches(pat, subject): { emitMatches(fb, src, lexed, env, pat, subject); }
@@ -11751,6 +11766,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       return uot;
     }
     SafeMember(obj, nameTok): { return safeMemberType(src, lexed, env, obj, nameTok); }
+    SafeCall(call): { return safeCallType(src, lexed, env, call); }
     Binary(op, left, right): {
       i32 k = lexed.tokens[op * tokenStride()];
       if (k == kAndAnd() || k == kOrOr()) { return "bool"; }
@@ -11930,6 +11946,58 @@ string safeMemberType(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok) {
   string ft = env.fieldType(base, tokenTextOf(src, lexed, nameTok));
   if (ft == "") { return ""; }
   return nullableRep(ft);
+}
+
+/**
+ * The type `p?.m(a)` answers: what the carried `p!.m(a)` answers, as `nullableRep` spells it nullable,
+ * and `void` where the method answers nothing — `p?.close();` is a statement. spec ch10.
+ */
+string safeCallType(u8[] src, Lexed lexed, Env env, Expr call) {
+  string ct = typeOfE(src, lexed, env, call);
+  if (ct == "") { return ""; }
+  if (ct == "void" || ct == "never") { return "void"; }
+  return nullableRep(ct);
+}
+
+/**
+ * `p?.m(a)` — nothing, or `null`, when `p` is absent, and the call otherwise; `a` is evaluated only
+ * when `p` is present. spec ch10.
+ *
+ * `p` is evaluated once into a local of its own and tested. The present arm emits the carried call
+ * `p!.m(a)` with `safeHeld` naming `p`, so where the call reaches `p` through its `Unwrap`,
+ * `emitExprAt` reads the local instead — and the call is emitted by whatever emits `p!.m(a)`, rather
+ * than by a second copy of every kind of method call.
+ */
+void emitSafeCall(B fb, u8[] src, Lexed lexed, Env env, Expr call) {
+  Expr obj = safeCallReceiver(call);
+  string ot = typeOfE(src, lexed, env, obj);
+  string ct = typeOfE(src, lexed, env, call);
+  string rt = safeCallType(src, lexed, env, call);
+  if (ot == "" || rt == "") { env.declineFor("a `?.` call whose answer has no type"); return; }
+  i32 held = env.scratchNamed("safe call " + numText(env.safeDepth), ot);
+  emitExprAt(fb, src, lexed, env, obj, ot);
+  fb.byte(34); fb.u32leb(held);           // local.tee
+  fb.byte(209);                           // ref.is_null
+  fb.byte(4);                             // if
+  if (rt == "void") { fb.byte(64); } else { writeValType(fb, env, rt); }
+  env.depth = env.depth + 1;
+  if (rt != "void") { emitNull(fb, env, rt); }
+  fb.byte(5);                             // else
+  Expr? heldWas = env.safeHeld;
+  i32 localWas = env.safeHeldLocal;
+  env.safeHeld = obj;
+  env.safeHeldLocal = held;
+  env.safeDepth = env.safeDepth + 1;
+  emitExprAt(fb, src, lexed, env, call, ct == "never" ? "" : ct);
+  env.safeDepth = env.safeDepth - 1;
+  env.safeHeld = heldWas;
+  env.safeHeldLocal = localWas;
+  if (isBoxedName(rt) && !isBoxedName(ct)) {
+    fb.byte(251); fb.u32leb(0);           // struct.new — the box
+    fb.u32leb(env.boxType(boxedInner(rt)));
+  }
+  env.depth = env.depth - 1;
+  fb.byte(11);
 }
 
 /** `t?` as this emitter spells it: a box for a number, the reference itself for anything else. */
@@ -13757,6 +13825,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     Member(obj, nameTok): { findLambdasExpr(env, src, lexed, obj, ""); }
     Unwrap(operand): { findLambdasExpr(env, src, lexed, operand, want); }
     SafeMember(obj, nameTok): { findLambdasExpr(env, src, lexed, obj, ""); }
+    SafeCall(call): { findLambdasExpr(env, src, lexed, call, ""); }
     // **A call and a construction are the same node.** `use(() => 1)` parses as `Construct`, not
     // `Call` — wac cannot tell `Point(1, 2)` from `f(1, 2)` by syntax, so the parser builds one shape
     // and the emitter sorts it out by asking whether the name is a struct. This arm is therefore
@@ -16066,6 +16135,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (so != "") { return so; }
       return safeMemberType(src, lexed, env, obj, nameTok) == "" ? "a `?.` on something with no such field" : "";
     }
+    SafeCall(call): {
+      string sc = unsupportedExpr(src, lexed, env, call);
+      if (sc != "") { return sc; }
+      return safeCallType(src, lexed, env, call) == "" ? "a `?.` call whose answer has no type" : "";
+    }
     Member(obj, nameTok): {
       if (tupleIndexE(env, src, lexed, nameTok) >= 0 && isTupleName(typeOfE(src, lexed, env, obj))) {
         return unsupportedValue(src, lexed, env, obj);
@@ -18263,6 +18337,7 @@ bool mentionsTypeRefE(Expr e) {
       return false;
     }
     Member(obj, nameTok): { return mentionsTypeRefE(obj); }
+    SafeCall(call): { return mentionsTypeRefE(call); }
     Binary(op, left, right): { return mentionsTypeRefE(left) || mentionsTypeRefE(right); }
     Unary(op, operand): { return mentionsTypeRefE(operand); }
     Ternary(cond, then, els): { return mentionsTypeRefE(cond) || mentionsTypeRefE(then) || mentionsTypeRefE(els); }
@@ -18510,6 +18585,12 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
       string srt = safeMemberType(src, lexed, env, obj, nameTok);
       if (isBoxedName(srt)) { env.boxType(boxedInner(srt)); }
     }
+    // `p?.m()` answers a box where `m` answers a number, for the same reason.
+    SafeCall(call): {
+      collectArrayTypesOfExpr(env, src, lexed, call);
+      string sct = safeCallType(src, lexed, env, call);
+      if (isBoxedName(sct)) { env.boxType(boxedInner(sct)); }
+    }
     Index(arr, index): {
       collectArrayTypesOfExpr(env, src, lexed, arr);
       collectArrayTypesOfExpr(env, src, lexed, index);
@@ -18565,6 +18646,7 @@ string kindOfExpr(Expr e) {
     Index(arr, index): { return "index"; }
     Member(obj, nameTok): { return "member"; }
     SafeMember(obj, nameTok): { return "safe member"; }
+    SafeCall(call): { return "safe call"; }
     Call(callee, args, callTargs): { return "call"; }
     Construct(ctype, args, named): { return "construct"; }
     ArrNew(elem, size, fill, elements): { return "array"; }

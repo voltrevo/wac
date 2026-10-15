@@ -53,7 +53,7 @@ import {
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
-  Pattern, Stmt, StmtKind, Ty, TyKind, tyPrim, TupleBinding,
+  Pattern, Stmt, StmtKind, Ty, TyKind, tyPrim, TupleBinding, safeCallReceiver, safeCallName,
 } from "./ast.wac";
 
 /** A returned value whose type cannot be the declared one. */
@@ -839,6 +839,46 @@ void checkSafeMember(C c, Expr obj, i32 nameTok) {
   if (withoutNull(base) != "" || (c.isStruct(tmpl) && c.fieldType(tmpl, tokenText(c, nameTok)) == "")) {
     c.reportTok(errNoSuchField(), nameTok, "no member '" + tokenText(c, nameTok) + "' on " + base);
   }
+}
+
+/**
+ * The type `p?.m(a)` answers: what `p!.m(a)` answers, made nullable where it is not already, as
+ * `p?.m` does for a field (`§wac-safe-call-hfr3mzk`). A method that returns nothing gives nothing:
+ * `p?.close();` is a statement.
+ */
+string safeCallTypeOf(C c, Expr call) {
+  string ot = typeOfExpr(c, safeCallReceiver(call));
+  if (ot == typeNone() || ot == "") { return typeNone(); }
+  string base = withoutNull(ot);
+  if (base == "" || withoutNull(base) != "") { return typeNone(); }
+  string rt = typeOfExpr(c, call);
+  if (rt == typeNone() || rt == "") { return typeNone(); }
+  if (rt == "void" || rt == "never") { return "void"; }
+  return isNullableName(rt) ? rt : suffixed(rt, "?");
+}
+
+/**
+ * `p?.m(a)`: `p` must be able to be absent, and the call must be one `p!.m(a)` could make — which is
+ * what the carried call is, so it is checked as written with `!`.
+ */
+void checkSafeCall(C c, Expr call) {
+  Expr obj = safeCallReceiver(call);
+  i32 nameTok = safeCallName(call);
+  string ot = typeOfExpr(c, obj);
+  if (ot == typeNone() || ot == "") { checkExpr(c, call); return; }
+  string base = withoutNull(ot);
+  if (base == "") {
+    checkExpr(c, obj);
+    c.reportWith(errAbsenceOperand(), obj.line, obj.col, ot + " cannot be absent");
+    return;
+  }
+  // `?.` stops at a `T??` for a call as for a field (`§wac-safe-member-stops-yyhgvjr`).
+  if (withoutNull(base) != "") {
+    checkExpr(c, obj);
+    c.reportTok(errNoSuchField(), nameTok, "no member '" + tokenText(c, nameTok) + "' on " + base);
+    return;
+  }
+  checkExpr(c, call);
 }
 
 /** `a ?? b`: `a` must be able to be absent, and `b` must fit what `a` holds. */
@@ -1782,6 +1822,8 @@ void daExpr(C c, Expr e, DA st) {
     Ternary(cond, then, els): { daExpr(c, cond, st); daExpr(c, then, st); daExpr(c, els, st); }
     Index(arr, index): { daExpr(c, arr, st); daExpr(c, index, st); }
     Member(obj, nameTok): { daExpr(c, obj, st); }
+    SafeMember(obj, nameTok): { daExpr(c, obj, st); }
+    SafeCall(call): { daExpr(c, call, st); }
     Call(callee, args, callTargs): {
       daExpr(c, callee, st);
       for (i32 i = 0; i < args.len(); i++) { daExpr(c, args[i], st); }
@@ -5898,6 +5940,7 @@ export string typeOfExpr(C c, Expr e) {
      * the literal takes its type from the other side rather than giving one.
      */
     SafeMember(obj, nameTok): { return safeMemberTypeOf(c, obj, nameTok); }
+    SafeCall(call): { return safeCallTypeOf(c, call); }
     Binary(op, left, right): {
       i32 bk = tokenKind(c, op);
       if (bk == kPlus() && isInterpPlusTok(c, op)) { return "string"; }
@@ -7561,6 +7604,7 @@ void checkExpr(C c, Expr e) {
       checkIndex(c, e, arr, index);
     }
     SafeMember(obj, nameTok): { checkSafeMember(c, obj, nameTok); }
+    SafeCall(call): { checkSafeCall(c, call); }
     Member(obj, nameTok): {
       checkReceiver(c, obj);
       // A tuple's members are selected by position, and the position must be known statically —
@@ -9378,6 +9422,7 @@ bool isModuleConst(C c, Program prog, string name) {
 
 bool callsAFunction(C c, Expr e) {
   match (e.kind) {
+    SafeCall(call): { return true; }
     Construct(ctype, args, named): {
       match (ctype.kind) {
         Named(tok, typeArgs): {

@@ -1,5 +1,4 @@
-// expect: f(3) = 4
-// expect: f(-1) = 105
+// expect: f() = 4105
 // spec: §wac-match-arm-leaves-y33uzzi
 // why: an arm of a match expression that returns rather than giving a value may read what it binds
 // from: converting packages/ from `bool ok` structs to Result, 2026-10-15
@@ -18,9 +17,11 @@ Result<i32, string> plusOne(i32 n) {
   return Result.Ok(v + 1);
 }
 
-export i32 f(i32 n) {
+i32 answer(i32 n) {
   return match (plusOne(n)) {
     Ok(v): v,
     Err(e): e.len() + 100,
   };
 }
+
+export i32 f() { return answer(3) * 1000 + answer(-1); }

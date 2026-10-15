@@ -291,6 +291,40 @@ export string? previousCity() {
 `[§wac-safe-member-stops-yyhgvjr]` `?.` on a `T??` is refused when the member is looked up on `T?`. The two
 absences must be collapsed explicitly first.
 
+## `?.` calls a method through an absence
+
+```wac
+// expect: calls() = 134
+struct Counter {
+  i32 n;
+  i32 add(this, i32 k) { this.n += k; return this.n; }
+  void reset(this) { this.n = 0; }
+}
+
+i32 three(Counter seen) { seen.add(1); return 3; }
+
+export i32 calls() {
+  Counter? c = Counter(0);
+  Counter? none = null;
+  Counter seen = Counter(0);
+
+  auto a = c?.add(three(seen));            // i32?: 3
+  auto b = none?.add(three(seen));         // null, and three is not called
+  none?.reset();                           // a method that answers nothing is a statement
+
+  string? s = "four";
+  i32 len = s?.len() ?? 0;                 // 4: any method, built in or declared
+  return seen.n * 100 + (a ?? 0) * 10 + (b ?? 0) + len;   // three ran once
+}
+```
+
+`[§wac-safe-call-hfr3mzk]` `p?.m(a)` answers `null` when `p` is absent, without evaluating `a`, and
+`p!.m(a)` otherwise. Its type is what `m` answers, made nullable if it is not already; a method that
+answers nothing makes a `?.` call that answers nothing, which can only stand as a statement.
+
+The rules for `p` are the field read's: it must be able to be absent, a `T??` is collapsed first, and
+the call is not an assignment target.
+
 ## `??` supplies what is absent
 
 ```wac

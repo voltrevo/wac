@@ -1,0 +1,26 @@
+// expect: f() = 1234
+// why: `p?.m(a)` is null when `p` is absent, without evaluating `a`, and `p!.m(a)` otherwise, made nullable
+// from: spec ch10 §wac-safe-call-hfr3mzk
+struct Counter {
+  i32 n;
+  i32 add(this, i32 k) { this.n += k; return this.n; }
+  void bump(this) { this.n += 1; }
+  string? label(const this) { return this.n > 0 ? "on" : null; }
+}
+i32 arg(Counter seen, i32 k) { seen.bump(); return k; }
+i32 or0(i32? v) { return v ?? 0; }
+export i32 f() {
+  Counter? c = Counter(0);
+  Counter? none = null;
+  Counter seen = Counter(0);
+  c?.bump();                                // a void method, as a statement
+  none?.bump();
+  i32 a = or0(c?.add(arg(seen, 2)));              // 3
+  i32 b = or0(none?.add(arg(seen, 100)));         // 0, and arg is not called
+  string? s = "four";
+  string? t = null;
+  i32 len = or0(s?.len()) + or0(t?.len());  // 4: a built-in method
+  string? l = c?.label();                   // string?, not string??
+  i32 got = l is null ? 0 : 1;
+  return got * 1000 + seen.n * 200 + a * 10 + len;
+}

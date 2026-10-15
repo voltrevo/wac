@@ -1,0 +1,4 @@
+// expect: refused
+// why: `p?.m()` can be absent even when `m` cannot, so it does not fit a slot that cannot hold null
+// from: spec ch10 §wac-safe-call-hfr3mzk
+export i32 f() { string? s = "four"; i32 n = s?.len(); return n; }

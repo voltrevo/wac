@@ -2272,6 +2272,7 @@ export string exprKindName(Expr e) {
     MatchExpr(subject, arms): { return "a `match` expression"; }
     TupleLit(elements): { return "a tuple"; }
     SafeMember(obj, nameTok): { return "a `?.`"; }
+    SafeCall(call): { return "a `?.`"; }
     Matches(pat, subject): { return "a `matches` test"; }
     TypeName(t): { return "a type used as a value"; }
     default: { return "this kind of expression"; }

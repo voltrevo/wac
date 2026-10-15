@@ -186,6 +186,7 @@ unary          = ( "-" | "!" | "~" | "++" | "--" ) , unary
 
 postfix        = primary , { "." , member_ref , [ [ type_args ] , "(" , [ args ] , ")" ]
                            | "." , "[" , expr , "]"                           (* static selector: 21 *)
+                           | "?." , name , [ [ type_args ] , "(" , [ args ] , ")" ]   (* through an absence: 10 *)
                            | "(" , [ args ] , ")"
                            | "[" , expr , "]"
                            | "!"

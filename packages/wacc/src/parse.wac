@@ -1613,11 +1613,22 @@ Expr parsePostfix(P p) {
         e = Expr(ExprKind.Member(e, nameTok), line, col);
       }
     } else if (p.at1(kQuestionDot())) {
-      // `p?.m` — spec ch10. A field read only: a method through an absence is not in the spec.
+      // `p?.m` and `p?.m(a)` — spec ch10. The call is built as the `p!.m(a)` it makes when `p` is
+      // present, which is what `SafeCall` carries.
       p.advance();
       i32 safeTok = -1;
       safeTok = declName(p, perrFieldName(), "field name");
-      e = Expr(ExprKind.SafeMember(e, safeTok), line, col);
+      Ty[] safeTypeArgs = p.at1(kLt()) && afterTypeArgs(p, 0) >= 0 ? parseTypeArgs(p) : Ty[]();
+      if (p.at1(kLparen())) {
+        p.advance();
+        Expr[] safeArgs = parseArgList(p);
+        p.expect(kRparen());
+        Expr held = Expr(ExprKind.Unwrap(e), e.line, e.col);
+        Expr safeCallee = Expr(ExprKind.Member(held, safeTok), line, col);
+        e = Expr(ExprKind.SafeCall(Expr(ExprKind.Call(safeCallee, safeArgs, safeTypeArgs), line, col)), line, col);
+      } else {
+        e = Expr(ExprKind.SafeMember(e, safeTok), line, col);
+      }
     } else if (p.at1(kLbrack())) {
       p.advance();
       Expr idx = parseExpr(p);

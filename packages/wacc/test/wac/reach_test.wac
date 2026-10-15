@@ -116,6 +116,9 @@ string[] expressionLabels() {
     "Binary", "Cast", "Ternary", "Ternary-cond", "Index", "Member",
     // `p?.m` — spec ch10. The fault is buried in the object, which is the only sub-expression.
     "SafeMember",
+    // `p?.m(a)` — spec ch10. It carries the `p!.m(a)` it makes, so the fault may be in the argument
+    // or in the receiver, which is inside that call.
+    "SafeCall", "SafeCall-receiver",
     "Call", "Call-method",
     "Construct", "Assign-rhs", "Return-value", "Condition",
     // Added after `Incr` turned out to be unwalked in its expression form: `p.n++;` was checked and
@@ -165,6 +168,10 @@ string[] expressionSources() {
     "void f(i32 p, f64 q, i32[] a) { i32 r = a[" + SUB + "]; }",
     "struct P { i32 x; } void f(i32 p, f64 q, P s) { i32 r = s.x + " + SUB + "; }",
     "struct P { i32 x; } P? mk(i32 n) { return null; } void f(i32 p, f64 q) { i32? r = mk(" + SUB + ")?.x; }",
+    "struct P { i32 x; i32 m(this, i32 n) { return n; } } P? mk() { return null; } "
+      + "void f(i32 p, f64 q) { i32? r = mk()?.m(" + SUB + "); }",
+    "struct P { i32 x; i32 m(this, i32 n) { return n; } } P? mk(i32 n) { return null; } "
+      + "void f(i32 p, f64 q) { i32? r = mk(" + SUB + ")?.m(1); }",
     "void g(i32 n) { } void f(i32 p, f64 q) { g(" + SUB + "); }",
     "struct P { i32 x; void m(this, i32 n) { } } void f(i32 p, f64 q, P s) { s.m(" + SUB + "); }",
     "struct P { i32 x; } void f(i32 p, f64 q) { P s = P(" + SUB + "); }",

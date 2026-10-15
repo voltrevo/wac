@@ -429,6 +429,7 @@ Expr subExpr(Ctx c, Expr e) {
     SafeMember(obj, nameTok): {
       return Expr(ExprKind.SafeMember(subExpr(c, obj), nameTok), e.line, e.col);
     }
+    SafeCall(call): { return Expr(ExprKind.SafeCall(subExpr(c, call)), e.line, e.col); }
     Member(obj, nameTok): {
       return Expr(ExprKind.Member(subExpr(c, obj), nameTok), e.line, e.col);
     }

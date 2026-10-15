@@ -179,6 +179,15 @@ export enum ExprKind {
   Member(Expr obj, i32 nameTok),
   /** `p?.m` — `null` when `p` is absent, `p!.m` otherwise. spec ch10. */
   SafeMember(Expr obj, i32 nameTok),
+  /**
+   * `p?.m(a)` — `null` when `p` is absent, without evaluating `a`, and `p!.m(a)` otherwise. spec ch10.
+   *
+   * **It carries the ordinary call it makes**, `Call(Member(Unwrap(p), m), a, targs)`, so the checker
+   * and every emitter walk judge that call exactly as they judge one written with `!`; a walk recurses
+   * into `call` and nothing else, since `p` is inside it. Only the emitter's value arm differs: it
+   * evaluates `p` once into a local and has the `Unwrap` read that local.
+   */
+  SafeCall(Expr call),
   /** `x!` — the non-null assertion. */
   Unwrap(Expr operand),
   /** `Point(1, 2)` or `Point(x: 1, y: 2)`; one of the two lists is empty. */
@@ -276,6 +285,40 @@ export Expr lvalueExpr(Lvalue lv) {
     LField(base, nameTok): { return Expr(ExprKind.Member(lvalueExpr(base), nameTok), lv.line, lv.col); }
     LIndex(base, index): { return Expr(ExprKind.Index(lvalueExpr(base), index), lv.line, lv.col); }
     LUnwrap(base): { return Expr(ExprKind.Unwrap(lvalueExpr(base)), lv.line, lv.col); }
+  }
+}
+
+/**
+ * The `p` of a `SafeCall`'s `p?.m(a)` — the operand of the `Unwrap` the parser built its receiver as.
+ * The call itself for anything else, which no parser output is.
+ */
+export Expr safeCallReceiver(Expr call) {
+  match (call.kind) {
+    Call(callee, args, typeArgs): {
+      match (callee.kind) {
+        Member(held, nameTok): {
+          match (held.kind) {
+            Unwrap(obj): { return obj; }
+            default: { return call; }
+          }
+        }
+        default: { return call; }
+      }
+    }
+    default: { return call; }
+  }
+}
+
+/** The `m` of a `SafeCall`'s `p?.m(a)`, as a token; -1 for anything else, which no parser output is. */
+export i32 safeCallName(Expr call) {
+  match (call.kind) {
+    Call(callee, args, typeArgs): {
+      match (callee.kind) {
+        Member(held, nameTok): { return nameTok; }
+        default: { return -1; }
+      }
+    }
+    default: { return -1; }
   }
 }
 

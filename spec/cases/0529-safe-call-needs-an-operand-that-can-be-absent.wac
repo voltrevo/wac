@@ -1,0 +1,4 @@
+// expect: refused
+// why: `?.` with a left operand that can never be absent has no case to handle, for a call as for a field
+// from: spec ch10 §wac-absence-op-needs-nullable-gp8hxz5
+export i32 f() { string s = "four"; i32? n = s?.len(); return n!; }

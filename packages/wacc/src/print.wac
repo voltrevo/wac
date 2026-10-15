@@ -511,6 +511,11 @@ void printExpr(Pr w, Expr e) {
       w.sp(); w.tok(nameTok);
       w.close();
     }
+    SafeCall(call): {
+      w.open("safe-call", e.line, e.col);
+      w.sp(); printExpr(w, call);
+      w.close();
+    }
     Unwrap(operand): {
       w.open("unwrap", e.line, e.col);
       w.sp(); printExpr(w, operand);
