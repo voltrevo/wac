@@ -17,7 +17,7 @@ import { Param, Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
          warningsOf, widthsOf, errNoSuchExport, errStaleBuiltinEmbedding, isBuiltinSubpath,
-         widenAutoContributions, ViewInputs, buildStaticView } from "./check.wac";
+         widenAutoContributions, ViewInputs, buildStaticView, isNameByte } from "./check.wac";
 import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, emitLinked, emitLinkedIn, missingImportParts, emitLinkedChecked, emitLinkedCovered,
   emitLinkedCoveredIn,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
@@ -2545,10 +2545,6 @@ string calleeBefore(string text, i32 at) {
   i32 end = i;
   while (i > 0 && isNameByte(b[i - 1] as i32)) { i = i - 1; }
   return end > i ? text.slice(i, end) : "";
-}
-
-bool isNameByte(i32 c) {
-  return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95;
 }
 
 /** Whether `text` has a ` ...name` — a variadic parameter's marker, not prose's ellipsis. */

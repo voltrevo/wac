@@ -8592,7 +8592,7 @@ bool mentionsActiveParam(C c, string t) {
 }
 
 /** A byte a name may be spelled with, so a whole-name match knows where one ends. */
-bool isNameByte(i32 b) {
+export bool isNameByte(i32 b) {
   return (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
 }
 
