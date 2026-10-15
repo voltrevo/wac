@@ -118,7 +118,7 @@ export void writeDescriptor(Ints out, string type) {
     string[] members = splitTuple(type);
     out.push(T_TUPLE);
     out.push(members.len());
-    for (i32 i = 0; i < members.len(); i++) { writeDescriptor(out, members[i]); }
+    for (string member in members) { writeDescriptor(out, member); }
     return;
   }
   if (type == "bool") { out.push(T_BOOL); return; }

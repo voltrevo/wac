@@ -122,10 +122,10 @@ export i32 main() {
   string[] ts = texts();
   for (i32 i = 0; i < ts.len(); i++) {
     u8[] bytes = ts[i].toBytes();
-    for (i32 s = 0; s < sizes.len(); s++) {
-      f.feed(bytes, sizes[s], true);
+    for (i32 size in sizes) {
+      f.feed(bytes, size, true);
       seen = seen + passthrough(read, write);
-      f.feed(bytes, sizes[s], true);
+      f.feed(bytes, size, true);
       seen = seen + upperCase(read, write);
     }
   }
@@ -167,10 +167,10 @@ export i32 main() {
   string sample = "hello caf\{string.fromCodepoint(0xe9)} " +
                   "\{string.fromCodepoint(0x4e16)} \{string.fromCodepoint(0x1f600)} world";
   i32[] fails = [0, 1, 3];
-  for (i32 i = 0; i < fails.len(); i++) {
-    f.feedFailing(sample.toBytes(), 4, fails[i]);
+  for (i32 fail in fails) {
+    f.feedFailing(sample.toBytes(), 4, fail);
     seen = seen + passthrough(read, write);
-    f.feedFailing(sample.toBytes(), 4, fails[i]);
+    f.feedFailing(sample.toBytes(), 4, fail);
     seen = seen + upperCase(read, write);
   }
 

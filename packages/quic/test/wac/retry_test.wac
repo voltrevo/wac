@@ -115,11 +115,11 @@ u8[] vn(i32[] versions) {
   for (i32 i = 0; i < dcid.len(); i++) { out[at] = dcid[i] as@ u8; at = at + 1; }
   out[at] = scid.len() as@ u8; at = at + 1;
   for (i32 i = 0; i < scid.len(); i++) { out[at] = scid[i] as@ u8; at = at + 1; }
-  for (i32 i = 0; i < versions.len(); i++) {
-    out[at] = ((versions[i] >> 24) & 255) as@ u8; at = at + 1;
-    out[at] = ((versions[i] >> 16) & 255) as@ u8; at = at + 1;
-    out[at] = ((versions[i] >> 8) & 255) as@ u8; at = at + 1;
-    out[at] = (versions[i] & 255) as@ u8; at = at + 1;
+  for (i32 version in versions) {
+    out[at] = ((version >> 24) & 255) as@ u8; at = at + 1;
+    out[at] = ((version >> 16) & 255) as@ u8; at = at + 1;
+    out[at] = ((version >> 8) & 255) as@ u8; at = at + 1;
+    out[at] = (version & 255) as@ u8; at = at + 1;
   }
   return out;
 }

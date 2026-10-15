@@ -476,8 +476,8 @@ bool sameName(const u8[] a, u8[] b) {
 /** Whether any index entry lives under `dir` — which decides whether git collapses it. */
 bool anyTrackedUnder(const Vec<IndexEntry> entries, string dir) {
   string with = "\{dir}/";
-  for (i32 i = 0; i < entries.len(); i++) {
-    (const IndexEntry) e = entries.get(i);
+  for (IndexEntry entry in entries) {
+    (const IndexEntry) e = entry;
     if (e.stage != 0) { continue; }
     if (e.path.len() > with.len() && e.path.slice(0, with.len()) == with) { return true; }
   }
@@ -486,8 +486,8 @@ bool anyTrackedUnder(const Vec<IndexEntry> entries, string dir) {
 
 /** Whether `path` is one of the index's own entries. */
 bool tracked(const Vec<IndexEntry> entries, string path) {
-  for (i32 i = 0; i < entries.len(); i++) {
-    if (entries.get(i).stage == 0 && entries.get(i).path == path) { return true; }
+  for (IndexEntry entry in entries) {
+    if (entry.stage == 0 && entry.path == path) { return true; }
   }
   return false;
 }
@@ -891,8 +891,7 @@ export Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> i
   // *listing* first makes both come out in order by construction.
   Vec<string> kept = Vec.create();
   Vec<bool> dirs = Vec.create();
-  for (i32 i = 0; i < names.len(); i++) {
-    string n = names[i];
+  for (string n in names) {
     if (n == ".git" || n == "." || n == "..") { continue; }
     Stat st = r.fs.stat("\{dir}/\{n}");
     if (!st.isDir && !st.isFile) { continue; }

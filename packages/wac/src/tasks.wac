@@ -77,15 +77,15 @@ export Task[] tasksIn(u8[] src) {
 
 /** The command for `name`, or "" — the caller distinguishes "no such task" from "empty command". */
 export string commandOf(Task[] tasks, string name) {
-  for (i32 i = 0; i < tasks.len(); i++) {
-    if (tasks[i].name == name) { return tasks[i].command; }
+  for (Task task in tasks) {
+    if (task.name == name) { return task.command; }
   }
   return "";
 }
 
 /** Whether `name` is one of them, which "" cannot answer. */
 export bool hasTask(Task[] tasks, string name) {
-  for (i32 i = 0; i < tasks.len(); i++) { if (tasks[i].name == name) { return true; } }
+  for (Task task in tasks) { if (task.name == name) { return true; } }
   return false;
 }
 
@@ -97,8 +97,8 @@ export bool hasTask(Task[] tasks, string name) {
  */
 export string listing(Task[] tasks) {
   i32 wide = 0;
-  for (i32 i = 0; i < tasks.len(); i++) {
-    if (tasks[i].name.len() > wide) { wide = tasks[i].name.len(); }
+  for (Task task in tasks) {
+    if (task.name.len() > wide) { wide = task.name.len(); }
   }
   string out = "";
   for (i32 i = 0; i < tasks.len(); i++) {
@@ -117,8 +117,8 @@ export string listing(Task[] tasks) {
  * a prefix finds. Nothing here guesses at a typo.
  */
 export string nearest(Task[] tasks, string wanted) {
-  for (i32 i = 0; i < tasks.len(); i++) {
-    string n = tasks[i].name;
+  for (Task task in tasks) {
+    string n = task.name;
     if (n.len() > wanted.len() && n.slice(0, wanted.len()) == wanted) { return n; }
   }
   return "";

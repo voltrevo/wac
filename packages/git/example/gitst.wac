@@ -66,7 +66,7 @@ export i32 main(Sys sys) {
     }
     Opened(repo): {
       Vec<string> lines = statusOf(repo, excludesFileOf(core, cli, fs, "\{root}/.git"));
-      for (i32 i = 0; i < lines.len(); i++) { core.log(lines.get(i)); }
+      for (string line in lines) { core.log(line); }
       return 0;
     }
   }

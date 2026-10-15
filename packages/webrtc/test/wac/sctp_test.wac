@@ -384,7 +384,7 @@ export string test_three_sacks_reporting_a_tsn_missing_resend_it() {
   T t = T.create();
   Association a = newAssociation(0x11111111, 1, 65536);
   string[] bodies = ["one", "two", "three", "four", "five"];
-  for (i32 i = 0; i < bodies.len(); i++) { a.send(0, 51, bodies[i].toBytes(), 0); }
+  for (string body in bodies) { a.send(0, 51, body.toBytes(), 0); }
   t.eqI32(a.inFlight(), 5, "five sent");
 
   // The peer got 1, lost 2, and has 3, 4, 5: cumulative 1, one gap block at +2..+4.

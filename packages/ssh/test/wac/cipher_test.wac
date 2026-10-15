@@ -34,8 +34,8 @@ export string test_sealing_and_opening_round_trips_and_the_padding_rule_is_the_a
   u8[] key = ramp(64, 7, 1);
   i32 block = 8;
   i32[] sizes = [0, 1, 5, 6, 7, 8, 9, 100, 1000];
-  for (i32 i = 0; i < sizes.len(); i++) {
-    i32 n = sizes[i];
+  for (i32 size in sizes) {
+    i32 n = size;
     string of = "payload \{n}";
     // The AEAD rule excludes the 4-byte length from the alignment, unlike RFC 4253's.
     i32 pad = aeadPaddingFor(n, block);

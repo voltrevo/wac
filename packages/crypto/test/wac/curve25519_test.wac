@@ -173,10 +173,10 @@ export string test_ed25519_rejects_what_it_should(Core core, Cli cli) {
   // this implementation's opinion. Its verdicts are claimed here the same way its signatures are.
   Lines lines = Lines.create();
   lines.add("edverify \{hex(pub)} \{hex(sig)} \{hex(msg)} 1");
-  for (i32 i = 0; i < spots.len(); i++) {
+  for (i32 spot in spots) {
     u8[] bad = u8[].filled(64, 0);
     for (i32 j = 0; j < 64; j++) { bad[j] = sig[j]; }
-    bad[spots[i]] = bad[spots[i]] ^ 1;
+    bad[spot] = bad[spot] ^ 1;
     lines.add("edverify \{hex(pub)} \{hex(bad)} \{hex(msg)} 0");
   }
   lines.add("edverify \{hex(pub)} \{hex(sig)} \{hex(otherMsg)} 0");

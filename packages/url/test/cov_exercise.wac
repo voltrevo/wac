@@ -151,8 +151,8 @@ export i32 main(Sys sys) {
     "?", "#", "http://absolute.example/x", "//h", "\\d", "a:b", ".", "..", "#a#b"
   ];
   for (i32 i = 0; i < bases.len(); i++) {
-    for (i32 j = 0; j < refs.len(); j++) {
-      seen = seen + parseWithBase(refs[j].toBytes(), bases[i].toBytes()).len();
+    for (string ref in refs) {
+      seen = seen + parseWithBase(ref.toBytes(), bases[i].toBytes()).len();
     }
   }
 
@@ -206,12 +206,12 @@ export i32 main(Sys sys) {
                      SET_USERINFO(), SET_COMPONENT()
   ];
   for (i32 c = 0; c < 128; c++) {
-    for (i32 s = 0; s < sets.len(); s++) { if (inEncodeSet(c, sets[s])) { seen = seen + 1; } }
+    for (i32 set in sets) { if (inEncodeSet(c, set)) { seen = seen + 1; } }
   }
   string[] enc = ["%41", "a&b+c,d$e", "a'b", "", "a b", "é", "日", "/a/b", "a%zz"];
   for (i32 i = 0; i < enc.len(); i++) {
-    for (i32 s = 0; s < sets.len(); s++) {
-      seen = seen + encode(enc[i].toBytes(), sets[s]).len();
+    for (i32 set in sets) {
+      seen = seen + encode(enc[i].toBytes(), set).len();
     }
     seen = seen + decode(enc[i].toBytes()).len();
   }
@@ -224,16 +224,16 @@ export i32 main(Sys sys) {
     "1:2:3:4:5:6:7:8", "1:0:3:4:5:6:7:8", "::ffff:127.0.0.1", "1::8", "1:2:3:4:5:6:1.2.3.4",
     "1:2:3:4:5:6:7:8:9", "1::2::3", "", ":", "z::1"
   ];
-  for (i32 i = 0; i < sixes.len(); i++) {
-    Host? h = parseIpv6(sixes[i].toBytes());
+  for (string six in sixes) {
+    Host? h = parseIpv6(six.toBytes());
     if (!(h is null)) { seen = seen + hostLen(h!); }
   }
   string[] fours = [
     "127.1", "0x7f.1", "2130706433", "0.0.0.0", "255.255.255.255", "1.2.3.4", "256.1.1.1",
     "1.2.3.4.5", "0177.0.0.1", "0x", "", "1.2.3.09"
   ];
-  for (i32 i = 0; i < fours.len(); i++) {
-    Host? h = parseIpv4(fours[i].toBytes());
+  for (string four in fours) {
+    Host? h = parseIpv4(four.toBytes());
     if (!(h is null)) { seen = seen + hostLen(h!); }
   }
   string[] numish = ["1.2.3.4", "a.1", "1.2.3.4.", "a.0x1f", "a.0177", "example.com", "1.2.3.4a", ""];

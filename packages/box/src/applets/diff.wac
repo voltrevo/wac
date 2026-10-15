@@ -46,7 +46,7 @@ export i32 diff(Core core, Cli cli, Fs fs, Args a) {
   // read off the LCS table from the front.
   i32[] ops = script(old, new);
   bool same = true;
-  for (i32 i = 0; i < ops.len(); i++) { if (ops[i] != 0) { same = false; } }
+  for (i32 op in ops) { if (op != 0) { same = false; } }
 
   // Whether each side ends with its terminator, which `splitLines` deliberately drops: it returns
   // line *contents*, so "x\ny\n" and "x\ny" give identical lists. Two files differing only there

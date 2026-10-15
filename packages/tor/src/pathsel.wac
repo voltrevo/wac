@@ -98,9 +98,9 @@ export i64[] weightedBandwidths(Relay[] relays, i32 position, i64[] weights) {
  */
 export i32 weightedChoice(i64[] weights, i64 r) {
   i64 total = 0;
-  for (i32 i = 0; i < weights.len(); i++) {
-    if (weights[i] < 0) { trap; }
-    total += weights[i];
+  for (i64 weight in weights) {
+    if (weight < 0) { trap; }
+    total += weight;
   }
   if (total == 0) { return -1; }
   i64 pick = r % total;

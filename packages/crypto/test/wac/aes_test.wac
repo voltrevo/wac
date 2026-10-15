@@ -84,9 +84,9 @@ export string test_the_block_agrees_with_the_host(Core core, Cli cli) {
   T t = T.create();
   Lines lines = Lines.create();
   i32[] keySizes = [16, 24, 32];
-  for (i32 k = 0; k < keySizes.len(); k++) {
+  for (i32 keySize in keySizes) {
     for (i32 i = 0; i < 8; i++) {
-      u8[] key = fill(keySizes[k], 7 + i, 3);
+      u8[] key = fill(keySize, 7 + i, 3);
       u8[] block = fill(16, 11 + i, 5);
       u8[] got = aesEncrypt(key, block);
       lines.add("ecb \{hex(key)} \{hex(block)} \{hex(got)}");
@@ -103,8 +103,8 @@ export string test_ctr_agrees_and_the_counter_carries(Core core, Cli cli) {
   Lines lines = Lines.create();
   i32[] keySizes = [16, 24, 32];
   i32[] lens = [0, 1, 15, 16, 17, 31, 32, 33, 200];
-  for (i32 k = 0; k < keySizes.len(); k++) {
-    u8[] key = fill(keySizes[k], 5, 1);
+  for (i32 keySize in keySizes) {
+    u8[] key = fill(keySize, 5, 1);
     u8[] iv = fill(16, 3, 9);
     for (i32 li = 0; li < lens.len(); li++) {
       u8[] data = fill(lens[li], 13, 2);
@@ -142,12 +142,12 @@ export string test_gcm_agrees_including_the_short_nonce_path(Core core, Cli cli)
   i32[] plainLens = [0, 1, 16, 17, 64];
   i32[] aadLens = [0, 1, 16, 20];
   u8[] key = fill(16, 9, 1);
-  for (i32 v = 0; v < ivLens.len(); v++) {
-    for (i32 p = 0; p < plainLens.len(); p++) {
-      for (i32 a = 0; a < aadLens.len(); a++) {
-        u8[] iv = fill(ivLens[v], 3, 7);
-        u8[] plain = fill(plainLens[p], 5, 11);
-        u8[] aad = fill(aadLens[a], 7, 13);
+  for (i32 ivLen in ivLens) {
+    for (i32 plainLen in plainLens) {
+      for (i32 aadLen in aadLens) {
+        u8[] iv = fill(ivLen, 3, 7);
+        u8[] plain = fill(plainLen, 5, 11);
+        u8[] aad = fill(aadLen, 7, 13);
         u8[] ct = gcmEncrypt(key, iv, plain);
         u8[] tag = gcmTag(key, iv, aad, ct);
         lines.add("gcm \{hex(key)} \{hex(iv)} \{hex(aad)} \{hex(plain)} " +
@@ -206,8 +206,7 @@ export string test_a_ctr_stream_in_pieces_matches_the_one_shot() {
   // Chunk sizes that are not multiples of the 16-byte block, because that is the case a
   // stream keeping only a counter gets wrong. 509 is Tor's, and the reason this exists.
   i32[] sizes = [1, 3, 15, 16, 17, 31, 33, 64, 100, 509];
-  for (i32 s = 0; s < sizes.len(); s++) {
-    i32 chunk = sizes[s];
+  for (i32 chunk in sizes) {
     CtrStream cs = CtrStream.create(key, iv);
     u8[] got = u8[].filled(1000, 0);
     i32 pos = 0;

@@ -265,7 +265,7 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
 /** A pkt-line, built here so the two report tests can write a reply by hand. */
 u8[] reply(string[] lines) {
   Buf out = Buf.create();
-  for (i32 i = 0; i < lines.len(); i++) { out.pushAll(writeText(lines[i])); }
+  for (string line in lines) { out.pushAll(writeText(line)); }
   out.pushAll("0000".toBytes());
   return out.take();
 }

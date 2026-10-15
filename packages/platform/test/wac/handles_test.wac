@@ -65,9 +65,9 @@ i32 digitsAt(string s, i32 from) {
 i32 declared(string src, string prefix, string name, string mid) {
   string want = prefix + name + mid;
   string[] lines = splitLines(src);
-  for (i32 i = 0; i < lines.len(); i++) {
-    if (!startsWith(lines[i], want)) { continue; }
-    return digitsAt(lines[i], want.len());
+  for (string line in lines) {
+    if (!startsWith(line, want)) { continue; }
+    return digitsAt(line, want.len());
   }
   return -1;
 }

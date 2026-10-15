@@ -136,9 +136,9 @@ Reader reader(T t, Cli cli, string dir) {
   string stem = "";
   if (!(listing is null)) {
     string[] names = listing!;
-    for (i32 i = 0; i < names.len(); i++) {
-      i32 n = names[i].len();
-      if (n > 4 && names[i].slice(n - 4, n) == ".idx") { stem = names[i].slice(0, n - 4); }
+    for (string name in names) {
+      i32 n = name.len();
+      if (n > 4 && name.slice(n - 4, n) == ".idx") { stem = name.slice(0, n - 4); }
     }
   }
   t.isTrue(stem != "", "the fixture has a pack, so `git gc` ran");

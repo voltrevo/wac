@@ -303,28 +303,28 @@ export i32 main(Sys sys) {
                            decOf(a1, magsAt + 1)
   ];
   i32[] shifts = [0, 1, 31, 32, 33, 96, 200, 500, -1, -32, -70];
-  for (i32 i = 0; i < mags.len(); i++) {
-    if (mags[i] == "") { continue; }
-    string[] signed = [mags[i], neg(mags[i])];
+  for (string mag in mags) {
+    if (mag == "") { continue; }
+    string[] signed = [mag, neg(mag)];
     for (i32 s = 0; s < signed.len(); s++) {
       u8[] b = signed[s].toBytes();
-      for (i32 k = 0; k < shifts.len(); k++) {
-        seen = seen + opShl(b, shifts[k]).len() + opShr(b, shifts[k]).len();
+      for (i32 shift in shifts) {
+        seen = seen + opShl(b, shift).len() + opShr(b, shift).len();
       }
     }
   }
 
   string[] smallMags = ["0", "1", decOf(a1, magsAt + 3)];
   i32[] smalls = [0, 1, 2, 10, 1000000000, -1, -2];
-  for (i32 i = 0; i < smallMags.len(); i++) {
-    if (smallMags[i] == "") { continue; }
-    string[] signed = [smallMags[i], neg(smallMags[i])];
+  for (string smallMag in smallMags) {
+    if (smallMag == "") { continue; }
+    string[] signed = [smallMag, neg(smallMag)];
     for (i32 s = 0; s < signed.len(); s++) {
       u8[] b = signed[s].toBytes();
-      for (i32 m = 0; m < smalls.len(); m++) {
-        seen = seen + opMulSmall(b, smalls[m]).len();
-        if (smalls[m] != 0) {
-          seen = seen + opDivSmall(b, smalls[m]).len() + opRemSmall(b, smalls[m]);
+      for (i32 small in smalls) {
+        seen = seen + opMulSmall(b, small).len();
+        if (small != 0) {
+          seen = seen + opDivSmall(b, small).len() + opRemSmall(b, small);
         }
       }
     }
@@ -353,12 +353,12 @@ export i32 main(Sys sys) {
     "0", "-0", "+0", "007", "-12345", forty,
     "", "-", "+", "abc", "1.5", "1e5", " 1", "1,000", "1x", "\{nines}x", "\{eighteen}x"
   ];
-  for (i32 i = 0; i < decs.len(); i++) {
-    if (acceptsDecimal(decs[i].toBytes())) { seen = seen + 1; }
+  for (string dec in decs) {
+    if (acceptsDecimal(dec.toBytes())) { seen = seen + 1; }
   }
   string[] hexes = ["0", "ff", "FF", "0xff", "0XFF", "-0xff", "", "-", "0x", "g", "0xg"];
-  for (i32 i = 0; i < hexes.len(); i++) {
-    if (acceptsHex(hexes[i].toBytes())) { seen = seen + 1; }
+  for (string hex in hexes) {
+    if (acceptsHex(hex.toBytes())) { seen = seen + 1; }
   }
   string twentyF = "";
   for (i32 i = 0; i < 20; i++) { twentyF = twentyF + "f"; }
@@ -373,8 +373,8 @@ export i32 main(Sys sys) {
 
   // The round-trip export.
   string[] trips = ["0", "-1", decOf(a1, magsAt + 2)];
-  for (i32 i = 0; i < trips.len(); i++) {
-    if (trips[i] != "") { seen = seen + roundTrip(trips[i].toBytes()).len(); }
+  for (string trip in trips) {
+    if (trip != "") { seen = seen + roundTrip(trip.toBytes()).len(); }
   }
 
 

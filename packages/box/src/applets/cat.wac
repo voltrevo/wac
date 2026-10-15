@@ -25,9 +25,9 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
   // Every letter GNU has, so an unknown one is the caller's mistake and gets GNU's own sentence. `-u` is
   // accepted and does nothing there too — it means "unbuffered", and this is.
   u8[] flags = a.flags.toBytes();
-  for (i32 i = 0; i < flags.len(); i++) {
-    if (!known(flags[i] as i32)) {
-      u8[] one = u8[].filled(1, flags[i]);
+  for (u8 flag in flags) {
+    if (!known(flag as i32)) {
+      u8[] one = u8[].filled(1, flag);
       core.warn("\{a.name}: invalid option -- '\{string.fromBytes(one)}'");
       core.warn("Try '\{a.name} --help' for more information.");
       return 1;

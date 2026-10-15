@@ -511,13 +511,13 @@ string[] namesInRepo(T t, Cli cli, Git g) {
 
   string[] lines = splitOn(g.text(["verify-pack", "-v", "\{pd}/\{stem}.idx"]), "\n");
   i32 count = 0;
-  for (i32 i = 0; i < lines.len(); i++) {
-    if (splitOn(lines[i], " ")[0].len() == 40) { count = count + 1; }
+  for (string line in lines) {
+    if (splitOn(line, " ")[0].len() == 40) { count = count + 1; }
   }
   string[] out = string[].filled(count, "");
   i32 at = 0;
-  for (i32 i = 0; i < lines.len(); i++) {
-    string first = splitOn(lines[i], " ")[0];
+  for (string line in lines) {
+    string first = splitOn(line, " ")[0];
     if (first.len() != 40) { continue; }
     out[at] = first;
     at = at + 1;

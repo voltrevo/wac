@@ -79,8 +79,8 @@ export void writePercent(Buf out, i32 b) {
 
 /** Append `bytes`, percent-encoding whatever `set` requires and passing the rest through. */
 export void encodeInto(Buf out, u8[] bytes, i32 set) {
-  for (i32 i = 0; i < bytes.len(); i++) {
-    i32 c = bytes[i] as i32;
+  for (u8 b in bytes) {
+    i32 c = b as i32;
     if (inEncodeSet(c, set)) {
       writePercent(out, c);
     } else {

@@ -233,9 +233,9 @@ export u8[] voteDocument(
 
 /** The opinion whose descriptor produced `line`, matched by the line's identity field. */
 RelayOpinion opinionFor(RelayOpinion[] relays, u8[] line) {
-  for (i32 i = 0; i < relays.len(); i++) {
-    u8[] want = routerStatusLine(relays[i].descriptor);
-    if (want.len() == line.len() && sameLine(want, line)) { return relays[i]; }
+  for (RelayOpinion relay in relays) {
+    u8[] want = routerStatusLine(relay.descriptor);
+    if (want.len() == line.len() && sameLine(want, line)) { return relay; }
   }
   return relays[0];
 }

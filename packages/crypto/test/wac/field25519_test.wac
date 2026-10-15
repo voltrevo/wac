@@ -142,8 +142,7 @@ export string test_the_small_multiply_matches_repeated_addition() {
   i64[] multipliers = [1, 2, 3, 4, 8, 19, 121665, 121666];
   for (i32 i = 0; i < 12; i++) {
     i64[] a = r.elem();
-    for (i32 m = 0; m < multipliers.len(); m++) {
-      i64 k = multipliers[m];
+    for (i64 k in multipliers) {
       i64[] want = feZero();
       for (i64 n = 0; n < k; n++) { want = feAdd(want, a); }
       t.isTrue(eq(feMulSmall(a, k), want),

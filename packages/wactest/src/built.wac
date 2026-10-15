@@ -181,8 +181,8 @@ export Closure closureOf(const Cli cli, string entry) {
     FileResult f = cli.readFile(path).wait();
     if (!f.ok) { return Closure(newest, what, files, false); }
     string[] specs = importsOf(string.fromBytes(f.bytes));
-    for (i32 i = 0; i < specs.len(); i++) {
-      string next = resolvedFrom(path, specs[i]);
+    for (string spec in specs) {
+      string next = resolvedFrom(path, spec);
       if (next == "") { continue; }
       bool have = false;
       for (i32 k = 0; k < n; k++) { if (seen[k] == next) { have = true; } }
@@ -242,8 +242,8 @@ export Sources sourcesOf(Cli cli, string entry) {
     text[kept] = src;
     kept = kept + 1;
     string[] specs = importsOf(src);
-    for (i32 i = 0; i < specs.len(); i++) {
-      string next = resolvedFrom(path, specs[i]);
+    for (string spec in specs) {
+      string next = resolvedFrom(path, spec);
       if (next == "") { continue; }
       bool have = false;
       for (i32 k = 0; k < n; k++) { if (seen[k] == next) { have = true; } }

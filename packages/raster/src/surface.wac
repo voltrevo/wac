@@ -223,7 +223,7 @@ export struct Surface {
    */
   i32 text(this, i32[] cps, i32 x, i32 y, i32 rgba) {
     i32 at = x;
-    for (i32 i = 0; i < cps.len(); i++) { at = at + this.glyph(cps[i], at, y, rgba); }
+    for (i32 cp in cps) { at = at + this.glyph(cp, at, y, rgba); }
     return at;
   }
 }

@@ -251,8 +251,8 @@ export i32[] hsdirsForDescriptor(
 /** The indices of relays that can be placed on the ring: `HSDir` flagged, with an ed25519 identity. */
 export i32[] hsdirCandidates(Relay[] relays) {
   i32 n = 0;
-  for (i32 i = 0; i < relays.len(); i++) {
-    if (isHsdir(relays[i])) { n = n + 1; }
+  for (Relay relay in relays) {
+    if (isHsdir(relay)) { n = n + 1; }
   }
   i32[] out = i32[].filled(n, 0);
   i32 at = 0;

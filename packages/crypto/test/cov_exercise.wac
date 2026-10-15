@@ -480,11 +480,11 @@ i32 probes(Core core, Cli cli) {
   }
   // The partial-block arm of each streaming hash, which no one-shot can take.
   i32[] streamLens = [1, 63, 64, 65, 200];
-  for (i32 i = 0; i < streamLens.len(); i++) {
-    sha256Streamed(bytes(streamLens[i], 0), 1);
-    sha256Streamed(bytes(streamLens[i], 0), 7);
-    sha512Streamed(bytes(streamLens[i], 0), 1);
-    sha512Streamed(bytes(streamLens[i], 0), 7);
+  for (i32 streamLen in streamLens) {
+    sha256Streamed(bytes(streamLen, 0), 1);
+    sha256Streamed(bytes(streamLen, 0), 7);
+    sha512Streamed(bytes(streamLen, 0), 1);
+    sha512Streamed(bytes(streamLen, 0), 7);
   }
 
   // **`CtrStream`, 6 points short.** Tor's resumable keystream: 509 is a cell payload, which is the
@@ -495,10 +495,10 @@ i32 probes(Core core, Cli cli) {
   i32[] ctrLens = [0, 1, 15, 16, 17, 509, 1024];
   i32[] cuts = [1, 5, 16, 509];
   i32[] ats = [0, 1, 11, 16];
-  for (i32 i = 0; i < ctrLens.len(); i++) {
-    for (i32 k = 0; k < cuts.len(); k++) { ctrStreamed(key, iv, bytes(ctrLens[i], 0), cuts[k]); }
-    for (i32 k = 0; k < ats.len(); k++) {
-      if (ats[k] <= ctrLens[i]) { ctrResumed(key, iv, bytes(ctrLens[i], 0), ats[k]); }
+  for (i32 ctrLen in ctrLens) {
+    for (i32 cut in cuts) { ctrStreamed(key, iv, bytes(ctrLen, 0), cut); }
+    for (i32 at in ats) {
+      if (at <= ctrLen) { ctrResumed(key, iv, bytes(ctrLen, 0), at); }
     }
   }
 
@@ -506,9 +506,9 @@ i32 probes(Core core, Cli cli) {
   // too, so `hmacSha1` shares the boundary.
   i32[] keyLens = [0, 1, 32, 63, 64, 65, 200];
   i32[] msgLens = [0, 1, 64, 150];
-  for (i32 i = 0; i < keyLens.len(); i++) {
-    for (i32 k = 0; k < msgLens.len(); k++) { hmac(bytes(keyLens[i], 1), bytes(msgLens[k], 2)); }
-    hmacSha1(bytes(keyLens[i], 0), bytes(keyLens[i], 0));
+  for (i32 keyLen in keyLens) {
+    for (i32 msgLen in msgLens) { hmac(bytes(keyLen, 1), bytes(msgLen, 2)); }
+    hmacSha1(bytes(keyLen, 0), bytes(keyLen, 0));
   }
 
   // Equal, differing, and differing in length — the third returns early, and that is deliberate.
@@ -527,12 +527,12 @@ i32 probes(Core core, Cli cli) {
   // which `traps_test.wac` is where.
   hkdfExtract(u8[](), bytes(22, 3));
   i32[] outLens = [1, 31, 32, 33, 42, 64, 82, 255 * 32];
-  for (i32 i = 0; i < outLens.len(); i++) { hkdf(bytes(13, 4), bytes(22, 5), bytes(10, 6), outLens[i]); }
+  for (i32 outLen in outLens) { hkdf(bytes(13, 4), bytes(22, 5), bytes(10, 6), outLen); }
   hkdf(u8[](), bytes(22, 7), u8[](), 42);
 
   // ChaCha20: the counter's low word, and messages that do and do not fill a block.
   u32[] ctrs = [0 as~ u32, 1 as~ u32, 0xFFFFFFFF as~ u32];
-  for (i32 i = 0; i < ctrs.len(); i++) { chachaBlock(bytes(32, 8), ctrs[i], bytes(12, 9)); }
+  for (u32 ctr in ctrs) { chachaBlock(bytes(32, 8), ctr, bytes(12, 9)); }
   i32[] msgN = [0, 1, 63, 64, 65, 127, 128, 375];
   for (i32 i = 0; i < msgN.len(); i++) {
     chacha20(bytes(32, 10), 1 as~ u32, bytes(12, 11), bytes(msgN[i], 0));
@@ -545,22 +545,22 @@ i32 probes(Core core, Cli cli) {
   // ChaCha20-Poly1305: AAD and ciphertext each padded to 16 independently.
   i32[] aadLens = [0, 1, 15, 16, 17, 20];
   i32[] ptLens = [0, 1, 15, 16, 17, 114];
-  for (i32 i = 0; i < aadLens.len(); i++) {
-    for (i32 k = 0; k < ptLens.len(); k++) {
-      u8[] ct = aeadEncrypt(bytes(32, 14), bytes(12, 15), bytes(ptLens[k], 16));
-      u8[] tag = aeadTag(bytes(32, 14), bytes(12, 15), bytes(aadLens[i], 17), ct);
-      aeadDecrypt(bytes(32, 14), bytes(12, 15), bytes(aadLens[i], 17), ct, tag);
+  for (i32 aadLen in aadLens) {
+    for (i32 ptLen in ptLens) {
+      u8[] ct = aeadEncrypt(bytes(32, 14), bytes(12, 15), bytes(ptLen, 16));
+      u8[] tag = aeadTag(bytes(32, 14), bytes(12, 15), bytes(aadLen, 17), ct);
+      aeadDecrypt(bytes(32, 14), bytes(12, 15), bytes(aadLen, 17), ct, tag);
     }
   }
 
   // AES: all three key sizes, both directions, since the round count differs.
   i32[] aesKeys = [16, 24, 32];
   i32[] ctrN = [0, 1, 15, 16, 17, 64, 100];
-  for (i32 i = 0; i < aesKeys.len(); i++) {
-    aesEncrypt(bytes(aesKeys[i], 18), bytes(16, 19));
-    aesDecrypt(bytes(aesKeys[i], 18), bytes(16, 19));
+  for (i32 aesKey in aesKeys) {
+    aesEncrypt(bytes(aesKey, 18), bytes(16, 19));
+    aesDecrypt(bytes(aesKey, 18), bytes(16, 19));
     for (i32 k = 0; k < ctrN.len(); k++) {
-      aesCtr(bytes(aesKeys[i], 18), bytes(16, 20), bytes(ctrN[k], 21));
+      aesCtr(bytes(aesKey, 18), bytes(16, 20), bytes(ctrN[k], 21));
     }
   }
 
@@ -578,12 +578,12 @@ i32 probes(Core core, Cli cli) {
   i32[] ivLens = [8, 12, 16, 60];
   i32[] gcmAad = [0, 16, 20];
   i32[] gcmPt = [0, 1, 15, 16, 60];
-  for (i32 i = 0; i < ivLens.len(); i++) {
+  for (i32 ivLen in ivLens) {
     for (i32 k = 0; k < gcmAad.len(); k++) {
       for (i32 q = 0; q < gcmPt.len(); q++) {
-        u8[] ct = gcmEncrypt(bytes(16, 24), bytes(ivLens[i], 25), bytes(gcmPt[q], 26));
-        u8[] tag = gcmTag(bytes(16, 24), bytes(ivLens[i], 25), bytes(gcmAad[k], 27), ct);
-        gcmDecrypt(bytes(16, 24), bytes(ivLens[i], 25), bytes(gcmAad[k], 27), ct, tag);
+        u8[] ct = gcmEncrypt(bytes(16, 24), bytes(ivLen, 25), bytes(gcmPt[q], 26));
+        u8[] tag = gcmTag(bytes(16, 24), bytes(ivLen, 25), bytes(gcmAad[k], 27), ct);
+        gcmDecrypt(bytes(16, 24), bytes(ivLen, 25), bytes(gcmAad[k], 27), ct, tag);
       }
     }
   }
@@ -602,12 +602,12 @@ i32 probes(Core core, Cli cli) {
     beWord64(bytes(16, 29), off);
   }
   u32[] words = [0 as~ u32, 1 as~ u32, 0x80000000 as~ u32, 0xFFFFFFFF as~ u32];
-  for (i32 i = 0; i < words.len(); i++) {
-    storeLE32(words[i]);
-    storeBE32(words[i]);
+  for (u32 word in words) {
+    storeLE32(word);
+    storeBE32(word);
   }
   u64[] longs = [0 as~ u64, 1 as~ u64, (1 as i64 << (63 as i64)) as~ u64, (0 - 1) as~ u64];
-  for (i32 i = 0; i < longs.len(); i++) { storeBE64(longs[i]); }
+  for (u64 long in longs) { storeBE64(long); }
   for (i32 n = 0; n <= 32; n++) { padTo16(n); }
 
   return curves(core, cli);
@@ -683,8 +683,8 @@ i32 curves(Core core, Cli cli) {
   u8[] seed = bytes(32, 50);
   u8[] pub = edPublicKey(seed);
   i32[] msgLens = [0, 1, 64];
-  for (i32 i = 0; i < msgLens.len(); i++) {
-    u8[] msg = bytes(msgLens[i], 51);
+  for (i32 msgLen in msgLens) {
+    u8[] msg = bytes(msgLen, 51);
     u8[] sig = edSign(seed, msg);
     edVerify(pub, msg, sig);
     u8[] tampered = u8[].filled(sig.len(), 0);
@@ -905,10 +905,10 @@ i32 nist(Core core, Cli cli) {
   modulus[0] = 0xC0;
   for (i32 i = 1; i < 256; i++) { modulus[i] = ((i * 7 + 3) & 255) as@ u8; }
   i32[] hashLens = [32, 48, 64];
-  for (i32 i = 0; i < hashLens.len(); i++) {
-    verifyPkcs1(modulus, e, rsaMsg, u8[].filled(10, 0), hashLens[i]);      // a signature of the wrong length
-    verifyPkcs1(u8[].filled(256, 0), e, rsaMsg, u8[].filled(256, 0), hashLens[i]);   // a modulus of zero
-    verifyPkcs1(modulus, e, rsaMsg, modulus, hashLens[i]);       // s = n, so s >= n
+  for (i32 hashLen in hashLens) {
+    verifyPkcs1(modulus, e, rsaMsg, u8[].filled(10, 0), hashLen);      // a signature of the wrong length
+    verifyPkcs1(u8[].filled(256, 0), e, rsaMsg, u8[].filled(256, 0), hashLen);   // a modulus of zero
+    verifyPkcs1(modulus, e, rsaMsg, modulus, hashLen);       // s = n, so s >= n
   }
   // **A modulus too small to hold the padding at all**: 64 bytes cannot carry a SHA-512 DigestInfo plus
   // eight padding bytes, so the length check fires before any work.
@@ -945,8 +945,8 @@ i32 nist(Core core, Cli cli) {
   // interleaved placement's final stride overruns and the loop has to stop early. `packages/ssh` asks
   // for 48 — a 32-byte key and a 16-byte IV — and nothing here had asked for anything but 32.
   i32[] keyLens = [1, 31, 33, 48, 63, 64, 65];
-  for (i32 i = 0; i < keyLens.len(); i++) {
-    bcryptPbkdf(bytes(8, 92), bytes(16, 93), keyLens[i], 2);
+  for (i32 keyLen in keyLens) {
+    bcryptPbkdf(bytes(8, 92), bytes(16, 93), keyLen, 2);
   }
   return 0;
 }

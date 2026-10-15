@@ -358,8 +358,8 @@ export i32 main(Sys sys) {
         return 1;
       }
       string[] rows = linesOf(string.fromBytes(r.stdout));
-      for (i32 i = 0; i < rows.len(); i++) {
-        if (startsWith(rows[i], "split ")) {
+      for (string row in rows) {
+        if (startsWith(row, "split ")) {
           stopped = true;
           // **Named, but as what it is.** A split is where *this* run happened to be when the two
           // stopped agreeing; the other was somewhere else, and the point itself need not depend on
@@ -368,13 +368,13 @@ export i32 main(Sys sys) {
           // that a reader wants it; the wording is what keeps it honest.
           if (splitAt == "") {
             // `split <event> <siteA> <siteB>` — the site is the third field, not the second.
-            Site sp = siteOf(cli, base, numberOf(word(rows[i], 2)));
+            Site sp = siteOf(cli, base, numberOf(word(row, 2)));
             if (sp.ok) { splitAt = sp.at; }
           }
           continue;
         }
-        if (!startsWith(rows[i], "site ")) { continue; }
-        Site st = siteOf(cli, base, numberOf(word(rows[i], 2)));
+        if (!startsWith(row, "site ")) { continue; }
+        Site st = siteOf(cli, base, numberOf(word(row, 2)));
         if (!st.ok) { continue; }
         if (!listed(sites, nSites, st.at) && nSites < 64) {
           sites[nSites] = st.at;

@@ -584,8 +584,8 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
 
 /** Every relay stopped, whatever the case decided, then the report. */
 string stopAll(T t, Cli cli, Daemon[] relays) {
-  for (i32 i = 0; i < relays.len(); i++) {
-    if (relays[i].ok()) { stop(cli, relays[i]); }
+  for (Daemon relay in relays) {
+    if (relay.ok()) { stop(cli, relay); }
   }
   return t.report();
 }

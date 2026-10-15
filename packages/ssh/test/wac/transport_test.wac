@@ -158,8 +158,7 @@ export string test_a_framed_packet_unframes_to_what_went_in() {
   T t = T.create();
   i32 block = minBlock();
   i32[] sizes = [0, 1, 7, 8, 9, 100, 1000];
-  for (i32 i = 0; i < sizes.len(); i++) {
-    i32 n = sizes[i];
+  for (i32 n in sizes) {
     u8[] payload = ramp(n, 31, 0);
     u8[] random = ramp(paddingFor(n, block), 17, 3);
     u8[] packet = frame(payload, random, block);

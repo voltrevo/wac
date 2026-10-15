@@ -94,8 +94,8 @@ export string[] absolutePathsIn(string script) {
  */
 export bool reachesTheMachine(Cli cli, string script) {
   string[] paths = absolutePathsIn(script);
-  for (i32 i = 0; i < paths.len(); i++) {
-    Stat st = cli.stat(paths[i]).wait();
+  for (string path in paths) {
+    Stat st = cli.stat(path).wait();
     if (st.exists) { return true; }
   }
   return false;

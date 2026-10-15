@@ -359,8 +359,7 @@ void redraw(Page page, Vec<Win> wins) {
  * would put its own output in that terminal's scrollback and prove nothing about sharing.
  */
 void paint(Page page, Vec<Win> wins) {
-  for (i32 i = 0; i < wins.len(); i++) {
-    Win w = wins.get(i);
+  for (Win w in wins) {
     string id = "\{w.id}";
     if (w.kind == SHELL()) {
       page.setText("scr\{id}", w.sh.screen).wait();

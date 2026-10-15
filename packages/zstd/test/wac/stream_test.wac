@@ -188,8 +188,8 @@ export string test_frames_from_the_reference_encoder_which_are_not_the_shape_our
   // And the shapes really are different from ours, or this test is the previous one again.
   u8[] ours = compress("hello".toBytes());
   bool onlyOurs = true;
-  for (i32 i = 0; i < shapes.len(); i++) {
-    if (shapes[i] >= 0 && shapes[i] != ours[4] as i32) { onlyOurs = false; }
+  for (i32 shape in shapes) {
+    if (shape >= 0 && shape != ours[4] as i32) { onlyOurs = false; }
   }
   t.isFalse(onlyOurs,
             "the reference encoder emitted only the shape ours does — this test proves nothing");

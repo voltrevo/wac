@@ -78,12 +78,12 @@ export u8[] write(Entry[] entries) {
   Vec<i32> offsets = Vec.create();
   Vec<i32> crcs = Vec.create();
 
-  for (i32 i = 0; i < entries.len(); i++) {
+  for (Entry entry in entries) {
     offsets.push(out.len());
-    u8[] name = entries[i].name.toBytes();
+    u8[] name = entry.name.toBytes();
     // `as~` because a CRC uses the whole 32 bits and the top one is not a sign here — the value is
     // written back out as four bytes, so the bit pattern is what matters and not the number.
-    i32 c = crc32(entries[i].data) as~ i32;
+    i32 c = crc32(entry.data) as~ i32;
     crcs.push(c);
     put32(out, 0x04034b50);
     put16(out, 20);                 // version needed
@@ -92,12 +92,12 @@ export u8[] write(Entry[] entries) {
     put16(out, 0);                  // time
     put16(out, 0);                  // date
     put32(out, c);
-    put32(out, entries[i].data.len());
-    put32(out, entries[i].data.len());
+    put32(out, entry.data.len());
+    put32(out, entry.data.len());
     put16(out, name.len());
     put16(out, 0);                  // extra
     for (i32 k = 0; k < name.len(); k++) { out.push(name[k] as i32); }
-    for (i32 k = 0; k < entries[i].data.len(); k++) { out.push(entries[i].data[k] as i32); }
+    for (i32 k = 0; k < entry.data.len(); k++) { out.push(entry.data[k] as i32); }
   }
 
   i32 dirAt = out.len();

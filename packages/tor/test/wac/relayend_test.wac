@@ -150,8 +150,7 @@ export string test_no_failure_path_sends_done(Core core, Cli cli) {
   string src = string.fromBytes(f.bytes);
   string[] lines = splitLines(src);
   i32 calls = 0;
-  for (i32 i = 0; i < lines.len(); i++) {
-    string l = lines[i];
+  for (string l in lines) {
     // The definition and the docstring that names it are not call sites.
     if (contains(l, "u8[] endReason()") || contains(l, " * `endReason()`")) { continue; }
     if (contains(l, "endReason()")) { calls = calls + 1; }

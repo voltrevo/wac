@@ -173,8 +173,8 @@ u8[] update(Core core, Page page, u8[] bytes, string from) {
   // plainly and I assumed otherwise for one build — so comparing it with `bytes.len()` could
   // never differ. Code points are the bytes that are not UTF-8 continuations.
   i32 chars = 0;
-  for (i32 i = 0; i < bytes.len(); i++) {
-    if ((bytes[i] & 192) != 128) { chars = chars + 1; }
+  for (u8 b in bytes) {
+    if ((b & 192) != 128) { chars = chars + 1; }
   }
   page.setText("chars", chars == bytes.len() ? "" : "(\{chars} characters)").wait();
   page.setText("sha", string.fromBytes(hexBytes(digest))).wait();

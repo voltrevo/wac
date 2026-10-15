@@ -72,7 +72,7 @@ export string test_the_derivation_found_the_commands_it_must_find(Core core, Cli
   string[] must = ["check", "build", "run", "test", "update", "app", "validate", "sh"];
   for (i32 i = 0; i < must.len(); i++) {
     bool got = false;
-    for (i32 j = 0; j < cmds.len(); j++) { if (cmds[j] == must[i]) { got = true; } }
+    for (string cmd in cmds) { if (cmd == must[i]) { got = true; } }
     t.isTrue(got, "the derivation missed `\{must[i]}`, so its pattern no longer matches");
   }
   return t.report();

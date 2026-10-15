@@ -106,15 +106,15 @@ export string test_the_key_length_boundaries(Core core, Cli cli) {
   Lines lines = Lines.create();
   u8[] msg = "the message does not matter here".toBytes();
   i32[] keyLens = [0, 1, 32, 63, 64, 65, 100, 131, 200];
-  for (i32 i = 0; i < keyLens.len(); i++) {
-    u8[] key = fill(keyLens[i], 7, 3);
+  for (i32 keyLen in keyLens) {
+    u8[] key = fill(keyLen, 7, 3);
     claimHmac(lines, key, msg, hmacSha256(key, msg));
   }
   // And message lengths across the same boundary, since the message is hashed inside.
   u8[] key = fill(32, 11, 1);
   i32[] msgLens = [0, 1, 55, 56, 63, 64, 65, 119, 120, 200];
-  for (i32 i = 0; i < msgLens.len(); i++) {
-    u8[] m = fill(msgLens[i], 13, 5);
+  for (i32 msgLen in msgLens) {
+    u8[] m = fill(msgLen, 13, 5);
     claimHmac(lines, key, m, hmacSha256(key, m));
   }
   t.eqI32(lines.n, keyLens.len() + msgLens.len(), "one claim per boundary");

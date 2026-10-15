@@ -64,12 +64,12 @@ export i32 main(Sys sys) {
     string d = string.fromBytes(cli.arg(2).wait());
     depth = 0;
     u8[] digits = d.toBytes();
-    for (i32 i = 0; i < digits.len(); i++) {
-      if (digits[i] < '0' || digits[i] > '9') {
+    for (u8 digit in digits) {
+      if (digit < '0' || digit > '9') {
         core.warn("gitclone: \{d} is not a depth");
         return 2;
       }
-      depth = depth * 10 + (digits[i] as i32 - '0');
+      depth = depth * 10 + (digit as i32 - '0');
     }
   }
 

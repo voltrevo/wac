@@ -262,10 +262,10 @@ i32 rawBytes() {
 i32 shapes() {
   i32 seen = 0;
   i32[] depths = [1, 399, 400, 500];
-  for (i32 i = 0; i < depths.len(); i++) {
+  for (i32 depth in depths) {
     string open = "";
     string close = "";
-    for (i32 k = 0; k < depths[i]; k++) { open = open + "["; close = close + "]"; }
+    for (i32 k = 0; k < depth; k++) { open = open + "["; close = close + "]"; }
     canonicalize((open + close).toBytes());
     seen = seen + 1;
   }

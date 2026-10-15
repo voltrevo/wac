@@ -126,8 +126,8 @@ export string test_arith_limb_boundaries(Core core, Cli cli) {
   i32[] powers = [0, 1, 15, 16, 31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 160, 192];
   string[] values = string[].filled(powers.len() * 5, "");
   i32 n = 0;
-  for (i32 p = 0; p < powers.len(); p++) {
-    string anchor = decimalOf(lines, powerOfTwoHex(powers[p]));
+  for (i32 power in powers) {
+    string anchor = decimalOf(lines, powerOfTwoHex(power));
     for (i32 d = -2; d <= 2; d++) {
       string v = text(opAdd(b(anchor), b("\{d}")));
       // The anchor arithmetic is itself checked, so a wrong `+ 1` cannot quietly move the corpus.
@@ -155,8 +155,7 @@ export string test_arith_all_ones_and_all_zeros_limb_runs(Core core, Cli cli) {
   i32[] limbCounts = [1, 2, 3, 4, 8, 17];
   string[] values = string[].filled(limbCounts.len() * 6, "");
   i32 n = 0;
-  for (i32 c = 0; c < limbCounts.len(); c++) {
-    i32 limbs = limbCounts[c];
+  for (i32 limbs in limbCounts) {
     string ones = "";
     for (i32 i = 0; i < limbs; i++) { ones = ones + "ffffffff"; }
     string onesDec = decimalOf(lines, ones);
@@ -225,11 +224,11 @@ export string test_arith_divisors_engineered_to_need_the_add_back(Core core, Cli
   i32[] limbCounts = [2, 3, 4, 6];
   string[] tops = ["80000000", "80000001", "fffffffe", "ffffffff"];
   string[] rests = ["00000000", "ffffffff", "00000001"];
-  for (i32 c = 0; c < limbCounts.len(); c++) {
-    for (i32 tI = 0; tI < tops.len(); tI++) {
-      for (i32 rI = 0; rI < rests.len(); rI++) {
-        string dHex = tops[tI];
-        for (i32 i = 1; i < limbCounts[c]; i++) { dHex = dHex + rests[rI]; }
+  for (i32 limbCount in limbCounts) {
+    for (string top in tops) {
+      for (string rest in rests) {
+        string dHex = top;
+        for (i32 i = 1; i < limbCount; i++) { dHex = dHex + rest; }
         string d = decimalOf(lines, dHex);
         for (i32 trial = 0; trial < 12; trial++) {
           string q = decimalOf(lines, randomHex(rng, 1 + rng.upto(130)));

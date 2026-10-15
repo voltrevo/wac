@@ -139,11 +139,11 @@ export Big modInverse(Big a, Big m) {
 /** Whether `n` is divisible by any of the small primes, which is a cheap composite test. */
 bool hasSmallFactor(Big n) {
   i32[] primes = smallPrimes();
-  for (i32 i = 0; i < primes.len(); i++) {
-    DivSmall d = divSmall(n, primes[i] as@ u32);
+  for (i32 prime in primes) {
+    DivSmall d = divSmall(n, prime as@ u32);
     if (d.r == 0) {
       // Equal to the prime itself is not a factor in the sense that matters.
-      if (cmp(n, small(primes[i] as i64)) != 0) { return true; }
+      if (cmp(n, small(prime as i64)) != 0) { return true; }
     }
   }
   return false;

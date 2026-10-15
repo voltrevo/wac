@@ -317,9 +317,9 @@ void putNode(Buf out, Fs fs, i32 node) {
   }
   string[] names = sortedNames(n);
   out.pushU32(names.len() as@ u32);
-  for (i32 i = 0; i < names.len(); i++) {
-    putString(out, names[i]);
-    putNode(out, fs, n.entries.getOr(names[i], -1));
+  for (string name in names) {
+    putString(out, name);
+    putNode(out, fs, n.entries.getOr(name, -1));
   }
 }
 

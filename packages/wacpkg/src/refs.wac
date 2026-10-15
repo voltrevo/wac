@@ -55,8 +55,8 @@ Resolved refFailed(i32 code) { return Resolved(false, code, "", ""); }
  */
 export Resolved resolveRef(string[] names, string[] commits, string ref) {
   if (names.len() != commits.len()) { return refFailed(R_MALFORMED()); }
-  for (i32 i = 0; i < commits.len(); i++) {
-    if (!isFullSha(commits[i])) { return refFailed(R_MALFORMED()); }
+  for (string commit in commits) {
+    if (!isFullSha(commit)) { return refFailed(R_MALFORMED()); }
   }
   if (ref == "") { return refFailed(R_NOT_FOUND()); }
 

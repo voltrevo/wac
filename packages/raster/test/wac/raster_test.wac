@@ -482,8 +482,7 @@ i32[] cps(string text) {
 /** A UTF-8 string from code points — the other direction, for comparing selected text. */
 string fromCodePoints(i32[] points) {
   string out = "";
-  for (i32 i = 0; i < points.len(); i++) {
-    i32 v = points[i];
+  for (i32 v in points) {
     u8[] b = u8[].filled(v < 0x80 ? 1 : (v < 0x800 ? 2 : (v < 0x10000 ? 3 : 4)), 0);
     if (b.len() == 1) { b[0] = v as@ u8; }
     else if (b.len() == 2) { b[0] = (0xC0 | (v >> 6)) as@ u8; b[1] = (0x80 | (v & 0x3F)) as@ u8; }

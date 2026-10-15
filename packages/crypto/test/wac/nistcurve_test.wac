@@ -268,11 +268,11 @@ u8[][] fieldCorpus(i32 width, string[] edges) {
   out[at] = u8[].filled(width, 0); at = at + 1;
   out[at] = oneAt(width, 0); at = at + 1;
   out[at] = oneAt(width, 1); at = at + 1;
-  for (i32 i = 0; i < edges.len(); i++) { out[at] = decodedHex(edges[i]); at = at + 1; }
+  for (string edge in edges) { out[at] = decodedHex(edge); at = at + 1; }
 
-  for (i32 i = 0; i < bits.len(); i++) {
-    out[at] = powerOfTwo(width, bits[i]); at = at + 1;
-    out[at] = powerOfTwoLess(width, bits[i]); at = at + 1;
+  for (i32 bit in bits) {
+    out[at] = powerOfTwo(width, bit); at = at + 1;
+    out[at] = powerOfTwoLess(width, bit); at = at + 1;
   }
 
   FieldRng rng = FieldRng.create(0x1E3779B9);

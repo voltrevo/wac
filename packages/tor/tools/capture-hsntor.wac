@@ -72,8 +72,8 @@ bool isHexDigit(i32 c) {
 string[] words(u8[] bytes) {
   i32 n = 0;
   bool inWord = false;
-  for (i32 i = 0; i < bytes.len(); i++) {
-    bool space = bytes[i] == ' ' || bytes[i] == '\n' || bytes[i] == '\r' || bytes[i] == '\t';
+  for (u8 b in bytes) {
+    bool space = b == ' ' || b == '\n' || b == '\r' || b == '\t';
     if (!space && !inWord) { n = n + 1; }
     inWord = !space;
   }
@@ -118,9 +118,9 @@ string[] runN(Core core, Cli cli, string prog, i32 want, string[] args) {
   }
   string[] lines = words(r.stdout);
   bool ok = lines.len() == want;
-  for (i32 i = 0; i < lines.len(); i++) {
-    if (lines[i].len() != 64) { ok = false; }
-    u8[] b = lines[i].toBytes();
+  for (string line in lines) {
+    if (line.len() != 64) { ok = false; }
+    u8[] b = line.toBytes();
     for (i32 j = 0; j < b.len(); j++) {
       if (!isHexDigit(b[j] as i32)) { ok = false; }
     }

@@ -47,8 +47,8 @@ export Vec<User> parsePasswd(u8[] text) {
  * "is this a real user?" — and `name == ""` answers it without unwrapping.
  */
 export User userNamed(Vec<User> users, string name) {
-  for (i32 i = 0; i < users.len(); i++) {
-    if (users.get(i).name == name) { return users.get(i); }
+  for (User user in users) {
+    if (user.name == name) { return user; }
   }
   return User("", -1, -1, "", "", "");
 }

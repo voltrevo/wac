@@ -114,8 +114,8 @@ export Network bootstrap(Core core, Cli cli, u8[] seedBytes, u8[] authBytes, boo
 
   Relay[] relays = parseConsensus(consensus);
   Vec<string> digests = Vec.create();
-  for (i32 i = 0; i < relays.len(); i++) {
-    if (relays[i].microdescDigest != "") { digests.push(relays[i].microdescDigest); }
+  for (Relay relay in relays) {
+    if (relay.microdescDigest != "") { digests.push(relay.microdescDigest); }
   }
   string[][] batches = microdescBatches(digests.toArray());
   for (i32 i = 0; i < batches.len(); i++) {

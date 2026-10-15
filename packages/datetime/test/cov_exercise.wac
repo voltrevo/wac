@@ -65,12 +65,12 @@ export i32 main() {
   i32[] years = [-271820, -100000, -4713, -1, 0, 1, 100, 1969, 1970, 1971, 2100, 275759];
   i32[] months = [1, 2, 3, 12];
   i32[] days = [1, 28, 31];
-  for (i32 a = 0; a < years.len(); a++) {
-    for (i32 b = 0; b < months.len(); b++) {
-      for (i32 c = 0; c < days.len(); c++) {
-        seen = seen + (toDays(years[a], months[b], days[c]) as~ i32);
-        if (validDate(years[a], months[b], days[c])) { seen = seen + 1; }
-        seen = seen + yearDay(years[a], months[b], 1);
+  for (i32 year in years) {
+    for (i32 month in months) {
+      for (i32 day in days) {
+        seen = seen + (toDays(year, month, day) as~ i32);
+        if (validDate(year, month, day)) { seen = seen + 1; }
+        seen = seen + yearDay(year, month, 1);
       }
     }
   }
@@ -89,7 +89,7 @@ export i32 main() {
 
   for (i32 h = -48; h <= 48; h++) { seen = seen + formatMillis((h as i64) * 3600000).len(); }
   i64[] edges = [0, 1, -1, 999, 1000, -1000, -999];
-  for (i32 i = 0; i < edges.len(); i++) { seen = seen + formatMillis(edges[i]).len(); }
+  for (i64 edge in edges) { seen = seen + formatMillis(edge).len(); }
 
   Rng r = Rng(0x1f2e3d4c);
   for (i32 i = 0; i < 5000; i++) {
@@ -112,7 +112,7 @@ export i32 main() {
                             "2020-06-15T10:00:00-00:00", "2020-06-15T10:00:00+00:00",
                             "2020-06-15T10:00:00Z"
   ];
-  for (i32 i = 0; i < zeros.len(); i++) { seen = seen + parseOffsetKnown(zeros[i].toBytes()); }
+  for (string zero in zeros) { seen = seen + parseOffsetKnown(zero.toBytes()); }
 
   // Years outside 0000..9999, where `padYear` writes a sign and six digits. The spread above covers
   // about 1963 to 1976 and cannot reach it.

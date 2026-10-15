@@ -183,7 +183,7 @@ export string test_at_every_compression_level_which_chooses_different_codings(Co
 
   i32[] levels = [1, 3, 9, 15, 19];
   Lines lines = Lines.create();
-  for (i32 i = 0; i < levels.len(); i++) { lines.add(compressLine(data, levels[i], false)); }
+  for (i32 level in levels) { lines.add(compressLine(data, level, false)); }
   Answers a = askZstd(t, cli, lines, "the reference encoder at five levels");
   if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < levels.len(); i++) {

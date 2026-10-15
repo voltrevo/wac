@@ -30,8 +30,8 @@ export string test_table_agrees_across_lengths() {
                         511, 512, 513, 514, 515, 516, 517, 518, 519, 520,
                         1000, 1023, 1024, 4095, 4096, 8191
   ];
-  for (i32 j = 0; j < lengths.len(); j++) {
-    i32 n = lengths[j];
+  for (i32 length in lengths) {
+    i32 n = length;
     u8[] data = u8[].filled(n, 0);
     // A deterministic spread rather than a constant, so state varies across the
     // whole table as the loop advances.

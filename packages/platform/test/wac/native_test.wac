@@ -161,10 +161,10 @@ i64 numberAfter(string text, string after) {
 string masked(string out) {
   string text = out;
   string[] markers = ["stage 3 quick ", "stage 3 slow "];
-  for (i32 m = 0; m < markers.len(); m++) {
-    i32 at = text.indexOf(markers[m]);
+  for (string marker in markers) {
+    i32 at = text.indexOf(marker);
     if (at < 0) { continue; }
-    i32 from = at + markers[m].len();
+    i32 from = at + marker.len();
     u8[] b = text.toBytes();
     i32 to = from;
     while (to < b.len() && b[to] >= '0' && b[to] <= '9') { to = to + 1; }
@@ -174,7 +174,7 @@ string masked(string out) {
 }
 
 bool holds(string[] lines, string want) {
-  for (i32 i = 0; i < lines.len(); i++) { if (lines[i] == want) { return true; } }
+  for (string line in lines) { if (line == want) { return true; } }
   return false;
 }
 
@@ -393,7 +393,7 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
         bool makeable = false;
         if (spec is not null) {
           string[] methods = namesOf(arrayIn(spec!, "methods"));
-          for (i32 k = 0; k < methods.len(); k++) { if (methods[k] == "create") { makeable = true; } }
+          for (string method in methods) { if (method == "create") { makeable = true; } }
         }
         t.isTrue(makeable,
                  "Core.\{name} is \{ty}" +

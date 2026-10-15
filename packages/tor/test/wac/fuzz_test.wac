@@ -149,12 +149,12 @@ export string test_a_consensus_shaped_document_with_wrong_fields() {
     "valid-after 9999-99-99 99:99:99\nfresh-until 0000-00-00 00:00:00\nvalid-until x\n",
     "p accept \np reject ,,,\np accept 1-\np accept -1\np accept 99999999-1\n"
   ];
-  for (i32 i = 0; i < shapes.len(); i++) {
-    u8[] doc = shapes[i].toBytes();
+  for (string shape in shapes) {
+    u8[] doc = shape.toBytes();
     parseConsensus(doc);
     refreshAt(doc, 5000);
     validUntil(doc);
-    parsePolicy(shapes[i]);
+    parsePolicy(shape);
     // And the same with a byte flipped at every position.
     for (i32 j = 0; j < doc.len(); j++) {
       u8[] m = u8[].filled(doc.len(), 0);
@@ -180,8 +180,8 @@ export string test_http_responses_from_a_hostile_cache() {
     "HTTP/1.0 99999999999999 OK\r\n\r\n", "HTTP/1.0 200\r\ncontent-encoding:\r\n\r\n",
     "HTTP/1.0 200 OK\r\ncontent-encoding: ident\r\n\r\n", "\r\n\r\nbody only"
   ];
-  for (i32 i = 0; i < shapes.len(); i++) {
-    Response resp = splitResponse(shapes[i].toBytes());
+  for (string shape in shapes) {
+    Response resp = splitResponse(shape.toBytes());
     isIdentity(resp);
   }
   t.isTrue(true, "no response shape aborted the parser");

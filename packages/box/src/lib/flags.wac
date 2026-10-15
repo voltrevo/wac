@@ -65,10 +65,10 @@ export bool refuseFlags(Core core, Args a) {
   string mine = implementedFlags(a.name);
   string free = acceptedFlags(a.name);
   u8[] flags = a.flags.toBytes();
-  for (i32 i = 0; i < flags.len(); i++) {
-    if (contains(mine, flags[i] as i32) || contains(free, flags[i] as i32)) { continue; }
-    string letter = string.fromBytes(u8[].filled(1, flags[i]));
-    if (contains(gnuFlags(a.name), flags[i] as i32)) {
+  for (u8 flag in flags) {
+    if (contains(mine, flag as i32) || contains(free, flag as i32)) { continue; }
+    string letter = string.fromBytes(u8[].filled(1, flag));
+    if (contains(gnuFlags(a.name), flag as i32)) {
       // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.
       core.warn("\{a.name}: -\{letter} is not implemented");
     } else {

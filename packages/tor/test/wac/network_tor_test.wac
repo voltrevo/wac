@@ -75,7 +75,7 @@ string build(Cli cli, string entry, string out, string[] grants, bool worker) {
   string[] args = string[].filled(head.len() + grants.len() + tail.len(), "");
   i32 at = 0;
   for (i32 i = 0; i < head.len(); i++) { args[at] = head[i]; at = at + 1; }
-  for (i32 i = 0; i < grants.len(); i++) { args[at] = grants[i]; at = at + 1; }
+  for (string grant in grants) { args[at] = grant; at = at + 1; }
   for (i32 i = 0; i < tail.len(); i++) { args[at] = tail[i]; at = at + 1; }
   Exec r = cli.exec("deno", args, u8[]()).wait();
   if (!r.ran() || r.status != 0) {

@@ -40,10 +40,10 @@ export string test_best_never_exceeds_stored_on_either_side_of_the_threshold() {
   i32[] alphabets = [2, 16, 200, 250, 256];
   i32 worse = 0;
   string first = "";
-  for (i32 i = 0; i < lengths.len(); i++) {
-    for (i32 k = 0; k < alphabets.len(); k++) {
-      i32 n = lengths[i];
-      i32 alpha = alphabets[k];
+  for (i32 length in lengths) {
+    for (i32 alphabet in alphabets) {
+      i32 n = length;
+      i32 alpha = alphabet;
       u8[] data = incompressible(n, alpha, 20260812 ^ n ^ alpha);
       i32 best = gzipBest(data).len();
       i32 stored = gzipStored(data).len();

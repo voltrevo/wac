@@ -187,8 +187,8 @@ void wireTypes() {
 /** A KEXINIT carrying the given ten name-lists, which is what a peer sends. */
 u8[] kexInitOf(string[] lists) {
   u8[] out = joinBytes([20] as u8[], u8[].filled(16, 0));
-  for (i32 i = 0; i < lists.len(); i++) {
-    u8[] b = lists[i].toBytes();
+  for (string list in lists) {
+    u8[] b = list.toBytes();
     out = joinBytes(out, joinBytes(be32(b.len()), b));
   }
   return joinBytes(out, [0, 0, 0, 0, 0] as u8[]);
@@ -368,7 +368,7 @@ void cipher() {
   i32[] blocks = [8, 16];
   for (i32 i = 0; i < ns.len(); i++) {
     i32 n = ns[i];
-    for (i32 k = 0; k < blocks.len(); k++) { sshAeadPaddingFor(n, blocks[k]); }
+    for (i32 block in blocks) { sshAeadPaddingFor(n, block); }
     u8[] payload = u8[].filled(n, 0);
     for (i32 k = 0; k < n; k++) { payload[k] = (k & 255) as@ u8; }
     u8[] packet = sshSeal(ckey, n, payload, filledWith(sshAeadPaddingFor(n, 8), 1), 8);
@@ -393,9 +393,9 @@ void cipher() {
   // body directly, since `seal` computes a valid one — this is the check that runs *after* the MAC, and
   // it is the one that matters, because by then the bytes are authenticated and still nonsense.
   i32[] padBytes = [200, 0, 3];
-  for (i32 i = 0; i < padBytes.len(); i++) {
+  for (i32 padByte in padBytes) {
     u8[] body = u8[].filled(8, 0);
-    body[0] = padBytes[i] as@ u8;
+    body[0] = padByte as@ u8;
     u8[] forged = sshSealBody(ckey, 0, body);
     sshOpenStatus(ckey, 0, forged, 0, forged.len(), 35000);
   }
@@ -776,8 +776,8 @@ void authorizedKeys() {
     "ssh-ed25519 !!!\n",                                         // unreadable base64
     "no-pty ssh-ed25519 \{k}\nssh-ed25519 \{k}\n"    // restricted then plain
   ];
-  for (i32 i = 0; i < files.len(); i++) {
-    u8[] f = files[i].toBytes();
+  for (string file in files) {
+    u8[] f = file.toBytes();
     sshAuthorized(f, akType, blob);
     sshAuthorized(f, akType, other);
     sshAuthorized(f, "ssh-rsa".toBytes(), blob);

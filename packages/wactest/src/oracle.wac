@@ -175,8 +175,8 @@ export Answers askCached(T t, Cli cli, string program, string[] args, Lines line
                          string name, string[] trees) {
   u8[] payload = lines.buf.take();
   i64 newest = 0 as i64;
-  for (i32 i = 0; i < trees.len(); i++) {
-    i64 deep = newestUnder(cli, trees[i]);
+  for (string tree in trees) {
+    i64 deep = newestUnder(cli, tree);
     if (deep > newest) { newest = deep; }
   }
   string stamp = "\{(newest / (1000 as i64)) as! i32}";
@@ -218,8 +218,8 @@ export Answers askCached(T t, Cli cli, string program, string[] args, Lines line
 export string askArgvCached(T t, Cli cli, string program, string[] args, string what, string name,
                             string[] trees, string[] inputs) {
   i64 newest = 0 as i64;
-  for (i32 i = 0; i < trees.len(); i++) {
-    i64 deep = newestUnder(cli, trees[i]);
+  for (string tree in trees) {
+    i64 deep = newestUnder(cli, tree);
     if (deep > newest) { newest = deep; }
   }
   string stamp = "\{(newest / (1000 as i64)) as! i32}";
@@ -246,8 +246,8 @@ export string askArgvCached(T t, Cli cli, string program, string[] args, string 
 /** A checksum over several strings, with a separator no argument can contain. */
 i32 sumOfStrings(string[] parts) {
   i32 h = 7;
-  for (i32 i = 0; i < parts.len(); i++) {
-    u8[] b = parts[i].toBytes();
+  for (string part in parts) {
+    u8[] b = part.toBytes();
     for (i32 k = 0; k < b.len(); k++) { h = (h * 31 + b[k] as i32) & 2147483647; }
     h = (h * 31 + 255) & 2147483647;
   }

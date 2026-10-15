@@ -82,8 +82,8 @@ export ProxyAt parseProxy(string url) {
   if (host.len() == 0 || portText.len() == 0) { return ProxyAt(false, "", 0); }
   i32 port = 0;
   u8[] digits = portText.toBytes();
-  for (i32 i = 0; i < digits.len(); i++) {
-    i32 c = digits[i] as i32;
+  for (u8 digit in digits) {
+    i32 c = digit as i32;
     if (c < '0' || c > '9') { return ProxyAt(false, "", 0); }
     port = port * 10 + (c - '0');
     if (port > 65535) { return ProxyAt(false, "", 0); }

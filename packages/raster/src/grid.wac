@@ -258,7 +258,7 @@ export struct Grid {
 
   /** Write a run of code points. */
   void write(this, i32[] cps) {
-    for (i32 i = 0; i < cps.len(); i++) { this.put(cps[i]); }
+    for (i32 cp in cps) { this.put(cp); }
   }
 
   /**

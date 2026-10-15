@@ -161,7 +161,7 @@ export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_gi
   t.isTrue(anyEndsWith(lines, "^{}"),
            "no peeled tag in the advertisement — an annotated tag is the shape that produces one");
   bool deep = false;
-  for (i32 i = 0; i < lines.len(); i++) { if (segments(refOf(lines[i])) > 3) { deep = true; } }
+  for (string line in lines) { if (segments(refOf(line)) > 3) { deep = true; } }
   t.isTrue(deep, "no deeply-named ref, so a name containing slashes is untested");
   if (lines.len() <= 100) { return t.report(); }
 

@@ -82,9 +82,9 @@ string[] words(string line) {
 Vec<string> lines(u8[] bytes) {
   Vec<string> out = Vec.create();
   string line = "";
-  for (i32 i = 0; i < bytes.len(); i++) {
-    if (bytes[i] == 10) { out.push(line); line = ""; continue; }
-    line = line + string.fromCodepoint(bytes[i] as i32);
+  for (u8 b in bytes) {
+    if (b == 10) { out.push(line); line = ""; continue; }
+    line = line + string.fromCodepoint(b as i32);
   }
   if (line.len() > 0) { out.push(line); }
   return out;
@@ -180,7 +180,7 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     Pending<Read> errT = complaining ? cli.recv(eh) : outT;
     while (reading || complaining) {
       i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0);
-      for (i32 k = 0; k < chans.len(); k++) { if (!(chans.get(k) is null)) { live++; } }
+      for (Chan? chan in chans) { if (!(chan is null)) { live++; } }
       i32[] ids = i32[].filled(live, 0);
       i32[] what = i32[].filled(live, -1);
       i32 at = 0;

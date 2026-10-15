@@ -166,10 +166,10 @@ export string test_the_tag_covers_everything(Core core, Cli cli) {
   u8[] nonce = decoded("070000004041424344454647");
   i32[] plainLens = [0, 1, 15, 16, 17, 63, 64, 65];
   i32[] aadLens = [0, 1, 15, 16, 17];
-  for (i32 p = 0; p < plainLens.len(); p++) {
-    for (i32 a = 0; a < aadLens.len(); a++) {
-      u8[] plain = fill(plainLens[p], 5, 2);
-      u8[] aad = fill(aadLens[a], 11, 7);
+  for (i32 plainLen in plainLens) {
+    for (i32 aadLen in aadLens) {
+      u8[] plain = fill(plainLen, 5, 2);
+      u8[] aad = fill(aadLen, 11, 7);
       u8[] ct = aeadEncrypt(key, nonce, plain);
       u8[] tag = aeadTag(key, nonce, aad, ct);
       claimSeal(lines, key, nonce, aad, plain, cat(ct, tag));

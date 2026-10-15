@@ -84,7 +84,7 @@ Decoded decode(u8[] blob, i32 count, i32 maxSymbol, i32 maxLog) {
 /** Counts of each symbol in `symbols`. */
 i32[] countsOf(i32[] symbols, i32 maxSymbol) {
   i32[] c = i32[].filled(maxSymbol + 1, 0);
-  for (i32 i = 0; i < symbols.len(); i++) { c[symbols[i]] = c[symbols[i]] + 1; }
+  for (i32 symbol in symbols) { c[symbol] = c[symbol] + 1; }
   return c;
 }
 

@@ -28,8 +28,8 @@ export i32 main(Sys sys) {
     core.warn("tunnel: the port is empty");
     return 2;
   }
-  for (i32 i = 0; i < digits.len(); i++) {
-    i32 c = digits[i] as i32;
+  for (u8 digit in digits) {
+    i32 c = digit as i32;
     if (c < '0' || c > '9') {
       core.warn("tunnel: \{portText} is not a port");
       return 2;

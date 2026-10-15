@@ -81,8 +81,8 @@ Layouts layouts() {
 string structOf(string name) {
   string[] markers = ["_zero", "_max", "_nil", "_one", "_lengthy", "_random"];
   i32 cut = name.len();
-  for (i32 m = 0; m < markers.len(); m++) {
-    i32 at = indexOf(name, markers[m]);
+  for (string marker in markers) {
+    i32 at = indexOf(name, marker);
     if (at >= 0 && at < cut) { cut = at; }
   }
   return name.slice(0, cut);

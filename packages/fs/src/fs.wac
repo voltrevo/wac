@@ -1068,9 +1068,9 @@ export struct Fs {
     string rest = path.slice(m.at.len(), path.len());
     i32 at = m.root;
     Vec<string> parts = splitPath(rest);
-    for (i32 i = 0; i < parts.len(); i++) {
+    for (string part in parts) {
       if (!this.nodes.get(at).isDir) { return NODE_NOT_A_DIR(); }
-      i32 next = this.child(at, parts.get(i));
+      i32 next = this.child(at, part);
       if (next < 0) { return NODE_NONE(); }
       at = next;
     }

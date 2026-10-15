@@ -405,8 +405,8 @@ Cli fakeCli() {
 export i32 shBuiltinsAgree() {
   string[] names = builtinNames();
   i32 wrong = 0;
-  for (i32 i = 0; i < names.len(); i++) {
-    if (!isBuiltin(names[i])) { wrong++; }
+  for (string name in names) {
+    if (!isBuiltin(name)) { wrong++; }
   }
   return wrong;
 }

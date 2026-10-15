@@ -324,8 +324,8 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
     string table = string.fromBytes(ss.stdout);
     string line = "";
     string[] rows = linesOf(table);
-    for (i32 i = 0; i < rows.len(); i++) {
-      if (contains(rows[i], "\{port}")) { line = rows[i]; }
+    for (string row in rows) {
+      if (contains(row, "\{port}")) { line = row; }
     }
     t.isTrue(contains(line, "127.0.0.1:\{port}"),
              "bound elsewhere: " + (line == "" ? table : line) +

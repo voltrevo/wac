@@ -85,8 +85,7 @@ export i32 main(Sys sys) {
                       0x3c2, 0x3c3, 0x3a3, 0x7ff, 0x800, 0xffff, 0x10000, 0x10ffff, -1, 0x110000,
                       0xd800, 0xdfff
   ];
-  for (i32 i = 0; i < edges.len(); i++) {
-    i32 cp = edges[i];
+  for (i32 cp in edges) {
     seen = seen + mapLower(cp) + mapUpper(cp) + mapFold(cp) + encodeOne(cp).len();
   }
 

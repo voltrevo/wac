@@ -250,9 +250,9 @@ export i32 main(Sys sys) {
     "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
     "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nX: v\r\n\r\n"
   ];
-  for (i32 f = 0; f < fulls.len(); f++) {
-    for (i32 n = 0; n <= fulls[f].len(); n++) {
-      seen = seen + parseRequest(wire(fulls[f].slice(0, n)), MAX_BODY).len();
+  for (string full in fulls) {
+    for (i32 n = 0; n <= full.len(); n++) {
+      seen = seen + parseRequest(wire(full.slice(0, n)), MAX_BODY).len();
     }
   }
 
@@ -320,9 +320,9 @@ export i32 main(Sys sys) {
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nX: v\r\n\r\n"
   ];
-  for (i32 f = 0; f < rfulls.len(); f++) {
-    for (i32 n = 0; n <= rfulls[f].len(); n++) {
-      seen = seen + parseResponse(wire(rfulls[f].slice(0, n)), "GET".toBytes(), false, MAX_BODY).len();
+  for (string rfull in rfulls) {
+    for (i32 n = 0; n <= rfull.len(); n++) {
+      seen = seen + parseResponse(wire(rfull.slice(0, n)), "GET".toBytes(), false, MAX_BODY).len();
     }
   }
 

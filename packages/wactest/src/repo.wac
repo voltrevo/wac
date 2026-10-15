@@ -67,8 +67,7 @@ export string[] nonEmptyLines(string s) {
 
 /** Whether `path` ends with any of `exts` — each written with its dot, as `".md"`. */
 export bool hasExtension(string path, string[] exts) {
-  for (i32 i = 0; i < exts.len(); i++) {
-    string e = exts[i];
+  for (string e in exts) {
     if (path.len() > e.len() && path.slice(path.len() - e.len(), path.len()) == e) { return true; }
   }
   return false;
@@ -76,8 +75,7 @@ export bool hasExtension(string path, string[] exts) {
 
 /** Whether `path` is inside any of `dirs`, each written with its trailing slash, as `"site/"`. */
 export bool under(string path, string[] dirs) {
-  for (i32 i = 0; i < dirs.len(); i++) {
-    string d = dirs[i];
+  for (string d in dirs) {
     if (path.len() >= d.len() && path.slice(0, d.len()) == d) { return true; }
   }
   return false;

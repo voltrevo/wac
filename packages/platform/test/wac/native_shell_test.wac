@@ -184,8 +184,8 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
 /** The first file of these that this machine has, so an empty answer means withheld not absent. */
 string hostFile(Cli cli) {
   string[] candidates = ["/etc/hostname", "/etc/hosts", "/etc/passwd"];
-  for (i32 i = 0; i < candidates.len(); i++) {
-    if (cli.stat(candidates[i]).wait().isFile) { return candidates[i]; }
+  for (string candidate in candidates) {
+    if (cli.stat(candidate).wait().isFile) { return candidate; }
   }
   return "";
 }

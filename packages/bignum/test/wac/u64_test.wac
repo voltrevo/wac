@@ -102,8 +102,8 @@ export string test_u64_shift_right_does_not_sign_extend(Core core, Cli cli) {
   i32[] shifts = [0, 1, 31, 32, 33, 63];
   Lines lines = Lines.create();
   for (i32 i = 0; i < vs.len(); i++) {
-    for (i32 k = 0; k < shifts.len(); k++) {
-      row(lines, "shr", vs[i], (shifts[k] as i64) as@ u64, vs[i] >> ((shifts[k] as i64) as@ u64));
+    for (i32 shift in shifts) {
+      row(lines, "shr", vs[i], (shift as i64) as@ u64, vs[i] >> ((shift as i64) as@ u64));
     }
   }
   checkDeno(t, cli, ORACLE, lines, "shift right");

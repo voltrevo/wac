@@ -116,12 +116,12 @@ export struct Code {
  */
 export Code[] canonical(i32[] lengths) {
   i32 maxLen = 0;
-  for (i32 i = 0; i < lengths.len(); i++) {
-    if (lengths[i] > maxLen) { maxLen = lengths[i]; }
+  for (i32 length in lengths) {
+    if (length > maxLen) { maxLen = length; }
   }
   i32[] countByLen = i32[].filled(maxLen + 1, 0);
-  for (i32 i = 0; i < lengths.len(); i++) {
-    if (lengths[i] > 0) { countByLen[lengths[i]] = countByLen[lengths[i]] + 1; }
+  for (i32 length in lengths) {
+    if (length > 0) { countByLen[length] = countByLen[length] + 1; }
   }
   i32[] next = i32[].filled(maxLen + 2, 0);
   i32 code = 0;

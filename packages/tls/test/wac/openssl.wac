@@ -102,9 +102,9 @@ export string openssl35(Cli cli) {
   ];
   u8[]? named = cli.env("OPENSSL35").wait();
   if (named is not null) { candidates[0] = string.fromBytes(named!); }
-  for (i32 i = 0; i < candidates.len(); i++) {
-    if (candidates[i] == "") { continue; }
-    if (cli.stat(candidates[i]).wait().isFile) { return candidates[i]; }
+  for (string candidate in candidates) {
+    if (candidate == "") { continue; }
+    if (cli.stat(candidate).wait().isFile) { return candidate; }
   }
   return "";
 }

@@ -164,16 +164,16 @@ export Vec<Setting> parseConfig(u8[] text) {
  */
 export string configOf(const Vec<Setting> settings, string name) {
   string found = "";
-  for (i32 i = 0; i < settings.len(); i++) {
-    if (settings.get(i).name == name) { found = settings.get(i).value; }
+  for (Setting setting in settings) {
+    if (setting.name == name) { found = setting.value; }
   }
   return found;
 }
 
 /** Whether `name` is set at all, with or without a value. */
 export bool hasConfig(const Vec<Setting> settings, string name) {
-  for (i32 i = 0; i < settings.len(); i++) {
-    if (settings.get(i).name == name) { return true; }
+  for (Setting setting in settings) {
+    if (setting.name == name) { return true; }
   }
   return false;
 }

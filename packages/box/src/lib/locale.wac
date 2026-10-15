@@ -21,8 +21,8 @@ import { Cli } from "std";
 /** The first of `LC_ALL`, `LC_CTYPE`, `LANG` that is set and non-empty, or "". */
 string ctypeSetting(Cli cli) {
   string[] names = ["LC_ALL", "LC_CTYPE", "LANG"];
-  for (i32 i = 0; i < names.len(); i++) {
-    u8[]? v = cli.env(names[i]).wait();
+  for (string name in names) {
+    u8[]? v = cli.env(name).wait();
     if (v is null) { continue; }
     if (v!.len() == 0) { continue; }
     return string.fromBytes(v!);

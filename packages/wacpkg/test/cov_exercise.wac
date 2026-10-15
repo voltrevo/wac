@@ -142,7 +142,7 @@ i32 manifestExercises() {
   Manifest table = readManifest(
     "{ imports: { 'bits': { git: 'g', ref: 'r' }, 'acme': { git: 'g', ref: 'r' } } }".toBytes());
   string[] specs = ["bits", "acme", "bits/vec.wac", "bits/", "acme/x", "other", ""];
-  for (i32 i = 0; i < specs.len(); i++) { matchSpecifier(table, specs[i]); seen = seen + 1; }
+  for (string spec in specs) { matchSpecifier(table, spec); seen = seen + 1; }
 
   // A package's entry: `exports` joined to its directory, in and out of it.
   string[] dirs = ["", "packages/geo", "a/b", "a/b", "a", "a", "a"];
@@ -166,7 +166,7 @@ i32 rootExercises() {
   ];
   for (i32 i = 0; i < file.len(); i++) { seen = seen + candidateRoots(file[i], boundary[i]).len(); }
   string[] paths = ["a/b/c.wac", "a/b.wac", "b.wac", "/b.wac", "/a/b.wac", "/"];
-  for (i32 i = 0; i < paths.len(); i++) { seen = seen + dirOf(paths[i]).len(); }
+  for (string path in paths) { seen = seen + dirOf(path).len(); }
   return seen;
 }
 
@@ -235,9 +235,9 @@ i32 mappingExercises() {
     "whole/src/a.wac", "sub/src/a.wac", "deep/../c.wac", "whole/../x.wac",
     "other/a.wac", "whol", "./a.wac", "", "exactly"
   ];
-  for (i32 i = 0; i < specs.len(); i++) {
-    locateIn(MAP.toBytes(), specs[i]);
-    seen = seen + mappingFor(MAP.toBytes(), specs[i]);
+  for (string spec in specs) {
+    locateIn(MAP.toBytes(), spec);
+    seen = seen + mappingFor(MAP.toBytes(), spec);
   }
   string[] atSpec = [
                              "@/src/a.wac", "@/a.wac", "@/a.wac", "@/a.wac", "@/./x/../a.wac",
@@ -256,7 +256,7 @@ i32 mappingExercises() {
                            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                            "gggggggggggggggggggggggggggggggggggggggg", "\{A40}a"
   ];
-  for (i32 i = 0; i < shas.len(); i++) { if (fullSha(shas[i])) { seen = seen + 1; } }
+  for (string sha in shas) { if (fullSha(sha)) { seen = seen + 1; } }
   return seen;
 }
 
@@ -288,7 +288,7 @@ i32 updateExercises() {
                               "0000000000000000000000000000000000000000", "refs/tags/v1^{}x",
                               "dup", "nope"
   ];
-  for (i32 i = 0; i < queries.len(); i++) { refToCommit(rn, rc, queries[i]); seen = seen + 1; }
+  for (string query in queries) { refToCommit(rn, rc, query); seen = seen + 1; }
   return seen;
 }
 
@@ -301,7 +301,7 @@ i32 transportAndCacheExercises() {
     "git@github.com:voltrevo/wac.git", "ssh://git@example.invalid/r",
     "git://example.invalid/r", "file:///tmp/r", "example.invalid/r", ""
   ];
-  for (i32 i = 0; i < urls.len(); i++) { seen = seen + transportRefusal(urls[i]).len(); }
+  for (string url in urls) { seen = seen + transportRefusal(url).len(); }
 
   string SHA = "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a";
   string[] cacheUrls = [
@@ -313,14 +313,14 @@ i32 transportAndCacheExercises() {
     "https://exämple.invalid/ünï/çode", "https://example.invalid/日本語",
     "https://example.invalid/%41/!b", "%!%!%!", ""
   ];
-  for (i32 i = 0; i < cacheUrls.len(); i++) {
-    seen = seen + repoUrlOf(repoDirName(cacheUrls[i])).len();
-    seen = seen + cacheOf("/home/x/.wac", cacheUrls[i], SHA).len();
+  for (string cacheUrl in cacheUrls) {
+    seen = seen + repoUrlOf(repoDirName(cacheUrl)).len();
+    seen = seen + cacheOf("/home/x/.wac", cacheUrl, SHA).len();
   }
   string[] bad = ["a/b", "A", "a%", "a%zz", "a!", "a!B", "a:b", "%"];
   for (i32 i = 0; i < bad.len(); i++) { seen = seen + repoUrlOf(bad[i]).len(); }
   string[] homes = ["/home/x/.wac", "/home/x/.wac/", "/home/x/.wac///", "rel/.wac"];
-  for (i32 i = 0; i < homes.len(); i++) { seen = seen + cacheDir(homes[i]).len(); }
+  for (string home in homes) { seen = seen + cacheDir(home).len(); }
   seen = seen + cacheOf("/home/x/.wac", "", SHA).len();
   seen = seen + cacheOf("/home/x/.wac", "https://example.invalid/r", "").len();
   return seen;

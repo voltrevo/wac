@@ -186,7 +186,7 @@ i32 attrSize(Attr a) { return 4 + ((a.value.len() + 3) & ~3); }
 /** Encode a message. The header's length is computed from the attributes rather than passed in. */
 export u8[] encode(i32 kind, u8[] tid, Attr[] attrs) {
   i32 body = 0;
-  for (i32 i = 0; i < attrs.len(); i++) { body = body + attrSize(attrs[i]); }
+  for (Attr attr in attrs) { body = body + attrSize(attr); }
   u8[] out = u8[].filled(20 + body, 0);
   out[0] = ((kind >> 8) & 0xFF) as@ u8;
   out[1] = (kind & 0xFF) as@ u8;
@@ -195,16 +195,16 @@ export u8[] encode(i32 kind, u8[] tid, Attr[] attrs) {
   out[4] = 0x21; out[5] = 0x12; out[6] = 0xA4; out[7] = 0x42;
   for (i32 i = 0; i < 12 && i < tid.len(); i++) { out[8 + i] = tid[i]; }
   i32 at = 20;
-  for (i32 i = 0; i < attrs.len(); i++) {
-    out[at] = ((attrs[i].kind >> 8) & 0xFF) as@ u8;
-    out[at + 1] = (attrs[i].kind & 0xFF) as@ u8;
-    out[at + 2] = ((attrs[i].value.len() >> 8) & 0xFF) as@ u8;
-    out[at + 3] = (attrs[i].value.len() & 0xFF) as@ u8;
-    for (i32 j = 0; j < attrs[i].value.len(); j++) { out[at + 4 + j] = attrs[i].value[j]; }
+  for (Attr attr in attrs) {
+    out[at] = ((attr.kind >> 8) & 0xFF) as@ u8;
+    out[at + 1] = (attr.kind & 0xFF) as@ u8;
+    out[at + 2] = ((attr.value.len() >> 8) & 0xFF) as@ u8;
+    out[at + 3] = (attr.value.len() & 0xFF) as@ u8;
+    for (i32 j = 0; j < attr.value.len(); j++) { out[at + 4 + j] = attr.value[j]; }
     // The padding is left zero. RFC 5389 says a receiver must ignore it, and RFC 8489 later says a
     // sender must make it zero — writing zeroes satisfies both and makes an encoding reproducible,
     // which is what lets a test compare bytes rather than parses.
-    at = at + attrSize(attrs[i]);
+    at = at + attrSize(attr);
   }
   return out;
 }

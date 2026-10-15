@@ -41,8 +41,8 @@ export i32 main(Sys sys) {
     string d = string.fromBytes(cli.arg(1).wait());
     depth = 0;
     u8[] digits = d.toBytes();
-    for (i32 i = 0; i < digits.len(); i++) {
-      i32 c = digits[i] as i32;
+    for (u8 digit in digits) {
+      i32 c = digit as i32;
       if (c < '0' || c > '9') {
         core.warn("gitfetch: \{d} is not a depth");
         return 2;

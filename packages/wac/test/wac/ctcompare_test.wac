@@ -106,18 +106,18 @@ string siteAt(Cli cli, string stem, i32 site) {
   if (!f.ok) { return "<no table: \{f.error}>"; }
   string[] rows = splitLines(string.fromBytes(f.bytes));
   string want = "\{site}\t";
-  for (i32 i = 0; i < rows.len(); i++) {
-    if (startsWith(rows[i], want)) {
+  for (string row in rows) {
+    if (startsWith(row, want)) {
       // index, line, col, kind, file
       string[] parts = string[].filled(5, "");
       i32 n = 0;
       string cur = "";
-      for (i32 k = 0; k < rows[i].len(); k++) {
-        if (rows[i].slice(k, k + 1) == "\t") {
+      for (i32 k = 0; k < row.len(); k++) {
+        if (row.slice(k, k + 1) == "\t") {
           if (n < 5) { parts[n] = cur; n = n + 1; }
           cur = "";
         } else {
-          cur = cur + rows[i].slice(k, k + 1);
+          cur = cur + row.slice(k, k + 1);
         }
       }
       if (n < 5) { parts[n] = cur; n = n + 1; }

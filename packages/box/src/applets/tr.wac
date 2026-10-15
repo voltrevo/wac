@@ -26,9 +26,9 @@ import { Feed } from "../../../platform/src/stream.wac";
 export i32 tr(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   u8[] flags = a.flags.toBytes();
-  for (i32 i = 0; i < flags.len(); i++) {
-    if (!known(flags[i] as i32)) {
-      core.warn(a.name + ": invalid option -- '" + string.fromBytes(u8[].filled(1, flags[i])) + "'");
+  for (u8 flag in flags) {
+    if (!known(flag as i32)) {
+      core.warn(a.name + ": invalid option -- '" + string.fromBytes(u8[].filled(1, flag)) + "'");
       core.warn("Try '\{a.name} --help' for more information.");
       return 1;
     }

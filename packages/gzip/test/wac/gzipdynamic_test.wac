@@ -85,8 +85,8 @@ export string test_skewed_frequencies_force_the_fifteen_bit_limit(Core core, Cli
   counts[1] = 1;
   for (i32 i = 2; i < counts.len(); i++) { counts[i] = counts[i - 1] + counts[i - 2]; }
   i32 total = 0;
-  for (i32 i = 0; i < counts.len(); i++) {
-    total = total + (counts[i] < 4000 ? counts[i] : 4000);
+  for (i32 count in counts) {
+    total = total + (count < 4000 ? count : 4000);
   }
   u8[] parts = u8[].filled(total, 0);
   i32 at = 0;

@@ -106,9 +106,9 @@ export string test_shake_agrees_with_the_host(Core core, Cli cli) {
     i32 rate = rates[a];
     i32[] inLens = [0, 1, rate - 1, rate, rate + 1, 300];
     i32[] outLens = [1, 31, 32, rate - 1, rate, rate + 1, 2 * rate, 400];
-    for (i32 i = 0; i < inLens.len(); i++) {
+    for (i32 inLen in inLens) {
       for (i32 o = 0; o < outLens.len(); o++) {
-        u8[] m = fill(inLens[i], inLens[i]);
+        u8[] m = fill(inLen, inLen);
         u8[] got = bits[a] == 128 ? shake128(m, outLens[o]) : shake256(m, outLens[o]);
         lines.add("shake \{bits[a] as i64} \{outLens[o] as i64} " +
                   "\{hex(m)} \{hex(got)}");
@@ -216,8 +216,7 @@ export string test_the_running_sha3_agrees_with_the_one_shot() {
   // of it.
   T t = T.create();
   i32[] lengths = [0, 1, 135, 136, 137, 271, 272, 273, 500, 1000];
-  for (i32 k = 0; k < lengths.len(); k++) {
-    i32 n = lengths[k];
+  for (i32 n in lengths) {
     u8[] msg = u8[].filled(n, 0);
     for (i32 i = 0; i < n; i++) { msg[i] = ((i * 31 + 7) & 0xFF) as@ u8; }
     Sha3_256 h = Sha3_256.create();

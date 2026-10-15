@@ -288,10 +288,10 @@ export bool ignored(const Vec<Rule> rules, string path, bool isDir) {
 
     bool decided = false;
     bool ignore = false;
-    for (i32 k = 0; k < rules.len(); k++) {
-      if (ruleHits(rules.get(k), sub, subIsDir)) {
+    for (Rule rule in rules) {
+      if (ruleHits(rule, sub, subIsDir)) {
         decided = true;
-        ignore = !rules.get(k).negated;
+        ignore = !rule.negated;
       }
     }
     // An ignored ancestor settles it: git does not look inside one, so a negation deeper down cannot

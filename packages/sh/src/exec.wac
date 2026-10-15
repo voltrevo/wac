@@ -1306,9 +1306,9 @@ Output waitBuiltin(Shell sh, Vec<string> argv) {
 
 /** A sequence of `&&`/`||` lists — a script, or the body of a compound command. */
 void runList(Shell sh, Vec<AndOr> lists) {
-  for (i32 i = 0; i < lists.len(); i++) {
+  for (AndOr list in lists) {
     if (unwinding(sh)) { return; }
-    runAndOr(sh, lists.get(i));
+    runAndOr(sh, list);
   }
 }
 
@@ -2468,8 +2468,7 @@ struct Plan {
 Plan planRedirs(Shell sh, Vec<Redir> redirs) {
   Where one = Where.Stream(1);
   Where two = Where.Stream(2);
-  for (i32 i = 0; i < redirs.len(); i++) {
-    Redir r = redirs.get(i);
+  for (Redir r in redirs) {
     bool append = false;
     match (r.kind) {
       Append: { append = true; }
@@ -2696,7 +2695,7 @@ Output readLine(Shell sh, Vec<string> argv) {
   }
 
   if (!sawAny) {
-    for (i32 i = 0; i < names.len(); i++) { sh.setVar(names.get(i), ""); }
+    for (string name in names) { sh.setVar(name, ""); }
     return Output(u8[](), u8[](), 1, true, false);
   }
 
@@ -3269,12 +3268,12 @@ u8[] named(u8[] err, string name) {
   string out = "";
   string line = "";
   u8[] bytes = err;
-  for (i32 i = 0; i < bytes.len(); i++) {
-    if (bytes[i] == 10) {
+  for (u8 b in bytes) {
+    if (b == 10) {
       out = out + "\{prefixed(line, name)}\n";
       line = "";
     } else {
-      line = line + string.fromBytes(u8[].filled(1, bytes[i]));
+      line = line + string.fromBytes(u8[].filled(1, b));
     }
   }
   if (line != "") { out = out + prefixed(line, name); }
@@ -4430,7 +4429,7 @@ u8[] hereBody(Shell sh, Redir r) {
   if (!r.bodyExpand) { return r.body.toBytes(); }
   Vec<Part> parts = lexQuotedText(r.body);
   string expanded = "";
-  for (i32 i = 0; i < parts.len(); i++) { expanded = expanded + expandPart(sh, parts.get(i)); }
+  for (Part part in parts) { expanded = expanded + expandPart(sh, part); }
   return expanded.toBytes();
 }
 
@@ -4686,7 +4685,7 @@ string expandQuoted(Shell sh, string text) {
   if (text == "") { return ""; }
   Vec<Part> parts = lexQuotedText(text);
   string out = "";
-  for (i32 i = 0; i < parts.len(); i++) { out = out + expandPart(sh, parts.get(i)); }
+  for (Part part in parts) { out = out + expandPart(sh, part); }
   return out;
 }
 
@@ -4736,8 +4735,7 @@ string expandText(Shell sh, string text) {
   Vec<Token> toks = tokenize(text);
   string out = "";
   bool first = true;
-  for (i32 i = 0; i < toks.len(); i++) {
-    Token t = toks.get(i);
+  for (Token t in toks) {
     match (t.kind) {
       Word: {}
       default: { continue; }

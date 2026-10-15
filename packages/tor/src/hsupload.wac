@@ -74,9 +74,9 @@ export Publication publicationState(i32[] outcomes) {
   i32 ok = 0;
   i32 no = 0;
   i32 other = 0;
-  for (i32 i = 0; i < outcomes.len(); i++) {
-    if (outcomes[i] == UPLOAD_OK) { ok = ok + 1; }
-    else if (outcomes[i] == UPLOAD_REJECTED) { no = no + 1; }
+  for (i32 outcome in outcomes) {
+    if (outcome == UPLOAD_OK) { ok = ok + 1; }
+    else if (outcome == UPLOAD_REJECTED) { no = no + 1; }
     else { other = other + 1; }
   }
   return Publication(ok, no, other, no > 0);

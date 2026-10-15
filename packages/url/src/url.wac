@@ -396,8 +396,8 @@ export Url? parseUrl(u8[] rawInput, Url? base) {
         if (buffer.len > 0) {
           u8[] digits = buffer.take();
           i32 value = 0;
-          for (i32 i = 0; i < digits.len(); i++) {
-            value = value * 10 + (digits[i] as i32 - '0');
+          for (u8 digit in digits) {
+            value = value * 10 + (digit as i32 - '0');
             if (value > 65535) { return null; }
           }
           url.port = value == defaultPort(url.scheme) ? -1 : value;

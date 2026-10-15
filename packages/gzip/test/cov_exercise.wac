@@ -183,8 +183,8 @@ export i32 main() {
   // Plus the boundary lengths the corpus does not guarantee: the empty input, a match longer than the
   // maximum, and the 65535-byte stored-block limit either side.
   i32[] lengths = [0, 1, 2, 3, 258, 65535, 65536, 131071];
-  for (i32 i = 0; i < lengths.len(); i++) {
-    u8[] runs = filledWith(lengths[i], 0x61);
+  for (i32 length in lengths) {
+    u8[] runs = filledWith(length, 0x61);
     gzipBest(runs);
     gzipDynamic(runs);
     gzipStored(runs);
@@ -282,9 +282,9 @@ export i32 main() {
   // it. Driven here so the ratchet does not report a tested function as dead — and compared, because
   // calling both and not looking is how a driver reports coverage of an answer nobody checked.
   i32[] sizes = [0, 1, 2, 255, 256, 4096];
-  for (i32 i = 0; i < sizes.len(); i++) {
-    u8[] d = u8[].filled(sizes[i], 0);
-    for (i32 k = 0; k < d.len(); k++) { d[k] = ((k * 37 + sizes[i]) & 0xFF) as@ u8; }
+  for (i32 size in sizes) {
+    u8[] d = u8[].filled(size, 0);
+    for (i32 k = 0; k < d.len(); k++) { d[k] = ((k * 37 + size) & 0xFF) as@ u8; }
     if (crc32(d) != crc32Bitwise(d)) { trap; }
   }
 
@@ -301,10 +301,10 @@ export i32 main() {
   i32[] chunks = [1, 7, 4096, 1 << 20];
   for (i32 i = 0; i < streamed.len(); i++) {
     u8[] d = streamed[i].data;
-    for (i32 c = 0; c < chunks.len(); c++) {
-      stream(gzipBest(d), chunks[c], true, false);
-      stream(gzipStored(d), chunks[c], true, false);
-      stream(gzipFixed(d), chunks[c], true, false);
+    for (i32 chunk in chunks) {
+      stream(gzipBest(d), chunk, true, false);
+      stream(gzipStored(d), chunk, true, false);
+      stream(gzipFixed(d), chunk, true, false);
     }
   }
   // An empty member, which is the only way the window is asked to hand over nothing.

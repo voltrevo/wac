@@ -87,7 +87,7 @@ i32 bundleFrom(Core core, Cli cli, string entry, string out) {
     string p = queue.get(queue.len() - 1);
     queue.remove(queue.len() - 1);
     bool have = false;
-    for (i32 i = 0; i < paths.len(); i++) { if (paths.get(i) == p) { have = true; } }
+    for (string path in paths) { if (path == p) { have = true; } }
     if (have) { continue; }
     FileResult f = cli.readFile(p).wait();
     if (!f.ok) {

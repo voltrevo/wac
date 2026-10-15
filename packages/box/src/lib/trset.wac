@@ -53,7 +53,7 @@ export TrSet parseSet(string who, u8[] raw, i32 targetLen) {
       if (members.len() == 0) {
         return TrSet(false, u8[](), "\{who}: invalid character class '\{name}'\n");
       }
-      for (i32 k = 0; k < members.len(); k++) { out.push(members[k]); plain.push(0); }
+      for (u8 member in members) { out.push(member); plain.push(0); }
       i = end + 2;
       continue;
     }

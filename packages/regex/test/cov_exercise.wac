@@ -131,10 +131,10 @@ export i32 main(Sys sys) {
 
   string[] subs = subjects();
   string[] pats = patterns();
-  for (i32 i = 0; i < pats.len(); i++) {
-    u8[] p = pats[i].toBytes();
-    for (i32 j = 0; j < subs.len(); j++) {
-      seen = seen + exec(p, subs[j].toBytes(), 0).len();
+  for (string pat in pats) {
+    u8[] p = pat.toBytes();
+    for (string sub in subs) {
+      seen = seen + exec(p, sub.toBytes(), 0).len();
     }
   }
 
@@ -169,8 +169,8 @@ export i32 main(Sys sys) {
   i32[] budgets = [1, 2, 3, 4, 8, 16, 64];
   string[] deep = ["(a|a|aa)+b", "(a*)*b", "((a)|(b))*c", "a?a?a?a?aaaa", "(a|b|c|d|e)+z"];
   for (i32 i = 0; i < deep.len(); i++) {
-    for (i32 b = 0; b < budgets.len(); b++) {
-      seen = seen + execBudget(deep[i].toBytes(), "aaaaaaaaab".toBytes(), 0, budgets[b]).len();
+    for (i32 budget in budgets) {
+      seen = seen + execBudget(deep[i].toBytes(), "aaaaaaaaab".toBytes(), 0, budget).len();
     }
   }
 

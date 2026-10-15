@@ -470,15 +470,15 @@ export i32 main(Sys sys) {
   i32[] chunks = [1, 3, 64, 4096];
   for (i32 i = 0; i < c.len(); i++) {
     u8[] f = compress(c[i]);
-    for (i32 k = 0; k < chunks.len(); k++) { stream1(f, chunks[k]); }
+    for (i32 chunk in chunks) { stream1(f, chunk); }
     stream1(f, f.len() < 1 ? 1 : f.len());
   }
   // **The eviction path**: a window smaller than the content, at several chunk sizes.
   i32[] evictChunks = [1, 64, 4096];
-  for (i32 k = 0; k < evictChunks.len(); k++) {
-    stream1(win10, evictChunks[k]);
-    stream1(win11, evictChunks[k]);
-    stream1(rleRef, evictChunks[k]);
+  for (i32 evictChunk in evictChunks) {
+    stream1(win10, evictChunk);
+    stream1(win11, evictChunk);
+    stream1(rleRef, evictChunk);
   }
   stream1(win10, win10.len());
   stream1(rleRef, rleRef.len());
@@ -495,7 +495,7 @@ export i32 main(Sys sys) {
   for (i32 i = 0; i < d200.len(); i++) { d200[i] = ((i * 37 + 11) & 255) as@ u8; }
   for (i32 n = 0; n <= 140; n++) { xxh64(d200, 0, n); }
   i32[] cuts = [1, 7, 31, 32, 33, 64, 200, 0];
-  for (i32 i = 0; i < cuts.len(); i++) { hashStreamed(d200, cuts[i]); }
+  for (i32 cut in cuts) { hashStreamed(d200, cut); }
   hashWhole(d200);
   hashRagged(d200);
   hashStreamed(u8[](), 1);
@@ -503,8 +503,8 @@ export i32 main(Sys sys) {
   // ## `optimalLog`, which refuses nothing
   i32[] totals = [1, 2, 10, 1000, 100000];
   i32[] maxSyms = [1, 5, 100, 255];
-  for (i32 i = 0; i < totals.len(); i++) {
-    for (i32 k = 0; k < maxSyms.len(); k++) { optimalLog(totals[i], maxSyms[k], 9); }
+  for (i32 total in totals) {
+    for (i32 maxSym in maxSyms) { optimalLog(total, maxSym, 9); }
   }
 
   // ## Everything below here can refuse, so it is last
@@ -1099,7 +1099,7 @@ export void encCase(i32 i) {
  */
 void encodeRoundTrip(i32[] symbols, i32 maxSymbol, i32 maxLog) {
   i32[] counts = i32[].filled(maxSymbol + 1, 0);
-  for (i32 i = 0; i < symbols.len(); i++) { counts[symbols[i]] = counts[symbols[i]] + 1; }
+  for (i32 symbol in symbols) { counts[symbol] = counts[symbol] + 1; }
   i32 log = optimalLog(symbols.len(), maxSymbol, maxLog);
   i32[] norm = normalize(counts, maxSymbol, symbols.len(), log);
   CTable c = buildCTable(norm, maxSymbol, log);

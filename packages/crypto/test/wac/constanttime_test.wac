@@ -453,9 +453,9 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
   // open about elsewhere.
   string[] rows = splitLines(all);
   string found = "";
-  for (i32 i = 0; i < rows.len(); i++) {
-    if (!startsWith(rows[i], "site ")) { continue; }
-    found = found + siteAt(cli, a, numberOf(word(rows[i], 2))) + " ";
+  for (string row in rows) {
+    if (!startsWith(row, "site ")) { continue; }
+    found = found + siteAt(cli, a, numberOf(word(row, 2))) + " ";
   }
   // **All five, and now that is the whole of it.** Until 2026-08-20 `xtime`'s conditional reduction
   // split the two runs at `aes.wac:66`, so everything after was unexamined — `--all` stops at a split

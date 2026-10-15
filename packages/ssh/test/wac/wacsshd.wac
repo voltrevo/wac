@@ -402,9 +402,9 @@ Said said(Exec r) {
   // The client writes its host key notice to stderr; it is not the command's output.
   string[] lines = splitLines(string.fromBytes(r.stderr));
   string kept = "";
-  for (i32 i = 0; i < lines.len(); i++) {
-    if (lines[i].len() >= 27 && lines[i].slice(0, 27) == "Warning: Permanently added ") { continue; }
-    kept = kept + (kept == "" ? "" : "\n") + lines[i];
+  for (string line in lines) {
+    if (line.len() >= 27 && line.slice(0, 27) == "Warning: Permanently added ") { continue; }
+    kept = kept + (kept == "" ? "" : "\n") + line;
   }
   return Said(r.status, string.fromBytes(r.stdout), kept);
 }

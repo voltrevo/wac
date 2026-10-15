@@ -912,9 +912,9 @@ u8[] crlf() {
  */
 u8[] forTerminal(u8[] bytes) {
   Buf out = Buf.create();
-  for (i32 i = 0; i < bytes.len(); i++) {
-    if (bytes[i] == 10) { out.push(13); }
-    out.push(bytes[i]);
+  for (u8 b in bytes) {
+    if (b == 10) { out.push(13); }
+    out.push(b);
   }
   return out.take();
 }

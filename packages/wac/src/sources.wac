@@ -492,11 +492,11 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
     }
     texts[at] = string.fromBytes(bytes);
     string[] specs = importSpecs(bytes);
-    for (i32 i = 0; i < specs.len(); i++) {
+    for (string spec in specs) {
       // **A `@/` is resolved here or the graph is short a file**, and the root is looked up only
       // when one of this file's specifiers asks for it — so a program with no project reference
       // never stats anything, and a manifest above the tree cannot change what its imports mean.
-      if ((isProjectSpecifier(specs[i]) || isMappingCandidate(specs[i])) && roots[at] == "") {
+      if ((isProjectSpecifier(spec) || isMappingCandidate(spec)) && roots[at] == "") {
         roots[at] = projectRootAbs(fs, base, path);
       }
       // **A mapping is tried before the path arithmetic**, because a specifier like `dep/lib.wac`
@@ -505,8 +505,8 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
       // occasionally is, which is the worse of the two failures. `matchSpecifier` answers `found`
       // only for a name the manifest actually declares, so an ordinary relative import falls
       // through untouched. `design/lang/0009` D9.
-      if (isMappingCandidate(specs[i]) && roots[at] != "") {
-        Mapped got = mapSpecifier(fs, cli, roots[at], specs[i]);
+      if (isMappingCandidate(spec) && roots[at] != "") {
+        Mapped got = mapSpecifier(fs, cli, roots[at], spec);
         if (got.named) {
           // **A package is resolved only when a retained declaration needs it** — spec ch04
           // `§wac-package-lazy-j3nmf2p`. A build maps it to a key nothing supplies, as it leaves out a
@@ -515,7 +515,7 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
           if (!got.ok && lazy) {
             if (mapN < mapFrom.len()) {
               mapFrom[mapN] = path;
-              mapSpec[mapN] = specs[i];
+              mapSpec[mapN] = spec;
               mapTo[mapN] = "(unresolved) \{got.error}";
               mapN = mapN + 1;
             }
@@ -525,7 +525,7 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
           // The answer the linker and the checker cannot work out for themselves.
           if (mapN < mapFrom.len()) {
             mapFrom[mapN] = path;
-            mapSpec[mapN] = specs[i];
+            mapSpec[mapN] = spec;
             mapTo[mapN] = got.path;
             mapN = mapN + 1;
           }
@@ -543,7 +543,7 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
           continue;
         }
       }
-      string next = resolveFromAt(path, specs[i], roots[at], base);
+      string next = resolveFromAt(path, spec, roots[at], base);
       // **A `@/` with no project stops the walk, and saying so is the whole point.** D7 makes it a
       // compile error. Skipping the import instead is the outcome that looks like success: the
       // program compiles with the import silently absent, which is how the first version of this
@@ -555,17 +555,17 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
       // saying *"needs a project"* for that one sends the reader to add a manifest they may already
       // have. `issues/system/0234a`.
       if (next == "") {
-        string head5 = specs[i].len() >= 5 ? specs[i].slice(0, 5) : "";
-        string head4 = specs[i].len() >= 4 ? specs[i].slice(0, 4) : "";
-        string why = head5 == "core/" || head4 == "std/" ? noBuiltinSubpath(specs[i])
-                   : isMappingCandidate(specs[i]) ? noMapping(specs[i], path)
-                   : noProject(specs[i], path);
+        string head5 = spec.len() >= 5 ? spec.slice(0, 5) : "";
+        string head4 = spec.len() >= 4 ? spec.slice(0, 4) : "";
+        string why = head5 == "core/" || head4 == "std/" ? noBuiltinSubpath(spec)
+                   : isMappingCandidate(spec) ? noMapping(spec, path)
+                   : noProject(spec, path);
         return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", why);
       }
       // **A path stays in its project, and a nested project is entered by its directory** —
       // spec ch02 `§wac-import-within-project-vnqu28r`, `§wac-import-nested-project-sd4s5n8`.
-      if (isPathSpecifier(specs[i])) {
-        Boundary bd = crossBoundary(fs, base, path, specs[i], next, rootCache);
+      if (isPathSpecifier(spec)) {
+        Boundary bd = crossBoundary(fs, base, path, spec, next, rootCache);
         if (bd.why != "") {
           return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", bd.why);
         }
@@ -573,7 +573,7 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
           // The compiler resolves this specifier through the map, as it does a package's.
           if (mapN < mapFrom.len()) {
             mapFrom[mapN] = path;
-            mapSpec[mapN] = specs[i];
+            mapSpec[mapN] = spec;
             mapTo[mapN] = bd.target;
             mapN = mapN + 1;
           }
@@ -596,9 +596,9 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
       // consumed through Git, and then it made usability depend on whether that package's own
       // closure happened to name a built-in. `packages/crypto` and `packages/codec` were fine;
       // `packages/json` was not, because `value.wac` imports `core/map.wac`.
-      if (!isBuiltinSpec(specs[i]) && !withinDir(confine[at], next)) {
+      if (!isBuiltinSpec(spec) && !withinDir(confine[at], next)) {
         return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "",
-                       leavesMapping(specs[i], path, confine[at]));
+                       leavesMapping(spec, path, confine[at]));
       }
       bool seen = false;
       for (i32 k = 0; k < n; k++) { if (paths[k] == next) { seen = true; } }
@@ -616,7 +616,7 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
       if (seen) { continue; }
       paths[n] = next;
       askedBy[n] = path;
-      askedAs[n] = specs[i];
+      askedAs[n] = spec;
       // Inherited: a file a confined file reaches is as confined as the file that reached it — **but a
       // built-in inherits nothing**, because it was never in the confined tree. Skipping the check above
       // and leaving this line alone moves the refusal one file along rather than lifting it:
@@ -625,7 +625,7 @@ export Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
       // Measured that way — with only the check skipped, a mapped file reaching `core/result.wac` gets
       // *"./option.wac leaves the mapped subdirectory"*. It is the one built-in with a relative import,
       // which is why the reported case (`core/map.wac`) does not show it. GitHub `voltrevo/wac#24`.
-      confine[n] = isBuiltinSpec(specs[i]) ? "" : confine[at];
+      confine[n] = isBuiltinSpec(spec) ? "" : confine[at];
       n = n + 1;
     }
     at = at + 1;

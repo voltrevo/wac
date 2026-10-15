@@ -173,12 +173,12 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
   string[] stagedLines = splitLines(string.fromBytes(staged.stdout));
   string firstExec = "";
   i32 executables = 0;
-  for (i32 i = 0; i < stagedLines.len(); i++) {
-    if (!startsWith(stagedLines[i], "100755 ")) { continue; }
+  for (string stagedLine in stagedLines) {
+    if (!startsWith(stagedLine, "100755 ")) { continue; }
     executables = executables + 1;
     if (firstExec != "") { continue; }
-    i32 tab = stagedLines[i].indexOf("\t");
-    if (tab >= 0) { firstExec = stagedLines[i].slice(tab + 1, stagedLines[i].len()); }
+    i32 tab = stagedLine.indexOf("\t");
+    if (tab >= 0) { firstExec = stagedLine.slice(tab + 1, stagedLine.len()); }
   }
   t.isTrue(executables > 0,
            "the clone's index holds no executable, so the mode is not being tested by this at all");
@@ -212,8 +212,8 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
     string[] entries = packs!;
     t.eqI32(entries.len(), 2, "expected a .pack and a .idx");
     string stem = "";
-    for (i32 i = 0; i < entries.len(); i++) {
-      if (endsWith(entries[i], ".pack")) { stem = entries[i].slice(0, entries[i].len() - 5); }
+    for (string entry in entries) {
+      if (endsWith(entry, ".pack")) { stem = entry.slice(0, entry.len() - 5); }
     }
     t.isTrue(stem != "", "no .pack in the pack directory");
     if (stem != "") {

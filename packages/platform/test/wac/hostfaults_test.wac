@@ -329,8 +329,7 @@ export string test_the_two_rust_hosts_hand_the_seed_the_same_grants(Core core, C
   string wasmtime = read(core, cli, WASMTIME_HOST);
 
   string[] names = ["read", "write", "env", "net", "run"];
-  for (i32 i = 0; i < names.len(); i++) {
-    string grant = names[i];
+  for (string grant in names) {
     bool inV8 = v8.indexOf("grants.\{grant} = true") >= 0
              || v8.indexOf("\{grant}: true") >= 0;
     bool inNative = wasmtime.indexOf("grants.\{grant} = true") >= 0

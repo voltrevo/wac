@@ -116,8 +116,7 @@ export i32 main(Sys sys) {
   core.log("| members | scan/lookup | indexed/lookup | index build | break-even lookups |");
   core.log("|---:|---:|---:|---:|---|");
 
-  for (i32 i = 0; i < sizes.len(); i++) {
-    i32 n = sizes[i];
+  for (i32 n in sizes) {
     i64 scan = perOp(bestOfThree(core, 0, n, REPS()), REPS());
     i64 indexed = perOp(bestOfThree(core, 1, n, REPS()), REPS());
     i64 build = perOp(bestOfThree(core, 2, n, BUILD_REPS()), BUILD_REPS());

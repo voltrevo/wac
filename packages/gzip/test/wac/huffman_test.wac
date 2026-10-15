@@ -64,8 +64,8 @@ export string test_kraft_equality() {
   // over-subscribed and two symbols share a pattern.
   T t = T.create();
   i32[] counts = [2, 3, 8, 19, 20, 40, 100, 286];
-  for (i32 c = 0; c < counts.len(); c++) {
-    i32 n = counts[c];
+  for (i32 count in counts) {
+    i32 n = count;
     Huff h = Huff.build(fibFreqs(n), n, 15);
     i32 sum = 0;
     for (i32 i = 0; i < n; i++) {
@@ -81,8 +81,8 @@ export string test_kraft_equality() {
 export string test_codes_form_a_prefix_code() {
   T t = T.create();
   i32[] counts = [2, 3, 8, 20, 40, 100, 286];
-  for (i32 c = 0; c < counts.len(); c++) {
-    i32 n = counts[c];
+  for (i32 count in counts) {
+    i32 n = count;
     Huff h = Huff.build(fibFreqs(n), n, 15);
     i32 violations = 0;
     for (i32 i = 0; i < n; i++) {
@@ -105,8 +105,8 @@ export string test_codes_form_a_prefix_code() {
 export string test_codes_fit_their_stated_width() {
   T t = T.create();
   i32[] counts = [2, 3, 8, 20, 40, 100, 286];
-  for (i32 c = 0; c < counts.len(); c++) {
-    i32 n = counts[c];
+  for (i32 count in counts) {
+    i32 n = count;
     Huff h = Huff.build(fibFreqs(n), n, 15);
     i32 overlong = 0;
     for (i32 i = 0; i < n; i++) {
