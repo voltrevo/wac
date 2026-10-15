@@ -1,0 +1,26 @@
+// expect: f(3) = 4
+// expect: f(-1) = 105
+// spec: §wac-match-arm-leaves-y33uzzi
+// why: an arm of a match expression that returns rather than giving a value may read what it binds
+// from: converting packages/ from `bool ok` structs to Result, 2026-10-15
+import { Result } from "core";
+
+Result<i32, string> get(i32 n) {
+  if (n < 0) { return Result.Err("no"); }
+  return Result.Ok(n);
+}
+
+Result<i32, string> plusOne(i32 n) {
+  i32 v = match (get(n)) {
+    Ok(x): x,
+    Err(e): return Result.Err("g: \{e}"),        // the binding, read in the arm that leaves
+  };
+  return Result.Ok(v + 1);
+}
+
+export i32 f(i32 n) {
+  return match (plusOne(n)) {
+    Ok(v): v,
+    Err(e): e.len() + 100,
+  };
+}

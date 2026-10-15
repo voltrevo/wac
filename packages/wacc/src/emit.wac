@@ -15601,7 +15601,11 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
       if (mm2 != "") { return mm2; }
       for (i32 a = 0; a < arms.len(); a++) {
         if (arms[a].value is null) {
+          // **An arm that leaves still binds** — `Err(e): return Result.Err("…\{e}…")` reads `e` —
+          // and the emitter binds it for both kinds of arm, so this has to as well.
+          i32 savedL2 = pushArmNames(src, lexed, env, arms[a], subject);
           string lb = unsupportedIn(src, lexed, env, arms[a].body);
+          env.localCount = savedL2;
           if (lb != "") { return lb; }
           continue;
         }
@@ -16429,7 +16433,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (mm != "") { return mm; }
       for (i32 a = 0; a < arms.len(); a++) {
         if (arms[a].value is null) {
+          i32 savedL = pushArmNames(src, lexed, env, arms[a], subject);
           string lb = unsupportedIn(src, lexed, env, arms[a].body);
+          env.localCount = savedL;
           if (lb != "") { return lb; }
           continue;
         }
