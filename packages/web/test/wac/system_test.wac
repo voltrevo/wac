@@ -1,6 +1,6 @@
 // A page's system driven with no browser: a `System` that records what it was asked, and the
 // answers a browser would give made by hand with `answered`. What a browser adds is the Origin Private
-// File System, and `tools/build.wac`'s system half is the whole of that — so what a program sees, in
+// File System, and `packages/web/tools/build.wac`'s system half is the whole of that — so what a program sees, in
 // every order the answers can arrive, is tested here.
 
 import { Check } from "./check.wac";
