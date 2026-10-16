@@ -225,11 +225,12 @@ export default function Checked() {
           write down why.
         </P>
         <P>
-          <Lead>36 of the 40 packages carry a coverage ledger</Lead> — and so does{" "}
+          <Lead>36 of the 41 packages carry a coverage ledger</Lead> — and so does{" "}
           {m({ children: "core" })}, which is not a package — a file listing every branch point the
-          suite does not reach, each with a sentence saying what would reach it. The four without one
+          suite does not reach, each with a sentence saying what would reach it. The five without one
           are {m({ children: "wacc" })}, which is 36,000 lines and its own project;{" "}
-          {m({ children: "box" })}; {m({ children: "wac" })}; and {m({ children: "ts" })}.
+          {m({ children: "box" })}; {m({ children: "wac" })}; {m({ children: "ts" })}; and{" "}
+          {m({ children: "web" })}.
         </P>
         <P>
           <Lead>The ratchet runs both ways, and the second direction is the unusual one.</Lead> An
@@ -260,7 +261,7 @@ export default function Checked() {
 
       <Section id="spec" kicker="evidence, seventh kind" title="A specification that cannot drift">
         <P>
-          The language has a written specification, and <Lead>698 of its claims carry a tag</Lead>{" "}
+          The language has a written specification, and <Lead>707 of its claims carry a tag</Lead>{" "}
           like {m({ children: "[§wac-core-one-type-8fjm2wq]" })}. Every tag names a test. A claim
           without evidence beside it reads as evidence, which is the failure mode a specification
           has, so a test walks the specification and fails with the list of any tag nothing covers.

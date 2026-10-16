@@ -24,5 +24,5 @@ export const KEYWORDS = new Set<string>([
   "default", "defer", "do", "else", "enum", "export", "false", "fn", "for", "gen", "if", "import", "is",
   "match", "matches", "namespace", "not", "null", "override", "private", "return", "static", "static_for",
   "static_if", "static_match", "static_trap", "struct", "switch", "symbol", "this", "trap", "true",
-  "type", "typeref", "union", "virtual", "void", "while", "yield",
+  "type", "typeof", "typeref", "union", "virtual", "void", "while", "yield",
 ]);
