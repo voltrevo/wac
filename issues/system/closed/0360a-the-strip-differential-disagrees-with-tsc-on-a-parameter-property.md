@@ -1,6 +1,7 @@
 # 0360a — the strip differential disagrees with `tsc` about a parameter property in `provider.ts`
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** 7dd0ccb8d
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-15
@@ -26,3 +27,8 @@ Whether the stripper also loses the `this.code = code` assignment was not checke
 the first line that differs. Fails on `origin/master` at `f05c23056` as well as
 after the interpolation commit, so it is not from `packages/ts`'s message changes. `provider.ts` last
 changed on 2026-10-02 (`78e5abc18`). Needs `site/node_modules` to run at all.
+
+## Resolution
+
+Our side: `WacExit` declares `code` as a field and assigns it, which strips identically under both; a
+parameter property is the one non-erasable construct `design/system/0009` D4 counted, and it was it.
