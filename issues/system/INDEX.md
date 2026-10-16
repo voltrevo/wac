@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0362a](open/0362a-an-applet-in-wac-sh-says-nothing-until-it-exits.md) | An applet run by `wac sh` says nothing until it exits: its `Core` writes to the frame, which delivers when the frame ends, so `wac sh -c 'httpd -8080 dist'` serves without ever saying it is listening — `templates/webapp`'s `serve` task is that command | bug | output of a long-running applet never appears |
 | [0361a](open/0361a-nativeshare-says-a-pure-wrapper-is-not-taken-natively.md) | `tools/mutate/nativeShare.test.ts`'s *a pure wrapper is actually taken natively* fails on `origin/master` with that commit's binary: either the binary is not where `buildProfile` looks or the file stopped qualifying, and which was not checked | bug | wrong answer |
 | [0360a](open/0360a-the-strip-differential-disagrees-with-tsc-on-a-parameter-property.md) | `packages/ts/test/stripDifferential.test.ts` fails on `packages/platform/host/provider.ts`: `WacExit`'s `constructor(readonly code: number)` is a parameter property, and `tsc` writes a field declaration (`code;`) where the wac stripper goes straight to the constructor. Fails on `origin/master` too | bug | wrong answer |
 | [0359a](open/0359a-the-ring-fuzz-answered-a-request-with-another-requests-bytes-under-load.md) | In a full suite run `packages/platform/test/fuzz.test.ts` failed with *"seed 1009 (off): answer for 80 is 166584 bytes, wanted 1767"* and passed three targeted runs straight after — `closed/0155`'s shape, but in the `off` scheduler mode the file's header says cannot open a recycled-slot window, and an answer 94x the size asked for looks like another request's answer rather than a short one | bug | a request answered with another request's bytes, under load |
@@ -125,7 +126,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-340 issues, 242 closed.
+341 issues, 242 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on
