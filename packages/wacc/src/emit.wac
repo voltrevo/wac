@@ -11653,6 +11653,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       if (ic >= 0) { return env.capTypes[env.emittingLambda * capsPerLambda() + ic]; }
       string lt = env.localType(nm);
       if (lt != "") { return lt; }
+      // **During the lambda walk a local is in the walk's scope**, not the emitter's, which does not
+      // exist yet — so `auto n = k;` or `typeof(k) n` captured by a lambda had no type when the walk
+      // asked, and the module declined. The walk's scope is empty outside a walk.
+      string wt = env.walkTypeOf(nm);
+      if (wt != "") { return wt; }
       string key2 = nameKeyOf(env, src, lexed, tok);
       // A function used as a value has the type of its own signature.
       i32 fi2 = env.funcAt(key2);
@@ -13126,6 +13131,9 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
   }
   env.curFile = w1f; src = w1s; lexed = w1l;
 
+  // The walk's scope is the walk's: empty once it ends, so `typeOfE` reading it can only ever see a
+  // name the walk is inside.
+  env.walkCount = 0;
 }
 
 /**
@@ -13330,6 +13338,9 @@ void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i
     }
   }
   env.curFile = w4f; src = w4s; lexed = w4l;
+  // The walk's scope is the walk's: empty once it ends, so `typeOfE` reading it can only ever see a
+  // name the walk is inside.
+  env.walkCount = 0;
 }
 
 void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {

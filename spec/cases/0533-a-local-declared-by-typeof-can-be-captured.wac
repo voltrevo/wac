@@ -1,0 +1,10 @@
+// expect: f() = 5
+// spec: §wac-typeof-cxgjqjz
+// why: a local whose declared type is `typeof(e)` is a local like any other, and a lambda may capture and write it
+export i32 f() {
+  i32 k = 3;
+  typeof(k) n = 0;
+  fn<void()> g = () => { n = k + 2; };
+  g();
+  return n;
+}

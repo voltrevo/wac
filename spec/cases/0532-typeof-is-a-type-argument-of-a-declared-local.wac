@@ -1,0 +1,10 @@
+// expect: f() = 7
+// spec: §wac-typeof-cxgjqjz
+// why: `typeof(e)` is allowed wherever a type is, and that includes a type argument of a local declared with no initialiser
+import { Ticket } from "core";
+export i32 f() {
+  i32 p = 2;
+  Ticket<typeof(p + 1)> t;
+  t.resolve(7);
+  return t.wait()!;
+}

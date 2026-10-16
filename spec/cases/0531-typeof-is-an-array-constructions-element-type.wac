@@ -1,0 +1,11 @@
+// expect: f() = 5
+// spec: §wac-typeof-cxgjqjz
+// why: `typeof(e)` is allowed wherever a type is, and that includes the element type an array is built at
+export i32 f() {
+  i32 p = 2;
+  string s = "ab";
+  i32[] a = typeof(p)[].filled(2, 3);
+  string[] b = typeof(s + "c")[].defaulted(1);
+  b[0] = s;
+  return a[1] + b[0].len();
+}

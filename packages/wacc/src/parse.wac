@@ -999,6 +999,14 @@ i32 afterTypeArgs(P p, i32 from) {
   i32 k = from;
   while (p.kindAt(k) != kEof()) {
     i32 kind = p.kindAt(k);
+    // **`typeof(e)` is a type whose parentheses hold an expression** (spec ch30), so what is inside them
+    // is skipped whole rather than asked whether it could be a type: `Ticket<typeof(p + 1)> t;` is a
+    // declaration, and the `+` would otherwise make it a comparison.
+    if (kind == kIdent() && p.textAt(k) == "typeof" && p.kindAt(k + 1) == kLparen()) {
+      k = afterParens(p, k + 1);
+      if (k < 0) { return -1; }
+      continue;
+    }
     // **What is between the angles has to be able to be a type.** Without this, `n < 0 || n > (cap)`
     // is a generic call whose type arguments are `0 || n`, and the complaint is *expected a type* —
     // a message about the parser's hypothesis rather than about the program, pointing away from the
@@ -1908,6 +1916,21 @@ Expr parsePrimary(P p) {
     }
     p.expect(kRparen());
     return Expr(ExprKind.TupleLit(items.take()), line, col);
+  }
+
+  // `typeof(e)[].filled(n, v)` — an array built at the type of an expression (spec ch30: `typeof` is
+  // allowed wherever a type is). `typeof` is a keyword, so nothing else starts this way, and
+  // `parseType` reads the head and the `[]` as the fn case below relies on. Not `type(e)`, which a
+  // function named `type` could also spell.
+  if (p.at1(kIdent()) && p.textAt(0) == "typeof" && p.kindAt(1) == kLparen()) {
+    Ty ct = parseType(p);
+    match (ct.kind) {
+      Arr(elem): { return parseArrayFactory(p, elem, line, col); }
+      default: {
+        p.fail(perrExpected());
+        return Expr(ExprKind.NullLit, line, col);
+      }
+    }
   }
 
   // `fn<R(P)>[]()` and `fn<R(P)>[].filled(n, f)` — an array of funcrefs. `parseType` reads the `[]` as
