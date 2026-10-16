@@ -3,38 +3,69 @@
 // Input is UTF-8 bytes rather than `string` — see value.wac for why. That turns
 // the scanner into comparisons on i32, which is what wac is good at.
 //
-// wac has no exceptions, so errors travel as a code on the Parser plus a null return. Every parse
-// entry point returns `T?`; null always means "check p.err".
-//
-// **This said "and no sum types", and the file it imports from is an enum.** `value.wac`'s
-// `JsonValue` is `export enum`, and spec/spec/enums.md names this package as one of the three that
-// exercised the feature hardest. So the error path could be a `Result<T, ParseFault>` and is not;
-// what is written here is what the language had when it was written.
+// **Inside, a failure is a fault on the Parser plus a null return**; `json.wac`'s entry points turn
+// that into a `Result<…, JsonError>` once, at the edge. The insides stay `T?` because they are hot:
+// a `Result` is an allocation per return, and in a microbenchmark that allocates per node it cost a
+// third of the throughput, where one per document costs nothing.
 
 import { JsonValue, JsonArray, JsonObject } from "./value.wac";
 import { Buf } from "core";
 import { atofSpan } from "../../fmt/src/atof.wac";
 
-export i32 ERR_NONE()         { return 0; }
-export i32 ERR_UNEXPECTED()   { return 1; }  // wrong byte for the position
-export i32 ERR_EOF()          { return 2; }  // ran out of input mid-value
-export i32 ERR_NUMBER()       { return 3; }  // malformed number
-export i32 ERR_ESCAPE()       { return 4; }  // bad \ escape
-export i32 ERR_CONTROL()      { return 5; }  // raw control byte in a string
-export i32 ERR_TRAILING()     { return 6; }  // non-whitespace after the value
-export i32 ERR_DEPTH()        { return 7; }  // nesting limit exceeded
-export i32 ERR_UTF8()         { return 8; }  // malformed UTF-8 inside a string
-export i32 ERR_COMMENT()      { return 9; }  // JSON5: `/*` with no `*/`
-export i32 ERR_UNSUPPORTED()  { return 10; } // JSON5: valid, but this parser does not accept it
+/** Why a document was refused. `JsonError` adds where. */
+export enum JsonFault {
+  Unexpected,     // wrong byte for the position
+  EndOfInput,     // ran out of input mid-value
+  BadNumber,      // malformed number
+  BadEscape,      // bad \ escape
+  ControlByte,    // raw control byte in a string
+  Trailing,       // non-whitespace after the value
+  TooDeep,        // nesting limit exceeded
+  BadUtf8,        // malformed UTF-8 inside a string
+  OpenComment,    // JSON5: `/*` with no `*/`
+  Unsupported,    // JSON5: valid, but this parser does not accept it
+
+  /** A short name for messages and tests — enums have no `==`, so a test compares this. */
+  string name(const this) {
+    return match (this) {
+      Unexpected: "unexpected",
+      EndOfInput: "end of input",
+      BadNumber: "bad number",
+      BadEscape: "bad escape",
+      ControlByte: "control byte",
+      Trailing: "trailing",
+      TooDeep: "too deep",
+      BadUtf8: "bad utf-8",
+      OpenComment: "open comment",
+      Unsupported: "unsupported",
+    };
+  }
+}
+
+/** A refused document: why, and the byte offset where parsing gave up. */
+export struct JsonError {
+  JsonFault fault;
+  i32 pos;
+
+  string text(const this) { return "\{this.fault.name()} at byte \{this.pos}"; }
+}
 
 // Bounded so a hostile input cannot exhaust the wasm stack. Real JSON is
 // nowhere near this deep.
-i32 MAX_DEPTH() { return 400; }
+static i32 MAX_DEPTH = 400;
+
+// The keywords `eatWord` matches, built once rather than per call.
+static u8[] TRUE = ['t', 'r', 'u', 'e'];
+static u8[] FALSE = ['f', 'a', 'l', 's', 'e'];
+static u8[] NULL = ['n', 'u', 'l', 'l'];
+static u8[] INFINITY = ['I', 'n', 'f', 'i', 'n', 'i', 't', 'y'];
+static u8[] NAN = ['N', 'a', 'N'];
 
 export struct Parser {
   u8[] src;
   i32 pos;
-  i32 err;
+  // The first fault, or null; `errPos` is where it happened.
+  JsonFault? err;
   i32 errPos;
   i32 depth;
   // JSON5 (json5.org 1.0.0) rather than RFC 8259. One flag rather than a second parser: the two
@@ -43,10 +74,10 @@ export struct Parser {
   // duplicating. Each difference below is guarded by `this.json5` and named.
   bool json5;
 
-  Parser create(u8[] src) { return Parser(src, 0, 0, 0, 0, false); }
+  Parser create(u8[] src) { return Parser(src, 0, null, 0, 0, false); }
 
   /** The same parser reading JSON5. `parseJson5` in json.wac is the entry point. */
-  Parser createJson5(u8[] src) { return Parser(src, 0, 0, 0, 0, true); }
+  Parser createJson5(u8[] src) { return Parser(src, 0, null, 0, 0, true); }
 
   // -1 rather than a bool+out-param: every caller compares against a byte
   // value anyway, and no real byte is negative.
@@ -55,10 +86,10 @@ export struct Parser {
     return this.src[this.pos] as i32;
   }
 
-  void fail(this, i32 code) {
+  void fail(this, JsonFault fault) {
     // Keep the first failure: it is the one nearest the actual mistake.
-    if (this.err == 0) {
-      this.err = code;
+    if (this.err is null) {
+      this.err = fault;
       this.errPos = this.pos;
     }
   }
@@ -114,8 +145,8 @@ export struct Parser {
    * comment at all — a bare slash is not whitespace, so the caller stops and the value parser
    * reports it where it stands.
    *
-   * An unterminated block comment gets its own code rather than `ERR_EOF`, because the position
-   * `ERR_EOF` would report is the end of the file and the mistake is wherever the comment opened.
+   * An unterminated block comment gets its own code rather than `EndOfInput`, because the position
+   * `EndOfInput` would report is the end of the file and the mistake is wherever the comment opened.
    * So the failure is recorded at the opening delimiter and the cursor then moved to the end.
    */
   bool skipComment(this) {
@@ -144,13 +175,13 @@ export struct Parser {
       this.pos++;
     }
     this.pos = open;
-    this.fail(ERR_COMMENT());
+    this.fail(JsonFault.OpenComment);
     this.pos = this.src.len();
     return false;
   }
 
-  // Match an ASCII keyword at the cursor without allocating.
-  bool eatWord(this, u8[] word) {
+  // Match an ASCII keyword at the cursor without allocating — the keywords are statics above.
+  bool eatWord(this, const u8[] word) {
     if (this.pos + word.len() > this.src.len()) { return false; }
     for (i32 i = 0; i < word.len(); i++) {
       if (this.src[this.pos + i] != word[i]) { return false; }
@@ -160,9 +191,9 @@ export struct Parser {
   }
 
   JsonValue? parseValue(this) {
-    if (this.depth >= MAX_DEPTH()) { this.fail(ERR_DEPTH()); return null; }
+    if (this.depth >= MAX_DEPTH) { this.fail(JsonFault.TooDeep); return null; }
     i32 c = this.peek();
-    if (c < 0) { this.fail(ERR_EOF()); return null; }
+    if (c < 0) { this.fail(JsonFault.EndOfInput); return null; }
 
     switch (c) {
       case '{': { return this.parseObject(); }
@@ -173,18 +204,18 @@ export struct Parser {
         return JsonValue.Str(b!);
       }
       case 't': {
-        if (this.eatWord(['t', 'r', 'u', 'e'] as u8[])) { return JsonValue.Bool(true); }
-        this.fail(ERR_UNEXPECTED());
+        if (this.eatWord(TRUE)) { return JsonValue.Bool(true); }
+        this.fail(JsonFault.Unexpected);
         return null;
       }
       case 'f': {
-        if (this.eatWord(['f', 'a', 'l', 's', 'e'] as u8[])) { return JsonValue.Bool(false); }
-        this.fail(ERR_UNEXPECTED());
+        if (this.eatWord(FALSE)) { return JsonValue.Bool(false); }
+        this.fail(JsonFault.Unexpected);
         return null;
       }
       case 'n': {
-        if (this.eatWord(['n', 'u', 'l', 'l'] as u8[])) { return JsonValue.Null; }
-        this.fail(ERR_UNEXPECTED());
+        if (this.eatWord(NULL)) { return JsonValue.Null; }
+        this.fail(JsonFault.Unexpected);
         return null;
       }
       default: {
@@ -201,7 +232,7 @@ export struct Parser {
           }
           if (c == '+' || c == '.' || c == 'I' || c == 'N') { return this.parseNumber(); }
         }
-        this.fail(ERR_UNEXPECTED());
+        this.fail(JsonFault.Unexpected);
         return null;
       }
     }
@@ -239,7 +270,7 @@ export struct Parser {
         this.depth--;
         return JsonValue.Array(arr);
       }
-      if (c < 0) { this.fail(ERR_EOF()); } else { this.fail(ERR_UNEXPECTED()); }
+      if (c < 0) { this.fail(JsonFault.EndOfInput); } else { this.fail(JsonFault.Unexpected); }
       return null;
     }
   }
@@ -260,7 +291,7 @@ export struct Parser {
       if (key is null) { return null; }
       this.skipWs();
       if (this.peek() != ':') {
-        if (this.peek() < 0) { this.fail(ERR_EOF()); } else { this.fail(ERR_UNEXPECTED()); }
+        if (this.peek() < 0) { this.fail(JsonFault.EndOfInput); } else { this.fail(JsonFault.Unexpected); }
         return null;
       }
       this.pos++;
@@ -283,7 +314,7 @@ export struct Parser {
         this.depth--;
         return JsonValue.Object(obj);
       }
-      if (c < 0) { this.fail(ERR_EOF()); } else { this.fail(ERR_UNEXPECTED()); }
+      if (c < 0) { this.fail(JsonFault.EndOfInput); } else { this.fail(JsonFault.Unexpected); }
       return null;
     }
   }
@@ -295,8 +326,8 @@ export struct Parser {
    * says an ECMAScript `IdentifierName`: the leading character is any letter in the `L*`
    * categories plus `$` and `_`, and the rest adds `Mn Mc Nd Pc`, ZWNJ and ZWJ.
    *
-   * So the ASCII part is implemented and the rest is **refused by name**: `ERR_UNSUPPORTED` rather
-   * than `ERR_UNEXPECTED`, because the input is valid JSON5 and this parser is the thing that is
+   * So the ASCII part is implemented and the rest is **refused by name**: `Unsupported` rather
+   * than `Unexpected`, because the input is valid JSON5 and this parser is the thing that is
    * short. Guessing — taking any well-formed UTF-8 — would accept `{→: 1}`, which the reference
    * rejects, and the disagreement would be silent. Quoting the key always works.
    *
@@ -311,13 +342,13 @@ export struct Parser {
     i32 c = this.peek();
     if (c == '"') { return this.parseStringBytes(); }
     if (!this.json5) {
-      if (c < 0) { this.fail(ERR_EOF()); } else { this.fail(ERR_UNEXPECTED()); }
+      if (c < 0) { this.fail(JsonFault.EndOfInput); } else { this.fail(JsonFault.Unexpected); }
       return null;
     }
     if (c == '\'') { return this.parseStringBytes(); }
-    if (c < 0) { this.fail(ERR_EOF()); return null; }
-    if (c >= 0x80 || c == '\\') { this.fail(ERR_UNSUPPORTED()); return null; }
-    if (!isIdentStart(c)) { this.fail(ERR_UNEXPECTED()); return null; }
+    if (c < 0) { this.fail(JsonFault.EndOfInput); return null; }
+    if (c >= 0x80 || c == '\\') { this.fail(JsonFault.Unsupported); return null; }
+    if (!isIdentStart(c)) { this.fail(JsonFault.Unexpected); return null; }
     Buf name = Buf.create();
     while (this.pos < this.src.len()) {
       i32 b = this.src[this.pos] as i32;
@@ -326,10 +357,10 @@ export struct Parser {
       // is only right for the second, so the two are told apart rather than one being assumed.
       if (b >= 0x80) {
         if (this.spaceLen() > 0) { break; }
-        this.fail(ERR_UNSUPPORTED());
+        this.fail(JsonFault.Unsupported);
         return null;
       }
-      if (b == '\\') { this.fail(ERR_UNSUPPORTED()); return null; }
+      if (b == '\\') { this.fail(JsonFault.Unsupported); return null; }
       if (!isIdentStart(b) && !(b >= '0' && b <= '9')) { break; }
       name.push(b as@ u8);
       this.pos++;
@@ -344,7 +375,7 @@ export struct Parser {
     this.pos++;                                        // consume opening quote
     Buf out = Buf.create();
     while (true) {
-      if (this.pos >= this.src.len()) { this.fail(ERR_EOF()); return null; }
+      if (this.pos >= this.src.len()) { this.fail(JsonFault.EndOfInput); return null; }
       i32 c = this.src[this.pos] as i32;
       if (c == quote) {
         this.pos++;
@@ -358,7 +389,7 @@ export struct Parser {
       // RFC 8259: unescaped bytes below ' ' are not allowed in a string. JSON5 excludes only the
       // line terminators, so a raw tab is a tab — the rule is "not a LineTerminator" rather than
       // "not a control character", and U+2028 and U+2029 are named back in by the grammar.
-      if (c < ' ' && (!this.json5 || c == '\n' || c == '\r')) { this.fail(ERR_CONTROL()); return null; }
+      if (c < ' ' && (!this.json5 || c == '\n' || c == '\r')) { this.fail(JsonFault.ControlByte); return null; }
       if (c < 0x80) {
         out.push(c as@ u8);
         this.pos++;
@@ -368,7 +399,7 @@ export struct Parser {
       // must be UTF-8, and a byte above 0x7F can only appear here — outside a
       // string every legal byte is ASCII, so a bad one already fails structurally.
       i32 seq = this.utf8SeqLen();
-      if (seq < 0) { this.fail(ERR_UTF8()); return null; }
+      if (seq < 0) { this.fail(JsonFault.BadUtf8); return null; }
       for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k]); }
       this.pos += seq;
     }
@@ -417,7 +448,7 @@ export struct Parser {
 
   bool readEscape(this, Buf out) {
     i32 e = this.peek();
-    if (e < 0) { this.fail(ERR_EOF()); return false; }
+    if (e < 0) { this.fail(JsonFault.EndOfInput); return false; }
     switch (e) {
       case '"': { out.push('"'); this.pos++; return true; }
       case '\\': { out.push('\\'); this.pos++; return true; }
@@ -430,7 +461,7 @@ export struct Parser {
       case 'u': { return this.readUnicodeEscape(out); }        // \uXXXX
       default: {
         if (this.json5) { return this.readJson5Escape(out, e); }
-        this.fail(ERR_ESCAPE());
+        this.fail(JsonFault.BadEscape);
         return false;
       }
     }
@@ -452,17 +483,17 @@ export struct Parser {
     if (e == '0') {
       this.pos++;
       i32 n = this.peek();
-      if (n >= '0' && n <= '9') { this.fail(ERR_ESCAPE()); return false; }
+      if (n >= '0' && n <= '9') { this.fail(JsonFault.BadEscape); return false; }
       out.push(0);
       return true;
     }
-    if (e >= '1' && e <= '9') { this.fail(ERR_ESCAPE()); return false; }
+    if (e >= '1' && e <= '9') { this.fail(JsonFault.BadEscape); return false; }
     if (e == 'x') {
       this.pos++;
-      if (this.pos + 2 > this.src.len()) { this.fail(ERR_EOF()); return false; }
+      if (this.pos + 2 > this.src.len()) { this.fail(JsonFault.EndOfInput); return false; }
       i32 hi = hexDigit(this.src[this.pos] as i32);
       i32 lo = hexDigit(this.src[this.pos + 1] as i32);
-      if (hi < 0 || lo < 0) { this.fail(ERR_ESCAPE()); return false; }
+      if (hi < 0 || lo < 0) { this.fail(JsonFault.BadEscape); return false; }
       this.pos += 2;
       out.pushCodepoint((hi << 4) | lo);
       return true;
@@ -481,7 +512,7 @@ export struct Parser {
     }
     if (e < 0x80) { out.push(e as@ u8); this.pos++; return true; }
     i32 seq = this.utf8SeqLen();
-    if (seq < 0) { this.fail(ERR_UTF8()); return false; }
+    if (seq < 0) { this.fail(JsonFault.BadUtf8); return false; }
     for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k]); }
     this.pos += seq;
     return true;
@@ -536,11 +567,11 @@ export struct Parser {
 
   // Four hex digits as a value, or -1 having recorded the failure.
   i32 readHex4(this) {
-    if (this.pos + 4 > this.src.len()) { this.fail(ERR_EOF()); return -1; }
+    if (this.pos + 4 > this.src.len()) { this.fail(JsonFault.EndOfInput); return -1; }
     i32 v = 0;
     for (i32 i = 0; i < 4; i++) {
       i32 d = hexDigit(this.src[this.pos + i] as i32);
-      if (d < 0) { this.fail(ERR_ESCAPE()); return -1; }
+      if (d < 0) { this.fail(JsonFault.BadEscape); return -1; }
       v = (v << 4) | d;
     }
     this.pos += 4;
@@ -560,7 +591,7 @@ export struct Parser {
       this.pos++;
       // A second digit after a leading zero is invalid JSON (01, 00).
       i32 n = this.peek();
-      if (n >= '0' && n <= '9') { this.fail(ERR_NUMBER()); return null; }
+      if (n >= '0' && n <= '9') { this.fail(JsonFault.BadNumber); return null; }
     } else if (c >= '1' && c <= '9') {
       while (true) {
         i32 d = this.peek();
@@ -568,7 +599,7 @@ export struct Parser {
         this.pos++;
       }
     } else {
-      this.fail(ERR_NUMBER());
+      this.fail(JsonFault.BadNumber);
       return null;
     }
 
@@ -581,7 +612,7 @@ export struct Parser {
         this.pos++;
         fracDigits++;
       }
-      if (fracDigits == 0) { this.fail(ERR_NUMBER()); return null; }
+      if (fracDigits == 0) { this.fail(JsonFault.BadNumber); return null; }
     }
 
     i32 e = this.peek();
@@ -596,7 +627,7 @@ export struct Parser {
         this.pos++;
         expDigits++;
       }
-      if (expDigits == 0) { this.fail(ERR_NUMBER()); return null; }
+      if (expDigits == 0) { this.fail(JsonFault.BadNumber); return null; }
     }
 
     // The span is now known to be a well-formed JSON number, and the conversion is
@@ -639,11 +670,11 @@ export struct Parser {
     if (c == '+') { this.pos++; plain = false; }
     else if (c == '-') { this.pos++; neg = true; }
 
-    if (this.eatWord(['I', 'n', 'f', 'i', 'n', 'i', 't', 'y'] as u8[])) {
+    if (this.eatWord(INFINITY)) {
       f64 inf = 1.0 / 0.0;
       return JsonValue.Number(neg ? -inf : inf, u8[]());
     }
-    if (this.eatWord(['N', 'a', 'N'] as u8[])) { return JsonValue.Number(0.0 / 0.0, u8[]()); }
+    if (this.eatWord(NAN)) { return JsonValue.Number(0.0 / 0.0, u8[]()); }
 
     c = this.peek();
     if (c == '0' && this.pos + 1 < this.src.len()
@@ -658,7 +689,7 @@ export struct Parser {
         this.pos++;
         digits++;
       }
-      if (digits == 0) { this.fail(ERR_NUMBER()); return null; }
+      if (digits == 0) { this.fail(JsonFault.BadNumber); return null; }
       return JsonValue.Number(neg ? -v : v, u8[]());
     }
 
@@ -666,11 +697,11 @@ export struct Parser {
     if (c == '0') {
       this.pos++;
       i32 n = this.peek();
-      if (n >= '0' && n <= '9') { this.fail(ERR_NUMBER()); return null; }   // 01, 00
+      if (n >= '0' && n <= '9') { this.fail(JsonFault.BadNumber); return null; }   // 01, 00
     } else if (c >= '1' && c <= '9') {
       while (true) { i32 d = this.peek(); if (d < '0' || d > '9') { break; } this.pos++; }
     } else if (c != '.') {
-      this.fail(ERR_NUMBER());
+      this.fail(JsonFault.BadNumber);
       return null;
     }
     i32 intEnd = this.pos;
@@ -684,7 +715,7 @@ export struct Parser {
       fracEnd = this.pos;
       // `.` on its own is not a number, and neither is `.e5`: one side or the other must have
       // digits. Missing either side is legal, so `plain` records that JSON would disagree.
-      if (intEnd == intStart && fracEnd == fracStart) { this.fail(ERR_NUMBER()); return null; }
+      if (intEnd == intStart && fracEnd == fracStart) { this.fail(JsonFault.BadNumber); return null; }
       if (intEnd == intStart || fracEnd == fracStart) { plain = false; }
     }
 
@@ -696,7 +727,7 @@ export struct Parser {
       if (s == '+' || s == '-') { this.pos++; }
       i32 expDigits = 0;
       while (true) { i32 d = this.peek(); if (d < '0' || d > '9') { break; } this.pos++; expDigits++; }
-      if (expDigits == 0) { this.fail(ERR_NUMBER()); return null; }
+      if (expDigits == 0) { this.fail(JsonFault.BadNumber); return null; }
     }
     i32 expEnd = this.pos;
 
@@ -753,7 +784,7 @@ export JsonValue? parseDocument(Parser p) {
   if (v is null) { return null; }
   p.skipWs();
   if (p.pos < p.src.len()) {
-    p.fail(ERR_TRAILING());
+    p.fail(JsonFault.Trailing);
     return null;
   }
   return v;

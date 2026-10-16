@@ -25,7 +25,7 @@ import { keccak256 } from "../../crypto/src/keccak.wac";
 import { encode, Item } from "../../rlp/src/rlp.wac";
 import { JsonValue } from "../../json/src/value.wac";
 import { Result } from "core";
-import { memberOf, memberData, memberQuantity, isNull } from "./jsonhex.wac";
+import { memberData, memberQuantity } from "./jsonhex.wac";
 
 /** A header, re-encoded and checked against the hash the node gave it. */
 export struct Header {
@@ -72,7 +72,7 @@ export Result<(u8[], i32), string> headerHash(JsonValue block) {
     // Absent, not empty: `extraData` is legitimately `"0x"` on a chain nobody has written a message into,
     // and a difficulty of zero is what every post-Merge block has. Treating either as missing rejects
     // every block anvil produces, which is how this was found.
-    if (isNull(memberOf(block, fixed[i]))) {
+    if (block.member(fixed[i])?.isNull() ?? true) {
       return Result.Err("the block has no \{fixed[i]}");
     }
     // **`isQuantity` now decides the decoding as well as the encoding.** It always had to: a QUANTITY
@@ -90,7 +90,7 @@ export Result<(u8[], i32), string> headerHash(JsonValue block) {
     // Absent stops the list; *present and zero* does not. `blobGasUsed: "0x0"` decodes to no bytes and
     // must still be encoded, as RLP's empty string — a missing field must not be encoded at all, and the
     // two produce different hashes.
-    if (isNull(memberOf(block, optional[i]))) { break; }
+    if (block.member(optional[i])?.isNull() ?? true) { break; }
     u8[] raw = isQuantity(optional[i]) ? memberQuantity(block, optional[i])
                                        : memberData(block, optional[i]);
     parts[n] = Item.Bytes(isQuantity(optional[i]) ? minimal(raw) : raw);

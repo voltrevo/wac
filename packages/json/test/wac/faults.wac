@@ -1,0 +1,14 @@
+// What a test compares when it expects a document to be refused, or not.
+//
+// Enums have no `==`, so a fault is compared by its name: `faultOf(canonicalize(b))` is `""` for a
+// document that parsed and `"bad utf-8"` for one that did not for that reason — and an assertion
+// that fails prints which fault it got. Not a test file: `wac test` walks `*_test.wac`.
+
+import { Result } from "core";
+import { JsonError } from "../../src/parse.wac";
+
+/** The name of the fault `r` was refused with, or `""` when it was not refused. */
+export string faultOf(Result<u8[], JsonError> r) {
+  JsonError? e = r.err();
+  return e is null ? "" : e!.fault.name();
+}

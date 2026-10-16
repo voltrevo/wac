@@ -1,0 +1,56 @@
+// The accessors on `JsonValue` — reading a tree without a `match` per step.
+//
+// Each answers `null` when the value is not the kind asked for, so a path reads as a chain of `?.`
+// and ends in `??` or `!`: `doc.member("result")?.member("hash")?.text() ?? ""`. Before these, about
+// twenty-five files that read JSON wrote their own `memberText`, `memberArray` and `text`, some
+// answering `""` and some trapping, under the same names.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { parse } from "../../src/json.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../src/value.wac";
+
+JsonValue doc(string s) {
+  JsonValue? v = parse(s.toBytes()).ok();
+  if (v is null) { trap; }
+  return v!;
+}
+
+export string test_each_accessor_answers_its_own_kind() {
+  T t = T.create();
+  JsonValue d = doc("{\"s\":\"hi\",\"n\":2.5,\"b\":true,\"z\":null,\"a\":[1,2],\"o\":{\"k\":\"v\"}}");
+  t.eqStr(d.member("s")?.text() ?? "", "hi", "text");
+  t.eqBytes(d.member("s")?.bytes() ?? u8[](), "hi".toBytes(), "bytes");
+  t.eqF64(d.member("n")?.number() ?? 0.0, 2.5, "number");
+  t.isTrue(d.member("b")?.boolean() ?? false, "boolean");
+  t.isTrue(d.member("z")?.isNull() ?? false, "a member that is null");
+  t.eqI32(d.member("a")?.array()?.len() ?? 0, 2, "array");
+  t.eqI32(d.member("o")?.object()?.len() ?? 0, 1, "object");
+  t.eqStr(d.member("o")?.member("k")?.text() ?? "", "v", "a path");
+  t.eqF64(d.member("a")?.item(1)?.number() ?? 0.0, 2.0, "an element");
+  return t.report();
+}
+
+export string test_the_wrong_kind_answers_null() {
+  T t = T.create();
+  JsonValue d = doc("{\"s\":\"hi\",\"n\":1,\"a\":[]}");
+  t.isTrue(d.member("n")?.text() is null, "a number is not text");
+  t.isTrue(d.member("s")?.number() is null, "text is not a number");
+  t.isTrue(d.member("s")?.boolean() is null, "text is not a boolean");
+  t.isTrue(d.member("s")?.array() is null, "text is not an array");
+  t.isTrue(d.member("a")?.object() is null, "an array is not an object");
+  t.isTrue(d.member("s")?.member("x") is null, "text has no members");
+  t.isTrue(d.member("s")?.item(0) is null, "text has no elements");
+  t.isFalse(d.member("s")?.isNull() ?? true, "text is not null");
+  return t.report();
+}
+
+export string test_an_absent_member_or_element_answers_null() {
+  T t = T.create();
+  JsonValue d = doc("{\"a\":[1]}");
+  t.isTrue(d.member("missing") is null, "no such member");
+  t.isTrue(d.member("a")?.item(1) is null, "past the end");
+  t.isTrue(d.member("a")?.item(-1) is null, "negative");
+  // `null` the JSON value and an absent member are different answers.
+  t.isFalse(d.member("missing")?.isNull() ?? false, "absent is not JSON null");
+  return t.report();
+}

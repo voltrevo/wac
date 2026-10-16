@@ -22,7 +22,7 @@
 // necessity and stays because bytes are right *inside* a parser: scanning is a
 // `switch` over `i32`, and a document's strings accumulate in a buffer instead of
 // allocating a `string` per token. The edge is where they become text —
-// `JsonMember.keyStr()`, `JsonObject.getStr()`.
+// `JsonValue.text()` and `member()`, `JsonMember.keyStr()`, `JsonObject.getStr()`.
 
 import { Map, hashBytes, bytesEq } from "core";
 
@@ -41,6 +41,87 @@ export enum JsonValue {
   // (`issues/lang/closed/0046`), which this hit first.
   Array(JsonArray items),
   Object(JsonObject members),
+
+  // ── Reading a tree ──
+  //
+  // Each accessor answers `null` when the value is not the kind asked for, so a path through a
+  // document is a chain of `?.` ending in `??` or `!`:
+  //
+  //     string hash = doc.member("result")?.member("hash")?.text() ?? "";
+  //
+  // `null` here means "not that kind, or not there" — which is not JSON `null`; `isNull` asks that.
+
+  /** The member named `key` of an object: the first, when the key repeats. Null for anything else. */
+  JsonValue? member(this, string key) {
+    return match (this) {
+      Object(members): members.getStr(key),
+      default: null,
+    };
+  }
+
+  /** Element `i` of an array, or null — past either end, or for anything that is not an array. */
+  JsonValue? item(const this, i32 i) {
+    return match (this) {
+      Array(a): i >= 0 && i < a.len() ? a.get(i) : null,
+      default: null,
+    };
+  }
+
+  /** A string's text, or null for anything else. */
+  string? text(const this) {
+    return match (this) {
+      Str(bytes): string.fromBytes(bytes),
+      default: null,
+    };
+  }
+
+  /** A string's UTF-8 bytes as the parser holds them, or null for anything else. */
+  u8[]? bytes(const this) {
+    return match (this) {
+      Str(bytes): bytes,
+      default: null,
+    };
+  }
+
+  /** A number's value, or null for anything else. */
+  f64? number(const this) {
+    return match (this) {
+      Number(value, raw): value,
+      default: null,
+    };
+  }
+
+  /** A boolean's value, or null for anything else. */
+  bool? boolean(const this) {
+    return match (this) {
+      Bool(value): value,
+      default: null,
+    };
+  }
+
+  /** An array's elements, or null for anything else. */
+  JsonArray? array(const this) {
+    return match (this) {
+      Array(items): items,
+      default: null,
+    };
+  }
+
+  /** An object's members, or null for anything else. */
+  JsonObject? object(const this) {
+    return match (this) {
+      Object(members): members,
+      default: null,
+    };
+  }
+
+  /** Whether this is JSON `null`. */
+  bool isNull(const this) {
+    return match (this) {
+      Null: true,
+      default: false,
+    };
+  }
 }
 
 /**
@@ -85,6 +166,21 @@ export struct JsonMember {
 }
 
 /**
+ * Both conditions for building an index, and both are measurements.
+ *
+ * `wac task bench:json-lookup` reports what a scan costs, what an indexed lookup costs, and
+ * what the index costs to build. The last one is the reason this is not simply "index if the
+ * object is big": an index is O(n) hashes before it answers anything, so on a 256-member
+ * object it takes **15 lookups to repay itself**, and 15-35 across every size where it wins
+ * at all. Parse a document and read three fields and it never pays.
+ *
+ * So: at least this many members, *and* at least this many lookups already served. Below
+ * either, scanning is not a fallback, it is the right answer.
+ */
+static i32 INDEX_MIN_MEMBERS = 16;
+static i32 INDEX_MIN_SCANS = 16;
+
+/**
  * A JSON object: an ordered list of members, plus an index built only if it pays.
  *
  * The **list** is what JSON actually is. Member order is observable — `canonicalize` is
@@ -113,21 +209,6 @@ export struct JsonObject {
   i32 scans;
 
   JsonObject create() { return JsonObject(JsonMember?[](), 0, null, 0); }
-
-  /**
-   * Both conditions for building an index, and both are measurements.
-   *
-   * `wac task bench:json-lookup` reports what a scan costs, what an indexed lookup costs, and
-   * what the index costs to build. The last one is the reason this is not simply "index if the
-   * object is big": an index is O(n) hashes before it answers anything, so on a 256-member
-   * object it takes **15 lookups to repay itself**, and 15-35 across every size where it wins
-   * at all. Parse a document and read three fields and it never pays.
-   *
-   * So: at least this many members, *and* at least this many lookups already served. Below
-   * either, scanning is not a fallback, it is the right answer.
-   */
-  i32 INDEX_MIN_MEMBERS() { return 16; }
-  i32 INDEX_MIN_SCANS() { return 16; }
 
   void push(this, u8[] key, JsonValue v) {
     // Only the first occurrence of a key is indexed; a later duplicate is still appended to
@@ -162,8 +243,7 @@ export struct JsonObject {
    */
   JsonValue? get(this, u8[] key) {
     if (this.index is null) {
-      if (this.count < JsonObject.INDEX_MIN_MEMBERS()
-          || this.scans < JsonObject.INDEX_MIN_SCANS()) {
+      if (this.count < INDEX_MIN_MEMBERS || this.scans < INDEX_MIN_SCANS) {
         this.scans++;
         return this.scan(key);
       }
@@ -200,11 +280,3 @@ export struct JsonObject {
    */
   JsonValue? getStr(this, string key) { return this.get(key.toBytes()); }
 }
-
-/**
- * Byte equality.
- *
- * Kept as an export because the tests and `json.wac` use it by this name; the
- * implementation now lives in `bytes` because `Map` needs it as a funcref.
- */
-export bool bytesEqual(u8[] a, u8[] b) { return bytesEq(a, b); }

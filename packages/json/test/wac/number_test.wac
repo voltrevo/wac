@@ -26,13 +26,8 @@ string bits64(f64 x) {
   return hex(out);
 }
 
-bool isNan(f64 x) {
-  u64 b = f64.toBits(x);
-  return ((b >> 52) & 2047) == 2047 && (b & 0xFFFFFFFFFFFFF) != 0;
-}
-
 void ask(Lines lines, string src) {
-  lines.add("number \{hex(src.toBytes())} \{bits64(parseNumberValue(src.toBytes()))}");
+  lines.add("number \{hex(src.toBytes())} \{bits64(parseNumberValue(src.toBytes())!)}");
 }
 
 /** Values where even a naive conversion is exact: mantissa < 2^53, |exp| <= 22. */
@@ -59,24 +54,24 @@ export string test_exact_cases_match_the_host_bit_for_bit(Core core, Cli cli) {
 }
 
 /**
- * A document that is not a number yields NaN.
+ * A document that is not a number yields null.
  *
  * `parseNumberValue`'s two failure paths. Branch coverage found both unexercised: every test fed it a
  * valid number, so a change that returned 0 or the last successful value on failure would have gone
  * unnoticed.
  */
-export string test_a_document_that_is_not_a_number_yields_nan() {
+export string test_a_document_that_is_not_a_number_yields_null() {
   T t = T.create();
   string[] unparseable = ["", "[", "1 2", "01", "-", "1e"];
   for (i32 i = 0; i < unparseable.len(); i++) {
-    t.isTrue(isNan(parseNumberValue(unparseable[i].toBytes())),
-             "\"\{unparseable[i]}\" should be NaN");
+    t.isTrue(parseNumberValue(unparseable[i].toBytes()) is null,
+             "\"\{unparseable[i]}\" should be null");
   }
-  // Parses, but is not a number — the `else` arm of the match rather than the null check above it.
+  // Parses, but is not a number — `number()` answering null rather than `parse` failing.
   string[] notNumbers = ["\"1\"", "true", "false", "null", "[1]", "{\"a\":1}"];
   for (i32 i = 0; i < notNumbers.len(); i++) {
-    t.isTrue(isNan(parseNumberValue(notNumbers[i].toBytes())),
-             "\"\{notNumbers[i]}\" should be NaN");
+    t.isTrue(parseNumberValue(notNumbers[i].toBytes()) is null,
+             "\"\{notNumbers[i]}\" should be null");
   }
   return t.report();
 }

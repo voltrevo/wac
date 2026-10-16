@@ -16,10 +16,11 @@
 // the host tests, where the oracle is.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { JsonValue, JsonArray, JsonObject, bytesEqual, numberOf } from "../../src/value.wac";
+import { JsonValue, JsonArray, JsonObject, numberOf } from "../../src/value.wac";
 import { writeValue } from "../../src/stringify.wac";
 import { Buf } from "core";
-import { Parser, parseDocument, hexDigit, ERR_NONE, ERR_TRAILING, ERR_CONTROL } from "../../src/parse.wac";
+import { Parser, parseDocument, hexDigit } from "../../src/parse.wac";
+import { parse } from "../../src/json.wac";
 
 /**
  * Extractors.
@@ -40,44 +41,9 @@ i32 tagOf(JsonValue v) {
   }
 }
 
-u8[] strBytes(JsonValue v) {
-  match (v) {
-    Str(bytes): { return bytes; }
-    default: { trap; }
-  }
-}
-
-bool boolValue(JsonValue v) {
-  match (v) {
-    Bool(value): { return value; }
-    default: { trap; }
-  }
-}
-
-f64 numValue(JsonValue v) {
-  match (v) {
-    Number(value, raw): { return value; }
-    default: { trap; }
-  }
-}
-
 u8[] numRaw(JsonValue v) {
   match (v) {
     Number(value, raw): { return raw; }
-    default: { trap; }
-  }
-}
-
-JsonArray asArray(JsonValue v) {
-  match (v) {
-    Array(items): { return items; }
-    default: { trap; }
-  }
-}
-
-JsonObject asObject(JsonValue v) {
-  match (v) {
-    Object(members): { return members; }
     default: { trap; }
   }
 }
@@ -104,16 +70,6 @@ export string test_hex_digit() {
   t.eqI32(hexDigit(0x67), -1, "'g' is not hex");
   t.eqI32(hexDigit(0x2F), -1, "'/' is not hex");
   t.eqI32(hexDigit(0x47), -1, "'G' is not hex");
-  return t.report();
-}
-
-export string test_bytes_equal() {
-  T t = T.create();
-  t.isTrue(bytesEqual([1, 2, 3] as u8[], [1, 2, 3] as u8[]), "identical");
-  t.isTrue(bytesEqual(u8[](), u8[]()), "both empty");
-  t.isFalse(bytesEqual([1, 2] as u8[], [1, 2, 3] as u8[]), "prefix is not equal");
-  t.isFalse(bytesEqual([1, 2, 3] as u8[], [1, 2, 4] as u8[]), "last byte differs");
-  t.isFalse(bytesEqual([1] as u8[], u8[]()), "one empty");
   return t.report();
 }
 
@@ -166,7 +122,7 @@ export string test_lookup_agrees_across_the_index_threshold() {
   f64 sum = 0.0;
   for (i32 round = 0; round < 40; round++) {
     for (i32 i = 0; i < n; i++) {
-      sum = sum + numValue(o.get([(65 + i) as@ u8])!);
+      sum = sum + o.get([(65 + i) as@ u8])!.number()!;
     }
   }
   // 0+1+..+19 per round. The duplicate of key "A" holds 999, so a lookup resolving to it
@@ -192,11 +148,11 @@ export string test_push_after_indexing_is_visible() {
   o.push([200] as u8[], numberOf(7.0));
   JsonValue? found = o.get([200] as u8[]);
   t.isTrue(found is not null, "a member pushed after the index was built is found");
-  t.eqF64(numValue(found!), 7.0, "and has the right value");
+  t.eqF64(found!.number()!, 7.0, "and has the right value");
 
   // And a duplicate added after indexing must not displace the original.
   o.push([66] as u8[], numberOf(123.0));
-  t.eqF64(numValue(o.get([66] as u8[])!), 1.0, "the first member still wins");
+  t.eqF64(o.get([66] as u8[])!.number()!, 1.0, "the first member still wins");
   return t.report();
 }
 
@@ -217,7 +173,7 @@ export string test_json_object_lookup() {
   // Duplicates are retained, and lookup returns the first.
   o.push([0x61] as u8[], JsonValue.Number(9.0, [0x39] as u8[]));
   t.eqI32(o.len(), 3, "duplicate key is kept as a third member");
-  t.isTrue(numValue(o.get([0x61] as u8[])!) == 1.0, "lookup returns the first of a duplicated key");
+  t.isTrue(o.get([0x61] as u8[])!.number()! == 1.0, "lookup returns the first of a duplicated key");
   return t.report();
 }
 
@@ -229,13 +185,13 @@ export string test_tree_shape() {
   t.isTrue(v is not null, "document parses");
   t.eqI32(tagOf(v!), 5, "root is an object");
 
-  JsonObject o = asObject(v!);
+  JsonObject o = v!.object()!;
   t.eqI32(o.len(), 2, "two members");
   t.eqBytes(o.at(0).key, [0x61] as u8[], "first key is a");
   t.eqBytes(o.at(1).key, [0x62] as u8[], "second key is b");
   t.eqI32(tagOf(o.at(1).value), 0, "b is null");
 
-  JsonArray arr = asArray(o.at(0).value);
+  JsonArray arr = o.at(0).value.array()!;
   t.eqI32(arr.len(), 2, "a has two elements");
   t.eqI32(tagOf(arr.get(0)), 2, "first is a number");
   t.eqI32(tagOf(arr.get(1)), 1, "second is a bool");
@@ -246,13 +202,13 @@ export string test_string_accessors() {
   T t = T.create();
   JsonValue? v = parseStr("{\"name\":\"wac\",\"n\":1}");
   t.isTrue(v is not null, "parses");
-  JsonObject o = asObject(v!);
+  JsonObject o = v!.object()!;
 
   // Lookup by a string key is what calling code actually has, and it must agree
   // with the byte-keyed form rather than being a separate code path.
   JsonValue? byStr = o.getStr("name");
   t.isTrue(byStr is not null, "getStr finds the member");
-  t.eqStr(string.fromBytes(strBytes(byStr!)), "wac", "and its value comes back as a string");
+  t.eqStr(string.fromBytes(byStr!.bytes()!), "wac", "and its value comes back as a string");
   JsonValue? byBytes = o.get(['n', 'a', 'm', 'e'] as u8[]);
   t.isTrue(byBytes is not null, "the byte-keyed form finds it too");
   t.isTrue(byStr! is byBytes!, "and both return the same object");
@@ -272,11 +228,11 @@ export string test_string_accessors_handle_utf8() {
   // multi-byte, plus one built from an escape rather than from literal bytes.
   JsonValue? v = parseStr("{\"日\":\"caf\\u00e9\"}");
   t.isTrue(v is not null, "parses");
-  JsonObject o = asObject(v!);
+  JsonObject o = v!.object()!;
   t.eqStr(o.at(0).keyStr(), "日", "a multi-byte key round-trips");
   JsonValue? found = o.getStr("日");
   t.isTrue(found is not null, "and can be looked up by that string");
-  t.eqStr(string.fromBytes(strBytes(found!)), "café",
+  t.eqStr(string.fromBytes(found!.bytes()!), "café",
     "a value assembled from a \\u escape comes back as the right string");
   return t.report();
 }
@@ -288,7 +244,7 @@ export string test_member_order_is_source_order() {
   // have nothing to do with this parser.
   JsonValue? v = parseStr("{\"2\":0,\"b\":0,\"1\":0}");
   t.isTrue(v is not null, "parses");
-  JsonObject o = asObject(v!);
+  JsonObject o = v!.object()!;
   t.eqBytes(o.at(0).key, [0x32] as u8[], "first key is 2");
   t.eqBytes(o.at(1).key, [0x62] as u8[], "second key is b");
   t.eqBytes(o.at(2).key, [0x31] as u8[], "third key is 1");
@@ -299,7 +255,7 @@ export string test_unescaped_string_contents() {
   T t = T.create();
   JsonValue? v = parseStr("\"a\\u0041\\n\\\\b\"");
   t.isTrue(v is not null, "parses");
-  t.eqBytes(strBytes(v!), ['a', 'A', '\n', '\\', 'b'] as u8[], "escapes are decoded in place");
+  t.eqBytes(v!.bytes()!, ['a', 'A', '\n', '\\', 'b'] as u8[], "escapes are decoded in place");
   return t.report();
 }
 
@@ -307,7 +263,7 @@ export string test_surrogate_pair_decodes_to_one_scalar() {
   T t = T.create();
   JsonValue? v = parseStr("\"\\ud83d\\ude00\"");
   t.isTrue(v is not null, "parses");
-  t.eqBytes(strBytes(v!), [0xF0, 0x9F, 0x98, 0x80] as u8[], "pair becomes U+1F600");
+  t.eqBytes(v!.bytes()!, [0xF0, 0x9F, 0x98, 0x80] as u8[], "pair becomes U+1F600");
   return t.report();
 }
 
@@ -315,7 +271,7 @@ export string test_unpaired_surrogate_becomes_replacement() {
   T t = T.create();
   JsonValue? v = parseStr("\"\\ud83d\"");
   t.isTrue(v is not null, "parses");
-  t.eqBytes(strBytes(v!), [0xEF, 0xBF, 0xBD] as u8[], "lone high surrogate becomes U+FFFD");
+  t.eqBytes(v!.bytes()!, [0xEF, 0xBF, 0xBD] as u8[], "lone high surrogate becomes U+FFFD");
   return t.report();
 }
 
@@ -323,9 +279,9 @@ export string test_number_keeps_its_source_span() {
   T t = T.create();
   JsonValue? v = parseStr("[1e2,-0]");
   t.isTrue(v is not null, "parses");
-  JsonArray a = asArray(v!);
+  JsonArray a = v!.array()!;
   t.eqBytes(numRaw(a.get(0)), [0x31, 0x65, 0x32] as u8[], "raw span is 1e2, not 100");
-  t.isTrue(numValue(a.get(0)) == 100.0, "value is still 100");
+  t.isTrue(a.get(0).number()! == 100.0, "value is still 100");
   t.eqBytes(numRaw(a.get(1)), [0x2D, 0x30] as u8[], "negative zero keeps its sign in the span");
   return t.report();
 }
@@ -333,19 +289,17 @@ export string test_number_keeps_its_source_span() {
 export string test_error_codes_and_positions() {
   T t = T.create();
 
-  Parser p1 = Parser.create("[1] junk".toBytes());
-  t.isTrue(parseDocument(p1) is null, "trailing content fails");
-  t.eqI32(p1.err, ERR_TRAILING(), "reported as trailing");
-  t.eqI32(p1.errPos, 4, "position is where the junk starts");
+  // The fault and where it happened, through the entry point a caller uses.
+  t.eqStr(parse("[1] junk".toBytes()).err()?.text() ?? "", "trailing at byte 4",
+          "trailing content, reported where the junk starts");
+  t.eqStr(parse([0x22, 0x0A, 0x22] as u8[]).err()?.text() ?? "", "control byte at byte 1",
+          "a raw newline in a string, reported at the newline");
+  t.isTrue(parse("[1]".toBytes()).isOk(), "valid input succeeds");
 
-  Parser p2 = Parser.create([0x22, 0x0A, 0x22] as u8[]);   // "\n" raw newline
-  t.isTrue(parseDocument(p2) is null, "raw control byte fails");
-  t.eqI32(p2.err, ERR_CONTROL(), "reported as a control byte");
-  t.eqI32(p2.errPos, 1, "position is the control byte");
-
-  Parser p3 = Parser.create("[1]".toBytes());
-  t.isTrue(parseDocument(p3) is not null, "valid input succeeds");
-  t.eqI32(p3.err, ERR_NONE(), "no error recorded");
+  // The parser keeps the *first* fault, and none at all when it succeeds.
+  Parser p = Parser.create("[1]".toBytes());
+  t.isTrue(parseDocument(p) is not null, "valid input succeeds");
+  t.isTrue(p.err is null, "no fault recorded");
 
   return t.report();
 }

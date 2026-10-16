@@ -30,46 +30,23 @@ import { blsModulusConstantsAgree, blsFpStatus, blsFpAdd, blsFpSub, blsFpMul, bl
          blsFpSquare, blsFpOneBytes, blsFpRoundTrip, blsFpMulByOneIsIdentity, blsFpIsZeroBytes,
          blsFpInvert, blsFpSqrt, blsFp2Op, blsFp2Norm, blsFp2OneIsIdempotent, blsFp6Op,
          blsFp12Op, blsFp12InverseIsInverse } from "./probe.wac";
-import { member, memberArray } from "../../../wactest/src/fixtures.wac";
 
 // ── Reading `vectors.json` ────────────────────────────────────────────────────
 
-string text(JsonValue v) {
-  match (v) {
-    Str(bytes): { return string.fromBytes(bytes); }
-    default: { return ""; }
-  }
-}
-
-string memberText(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  return found is null ? "" : text(found!);
-}
-
-/** Whether the named member is JSON `null` — how "this value has no square root" is written. */
-bool memberIsNull(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return true; }
-  match (found!) {
-    Null: { return true; }
-    default: { return false; }
-  }
-}
-
 /** A member that is an array of hex strings, concatenated — one flat value for the probe. */
 u8[] flat(JsonValue v, string key) {
-  JsonArray? items = memberArray(v, key);
+  JsonArray? items = v.member(key)?.array();
   if (items is null) { return u8[](); }
   string out = "";
-  for (i32 i = 0; i < items!.len(); i++) { out = out + text(items!.get(i)); }
+  for (i32 i = 0; i < items!.len(); i++) { out = out + (items!.get(i).text() ?? ""); }
   return decoded(out);
 }
 
 /** An Fp2 member's `c0` and `c1`, concatenated — the form `blsFp2Op` answers in. */
 string fp2Text(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
+  JsonValue? found = v.member(key);
   if (found is null) { return ""; }
-  return memberText(found!, "c0") + memberText(found!, "c1");
+  return (found!.member("c0")?.text() ?? "") + (found!.member("c1")?.text() ?? "");
 }
 
 /** The whole vectors file, or `null`. */
@@ -77,7 +54,7 @@ JsonValue? vectors(T t, Cli cli) {
   FileResult f = cli.readFile("packages/bls/test/vectors.json").wait();
   t.isTrue(f.ok, "vectors.json could not be read: \{f.error}");
   if (!f.ok) { return null; }
-  JsonValue? doc = parse(f.bytes);
+  JsonValue? doc = parse(f.bytes).ok();
   t.isTrue(!(doc is null), "vectors.json did not parse");
   return doc;
 }
@@ -88,18 +65,18 @@ export string test_addition_subtraction_and_multiplication_agree_with_python(Cor
   T t = T.create();
   JsonValue? v = vectors(t, cli);
   if (v is null) { return t.report(); }
-  JsonArray? cases = memberArray(v!, "cases");
+  JsonArray? cases = v!.member("cases")?.array();
   t.isTrue(!(cases is null), "no `cases` in vectors.json");
   if (cases is null) { return t.report(); }
   t.isTrue(cases!.len() > 0, "no cases to compare");
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    u8[] a = decoded(memberText(c, "a"));
-    u8[] b = decoded(memberText(c, "b"));
-    string label = memberText(c, "a").slice(0, 12) + "…, " + memberText(c, "b").slice(0, 12) + "…";
-    t.eqStr(hex(blsFpAdd(a, b)), memberText(c, "add"), "add(\{label})");
-    t.eqStr(hex(blsFpSub(a, b)), memberText(c, "sub"), "sub(\{label})");
-    t.eqStr(hex(blsFpMul(a, b)), memberText(c, "mul"), "mul(\{label})");
+    u8[] a = decoded(c.member("a")?.text() ?? "");
+    u8[] b = decoded(c.member("b")?.text() ?? "");
+    string label = (c.member("a")?.text() ?? "").slice(0, 12) + "…, " + (c.member("b")?.text() ?? "").slice(0, 12) + "…";
+    t.eqStr(hex(blsFpAdd(a, b)), c.member("add")?.text() ?? "", "add(\{label})");
+    t.eqStr(hex(blsFpSub(a, b)), c.member("sub")?.text() ?? "", "sub(\{label})");
+    t.eqStr(hex(blsFpMul(a, b)), c.member("mul")?.text() ?? "", "mul(\{label})");
   }
   return t.report();
 }
@@ -108,14 +85,14 @@ export string test_negation_and_squaring_agree_with_python(Core core, Cli cli) {
   T t = T.create();
   JsonValue? v = vectors(t, cli);
   if (v is null) { return t.report(); }
-  JsonArray? unary = memberArray(v!, "unary");
+  JsonArray? unary = v!.member("unary")?.array();
   if (unary is null) { return t.report(); }
   for (i32 i = 0; i < unary!.len(); i++) {
     JsonValue u = unary!.get(i);
-    u8[] a = decoded(memberText(u, "a"));
-    string label = memberText(u, "a").slice(0, 12) + "…";
-    t.eqStr(hex(blsFpNeg(a)), memberText(u, "neg"), "neg(\{label})");
-    t.eqStr(hex(blsFpSquare(a)), memberText(u, "sq"), "sq(\{label})");
+    u8[] a = decoded(u.member("a")?.text() ?? "");
+    string label = (u.member("a")?.text() ?? "").slice(0, 12) + "…";
+    t.eqStr(hex(blsFpNeg(a)), u.member("neg")?.text() ?? "", "neg(\{label})");
+    t.eqStr(hex(blsFpSquare(a)), u.member("sq")?.text() ?? "", "sq(\{label})");
   }
   return t.report();
 }
@@ -127,15 +104,15 @@ export string test_montgomery_form_does_not_leak_one_is_one_and_every_value_roun
   // self-consistent — this is the check that the form stays inside the field code.
   JsonValue? v = vectors(t, cli);
   if (v is null) { return t.report(); }
-  t.eqStr(hex(blsFpOneBytes()), memberText(v!, "one"), "one's encoding");
-  JsonArray? unary = memberArray(v!, "unary");
+  t.eqStr(hex(blsFpOneBytes()), v!.member("one")?.text() ?? "", "one's encoding");
+  JsonArray? unary = v!.member("unary")?.array();
   if (unary is null) { return t.report(); }
   for (i32 i = 0; i < unary!.len(); i++) {
-    string a = memberText(unary!.get(i), "a");
+    string a = unary!.get(i).member("a")?.text() ?? "";
     t.eqStr(hex(blsFpRoundTrip(decoded(a))), a, "the round trip changed a value");
     t.isTrue(blsFpMulByOneIsIdentity(decoded(a)), "a·1 != a for \{a}");
   }
-  t.isTrue(blsFpIsZeroBytes(decoded(memberText(unary!.get(0), "a"))),
+  t.isTrue(blsFpIsZeroBytes(decoded(unary!.get(0).member("a")?.text() ?? "")),
            "zero did not read as zero");
   return t.report();
 }
@@ -147,12 +124,12 @@ export string test_a_value_at_or_above_p_is_refused_not_reduced(Core core, Cli c
   // an invalid field element.
   JsonValue? v = vectors(t, cli);
   if (v is null) { return t.report(); }
-  JsonArray? bad = memberArray(v!, "bad");
+  JsonArray? bad = v!.member("bad")?.array();
   if (bad is null) { return t.report(); }
-  u8[] one = decoded(memberText(v!, "one"));
+  u8[] one = decoded(v!.member("one")?.text() ?? "");
   t.isTrue(bad!.len() > 0, "no bad encodings in the corpus");
   for (i32 i = 0; i < bad!.len(); i++) {
-    string b = text(bad!.get(i));
+    string b = bad!.get(i).text() ?? "";
     t.eqI32(blsFpStatus(decoded(b), one), 1, "\{b} was accepted");
   }
   // And a short or long input is refused rather than padded.
@@ -166,16 +143,16 @@ export string test_inversion_agrees_with_python_and_zero_has_none(Core core, Cli
   T t = T.create();
   JsonValue? v = vectors(t, cli);
   if (v is null) { return t.report(); }
-  JsonArray? inv = memberArray(v!, "inv");
+  JsonArray? inv = v!.member("inv")?.array();
   if (inv is null) { return t.report(); }
   for (i32 i = 0; i < inv!.len(); i++) {
     JsonValue c = inv!.get(i);
-    t.eqStr(hex(blsFpInvert(decoded(memberText(c, "a")))), memberText(c, "inv"),
-            "inv(" + memberText(c, "a").slice(0, 12) + "…)");
+    t.eqStr(hex(blsFpInvert(decoded(c.member("a")?.text() ?? ""))), c.member("inv")?.text() ?? "",
+            "inv(" + (c.member("a")?.text() ?? "").slice(0, 12) + "…)");
   }
-  JsonArray? unary = memberArray(v!, "unary");
+  JsonArray? unary = v!.member("unary")?.array();
   if (unary is null) { return t.report(); }
-  t.eqI32(blsFpInvert(decoded(memberText(unary!.get(0), "a"))).len(), 0, "zero was inverted");
+  t.eqI32(blsFpInvert(decoded(unary!.get(0).member("a")?.text() ?? "")).len(), 0, "zero was inverted");
   return t.report();
 }
 
@@ -188,21 +165,21 @@ export string test_square_roots_are_found_where_they_exist_and_refused_where_the
   // going into a pairing.
   JsonValue? v = vectors(t, cli);
   if (v is null) { return t.report(); }
-  JsonArray? roots = memberArray(v!, "roots");
+  JsonArray? roots = v!.member("roots")?.array();
   if (roots is null) { return t.report(); }
   i32 squares = 0;
   for (i32 i = 0; i < roots!.len(); i++) {
     JsonValue r = roots!.get(i);
-    string a = memberText(r, "a");
+    string a = r.member("a")?.text() ?? "";
     u8[] got = blsFpSqrt(decoded(a));
-    if (memberIsNull(r, "sqrt")) {
+    if (r.member("sqrt")?.isNull() ?? true) {
       t.eqI32(got.len(), 0, "sqrt(\{a.slice(0, 12)}…) returned a non-root");
       continue;
     }
     squares = squares + 1;
     // Either root is correct; the vector holds a^((p+1)/4), and the other is its negation — asked
     // of `fpNeg`, which the `unary` vectors already pinned against Python.
-    string want = memberText(r, "sqrt");
+    string want = r.member("sqrt")?.text() ?? "";
     t.isTrue(hex(got) == want || hex(blsFpNeg(got)) == want,
              "sqrt(\{a.slice(0, 12)}…): got \{hex(got)}, want \{want}" +
              " (or its negation)");
@@ -215,22 +192,22 @@ export string test_fp2_arithmetic_agrees_with_python(Core core, Cli cli) {
   T t = T.create();
   JsonValue? v = vectors(t, cli);
   if (v is null) { return t.report(); }
-  JsonArray? cases = memberArray(v!, "fp2");
+  JsonArray? cases = v!.member("fp2")?.array();
   if (cases is null) { return t.report(); }
   string[] names = ["add", "sub", "mul", "sq", "conj", "mulByU", "mulByXi"];
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    JsonValue? a = member(c, "a");
-    JsonValue? b = member(c, "b");
+    JsonValue? a = c.member("a");
+    JsonValue? b = c.member("b");
     if ((a is null) || (b is null)) { continue; }
-    u8[] ac0 = decoded(memberText(a!, "c0"));
-    u8[] ac1 = decoded(memberText(a!, "c1"));
-    u8[] bc0 = decoded(memberText(b!, "c0"));
-    u8[] bc1 = decoded(memberText(b!, "c1"));
+    u8[] ac0 = decoded(a!.member("c0")?.text() ?? "");
+    u8[] ac1 = decoded(a!.member("c1")?.text() ?? "");
+    u8[] bc0 = decoded(b!.member("c0")?.text() ?? "");
+    u8[] bc1 = decoded(b!.member("c1")?.text() ?? "");
     for (i32 op = 0; op < names.len(); op++) {
       t.eqStr(hex(blsFp2Op(ac0, ac1, bc0, bc1, op)), fp2Text(c, names[op]), "fp2 \{names[op]}");
     }
-    t.eqStr(hex(blsFp2Norm(ac0, ac1)), memberText(c, "norm"), "fp2 norm");
+    t.eqStr(hex(blsFp2Norm(ac0, ac1)), c.member("norm")?.text() ?? "", "fp2 norm");
   }
   t.isTrue(blsFp2OneIsIdempotent(), "1·1 != 1 in Fp2");
   return t.report();
@@ -242,7 +219,7 @@ export string test_fp6_arithmetic_and_frobenius_agree_with_the_python_tower(Core
   T t = T.create();
   JsonValue? v = vectors(t, cli);
   if (v is null) { return t.report(); }
-  JsonArray? cases = memberArray(v!, "fp6");
+  JsonArray? cases = v!.member("fp6")?.array();
   if (cases is null) { return t.report(); }
   string[] names = ["mul", "sq", "mulByV", "inv", "frob1", "frob2", "frob3"];
   for (i32 i = 0; i < cases!.len(); i++) {
@@ -263,7 +240,7 @@ export string test_fp12_arithmetic_and_frobenius_agree_with_the_python_tower(Cor
   // digit in any of the nine twelve-word tables fails there before reaching here.
   JsonValue? v = vectors(t, cli);
   if (v is null) { return t.report(); }
-  JsonArray? cases = memberArray(v!, "fp12");
+  JsonArray? cases = v!.member("fp12")?.array();
   if (cases is null) { return t.report(); }
   string[] names = ["mul", "sq", "conj", "inv", "frob1", "frob2", "frob3"];
   for (i32 i = 0; i < cases!.len(); i++) {

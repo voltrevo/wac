@@ -32,35 +32,10 @@ import { JsonValue, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { blsVerify, blsG1Status, blsG2Status } from "./probe.wac";
-import { member } from "../../../wactest/src/fixtures.wac";
 
 /** `0x…` as bytes, which is how every field in these fixtures is written. */
 u8[] un(string h) {
   return decoded(h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h);
-}
-
-string memberText(JsonValue v, string key) {
-  match (v) {
-    Object(members): {
-      JsonValue? found = members.getStr(key);
-      if (found is null) { return ""; }
-      match (found!) {
-        Str(bytes): { return string.fromBytes(bytes); }
-        default: { return ""; }
-      }
-    }
-    default: { return ""; }
-  }
-}
-
-/** A boolean member, and `missing` when it is absent or is not one. */
-bool memberBool(JsonValue v, string key, bool missing) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return missing; }
-  match (found!) {
-    Bool(value): { return value; }
-    default: { return missing; }
-  }
 }
 
 /** The vendored fixture file as a name-keyed object, or `null`. */
@@ -68,7 +43,7 @@ JsonObject? fixture(T t, Cli cli, string path) {
   FileResult f = cli.readFile(path).wait();
   t.isTrue(f.ok, "\{path} could not be read: \{f.error}");
   if (!f.ok) { return null; }
-  JsonValue? doc = parse(f.bytes);
+  JsonValue? doc = parse(f.bytes).ok();
   t.isTrue(!(doc is null), "\{path} did not parse");
   if (doc is null) { return null; }
   match (doc!) {
@@ -88,12 +63,12 @@ export string test_every_ethereum_verify_fixture_agrees(Core core, Cli cli) {
   for (i32 i = 0; i < cases!.len(); i++) {
     string name = cases!.at(i).keyStr();
     JsonValue c = cases!.at(i).value;
-    JsonValue? input = member(c, "input");
+    JsonValue? input = c.member("input");
     t.isTrue(!(input is null), "\{name}: no input");
     if (input is null) { continue; }
-    bool want = memberBool(c, "output", false);
-    bool got = blsVerify(un(memberText(input!, "pubkey")), un(memberText(input!, "message")),
-                         un(memberText(input!, "signature")));
+    bool want = c.member("output")?.boolean() ?? false;
+    bool got = blsVerify(un(input!.member("pubkey")?.text() ?? ""), un(input!.member("message")?.text() ?? ""),
+                         un(input!.member("signature")?.text() ?? ""));
     if (want) { accepted = accepted + 1; } else { refused = refused + 1; }
     if (got != want) {
       failures = failures + 1;
@@ -127,11 +102,11 @@ export string test_every_ethereum_deserialization_fixture_agrees_g1_and_g2(Core 
     for (i32 i = 0; i < cases!.len(); i++) {
       string name = cases!.at(i).keyStr();
       JsonValue c = cases!.at(i).value;
-      JsonValue? input = member(c, "input");
+      JsonValue? input = c.member("input");
       if (input is null) { continue; }
-      u8[] bytes = un(memberText(input!, keys[g]));
+      u8[] bytes = un(input!.member(keys[g])?.text() ?? "");
       bool got = (g == 0 ? blsG1Status(bytes) : blsG2Status(bytes)) == 0;
-      bool want = memberBool(c, "output", false);
+      bool want = c.member("output")?.boolean() ?? false;
       checked = checked + 1;
       if (got != want) {
         failures = failures + 1;

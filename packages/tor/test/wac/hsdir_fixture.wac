@@ -12,14 +12,14 @@
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { Cli } from "std";
-import { arrayOf, boolOf, jsonFile, num64Of, objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
+import { arrayOf, boolOf, jsonFile, num64Of, strOf } from "../../../wactest/src/jsonfile.wac";
 
 JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/hsdir_vectors.json"); }
 
 // ── the service's uploads ─────────────────────────────────────────────────────
 
 JsonArray cases(Cli cli) { return arrayOf(top(cli), "cases"); }
-JsonObject caseAt(Cli cli, i32 c) { return objectOf(cases(cli).get(c)); }
+JsonObject caseAt(Cli cli, i32 c) { return cases(cli).get(c).object()!; }
 
 export i32 caseCount(Cli cli) { return cases(cli).len(); }
 export u8[] caseBlinded(Cli cli, i32 c) { return decoded(strOf(caseAt(cli, c), "blindedKey")); }
@@ -39,11 +39,11 @@ JsonArray caseDirs(Cli cli, i32 c) { return arrayOf(caseAt(cli, c), "hsdirs"); }
 
 export i32 caseHsdirCount(Cli cli, i32 c) { return caseDirs(cli, c).len(); }
 export u8[] caseHsdirEd(Cli cli, i32 c, i32 i) {
-  return decoded(strOf(objectOf(caseDirs(cli, c).get(i)), "ed25519"));
+  return decoded(strOf(caseDirs(cli, c).get(i).object()!, "ed25519"));
 }
 /** The relay index tor logged in `upload_descriptor_to_hsdir()` — the value with no local oracle. */
 export u8[] caseHsdirIndex(Cli cli, i32 c, i32 i) {
-  return decoded(strOf(objectOf(caseDirs(cli, c).get(i)), "relayIndex"));
+  return decoded(strOf(caseDirs(cli, c).get(i).object()!, "relayIndex"));
 }
 
 // ── the network ───────────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ export i32 candidateCount(Cli cli) {
   JsonArray rs = arrayOf(top(cli), "relays");
   i32 n = 0;
   for (i32 i = 0; i < rs.len(); i++) {
-    if (boolOf(objectOf(rs.get(i)), "hsdir")) { n = n + 1; }
+    if (boolOf(rs.get(i).object()!, "hsdir")) { n = n + 1; }
   }
   return n;
 }
@@ -74,7 +74,7 @@ export u8[] candidateEd(Cli cli, i32 want) {
   JsonArray rs = arrayOf(top(cli), "relays");
   i32 n = 0;
   for (i32 i = 0; i < rs.len(); i++) {
-    JsonObject r = objectOf(rs.get(i));
+    JsonObject r = rs.get(i).object()!;
     if (!boolOf(r, "hsdir")) { continue; }
     if (n == want) { return decoded(strOf(r, "ed25519")); }
     n = n + 1;

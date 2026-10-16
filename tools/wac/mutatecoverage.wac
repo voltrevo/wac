@@ -103,7 +103,7 @@ export Share shareOf(Core core, Cli cli, string binary, string work, string entr
  * given and the caller may have named it relative to a staged root.
  */
 export Share shareFrom(string text, string entry) {
-  JsonValue? root = parse(text.toBytes());
+  JsonValue? root = parse(text.toBytes()).ok();
   if (root is null) { return none("not JSON"); }
   JsonObject doc = match (root!) { Object(o): o, default: JsonObject.create() };
   if (doc.len() == 0) { return none("not a profile"); }
@@ -116,7 +116,7 @@ export Share shareFrom(string text, string entry) {
   // partial profile into a confident wrong answer.
   JsonValue? skipped = doc.get("skipped".toBytes());
   if (skipped is null) { return none("the profile does not say what it skipped"); }
-  JsonArray skips = asArray(skipped!);
+  JsonArray skips = skipped!.array() ?? JsonArray.create();
   if (skips.len() > 0) {
     return none("the run skipped " + itoa(skips.len()) + " test(s), so this profile is partial");
   }
@@ -131,12 +131,12 @@ export Share shareFrom(string text, string entry) {
   string[] points = string[].filled(tests.len(), "");
   for (i32 i = 0; i < tests.len(); i++) {
     names[i] = keyAt(tests, i);
-    points[i] = joinArray(asArray(valueAt(tests, i)));
+    points[i] = joinArray(valueAt(tests, i).array() ?? JsonArray.create());
   }
   JsonValue? allVal = doc.get("all".toBytes());
-  JsonArray all = allVal is null ? JsonArray.create() : asArray(allVal!);
+  JsonArray all = allVal is null ? JsonArray.create() : (allVal!.array() ?? JsonArray.create());
   string[] allPts = string[].filled(all.len(), "");
-  for (i32 i = 0; i < all.len(); i++) { allPts[i] = textOf(all.get(i)); }
+  for (i32 i = 0; i < all.len(); i++) { allPts[i] = all.get(i).text() ?? ""; }
   return Share(true, "", allPts, names, points);
 }
 
@@ -148,20 +148,12 @@ bool endsWithSlash(string named, string entry) {
 
 string stringAt(JsonObject o, string key) {
   JsonValue? v = o.get(key.toBytes());
-  return v is null ? "" : textOf(v!);
-}
-
-JsonArray asArray(JsonValue v) {
-  return match (v) { Array(a): a, default: JsonArray.create() };
-}
-
-string textOf(JsonValue v) {
-  return match (v) { Str(b): string.fromBytes(b), default: "" };
+  return v is null ? "" : (v!.text() ?? "");
 }
 
 string joinArray(JsonArray a) {
   string out = "";
-  for (i32 i = 0; i < a.len(); i++) { out = out + (i == 0 ? "" : " ") + textOf(a.get(i)); }
+  for (i32 i = 0; i < a.len(); i++) { out = out + (i == 0 ? "" : " ") + (a.get(i).text() ?? ""); }
   return out;
 }
 

@@ -55,7 +55,7 @@ i64 be64(u8[] b, i32 at) {
 JsonObject vectorsOf(Cli cli) {
   FileResult r = cli.readFile("packages/tor/test/data/hs_blind_vectors.json").wait();
   if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes);
+  JsonValue? v = parse(r.bytes).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): { return members; }

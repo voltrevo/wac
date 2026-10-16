@@ -24,7 +24,7 @@ import {
 } from "../../src/vote.wac";
 import { AuthorityKeys } from "../../src/authcert.wac";
 import { b64Unpadded, descriptorIdentity } from "../../src/routerdesc.wac";
-import { jsonFile, strOf, numOf, num64Of, arrayOf, objectOf } from "../../../wactest/src/jsonfile.wac";
+import { jsonFile, strOf, numOf, num64Of, arrayOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
@@ -34,8 +34,8 @@ static string ORACLE = "packages/tor/test/oracle.mjs";
 
 /** The one real vote: the document, and the signature its embedded signing key made. */
 JsonObject theVote(Cli cli) {
-  return objectOf(arrayOf(jsonFile(cli, "packages/tor/test/data/vote_vectors.json"),
-                          "votes").get(0));
+  return arrayOf(jsonFile(cli, "packages/tor/test/data/vote_vectors.json"),
+                          "votes").get(0).object()!;
 }
 
 /**
@@ -109,7 +109,7 @@ export string test_the_entries_are_ordered_by_identity_digest(Core core, Cli cli
 
   u8[][] descriptors = u8[][].defaulted(n);
   for (i32 i = 0; i < n; i++) {
-    descriptors[i] = strOf(objectOf(cases.get(i)), "descriptor").toBytes();
+    descriptors[i] = strOf(cases.get(i).object()!, "descriptor").toBytes();
   }
 
   // The r lines in our order, against the r lines in the order tor's authority wrote them. The input

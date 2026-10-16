@@ -44,9 +44,11 @@ export Result<JsonValue, string> call(Cli cli, string host, i32 port, string met
     return bad("\{method}: the node answered HTTP \{response.status}");
   }
 
-  JsonValue? parsed = parse(response.body);
-  if (parsed is null) { return bad("\{method}: the node's answer is not JSON"); }
-  match (parsed!) {
+  JsonValue parsed = match (parse(response.body)) {
+    Ok(v): v,
+    Err(e): return bad("\{method}: the node's answer is not JSON — \{e.text()}"),
+  };
+  match (parsed) {
     Object(members): {
       // An error member is the node refusing, and it is not the same as a transport failure: the request
       // arrived and was understood. Its message is the useful part and is passed through.
@@ -72,14 +74,6 @@ string describe(JsonValue err) {
       }
     }
     default: { return "the node refused"; }
-  }
-}
-
-/** A `Str` result's bytes — most `eth_` methods answer with a hex string. */
-export u8[] stringOf(JsonValue v) {
-  match (v) {
-    Str(bytes): { return bytes; }
-    default: { return u8[](); }
   }
 }
 

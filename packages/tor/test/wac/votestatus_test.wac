@@ -20,7 +20,7 @@ import {
 JsonArray voteCases(Cli cli) {
   FileResult r = cli.readFile("packages/tor/test/data/votestatus_vectors.json").wait();
   if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes);
+  JsonValue? v = parse(r.bytes).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): {

@@ -37,7 +37,7 @@ import {
 } from "../../src/relaycert.wac";
 import { certSignedWithKey, certCertifiedKey, certType} from "../../src/hsdesc.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
-import { jsonFile, strOf, arrayOf, objectOf } from "../../../wactest/src/jsonfile.wac";
+import { jsonFile, strOf, arrayOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonArray } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
@@ -69,8 +69,8 @@ export string test_every_certificate_tor_made_verifies(Core core, Cli cli) {
   i32 n = cases.len();
   t.isTrue(n >= 3, "several real certificates, not one");
   for (i32 i = 0; i < n; i++) {
-    u8[] cert = decoded(strOf(objectOf(cases.get(i)), "signingCert"));
-    u8[] master = decoded(strOf(objectOf(cases.get(i)), "masterIdentity"));
+    u8[] cert = decoded(strOf(cases.get(i).object()!, "signingCert"));
+    u8[] master = decoded(strOf(cases.get(i).object()!, "masterIdentity"));
     string which = "cert \{i as i64}";
 
     t.eqI32(cert[0] as i32, 1, "\{which}: version 1");

@@ -3,8 +3,10 @@
 Asking an Ethereum node a question, so the packages that *verify* answers have something to verify.
 
 ```wac
-Answer a = call(cli, "127.0.0.1", 8545, "eth_blockNumber", "[]");
-if (a.ok) { core.log(string.fromBytes(stringOf(a.result))); }
+match (call(cli, "127.0.0.1", 8545, "eth_blockNumber", "[]")) {
+  Ok(result): { core.log(result.text() ?? ""); }
+  Err(why): { core.warn(why); }
+}
 ```
 
 `example/blocknumber.wac` is that, as a program. Build and run it against a local node:

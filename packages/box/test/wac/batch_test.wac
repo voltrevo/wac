@@ -102,7 +102,7 @@ export string test_json_canonicalises_and_reports_a_parse_error(Core core, Cli c
 
   Ran bad = runAppletIn(core, cli, dir, ["json"], "{\"a\":}".toBytes());
   t.eqI32(bad.status, 1, "an invalid document is 1");
-  t.isTrue(bad.err.indexOf("invalid JSON at byte") >= 0, bad.err);
+  t.isTrue(bad.err.indexOf("invalid JSON: unexpected at byte 5") >= 0, bad.err);
 
   cli.remove(dir, true).wait();
   return t.report();

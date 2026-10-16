@@ -17,8 +17,10 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { Canonical, canonicalize } from "../../src/json.wac";
-import { ERR_NONE, ERR_DEPTH } from "../../src/parse.wac";
+import { canonicalize } from "../../src/json.wac";
+import { faultOf } from "./faults.wac";
+import { JsonError } from "../../src/parse.wac";
+import { Result } from "core";
 
 static string ORACLE = "packages/json/test/oracle.ts";
 
@@ -52,10 +54,10 @@ export string test_round_trip_matches_the_hosts(Core core, Cli cli) {
   string[] all = cases();
   Lines lines = Lines.create();
   for (i32 i = 0; i < all.len(); i++) {
-    Canonical got = canonicalize(all[i].toBytes());
-    t.eqI32(got.code, ERR_NONE(), "unexpected error for \"\{all[i]}\"");
-    if (!got.ok) { continue; }
-    lines.add("restringify \{hex(all[i].toBytes())} \{hex(got.text)}");
+    Result<u8[], JsonError> got = canonicalize(all[i].toBytes());
+    t.eqStr(faultOf(got), "", "unexpected error for \"\{all[i]}\"");
+    if (!got.isOk()) { continue; }
+    lines.add("restringify \{hex(all[i].toBytes())} \{hex(got.orElse(u8[]()))}");
   }
   t.eqI32(lines.n, all.len(), "every case was compared");
   checkDeno(t, cli, ORACLE, lines, "the round trip");
@@ -70,9 +72,9 @@ export string test_round_trip_matches_the_hosts(Core core, Cli cli) {
  */
 export string test_negative_zero_keeps_its_sign(Core core, Cli cli) {
   T t = T.create();
-  Canonical got = canonicalize("-0".toBytes());
-  t.eqI32(got.code, ERR_NONE(), "-0 parses");
-  t.eqStr(string.fromBytes(got.text), "-0", "and keeps its sign");
+  Result<u8[], JsonError> got = canonicalize("-0".toBytes());
+  t.eqStr(faultOf(got), "", "-0 parses");
+  t.eqStr(string.fromBytes(got.orElse(u8[]())), "-0", "and keeps its sign");
   // The other half: the host still loses it, so this is a divergence rather than an old note.
   Lines lines = Lines.create();
   lines.add("restringify " + hex("-0".toBytes()) + " " + hex("0".toBytes()));
@@ -89,9 +91,9 @@ export string test_negative_zero_keeps_its_sign(Core core, Cli cli) {
 export string test_duplicate_object_keys_are_all_retained(Core core, Cli cli) {
   T t = T.create();
   string src = "{\"a\":1,\"a\":2}";
-  Canonical got = canonicalize(src.toBytes());
-  t.eqI32(got.code, ERR_NONE(), "the document parses");
-  t.eqStr(string.fromBytes(got.text), src, "and both members survive");
+  Result<u8[], JsonError> got = canonicalize(src.toBytes());
+  t.eqStr(faultOf(got), "", "the document parses");
+  t.eqStr(string.fromBytes(got.orElse(u8[]())), src, "and both members survive");
   Lines lines = Lines.create();
   lines.add("restringify " + hex(src.toBytes()) + " " + hex("{\"a\":2}".toBytes()));
   checkDeno(t, cli, ORACLE, lines, "the host still collapses them");
@@ -104,9 +106,9 @@ export string test_deep_nesting_inside_the_depth_limit(Core core, Cli cli) {
   Lines lines = Lines.create();
   for (i32 d = 0; d < depths.len(); d++) {
     string src = repeated("[", depths[d]) + repeated("]", depths[d]);
-    Canonical got = canonicalize(src.toBytes());
-    t.eqI32(got.code, ERR_NONE(), "depth \{depths[d]} should parse");
-    if (got.ok) { lines.add("restringify \{hex(src.toBytes())} \{hex(got.text)}"); }
+    Result<u8[], JsonError> got = canonicalize(src.toBytes());
+    t.eqStr(faultOf(got), "", "depth \{depths[d]} should parse");
+    if (got.isOk()) { lines.add("restringify \{hex(src.toBytes())} \{hex(got.orElse(u8[]()))}"); }
   }
   checkDeno(t, cli, ORACLE, lines, "deep nesting");
   return t.report();
@@ -115,7 +117,7 @@ export string test_deep_nesting_inside_the_depth_limit(Core core, Cli cli) {
 export string test_the_depth_limit_rejects_rather_than_exhausting_the_stack() {
   T t = T.create();
   string src = repeated("[", 500) + repeated("]", 500);
-  t.eqI32(canonicalize(src.toBytes()).code, ERR_DEPTH(), "500 deep is refused by the depth limit");
+  t.eqStr(faultOf(canonicalize(src.toBytes())), "too deep", "500 deep is refused by the depth limit");
   return t.report();
 }
 

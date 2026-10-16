@@ -1,13 +1,13 @@
 // The RPC client, reachable from a test that drives a real node.
 import { Result } from "core";
-import { call, stringOf } from "../../src/rpc.wac";
+import { call } from "../../src/rpc.wac";
 import { Cli } from "std";
 import { JsonValue } from "../../../json/src/value.wac";
 
 /** `[ok, payload…]` — the result as text when it worked, the error when it did not. */
 export u8[] rpc(Cli cli, string host, i32 port, string method, string params) {
   Result<JsonValue, string> a = call(cli, host, port, method, params);
-  u8[] body = match (a) { Ok(v): stringOf(v), Err(e): e.toBytes() };
+  u8[] body = match (a) { Ok(v): (v.bytes() ?? u8[]()), Err(e): e.toBytes() };
   u8[] out = u8[].filled(1 + body.len(), 0);
   out[0] = a.isOk() ? 1 : 0;
   out.copyFrom(body, 0, 1, body.len());

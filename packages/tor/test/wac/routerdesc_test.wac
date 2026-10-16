@@ -55,7 +55,7 @@ import {
   RelayInfo, RelayKeys, routerDescriptor,
 } from "../../src/routerdesc.wac";
 import { ed25519Verify } from "../../../crypto/src/ed25519.wac";
-import { jsonFile, strOf, numOf, num64Of, arrayOf, objectOf } from "../../../wactest/src/jsonfile.wac";
+import { jsonFile, strOf, numOf, num64Of, arrayOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
@@ -131,7 +131,7 @@ export string test_the_fixture_covers_both_sign_bits(Core core, Cli cli) {
   i32 zeros = 0;
   i32 ones = 0;
   for (i32 i = 0; i < all.len(); i++) {
-    if (numOf(objectOf(all.get(i)), "signbit") == 0) { zeros = zeros + 1; } else { ones = ones + 1; }
+    if (numOf(all.get(i).object()!, "signbit") == 0) { zeros = zeros + 1; } else { ones = ones + 1; }
   }
   t.isTrue(zeros > 0 && ones > 0, "both sign bits occur, so the bit is genuinely exercised");
   t.isTrue(arrayOf(prop228(cli), "cases").len() >= 1, "tor's own derivation was captured");
@@ -149,7 +149,7 @@ export string test_the_conversion_matches_the_certificates_tor_signed(Core core,
   // rather than agreeing with half of it.
   Lines lines = Lines.create();
   for (i32 i = 0; i < n; i++) {
-    JsonObject d = objectOf(all.get(i));
+    JsonObject d = all.get(i).object()!;
     u8[] ntor = decoded(strOf(d, "ntor_onion_key"));
     i32 bit = numOf(d, "signbit");
     string cert = strOf(d, "ntor_crosscert");
@@ -160,7 +160,7 @@ export string test_the_conversion_matches_the_certificates_tor_signed(Core core,
   if (!a.ok) { return t.report(); }
 
   for (i32 i = 0; i < n; i++) {
-    JsonObject d = objectOf(all.get(i));
+    JsonObject d = all.get(i).object()!;
     u8[] ntor = decoded(strOf(d, "ntor_onion_key"));
     i32 bit = numOf(d, "signbit");
     u8[] cert = decoded(strOf(d, "ntor_crosscert"));
@@ -196,7 +196,7 @@ export string test_the_crosscert_body_is_reproduced_byte_for_byte(Core core, Cli
   i32 n = all.len();
 
   for (i32 i = 0; i < n; i++) {
-    JsonObject d = objectOf(all.get(i));
+    JsonObject d = all.get(i).object()!;
     u8[] cert = decoded(strOf(d, "ntor_crosscert"));
     u8[] master = decoded(strOf(d, "master_key_ed25519"));
     string which = "descriptor \{i as i64}";
@@ -232,9 +232,9 @@ export string test_the_secret_derivation_is_tors(Core core, Cli cli) {
   u8[] identity = u8[].filled(32, 0);
   for (i32 j = 0; j < 32; j++) { identity[j] = ((200 - j * 3) & 0xFF) as@ u8; }
   for (i32 k = 0; k < n; k++) {
-    u8[] expanded = curve25519ToEd25519Secret(decoded(strOf(objectOf(cases.get(k)),
+    u8[] expanded = curve25519ToEd25519Secret(decoded(strOf(cases.get(k).object()!,
                                                             "curve_secret")));
-    lines.add("edverify " + strOf(objectOf(cases.get(k)), "ed_public") + " " +
+    lines.add("edverify " + strOf(cases.get(k).object()!, "ed_public") + " " +
               hex(ed25519CertExpanded(CERT_TYPE_ONION_ID, 123456, KEY_TYPE_ED25519,
                                       identity, expanded)));
   }
@@ -242,7 +242,7 @@ export string test_the_secret_derivation_is_tors(Core core, Cli cli) {
   if (!a.ok) { return t.report(); }
 
   for (i32 k = 0; k < n; k++) {
-    JsonObject c = objectOf(cases.get(k));
+    JsonObject c = cases.get(k).object()!;
     u8[] secret = decoded(strOf(c, "curve_secret"));
     string which = "case \{k as i64}";
 
@@ -286,13 +286,13 @@ export string test_the_document_digests_are_tors(Core core, Cli cli) {
   // One `desc` line per descriptor: the host parses each one and hands back what it found.
   Lines lines = Lines.create();
   for (i32 i = 0; i < n; i++) {
-    lines.add("desc " + hex(strOf(objectOf(all.get(i)), "descriptor").toBytes()));
+    lines.add("desc " + hex(strOf(all.get(i).object()!, "descriptor").toBytes()));
   }
   Answers a = ask(t, cli, "node", [ORACLE], lines, "what the host read out of each");
   if (!a.ok) { return t.report(); }
 
   for (i32 i = 0; i < n; i++) {
-    JsonObject d = objectOf(all.get(i));
+    JsonObject d = all.get(i).object()!;
     u8[] text = strOf(d, "descriptor").toBytes();
     u8[] sig = b64Padded(strOf(d, "router_sig_ed25519"));
     string which = "descriptor \{i as i64}";
@@ -330,7 +330,7 @@ export string test_the_document_digests_are_tors(Core core, Cli cli) {
 
 export string test_a_digest_span_stops_where_tor_stops(Core core, Cli cli) {
   T t = T.create();
-  u8[] text = strOf(objectOf(descriptors(cli).get(0)), "descriptor").toBytes();
+  u8[] text = strOf(descriptors(cli).get(0).object()!, "descriptor").toBytes();
 
   // The ed25519 span ends immediately after the keyword and its single space, with no newline. The
   // easiest wrong answer is to include the signature that follows, and the second easiest is to stop
@@ -367,7 +367,7 @@ export string test_a_pem_block_is_wrapped_the_way_tor_wraps_one(Core core, Cli c
   i32 n = all.len();
   Lines lines = Lines.create();
   for (i32 i = 0; i < n; i++) {
-    lines.add("desc " + hex(strOf(objectOf(all.get(i)), "descriptor").toBytes()));
+    lines.add("desc " + hex(strOf(all.get(i).object()!, "descriptor").toBytes()));
   }
   Answers a = ask(t, cli, "node", [ORACLE], lines, "the onion keys the host unwrapped");
   if (!a.ok) { return t.report(); }
@@ -410,7 +410,7 @@ export string test_the_field_formats_are_tors(Core core, Cli cli) {
   i32 n = all.len();
   Lines lines = Lines.create();
   for (i32 i = 0; i < n; i++) {
-    lines.add("desc " + hex(strOf(objectOf(all.get(i)), "descriptor").toBytes()));
+    lines.add("desc " + hex(strOf(all.get(i).object()!, "descriptor").toBytes()));
   }
   Answers a = ask(t, cli, "node", [ORACLE], lines, "each descriptor's own field values");
   if (!a.ok) { return t.report(); }
@@ -438,7 +438,7 @@ export string test_the_field_formats_are_tors(Core core, Cli cli) {
               "\{which}: our RSAPublicKey encoding is tor's");
 
     // `ntor-onion-key` — base64 with the padding stripped.
-    t.eqStr(b64Unpadded(decoded(strOf(objectOf(all.get(i)), "ntor_onion_key"))), d.ntorLine,
+    t.eqStr(b64Unpadded(decoded(strOf(all.get(i).object()!, "ntor_onion_key"))), d.ntorLine,
             "\{which}: our ntor-onion-key line is tor's");
   }
   return t.report();

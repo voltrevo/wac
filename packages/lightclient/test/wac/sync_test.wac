@@ -31,7 +31,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
-import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
+import { Loaded, json } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -58,18 +58,9 @@ JsonArray? syncCases(T t, Core core, Cli cli) {
   Loaded f = json(core, cli, "ssz", "light_client_sync_altair_minimal", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return null; }
-  JsonArray? cases = memberArray(f.doc, "cases");
+  JsonArray? cases = f.doc.member("cases")?.array();
   t.isTrue(!(cases is null), "the fixture has no `cases` array");
   return cases;
-}
-
-JsonObject? memberObject(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return null; }
-  match (found!) {
-    Object(members): { return members; }
-    default: { return null; }
-  }
 }
 
 string textAt(JsonObject o, string key) {
@@ -122,17 +113,17 @@ string optimisticOf(Store s) {
 
 /** What a step's checks say the two headers must be, in the same form. */
 string checkOf(JsonValue step, string which) {
-  JsonValue? checks = member(step, "checks");
+  JsonValue? checks = step.member("checks");
   if (checks is null) { return ""; }
-  JsonValue? h = member(checks!, which);
+  JsonValue? h = checks!.member(which);
   if (h is null) { return ""; }
-  return memberText(h!, "slot") + "@" + memberText(h!, "beacon_root");
+  return (h!.member("slot")?.text() ?? "") + "@" + (h!.member("beacon_root")?.text() ?? "");
 }
 
 /** The first `process_update` step of a case, or `-1`. */
 i32 firstUpdateStep(JsonArray steps) {
   for (i32 i = 0; i < steps.len(); i++) {
-    if (memberText(steps.get(i), "kind") == "process_update") { return i; }
+    if ((steps.get(i).member("kind")?.text() ?? "") == "process_update") { return i; }
   }
   return -1;
 }
@@ -148,27 +139,27 @@ export string test_every_light_client_sync_vector_step_agrees_header_for_header(
   i32 forced = 0;
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string name = memberText(c, "case");
-    JsonValue? meta = member(c, "meta");
-    JsonArray? steps = memberArray(c, "steps");
-    JsonObject? updates = memberObject(c, "updates");
+    string name = c.member("case")?.text() ?? "";
+    JsonValue? meta = c.member("meta");
+    JsonArray? steps = c.member("steps")?.array();
+    JsonObject? updates = c.member("updates")?.object();
     t.isTrue(!(meta is null) && !(steps is null) && !(updates is null), "\{name}: incomplete case");
     if ((meta is null) || (steps is null) || (updates is null)) { continue; }
 
-    Store? store = initializeStore(un(memberText(meta!, "trusted_block_root")),
-                                   decoded(memberText(c, "bootstrap")));
+    Store? store = initializeStore(un(meta!.member("trusted_block_root")?.text() ?? ""),
+                                   decoded(c.member("bootstrap")?.text() ?? ""));
     t.isTrue(!(store is null), "\{name}: the bootstrap did not initialize a store");
     if (store is null) { continue; }
-    u8[] gvr = un(memberText(meta!, "genesis_validators_root"));
+    u8[] gvr = un(meta!.member("genesis_validators_root")?.text() ?? "");
 
     for (i32 j = 0; j < steps!.len(); j++) {
       JsonValue s = steps!.get(j);
-      string kind = memberText(s, "kind");
-      i64 slot = slotOf(memberText(s, "current_slot"));
+      string kind = s.member("kind")?.text() ?? "";
+      i64 slot = slotOf(s.member("current_slot")?.text() ?? "");
       string at = name + " step \{j} (" + kind + ", current_slot " +
-                  memberText(s, "current_slot") + ")";
+                  (s.member("current_slot")?.text() ?? "") + ")";
       if (kind == "process_update") {
-        string which = memberText(s, "update");
+        string which = s.member("update")?.text() ?? "";
         string updateHex = textAt(updates!, which);
         t.isTrue(updateHex.len() > 0, "\{at}: no update \{which}");
         if (updateHex.len() == 0) { continue; }
@@ -212,18 +203,18 @@ Base baseCase(T t, Core core, Cli cli) {
   JsonArray? cases = syncCases(t, core, cli);
   if (cases is null) { return none; }
   JsonValue c = cases!.get(0);
-  JsonValue? meta = member(c, "meta");
-  JsonArray? steps = memberArray(c, "steps");
-  JsonObject? updates = memberObject(c, "updates");
+  JsonValue? meta = c.member("meta");
+  JsonArray? steps = c.member("steps")?.array();
+  JsonObject? updates = c.member("updates")?.object();
   if ((meta is null) || (steps is null) || (updates is null)) { return none; }
   i32 at = firstUpdateStep(steps!);
   t.isTrue(at >= 0, "no process_update step in the first case");
   if (at < 0) { return none; }
   JsonValue step = steps!.get(at);
-  return Base(true, memberText(c, "case"), un(memberText(meta!, "genesis_validators_root")),
-              un(memberText(meta!, "trusted_block_root")), decoded(memberText(c, "bootstrap")),
-              decoded(textAt(updates!, memberText(step, "update"))),
-              slotOf(memberText(step, "current_slot")));
+  return Base(true, c.member("case")?.text() ?? "", un(meta!.member("genesis_validators_root")?.text() ?? ""),
+              un(meta!.member("trusted_block_root")?.text() ?? ""), decoded(c.member("bootstrap")?.text() ?? ""),
+              decoded(textAt(updates!, step.member("update")?.text() ?? "")),
+              slotOf(step.member("current_slot")?.text() ?? ""));
 }
 
 /** A store initialized from the base case's bootstrap, or `null`. */

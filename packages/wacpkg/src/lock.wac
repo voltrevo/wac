@@ -199,14 +199,14 @@ export LockEntry[] applyPlan(Manifest m, Lock l, Step[] steps, string[] resolved
 
 /** The lock in `src`. An empty document is a valid empty lock. */
 export Lock readLock(u8[] src) {
-  JsonValue? doc = parseJson5(src);
-  if (doc is null) { return lockFailed(L_NOT_JSON5(), ""); }
-
-  JsonObject root = JsonObject.create();
-  match (doc!) {
-    Object(o): { root = o; }
-    default: { return lockFailed(L_NOT_OBJECT(), ""); }
+  JsonObject? top = null;
+  match (parseJson5(src)) {
+    Ok(doc): { top = doc.object(); }
+    // The detail says where: `unexpected at byte 41` is the line to look at.
+    Err(e): { return lockFailed(L_NOT_JSON5(), e.text()); }
   }
+  if (top is null) { return lockFailed(L_NOT_OBJECT(), ""); }
+  JsonObject root = top!;
 
   JsonValue? importsVal = root.getStr("imports");
   if (importsVal is null) { return Lock.empty(); }

@@ -1,9 +1,8 @@
 // Serializer: JSON value tree -> UTF-8 bytes.
 //
-// Numbers are written from the source span kept on JsonNumber rather than from
-// its f64. That is not laziness about canonical form so much as necessity: wac
-// has no float-to-string operation, so printing an f64 would mean implementing
-// shortest-round-trip formatting (Ryu or Grisu) first.
+// A parsed number is written from the source span it keeps rather than from its f64, so a
+// round-trip is byte-exact: `1e2` stays `1e2` and `-0` keeps its sign. A number built by hand has
+// no span and is formatted by packages/fmt.
 //
 // The fold is a `match`, so the compiler checks that every variant is handled —
 // which is the difference between this and the switch-on-tag it replaced, where a
@@ -13,19 +12,24 @@ import { JsonValue, JsonMember } from "./value.wac";
 import { Buf } from "core";
 import { writeF64 } from "../../fmt/src/ftoa.wac";
 
+// The literals, built once rather than per value written.
+static u8[] NULL = ['n', 'u', 'l', 'l'];
+static u8[] TRUE = ['t', 'r', 'u', 'e'];
+static u8[] FALSE = ['f', 'a', 'l', 's', 'e'];
+
 export void writeValue(Buf out, JsonValue v) {
   // Exhaustive: adding a variant to JsonValue makes this a compile error rather
   // than a case that silently falls through to `trap`, which is what the old
   // switch-on-tag did.
   match (v) {
     Null: {
-      out.pushAll(['n', 'u', 'l', 'l'] as u8[]);
+      out.pushAll(NULL);
     }
     Bool(value): {
       if (value) {
-        out.pushAll(['t', 'r', 'u', 'e'] as u8[]);
+        out.pushAll(TRUE);
       } else {
-        out.pushAll(['f', 'a', 'l', 's', 'e'] as u8[]);
+        out.pushAll(FALSE);
       }
     }
     Number(value, raw): {
@@ -39,7 +43,7 @@ export void writeValue(Buf out, JsonValue v) {
         // JavaScript ones — `NaN`, `Infinity` — so a hand-built tree serialised to text this
         // package's own parser rejects. `JSON.stringify` writes `null` for them, and being judged
         // against `JSON.stringify` is the claim this file makes, so it writes `null` too.
-        out.pushAll(['n', 'u', 'l', 'l'] as u8[]);
+        out.pushAll(NULL);
       } else {
         writeF64(out, value);
       }

@@ -17,7 +17,6 @@ import { encodeUpper, decoded } from "../../../codec/src/hex.wac";
 import { b64Unpadded } from "../../src/routerdesc.wac";
 import { Lines, Answers, ask, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, FileResult } from "std";
-import { memberText } from "../../../wactest/src/fixtures.wac";
 import { JsonValue } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 
@@ -28,10 +27,10 @@ string field(T t, Cli cli, string file, string key) {
   FileResult f = cli.readFile("packages/tor/test/data/\{file}").wait();
   t.isTrue(f.ok, "\{file} could not be read: \{f.error}");
   if (!f.ok) { return ""; }
-  JsonValue? doc = parse(f.bytes);
+  JsonValue? doc = parse(f.bytes).ok();
   t.isTrue(!(doc is null), "\{file} did not parse");
   if (doc is null) { return ""; }
-  return memberText(doc!, key);
+  return doc!.member(key)?.text() ?? "";
 }
 
 DirDocuments docsFrom(T t, Cli cli) {

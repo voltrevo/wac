@@ -394,7 +394,7 @@ string[] sortedNames(string[] names) {
  * a declaration. `issues/system/0240c` is what made the module reachable from wac at all.
  */
 TestExport[] testExportsIn(string manifest) {
-  JsonValue? doc = parse(manifest.toBytes());
+  JsonValue? doc = parse(manifest.toBytes()).ok();
   if (doc is null) { return TestExport[](); }
   JsonObject root = JsonObject.create();
   match (doc!) {

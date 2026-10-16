@@ -13,7 +13,7 @@ import { Cli } from "std";
 import { call } from "./rpc.wac";
 import { Result } from "core";
 import { JsonValue } from "../../json/src/value.wac";
-import { memberOf, memberData, hexArray, fromHexData, isNull, stringOf as jsonString } from "./jsonhex.wac";
+import { memberData, hexArray, fromHexData } from "./jsonhex.wac";
 import { encode as hexOf } from "../../codec/src/hex.wac";
 import { headerOf, Header } from "./header.wac";
 import { keccak256 } from "../../crypto/src/keccak.wac";
@@ -81,7 +81,7 @@ export Result<Proof, string> proofOfSlots(Cli cli, string host, i32 port, string
     : "[\"latest\",false]";
   JsonValue block = try call(cli, host, port,
                              anchored ? "eth_getBlockByHash" : "eth_getBlockByNumber", where);
-  if (isNull(block)) { return failed("this node does not have the block you anchored to"); }
+  if (block.isNull()) { return failed("this node does not have the block you anchored to"); }
 
   // **The root comes out of a header that was re-encoded and hashed**, not straight out of the JSON. With
   // an `expectedHash` from somewhere else that makes the root trustworthy; without one it catches a node
@@ -92,9 +92,9 @@ export Result<Proof, string> proofOfSlots(Cli cli, string host, i32 port, string
 
   // The proof has to be about the same block as the root, which is the whole point: `latest` here with an
   // anchored root above would verify a fresh trie against an old root and report every slot as absent.
-  JsonValue numberAt = memberOf(block, "number");
-  string at = anchored ? "\"\{string.fromBytes(jsonString(numberAt))}\"" : "\"latest\"";
-  if (anchored && jsonString(numberAt).len() == 0) { return failed("the block has no number"); }
+  u8[] number = block.member("number")?.bytes() ?? u8[]();
+  string at = anchored ? "\"\{string.fromBytes(number)}\"" : "\"latest\"";
+  if (anchored && number.len() == 0) { return failed("the block has no number"); }
 
   string list = "";
   for (i32 i = 0; i < slots.len(); i++) {
@@ -103,7 +103,7 @@ export Result<Proof, string> proofOfSlots(Cli cli, string host, i32 port, string
   string params = "[\"\{address}\",[\{list}],\{at}]";
   JsonValue got = try call(cli, host, port, "eth_getProof", params);
 
-  u8[][] accountNodes = hexArray(memberOf(got, "accountProof"));
+  u8[][] accountNodes = hexArray(got.member("accountProof") ?? JsonValue.Null);
 
   // **The proof has to be about the block the root came from**, and the first node is where that is
   // checkable: an account proof's root node hashes to the state root by definition. Checking it here turns
@@ -123,7 +123,7 @@ export Result<Proof, string> proofOfSlots(Cli cli, string host, i32 port, string
         : "the node's proof does not match the state root of the block it sent");
     }
   }
-  JsonValue storageProof = memberOf(got, "storageProof");
+  JsonValue storageProof = got.member("storageProof") ?? JsonValue.Null;
   match (storageProof) {
     Array(items): {
       if (items.len() != slots.len()) {
@@ -142,7 +142,7 @@ export Result<Proof, string> proofOfSlots(Cli cli, string host, i32 port, string
         for (i32 j = 0; j < key.len(); j++) {
           if (key[j] != want[j]) { return failed("the node answered about a slot that was not asked for"); }
         }
-        out[i] = hexArray(memberOf(entry, "proof"));
+        out[i] = hexArray(entry.member("proof") ?? JsonValue.Null);
       }
       return Result.Ok(Proof.many(root, accountNodes, out));
     }

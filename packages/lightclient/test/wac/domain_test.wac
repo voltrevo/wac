@@ -28,7 +28,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
-import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
+import { Loaded, json } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -128,18 +128,9 @@ JsonArray? syncCases(T t, Core core, Cli cli) {
   Loaded f = json(core, cli, "ssz", "light_client_sync_altair_minimal", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return null; }
-  JsonArray? cases = memberArray(f.doc, "cases");
+  JsonArray? cases = f.doc.member("cases")?.array();
   t.isTrue(!(cases is null), "the fixture has no `cases` array");
   return cases;
-}
-
-JsonObject? memberObject(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return null; }
-  match (found!) {
-    Object(members): { return members; }
-    default: { return null; }
-  }
 }
 
 /** The hex text stored under `key` in an object of hex strings, or `""`. */
@@ -161,20 +152,20 @@ export string test_the_fork_digest_the_vectors_state_is_the_one_this_computes(Co
   // bytes left-aligned in a chunk, which is easy to get stably wrong.
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string name = memberText(c, "case");
-    JsonValue? meta = member(c, "meta");
+    string name = c.member("case")?.text() ?? "";
+    JsonValue? meta = c.member("meta");
     t.isTrue(!(meta is null), "\{name}: no meta");
     if (meta is null) { continue; }
-    u8[] gvr = un(memberText(meta!, "genesis_validators_root"));
+    u8[] gvr = un(meta!.member("genesis_validators_root")?.text() ?? "");
     string got = "0x" + hex(forkDigest(altairForkVersionMinimal(), gvr));
-    t.eqStr(got, memberText(meta!, "store_fork_digest"), "\{name}: fork digest");
-    t.eqStr(got, memberText(meta!, "bootstrap_fork_digest"),
+    t.eqStr(got, meta!.member("store_fork_digest")?.text() ?? "", "\{name}: fork digest");
+    t.eqStr(got, meta!.member("bootstrap_fork_digest")?.text() ?? "",
             "\{name}: bootstrap digest differs, so these cases span a fork upgrade");
   }
   // Mainnet's Altair version must give a different digest, or the version is not reaching the hash.
-  JsonValue? meta0 = member(cases!.get(0), "meta");
+  JsonValue? meta0 = cases!.get(0).member("meta");
   if (meta0 is null) { return t.report(); }
-  u8[] gvr = un(memberText(meta0!, "genesis_validators_root"));
+  u8[] gvr = un(meta0!.member("genesis_validators_root")?.text() ?? "");
   t.isFalse(hex(forkDigest(altairForkVersionMainnet(), gvr)) ==
             hex(forkDigest(altairForkVersionMinimal(), gvr)),
             "mainnet and minimal fork versions give the same digest");
@@ -186,9 +177,9 @@ export string test_the_domain_is_the_type_then_twenty_eight_bytes_of_the_fork_da
   T t = T.create();
   JsonArray? cases = syncCases(t, core, cli);
   if (cases is null) { return t.report(); }
-  JsonValue? meta0 = member(cases!.get(0), "meta");
+  JsonValue? meta0 = cases!.get(0).member("meta");
   if (meta0 is null) { return t.report(); }
-  u8[] gvr = un(memberText(meta0!, "genesis_validators_root"));
+  u8[] gvr = un(meta0!.member("genesis_validators_root")?.text() ?? "");
   u8[] version = altairForkVersionMinimal();
   u8[] domain = domainOf(version, gvr);
   t.eqI32(domain.len(), 32, "domain width");
@@ -225,14 +216,14 @@ export string test_every_real_sync_committee_signature_verifies(Core core, Cli c
   i32 bySupplied = 0;
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string name = memberText(c, "case");
-    JsonValue? meta = member(c, "meta");
-    JsonArray? steps = memberArray(c, "steps");
-    JsonObject? updates = memberObject(c, "updates");
+    string name = c.member("case")?.text() ?? "";
+    JsonValue? meta = c.member("meta");
+    JsonArray? steps = c.member("steps")?.array();
+    JsonObject? updates = c.member("updates")?.object();
     if ((meta is null) || (steps is null) || (updates is null)) { continue; }
-    u8[] gvr = un(memberText(meta!, "genesis_validators_root"));
+    u8[] gvr = un(meta!.member("genesis_validators_root")?.text() ?? "");
     u8[][] bootstrapKeys = pubkeysOf(field(TY_LIGHT_CLIENT_BOOTSTRAP(),
-                                           decoded(memberText(c, "bootstrap")),
+                                           decoded(c.member("bootstrap")?.text() ?? ""),
                                            BOOTSTRAP_CURRENT_COMMITTEE()));
     t.eqI32(bootstrapKeys.len(), 32, "\{name}: pubkeys, expected 32 for minimal config");
     // Sixteen updates across four cases, so a committee list this size can never overflow.
@@ -241,8 +232,8 @@ export string test_every_real_sync_committee_signature_verifies(Core core, Cli c
 
     for (i32 j = 0; j < steps!.len(); j++) {
       JsonValue step = steps!.get(j);
-      if (memberText(step, "kind") != "process_update") { continue; }
-      string which = memberText(step, "update");
+      if ((step.member("kind")?.text() ?? "") != "process_update") { continue; }
+      string which = step.member("update")?.text() ?? "";
       u8[] upd = decoded(textAt(updates!, which));
       u8[] agg = field(TY_LIGHT_CLIENT_UPDATE(), upd, UPDATE_SYNC_AGGREGATE());
       u8[] bits = field(TY_SYNC_AGGREGATE(), agg, AGGREGATE_BITS());
@@ -299,18 +290,18 @@ export string test_the_signing_root_is_what_makes_the_signature_context_specific
   // not verify. Without this, a signature could be replayed across contexts, and nothing else in the
   // suite would notice because every positive case uses the right domain.
   JsonValue c = cases!.get(0);
-  JsonValue? meta = member(c, "meta");
-  JsonArray? steps = memberArray(c, "steps");
-  JsonObject? updates = memberObject(c, "updates");
+  JsonValue? meta = c.member("meta");
+  JsonArray? steps = c.member("steps")?.array();
+  JsonObject? updates = c.member("updates")?.object();
   t.isTrue(!(meta is null) && !(steps is null) && !(updates is null), "the first case is incomplete");
   if ((meta is null) || (steps is null) || (updates is null)) { return t.report(); }
-  u8[] gvr = un(memberText(meta!, "genesis_validators_root"));
+  u8[] gvr = un(meta!.member("genesis_validators_root")?.text() ?? "");
 
   u8[] upd = u8[]();
   for (i32 j = 0; j < steps!.len() && upd.len() == 0; j++) {
     JsonValue step = steps!.get(j);
-    if (memberText(step, "kind") == "process_update") {
-      upd = decoded(textAt(updates!, memberText(step, "update")));
+    if ((step.member("kind")?.text() ?? "") == "process_update") {
+      upd = decoded(textAt(updates!, step.member("update")?.text() ?? ""));
     }
   }
   t.isTrue(upd.len() > 0, "no process_update step in the first case");
@@ -323,7 +314,7 @@ export string test_the_signing_root_is_what_makes_the_signature_context_specific
                                 field(TY_LIGHT_CLIENT_UPDATE(), upd, UPDATE_ATTESTED()),
                                 HEADER_BEACON());
   u8[][] keys = participants(pubkeysOf(field(TY_LIGHT_CLIENT_BOOTSTRAP(),
-                                             decoded(memberText(c, "bootstrap")),
+                                             decoded(c.member("bootstrap")?.text() ?? ""),
                                              BOOTSTRAP_CURRENT_COMMITTEE())), bits);
 
   t.isTrue(fastAggregateVerify(keys, signingRootOf(beaconRoot, altairForkVersionMinimal(), gvr),

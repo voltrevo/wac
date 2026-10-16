@@ -29,7 +29,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
-import { Loaded, json, memberText, memberArray, memberI32 } from "../../../wactest/src/fixtures.wac";
+import { Loaded, json, memberI32 } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -55,14 +55,14 @@ Proof[] proofs(T t, Core core, Cli cli) {
   Loaded f = json(core, cli, "ssz", "light_client_proofs", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return Proof[].filled(0, Proof("", "", u8[](), 0, u8[](), 0)); }
-  JsonArray? cases = memberArray(f.doc, "cases");
+  JsonArray? cases = f.doc.member("cases")?.array();
   t.isTrue(!(cases is null), "the fixture has no `cases` array");
   if (cases is null) { return Proof[].filled(0, Proof("", "", u8[](), 0, u8[](), 0)); }
 
   Proof[] out = Proof[].filled(cases!.len(), Proof("", "", u8[](), 0, u8[](), 0));
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    JsonArray? branch = memberArray(c, "branch");
+    JsonArray? branch = c.member("branch")?.array();
     string flat = "";
     i32 nodes = 0;
     if (!(branch is null)) {
@@ -74,7 +74,7 @@ Proof[] proofs(T t, Core core, Cli cli) {
         }
       }
     }
-    out[i] = Proof(memberText(c, "fork"), memberText(c, "case"), decoded(memberText(c, "leaf")),
+    out[i] = Proof(c.member("fork")?.text() ?? "", c.member("case")?.text() ?? "", decoded(c.member("leaf")?.text() ?? ""),
                    memberI32(c, "gindex", -1), decoded(flat), nodes);
   }
   return out;

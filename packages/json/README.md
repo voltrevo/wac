@@ -36,19 +36,21 @@ a `switch` over `i32` spelled with character literals (`case '{':`), and a
 document's strings accumulate in a growable buffer rather than allocating a
 `string` per token.
 
-What changed is the boundary. `JsonString.str()`, `JsonMember.keyStr()` and
-`JsonObject.getStr("key")` mean calling code never has to see a `u8[]`:
+What changed is the boundary. A `JsonValue` reads itself — `member`, `item`, `text`, `bytes`,
+`number`, `boolean`, `array`, `object` and `isNull` — and each answers `null` for the wrong kind, so
+calling code never sees a `u8[]` or writes a `match` per step:
 
 ```wac
-JsonObject o = ...;
-JsonValue? name = o.getStr("name");
-match (name!) {
-  Str(bytes): { return string.fromBytes(bytes); }
-  default: { trap; }
-}
+JsonValue doc = parse(src)!;
+string hash = doc.member("result")?.member("hash")?.text() ?? "";
 ```
 
-`getStr` converts the key once, outside the lookup — `toBytes()` allocates, so
+`parse` answers a `Result<JsonValue, JsonError>`. A `JsonError` is a `JsonFault` and the byte where
+parsing gave up, and `e.text()` says both — `"bad utf-8 at byte 3"`. The parser's insides still use
+`T?` and a fault on the `Parser`, because a `Result` per node costs an allocation per node; one per
+document costs nothing.
+
+`member` goes through `getStr`, which converts the key once, outside the lookup — `toBytes()` allocates, so
 converting per member would have turned a scan into an allocation per member.
 
 ## Object key lookup
@@ -147,7 +149,7 @@ silently. `test/wac/json5_test.wac` asserts that directly.
 using the extensions would have to decide when a name is safe unquoted, and nothing needs that.
 
 **What it refuses, by name.** An unquoted member name containing a non-ASCII character or a
-`\uXXXX` escape gets `ERR_UNSUPPORTED` rather than being parsed or being called a syntax error.
+`\uXXXX` escape gets `JsonFault.Unsupported` rather than being parsed or being called a syntax error.
 ECMAScript's `IdentifierName` is a Unicode-category question — every letter in `L*`, plus `Mn Mc
 Nd Pc` and the two zero-width joiners. Accepting any well-formed UTF-8 instead would take
 `{→: 1}`, which the reference rejects, and the disagreement would be silent.

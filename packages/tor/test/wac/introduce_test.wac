@@ -35,7 +35,7 @@ import { strOf } from "../../../wactest/src/jsonfile.wac";
 JsonObject vectors(Cli cli) {
   FileResult r = cli.readFile("packages/tor/test/data/introduce_vectors.json").wait();
   if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes);
+  JsonValue? v = parse(r.bytes).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): { return members; }

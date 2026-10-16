@@ -24,7 +24,6 @@ import { Core, Cli } from "std";
 import { ftoa } from "../../../fmt/src/ftoa.wac";
 import { parse, stringify } from "../../src/json.wac";
 import { JsonValue, JsonArray, JsonObject, JsonMember } from "../../src/value.wac";
-import { objectOf } from "../../../wactest/src/jsonfile.wac";
 
 static string ORACLE = "packages/json/test/oracle.ts";
 
@@ -45,7 +44,7 @@ export string test_every_kind_arrives_with_the_right_tag() {
   string[] docs = ["null", "true", "1", "\"x\"", "[]", "{}"];
   string[] tags = ["Null", "Bool", "Number", "Str", "Array", "Object"];
   for (i32 i = 0; i < docs.len(); i++) {
-    JsonValue? v = parse(docs[i].toBytes());
+    JsonValue? v = parse(docs[i].toBytes()).ok();
     t.isTrue(!(v is null), "\{docs[i]} did not parse");
     if (!(v is null)) { t.eqStr(tagOf(v!), tags[i], docs[i]); }
   }
@@ -56,42 +55,14 @@ export string test_a_document_that_is_not_json_parses_as_null() {
   T t = T.create();
   string[] bad = ["", "{", "[1,]", "tru", "{\"a\"}", "1 2"];
   for (i32 i = 0; i < bad.len(); i++) {
-    t.isTrue(parse(bad[i].toBytes()) is null, "\"\{bad[i]}\" should not have parsed");
+    t.isTrue(parse(bad[i].toBytes()).isErr(), "\"\{bad[i]}\" should not have parsed");
   }
   return t.report();
-}
-
-bool boolOf(JsonValue v) {
-  match (v) {
-    Bool(value): { return value; }
-    default: { trap; }
-  }
-}
-
-f64 numOf(JsonValue v) {
-  match (v) {
-    Number(value, _): { return value; }
-    default: { trap; }
-  }
 }
 
 string rawOf(JsonValue v) {
   match (v) {
     Number(_, raw): { return string.fromBytes(raw); }
-    default: { trap; }
-  }
-}
-
-string strOf(JsonValue v) {
-  match (v) {
-    Str(bytes): { return string.fromBytes(bytes); }
-    default: { trap; }
-  }
-}
-
-JsonArray arrayOf(JsonValue v) {
-  match (v) {
-    Array(items): { return items; }
     default: { trap; }
   }
 }
@@ -111,34 +82,34 @@ string bits(f64 x) {
 
 export string test_scalars_carry_their_values() {
   T t = T.create();
-  t.isTrue(boolOf(parse("true".toBytes())!), "true");
-  t.isFalse(boolOf(parse("false".toBytes())!), "false");
-  t.eqF64(numOf(parse("1.5".toBytes())!), 1.5, "1.5");
+  t.isTrue(parse("true".toBytes())!.boolean()!, "true");
+  t.isFalse(parse("false".toBytes())!.boolean()!, "false");
+  t.eqF64(parse("1.5".toBytes())!.number()!, 1.5, "1.5");
   // `-0` compared by bit pattern, because it is the one value `==` cannot tell from `0`.
-  t.eqStr(bits(numOf(parse("-0".toBytes())!)), "8000000000000000", "-0 keeps its sign bit");
-  t.eqStr(strOf(parse("\"héllo\"".toBytes())!), "héllo", "a multi-byte string");
+  t.eqStr(bits(parse("-0".toBytes())!.number()!), "8000000000000000", "-0 keeps its sign bit");
+  t.eqStr(parse("\"héllo\"".toBytes())!.text()!, "héllo", "a multi-byte string");
   // The source span, which is what makes a round trip byte-exact. A tree walker can see it too.
   t.eqStr(rawOf(parse("1e2".toBytes())!), "1e2", "the raw span");
-  t.eqF64(numOf(parse("1e2".toBytes())!), 100.0, "and the value it names");
+  t.eqF64(parse("1e2".toBytes())!.number()!, 100.0, "and the value it names");
   return t.report();
 }
 
 export string test_containers_are_walkable_in_order_and_with_duplicates() {
   T t = T.create();
-  JsonArray arr = arrayOf(parse("[1,true,null,[2]]".toBytes())!);
+  JsonArray arr = parse("[1,true,null,[2]]".toBytes())!.array()!;
   t.eqI32(arr.len(), 4, "four items");
-  t.eqF64(numOf(arr.get(0)), 1.0, "the first");
-  t.isTrue(boolOf(arr.get(1)), "the second");
+  t.eqF64(arr.get(0).number()!, 1.0, "the first");
+  t.isTrue(arr.get(1).boolean()!, "the second");
   t.eqStr(tagOf(arr.get(2)), "Null", "the third");
-  t.eqF64(numOf(arrayOf(arr.get(3)).get(0)), 2.0, "and a nested one");
+  t.eqF64(arr.get(3).array()!.get(0).number()!, 2.0, "and a nested one");
 
-  JsonObject obj = objectOf(parse("{\"b\":1,\"a\":2,\"b\":3}".toBytes())!);
+  JsonObject obj = parse("{\"b\":1,\"a\":2,\"b\":3}".toBytes())!.object()!;
   t.eqI32(obj.len(), 3, "a duplicate key is kept");
   t.eqStr(string.fromBytes(obj.at(0).key), "b", "source order, not sorted");
   t.eqStr(string.fromBytes(obj.at(1).key), "a", "the second");
   t.eqStr(string.fromBytes(obj.at(2).key), "b", "the third");
-  t.eqF64(numOf(obj.at(0).value), 1.0, "the first value");
-  t.eqF64(numOf(obj.at(2).value), 3.0, "and the duplicate's");
+  t.eqF64(obj.at(0).value.number()!, 1.0, "the first value");
+  t.eqF64(obj.at(2).value.number()!, 3.0, "and the duplicate's");
   return t.report();
 }
 
@@ -155,7 +126,7 @@ export string test_a_tree_handed_back_serializes_to_what_it_came_from() {
                            "\"x\"", "-0"
   ];
   for (i32 i = 0; i < docs.len(); i++) {
-    JsonValue? v = parse(docs[i].toBytes());
+    JsonValue? v = parse(docs[i].toBytes()).ok();
     t.isTrue(!(v is null), "\{docs[i]} did not parse");
     if (!(v is null)) { t.eqStr(string.fromBytes(stringify(v!)), docs[i], docs[i]); }
   }
@@ -184,7 +155,7 @@ export string test_the_tree_walks_to_the_same_data_the_host_produces(Core core, 
   ];
   Lines lines = Lines.create();
   for (i32 i = 0; i < docs.len(); i++) {
-    JsonValue? v = parse(docs[i].toBytes());
+    JsonValue? v = parse(docs[i].toBytes()).ok();
     t.isTrue(!(v is null), "\{docs[i]} did not parse");
     if (v is null) { continue; }
     lines.add("restringify \{hex(docs[i].toBytes())} \{hex(walk(v!).toBytes())}");

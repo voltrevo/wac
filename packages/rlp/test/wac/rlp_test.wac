@@ -28,7 +28,7 @@ import { JsonValue, JsonObject, JsonMember } from "../../../json/src/value.wac";
 import { Core, Cli, FileResult } from "std";
 import { FixedBig } from "../../../fmt/src/bigint.wac";
 import { slice } from "../../../bytes/src/slice.wac";
-import { objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
+import { strOf } from "../../../wactest/src/jsonfile.wac";
 
 /** `(` … `)` for a list, `<hex>` for a byte string. One rendering per tree, and no two trees alike. */
 string render(Item it) {
@@ -73,7 +73,7 @@ JsonObject fixtures(Core core, Cli cli, string name) {
     core.warn("rlp: cannot read \{path} — \{r.error}");
     trap;
   }
-  JsonValue? v = parse(r.bytes);
+  JsonValue? v = parse(r.bytes).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): { return members; }
@@ -167,7 +167,7 @@ export string test_the_published_vectors_decode_and_re_encode(Core core, Cli cli
   for (i32 i = 0; i < n; i++) {
     JsonMember m = all.at(i);
     string name = m.keyStr();
-    JsonObject one = objectOf(m.value);
+    JsonObject one = m.value.object()!;
     u8[] bytes = decoded(stripHexPrefix(strOf(one, "out")));
     Decoded got = decode(bytes);
     t.isTrue(got.ok, "\{name}: decode refused a valid encoding — \{got.error}");
@@ -192,7 +192,7 @@ export string test_the_invalid_vectors_are_all_refused(Core core, Cli cli) {
   t.isTrue(n >= 20, "the invalid set should have twenty-odd cases, got \{n}");
   for (i32 i = 0; i < n; i++) {
     JsonMember m = all.at(i);
-    Decoded got = decode(decoded(stripHexPrefix(strOf(objectOf(m.value), "out"))));
+    Decoded got = decode(decoded(stripHexPrefix(strOf(m.value.object()!, "out"))));
     // Named, because "one of twenty-six was accepted" is a bisect and "wrongSizeList was accepted"
     // is a fix. Each of these is a consensus fault if it decodes.
     t.isFalse(got.ok, "\{m.keyStr()}: accepted an invalid encoding, rendered \{render(got.item)}");

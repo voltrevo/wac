@@ -53,9 +53,6 @@ Rule[] rules() {
          "A quantity that is empty after its `0x`, and one whose digits are not hex. " +
          "`header_test.wac` drives the well-formed quantities; these are the malformed ones a " +
          "node would have to send."),
-    Rule("packages/ethrpc/src/jsonhex.wac", "memberOf", "decl", false,
-         "Asking a JSON value that is not an object for a member. Its callers all hold a block " +
-         "object."),
     Rule("packages/ethrpc/src/jsonhex.wac", "prefixLen", "decl", false,
          "The uppercase `0X` prefix, which is legal JSON-RPC and which no node in the corpus " +
          "emits.")

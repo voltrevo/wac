@@ -15,7 +15,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
-import { Loaded, json, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
+import { Loaded, json } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -65,7 +65,7 @@ export string test_every_light_client_container_merkleizes_to_ethereums_root(Cor
   Loaded f = json(core, cli, "ssz", "ssz_static_altair_mainnet", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return t.report(); }
-  JsonArray? cases = memberArray(f.doc, "cases");
+  JsonArray? cases = f.doc.member("cases")?.array();
   t.isTrue(!(cases is null), "the fixture has no `cases` array");
   if (cases is null) { return t.report(); }
 
@@ -75,17 +75,17 @@ export string test_every_light_client_container_merkleizes_to_ethereums_root(Cor
   i32 reported = 0;
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string container = memberText(c, "container");
+    string container = c.member("container")?.text() ?? "";
     i32 at = indexOfContainer(container);
     t.isTrue(at >= 0, "no descriptor for \{container}");
     if (at < 0) { continue; }
     per[at] = per[at] + 1;
-    u8[]? got = beaconRoot(types[at], decoded(memberText(c, "ssz")));
+    u8[]? got = beaconRoot(types[at], decoded(c.member("ssz")?.text() ?? ""));
     string gotHex = got is null ? "(refused)" : hex(got!);
-    if (gotHex != memberText(c, "root") && reported < 6) {
+    if (gotHex != (c.member("root")?.text() ?? "") && reported < 6) {
       reported = reported + 1;
-      t.fail(container + "/" + memberText(c, "case") + "\n    got  " + gotHex + "\n    want " +
-             memberText(c, "root"));
+      t.fail(container + "/" + (c.member("case")?.text() ?? "") + "\n    got  " + gotHex + "\n    want " +
+             (c.member("root")?.text() ?? ""));
     }
   }
   // Five cases per container, nine containers. Asserted so a container vanishing from the fixture is a
@@ -104,7 +104,7 @@ export string test_the_descriptors_serialized_sizes_are_ethereums(Core core, Cli
   Loaded f = json(core, cli, "ssz", "ssz_static_altair_mainnet", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return t.report(); }
-  JsonArray? cases = memberArray(f.doc, "cases");
+  JsonArray? cases = f.doc.member("cases")?.array();
   t.isTrue(!(cases is null), "the fixture has no `cases` array");
   if (cases is null) { return t.report(); }
 
@@ -114,9 +114,9 @@ export string test_the_descriptors_serialized_sizes_are_ethereums(Core core, Cli
   bool[] disagree = bool[].filled(names.len(), false);
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    i32 at = indexOfContainer(memberText(c, "container"));
+    i32 at = indexOfContainer(c.member("container")?.text() ?? "");
     if (at < 0) { continue; }
-    i32 size = memberText(c, "ssz").len() / 2;
+    i32 size = (c.member("ssz")?.text() ?? "").len() / 2;
     if (seen[at] < 0) { seen[at] = size; }
     else if (seen[at] != size) { disagree[at] = true; }
   }
@@ -151,7 +151,7 @@ export string test_a_wrong_length_update_is_refused_rather_than_merkleized(Core 
   Loaded f = json(core, cli, "ssz", "ssz_static_altair_mainnet", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return t.report(); }
-  JsonArray? cases = memberArray(f.doc, "cases");
+  JsonArray? cases = f.doc.member("cases")?.array();
   t.isTrue(!(cases is null), "the fixture has no `cases` array");
   if (cases is null) { return t.report(); }
 
@@ -160,13 +160,13 @@ export string test_a_wrong_length_update_is_refused_rather_than_merkleized(Core 
   u8[] syncCommittee = u8[]();
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string container = memberText(c, "container");
+    string container = c.member("container")?.text() ?? "";
     if (container == "LightClientUpdate" && good.len() == 0) {
-      good = decoded(memberText(c, "ssz"));
-      wantRoot = memberText(c, "root");
+      good = decoded(c.member("ssz")?.text() ?? "");
+      wantRoot = c.member("root")?.text() ?? "";
     }
     if (container == "SyncCommittee" && syncCommittee.len() == 0) {
-      syncCommittee = decoded(memberText(c, "ssz"));
+      syncCommittee = decoded(c.member("ssz")?.text() ?? "");
     }
   }
   t.isTrue(good.len() > 0, "no LightClientUpdate case");

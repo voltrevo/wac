@@ -7,7 +7,7 @@
 //     ./blocknumber 127.0.0.1 8545
 import { Result } from "core";
 import { Cli, Core, Sys } from "std";
-import { call, stringOf } from "../src/rpc.wac";
+import { call } from "../src/rpc.wac";
 import { JsonValue } from "../../json/src/value.wac";
 
 export Result<i32, string> main(Sys sys) {
@@ -21,7 +21,7 @@ export Result<i32, string> main(Sys sys) {
     Ok(v): v,
     Err(e): return Result.Err("blocknumber: \{e}"),
   };
-  core.log(string.fromBytes(stringOf(number)));
+  core.log(string.fromBytes(number.bytes() ?? u8[]()));
   return Result.Ok(0);
 }
 

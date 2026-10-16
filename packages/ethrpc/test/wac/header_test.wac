@@ -78,7 +78,7 @@ string FIXED_JSON() {
 /** A block object with `extra` spliced in — pass `""` for the pre-London fifteen alone. */
 JsonValue block(T t, string extra) {
   string doc = "{\{FIXED_JSON()}\{extra}}";
-  JsonValue? v = parse(doc.toBytes());
+  JsonValue? v = parse(doc.toBytes()).ok();
   t.isTrue(!(v is null), "the test's own block JSON did not parse");
   if (v is null) { return JsonValue.Null; }
   return v!;
@@ -169,7 +169,7 @@ export string test_a_missing_fixed_field_is_refused_and_named() {
       first = false;
     }
     doc = doc + "}";
-    JsonValue? v = parse(doc.toBytes());
+    JsonValue? v = parse(doc.toBytes()).ok();
     t.isTrue(!(v is null), "the block without \{names[i]} did not parse");
     if (v is null) { continue; }
     Result<Header, string> h = headerOf(v!, u8[]());
@@ -252,7 +252,7 @@ export string test_quantities_are_minimal_and_data_is_not() {
   // A quantity with leading zeros is the same number, so the same hash.
   string padded = FIXED_JSON();
   string doc = "{" + replaceOnce(padded, "\"gasUsed\":\"0xf4240\"", "\"gasUsed\":\"0x0000f4240\"") + "}";
-  JsonValue? v = parse(doc.toBytes());
+  JsonValue? v = parse(doc.toBytes()).ok();
   t.isTrue(!(v is null), "the padded-quantity block did not parse");
   if (!(v is null)) {
     t.isTrue(sameHash(plain, hashed(t, v!)),
@@ -261,7 +261,7 @@ export string test_quantities_are_minimal_and_data_is_not() {
 
   // A different quantity is a different header.
   string other = "{" + replaceOnce(padded, "\"gasUsed\":\"0xf4240\"", "\"gasUsed\":\"0xf4241\"") + "}";
-  JsonValue? w = parse(other.toBytes());
+  JsonValue? w = parse(other.toBytes()).ok();
   t.isTrue(!(w is null), "the changed-quantity block did not parse");
   if (!(w is null)) {
     t.isFalse(sameHash(plain, hashed(t, w!)), "changing gasUsed did not change the hash");
@@ -272,7 +272,7 @@ export string test_quantities_are_minimal_and_data_is_not() {
   string zeroLead = "{" + replaceOnce(padded,
       "\"mixHash\":\"0x7777777777777777777777777777777777777777777777777777777777777777\"",
       "\"mixHash\":\"0x0077777777777777777777777777777777777777777777777777777777777777\"") + "}";
-  JsonValue? z = parse(zeroLead.toBytes());
+  JsonValue? z = parse(zeroLead.toBytes()).ok();
   t.isTrue(!(z is null), "the zero-leading-data block did not parse");
   if (!(z is null)) {
     t.isFalse(sameHash(plain, hashed(t, z!)),

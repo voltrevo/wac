@@ -15,7 +15,7 @@ import {
 import { equal, slice } from "../../../bytes/src/slice.wac";
 import { Core, Cli } from "std";
 import { JsonValue, JsonObject } from "../../../json/src/value.wac";
-import { boolOf, numOf, objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
+import { boolOf, numOf, strOf } from "../../../wactest/src/jsonfile.wac";
 import {
   blindedKeyBytes, controlCount, controls, descriptorBytes, descriptorText, generatedTop,
   publishTop, queryName,
@@ -46,10 +46,10 @@ export string test_the_vector_is_about_this_descriptor(Core core, Cli cli) {
 
   bool discriminating = false;
   for (i32 i = 0; i < controlCount(cli); i++) {
-    JsonObject c = objectOf(controls(cli).get(i));
+    JsonObject c = controls(cli).get(i).object()!;
     JsonValue? r = c.getStr("result");
     if (r is null) { trap; }
-    JsonObject res = objectOf(r!);
+    JsonObject res = r!.object()!;
     t.isFalse(boolOf(res, "accepted"),
               "the control " + strOf(c, "name") + " was accepted, so it proves nothing");
     if (boolOf(res, "stored") && strOf(res, "lookup") == "miss") { discriminating = true; }

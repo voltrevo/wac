@@ -13,7 +13,7 @@
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { Cli } from "std";
-import { arrayOf, boolOf, jsonFile, numOf, objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
+import { arrayOf, jsonFile, numOf, strOf } from "../../../wactest/src/jsonfile.wac";
 
 /**
  * The publish verdicts, the generated descriptor, and the controls — built here rather than handed in.
@@ -50,10 +50,10 @@ export i32 controlCount(Cli cli) { return controls(cli).len(); }
  * in the file are into that string.
  */
 export u8[] controlBytes(Cli cli, i32 i) {
-  JsonObject c = objectOf(controls(cli).get(i));
+  JsonObject c = controls(cli).get(i).object()!;
   JsonValue? e = c.getStr("edit");
   if (e is null) { trap; }
-  JsonObject edit = objectOf(e!);
+  JsonObject edit = e!.object()!;
   string kind = strOf(edit, "kind");
   string d = descriptorText(cli);
   if (kind == "none") { return d.toBytes(); }
@@ -82,7 +82,7 @@ export i32 sequenceCount(Cli cli) { return sequences(cli).len(); }
 
 /** One position of sequence `si`: the document tor was handed, `current` or `next`. */
 export u8[] sequenceDocument(Cli cli, i32 si, i32 pos) {
-  JsonObject s = objectOf(sequences(cli).get(si));
+  JsonObject s = sequences(cli).get(si).object()!;
   match (arrayOf(s, "order").get(pos)) {
     Str(bytes): {
       if (string.fromBytes(bytes) == "next") { return nextBytes(cli); }
@@ -94,10 +94,10 @@ export u8[] sequenceDocument(Cli cli, i32 si, i32 pos) {
 
 /** One byte per position of sequence `si`, 1 where tor kept the upload. */
 export u8[] sequenceStored(Cli cli, i32 si) {
-  JsonObject s = objectOf(sequences(cli).get(si));
+  JsonObject s = sequences(cli).get(si).object()!;
   JsonValue? r = s.getStr("result");
   if (r is null) { trap; }
-  JsonArray each = arrayOf(objectOf(r!), "storedEach");
+  JsonArray each = arrayOf(r!.object()!, "storedEach");
   u8[] out = u8[].filled(each.len(), 0);
   for (i32 i = 0; i < each.len(); i++) {
     match (each.get(i)) {

@@ -79,24 +79,6 @@ string lowerHex(u8[] b) {
 // shapes. They answer `null` or `""` rather than trapping: a fixture missing a member is a case the
 // caller should *fail* on with its own message, and a trap says only where it happened.
 
-/** The named member of `v`, or `null` when `v` is not an object or has no such member. */
-export JsonValue? member(JsonValue v, string key) {
-  match (v) {
-    Object(members): { return members.getStr(key); }
-    default: { return null; }
-  }
-}
-
-/** The named member as text, and `""` when it is absent or is not a string. */
-export string memberText(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return ""; }
-  match (found!) {
-    Str(bytes): { return string.fromBytes(bytes); }
-    default: { return ""; }
-  }
-}
-
 /**
  * The named member as a whole number, and `missing` when it is absent or is not a number.
  *
@@ -105,21 +87,11 @@ export string memberText(JsonValue v, string key) {
  * caller's decision rather than this file's.
  */
 export i32 memberI32(JsonValue v, string key, i32 missing) {
-  JsonValue? found = member(v, key);
+  JsonValue? found = v.member(key);
   if (found is null) { return missing; }
   match (found!) {
     Number(value, _): { return value as~ i32; }
     default: { return missing; }
-  }
-}
-
-/** The named member as an array, and `null` when it is absent or is not one. */
-export JsonArray? memberArray(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return null; }
-  match (found!) {
-    Array(items): { return items; }
-    default: { return null; }
   }
 }
 
@@ -130,12 +102,12 @@ Manifest manifestOf(Cli cli, string manifestPath, string name) {
   Parser p = Parser.create(r.bytes);
   JsonValue? doc = parseDocument(p);
   if (doc is null) { return Manifest("", "", "", "", false); }
-  JsonValue? sets = member(doc!, "sets");
+  JsonValue? sets = doc!.member("sets");
   if (sets is null) { return Manifest("", "", "", "", false); }
-  JsonValue? set = member(sets!, name);
+  JsonValue? set = sets!.member(name);
   if (set is null) { return Manifest("", "", "", "", false); }
-  return Manifest(memberText(doc!, "source"), memberText(doc!, "commit"),
-                  memberText(doc!, "rebuild"), memberText(set!, "sha256"), true);
+  return Manifest(doc!.member("source")?.text() ?? "", doc!.member("commit")?.text() ?? "",
+                  doc!.member("rebuild")?.text() ?? "", set!.member("sha256")?.text() ?? "", true);
 }
 
 /**

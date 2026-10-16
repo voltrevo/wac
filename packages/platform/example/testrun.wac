@@ -45,7 +45,7 @@ export i32 main(Sys sys) {
 
 /** Every `test*` export the module declares, read from the manifest it carries. */
 string[] testExports(u8[] wasm) {
-  JsonValue? doc = parse(manifestIn(wasm).toBytes());
+  JsonValue? doc = parse(manifestIn(wasm).toBytes()).ok();
   if (doc is null) { return string[].filled(0, ""); }
   JsonObject root = JsonObject.create();
   match (doc!) { Object(o): { root = o; } default: { return string[].filled(0, ""); } }

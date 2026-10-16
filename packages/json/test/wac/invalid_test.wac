@@ -20,8 +20,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
-import { Canonical, canonicalize } from "../../src/json.wac";
-import { ERR_NONE } from "../../src/parse.wac";
+import { canonicalize } from "../../src/json.wac";
 
 static string ORACLE = "packages/json/test/oracle.ts";
 
@@ -71,8 +70,8 @@ export string test_invalid_documents_are_rejected(Core core, Cli cli) {
   string[] bad = invalid();
   Lines lines = Lines.create();
   for (i32 i = 0; i < bad.len(); i++) {
-    t.neI32(canonicalize(bad[i].toBytes()).code, ERR_NONE(),
-            "accepted invalid input \"\{bad[i]}\"");
+    t.isTrue(canonicalize(bad[i].toBytes()).isErr(),
+             "accepted invalid input \"\{bad[i]}\"");
     // And the corpus really is invalid, which the oracle says rather than this file assuming it: an
     // entry that quietly became valid JSON would make its own assertion above meaningless.
     lines.add("parses \{hex(bad[i].toBytes())} 0");
@@ -86,7 +85,7 @@ export string test_valid_documents_are_accepted(Core core, Cli cli) {
   string[] good = valid();
   Lines lines = Lines.create();
   for (i32 i = 0; i < good.len(); i++) {
-    t.eqI32(canonicalize(good[i].toBytes()).code, ERR_NONE(),
+    t.eqStr(canonicalize(good[i].toBytes()).err()?.text() ?? "", "",
             "rejected valid input \"\{good[i]}\"");
     lines.add("parses \{hex(good[i].toBytes())} 1");
   }
@@ -141,8 +140,8 @@ export string test_mutations_agree_with_the_host(Core core, Cli cli) {
  * by the `parses` line, rather than twice.
  */
 i32 one(Lines lines, string src) {
-  Canonical out = canonicalize(src.toBytes());
-  lines.add("parses " + hex(src.toBytes()) + " " + (out.ok ? "1" : "0"));
-  if (out.ok) { lines.add("sametree \{hex(out.text)} \{hex(src.toBytes())}"); }
+  u8[]? out = canonicalize(src.toBytes()).ok();
+  lines.add("parses " + hex(src.toBytes()) + " " + (out is not null ? "1" : "0"));
+  if (out is not null) { lines.add("sametree \{hex(out!)} \{hex(src.toBytes())}"); }
   return 1;
 }

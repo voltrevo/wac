@@ -118,14 +118,14 @@ Manifest failed(i32 code, string detail) { return Manifest(false, code, detail, 
 
 /** The manifest in `src`, checked. An empty document — or one with no `imports` — is valid. */
 export Manifest readManifest(u8[] src) {
-  JsonValue? doc = parseJson5(src);
-  if (doc is null) { return failed(M_NOT_JSON5(), ""); }
-
-  JsonObject root = JsonObject.create();
-  match (doc!) {
-    Object(o): { root = o; }
-    default: { return failed(M_NOT_OBJECT(), ""); }
+  JsonObject? top = null;
+  match (parseJson5(src)) {
+    Ok(doc): { top = doc.object(); }
+    // The detail says where: `unexpected at byte 41` is the line to look at.
+    Err(e): { return failed(M_NOT_JSON5(), e.text()); }
   }
+  if (top is null) { return failed(M_NOT_OBJECT(), ""); }
+  JsonObject root = top!;
 
   // One module path and nothing else: a map of entry points is refused (`§wac-package-exports-single-c3mtr3y`).
   string exports = "";

@@ -75,20 +75,6 @@ struct Vectors {
   Bad[] bad;
 }
 
-string memberText(JsonValue v, string key) {
-  match (v) {
-    Object(members): {
-      JsonValue? found = members.getStr(key);
-      if (found is null) { return ""; }
-      match (found!) {
-        Str(bytes): { return string.fromBytes(bytes); }
-        default: { return ""; }
-      }
-    }
-    default: { return ""; }
-  }
-}
-
 /**
  * A coordinate, which is a string in `g1.json` and a two-element array in `g2.json`.
  *
@@ -119,44 +105,30 @@ string coordinate(JsonValue v, string key) {
   }
 }
 
-JsonArray? memberArray(JsonValue v, string key) {
-  match (v) {
-    Object(members): {
-      JsonValue? found = members.getStr(key);
-      if (found is null) { return null; }
-      match (found!) {
-        Array(items): { return items; }
-        default: { return null; }
-      }
-    }
-    default: { return null; }
-  }
-}
-
 Vectors vectors(T t, Cli cli, i32 g) {
   Vectors none = Vectors(false, Good[].filled(0, Good("", "", "")), Bad[].filled(0, Bad("", "")));
   string path = "packages/bls/test/" + (g == G1() ? "g1.json" : "g2.json");
   FileResult f = cli.readFile(path).wait();
   t.isTrue(f.ok, "\{path} could not be read: \{f.error}");
   if (!f.ok) { return none; }
-  JsonValue? doc = parse(f.bytes);
+  JsonValue? doc = parse(f.bytes).ok();
   t.isTrue(!(doc is null), "\{path} did not parse");
   if (doc is null) { return none; }
 
-  JsonArray? goods = memberArray(doc!, "good");
-  JsonArray? bads = memberArray(doc!, "bad");
+  JsonArray? goods = doc!.member("good")?.array();
+  JsonArray? bads = doc!.member("bad")?.array();
   t.isTrue(!(goods is null) && !(bads is null), "\{path} has no `good` or `bad`");
   if ((goods is null) || (bads is null)) { return none; }
 
   Good[] good = Good[].filled(goods!.len(), Good("", "", ""));
   for (i32 i = 0; i < goods!.len(); i++) {
     JsonValue c = goods!.get(i);
-    good[i] = Good(memberText(c, "hex"), coordinate(c, "x"), coordinate(c, "y"));
+    good[i] = Good(c.member("hex")?.text() ?? "", coordinate(c, "x"), coordinate(c, "y"));
   }
   Bad[] bad = Bad[].filled(bads!.len(), Bad("", ""));
   for (i32 i = 0; i < bads!.len(); i++) {
     JsonValue c = bads!.get(i);
-    bad[i] = Bad(memberText(c, "why"), memberText(c, "hex"));
+    bad[i] = Bad(c.member("why")?.text() ?? "", c.member("hex")?.text() ?? "");
   }
   return Vectors(true, good, bad);
 }

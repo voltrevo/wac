@@ -31,7 +31,7 @@ import { ed25519PublicKey, ed25519Sign, ed25519Verify } from "../../../crypto/sr
 import { EstablishedIntro, parseEstablishIntro } from "../../src/hsservice.wac";
 import { Buf } from "core";
 import { equal } from "../../../bytes/src/slice.wac";
-import { jsonFile, strOf, numOf, boolOf, arrayOf, objectOf } from "../../../wactest/src/jsonfile.wac";
+import { jsonFile, strOf, numOf, boolOf, arrayOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
@@ -45,8 +45,8 @@ u8[] authSeed(JsonObject v) { return decoded(strOf(v, "authSeed")); }
 u8[] authPublic(JsonObject v) { return decoded(strOf(v, "authPublic")); }
 u8[] circuitKH(JsonObject v) { return decoded(strOf(v, "circuitKH")); }
 u8[] theCell(JsonObject v) { return decoded(strOf(v, "cell")); }
-i32 macSpanLen(JsonObject v) { return numOf(objectOf(v.getStr("torSpans")!), "macSpanLen"); }
-i32 sigSpanLen(JsonObject v) { return numOf(objectOf(v.getStr("torSpans")!), "sigSpanLen"); }
+i32 macSpanLen(JsonObject v) { return numOf(v.getStr("torSpans")!.object()!, "macSpanLen"); }
+i32 sigSpanLen(JsonObject v) { return numOf(v.getStr("torSpans")!.object()!, "sigSpanLen"); }
 
 /** The cell built from the vector's own inputs. */
 u8[] built(JsonObject v) {
@@ -69,7 +69,7 @@ export string test_the_fixture_can_discriminate(Core core, Cli cli) {
 
   bool spanTrap = false;
   for (i32 i = 0; i < muts.len(); i++) {
-    JsonObject m = objectOf(muts.get(i));
+    JsonObject m = muts.get(i).object()!;
     string name = strOf(m, "name");
     t.isFalse(boolOf(m, "accepted"),
               "tor accepted the mutation \"\{name}\", so ACCEPTED means nothing");
@@ -236,7 +236,7 @@ export string test_the_relay_accepts_what_tor_built(Core core, Cli cli) {
   JsonArray muts = arrayOf(v, "mutations");
   t.isTrue(muts.len() >= 7, "there are several mutations, not one");
   for (i32 i = 0; i < muts.len(); i++) {
-    JsonObject m = objectOf(muts.get(i));
+    JsonObject m = muts.get(i).object()!;
     t.isTrue(!parseEstablishIntro(decoded(strOf(m, "cell")), decoded(strOf(m, "kh"))).ok,
              "a cell tor refused is refused: " + strOf(m, "name"));
   }

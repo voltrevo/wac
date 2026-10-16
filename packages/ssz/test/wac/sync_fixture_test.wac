@@ -17,7 +17,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
-import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
+import { Loaded, json } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -38,19 +38,9 @@ JsonArray? syncCases(T t, Core core, Cli cli) {
   Loaded f = json(core, cli, "ssz", "light_client_sync_altair_minimal", MANIFEST);
   t.isTrue(f.ok, f.error);
   if (!f.ok) { return null; }
-  JsonArray? cases = memberArray(f.doc, "cases");
+  JsonArray? cases = f.doc.member("cases")?.array();
   t.isTrue(!(cases is null), "the fixture has no `cases` array");
   return cases;
-}
-
-/** The named member as an object, and `null` when it is absent or is not one. */
-JsonObject? memberObject(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return null; }
-  match (found!) {
-    Object(members): { return members; }
-    default: { return null; }
-  }
 }
 
 /** `true` when every byte is an ASCII digit and there is at least one. */
@@ -93,15 +83,15 @@ export string test_every_sync_case_has_the_steps_and_updates_the_vendoring_recor
   t.eqI32(cases!.len(), 4, "cases in the fixture");
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string name = memberText(c, "case");
+    string name = c.member("case")?.text() ?? "";
     i32 at = -1;
     for (i32 k = 0; k < names.len(); k++) {
       if (names[k] == name) { at = k; }
     }
     t.isTrue(at >= 0, "unexpected case \{name}");
     if (at < 0) { continue; }
-    JsonArray? theSteps = memberArray(c, "steps");
-    JsonObject? theUpdates = memberObject(c, "updates");
+    JsonArray? theSteps = c.member("steps")?.array();
+    JsonObject? theUpdates = c.member("updates")?.object();
     t.isTrue(!(theSteps is null) && !(theUpdates is null), "\{name}: no steps or no updates");
     if ((theSteps is null) || (theUpdates is null)) { continue; }
     t.eqI32(theSteps!.len(), steps[at], "\{name}: steps — did the parser drop one?");
@@ -120,14 +110,14 @@ export string test_every_step_is_one_the_sync_protocol_defines_and_names_data_th
 
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string name = memberText(c, "case");
-    JsonArray? theSteps = memberArray(c, "steps");
-    JsonObject? theUpdates = memberObject(c, "updates");
+    string name = c.member("case")?.text() ?? "";
+    JsonArray? theSteps = c.member("steps")?.array();
+    JsonObject? theUpdates = c.member("updates")?.object();
     if ((theSteps is null) || (theUpdates is null)) { continue; }
     for (i32 j = 0; j < theSteps!.len(); j++) {
       JsonValue s = theSteps!.get(j);
       string at = "\{name}[\{j}]";
-      string kind = memberText(s, "kind");
+      string kind = s.member("kind")?.text() ?? "";
       bool known = false;
       for (i32 k = 0; k < kinds.len(); k++) {
         if (kinds[k] == kind) { known = true; }
@@ -135,21 +125,21 @@ export string test_every_step_is_one_the_sync_protocol_defines_and_names_data_th
       t.isTrue(known, "\{at}: unknown step kind \{kind}");
       // Every step drives the store to a slot, and every step asserts something about it — a step
       // with no checks would run and verify nothing.
-      t.isTrue(isDigits(memberText(s, "current_slot")), "\{at}: no current_slot");
-      JsonValue? checks = member(s, "checks");
+      t.isTrue(isDigits(s.member("current_slot")?.text() ?? ""), "\{at}: no current_slot");
+      JsonValue? checks = s.member("checks");
       t.isTrue(!(checks is null), "\{at}: no checks, so it would assert nothing");
       if (checks is null) { continue; }
       for (i32 k = 0; k < headers.len(); k++) {
-        JsonValue? h = member(checks!, headers[k]);
+        JsonValue? h = checks!.member(headers[k]);
         t.isTrue(!(h is null), "\{at}: no \{headers[k]} check");
         if (h is null) { continue; }
-        t.isTrue(isDigits(memberText(h!, "slot")),
-                 at + ": " + headers[k] + ".slot is " + memberText(h!, "slot"));
-        t.isTrue(isHexOf(memberText(h!, "beacon_root"), 64),
+        t.isTrue(isDigits(h!.member("slot")?.text() ?? ""),
+                 at + ": " + headers[k] + ".slot is " + (h!.member("slot")?.text() ?? ""));
+        t.isTrue(isHexOf(h!.member("beacon_root")?.text() ?? "", 64),
                  "\{at}: \{headers[k]}.beacon_root is not 32 bytes");
       }
       if (kind == "process_update") {
-        string named = memberText(s, "update");
+        string named = s.member("update")?.text() ?? "";
         t.isTrue(named.len() > 0, "\{at}: a process_update with no update named");
         t.isTrue(!(theUpdates!.getStr(named) is null),
                  "\{at}: names update \{named}, which was not vendored");
@@ -173,9 +163,9 @@ export string test_the_bootstrap_and_updates_are_minimal_config_sizes(Core core,
   i32 UPDATE = 112 + (32 * 48 + 48) + 5 * 32 + 112 + 6 * 32 + (4 + 96) + 8;
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string name = memberText(c, "case");
-    t.eqI32(memberText(c, "bootstrap").len() / 2, BOOTSTRAP, "\{name}: bootstrap size");
-    JsonObject? theUpdates = memberObject(c, "updates");
+    string name = c.member("case")?.text() ?? "";
+    t.eqI32((c.member("bootstrap")?.text() ?? "").len() / 2, BOOTSTRAP, "\{name}: bootstrap size");
+    JsonObject? theUpdates = c.member("updates")?.object();
     if (theUpdates is null) { continue; }
     for (i32 j = 0; j < theUpdates!.len(); j++) {
       match (theUpdates!.at(j).value) {
@@ -200,16 +190,16 @@ export string test_the_metadata_carries_what_initialising_a_store_needs(Core cor
   string[] digests = ["bootstrap_fork_digest", "store_fork_digest"];
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string name = memberText(c, "case");
-    JsonValue? meta = member(c, "meta");
+    string name = c.member("case")?.text() ?? "";
+    JsonValue? meta = c.member("meta");
     t.isTrue(!(meta is null), "\{name}: no meta");
     if (meta is null) { continue; }
     for (i32 k = 0; k < roots.len(); k++) {
-      t.isTrue(isHexOf(memberText(meta!, roots[k]), 64),
+      t.isTrue(isHexOf(meta!.member(roots[k])?.text() ?? "", 64),
                "\{name}: meta.\{roots[k]} is not a 32-byte root");
     }
     for (i32 k = 0; k < digests.len(); k++) {
-      t.isTrue(isHexOf(memberText(meta!, digests[k]), 8),
+      t.isTrue(isHexOf(meta!.member(digests[k])?.text() ?? "", 8),
                "\{name}: meta.\{digests[k]} is not a 4-byte fork digest");
     }
   }
@@ -227,8 +217,8 @@ export string test_the_minimal_descriptor_table_reproduces_the_vendored_objects_
   //
   // Checked against the bytes Ethereum actually generated rather than against my arithmetic.
   JsonValue first = cases!.get(0);
-  i32 bootstrap = memberText(first, "bootstrap").len() / 2;
-  JsonObject? theUpdates = memberObject(first, "updates");
+  i32 bootstrap = (first.member("bootstrap")?.text() ?? "").len() / 2;
+  JsonObject? theUpdates = first.member("updates")?.object();
   t.isTrue(!(theUpdates is null) && theUpdates!.len() > 0, "the first case has no updates");
   if ((theUpdates is null) || theUpdates!.len() == 0) { return t.report(); }
   i32 update = 0;
@@ -263,13 +253,13 @@ export string test_every_vendored_bootstrap_and_update_merkleizes_under_the_mini
   i32 n = 0;
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string name = memberText(c, "case");
+    string name = c.member("case")?.text() ?? "";
     u8[]? root = hashTreeRoot(minimal, fields, TY_LIGHT_CLIENT_BOOTSTRAP(),
-                              decoded(memberText(c, "bootstrap")));
+                              decoded(c.member("bootstrap")?.text() ?? ""));
     t.isTrue(!(root is null) && root!.len() == 32,
              "\{name}: the bootstrap was refused under the minimal table");
     n = n + 1;
-    JsonObject? theUpdates = memberObject(c, "updates");
+    JsonObject? theUpdates = c.member("updates")?.object();
     if (theUpdates is null) { continue; }
     for (i32 j = 0; j < theUpdates!.len(); j++) {
       match (theUpdates!.at(j).value) {
@@ -319,23 +309,23 @@ export string test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_o
   i32 seen = 0;
   for (i32 i = 0; i < cases!.len(); i++) {
     JsonValue c = cases!.get(i);
-    string name = memberText(c, "case");
-    JsonArray? theSteps = memberArray(c, "steps");
-    JsonObject? theUpdates = memberObject(c, "updates");
+    string name = c.member("case")?.text() ?? "";
+    JsonArray? theSteps = c.member("steps")?.array();
+    JsonObject? theUpdates = c.member("updates")?.object();
     if ((theSteps is null) || (theUpdates is null)) { continue; }
     for (i32 j = 0; j < theSteps!.len(); j++) {
       JsonValue s = theSteps!.get(j);
-      if (memberText(s, "kind") != "process_update") { continue; }
-      JsonValue? named = theUpdates!.getStr(memberText(s, "update"));
+      if ((s.member("kind")?.text() ?? "") != "process_update") { continue; }
+      JsonValue? named = theUpdates!.getStr(s.member("update")?.text() ?? "");
       if (named is null) { continue; }
       u8[] update = u8[]();
       match (named!) {
         Str(bytes): { update = decoded(string.fromBytes(bytes)); }
         default: { continue; }
       }
-      JsonValue? checks = member(s, "checks");
+      JsonValue? checks = s.member("checks");
       if (checks is null) { continue; }
-      JsonValue? want = member(checks!, "optimistic_header");
+      JsonValue? want = checks!.member("optimistic_header");
       if (want is null) { continue; }
 
       u8[] header = fieldBytes(minimal, fields, TY_LIGHT_CLIENT_UPDATE(), update,
@@ -349,9 +339,9 @@ export string test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_o
       seen = seen + 1;
 
       string slot = slotOf(slotBytes);
-      if (slot != memberText(want!, "slot")) { continue; }   // a past update; the store kept its own
+      if (slot != (want!.member("slot")?.text() ?? "")) { continue; }   // a past update; the store kept its own
       u8[]? root = fieldRoot(minimal, fields, TY_LIGHT_CLIENT_HEADER(), header, HEADER_BEACON());
-      t.eqStr(root is null ? "(refused)" : "0x\{hex(root!)}", memberText(want!, "beacon_root"),
+      t.eqStr(root is null ? "(refused)" : "0x\{hex(root!)}", want!.member("beacon_root")?.text() ?? "",
               "\{name} @ slot \{slot}: attested beacon root");
       matched = matched + 1;
     }
@@ -368,7 +358,7 @@ export string test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_re
   T t = T.create();
   JsonArray? cases = syncCases(t, core, cli);
   if (cases is null) { return t.report(); }
-  JsonObject? theUpdates = memberObject(cases!.get(0), "updates");
+  JsonObject? theUpdates = cases!.get(0).member("updates")?.object();
   t.isTrue(!(theUpdates is null) && theUpdates!.len() > 0, "the first case has no updates");
   if ((theUpdates is null) || theUpdates!.len() == 0) { return t.report(); }
   u8[] update = u8[]();

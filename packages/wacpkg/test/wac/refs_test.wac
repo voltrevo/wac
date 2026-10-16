@@ -11,7 +11,6 @@
 // one tag, and nothing but a real repository would have told me the object names differ.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
 import { Core, Cli, FileResult } from "std";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
@@ -36,13 +35,13 @@ Corpus load(Cli cli) {
                   + "packages/wacpkg/tools/vendorRefs.ts` rebuilds it", "",
                   string[](), string[](), JsonArray.create());
   }
-  JsonValue? doc = parse(r.bytes);
+  JsonValue? doc = parse(r.bytes).ok();
   if (doc is null) {
     return Corpus(false, "\{CORPUS_PATH()} is not valid JSON", "",
                   string[](), string[](), JsonArray.create());
   }
-  JsonArray? ad = memberArray(doc!, "advertised");
-  JsonArray? qs = memberArray(doc!, "queries");
+  JsonArray? ad = doc!.member("advertised")?.array();
+  JsonArray? qs = doc!.member("queries")?.array();
   if ((ad is null) || (qs is null)) {
     return Corpus(false, "\{CORPUS_PATH()} has no `advertised`/`queries` array", "",
                   string[](), string[](), JsonArray.create());
@@ -53,10 +52,10 @@ Corpus load(Cli cli) {
   for (i32 i = 0; i < rows.n; i++) {
     JsonValue? row = rows.items[i];
     if (row is null) { continue; }
-    names[i] = memberText(row!, "name");
-    commits[i] = memberText(row!, "commit");
+    names[i] = row!.member("name")?.text() ?? "";
+    commits[i] = row!.member("commit")?.text() ?? "";
   }
-  return Corpus(true, "", memberText(doc!, "source"), names, commits, qs!);
+  return Corpus(true, "", doc!.member("source")?.text() ?? "", names, commits, qs!);
 }
 
 export string test_each_code_has_the_number_it_has_always_had() {
@@ -100,9 +99,9 @@ export string test_every_query_agrees_with_git_or_is_a_listed_refusal(Core core,
   for (i32 i = 0; i < c.queries.n; i++) {
     JsonValue? q = c.queries.items[i];
     if (q is null) { continue; }
-    string ref = memberText(q!, "ref");
+    string ref = q!.member("ref")?.text() ?? "";
     // A null `git` is git refusing; no real commit is the empty string, so the two cannot collide.
-    string want = memberText(q!, "git");
+    string want = q!.member("git")?.text() ?? "";
     Resolved got = resolveRef(c.names, c.commits, ref);
     bool agrees = want == "" ? !got.ok : (got.ok && got.commit == want);
     if (agrees) { continue; }

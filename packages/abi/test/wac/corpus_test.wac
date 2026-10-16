@@ -52,46 +52,21 @@ JsonValue fixture(Core core, Cli cli) {
   return doc!;
 }
 
-JsonValue member(JsonValue v, string key) {
-  match (v) {
-    Object(members): {
-      JsonValue? found = members.get(key.toBytes());
-      if (found is null) { trap; }
-      return found!;
-    }
-    default: { trap; }
-  }
-}
-
-JsonArray items(JsonValue v) {
-  match (v) {
-    Array(a): { return a; }
-    default: { trap; }
-  }
-}
-
-string text(JsonValue v) {
-  match (v) {
-    Str(bytes): { return string.fromBytes(bytes); }
-    default: { trap; }
-  }
-}
-
-JsonArray cases(Core core, Cli cli) { return items(member(fixture(core, cli), "cases")); }
+JsonArray cases(Core core, Cli cli) { return fixture(core, cli).member("cases")!.array()!; }
 
 /** Every type in a case, flattened into one descriptor — the schema the probe takes. */
 i32[] schemaOf(JsonValue c) {
   Ints out = Ints.create();
-  JsonArray types = items(member(c, "types"));
-  for (i32 i = 0; i < types.len(); i++) { writeDescriptor(out, text(types.get(i))); }
+  JsonArray types = c.member("types")!.array()!;
+  for (i32 i = 0; i < types.len(); i++) { writeDescriptor(out, types.get(i).text()!); }
   return out.take();
 }
 
 string typesOf(JsonValue c) {
-  JsonArray types = items(member(c, "types"));
+  JsonArray types = c.member("types")!.array()!;
   string out = "";
   for (i32 i = 0; i < types.len(); i++) {
-    out = (i == 0 ? "" : "\{out},") + text(types.get(i));
+    out = (i == 0 ? "" : "\{out},") + types.get(i).text()!;
   }
   return out;
 }
@@ -115,10 +90,10 @@ export string test_every_case_decodes_to_what_ethers_says_it_means(Core core, Cl
   t.isTrue(cs.len() >= 25, "only \{cs.len()} cases — is the vendored corpus intact?");
   for (i32 i = 0; i < cs.len(); i++) {
     JsonValue c = cs.get(i);
-    string name = text(member(c, "name"));
-    Rendered got = rendered(decodeRender(unhex(text(member(c, "hex"))), schemaOf(c)));
+    string name = c.member("name")!.text()!;
+    Rendered got = rendered(decodeRender(unhex(c.member("hex")!.text()!), schemaOf(c)));
     t.isTrue(got.ok, "\{name}: \{got.text}");
-    if (got.ok) { t.eqStr(got.text, text(member(c, "rendering")), "\{name} (\{typesOf(c)})"); }
+    if (got.ok) { t.eqStr(got.text, c.member("rendering")!.text()!, "\{name} (\{typesOf(c)})"); }
   }
   return t.report();
 }
@@ -134,9 +109,9 @@ export string test_and_re_encodes_to_the_bytes_ethers_produced(Core core, Cli cl
   JsonArray cs = cases(core, cli);
   for (i32 i = 0; i < cs.len(); i++) {
     JsonValue c = cs.get(i);
-    string want = text(member(c, "hex"));
+    string want = c.member("hex")!.text()!;
     t.eqStr(hex(roundTrip(unhex(want), schemaOf(c))), want,
-            text(member(c, "name")) + " (" + typesOf(c) + ")");
+            c.member("name")!.text()! + " (" + typesOf(c) + ")");
   }
   return t.report();
 }

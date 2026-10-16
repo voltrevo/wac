@@ -54,7 +54,7 @@ Boundary manifestOf(Cli cli, string entry, string stem) {
   if (text.len() == 0) {
     return Boundary(string[].filled(0, ""), -1, "the module carries no `wac.manifest` section");
   }
-  JsonValue? doc = parse(text.toBytes());
+  JsonValue? doc = parse(text.toBytes()).ok();
   if (doc is null) { return Boundary(string[].filled(0, ""), -1, "the manifest is not JSON"); }
   JsonObject top = match (doc!) { Object(members): members, default: JsonObject.create() };
 

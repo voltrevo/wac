@@ -16,7 +16,6 @@ import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { blsExpandMessage, blsHashToField, blsMapToCurve, blsMapLandsOnCurve, blsHashToG2,
          blsHashToG2InSubgroup } from "./probe.wac";
-import { member, memberArray } from "../../../wactest/src/fixtures.wac";
 
 /** One CFRG vector: the message, its two `u` values, and the points at each checkpoint. */
 struct Vector {
@@ -31,24 +30,10 @@ struct Vector {
   string py;
 }
 
-string memberText(JsonValue v, string key) {
-  match (v) {
-    Object(members): {
-      JsonValue? found = members.getStr(key);
-      if (found is null) { return ""; }
-      match (found!) {
-        Str(bytes): { return string.fromBytes(bytes); }
-        default: { return ""; }
-      }
-    }
-    default: { return ""; }
-  }
-}
-
 /** `memberText` of a member's member — `Q0.x` and the like. */
 string nested(JsonValue v, string outer, string inner) {
-  JsonValue? o = member(v, outer);
-  return o is null ? "" : memberText(o!, inner);
+  JsonValue? o = v.member(outer);
+  return o is null ? "" : (o!.member(inner)?.text() ?? "");
 }
 
 /** `n`th comma-separated part of a draft coefficient pair, `0x`-stripped and zero-padded to 96. */
@@ -98,17 +83,17 @@ Suite suite(T t, Cli cli) {
   FileResult f = cli.readFile("packages/bls/test/vendor/hash_to_G2.json").wait();
   t.isTrue(f.ok, "hash_to_G2.json could not be read: \{f.error}");
   if (!f.ok) { return none; }
-  JsonValue? doc = parse(f.bytes);
+  JsonValue? doc = parse(f.bytes).ok();
   t.isTrue(!(doc is null), "hash_to_G2.json did not parse");
   if (doc is null) { return none; }
-  JsonArray? list = memberArray(doc!, "vectors");
+  JsonArray? list = doc!.member("vectors")?.array();
   t.isTrue(!(list is null), "hash_to_G2.json has no `vectors`");
   if (list is null) { return none; }
 
   Vector[] out = Vector[].filled(list!.len(), Vector("", string[].filled(0, ""), "", "", "", "", "", ""));
   for (i32 i = 0; i < list!.len(); i++) {
     JsonValue v = list!.get(i);
-    JsonArray? us = memberArray(v, "u");
+    JsonArray? us = v.member("u")?.array();
     string[] u = string[].filled(us is null ? 0 : us!.len(), "");
     if (!(us is null)) {
       for (i32 k = 0; k < us!.len(); k++) {
@@ -118,12 +103,12 @@ Suite suite(T t, Cli cli) {
         }
       }
     }
-    out[i] = Vector(memberText(v, "msg"), u,
+    out[i] = Vector(v.member("msg")?.text() ?? "", u,
                     nested(v, "Q0", "x"), nested(v, "Q0", "y"),
                     nested(v, "Q1", "x"), nested(v, "Q1", "y"),
                     nested(v, "P", "x"), nested(v, "P", "y"));
   }
-  return Suite(true, memberText(doc!, "dst"), out);
+  return Suite(true, doc!.member("dst")?.text() ?? "", out);
 }
 
 export string test_hash_to_field_matches_every_cfrg_vector(Core core, Cli cli) {
@@ -235,7 +220,7 @@ export string test_hash_to_g2_matches_the_ethereum_fixtures_too(Core core, Cli c
   FileResult f = cli.readFile("packages/bls/test/vendor/eth_hash_to_G2.json").wait();
   t.isTrue(f.ok, "eth_hash_to_G2.json could not be read: \{f.error}");
   if (!f.ok) { return t.report(); }
-  JsonValue? doc = parse(f.bytes);
+  JsonValue? doc = parse(f.bytes).ok();
   t.isTrue(!(doc is null), "eth_hash_to_G2.json did not parse");
   if (doc is null) { return t.report(); }
   JsonObject cases = JsonObject.create();
@@ -249,13 +234,13 @@ export string test_hash_to_g2_matches_the_ethereum_fixtures_too(Core core, Cli c
   for (i32 i = 0; i < cases.len(); i++) {
     string name = cases.at(i).keyStr();
     JsonValue c = cases.at(i).value;
-    JsonValue? input = member(c, "input");
-    JsonValue? output = member(c, "output");
+    JsonValue? input = c.member("input");
+    JsonValue? output = c.member("output");
     if ((input is null) || (output is null)) { continue; }
-    string msg = memberText(input!, "msg");
+    string msg = input!.member("msg")?.text() ?? "";
     if (msg.len() > longest) { longest = msg.len(); }
     t.eqStr(hex(blsHashToG2(msg.toBytes(), dst)),
-            pointHex(memberText(output!, "x"), memberText(output!, "y")), name);
+            pointHex(output!.member("x")?.text() ?? "", output!.member("y")?.text() ?? ""), name);
   }
   // The long message is the reason this corpus is here at all; without it every case fits one
   // block of `expand_message_xmd` and the second block never runs.

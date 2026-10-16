@@ -48,7 +48,7 @@ export struct Task {
  * the benchmarks last, and sorting would throw that away for no gain.
  */
 export Task[] tasksIn(u8[] src) {
-  JsonValue? parsed = parseJson5(src);
+  JsonValue? parsed = parseJson5(src).ok();
   if (parsed is null) { return Task[](); }
   match (parsed!) {
     Object(obj): {

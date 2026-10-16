@@ -59,7 +59,7 @@ static i64 PERIOD = 3720629;
 JsonObject jsonObject(Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
   if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes);
+  JsonValue? v = parse(r.bytes).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): { return members; }

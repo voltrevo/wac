@@ -28,7 +28,7 @@ import { Core, Cli, FileResult } from "std";
 JsonObject corpusOf(Cli cli) {
   FileResult r = cli.readFile("packages/ens/test/vendor/corpus.json").wait();
   if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes);
+  JsonValue? v = parse(r.bytes).ok();
   if (v is null) { trap; }
   match (v!) {
     Object(members): { return members; }

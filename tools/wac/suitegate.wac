@@ -281,7 +281,7 @@ bool boolField(JsonObject o, string key) {
 Note readNote(Cli cli, string path) {
   FileResult f = cli.readFile(path).wait();
   if (!f.ok) { return noNote(); }
-  JsonValue? v = parse(f.bytes);
+  JsonValue? v = parse(f.bytes).ok();
   if (v is null) { return noNote(); }
   match (v!) {
     Object(members): {

@@ -22,8 +22,8 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, FileResult } from "std";
-import { Canonical, canonicalize } from "../../src/json.wac";
-import { ERR_NONE } from "../../src/parse.wac";
+import { canonicalize } from "../../src/json.wac";
+import { JsonError } from "../../src/parse.wac";
 
 static string ORACLE = "packages/json/test/oracle.ts";
 static string DIR = "packages/json/test/jsontestsuite";
@@ -110,8 +110,7 @@ export string test_every_valid_document_is_accepted(Core core, Cli cli) {
   i32 checked = 0;
   for (i32 i = 0; i < cases.len(); i++) {
     if (cases[i].expect != "accept") { continue; }
-    Canonical out = canonicalize(cases[i].bytes);
-    t.eqI32(out.code, ERR_NONE(), "\{cases[i].name}: rejected");
+    t.eqStr(canonicalize(cases[i].bytes).err()?.text() ?? "", "", "\{cases[i].name}: rejected");
     checked = checked + 1;
   }
   t.eqI32(checked, 95, "every y_ document was tried");
@@ -124,7 +123,7 @@ export string test_every_invalid_document_is_rejected(Core core, Cli cli) {
   i32 checked = 0;
   for (i32 i = 0; i < cases.len(); i++) {
     if (cases[i].expect != "reject") { continue; }
-    t.neI32(canonicalize(cases[i].bytes).code, ERR_NONE(), "\{cases[i].name}: accepted");
+    t.isTrue(canonicalize(cases[i].bytes).isErr(), "\{cases[i].name}: accepted");
     checked = checked + 1;
   }
   t.eqI32(checked, 188, "every n_ document was tried");
@@ -144,9 +143,9 @@ export string test_accepted_documents_re_serialize_to_the_same_tree(Core core, C
   Lines lines = Lines.create();
   for (i32 i = 0; i < cases.len(); i++) {
     if (cases[i].expect != "accept") { continue; }
-    Canonical out = canonicalize(cases[i].bytes);
-    if (!out.ok) { continue; }             // covered by the test above
-    lines.add("sametree \{hex(out.text)} \{hex(cases[i].bytes)}");
+    u8[]? out = canonicalize(cases[i].bytes).ok();
+    if (out is null) { continue; }         // covered by the test above
+    lines.add("sametree \{hex(out!)} \{hex(cases[i].bytes)}");
   }
   t.isTrue(lines.n > 90, "only \{lines.n} trees were compared");
   checkDeno(t, cli, ORACLE, lines, "the accepted trees");
@@ -164,19 +163,25 @@ export string test_implementation_defined_documents_terminate(Core core, Cli cli
   Case[] cases = load(core, cli);
   i32 accepted = 0;
   i32 seen = 0;
-  i32[] byCode = i32[].filled(16, 0);
+  // How many were refused for each reason, in the order first seen.
+  string[] faults = string[].defaulted(16);
+  i32[] counts = i32[].filled(16, 0);
+  i32 kinds = 0;
   for (i32 i = 0; i < cases.len(); i++) {
     if (cases[i].expect != "either") { continue; }
     seen = seen + 1;
-    i32 code = canonicalize(cases[i].bytes).code;
-    if (code == ERR_NONE()) { accepted = accepted + 1; }
-    else if (code >= 0 && code < byCode.len()) { byCode[code] = byCode[code] + 1; }
-    else { t.fail("\{cases[i].name}: answered with code \{code}, which is not a code"); }
+    JsonError? e = canonicalize(cases[i].bytes).err();
+    if (e is null) { accepted = accepted + 1; continue; }
+    string name = e!.fault.name();
+    i32 k = 0;
+    while (k < kinds && faults[k] != name) { k++; }
+    if (k == kinds) { faults[k] = name; kinds++; }
+    counts[k] = counts[k] + 1;
   }
   t.eqI32(seen, 35, "every i_ document was tried");
   string codes = "";
-  for (i32 i = 0; i < byCode.len(); i++) {
-    if (byCode[i] > 0) { codes = (codes == "" ? "" : "\{codes}, ") + "\{i}×\{byCode[i]}"; }
+  for (i32 k = 0; k < kinds; k++) {
+    codes = (codes == "" ? "" : "\{codes}, ") + "\{faults[k]}×\{counts[k]}";
   }
   core.log("  i_: \{accepted} accepted, \{seen - accepted} rejected (" +
            "\{codes})");

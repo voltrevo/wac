@@ -256,7 +256,7 @@ export string test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_co
 
 /** Does this parse as RFC 8259 JSON — not JSON5? */
 bool strictJson(u8[] src) {
-  JsonValue? v = parse(src);
+  JsonValue? v = parse(src).ok();
   return !(v is null);
 }
 

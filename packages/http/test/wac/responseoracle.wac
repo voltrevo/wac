@@ -83,7 +83,7 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
     return allResponsesBroken(t, cases.len(),
                               "the response oracle failed: \{string.fromBytes(r.stderr)}");
   }
-  JsonValue? doc = parse(r.stdout);
+  JsonValue? doc = parse(r.stdout).ok();
   if (doc is null) {
     return allResponsesBroken(t, cases.len(), "the response oracle's answer is not JSON");
   }
@@ -103,13 +103,13 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
   ResponseOutcome[] out = ResponseOutcome[].filled(cases.len(), ResponseOutcome.Incomplete);
   for (i32 i = 0; i < items.len(); i++) {
     JsonValue c = items.get(i);
-    string kind = memberText(c, "outcome");
+    string kind = c.member("outcome")?.text() ?? "";
     if (kind == "ok") {
-      out[i] = ResponseOutcome.Ok(memberI32(c, "status", -1), memberText(c, "version"),
+      out[i] = ResponseOutcome.Ok(memberI32(c, "status", -1), c.member("version")?.text() ?? "",
                                   memberStrings(c, "rawHeaders"),
-                                  unbase64(memberText(c, "body")));
+                                  unbase64(c.member("body")?.text() ?? ""));
     } else if (kind == "error") {
-      out[i] = ResponseOutcome.Refused(memberText(c, "code"));
+      out[i] = ResponseOutcome.Refused(c.member("code")?.text() ?? "");
     } else if (kind == "incomplete") {
       out[i] = ResponseOutcome.Incomplete;
     } else {
@@ -122,20 +122,6 @@ export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] met
 ResponseOutcome[] allResponsesBroken(T t, i32 n, string why) {
   t.fail(why);
   return ResponseOutcome[].filled(n, ResponseOutcome.Broken(why));
-}
-
-string memberText(JsonValue v, string key) {
-  match (v) {
-    Object(members): {
-      JsonValue? found = members.getStr(key);
-      if (found is null) { return ""; }
-      match (found!) {
-        Str(bytes): { return string.fromBytes(bytes); }
-        default: { return ""; }
-      }
-    }
-    default: { return ""; }
-  }
 }
 
 /** A member that is an array of strings, or an empty list. */

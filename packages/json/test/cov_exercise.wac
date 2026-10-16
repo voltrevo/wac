@@ -24,7 +24,7 @@
 import { Core, Cli, FileResult, Sys } from "std";
 import { JsonValue, JsonArray, JsonObject } from "../src/value.wac";
 import { parse, canonicalize, canonicalizeJson5, parseNumberValue } from "../src/json.wac";
-import { test_hex_digit, test_bytes_equal, test_json_array_growth,
+import { test_hex_digit, test_json_array_growth,
          test_lookup_agrees_across_the_index_threshold, test_push_after_indexing_is_visible,
          test_json_object_lookup, test_tree_shape, test_string_accessors,
          test_string_accessors_handle_utf8, test_member_order_is_source_order,
@@ -32,6 +32,8 @@ import { test_hex_digit, test_bytes_equal, test_json_array_growth,
          test_unpaired_surrogate_becomes_replacement, test_number_keeps_its_source_span,
          test_error_codes_and_positions, test_hand_built_tree_serializes,
          test_hand_built_values_stay_valid_json, test_parsed_numbers_keep_their_span } from "./wac/json_test.wac";
+import { test_each_accessor_answers_its_own_kind, test_the_wrong_kind_answers_null,
+         test_an_absent_member_or_element_answers_null } from "./wac/accessors_test.wac";
 import { test_traps_when_an_array_index_is_past_the_end,
          test_traps_when_an_array_index_is_negative,
          test_traps_when_an_object_index_is_past_the_end,
@@ -60,7 +62,7 @@ import {
 } from "./wac/json5_test.wac";
 import {
   test_exact_cases_match_the_host_bit_for_bit as nu__exact_cases_match_the_host_bit_for_bit,
-  test_a_document_that_is_not_a_number_yields_nan as nu__a_document_that_is_not_a_number_yields_nan,
+  test_a_document_that_is_not_a_number_yields_null as nu__a_document_that_is_not_a_number_yields_null,
   test_hard_cases_are_exact_too as nu__hard_cases_are_exact_too,
 } from "./wac/number_test.wac";
 import {
@@ -163,7 +165,7 @@ u8[]? bytesOf(JsonValue v) {
 i32 json5Corpus(Cli cli) {
   FileResult f = cli.readFile(JSON5).wait();
   if (!f.ok) { return 0; }
-  JsonValue? root = parse(f.bytes);
+  JsonValue? root = parse(f.bytes).ok();
   if (root is null) { return 0; }
   JsonObject? top = objectOf(root!);
   if (top is null) { return 0; }
@@ -290,7 +292,9 @@ export i32 main(Sys sys) {
   // The package's own tests, which reach much of `value.wac` — the container accessors, the
   // string-typed edge, lookup by key — that the four exports `json.wac` offers a host cannot.
   seen = seen + test_hex_digit().len();
-  seen = seen + test_bytes_equal().len();
+  seen = seen + test_each_accessor_answers_its_own_kind().len();
+  seen = seen + test_the_wrong_kind_answers_null().len();
+  seen = seen + test_an_absent_member_or_element_answers_null().len();
   seen = seen + test_json_array_growth().len();
   seen = seen + test_lookup_agrees_across_the_index_threshold().len();
   seen = seen + test_push_after_indexing_is_visible().len();
@@ -382,8 +386,8 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED number_test test_exact_cases_match_the_host_bit_for_bit");
     bad = bad + 1;
   }
-  if (nu__a_document_that_is_not_a_number_yields_nan().len() > 0) {
-    core.warn("error: FAILED number_test test_a_document_that_is_not_a_number_yields_nan");
+  if (nu__a_document_that_is_not_a_number_yields_null().len() > 0) {
+    core.warn("error: FAILED number_test test_a_document_that_is_not_a_number_yields_null");
     bad = bad + 1;
   }
   if (nu__hard_cases_are_exact_too(core, cli).len() > 0) {

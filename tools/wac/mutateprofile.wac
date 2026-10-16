@@ -193,7 +193,7 @@ Decoded nothing() {
 }
 
 export Decoded decodeProfile(string text) {
-  JsonValue? root = parse(text.toBytes());
+  JsonValue? root = parse(text.toBytes()).ok();
   if (root is null) { return nothing(); }
   JsonObject obj = match (root!) { Object(o): o, default: JsonObject.create() };
   if (obj.len() == 0) { return nothing(); }
@@ -204,15 +204,15 @@ export Decoded decodeProfile(string text) {
   JsonArray costs = arrayAt(obj, "cost");
 
   string[] nameList = string[].filled(names.len(), "");
-  for (i32 i = 0; i < names.len(); i++) { nameList[i] = textOf(names.get(i)); }
+  for (i32 i = 0; i < names.len(); i++) { nameList[i] = names.get(i).text() ?? ""; }
 
   string[] known = string[].filled(lines.len(), "");
   string[] tests = string[].filled(lines.len(), "");
   for (i32 i = 0; i < lines.len(); i++) {
-    JsonArray pair = asArray(lines.get(i));
+    JsonArray pair = lines.get(i).array() ?? JsonArray.create();
     if (pair.len() < 2) { continue; }
-    known[i] = textOf(pair.get(0));
-    JsonArray ids = asArray(pair.get(1));
+    known[i] = pair.get(0).text() ?? "";
+    JsonArray ids = pair.get(1).array() ?? JsonArray.create();
     string joined = "";
     for (i32 j = 0; j < ids.len(); j++) {
       i32 at = numberOf(ids.get(j));
@@ -223,15 +223,15 @@ export Decoded decodeProfile(string text) {
   }
 
   string[] fileList = string[].filled(files.len(), "");
-  for (i32 i = 0; i < files.len(); i++) { fileList[i] = textOf(files.get(i)); }
+  for (i32 i = 0; i < files.len(); i++) { fileList[i] = files.get(i).text() ?? ""; }
 
   // Cost is keyed by file, so it is looked up rather than positional: a profile whose `cost` lists
   // fewer files than `testFiles` is one where some file was never measured, and that is `-1`.
   i32[] costList = i32[].filled(fileList.len(), -1);
   for (i32 i = 0; i < costs.len(); i++) {
-    JsonArray pair = asArray(costs.get(i));
+    JsonArray pair = costs.get(i).array() ?? JsonArray.create();
     if (pair.len() < 2) { continue; }
-    string file = textOf(pair.get(0));
+    string file = pair.get(0).text() ?? "";
     for (i32 k = 0; k < fileList.len(); k++) {
       if (fileList[k] == file) { costList[k] = numberOf(pair.get(1)); break; }
     }
@@ -241,7 +241,7 @@ export Decoded decodeProfile(string text) {
   string[] homeFiles = string[].filled(homes.len(), "");
   i32 homeCount = 0;
   for (i32 i = 0; i < homes.len(); i++) {
-    JsonArray pair = asArray(homes.get(i));
+    JsonArray pair = homes.get(i).array() ?? JsonArray.create();
     if (pair.len() < 2) { continue; }
     i32 nameAt = numberOf(pair.get(0));
     i32 fileAt = numberOf(pair.get(1));
@@ -260,15 +260,7 @@ export Decoded decodeProfile(string text) {
 JsonArray arrayAt(JsonObject o, string key) {
   JsonValue? v = o.get(key.toBytes());
   if (v is null) { return JsonArray.create(); }
-  return asArray(v!);
-}
-
-JsonArray asArray(JsonValue v) {
-  return match (v) { Array(a): a, default: JsonArray.create() };
-}
-
-string textOf(JsonValue v) {
-  return match (v) { Str(b): string.fromBytes(b), default: "" };
+  return v!.array() ?? JsonArray.create();
 }
 
 i32 numberOf(JsonValue v) {

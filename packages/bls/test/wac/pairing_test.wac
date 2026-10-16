@@ -50,36 +50,22 @@ string memberText(JsonValue v, string key) {
   }
 }
 
-JsonArray? memberArray(JsonValue v, string key) {
-  match (v) {
-    Object(members): {
-      JsonValue? found = members.getStr(key);
-      if (found is null) { return null; }
-      match (found!) {
-        Array(items): { return items; }
-        default: { return null; }
-      }
-    }
-    default: { return null; }
-  }
-}
-
 Case[] cases(T t, Cli cli) {
   Case[] none = Case[].filled(0, Case("", "", u8[](), u8[](), string[].filled(0, "")));
   FileResult f = cli.readFile("packages/bls/test/pairing.json").wait();
   t.isTrue(f.ok, "pairing.json could not be read: \{f.error}");
   if (!f.ok) { return none; }
-  JsonValue? doc = parse(f.bytes);
+  JsonValue? doc = parse(f.bytes).ok();
   t.isTrue(!(doc is null), "pairing.json did not parse");
   if (doc is null) { return none; }
-  JsonArray? list = memberArray(doc!, "cases");
+  JsonArray? list = doc!.member("cases")?.array();
   t.isTrue(!(list is null), "pairing.json has no `cases`");
   if (list is null) { return none; }
 
   Case[] out = Case[].filled(list!.len(), Case("", "", u8[](), u8[](), string[].filled(0, "")));
   for (i32 i = 0; i < list!.len(); i++) {
     JsonValue c = list!.get(i);
-    JsonArray? miller = memberArray(c, "miller");
+    JsonArray? miller = c.member("miller")?.array();
     string[] coeffs = string[].filled(miller is null ? 0 : miller!.len(), "");
     if (!(miller is null)) {
       for (i32 k = 0; k < miller!.len(); k++) {

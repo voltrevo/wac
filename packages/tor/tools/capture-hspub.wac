@@ -34,7 +34,7 @@ import { decoded } from "../../codec/src/hex.wac";
 import { ALPHABET_STANDARD, encode as base64Encode } from "../../codec/src/base64.wac";
 import { arrayField, boolOf, field, pad, quoted, raw } from "./capturejson.wac";
 import { agentDir } from "../../wactest/src/host.wac";
-import { numOf, objectOf, strOf } from "../../wactest/src/jsonfile.wac";
+import { numOf, strOf } from "../../wactest/src/jsonfile.wac";
 
 /** What one `ask` answered — the six fields the probe reports about an upload. */
 struct Asked {
@@ -66,7 +66,7 @@ JsonObject generated(Core core, Cli cli) {
     core.warn("capture-hspub: cannot read \{path} — \{r.error}");
     trap;
   }
-  JsonValue? v = parse(r.bytes);
+  JsonValue? v = parse(r.bytes).ok();
   if (v is null) {
     core.warn("capture-hspub: \{path} is not JSON");
     trap;
@@ -344,7 +344,7 @@ export i32 main(Sys sys) {
   string firstKey = "";
   bool twoKeys = false;
   for (i32 v = 0; v < vars.len(); v++) {
-    JsonObject var = objectOf(vars.get(v));
+    JsonObject var = vars.get(v).object()!;
     string key = strOf(var, "blindedKey");
     if (v == 0) { firstKey = key; } else if (key != firstKey) { twoKeys = true; }
     string body = strOf(var, "descriptor");

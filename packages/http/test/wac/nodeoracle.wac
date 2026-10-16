@@ -68,20 +68,6 @@ export string outcomeOf(Outcome o) {
   }
 }
 
-string memberText(JsonValue v, string key) {
-  match (v) {
-    Object(members): {
-      JsonValue? found = members.getStr(key);
-      if (found is null) { return ""; }
-      match (found!) {
-        Str(bytes): { return string.fromBytes(bytes); }
-        default: { return ""; }
-      }
-    }
-    default: { return ""; }
-  }
-}
-
 /** A member that is an array of strings, or an empty list. */
 string[] memberStrings(JsonValue v, string key) {
   match (v) {
@@ -139,7 +125,7 @@ export Outcome[] oracle(T t, Cli cli, u8[][] cases, i32 nudgeMs) {
   if (r.status != 0) {
     return allBroken(t, cases.len(), "the oracle failed: \{string.fromBytes(r.stderr)}");
   }
-  JsonValue? doc = parse(r.stdout);
+  JsonValue? doc = parse(r.stdout).ok();
   if (doc is null) {
     return allBroken(t, cases.len(), "the oracle's answer is not JSON");
   }
@@ -162,13 +148,13 @@ export Outcome[] oracle(T t, Cli cli, u8[][] cases, i32 nudgeMs) {
   Outcome[] out = Outcome[].filled(cases.len(), Outcome.Incomplete);
   for (i32 i = 0; i < items.len(); i++) {
     JsonValue c = items.get(i);
-    string kind = memberText(c, "outcome");
+    string kind = c.member("outcome")?.text() ?? "";
     if (kind == "ok") {
-      out[i] = Outcome.Ok(memberText(c, "method"), memberText(c, "target"),
-                          memberText(c, "version"), memberStrings(c, "rawHeaders"),
-                          unbase64(memberText(c, "body")), memberStrings(c, "trailers"));
+      out[i] = Outcome.Ok(c.member("method")?.text() ?? "", c.member("target")?.text() ?? "",
+                          c.member("version")?.text() ?? "", memberStrings(c, "rawHeaders"),
+                          unbase64(c.member("body")?.text() ?? ""), memberStrings(c, "trailers"));
     } else if (kind == "error") {
-      out[i] = Outcome.Refused(memberText(c, "code"));
+      out[i] = Outcome.Refused(c.member("code")?.text() ?? "");
     } else if (kind == "incomplete") {
       out[i] = Outcome.Incomplete;
     } else if (kind == "timeout") {

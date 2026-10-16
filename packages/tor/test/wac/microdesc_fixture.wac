@@ -9,12 +9,12 @@
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decode as base64Decode } from "../../../codec/src/base64.wac";
 import { Cli } from "std";
-import { arrayOf, jsonFile, objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
+import { arrayOf, jsonFile, strOf } from "../../../wactest/src/jsonfile.wac";
 
 JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/microdesc_vectors.json"); }
 
 JsonArray cases(Cli cli) { return arrayOf(top(cli), "cases"); }
-JsonObject caseAt(Cli cli, i32 i) { return objectOf(cases(cli).get(i)); }
+JsonObject caseAt(Cli cli, i32 i) { return cases(cli).get(i).object()!; }
 
 export i32 caseCount(Cli cli) { return cases(cli).len(); }
 
@@ -52,11 +52,11 @@ export i32 mutationCount(Cli cli) { return mutations(cli).len(); }
  * the good one, every assertion built on it would be vacuous.
  */
 export string mutationDigestBase64(Cli cli, i32 i) {
-  return strOf(objectOf(mutations(cli).get(i)), "digest256Base64");
+  return strOf(mutations(cli).get(i).object()!, "digest256Base64");
 }
 
 export string mutationName(Cli cli, i32 i) {
-  return strOf(objectOf(mutations(cli).get(i)), "name");
+  return strOf(mutations(cli).get(i).object()!, "name");
 }
 
 /**

@@ -36,25 +36,15 @@ import { blsAggregate, blsFastAggregateVerify, blsAggregateVerify, blsBatchVerif
          blsBatchScalar } from "./probe.wac";
 import { G1, g1FromBytes } from "../../src/g1.wac";
 import { G2, g2FromBytes } from "../../src/g2.wac";
-import { member, memberText } from "../../../wactest/src/fixtures.wac";
 
 /** `0x…` as bytes, which is how every field in these fixtures is written. */
 u8[] un(string h) {
   return decoded(h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h);
 }
 
-bool memberBool(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
-  if (found is null) { return false; }
-  match (found!) {
-    Bool(value): { return value; }
-    default: { return false; }
-  }
-}
-
 /** A member that is an array of `0x…` strings, as bytes. Empty when absent. */
 u8[][] memberBytes(JsonValue v, string key) {
-  JsonValue? found = member(v, key);
+  JsonValue? found = v.member(key);
   if (found is null) { return u8[][].filled(0, u8[]()); }
   match (found!) {
     Array(items): {
@@ -77,7 +67,7 @@ JsonObject? load(T t, Cli cli, string name) {
   FileResult f = cli.readFile(path).wait();
   t.isTrue(f.ok, "\{path} could not be read: \{f.error}");
   if (!f.ok) { return null; }
-  JsonValue? doc = parse(f.bytes);
+  JsonValue? doc = parse(f.bytes).ok();
   t.isTrue(!(doc is null), "\{path} did not parse");
   if (doc is null) { return null; }
   match (doc!) {
@@ -105,12 +95,12 @@ export string test_every_ethereum_fast_aggregate_verify_fixture_agrees(Core core
   for (i32 i = 0; i < cases!.len(); i++) {
     string name = cases!.at(i).keyStr();
     JsonValue c = cases!.at(i).value;
-    JsonValue? input = member(c, "input");
+    JsonValue? input = c.member("input");
     if (input is null) { continue; }
     u8[][] pks = memberBytes(input!, "pubkeys");
-    bool got = blsFastAggregateVerify(pks, un(memberText(input!, "message")),
-                                      un(memberText(input!, "signature")));
-    t.eqBool(got, memberBool(c, "output"),
+    bool got = blsFastAggregateVerify(pks, un(input!.member("message")?.text() ?? ""),
+                                      un(input!.member("signature")?.text() ?? ""));
+    t.eqBool(got, c.member("output")?.boolean() ?? false,
              "\{name} (\{pks.len()} pubkeys)");
     ran = ran + 1;
   }
@@ -126,12 +116,12 @@ export string test_every_ethereum_aggregate_verify_fixture_agrees(Core core, Cli
   for (i32 i = 0; i < cases!.len(); i++) {
     string name = cases!.at(i).keyStr();
     JsonValue c = cases!.at(i).value;
-    JsonValue? input = member(c, "input");
+    JsonValue? input = c.member("input");
     if (input is null) { continue; }
     u8[][] pks = memberBytes(input!, "pubkeys");
     bool got = blsAggregateVerify(pks, memberBytes(input!, "messages"),
-                                  un(memberText(input!, "signature")));
-    t.eqBool(got, memberBool(c, "output"), "\{name} (\{pks.len()} pubkeys)");
+                                  un(input!.member("signature")?.text() ?? ""));
+    t.eqBool(got, c.member("output")?.boolean() ?? false, "\{name} (\{pks.len()} pubkeys)");
     ran = ran + 1;
   }
   t.eqI32(ran, 5, "aggregate_verify fixtures run");
@@ -147,12 +137,12 @@ export string test_every_ethereum_batch_verify_fixture_agrees(Core core, Cli cli
   for (i32 i = 0; i < cases!.len(); i++) {
     string name = cases!.at(i).keyStr();
     JsonValue c = cases!.at(i).value;
-    JsonValue? input = member(c, "input");
+    JsonValue? input = c.member("input");
     if (input is null) { continue; }
     u8[][] pks = memberBytes(input!, "pubkeys");
     bool got = blsBatchVerify(pks, memberBytes(input!, "messages"),
                               memberBytes(input!, "signatures"), noEntropy());
-    t.eqBool(got, memberBool(c, "output"), "\{name} (\{pks.len()} signatures)");
+    t.eqBool(got, c.member("output")?.boolean() ?? false, "\{name} (\{pks.len()} signatures)");
     if (contains(name, "forged")) { forged = forged + 1; }
     ran = ran + 1;
   }
@@ -167,9 +157,9 @@ export string test_every_ethereum_batch_verify_fixture_agrees(Core core, Cli cli
 i32 firstValidBatch(JsonObject cases) {
   for (i32 i = 0; i < cases.len(); i++) {
     JsonValue c = cases.at(i).value;
-    JsonValue? input = member(c, "input");
+    JsonValue? input = c.member("input");
     if (input is null) { continue; }
-    if (memberBool(c, "output") && memberBytes(input!, "pubkeys").len() >= 2) { return i; }
+    if ((c.member("output")?.boolean() ?? false) && memberBytes(input!, "pubkeys").len() >= 2) { return i; }
   }
   return -1;
 }
@@ -185,7 +175,7 @@ export string test_the_batch_weights_are_what_reject_a_forged_set(Core core, Cli
   i32 at = firstValidBatch(cases!);
   t.isTrue(at >= 0, "no valid multi-signature fixture to build on");
   if (at < 0) { return t.report(); }
-  JsonValue? input = member(cases!.at(at).value, "input");
+  JsonValue? input = cases!.at(at).value.member("input");
   if (input is null) { return t.report(); }
   u8[][] pks = memberBytes(input!, "pubkeys");
   u8[][] msgs = memberBytes(input!, "messages");
@@ -215,13 +205,13 @@ export string test_entropy_changes_the_weights_but_not_the_verdict(Core core, Cl
   for (i32 i = 0; i < cases!.len(); i++) {
     string name = cases!.at(i).keyStr();
     JsonValue c = cases!.at(i).value;
-    JsonValue? input = member(c, "input");
+    JsonValue? input = c.member("input");
     if (input is null) { continue; }
     u8[][] pks = memberBytes(input!, "pubkeys");
     u8[][] msgs = memberBytes(input!, "messages");
     u8[][] sigs = memberBytes(input!, "signatures");
     for (i32 e = 0; e < entropies.len(); e++) {
-      t.eqBool(blsBatchVerify(pks, msgs, sigs, entropies[e]), memberBool(c, "output"),
+      t.eqBool(blsBatchVerify(pks, msgs, sigs, entropies[e]), c.member("output")?.boolean() ?? false,
                "\{name}: entropy \{hex(entropies[e])} changed the verdict");
     }
   }
@@ -242,9 +232,9 @@ export string test_aggregation_refuses_an_empty_list_and_a_bad_member_and_round_
   u8[] sig = u8[]();
   for (i32 i = 0; i < cases!.len() && sig.len() == 0; i++) {
     JsonValue c = cases!.at(i).value;
-    JsonValue? input = member(c, "input");
-    if ((input is null) || !memberBool(c, "output")) { continue; }
-    sig = un(memberText(input!, "signature"));
+    JsonValue? input = c.member("input");
+    if ((input is null) || !(c.member("output")?.boolean() ?? false)) { continue; }
+    sig = un(input!.member("signature")?.text() ?? "");
   }
   t.isTrue(sig.len() > 0, "no valid fixture");
   if (sig.len() == 0) { return t.report(); }
@@ -286,7 +276,7 @@ export string test_a_batch_weight_depends_on_the_whole_batch_not_just_its_positi
   i32 at = firstValidBatch(cases!);
   t.isTrue(at >= 0, "no valid multi-signature fixture");
   if (at < 0) { return t.report(); }
-  JsonValue? input = member(cases!.at(at).value, "input");
+  JsonValue? input = cases!.at(at).value.member("input");
   if (input is null) { return t.report(); }
   u8[][] pks = memberBytes(input!, "pubkeys");
   u8[][] msgs = memberBytes(input!, "messages");
@@ -375,11 +365,11 @@ export string test_every_ethereum_g1_deserialization_fixture_agrees(Core core, C
   for (i32 i = 0; i < cases!.len(); i++) {
     string name = cases!.at(i).keyStr();
     JsonValue c = cases!.at(i).value;
-    JsonValue? input = member(c, "input");
+    JsonValue? input = c.member("input");
     if (input is null) { continue; }
-    G1? got = g1FromBytes(un(memberText(input!, "pubkey")));
+    G1? got = g1FromBytes(un(input!.member("pubkey")?.text() ?? ""));
     bool ok = !(got is null);
-    t.eqBool(ok, memberBool(c, "output"), name);
+    t.eqBool(ok, c.member("output")?.boolean() ?? false, name);
     if (ok) { accepted = accepted + 1; }
     ran = ran + 1;
   }
@@ -398,11 +388,11 @@ export string test_every_ethereum_g2_deserialization_fixture_agrees(Core core, C
   for (i32 i = 0; i < cases!.len(); i++) {
     string name = cases!.at(i).keyStr();
     JsonValue c = cases!.at(i).value;
-    JsonValue? input = member(c, "input");
+    JsonValue? input = c.member("input");
     if (input is null) { continue; }
-    G2? got = g2FromBytes(un(memberText(input!, "signature")));
+    G2? got = g2FromBytes(un(input!.member("signature")?.text() ?? ""));
     bool ok = !(got is null);
-    t.eqBool(ok, memberBool(c, "output"), name);
+    t.eqBool(ok, c.member("output")?.boolean() ?? false, name);
     if (ok) { accepted = accepted + 1; }
     ran = ran + 1;
   }

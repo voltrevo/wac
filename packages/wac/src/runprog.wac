@@ -114,7 +114,7 @@ export i32 grantsBefore(Cli cli, i32 argc, string entry) {
 export i32 declaredGrants(u8[] wasm) {
   string text = manifestIn(wasm);
   if (text == "") { return -1; }
-  JsonValue? doc = parse(text.toBytes());
+  JsonValue? doc = parse(text.toBytes()).ok();
   if (doc is null) { return -1; }
   JsonObject root = JsonObject.create();
   match (doc!) {
