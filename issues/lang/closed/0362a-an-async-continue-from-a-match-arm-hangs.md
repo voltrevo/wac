@@ -1,6 +1,7 @@
 # 0362a — In an `async` function, `continue` from an arm of a value-giving `match` inside a `for` loop never finishes
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** 71a4c76f9
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-03

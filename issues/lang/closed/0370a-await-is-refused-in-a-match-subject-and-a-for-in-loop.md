@@ -1,6 +1,7 @@
 # 0370a — `await` in a `match` subject, inside a larger expression, or in a `for (x in xs)` body is refused, and the spec writes all three
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** 71a4c76f9
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-03

@@ -1,6 +1,7 @@
 # 0323a — `await` on anything but a name is not refused, and fails to emit
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** 71a4c76f9
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-09-04

@@ -1,6 +1,7 @@
 # 0364a — A name bound by `matches` in a `while` head and used after an `await` in the body passes check and stops the emitter
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** 71a4c76f9
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-03

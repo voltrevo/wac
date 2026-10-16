@@ -1,6 +1,7 @@
 # 0375a — An `async` method without a receiver is not lowered
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** 71a4c76f9
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-14
