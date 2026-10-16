@@ -47,7 +47,8 @@ import { Core, Cli, FileResult } from "std";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { Sources, sourcesOf } from "../../../wactest/src/built.wac";
-import { blockedFiles, diagnoseFiles } from "../../src/api.wac";
+import { blockedFilesIn, diagnoseFilesIn } from "../../src/api.wac";
+import { Res } from "../../src/path.wac";
 import { KIND_CLI, KIND_PAGE, Program, findPrograms } from "../../../../tools/wac/programs.wac";
 
 /**
@@ -90,8 +91,10 @@ export string test_every_program_in_the_repo_compiles(Core core, Cli cli) {
     }
     // Both halves of "does it compile": what the checker refuses, and what the emitter declines. A
     // build runs both, so a guard that ran one would still let the other through.
-    string diagnostics = diagnoseFiles(src.paths, src.texts, p.path);
-    string blocked = diagnostics == "" ? blockedFiles(src.paths, src.texts, p.path) : "";
+    // With the nested projects the closure entered mapped, as `wac` maps them.
+    Res res = Res(string[](), src.mapFrom, src.mapSpec, src.mapTo, "");
+    string diagnostics = diagnoseFilesIn(src.paths, src.texts, res, p.path);
+    string blocked = diagnostics == "" ? blockedFilesIn(src.paths, src.texts, res, p.path) : "";
     if (diagnostics == "" && blocked == "") { continue; }
     nBroken = nBroken + 1;
     broken = broken + "\n  " + p.path + " (" + p.pkg + "):\n"

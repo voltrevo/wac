@@ -870,6 +870,12 @@ it can report instead of one protocol that works by accident. `box get`, `box ge
 
 ### Interactive pages
 
+**A page that needs only the page is built with [`packages/web`](../web/README.md)**:
+`export async i32 main(Page page)`, run on the page's own thread and waiting with `await`, with no
+worker, no `SharedArrayBuffer` and no headers to serve. `example/{life,pixels,ripple}.wac` are
+those. What follows is the worker host's `Page`, which is still what a page that also needs `Cli` —
+a filesystem, `packages/sh` — runs on: `packages/box/example/{term,desk,rasterterm}.wac`.
+
 A third profile beside `Core` and `Cli`, and only a browser provides it. The entry point says
 which kind of program this is: a module exporting `page` gets `Page`, one exporting `main` gets
 `Cli`, and a module may export both.
@@ -902,8 +908,7 @@ queue what arrives. Three things follow, and they are the reason for the shape:
 
 Beyond drawing and events there are four more: `drawPixels(id, w, h, rgba)` blits a buffer wac
 filled into a `<canvas>`, and `nextFile`/`offerDownload` carry bytes between the user and the
-program. `example/pixels.wac` is all three at once — a Mandelbrot set recomputed on every zoom,
-the escape count under the pointer, and a dropped file handed straight back.
+program.
 
 `drawPixelsIn(id, x, y, w, h, rgba)` is the same blit into part of a canvas, **without resizing it**.
 A desktop redrawn whole is four bytes times width times height across the bridge every frame — 8 MB
@@ -940,15 +945,9 @@ elements they were asked about. Attaching to the elements themselves would break
 redraw, and the symptom — the first click works and the second does not — sends you looking in
 the wrong place.
 
-`example/counter.wac` is the small one and `example/pixels.wac` is the raster one.
 `packages/box/example/term.wac` is `packages/sh` with a keyboard in front of it — a real shell
 in a tab, with pipelines, loops and redirection into OPFS that survives a reload; what it cannot
 run is `$WACPATH` programs, since those need `spawn` and `spawn` is Deno-only.
-
-And `packages/box/example/hash.wac` is the one worth seeing: type into a box and watch SHA-256 from `packages/crypto` and DEFLATE from
-`packages/gzip` keep up, both written for a command line and neither changed for this. 18KB of
-text hashes and compresses to 131 bytes in about a millisecond, on a worker, so the typing stays
-smooth. No JavaScript was written by anybody.
 
 **`rename` is the promise a page cannot keep.** OPFS has no rename, so it is a copy and a
 delete. Atomicity is the entire reason `rename` exists — `cp` and `sponge` write beside

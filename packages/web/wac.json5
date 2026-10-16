@@ -1,0 +1,4 @@
+{
+  // One module is the package: `import { Page } from "web"`.
+  exports: './src/page.wac',
+}

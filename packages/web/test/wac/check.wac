@@ -1,0 +1,29 @@
+// The assertions this package's tests use, here rather than imported from `packages/wactest`.
+//
+// **This package is a project of its own** — it has a `wac.json5`, so a project outside this
+// repository can depend on it — and a project's files cannot import past its root. So its tests carry
+// the few lines they need, and run anywhere the package does. Not a test file: `wac test` walks
+// `*_test.wac`. The report's shape is `wactest`'s, which is what `wac test` reads.
+
+/** A test's findings, reported as one string: empty when everything held. */
+export struct Check {
+  string failures;
+
+  Check create() { return Check(""); }
+
+  void fail(this, string what) { this.failures = this.failures + what + "\n"; }
+
+  void isTrue(this, bool cond, string what) { if (!cond) { this.fail(what); } }
+
+  void isFalse(this, bool cond, string what) { if (cond) { this.fail(what); } }
+
+  void eqI32(this, i32 got, i32 want, string what) {
+    if (got != want) { this.fail("\{what}: got \{got}, want \{want}"); }
+  }
+
+  void eqStr(this, string got, string want, string what) {
+    if (got != want) { this.fail("\{what}: got \"\{got}\", want \"\{want}\""); }
+  }
+
+  string report(const this) { return this.failures; }
+}

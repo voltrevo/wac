@@ -1,0 +1,222 @@
+// A page driven with no browser: a `Dom` made of lambdas that record what the program did, and the
+// host's two calls made by hand. What a browser adds is the document, and `host/page.js` is the whole
+// of that — so everything a program can do to a page, and every order in which things can arrive, is
+// tested here.
+
+import { Check } from "./check.wac";
+import { Ticket, html.p, html.b } from "core";
+import { Dom, Event, Page, deliver, timerFired } from "../../src/page.wac";
+
+/** What the fake document saw, as one line per call. */
+struct Seen {
+  string log;
+  i32 timers;
+}
+
+Dom fakeDom(Seen seen) {
+  return Dom(
+    (string html) => { seen.log = seen.log + "render " + html + "\n"; },
+    (string id, string html) => { seen.log = seen.log + "into " + id + "=" + html + "\n"; },
+    (string id, string text) => { seen.log = seen.log + "text " + id + "=" + text + "\n"; },
+    (string id, string value) => { seen.log = seen.log + "value " + id + "=" + value + "\n"; },
+    (string id, string style) => { seen.log = seen.log + "style " + id + "=" + style + "\n"; },
+    (string id) => "typed",
+    (string selector, string kind) => { seen.log = seen.log + "listen " + selector + " " + kind + "\n"; },
+    (string t) => { seen.log = seen.log + "title " + t + "\n"; },
+    (string line) => { seen.log = seen.log + "log " + line + "\n"; },
+    () => 1000.0,
+    (i32 id, i32 ms) => { seen.timers = seen.timers + 1; seen.log = seen.log + "timer \{id} \{ms}\n"; },
+    (i32 id) => { seen.timers = seen.timers + 1; seen.log = seen.log + "frame \{id}\n"; },
+    (string id, i32 w, i32 h, u8[] rgba) => { seen.log = seen.log + "pixels \{id} \{w}x\{h}\n"; },
+    (string id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => { seen.log = seen.log + "pixelsIn \{id} \{x},\{y} \{w}x\{h}\n"; },
+    (string name, u8[] bytes) => { seen.log = seen.log + "download \{name} \{bytes.len()}\n"; }
+  );
+}
+
+async i32 counter(Page page) {
+  page.title("counter");
+  page.render(<p>Clicks: <b id="n">0</b></p>);
+  page.on("button", "click");
+  i32 n = 0;
+  while (true) {
+    Event e = await page.nextEvent();
+    if (e.id == "up") {
+      n += 1;
+      page.setText("n", "\{n}");
+    }
+    if (e.id == "quit") { return n; }
+  }
+}
+
+/** What the build's wrapper does: the program run with the page as its schedule target. */
+Ticket<i32> start(Page page) {
+  schedule page.take;
+  return counter(page);
+}
+
+export string test_the_program_runs_until_it_waits_and_each_event_runs_it_on() {
+  Check t = Check.create();
+  Seen seen = Seen("", 0);
+  Page page = Page.create(fakeDom(seen));
+  Ticket<i32> done = start(page);
+  t.eqStr(seen.log, "title counter\nrender <p>Clicks: <b id=\"n\">0</b></p>\nlisten button click\n",
+          "it ran to its first wait");
+  t.isFalse(done.settled(), "and is waiting");
+  seen.log = "";
+  deliver(page, "click", "up", "", 0, 0);
+  deliver(page, "click", "noise", "", 0, 0);
+  deliver(page, "click", "up", "", 0, 0);
+  t.eqStr(seen.log, "text n=1\ntext n=2\n", "each click ran it on, there and then");
+  deliver(page, "click", "quit", "", 0, 0);
+  t.isTrue(done.settled(), "quit finished it");
+  t.eqI32(done.value(), 2, "with the count");
+  return t.report();
+}
+
+async i32 early(Page page) {
+  // Events delivered before anything waits are kept, in order.
+  Event a = await page.nextEvent();
+  Event b = await page.nextEvent();
+  return a.id.len() * 10 + b.id.len();
+}
+
+export string test_events_that_arrive_before_a_wait_are_kept_in_order() {
+  Check t = Check.create();
+  Seen seen = Seen("", 0);
+  Page page = Page.create(fakeDom(seen));
+  deliver(page, "click", "abc", "", 0, 0);
+  deliver(page, "click", "de", "", 0, 0);
+  Ticket<i32> done = early(page);
+  // Nothing was scheduled for these: both tickets were already settled.
+  page.drain();
+  t.isTrue(done.wait().isOk(), "it finished");
+  t.eqI32(done.value(), 32, "a then b");
+  return t.report();
+}
+
+async i32 sleeper(Page page) {
+  page.log("before");
+  f64 at = await page.sleep(250);
+  page.log("after \{at as~ i32}");
+  await page.sleep(10);
+  return 7;
+}
+
+Ticket<i32> startSleeper(Page page) {
+  schedule page.take;
+  return sleeper(page);
+}
+
+export string test_a_sleep_waits_for_its_timer() {
+  Check t = Check.create();
+  Seen seen = Seen("", 0);
+  Page page = Page.create(fakeDom(seen));
+  Ticket<i32> done = startSleeper(page);
+  t.eqStr(seen.log, "log before\ntimer 0 250\n", "it asked for a timer and waited");
+  timerFired(page, 0);
+  // The fired timer's slot is free again, so the next sleep reuses it.
+  t.eqStr(seen.log, "log before\ntimer 0 250\nlog after 1000\ntimer 0 10\n",
+          "the timer ran it on, answering the time it fired");
+  timerFired(page, 3);
+  t.isFalse(done.settled(), "a timer nobody asked for does nothing");
+  timerFired(page, 0);
+  t.isTrue(done.settled(), "the second timer finished it");
+  t.eqI32(done.value(), 7, "with its answer");
+  timerFired(page, 0);
+  t.isTrue(done.settled(), "and a timer fires once");
+  return t.report();
+}
+
+async i32 helper(Page page) {
+  Event e = await page.nextEvent();
+  return e.value.len();
+}
+
+async i32 nested(Page page) {
+  // A machine waiting on another machine waiting on an event: settling the event runs both.
+  i32 a = await helper(page);
+  i32 b = await helper(page);
+  return a * 10 + b;
+}
+
+Ticket<i32> startNested(Page page) {
+  schedule page.take;
+  return nested(page);
+}
+
+export string test_a_wait_on_a_wait_runs_on_through_both() {
+  Check t = Check.create();
+  Seen seen = Seen("", 0);
+  Page page = Page.create(fakeDom(seen));
+  Ticket<i32> done = startNested(page);
+  deliver(page, "input", "name", "abcd", 0, 0);
+  t.isFalse(done.settled(), "one event in, one to go");
+  deliver(page, "input", "name", "xy", 0, 0);
+  t.isTrue(done.settled(), "the second finished both");
+  t.eqI32(done.value(), 42, "4 then 2");
+  return t.report();
+}
+
+async i32 eventOrTick(Page page) {
+  // The shape of an animation: whichever comes first, an event or the next frame.
+  i32 ticks = 0;
+  Ticket<Event> ev = page.nextEvent();
+  Ticket<f64> tick = page.sleep(30);
+  while (true) {
+    await Ticket.any(ev, tick);
+    if (tick.settled()) {
+      ticks += 1;
+      tick = page.sleep(30);
+    }
+    if (ev.settled()) {
+      Event e = ev.value();
+      if (e.id == "quit") { return ticks; }
+      ev = page.nextEvent();
+    }
+  }
+}
+
+Ticket<i32> startEventOrTick(Page page) {
+  schedule page.take;
+  return eventOrTick(page);
+}
+
+export string test_waiting_on_whichever_comes_first() {
+  Check t = Check.create();
+  Seen seen = Seen("", 0);
+  Page page = Page.create(fakeDom(seen));
+  Ticket<i32> done = startEventOrTick(page);
+  t.eqI32(seen.timers, 1, "one frame asked for");
+  timerFired(page, 0);
+  t.eqI32(seen.timers, 2, "the frame ran it on, and it asked for the next");
+  deliver(page, "click", "noise", "", 0, 0);
+  t.eqI32(seen.timers, 2, "an event ran it on without a frame");
+  timerFired(page, 0);
+  deliver(page, "click", "quit", "", 0, 0);
+  t.isTrue(done.settled(), "quit finished it");
+  t.eqI32(done.value(), 2, "after two frames");
+  return t.report();
+}
+
+async i32 bothArrived(Page page) {
+  (Event, Event) both = await Ticket.all(page.nextEvent(), page.nextEvent());
+  return both.0.id.len() * 10 + both.1.id.len();
+}
+
+Ticket<i32> startBoth(Page page) {
+  schedule page.take;
+  return bothArrived(page);
+}
+
+export string test_waiting_on_all_of_several() {
+  Check t = Check.create();
+  Seen seen = Seen("", 0);
+  Page page = Page.create(fakeDom(seen));
+  Ticket<i32> done = startBoth(page);
+  deliver(page, "click", "abc", "", 0, 0);
+  t.isFalse(done.settled(), "one of two");
+  deliver(page, "click", "de", "", 0, 0);
+  t.isTrue(done.settled(), "both");
+  t.eqI32(done.value(), 32, "in order");
+  return t.report();
+}

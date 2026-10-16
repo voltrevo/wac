@@ -3,11 +3,11 @@
 //
 //   deno run -A site/tools/syncDemos.ts [repo-root]
 //
-// These are whole applications, not snippets: a wac program on a worker, talking to a capability
-// world on the page's own thread over a `SharedArrayBuffer`. Nothing about them is specific to
-// this site — each file is exactly what `wac task app:build --target browser --optimize` produces, copied
-// unmodified, which is the point. What you can open on the website is the artifact you would
-// build yourself.
+// These are whole applications, not snippets. Most are `packages/web` pages — a wac program on the
+// page's own thread, waiting with `await` — and the shell and the desktop are a wac program on a
+// worker, talking to a capability world on the page's own thread over a `SharedArrayBuffer`. Nothing
+// about them is specific to this site: each file is what its builder produces, which is the point.
+// What you can open on the website is the artifact you would build yourself.
 //
 // **They are build output and are not committed.** `.github/workflows/pages.yml` checks out
 // this repository and runs this before `vite build`, so what the site serves is built from
@@ -19,8 +19,8 @@
 // Without it the demo links are still right and simply 404, which is the honest state of a checkout
 // that has not built them.
 //
-// `SharedArrayBuffer` needs cross-origin isolation, which Pages cannot serve — see
-// `public/coi-serviceworker.js`, which is what makes these work there at all.
+// The worker-hosted ones need cross-origin isolation for `SharedArrayBuffer`, which Pages cannot
+// serve — see `public/coi-serviceworker.js`, which is what makes those work there at all.
 
 type Demo = {
   /** Where it lands in `public/`. */
@@ -28,6 +28,12 @@ type Demo = {
   entry: string;
   grants: string[];
   what: string;
+  /**
+   * `"web"` for a page built by `packages/web` — `main(Page)`, on the page's own thread, needing no
+   * headers — and absent for one that still runs on `packages/platform`'s worker host because it
+   * needs `Cli`: the shell and the desktop.
+   */
+  kind?: "web";
 };
 
 // What each demo *is* — its name, its description and where its source lives — belongs to the site
@@ -49,6 +55,7 @@ const DEMOS: Demo[] = [
   },
   {
     file: "hash.html",
+    kind: "web",
     entry: "packages/box/example/hash.wac",
     grants: [],
     what:
@@ -56,12 +63,14 @@ const DEMOS: Demo[] = [
   },
   {
     file: "pixels.html",
+    kind: "web",
     entry: "packages/platform/example/pixels.wac",
     grants: [],
     what: "a Mandelbrot set recomputed on every zoom, with the escape count under the pointer",
   },
   {
     file: "ripple.html",
+    kind: "web",
     entry: "packages/platform/example/ripple.wac",
     grants: [],
     what:
@@ -70,6 +79,7 @@ const DEMOS: Demo[] = [
   },
   {
     file: "life.html",
+    kind: "web",
     entry: "packages/platform/example/life.wac",
     grants: [],
     what:
@@ -78,6 +88,7 @@ const DEMOS: Demo[] = [
   },
   {
     file: "gitpack.html",
+    kind: "web",
     entry: "packages/git/example/gitpage.wac",
     grants: [],
     what:
@@ -86,6 +97,7 @@ const DEMOS: Demo[] = [
   },
   {
     file: "wacc.html",
+    kind: "web",
     entry: "packages/wacc/example/waccpage.wac",
     grants: [],
     what:
@@ -107,8 +119,73 @@ const mono = // The repository root. Run from there — the build below is spawn
 Deno.args[0] ?? new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
 const out = new URL("../public/", import.meta.url).pathname;
 
+/**
+ * A `wac` command to run `packages/web`'s builder with: this checkout's native one when it has been
+ * built, and otherwise the one `bootstrap.sh --host deno` writes — which needs nothing but Deno, so it
+ * is what `pages.yml`, with no cargo and no binary, gets. Built once, into `.cache`, and reused.
+ */
+function wacCommand(): string {
+  const native = `${mono}/native/v8/target/release/wac`;
+  try {
+    Deno.statSync(native);
+    return native;
+  } catch { /* not built here */ }
+  const js = `${mono}/.cache/wac-deno`;
+  try {
+    Deno.statSync(js);
+    return js;
+  } catch { /* not yet */ }
+  console.log("building a wac command with deno, for packages/web's builder");
+  const r = new Deno.Command("sh", {
+    args: ["./bootstrap.sh", "--host", "deno", "-o", js, "--no-profile"],
+    cwd: mono,
+    stdout: "piped",
+    stderr: "piped",
+  }).outputSync();
+  if (!r.success) {
+    console.error(new TextDecoder().decode(r.stderr).trim().split("\n").slice(-6).join("\n"));
+    Deno.exit(1);
+  }
+  return js;
+}
+
+/**
+ * A page built by `packages/web/tools/build.wac`, copied to `dest` as it came out: one `index.html`
+ * with the module inside it. No isolation script — a `packages/web` page has no `SharedArrayBuffer`
+ * to need one.
+ */
+async function buildWebPage(demo: Demo, dest: string): Promise<void> {
+  const wac = wacCommand();
+  // Relative, under the repository: the builder writes its wrapper module there, and refuses a
+  // directory outside the project, whose imports would cross its boundary.
+  const dir = `.cache/demos/${demo.file.replace(/\.html$/, "")}`;
+  const r = new Deno.Command(wac, {
+    args: [
+      "run", "--allow-read", "--allow-write", "--allow-run", "packages/web/tools/build.wac",
+      demo.entry, dir, "--page", "./packages/web", "--wac", wac,
+    ],
+    cwd: mono,
+    stdout: "piped",
+    stderr: "piped",
+  }).outputSync();
+  if (!r.success) {
+    const said = new TextDecoder().decode(r.stderr) + new TextDecoder().decode(r.stdout);
+    console.error(said.trim().split("\n").slice(-6).join("\n"));
+    Deno.exit(1);
+  }
+  await Deno.copyFile(`${mono}/${dir}/index.html`, dest);
+}
+
 for (const demo of DEMOS) {
   const dest = `${out}${demo.file}`;
+  if (demo.kind === "web") {
+    console.log(`building ${demo.file} from ${demo.entry}, with packages/web`);
+    await buildWebPage(demo, dest);
+    const size = (await Deno.stat(dest)).size;
+    sizes.push({ file: demo.file, size: `${Math.round(size / 1024)}K` });
+    console.log(`  ${demo.file}: ${Math.round(size / 1024)}K`);
+    continue;
+  }
   // **The program the task names, not the task.** `wac task app:build` would need the `wac` binary,
   // and the one place this script has to work is the one place there isn't one: `pages.yml` checks
   // out a bare tree, installs Deno and Node, and builds nothing native. Since 2026-08-27 that made

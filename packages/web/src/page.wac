@@ -1,0 +1,385 @@
+// A web page, as a wac program sees it: `export async i32 main(Page page)`.
+//
+// **The program runs on the page's own thread, as an `async` function.** It changes the document
+// with plain calls — `render`, `setText`, `drawPixels` — which happen at once, and it waits for what
+// happens later — the next event, a timer, a file — with `await`. Each `await` hands control back to
+// the browser, and the host calls back in when something arrives. There is no worker, no shared
+// memory and no blocking, so a built page needs nothing from the server that serves it.
+//
+// **The host is small and has no decisions in it.** It supplies a `Dom` — a struct of functions that
+// touch the document — and forwards each event, timer and file to `deliver`, `timerFired` and
+// `fileArrived`. Everything else, including the waiting, is here.
+//
+// **Waiting resumes at once.** The program runs with this page as its schedule target (spec ch35) —
+// when it starts and each time the host calls in — so each machine that suspends hands its
+// continuation to `take`, which attaches it to the ticket it waits on. When the host delivers an
+// event, settling the ticket runs the program on, right there, until it waits again.
+//
+// **Several things at once is `Ticket.any`.** An animation waits for whichever comes first, the next
+// frame or the next click — `await Ticket.any(frame, click);` — and then asks each ticket whether it
+// has settled. Each ticket is the program's until it settles, so asking for the next event while one
+// is still outstanding queues a second waiter rather than replacing the first.
+
+import { Attr, Buf, Continuation, Node, Queue, Ticket, TicketBase } from "core";
+
+/** Something that happened on the page. */
+export struct Event {
+  /** What was listened for: `"click"`, `"input"`, `"keydown"`, `"pointerdown"`, `"pointermove"`… */
+  string kind;
+  /** The `id` of the element it happened to, or `""` when it has none. */
+  string id;
+  /** The element's value for `input` and `change`; the key for `keydown`, as the browser names it. */
+  string value;
+  /**
+   * Where in the element it happened, for a pointer: in the element's own pixels — a canvas's are its
+   * backing store, so a `<canvas width="480">` shown at any size answers 0 to 479. 0 otherwise.
+   */
+  i32 x;
+  i32 y;
+}
+
+/** A file the user handed over — chosen with an `<input type="file">`, or dropped on the page. */
+export struct Picked {
+  bool ok;
+  string name;
+  u8[] bytes;
+  /** Why it could not be read, when `ok` is false. */
+  string error;
+}
+
+/**
+ * What the browser does for a page, supplied by the host. Every one happens at once and answers at
+ * once; nothing here waits.
+ */
+export struct Dom {
+  /** Replace the application's markup with this HTML. Only `Page.render` calls it, with escaped text. */
+  fn<void(string)> render;
+  /** Replace one element's content with this HTML, by id. Only `Page.renderInto` calls it. */
+  fn<void(string, string)> renderInto;
+  /** Set an element's text, by id — text, not markup. */
+  fn<void(string, string)> setText;
+  /** Set an input's value, by id. */
+  fn<void(string, string)> setValue;
+  /** Replace an element's inline style, by id. */
+  fn<void(string, string)> setStyle;
+  /** An input's value, by id; `""` when there is no such element. */
+  fn<string(string)> getValue;
+  /** Deliver events of a kind on elements matching a selector — delegated, so they survive `render`. */
+  fn<void(string, string)> listen;
+  /** The document's title. */
+  fn<void(string)> title;
+  /** A line for the console. */
+  fn<void(string)> log;
+  /** Milliseconds, from a clock that only goes forward. */
+  fn<f64()> now;
+  /** Call `timerFired(id)` after `ms` milliseconds. */
+  fn<void(i32, i32)> timer;
+  /** Call `timerFired(id)` before the browser next paints. */
+  fn<void(i32)> frame;
+  /** Size the canvas `id` to `w` by `h` and fill it with `w * h * 4` bytes of RGBA. */
+  fn<void(string, i32, i32, u8[])> drawPixels;
+  /** Write a `w` by `h` block of RGBA into the canvas `id` at `x`, `y`, leaving its size alone. */
+  fn<void(string, i32, i32, i32, i32, u8[])> drawPixelsIn;
+  /** Offer bytes to the user as a file to save, under a name. */
+  fn<void(string, u8[])> download;
+
+  /**
+   * A document that does nothing: every change is dropped, every read answers empty, and no timer
+   * ever fires. For a test, which replaces the functions it wants to watch —
+   * `Dom d = Dom.inert(); d.setText = (string id, string t) => { … };` — rather than writing all of them.
+   */
+  Dom inert() {
+    return Dom(
+      (string html) => { }, (string id, string html) => { }, (string id, string text) => { },
+      (string id, string value) => { }, (string id, string style) => { }, (string id) => "",
+      (string selector, string kind) => { }, (string t) => { }, (string line) => { }, () => 0.0,
+      (i32 id, i32 ms) => { }, (i32 id) => { }, (string id, i32 w, i32 h, u8[] rgba) => { },
+      (string id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => { }, (string name, u8[] bytes) => { }
+    );
+  }
+}
+
+/** A page: what the program is handed. */
+export struct Page {
+  Dom dom;
+  /** Events that arrived while nothing was waiting, oldest first. */
+  Queue<Event> arrived;
+  /** Tickets `nextEvent` handed out and no event has settled yet, oldest first. */
+  Queue<Ticket<Event>> waiting;
+  /** Files handed over while nothing was waiting, and the tickets waiting for one. */
+  Queue<Picked> files;
+  Queue<Ticket<Picked>> wantsFile;
+  /** Each timer's ticket, by id, until it fires. */
+  Ticket<f64>?[] timers;
+  /** Continuations with nothing to wait on — a bare `await;` — run before control goes back. */
+  Queue<Continuation> ready;
+
+  Page create(Dom dom) {
+    Queue<Event> arrived;
+    Queue<Ticket<Event>> waiting;
+    Queue<Picked> files;
+    Queue<Ticket<Picked>> wantsFile;
+    Queue<Continuation> ready;
+    return Page(dom, arrived, waiting, files, wantsFile, Ticket<f64>?[](), ready);
+  }
+
+  /** Replace what the page shows with `n`, escaped. */
+  void render(this, Node n) { this.dom.render(htmlOf(n)); }
+
+  /**
+   * Replace what the element `id` holds with `n`, escaped — the rest of the page, an input being typed
+   * into included, is left as it is.
+   */
+  void renderInto(this, string id, Node n) { this.dom.renderInto(id, htmlOf(n)); }
+
+  void setText(this, string id, string text) { this.dom.setText(id, text); }
+  void setValue(this, string id, string value) { this.dom.setValue(id, value); }
+  void setStyle(this, string id, string style) { this.dom.setStyle(id, style); }
+  string getValue(this, string id) { return this.dom.getValue(id); }
+  void title(this, string t) { this.dom.title(t); }
+  void log(this, string line) { this.dom.log(line); }
+  f64 now(this) { return this.dom.now(); }
+
+  /**
+   * Fill the canvas `id` with a `w` by `h` picture, four bytes a pixel, sizing the canvas to match.
+   * One call rather than a drawing API: anything a drawing API would do is a loop over bytes here.
+   */
+  void drawPixels(this, string id, i32 w, i32 h, u8[] rgba) {
+    if (rgba.len() != w * h * 4) { trap "drawPixels: the buffer is not w * h * 4 bytes"; }
+    this.dom.drawPixels(id, w, h, rgba);
+  }
+
+  /**
+   * Write a `w` by `h` block into the canvas `id` at `x`, `y` — for a frame where little changed.
+   * Leaves the canvas's size alone, since resizing a canvas clears it; `drawPixels` sets the size.
+   */
+  void drawPixelsIn(this, string id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) {
+    if (rgba.len() != w * h * 4) { trap "drawPixelsIn: the buffer is not w * h * 4 bytes"; }
+    this.dom.drawPixelsIn(id, x, y, w, h, rgba);
+  }
+
+  /** Offer `bytes` to the user as a file called `name`. */
+  void download(this, string name, u8[] bytes) { this.dom.download(name, bytes); }
+
+  /** Deliver `kind` events on elements matching `selector` — `on("button", "click")`. */
+  void on(this, string selector, string kind) { this.dom.listen(selector, kind); }
+
+  /** The next event, waited for: `Event e = await page.nextEvent();`. */
+  Ticket<Event> nextEvent(this) {
+    Ticket<Event> t;
+    Event? already = this.arrived.pop();
+    if (already is not null) {
+      t.resolve(already!);
+      return t;
+    }
+    this.waiting.push(t);
+    return t;
+  }
+
+  /** The next file the user hands over, waited for. One already handed over is not lost. */
+  Ticket<Picked> nextFile(this) {
+    Ticket<Picked> t;
+    Picked? already = this.files.pop();
+    if (already is not null) {
+      t.resolve(already!);
+      return t;
+    }
+    this.wantsFile.push(t);
+    return t;
+  }
+
+  /** A ticket that settles after `ms` milliseconds, answering `now()` when it did. */
+  Ticket<f64> sleep(this, i32 ms) {
+    Ticket<f64> t;
+    this.dom.timer(this.timerFor(t), ms);
+    return t;
+  }
+
+  /** A ticket that settles before the browser next paints, answering `now()` — one per frame drawn. */
+  Ticket<f64> nextFrame(this) {
+    Ticket<f64> t;
+    this.dom.frame(this.timerFor(t));
+    return t;
+  }
+
+  /**
+   * Settles once the browser has painted what the page shows now, answering `now()`. Before long work,
+   * so a "reading…" note is on screen while it runs: the program runs on the page's own thread, and a
+   * frame callback runs *before* the paint it belongs to, so the wait is a frame and then a timer.
+   */
+  async f64 painted(this) {
+    await this.nextFrame();
+    return await this.sleep(0);
+  }
+
+  /** `t`'s id, for `timerFired`: a free slot, or a new one. */
+  i32 timerFor(this, Ticket<f64> t) {
+    for (i32 i = 0; i < this.timers.len(); i++) {
+      if (this.timers[i] is null) {
+        this.timers[i] = t;
+        return i;
+      }
+    }
+    i32 id = this.timers.len();
+    Ticket<f64>?[] more = Ticket<f64>?[].defaulted(id + 1);
+    for (i32 i = 0; i < id; i++) { more[i] = this.timers[i]; }
+    more[id] = t;
+    this.timers = more;
+    return id;
+  }
+
+  /**
+   * Where a suspended machine's continuation goes. A continuation waiting on a ticket runs when that
+   * ticket settles; one waiting on nothing runs before control goes back to the browser.
+   */
+  void take(this, Continuation k) {
+    TicketBase? on = k.t;
+    if (on is null || on!.settled()) {
+      this.ready.push(k);
+      return;
+    }
+    on!.whenSettled(k.call);
+  }
+
+  /** Run what is ready, until nothing is. */
+  void drain(this) {
+    while (Continuation k matches this.ready.pop()) { k.call(); }
+  }
+}
+
+// ── What the host calls ───────────────────────────────────────────────────────
+
+// **Each runs the program under the page as its schedule target**, because this is where it resumes:
+// a machine hands the continuation of its next wait to the target in force when it is resumed, and
+// with none in force here the program's next wait would be dropped.
+
+/** An event happened: settle the oldest ticket waiting for one, or keep it for the next `nextEvent`. */
+export void deliver(Page page, string kind, string id, string value, i32 x, i32 y) {
+  schedule page.take;
+  Event e = Event(kind, id, value, x, y);
+  Ticket<Event>? w = page.waiting.pop();
+  if (w is not null) {
+    w!.resolve(e);
+    page.drain();
+    return;
+  }
+  // **A `pointermove` is a position, not an occurrence.** Kept while nothing is waiting, a drag would
+  // queue hundreds of them and the program would still be moving things long after the pointer
+  // stopped. The newest says everything an older one did, so it replaces one for the same element
+  // at the back of the queue; anything else is a thing that happened, and queues.
+  i32 n = page.arrived.items.len();
+  if (kind == "pointermove" && page.arrived.len() > 0) {
+    Event last = page.arrived.items.get(n - 1);
+    if (last.kind == "pointermove" && last.id == id) {
+      page.arrived.items.set(n - 1, e);
+      return;
+    }
+  }
+  page.arrived.push(e);
+}
+
+/** Timer `id` is due — a `sleep` or a `nextFrame`. */
+export void timerFired(Page page, i32 id) {
+  schedule page.take;
+  if (id < 0 || id >= page.timers.len()) { return; }
+  Ticket<f64>? t = page.timers[id];
+  if (t is null) { return; }
+  page.timers[id] = null;
+  t!.resolve(page.now());
+  page.drain();
+}
+
+/** The user handed over a file: settle the oldest ticket waiting for one, or keep it. */
+export void fileArrived(Page page, bool ok, string name, u8[] bytes, string error) {
+  schedule page.take;
+  Picked f = Picked(ok, name, bytes, error);
+  Ticket<Picked>? w = page.wantsFile.pop();
+  if (w is null) {
+    page.files.push(f);
+    return;
+  }
+  w!.resolve(f);
+  page.drain();
+}
+
+// ── A markup tree as HTML ─────────────────────────────────────────────────────
+//
+// JSX builds `core`'s `Node` (spec ch23, ch43), and the spec leaves serialising it to a library; this
+// is that library. **Everything is escaped**: text and attribute values are data, never markup, so a
+// string that happens to hold `<script>` arrives as those characters. `Page.render` is the only way a
+// page puts HTML into the document, and it comes through here — which makes that a property of the
+// program rather than of each place that builds a string.
+//
+// **A `<style>` is the one exception, because its text is not HTML**: the browser reads it as CSS up
+// to the first `</style`, and escaping `>` would break every child combinator in it. So its text goes
+// out as it is, with each `<` written as CSS's own escape for it, `\3c ` — which no stylesheet needs
+// to spell literally, and which is what makes `</style>` inside one impossible.
+//
+// Here rather than in a file of its own because a package is one module (spec ch04): what a project
+// imports from `web` is this file, and an import does not re-export.
+
+/** `n` as HTML. */
+export string htmlOf(Node n) {
+  Buf out = Buf.create();
+  writeNode(out, n, false);
+  return string.fromBytes(out.take());
+}
+
+void writeNode(Buf out, Node n, bool css) {
+  match (n) {
+    Text(t): {
+      if (css) { writeCss(out, t); } else { writeEscaped(out, t, false); }
+    }
+    Fragment(kids): {
+      for (Node k in kids) { writeNode(out, k, css); }
+    }
+    Element(tag, attrs, kids): {
+      out.pushStr("<");
+      out.pushStr(tag);
+      for (Attr a in attrs) {
+        out.pushStr(" ");
+        out.pushStr(a.name);
+        out.pushStr("=\"");
+        writeEscaped(out, a.value, true);
+        out.pushStr("\"");
+      }
+      out.pushStr(">");
+      // A void element has no content and no end tag: `<br></br>` is two line breaks to a browser.
+      if (isVoidElement(tag)) { return; }
+      for (Node k in kids) { writeNode(out, k, tag == "style"); }
+      out.pushStr("</");
+      out.pushStr(tag);
+      out.pushStr(">");
+    }
+  }
+}
+
+/**
+ * `s` with what would be read as markup replaced by references: `&` and `<` always, `>` too, and in
+ * an attribute value the `"` that would end it.
+ */
+void writeEscaped(Buf out, string s, bool inAttr) {
+  u8[] b = s.toBytes();
+  for (u8 c in b) {
+    if (c == '&') { out.pushStr("&amp;"); }
+    else if (c == '<') { out.pushStr("&lt;"); }
+    else if (c == '>') { out.pushStr("&gt;"); }
+    else if (inAttr && c == '"') { out.pushStr("&quot;"); }
+    else { out.push(c); }
+  }
+}
+
+/** A stylesheet's text as it is, except `<`, written as CSS's escape for it so nothing can end the element. */
+void writeCss(Buf out, string s) {
+  u8[] b = s.toBytes();
+  for (u8 c in b) {
+    if (c == '<') { out.pushStr("\\3c "); } else { out.push(c); }
+  }
+}
+
+/** The HTML elements that cannot have content (the "void elements" of the HTML standard). */
+export bool isVoidElement(string tag) {
+  return tag == "area" || tag == "base" || tag == "br" || tag == "col" || tag == "embed" || tag == "hr"
+      || tag == "img" || tag == "input" || tag == "link" || tag == "meta" || tag == "source"
+      || tag == "track" || tag == "wbr";
+}

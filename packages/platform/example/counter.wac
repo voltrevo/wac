@@ -1,59 +1,38 @@
-// An interactive page: draw something, then answer what the user does.
+// A page: draw something, then answer what the user does.
 //
-//   wac task app:build packages/platform/example/counter.wac --target browser -o page/index.html
-//   box httpd -8080 page -x
+//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+//       packages/platform/example/counter.wac .cache/counter --page ./packages/web
 //
-// The entry point is `page`, not `main`, and that is the whole of how a program says it is
-// interactive: the launcher hands `Page` to one and `Cli` to the other. A module may export
-// both, and then it is a command-line program that also knows how to be a page.
-//
-// **It is a loop, not a set of callbacks.** `nextEvent().wait()` parks the worker exactly as
-// `recv` parks it on a socket, while the page's own thread — the host — stays free to run the
-// real event loop. So the program keeps its state in ordinary locals across events, which is
-// the thing a callback shape cannot do without somewhere to put it.
+// The program is a loop that waits — `await page.nextEvent()` hands control back to the browser until
+// something happens — so its state is ordinary locals.
 
-import { Cli, Core, Event, Page } from "std";
+import { Event, Page } from "../../web";
+import { html.b, html.button, html.div, html.input, html.p } from "core";
 
-// `Cli` comes too, unused here: a page has a filesystem and arguments like any other program.
-export i32 page(Core core, Cli cli, Page page) {
-  page.title("counter").wait();
+export async i32 main(Page page) {
+  page.title("counter");
   page.render(
-    "<p>Clicks: <b id=\"n\">0</b></p>" +
-    "<button id=\"up\">+1</button> " +
-    "<button id=\"down\">-1</button> " +
-    "<button id=\"reset\">reset</button>" +
-    "<p>Type here: <input id=\"echo\" size=\"24\"></p>" +
-    "<p id=\"said\" class=\"meta\"></p>" +
-    "<p><button id=\"quit\">quit</button></p>"
-  ).wait();
-
-  // Delegated, so these survive the `render` above and any later one.
-  page.on("button", "click").wait();
-  page.on("#echo", "input").wait();
-
-  i32 n = 0;                       // state, in a local, because this is a loop
+    <div>
+      <p>Clicks: <b id="n">0</b></p>
+      <button id="up">+1</button>
+      <button id="down">-1</button>
+      <p><input id="echo" placeholder="type here"/></p>
+      <p id="said"></p>
+    </div>
+  );
+  page.on("button", "click");
+  page.on("#echo", "input");
+  i32 n = 0;
   while (true) {
-    Event e = page.nextEvent().wait();
-
+    Event e = await page.nextEvent();
     if (e.kind == "input") {
-      page.setText("said", e.value == "" ? "" : "you typed: \{e.value}").wait();
+      page.setText("said", e.value == "" ? "" : "you typed: \{e.value}");
     } else if (e.id == "up") {
-      n = n + 1;
-      page.setText("n", "\{n}").wait();
+      n += 1;
+      page.setText("n", "\{n}");
     } else if (e.id == "down") {
-      n = n - 1;
-      page.setText("n", "\{n}").wait();
-    } else if (e.id == "reset") {
-      n = 0;
-      page.setText("n", "0").wait();
-      page.setValue("echo", "").wait();
-      page.setText("said", "").wait();
-    } else if (e.id == "quit") {
-      // Returning ends the application, and the launcher prints the exit line. The page stays
-      // on screen: nothing here owns the document once the program is done with it.
-      core.log("counted to \{n}");
-      return 0;
+      n -= 1;
+      page.setText("n", "\{n}");
     }
   }
 }
-

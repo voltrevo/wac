@@ -1,0 +1,5 @@
+// The page builder, run from this project so that `web` resolves through its `wac.json5`.
+import { Sys } from "std";
+import { buildPage } from "webbuild";
+
+export i32 main(Sys sys) { return buildPage(sys.core, sys.cli); }

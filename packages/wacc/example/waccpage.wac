@@ -1,6 +1,7 @@
 // The self-hosted compiler, in a tab: wac in, wasm out, and nothing else in the path.
 //
-//   wac task app:build packages/wacc/example/waccpage.wac --target browser -o page/index.html
+//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+//       packages/wacc/example/waccpage.wac .cache/waccpage --page ./packages/web
 //
 // The playground on the website runs the **reference** compiler — TypeScript, bundled as JavaScript.
 // This page runs `wacc`: the compiler written in wac, compiled to WebAssembly by the reference, and
@@ -24,7 +25,9 @@
 // So what this is: the compiler, self-hosted, running on what you give it. The size and the SHA-256
 // of the module it emits are checkable against `waccx emit` on the same input, on your machine.
 
-import { Cli, Core, Event, Page, Pending, Picked } from "std";
+import { Event, Page, Picked } from "../../web";
+import { Ticket, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.em,
+         html.footer, html.h1, html.input, html.p, html.span, html.style, html.textarea } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Buf } from "core";
 import { Vec } from "core";
@@ -33,6 +36,39 @@ import { sha256 } from "../../crypto/src/sha256.wac";
 import { blocked, emitFiles } from "../src/api.wac";
 
 /** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
+static string STYLE =
+  ":root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
+  "        --dim: #5b7073; --key: #0e8c78; --bad: #c2410c; }" +
+  "@media (prefers-color-scheme: dark) {" +
+  "  :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
+  "          --dim: #8ba3a4; --key: #46d9c0; --bad: #fb923c; } }" +
+  "body { background: var(--ink); color: var(--text); }" +
+  "#tool { max-width: 50rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
+  "h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
+  "p.sub { margin: 0 0 1.4rem; color: var(--dim); font-size: .95rem; max-width: 40rem; }" +
+  "code { font-family: ui-monospace, monospace; font-size: .9em; }" +
+  "textarea { width: 100%; box-sizing: border-box; min-height: 15rem; resize: vertical;" +
+  "           background: var(--slab); color: var(--text); border: 1px solid var(--line);" +
+  "           border-radius: 6px; padding: .8rem; font: 13px/1.6 ui-monospace, monospace; }" +
+  "textarea:focus { outline: 2px solid var(--key); outline-offset: 1px; }" +
+  "#row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
+  "button { font: inherit; font-size: .88rem; padding: .3rem .8rem; cursor: pointer;" +
+  "         color: var(--text); background: var(--slab); border: 1px solid var(--line);" +
+  "         border-radius: 5px; }" +
+  "button:hover { border-color: var(--key); color: var(--key); }" +
+  "input[type=file] { font: inherit; font-size: .85rem; color: var(--dim); }" +
+  "dl { display: grid; grid-template-columns: max-content 1fr; gap: .55rem 1.1rem;" +
+  "     margin: 1.4rem 0 0; align-items: baseline; }" +
+  "dt { color: var(--dim); font-size: .78rem; letter-spacing: .09em; text-transform: uppercase; }" +
+  "dd { margin: 0; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums;" +
+  "     word-break: break-all; }" +
+  "dd#sha { color: var(--key); font-size: .82rem; line-height: 1.5; }" +
+  "#why { color: var(--bad); white-space: pre-wrap; font-family: ui-monospace, monospace;" +
+  "       font-size: .82rem; margin-top: .7rem; }" +
+  ".dim { color: var(--dim); }" +
+  "footer { margin-top: 2.2rem; font-size: .85rem; color: var(--dim); }" +
+  "footer a { color: var(--key); }";
+
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/wacc/example/waccpage.wac";
 
@@ -132,125 +168,91 @@ Vec<string> importsOf(u8[] wasm) {
   return names;
 }
 
-export i32 page(Core core, Cli cli, Page page) {
-  page.title("wac: the self-hosted compiler, in a tab").wait();
+export async i32 main(Page page) {
+  page.title("wac: the self-hosted compiler, in a tab");
   page.render(
-    "<style>" +
-    "  :root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
-    "          --dim: #5b7073; --key: #0e8c78; --bad: #c2410c; }" +
-    "  @media (prefers-color-scheme: dark) {" +
-    "    :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
-    "            --dim: #8ba3a4; --key: #46d9c0; --bad: #fb923c; } }" +
-    "  body { background: var(--ink); color: var(--text); }" +
-    "  #tool { max-width: 50rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
-    "  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
-    "  p.sub { margin: 0 0 1.4rem; color: var(--dim); font-size: .95rem; max-width: 40rem; }" +
-    "  code { font-family: ui-monospace, monospace; font-size: .9em; }" +
-    "  textarea { width: 100%; box-sizing: border-box; min-height: 15rem; resize: vertical;" +
-    "             background: var(--slab); color: var(--text); border: 1px solid var(--line);" +
-    "             border-radius: 6px; padding: .8rem; font: 13px/1.6 ui-monospace, monospace; }" +
-    "  textarea:focus { outline: 2px solid var(--key); outline-offset: 1px; }" +
-    "  #row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
-    "  button { font: inherit; font-size: .88rem; padding: .3rem .8rem; cursor: pointer;" +
-    "           color: var(--text); background: var(--slab); border: 1px solid var(--line);" +
-    "           border-radius: 5px; }" +
-    "  button:hover { border-color: var(--key); color: var(--key); }" +
-    "  input[type=file] { font: inherit; font-size: .85rem; color: var(--dim); }" +
-    "  dl { display: grid; grid-template-columns: max-content 1fr; gap: .55rem 1.1rem;" +
-    "       margin: 1.4rem 0 0; align-items: baseline; }" +
-    "  dt { color: var(--dim); font-size: .78rem; letter-spacing: .09em; text-transform: uppercase; }" +
-    "  dd { margin: 0; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums;" +
-    "       word-break: break-all; }" +
-    "  dd#sha { color: var(--key); font-size: .82rem; line-height: 1.5; }" +
-    "  #why { color: var(--bad); white-space: pre-wrap; font-family: ui-monospace, monospace;" +
-    "         font-size: .82rem; margin-top: .7rem; }" +
-    "  .dim { color: var(--dim); }" +
-    "  footer { margin-top: 2.2rem; font-size: .85rem; color: var(--dim); }" +
-    "  footer a { color: var(--key); }" +
-    "</style>" +
-    "<div id=\"tool\">" +
-    "  <h1>the self-hosted compiler, in a tab</h1>" +
-    "  <p class=\"sub\">The playground on this site runs the <em>reference</em> compiler, which is" +
-    "    TypeScript. This page runs <code>wacc</code> — the compiler written in wac, compiled to" +
-    "    WebAssembly, doing the compiling itself. Check the answer with <code>waccx emit</code> on" +
-    "    the same input. The <em>imports</em> line is the one to watch: a wac module can only call a" +
-    "    function it was handed, so a program that takes none has no import section at all — and" +
-    "    the three buttons below show the rule the site states, read off the binary rather than" +
-    "    asserted. Two exports taking the same shape of function still import <em>one</em>" +
-    "    dispatcher; make their signatures differ and a second appears.</p>" +
-    "  <textarea id=\"src\" spellcheck=\"false\"></textarea>" +
-    "  <div id=\"row\">" +
-    "    <button id=\"go\">compile</button>" +
-    "    <button id=\"plain\">no function parameter</button>" +
-    "    <button id=\"one\">one function parameter</button>" +
-    "    <button id=\"two\">two exports, one signature</button>" +
-    "    <input type=\"file\" id=\"f\" accept=\".wac\">" +
-    "    <span id=\"note\" class=\"dim\">or drop a .wac file anywhere on this page</span>" +
-    "  </div>" +
-    "  <dl>" +
-    "    <dt>source</dt><dd><b id=\"inlen\">0</b> bytes</dd>" +
-    "    <dt>wasm</dt><dd><b id=\"outlen\">0</b> bytes</dd>" +
-    "    <dt>sha-256</dt><dd id=\"sha\"></dd>" +
-    "    <dt>took</dt><dd class=\"dim\"><span id=\"ms\">0</span> ms</dd>" +
-    "    <dt>imports</dt><dd><b id=\"impn\">0</b> <span id=\"imps\" class=\"dim\"></span></dd>" +
-    "  </dl>" +
-    "  <div id=\"why\"></div>" +
-    "  <footer>The compiler, the hash and this page are wac. " +
-    "    <a href=\"" + SOURCE + "\">source</a>. The <em>fixpoint</em> — wacc compiling its own ten" +
-    "    sources, twice, to the same bytes — is not shown here: it needs the whole import closure," +
-    "    and running the second stage means instantiating a module this page just produced, which" +
-    "    no wac program can do. <code>test/wac/fixpointemit_test.wac</code> settles that by running it." +
-    "  </footer>" +
-    "</div>"
-  ).wait();
-  page.on("#go", "click").wait();
-  page.on("#plain", "click").wait();
-  page.on("#one", "click").wait();
-  page.on("#two", "click").wait();
-  page.setValue("src", SAMPLE).wait();
+    <div id="tool">
+      <style>{STYLE}</style>
+      <h1>the self-hosted compiler, in a tab</h1>
+      <p class="sub">The playground on this site runs the <em>reference</em> compiler, which is TypeScript.
+        This page runs <code>wacc</code> — the compiler written in wac, compiled to WebAssembly, doing the
+        compiling itself. Check the answer with <code>waccx emit</code> on the same input. The
+        <em>imports</em> line is the one to watch: a wac module can only call a function it was handed,
+        so a program that takes none has no import section at all — and the three buttons below show the
+        rule the site states, read off the binary rather than asserted. Two exports taking the same shape
+        of function still import <em>one</em> dispatcher; make their signatures differ and a second
+        appears.</p>
+      <textarea id="src" spellcheck="false"></textarea>
+      <div id="row">
+        <button id="go">compile</button>
+        <button id="plain">no function parameter</button>
+        <button id="one">one function parameter</button>
+        <button id="two">two exports, one signature</button>
+        <input type="file" id="f" accept=".wac"/>
+        <span id="note" class="dim">or drop a .wac file anywhere on this page</span>
+      </div>
+      <dl>
+        <dt>source</dt><dd><b id="inlen">0</b> bytes</dd>
+        <dt>wasm</dt><dd><b id="outlen">0</b> bytes</dd>
+        <dt>sha-256</dt><dd id="sha"></dd>
+        <dt>took</dt><dd class="dim"><span id="ms">0</span> ms</dd>
+        <dt>imports</dt><dd><b id="impn">0</b> <span id="imps" class="dim"></span></dd>
+      </dl>
+      <div id="why"></div>
+      <footer>The compiler, the hash and this page are wac. <a href={SOURCE}>source</a>. The
+        <em>fixpoint</em> — wacc compiling its own ten sources, twice, to the same bytes — is not shown
+        here: it needs the whole import closure, and running the second stage means instantiating a module
+        this page just produced, which no wac program can do. <code>test/wac/fixpointemit_test.wac</code>
+        settles that by running it.</footer>
+    </div>
+  );
+  page.on("#go", "click");
+  page.on("#plain", "click");
+  page.on("#one", "click");
+  page.on("#two", "click");
+  page.setValue("src", SAMPLE);
 
-  Pending<Event> ev = page.nextEvent();
-  Pending<Picked> file = page.nextFile();
+  Ticket<Event> ev = page.nextEvent();
+  Ticket<Picked> file = page.nextFile();
 
-  compile(core, page, SAMPLE, "sample.wac");
+  compile(page, SAMPLE, "sample.wac");
 
   while (true) {
-    i32 which = core.waitAny([ev.id, file.id], -1);
-    if (which < 0) { return 0; }
+    await Ticket.any(ev, file);
 
-    if (which == 1) {
-      Picked f = file.wait();
+    if (file.settled()) {
+      Picked f = file.value();
       file = page.nextFile();
       if (!f.ok) {
-        page.setText("note", "could not read it: " + f.error).wait();
-        continue;
+        page.setText("note", "could not read it: " + f.error);
+      } else {
+        string text = string.fromBytes(f.bytes);
+        page.setValue("src", text);
+        page.setText("note", f.name);
+        compile(page, text, f.name);
       }
-      string text = string.fromBytes(f.bytes);
-      page.setValue("src", text).wait();
-      page.setText("note", f.name).wait();
-      compile(core, page, text, f.name);
-      continue;
     }
 
-    Event e = ev.wait();
+    if (!ev.settled()) { continue; }
+    Event e = ev.value();
     ev = page.nextEvent();
     if (e.kind == "click" && e.id == "plain") {
-      page.setValue("src", SAMPLE).wait();
-      compile(core, page, SAMPLE, "sample.wac");
+      page.setValue("src", SAMPLE);
+      compile(page, SAMPLE, "sample.wac");
     } else if (e.kind == "click" && e.id == "one") {
       // **The point of the page, in one click.** The only difference between these programs is a
       // parameter, and the import section follows it — which is what "a capability is an argument"
       // means when you read the binary instead of the prose.
-      page.setValue("src", ONE_FN).wait();
-      compile(core, page, ONE_FN, "sample.wac");
+      page.setValue("src", ONE_FN);
+      compile(page, ONE_FN, "sample.wac");
     } else if (e.kind == "click" && e.id == "two") {
-      page.setValue("src", TWO_FN).wait();
-      compile(core, page, TWO_FN, "sample.wac");
+      page.setValue("src", TWO_FN);
+      compile(page, TWO_FN, "sample.wac");
     } else if (e.kind == "click" && e.id == "go") {
       // Read back rather than remembered: the textarea is the source of truth once a reader has
       // typed in it, and holding a copy here would compile what was loaded instead of what is there.
-      string text = page.getValue("src").wait();
-      compile(core, page, text, "typed.wac");
+      string text = page.getValue("src");
+      compile(page, text, "typed.wac");
     }
   }
 }
@@ -263,41 +265,41 @@ export i32 page(Core core, Cli cli, Page page) {
  * That is the same pair the corpus test uses, and the reason its report can say *why* each of the
  * three files it cannot finish is unfinished rather than only counting them.
  */
-void compile(Core core, Page page, string text, string name) {
-  page.setText("inlen", itoa(text.toBytes().len())).wait();
-  page.setText("why", "").wait();
+void compile(Page page, string text, string name) {
+  page.setText("inlen", itoa(text.toBytes().len()));
+  page.setText("why", "");
 
   string[] paths = string[].defaulted(1);
   string[] sources = string[].defaulted(1);
   paths[0] = name;
   sources[0] = text;
 
-  i64 began = core.monotonicNanos().wait();
+  f64 began = page.now();
   u8[] out = emitFiles(paths, sources, name);
-  i64 took = (core.monotonicNanos().wait() - began) / 1000000;
+  f64 took = page.now() - began;
 
-  page.setText("ms", itoa(took as@ i32)).wait();
-  page.setText("outlen", itoa(out.len())).wait();
+  page.setText("ms", itoa(took as~ i32));
+  page.setText("outlen", itoa(out.len()));
 
   if (out.len() == 0) {
-    page.setText("sha", "").wait();
+    page.setText("sha", "");
     string why = blocked(text.toBytes());
     page.setText("why", why == "" ? "wacc emitted nothing and gave no reason, which is a bug worth "
-      + "reporting" : why).wait();
+      + "reporting" : why);
     return;
   }
-  page.setText("sha", hexOf(sha256(out))).wait();
+  page.setText("sha", hexOf(sha256(out)));
 
   Vec<string> imports = importsOf(out);
-  page.setText("impn", itoa(imports.len())).wait();
+  page.setText("impn", itoa(imports.len()));
   if (imports.len() == 0) {
     page.setText("imps", "— no import section at all, which is what a `main` taking no capability "
-      + "compiles to").wait();
+      + "compiles to");
   } else {
     string list = "";
     for (i32 i = 0; i < imports.len(); i++) {
       list = list + (i == 0 ? "— " : ", ") + imports.get(i);
     }
-    page.setText("imps", list).wait();
+    page.setText("imps", list);
   }
 }

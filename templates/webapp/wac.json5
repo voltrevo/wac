@@ -1,0 +1,8 @@
+{
+  imports: {
+    // The page a program is handed — `import { Page, Event } from "web"`.
+    web: { git: 'https://github.com/voltrevo/wac', ref: 'master', subdir: './packages/web' },
+    // The page builder `build.wac` calls — a program, so building needs nothing but `wac`.
+    webbuild: { git: 'https://github.com/voltrevo/wac', ref: 'master', subdir: './packages/web/tools' },
+  },
+}

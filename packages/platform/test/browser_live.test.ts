@@ -27,6 +27,7 @@
 // landed, an interactive application driven by real clicks and real typing.
 
 import { buildApp } from "../build.ts";
+import { buildPage } from "../../../harness/buildPage.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
@@ -226,12 +227,11 @@ Deno.test({
       assertEquals(ent.includes("1048576 bytes vary: yes"), true, ent);
       assertEquals(ent.includes("[exit 0]"), true, ent);
 
-      // An interactive application, driven by real clicks. This is the part no double reaches:
-      // delegated listeners surviving a `render`, an event queue feeding a parked worker, and
-      // state kept in a local across events because the program is a loop rather than a set of
-      // callbacks.
-      await buildApp("packages/platform/example/counter.wac", `${dir}/counter.html`, {}, "browser");
-      await page.goto(`http://127.0.0.1:${port}/counter.html`, { waitUntil: "load" });
+      // An interactive page, driven by real clicks. Built by `packages/web`, as every page is: the
+      // program runs on the page's own thread and waits with `await`, so delegated listeners
+      // surviving a `render` and state kept in a local across events are both its claims to check.
+      await buildPage("packages/platform/example/counter.wac", `${dir}/counter`);
+      await page.goto(`http://127.0.0.1:${port}/counter/index.html`, { waitUntil: "load" });
       await page.waitForSelector("#up", { timeout: 30_000 });
 
       await page.click("#up");
@@ -244,25 +244,9 @@ Deno.test({
       await page.fill("#echo", "typed");
       assertEquals(await page.textContent("#said"), "you typed: typed");
 
-      await page.click("#reset");
-      assertEquals(await page.textContent("#n"), "0", "reset");
-      assertEquals(await page.inputValue("#echo"), "", "reset clears the box too");
-
-      // And the loop ends when the program decides to return, not when the page decides.
-      await page.click("#up");
-      await page.click("#quit");
-      await page.waitForFunction(
-        "document.body.innerText.includes('[exit')",
-        null,
-        { timeout: 30_000 },
-      );
-      const done = (await page.evaluate("document.body.innerText")) as string;
-      assertEquals(done.includes("counted to 1"), true, done);
-      assertEquals(done.includes("[exit 0]"), true, done);
-
       // Pixels, a pointer and files — the three that only a browser can answer for.
-      await buildApp("packages/platform/example/pixels.wac", `${dir}/pixels.html`, {}, "browser");
-      await page.goto(`http://127.0.0.1:${port}/pixels.html`, { waitUntil: "load" });
+      await buildPage("packages/platform/example/pixels.wac", `${dir}/pixels`);
+      await page.goto(`http://127.0.0.1:${port}/pixels/index.html`, { waitUntil: "load" });
       // Wait for the canvas to have been *drawn into*, which is the actual precondition, rather
       // than for a particular size. Two wrong versions preceded this: pinning `width === 240`
       // failed as a timeout when the picture was made bigger, and `width > 0` passed instantly
@@ -326,13 +310,8 @@ Deno.test({
       // than against more wac. It drives `box/example/hash.wac`, which is where `nextFile` lives
       // now: a page that hashes a file you drop on it has a reason to want one, and a Mandelbrot
       // viewer never did.
-      await buildApp(
-        "packages/box/example/hash.wac",
-        `${dir}/hash.html`,
-        {},
-        "browser",
-      );
-      await page.goto(`http://127.0.0.1:${port}/hash.html`, { waitUntil: "load" });
+      await buildPage("packages/box/example/hash.wac", `${dir}/hash`);
+      await page.goto(`http://127.0.0.1:${port}/hash/index.html`, { waitUntil: "load" });
       await page.waitForSelector("#in", { timeout: 30_000 });
 
       const given = `${dir}/given.txt`;

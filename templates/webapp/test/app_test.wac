@@ -1,0 +1,53 @@
+// The application, driven with no browser: a `Dom` made of lambdas that record what it did, and the
+// two calls the browser's side makes — `deliver` for an event — made by hand.
+
+import { Ticket } from "core";
+import { Dom, Page, deliver } from "web";
+import { main } from "../src/app.wac";
+
+struct Seen {
+  string log;
+  string typed;
+}
+
+/** A document that records what the application did to it, and answers what was typed. */
+Dom recording(Seen seen) {
+  Dom d = Dom.inert();
+  d.renderInto = (string id, string html) => { seen.log = seen.log + "into " + id + "=" + html + "\n"; };
+  d.setText = (string id, string text) => { seen.log = seen.log + "text " + id + "=" + text + "\n"; };
+  d.setValue = (string id, string value) => { seen.typed = value; };
+  d.getValue = (string id) => seen.typed;
+  return d;
+}
+
+/** What the build's wrapper does: the program run with its page as the schedule target. */
+Ticket<i32> start(Page page) {
+  schedule page.take;
+  return main(page);
+}
+
+export string test_adding_an_item_lists_it_and_clears_the_input() {
+  Seen seen = Seen("", "");
+  Page page = Page.create(recording(seen));
+  start(page);
+  seen.log = "";
+  seen.typed = "milk";
+  deliver(page, "click", "add", "", 0, 0);
+  string want = "into list=<ul id=\"items\"><li>milk</li></ul>\ntext count=1 to do\n";
+  if (seen.log != want) { return "after one add: \{seen.log}"; }
+  if (seen.typed != "") { return "the input was not cleared"; }
+  seen.typed = "eggs";
+  deliver(page, "keydown", "what", "Enter", 0, 0);
+  if (seen.log.indexOf("<li>milk</li><li>eggs</li>") < 0) { return "Enter did not add: \{seen.log}"; }
+  return "";
+}
+
+export string test_an_empty_input_adds_nothing() {
+  Seen seen = Seen("", "");
+  Page page = Page.create(recording(seen));
+  start(page);
+  seen.log = "";
+  deliver(page, "click", "add", "", 0, 0);
+  deliver(page, "keydown", "what", "a", 0, 0);
+  return seen.log == "" ? "" : "something happened: \{seen.log}";
+}

@@ -1,10 +1,11 @@
 // A ripple tank: the wave equation on a grid, and a pointer that drops stones in it.
 //
-//   wac task app:build packages/platform/example/ripple.wac --target browser -o page/index.html
+//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+//       packages/platform/example/ripple.wac .cache/ripple --page ./packages/web
 //
 // Click and a wave leaves your finger, reflects off the walls, and interferes with itself. That is
 // not a particle effect faking it — it is the discretised wave equation, three lines in `step`, run
-// over 200×150 cells every frame.
+// over 200×150 cells every frame the browser paints.
 //
 // ## The one interesting decision: fixed point
 //
@@ -27,10 +28,33 @@
 // disagree; this is here to be played with. The millisecond counter is the only real claim, and it
 // is about how fast wac compiled to WebAssembly runs a stencil over 30,000 cells.
 
-import { Cli, Core, Event, Page, Pending } from "std";
+import { Event, Page } from "../../web";
+import { Ticket, html.a, html.b, html.button, html.canvas, html.div, html.footer, html.h1, html.p, html.span,
+         html.style } from "core";
 
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/ripple.wac";
+
+static string STYLE =
+  ":root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
+  "        --dim: #5b7073; --key: #0e8c78; }" +
+  "@media (prefers-color-scheme: dark) {" +
+  "  :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
+  "          --dim: #8ba3a4; --key: #46d9c0; } }" +
+  "body { background: var(--ink); color: var(--text); }" +
+  "#tool { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
+  "h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
+  "p.sub { margin: 0 0 1.2rem; color: var(--dim); font-size: .95rem; }" +
+  "canvas { width: 100%; image-rendering: pixelated; border: 1px solid var(--line);" +
+  "         border-radius: 6px; display: block; cursor: crosshair; }" +
+  "#row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
+  "button { font: inherit; font-size: .88rem; padding: .3rem .8rem; cursor: pointer;" +
+  "         color: var(--text); background: var(--slab); border: 1px solid var(--line);" +
+  "         border-radius: 5px; }" +
+  "button:hover { border-color: var(--key); color: var(--key); }" +
+  ".dim { color: var(--dim); font-size: .88rem; }" +
+  "footer { margin-top: 1.6rem; font-size: .85rem; color: var(--dim); }" +
+  "footer a { color: var(--key); }";
 
 static i32 W = 200;
 static i32 H = 150;
@@ -83,7 +107,7 @@ void paint(Page page, i32[] now, u8[] rgba) {
       }
     }
   }
-  page.drawPixels("c", W * SCALE, H * SCALE, rgba).wait();
+  page.drawPixels("c", W * SCALE, H * SCALE, rgba);
 }
 
 /** Push the surface down at `(cx, cy)`, softened over a few cells so it is a stone and not a spike. */
@@ -100,55 +124,32 @@ void splash(i32[] now, i32 cx, i32 cy) {
   }
 }
 
-export i32 page(Core core, Cli cli, Page page) {
-  page.title("wac: a ripple tank").wait();
+export async i32 main(Page page) {
+  page.title("wac: a ripple tank");
   page.render(
-    "<style>" +
-    "  :root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
-    "          --dim: #5b7073; --key: #0e8c78; }" +
-    "  @media (prefers-color-scheme: dark) {" +
-    "    :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
-    "            --dim: #8ba3a4; --key: #46d9c0; } }" +
-    "  body { background: var(--ink); color: var(--text); }" +
-    "  #tool { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
-    "  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
-    "  p.sub { margin: 0 0 1.2rem; color: var(--dim); font-size: .95rem; }" +
-    "  canvas { width: 100%; image-rendering: pixelated; border: 1px solid var(--line);" +
-    "           border-radius: 6px; display: block; cursor: crosshair; }" +
-    "  #row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
-    "  button { font: inherit; font-size: .88rem; padding: .3rem .8rem; cursor: pointer;" +
-    "           color: var(--text); background: var(--slab); border: 1px solid var(--line);" +
-    "           border-radius: 5px; }" +
-    "  button:hover { border-color: var(--key); color: var(--key); }" +
-    "  code { font-family: ui-monospace, monospace; font-size: .9em; }" +
-    "  .dim { color: var(--dim); font-size: .88rem; }" +
-    "  footer { margin-top: 1.6rem; font-size: .85rem; color: var(--dim); }" +
-    "  footer a { color: var(--key); }" +
-    "</style>" +
-    "<div id=\"tool\">" +
-    "  <h1>a ripple tank</h1>" +
-    "  <p class=\"sub\">Click the water. The wave equation over 200&times;150 cells, in fixed-point" +
-    "    integers so every machine gets the same frame — waves reflect off the walls with their" +
-    "    phase inverted and interfere with each other, because that is what the equation does rather" +
-    "    than something drawn to look like it. Drag to trail your finger through it.</p>" +
-    "  <canvas id=\"c\"></canvas>" +
-    "  <div id=\"row\">" +
-    "    <button id=\"go\">pause</button>" +
-    "    <button id=\"calm\">still the water</button>" +
-    "    <button id=\"rain\">rain</button>" +
-    "  </div>" +
-    "  <p class=\"dim\">frame <b id=\"fr\">0</b>, <span id=\"ms\">0</span> ms a step over" +
-    "    \{W * H} cells</p>" +
-    "  <footer>The solver, the colouring and this page are wac. " +
-    "    <a href=\"\{SOURCE}\">source</a>. It proves nothing and is here to be played with." +
-    "  </footer>" +
-    "</div>"
-  ).wait();
-  page.on("#go", "click").wait();
-  page.on("#calm", "click").wait();
-  page.on("#rain", "click").wait();
-  page.on("#c", "click").wait();
-  page.on("#c", "pointermove").wait();
+    <div id="tool">
+      <style>{STYLE}</style>
+      <h1>a ripple tank</h1>
+      <p class="sub">Click the water. The wave equation over 200×150 cells, in fixed-point integers so
+        every machine gets the same frame — waves reflect off the walls with their phase inverted and
+        interfere with each other, because that is what the equation does rather than something drawn
+        to look like it. Drag to trail your finger through it.</p>
+      <canvas id="c"></canvas>
+      <div id="row">
+        <button id="go">pause</button>
+        <button id="calm">still the water</button>
+        <button id="rain">rain</button>
+      </div>
+      <p class="dim">frame <b id="fr">0</b>, <span id="ms">0</span> ms a step over {"\{W * H}"} cells</p>
+      <footer>The solver, the colouring and this page are wac. <a href={SOURCE}>source</a>. It proves
+        nothing and is here to be played with.</footer>
+    </div>
+  );
+  page.on("#go", "click");
+  page.on("#calm", "click");
+  page.on("#rain", "click");
+  page.on("#c", "click");
+  page.on("#c", "pointermove");
 
   // Three surfaces: the step needs the two previous ones, and rotating three arrays avoids copying
   // 30,000 integers a frame just to shuffle them along.
@@ -165,16 +166,15 @@ export i32 page(Core core, Cli cli, Page page) {
   bool raining = false;
   i32 seed = 12345;
 
-  Pending<Event> ev = page.nextEvent();
-  Pending<i64> tick = core.sleepMillis(33);
+  Ticket<Event> ev = page.nextEvent();
+  Ticket<f64> tick = page.nextFrame();
 
   while (true) {
-    i32 which = core.waitAny([ev.id, tick.id], -1);
-    if (which < 0) { return 0; }
+    // A frame or an event, whichever comes first — one `await` for both.
+    await Ticket.any(ev, tick);
 
-    if (which == 2) {
-      tick.wait();
-      tick = core.sleepMillis(33);
+    if (tick.settled()) {
+      tick = page.nextFrame();
       if (running) {
         if (raining) {
           // A cheap linear congruential step: this wants unpredictability, not randomness, and
@@ -182,9 +182,9 @@ export i32 page(Core core, Cli cli, Page page) {
           seed = (seed * 1103515245 + 12345) & 2147483647;
           splash(now, 2 + (seed >> 7) % (W - 4), 2 + (seed >> 17) % (H - 4));
         }
-        i64 began = core.monotonicNanos().wait();
+        f64 began = page.now();
         step(before, now, next);
-        i64 took = (core.monotonicNanos().wait() - began) / 1000000;
+        f64 took = page.now() - began;
         // Rotate: what was `now` becomes the past, and `next` becomes the present.
         for (i32 i = 0; i < W * H; i++) {
           before[i] = now[i];
@@ -192,31 +192,32 @@ export i32 page(Core core, Cli cli, Page page) {
         }
         frame = frame + 1;
         paint(page, now, rgba);
-        page.setText("fr", "\{frame}").wait();
-        page.setText("ms", "\{took as@ i32}").wait();
+        page.setText("fr", "\{frame}");
+        page.setText("ms", "\{took as~ i32}");
       }
-      continue;
     }
 
-    Event e = ev.wait();
-    ev = page.nextEvent();
-    if (e.id == "c" && (e.kind == "click" || e.kind == "pointermove")) {
-      // `Event.x` and `Event.y` are the canvas's own coordinates, and the canvas is drawn at SCALE
-      // times the grid — so the divide is what turns a click into a cell.
-      splash(now, e.x / SCALE, e.y / SCALE);
-    } else if (e.kind == "click" && e.id == "go") {
-      running = !running;
-      page.setText("go", running ? "pause" : "run").wait();
-    } else if (e.kind == "click" && e.id == "calm") {
-      for (i32 i = 0; i < W * H; i++) {
-        before[i] = 0;
-        now[i] = 0;
-        next[i] = 0;
+    if (ev.settled()) {
+      Event e = ev.value();
+      ev = page.nextEvent();
+      if (e.id == "c" && (e.kind == "click" || e.kind == "pointermove")) {
+        // `Event.x` and `Event.y` are the canvas's own coordinates, and the canvas is drawn at SCALE
+        // times the grid — so the divide is what turns a click into a cell.
+        splash(now, e.x / SCALE, e.y / SCALE);
+      } else if (e.kind == "click" && e.id == "go") {
+        running = !running;
+        page.setText("go", running ? "pause" : "run");
+      } else if (e.kind == "click" && e.id == "calm") {
+        for (i32 i = 0; i < W * H; i++) {
+          before[i] = 0;
+          now[i] = 0;
+          next[i] = 0;
+        }
+        paint(page, now, rgba);
+      } else if (e.kind == "click" && e.id == "rain") {
+        raining = !raining;
+        page.setText("rain", raining ? "stop the rain" : "rain");
       }
-      paint(page, now, rgba);
-    } else if (e.kind == "click" && e.id == "rain") {
-      raining = !raining;
-      page.setText("rain", raining ? "stop the rain" : "rain").wait();
     }
   }
 }

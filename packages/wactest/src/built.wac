@@ -37,6 +37,7 @@
 // `/tmp`, where three agents would share a name.
 
 import { Cli, Exec, Stat, FileResult } from "std";
+import { Located, Manifest, packageEntry, readManifest } from "../../wacpkg/src/manifest.wac";
 
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
 export i64 newestUnder(const Cli cli, string dir) {
@@ -184,6 +185,9 @@ export Closure closureOf(const Cli cli, string entry) {
     for (string spec in specs) {
       string next = resolvedFrom(path, spec);
       if (next == "") { continue; }
+      // A nested project is entered by its directory, at the module it exports.
+      string entered = nestedEntry(cli, next);
+      if (entered != "") { next = entered; }
       bool have = false;
       for (i32 k = 0; k < n; k++) { if (seen[k] == next) { have = true; } }
       if (have || n >= seen.len()) { continue; }
@@ -219,6 +223,14 @@ export struct Sources {
   string[] texts;
   /** `""` when the whole closure was read, otherwise the first file that could not be. */
   string why;
+  /**
+   * Each import of a **nested project's directory**, and the module its manifest `exports` — what `wac`
+   * maps such a specifier to (spec ch02 `§wac-import-nested-project-sd4s5n8`). A caller hands these to
+   * the compiler as a `Res`, or the specifier names no file it was given.
+   */
+  string[] mapFrom;
+  string[] mapSpec;
+  string[] mapTo;
 }
 
 export Sources sourcesOf(Cli cli, string entry) {
@@ -229,6 +241,9 @@ export Sources sourcesOf(Cli cli, string entry) {
   i32 at = 0;
   i32 kept = 0;
   string[] paths = string[].filled(CLOSURE_CAP, "");
+  string[] mapFrom = string[]();
+  string[] mapSpec = string[]();
+  string[] mapTo = string[]();
   while (at < n) {
     string path = seen[at];
     at = at + 1;
@@ -236,7 +251,7 @@ export Sources sourcesOf(Cli cli, string entry) {
     // is what will be handed these, so it already has them.
     if (!cli.stat(path).wait().isFile) { continue; }
     FileResult f = cli.readFile(path).wait();
-    if (!f.ok) { return Sources(string[].filled(0, ""), string[].filled(0, ""), path); }
+    if (!f.ok) { return Sources(string[].filled(0, ""), string[].filled(0, ""), path, string[](), string[](), string[]()); }
     string src = string.fromBytes(f.bytes);
     paths[kept] = path;
     text[kept] = src;
@@ -245,6 +260,13 @@ export Sources sourcesOf(Cli cli, string entry) {
     for (string spec in specs) {
       string next = resolvedFrom(path, spec);
       if (next == "") { continue; }
+      string entered = nestedEntry(cli, next);
+      if (entered != "") {
+        mapFrom = grown(mapFrom, path);
+        mapSpec = grown(mapSpec, spec);
+        mapTo = grown(mapTo, entered);
+        next = entered;
+      }
       bool have = false;
       for (i32 k = 0; k < n; k++) { if (seen[k] == next) { have = true; } }
       if (have || n >= seen.len()) { continue; }
@@ -255,7 +277,24 @@ export Sources sourcesOf(Cli cli, string entry) {
   string[] outPaths = string[].filled(kept, "");
   string[] outTexts = string[].filled(kept, "");
   for (i32 i = 0; i < kept; i++) { outPaths[i] = paths[i]; outTexts[i] = text[i]; }
-  return Sources(outPaths, outTexts, "");
+  return Sources(outPaths, outTexts, "", mapFrom, mapSpec, mapTo);
+}
+
+/** The module a nested project at `dir` exports, or "" when `dir` is not one. */
+string nestedEntry(const Cli cli, string dir) {
+  if (!cli.stat(dir).wait().isDir) { return ""; }
+  FileResult m = cli.readFile(dir + "/wac.json5").wait();
+  if (!m.ok) { return ""; }
+  Manifest mf = readManifest(m.bytes);
+  if (!mf.ok || mf.exports == "") { return ""; }
+  Located at = packageEntry(dir, mf.exports);
+  return at.ok ? at.path : "";
+}
+
+string[] grown(string[] xs, string x) {
+  string[] out = string[].filled(xs.len() + 1, x);
+  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  return out;
 }
 
 /**

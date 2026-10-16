@@ -1,0 +1,42 @@
+// The application: `main` is handed the page, draws it, and answers what happens on it.
+//
+// It is an ordinary `async` function. `await page.nextEvent()` hands control back to the browser until
+// something happens, so the state is ordinary locals and the program reads top to bottom.
+
+import { Event, Page } from "web";
+import { html.button, html.div, html.h1, html.input, html.li, html.p, html.ul, Node } from "core";
+
+/** The list, drawn from what has been added. */
+Node listOf(string[] items, i32 n) {
+  Node[] rows = Node[].filled(n, Node.Text(""));
+  for (i32 i = 0; i < n; i++) { rows[i] = <li>{Node.Text(items[i])}</li>; }
+  return <ul id="items">{Node.Fragment(rows)}</ul>;
+}
+
+export async i32 main(Page page) {
+  page.title("wac app");
+  page.render(
+    <div>
+      <h1>To do</h1>
+      <p><input id="what" placeholder="something to do"/> <button id="add">add</button></p>
+      <div id="list"></div>
+      <p id="count">nothing yet</p>
+    </div>
+  );
+  page.on("button", "click");
+  page.on("#what", "keydown");
+  string[] items = string[].defaulted(64);
+  i32 n = 0;
+  while (true) {
+    Event e = await page.nextEvent();
+    bool adding = e.id == "add" || (e.kind == "keydown" && e.value == "Enter");
+    if (!adding) { continue; }
+    string what = page.getValue("what");
+    if (what == "" || n == items.len()) { continue; }
+    items[n] = what;
+    n += 1;
+    page.setValue("what", "");
+    page.renderInto("list", listOf(items, n));
+    page.setText("count", "\{n} to do");
+  }
+}

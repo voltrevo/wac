@@ -1,0 +1,7 @@
+{
+  // `src/app.wac` as one `dist/index.html`. Open it, or serve it with `wac task serve`.
+  build: "wac run --allow-read --allow-write --allow-run build.wac src/app.wac dist --title 'wac app'",
+  // Any static server will do: the page needs no special headers.
+  serve: "wac sh --allow-read --allow-net -c 'httpd -8080 dist'",
+  test: "wac test test",
+}

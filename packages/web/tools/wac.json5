@@ -1,0 +1,4 @@
+{
+  // The page builder, mapped beside `web` — `import { buildPage } from "webbuild"`.
+  exports: './build.wac',
+}

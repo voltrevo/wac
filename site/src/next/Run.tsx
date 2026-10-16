@@ -128,10 +128,9 @@ export default function Run() {
       <Section id="top" kicker="run it here" title={`${DEMOS.length} whole applications, in this browser`}>
         <P>
           These are not snippets and not a sandbox pretending to be one. Each is a complete wac
-          program, compiled to wasm, running on a worker, talking to a capability world on the
-          page&rsquo;s own thread. <Lead>Each file is exactly what{" "}
-          {m({ children: "wac task app:build --target browser" })} produces, copied
-          unmodified</Lead> — what you open here is the artifact you would build yourself.
+          program, compiled to wasm and built into one HTML file. <Lead>Each file is exactly what
+          its builder produces, copied unmodified</Lead> — the same builder a project of your own
+          uses, so what you open here is the artifact you would build yourself.
         </P>
         <div style={{ display: "grid", gap: 14, marginBottom: space.block }}>
           {DEMOS.map(({ file, title, what, src, key }) => (
@@ -161,20 +160,24 @@ export default function Run() {
         </P>
       </Section>
 
-      <Section id="how" kicker="what makes it possible" title="A worker, a page, and a shared buffer">
+      <Section id="how" kicker="what makes it possible" title="An await, a page, and for the shell a worker">
         <P>
-          A wac program expects to make a call and get an answer. The host&rsquo;s answers are
-          asynchronous, and a browser cannot block the page&rsquo;s thread. So the program runs on a
-          worker and parks on {m({ children: "Atomics.wait" })} against a{" "}
-          {m({ children: "SharedArrayBuffer" })} while the page does the work and writes the reply
-          back — asynchronous work, called synchronously, with none of the colouring that usually
-          spreads through everything that touches it.
+          Most of these are {m({ children: "packages/web" })} pages: {m({ children: "main(Page page)" })}, an{" "}
+          {m({ children: "async" })} function on the page&rsquo;s own thread. It changes the document
+          with plain calls and waits for the next click, frame or file with{" "}
+          {m({ children: "await" })}, and each wait hands control back to the browser until
+          something arrives. State is ordinary locals, the program reads top to bottom, and the
+          page needs nothing from the server that serves it.
         </P>
         <P>
-          That is also why this site registers a service worker: a{" "}
-          {m({ children: "SharedArrayBuffer" })} needs cross-origin isolation headers, and static
-          hosting cannot set them, so the page re-serves itself with the headers it needs and
-          reloads once. It is the reason a demo works here at all rather than a detail of the demo.
+          The shell and the desktop are different, because they run programs that expect to read a
+          file and get an answer. The host&rsquo;s answers are asynchronous, and a browser cannot
+          block the page&rsquo;s thread, so those run on a worker and park on{" "}
+          {m({ children: "Atomics.wait" })} against a {m({ children: "SharedArrayBuffer" })} while
+          the page does the work and writes the reply back. That is also why this site registers a
+          service worker: a {m({ children: "SharedArrayBuffer" })} needs cross-origin isolation
+          headers, and static hosting cannot set them, so the page re-serves itself with the
+          headers it needs and reloads once.
         </P>
       </Section>
 

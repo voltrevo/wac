@@ -1,5 +1,6 @@
-// Whether this program may run a host program: `run=ok` when `/bin/sh -c true` ran, and otherwise
-// `run=no` with what the host said.
+// Whether this program may run a host program.
+//
+// `run=ok` when `/bin/sh -c true` ran, and otherwise `run=no` with what the host said.
 //
 //   runner runprobe.worker.js "" run      ->  ok, if the runner itself may run programs
 //

@@ -1,0 +1,257 @@
+// Build a page: `<entry.wac>` exporting `async i32 main(Page page)` becomes one `index.html` that runs it.
+//
+//     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac src/app.wac dist
+//
+// **Three steps, all of them visible in the output directory.** A wrapper module, `page.wac`, gives the
+// host the four calls it makes — make a page, start the program, deliver an event, fire a timer — and
+// imports the program's `main`. `wac bindgen --js` turns the wrapper into `page.js`, the module with
+// the program inside it. `index.html` is that module and `host.js` — the browser's side, written below —
+// in one `<script type="module">`, so the page is a single file any static server can serve.
+//
+// **A program, not a script in someone else's language**, so a project outside this repository builds
+// a page with the `wac` it already has and this package as a dependency (`templates/webapp/`). It
+// runs `wac bindgen` as a command, which is why it needs `--allow-run`; `--wac <path>` names a binary
+// other than the one on `PATH`, and `--page <spec>` the module the wrapper imports `Page` from when the
+// project does not map this package as `web`.
+
+import { Core, Cli, Exec, FileResult, Sys } from "std";
+import { Vec } from "core";
+
+/** What a build was asked for. */
+struct Asked {
+  string entry;
+  string out;
+  string wac;
+  string pageSpec;
+  string title;
+}
+
+/** The arguments, or a usage line in `title` and empty `entry` when they do not make sense. */
+Asked askedOf(Cli cli) {
+  Asked a = Asked("", "", "wac", "web", "wac");
+  i32 argc = cli.argCount().wait();
+  string[] args = string[].filled(argc, "");
+  for (i32 k = 0; k < argc; k++) { args[k] = string.fromBytes(cli.arg(k).wait()); }
+  i32 i = 0;
+  i32 positional = 0;
+  while (i < argc) {
+    string w = args[i];
+    if ((w == "--wac" || w == "--page" || w == "--title") && i + 1 < argc) {
+      string v = args[i + 1];
+      if (w == "--wac") { a.wac = v; } else if (w == "--page") { a.pageSpec = v; } else { a.title = v; }
+      i += 2;
+      continue;
+    }
+    if (positional == 0) { a.entry = w; } else if (positional == 1) { a.out = w; }
+    positional++;
+    i++;
+  }
+  return a;
+}
+
+/** The parts of a relative path, with `.` dropped and `..` taken against what comes before it. */
+string[] partsOf(string path) {
+  Vec<string> out = Vec.create();
+  string rest = path;
+  while (true) {
+    i32 cut = rest.indexOf("/");
+    string p = cut < 0 ? rest : rest.slice(0, cut);
+    if (p == "..") {
+      if (out.len() > 0 && out.get(out.len() - 1) != "..") { out.pop(); } else { out.push(p); }
+    } else if (p != "" && p != ".") {
+      out.push(p);
+    }
+    if (cut < 0) { break; }
+    rest = rest.slice(cut + 1, rest.len());
+  }
+  string[] parts = string[].filled(out.len(), "");
+  for (i32 i = 0; i < out.len(); i++) { parts[i] = out.get(i); }
+  return parts;
+}
+
+/** Whether `path` is absolute or climbs above this directory. */
+bool leavesHere(string path) {
+  if (path.len() > 0 && path.slice(0, 1) == "/") { return true; }
+  string[] parts = partsOf(path);
+  return parts.len() > 0 && parts[0] == "..";
+}
+
+/** How a file in directory `from` names the file `to` — both relative to where the build runs. */
+export string relativeTo(string from, string to) {
+  string[] a = partsOf(from);
+  string[] b = partsOf(to);
+  i32 common = 0;
+  while (common < a.len() && common + 1 < b.len() && a[common] == b[common]) { common++; }
+  string out = "";
+  for (i32 i = common; i < a.len(); i++) { out = out + "../"; }
+  for (i32 i = common; i < b.len(); i++) { out = out + b[i] + (i + 1 < b.len() ? "/" : ""); }
+  return out.len() >= 3 && out.slice(0, 3) == "../" ? out : "./" + out;
+}
+
+/** The wrapper: the program's `main`, and the five calls the host makes. */
+export string wrapperFor(string entrySpec, string pageSpec) {
+  return "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
+       + "import { main } from \"\{entrySpec}\";\n"
+       + "import { Dom, Page, deliver, fileArrived, timerFired } from \"\{pageSpec}\";\n"
+       + "import { Ticket } from \"core\";\n"
+       + """
+
+           export Page __page(Dom dom) { return Page.create(dom); }
+
+           export Ticket<i32> __start(Page page) {
+             schedule page.take;
+             Ticket<i32> run = main(page);
+             page.drain();
+             return run;
+           }
+
+           export void __event(Page page, string kind, string id, string value, i32 x, i32 y) {
+             deliver(page, kind, id, value, x, y);
+           }
+
+           export void __timer(Page page, i32 id) { timerFired(page, id); }
+
+           export void __file(Page page, bool ok, string name, u8[] bytes, string error) {
+             fileArrived(page, ok, name, bytes, error);
+           }
+           """;
+}
+
+/**
+ * The browser's side: the document as a `Dom`, and each event, timer and file handed back. No
+ * decisions are made here — everything a page does is in `src/page.wac`, where it is tested without
+ * a browser.
+ */
+export string hostScript() {
+  return """
+      {
+        const root = document.getElementById("app");
+        const listening = new Set();
+        let page = null;
+        const byId = (id) => document.getElementById(id);
+        const canvas = (id, what) => {
+          const el = byId(id);
+          const ctx = el && el.getContext ? el.getContext("2d") : null;
+          if (!ctx) throw new Error(what + ": no canvas with id " + JSON.stringify(id));
+          return [el, ctx];
+        };
+        const blit = (ctx, w, h, rgba, x, y) => {
+          const img = ctx.createImageData(w, h);
+          img.data.set(rgba);
+          ctx.putImageData(img, x, y);
+        };
+        // Where in the element the pointer is, in the element's own pixels: a canvas's backing store
+        // rather than its size on screen, so a scaled canvas still answers in the units it is drawn in.
+        const within = (el, ev) => {
+          if (ev.clientX === undefined) return [0, 0];
+          const r = el.getBoundingClientRect();
+          const sx = el.width !== undefined && r.width > 0 ? el.width / r.width : 1;
+          const sy = el.height !== undefined && r.height > 0 ? el.height / r.height : 1;
+          return [Math.round((ev.clientX - r.left) * sx), Math.round((ev.clientY - r.top) * sy)];
+        };
+        const dom = Dom.of(
+          (html) => { root.innerHTML = html; },
+          (id, html) => { const el = byId(id); if (el) el.innerHTML = html; },
+          (id, text) => { const el = byId(id); if (el) el.textContent = text; },
+          (id, value) => { const el = byId(id); if (el) el.value = value; },
+          (id, style) => { const el = byId(id); if (el) el.setAttribute("style", style); },
+          (id) => { const el = byId(id); return el && "value" in el ? String(el.value) : ""; },
+          (selector, kind) => {
+            const key = selector + " " + kind;
+            if (listening.has(key)) return;
+            listening.add(key);
+            root.addEventListener(kind, (ev) => {
+              const el = ev.target instanceof Element ? ev.target.closest(selector) : null;
+              if (!el || !root.contains(el)) return;
+              if (kind === "submit") ev.preventDefault();
+              const value = kind === "keydown" ? ev.key : ("value" in el ? String(el.value) : "");
+              const [x, y] = within(el, ev);
+              __event(page, kind, el.id || "", value, x, y);
+            });
+          },
+          (title) => { document.title = title; },
+          (line) => { console.log(line); },
+          () => performance.now(),
+          (id, ms) => { setTimeout(() => __timer(page, id), ms); },
+          (id) => { requestAnimationFrame(() => __timer(page, id)); },
+          (id, w, h, rgba) => {
+            const [el, ctx] = canvas(id, "drawPixels");
+            // Resizing clears a canvas, so only when the size changes.
+            if (el.width !== w) el.width = w;
+            if (el.height !== h) el.height = h;
+            blit(ctx, w, h, rgba, 0, 0);
+          },
+          (id, x, y, w, h, rgba) => { blit(canvas(id, "drawPixelsIn")[1], w, h, rgba, x, y); },
+          (name, bytes) => {
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(new Blob([bytes]));
+            a.download = name;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+          },
+        );
+        // Files arrive whether or not the program has asked yet; the page keeps them until it does.
+        const take = (files) => {
+          for (const f of files ?? []) {
+            f.arrayBuffer().then(
+              (buf) => __file(page, true, f.name, new Uint8Array(buf), ""),
+              (e) => __file(page, false, f.name, new Uint8Array(0), String(e?.message ?? e)));
+          }
+        };
+        root.addEventListener("change", (ev) => { if (ev.target?.files) take(ev.target.files); });
+        // Without preventing dragover a dropped file replaces the page.
+        document.addEventListener("dragover", (ev) => ev.preventDefault());
+        document.addEventListener("drop", (ev) => { ev.preventDefault(); take(ev.dataTransfer?.files); });
+        page = __page(dom);
+        __start(page);
+      }
+      """;
+}
+
+/** The page: the module and the host in one script. */
+export string indexFor(string title, string module) {
+  return "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+       + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+       + "<title>" + title + "</title>\n</head>\n<body>\n<div id=\"app\"></div>\n"
+       + "<script type=\"module\">\n" + module + "\n" + hostScript() + "</script>\n</body>\n</html>\n";
+}
+
+export i32 buildPage(Core core, Cli cli) {
+  Asked a = askedOf(cli);
+  if (a.entry == "" || a.out == "") {
+    cli.writeErr("usage: build.wac <entry.wac> <out-dir> [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
+    return 2;
+  }
+  // **The wrapper is a module of this project**, so it is written inside it: from anywhere else its
+  // imports would cross a project boundary, and the build would fail naming an import rather than this.
+  if (leavesHere(a.out)) {
+    cli.writeErr("build.wac: \{a.out}: the output directory must be inside this directory, since the page's wrapper is written there and imports the program\n".toBytes());
+    return 2;
+  }
+  cli.mkdir(a.out, true).wait();
+  string wrapper = a.out + "/page.wac";
+  // A path names the file from here, and the wrapper sits in `out`; anything else is a mapped name.
+  bool pagePath = a.pageSpec.len() > 0 && (a.pageSpec.slice(0, 1) == "." || a.pageSpec.slice(0, 1) == "/");
+  string pageSpec = pagePath ? relativeTo(a.out, a.pageSpec) : a.pageSpec;
+  string entrySpec = relativeTo(a.out, a.entry);
+  cli.writeFile(wrapper, wrapperFor(entrySpec, pageSpec).toBytes()).wait();
+  string js = a.out + "/page.js";
+  Exec made = cli.exec(a.wac, ["bindgen", wrapper, js, "--js"], u8[]()).wait();
+  if (!made.ok()) {
+    cli.writeErr(made.stderr);
+    cli.writeErr(made.stdout);
+    if (made.error != "") { cli.writeErr("build.wac: \{a.wac}: \{made.error}\n".toBytes()); }
+    return 1;
+  }
+  FileResult module = cli.readFile(js).wait();
+  if (!module.ok) {
+    cli.writeErr("build.wac: \{js}: \{module.error}\n".toBytes());
+    return 1;
+  }
+  string index = a.out + "/index.html";
+  cli.writeFile(index, indexFor(a.title, string.fromBytes(module.bytes)).toBytes()).wait();
+  core.log("\{index}: \{module.bytes.len()} bytes of module");
+  return 0;
+}
+
+export i32 main(Sys sys) { return buildPage(sys.core, sys.cli); }

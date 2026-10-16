@@ -1,6 +1,7 @@
 // A page that opens a real packfile — the object database, with no network anywhere near it.
 //
-//   wac task app:build packages/git/example/gitpage.wac --target browser -o page/index.html
+//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+//       packages/git/example/gitpage.wac .cache/gitpage --page ./packages/web
 //
 // Drop `.git/objects/pack/pack-*.pack` from any repository on your machine. Nothing is fetched and
 // nothing is uploaded: the bytes go from the file input into wasm and the answers come back out.
@@ -22,8 +23,9 @@
 // we shipped. `git verify-pack -v` on the same file, on your machine, prints the same object count
 // and the same names — which is a check anyone can run and nobody has to trust us for.
 
-import { Cli, Core, Event, Page, Pending, Picked } from "std";
-import { Vec } from "core";
+import { Event, Page, Picked } from "../../web";
+import { Ticket, Vec, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt,
+         html.footer, html.h1, html.input, html.p, html.pre, html.span, html.style } from "core";
 import { encode } from "../../codec/src/hex.wac";
 import { PackIndex } from "../src/idx.wac";
 import { Got, Indexed, Pack, indexPack, objectNamed, openIndexed } from "../src/pack.wac";
@@ -33,6 +35,31 @@ import { Entry, Tree, parseTree } from "../src/tree.wac";
 /** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/git/example/gitpage.wac";
+
+static string STYLE =
+  ":root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
+  "        --dim: #5b7073; --key: #0e8c78; }" +
+  "@media (prefers-color-scheme: dark) {" +
+  "  :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
+  "          --dim: #8ba3a4; --key: #46d9c0; } }" +
+  "body { background: var(--ink); color: var(--text); }" +
+  "#tool { max-width: 52rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
+  "h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
+  "p.sub { margin: 0 0 1.4rem; color: var(--dim); font-size: .95rem; max-width: 40rem; }" +
+  "code { font-family: ui-monospace, monospace; font-size: .9em; }" +
+  ".row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
+  "input[type=file] { font: inherit; font-size: .85rem; color: var(--dim); }" +
+  "dl { display: grid; grid-template-columns: max-content 1fr; gap: .55rem 1.1rem;" +
+  "     margin: 1.4rem 0 0; align-items: baseline; }" +
+  "dt { color: var(--dim); font-size: .78rem; letter-spacing: .09em; text-transform: uppercase; }" +
+  "dd { margin: 0; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums;" +
+  "     word-break: break-all; }" +
+  ".dim { color: var(--dim); }" +
+  "pre { background: var(--slab); border: 1px solid var(--line); border-radius: 6px;" +
+  "      padding: .8rem; overflow-x: auto; font: 12.5px/1.6 ui-monospace, monospace;" +
+  "      margin: .6rem 0 0; }" +
+  "footer { margin-top: 2.2rem; font-size: .85rem; color: var(--dim); }" +
+  "footer a { color: var(--key); }";
 
 /**
  * The largest pack this page will take on, in bytes.
@@ -53,76 +80,42 @@ static i32 SHOWN = 200;
 /** Twenty raw bytes as forty hex characters. */
 string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
 
-// **Nothing here escapes anything, and that is a property of the page rather than an oversight.**
-// Two helpers stood here — an HTML escaper and a "first line of the message" — and neither had a
-// caller. `page.setText` is `textContent`, so a commit message containing `<script>` lands as those
-// characters; the one `render` call below is a static shell with no data in it. An escaper kept
-// beside code that never builds markup is worse than none: it reads as though somewhere here does.
-// If this page ever interpolates a commit into `render`, escaping is required and this is the
-// paragraph that says so. issues/system 0009.
+// **Nothing here escapes anything, because nothing has to.** `page.setText` is `textContent`, so a
+// commit message containing `<script>` lands as those characters, and `render` escapes every string
+// in the tree it is handed (`packages/web`) — the markup below could hold a commit and still be safe.
 
-export i32 page(Core core, Cli cli, Page page) {
-  page.title("wac: a packfile, opened in a tab").wait();
+export async i32 main(Page page) {
+  page.title("wac: a packfile, opened in a tab");
   page.render(
-    "<style>" +
-    "  :root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
-    "          --dim: #5b7073; --key: #0e8c78; }" +
-    "  @media (prefers-color-scheme: dark) {" +
-    "    :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
-    "            --dim: #8ba3a4; --key: #46d9c0; } }" +
-    "  body { background: var(--ink); color: var(--text); }" +
-    "  #tool { max-width: 52rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
-    "  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
-    "  p.sub { margin: 0 0 1.4rem; color: var(--dim); font-size: .95rem; max-width: 40rem; }" +
-    "  code { font-family: ui-monospace, monospace; font-size: .9em; }" +
-    "  #row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
-    "  input[type=file] { font: inherit; font-size: .85rem; color: var(--dim); }" +
-    "  select { font: inherit; font-size: .85rem; max-width: 100%; padding: .3rem;" +
-    "           background: var(--slab); color: var(--text); border: 1px solid var(--line);" +
-    "           border-radius: 5px; font-family: ui-monospace, monospace; }" +
-    "  dl { display: grid; grid-template-columns: max-content 1fr; gap: .55rem 1.1rem;" +
-    "       margin: 1.4rem 0 0; align-items: baseline; }" +
-    "  dt { color: var(--dim); font-size: .78rem; letter-spacing: .09em; text-transform: uppercase; }" +
-    "  dd { margin: 0; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums;" +
-    "       word-break: break-all; }" +
-    "  .dim { color: var(--dim); }" +
-    "  .key { color: var(--key); }" +
-    "  pre { background: var(--slab); border: 1px solid var(--line); border-radius: 6px;" +
-    "        padding: .8rem; overflow-x: auto; font: 12.5px/1.6 ui-monospace, monospace;" +
-    "        margin: .6rem 0 0; }" +
-    "  footer { margin-top: 2.2rem; font-size: .85rem; color: var(--dim); }" +
-    "  footer a { color: var(--key); }" +
-    "</style>" +
-    "<div id=\"tool\">" +
-    "  <h1>a packfile, opened in a tab</h1>" +
-    "  <p class=\"sub\">Drop <code>.git/objects/pack/pack-*.pack</code> from any repository on your" +
-    "    machine. There is no network here — a page cannot open a socket, and this does not need" +
-    "    one. The pack arrives with its index thrown away, and" +
-    "    <code>packages/git</code> rebuilds it: every object header, every zlib stream, and every" +
-    "    delta resolved against what came before it. Check the answer with" +
-    "    <code>git verify-pack -v</code> on the same file.</p>" +
-    "  <div id=\"row\">" +
-    "    <input type=\"file\" id=\"f\" accept=\".pack\">" +
-    "    <span id=\"note\" class=\"dim\">or drop one anywhere on this page</span>" +
-    "  </div>" +
-    "  <dl>" +
-    "    <dt>pack</dt><dd><span id=\"packname\" class=\"dim\">nothing yet</span></dd>" +
-    "    <dt>objects</dt><dd><b id=\"count\">0</b> <span id=\"kinds\" class=\"dim\"></span></dd>" +
-    "    <dt>took</dt><dd class=\"dim\"><span id=\"ms\">0</span> ms to rebuild the index —" +
-      " delta depth costs far more than size does</dd>" +
-    "  </dl>" +
-    "  <div id=\"row\">" +
-    "    <button id=\"prev\">‹ older</button>" +
-    "    <button id=\"next\">newer ›</button>" +
-    "    <span id=\"where\" class=\"dim\">no commits loaded</span>" +
-    "  </div>" +
-    "  <pre id=\"detail\">Drop a pack to begin.</pre>" +
-    "  <footer>The object database, the delta resolver and this page are wac. " +
-    "    <a href=\"\{SOURCE}\">source</a>.</footer>" +
-    "</div>"
-  ).wait();
-  page.on("#prev", "click").wait();
-  page.on("#next", "click").wait();
+    <div id="tool">
+      <style>{STYLE}</style>
+      <h1>a packfile, opened in a tab</h1>
+      <p class="sub">Drop <code>.git/objects/pack/pack-*.pack</code> from any repository on your machine.
+        There is no network here — a page cannot open a socket, and this does not need one. The pack
+        arrives with its index thrown away, and <code>packages/git</code> rebuilds it: every object
+        header, every zlib stream, and every delta resolved against what came before it. Check the
+        answer with <code>git verify-pack -v</code> on the same file.</p>
+      <div class="row">
+        <input type="file" id="f" accept=".pack"/>
+        <span id="note" class="dim">or drop one anywhere on this page</span>
+      </div>
+      <dl>
+        <dt>pack</dt><dd><span id="packname" class="dim">nothing yet</span></dd>
+        <dt>objects</dt><dd><b id="count">0</b> <span id="kinds" class="dim"></span></dd>
+        <dt>took</dt><dd class="dim"><span id="ms">0</span> ms to rebuild the index — delta depth
+          costs far more than size does</dd>
+      </dl>
+      <div class="row">
+        <button id="prev">‹ older</button>
+        <button id="next">newer ›</button>
+        <span id="where" class="dim">no commits loaded</span>
+      </div>
+      <pre id="detail">Drop a pack to begin.</pre>
+      <footer>The object database, the delta resolver and this page are wac. <a href={SOURCE}>source</a>.</footer>
+    </div>
+  );
+  page.on("#prev", "click");
+  page.on("#next", "click");
 
   // Held across iterations, because a change event has to reach the same pack the file event built.
   // There is no `Pack?` worth carrying — an empty index reads as "nothing loaded" on its own.
@@ -133,37 +126,38 @@ export i32 page(Core core, Cli cli, Page page) {
   Vec<string> commits = Vec.create();
   i32 at = 0;
 
-  Pending<Event> ev = page.nextEvent();
-  Pending<Picked> file = page.nextFile();
+  Ticket<Event> ev = page.nextEvent();
+  Ticket<Picked> file = page.nextFile();
 
   while (true) {
-    i32 which = core.waitAny([ev.id, file.id], -1);
-    if (which < 0) { return 0; }
+    await Ticket.any(ev, file);
 
-    if (which == 1) {
-      Picked f = file.wait();
+    if (file.settled()) {
+      Picked f = file.value();
       file = page.nextFile();
       if (!f.ok) {
-        page.setText("note", "could not read it: \{f.error}").wait();
+        page.setText("note", "could not read it: \{f.error}");
         continue;
       }
       if (f.bytes.len() > LIMIT) {
         page.setText("note", "\{f.name} is \{f.bytes.len()}"
-          + " bytes; this page stops at \{LIMIT} so it never looks hung").wait();
+          + " bytes; this page stops at \{LIMIT} so it never looks hung");
         continue;
       }
 
-      // Said before the work, not after: rebuilding an index means inflating every object and
+      // Said before the work, and shown: rebuilding an index means inflating every object and
       // walking every delta chain, which took twelve seconds for one megabyte of this repository's
-      // own history. A page that goes quiet for that long looks broken.
-      page.setText("note", "reading \{f.name}…").wait();
-      i64 began = core.monotonicNanos().wait();
+      // own history. The work runs on the page's own thread, so the note is only on screen if the
+      // browser paints before it starts — which is what waiting for `painted` is.
+      page.setText("note", "reading \{f.name}…");
+      await page.painted();
+      f64 began = page.now();
       match (indexPack(f.bytes)) {
         Unindexable(why): {
           // Said, not swallowed. A file that is not a pack is the commonest thing to drop here, and
           // "nothing happened" would leave the reader with no idea which of us was wrong.
-          page.setText("note", "not a packfile this can read: \{why}").wait();
-          page.setText("detail", "").wait();
+          page.setText("note", "not a packfile this can read: \{why}");
+          page.setText("detail", "");
           continue;
         }
         Thin(bases): {
@@ -172,27 +166,27 @@ export i32 page(Core core, Cli cli, Page page) {
           // in it. Naming that is more useful than refusing.
           page.setText("note", "\{f.name} is a *thin* pack: \{bases.len()}"
             + " of its deltas name a base that is not inside it, so it needs the repository it came"
-            + " from. `git index-pack --fix-thin` completes one.").wait();
-          page.setText("detail", "").wait();
+            + " from. `git index-pack --fix-thin` completes one.");
+          page.setText("detail", "");
           continue;
         }
         Built(built): {
           idx = built;
           packBytes = f.bytes;
-          i64 took = (core.monotonicNanos().wait() - began) / 1000000;
-          page.setText("note", "").wait();
-          page.setText("packname", "\{f.name} — \{f.bytes.len()} bytes").wait();
-          page.setText("count", "\{idx.count}").wait();
-          page.setText("ms", "\{took as@ i32}").wait();
+          f64 took = page.now() - began;
+          page.setText("note", "");
+          page.setText("packname", "\{f.name} — \{f.bytes.len()} bytes");
+          page.setText("count", "\{idx.count}");
+          page.setText("ms", "\{took as~ i32}");
           commits = commitsIn(page, packBytes, idx);
           at = 0;
           showAt(page, packBytes, idx, commits, at);
         }
       }
-      continue;
     }
 
-    Event e = ev.wait();
+    if (!ev.settled()) { continue; }
+    Event e = ev.value();
     ev = page.nextEvent();
     if (e.kind == "click" && commits.len() > 0) {
       if (e.id == "prev" && at + 1 < commits.len()) { at = at + 1; }
@@ -234,22 +228,22 @@ Vec<string> commitsIn(Page page, u8[] pack, PackIndex idx) {
   }
 
   page.setText("kinds", "— \{commits} commits, \{trees} trees, "
-    + "\{blobs} blobs, \{tags} tags").wait();
+    + "\{blobs} blobs, \{tags} tags");
   return found;
 }
 
 /** The commit at `at`, with where it sits in the list. */
 void showAt(Page page, u8[] pack, PackIndex idx, const Vec<string> commits, i32 at) {
   if (commits.len() == 0) {
-    page.setText("where", "no commits in this pack").wait();
+    page.setText("where", "no commits in this pack");
     // Legal, and worth saying rather than leaving blank: a pack is a bag of objects, and one sent
     // for a single blob has no commit in it at all.
     page.setText("detail", "This pack holds no commits — which is legal: a pack is a bag of "
-      + "objects, and one sent for a single blob has none.").wait();
+      + "objects, and one sent for a single blob has none.");
     return;
   }
   page.setText("where", "commit \{at + 1} of \{commits.len()}"
-    + (commits.len() == SHOWN ? " shown" : "")).wait();
+    + (commits.len() == SHOWN ? " shown" : ""));
   detail(page, pack, idx, commits.get(at));
 }
 
@@ -262,17 +256,17 @@ void detail(Page page, u8[] pack, PackIndex idx, string hex) {
     if (idx.hexAt(i) == hex) { at = i; break; }
   }
   if (at < 0) {
-    page.setText("detail", "no object named \{hex} in this pack").wait();
+    page.setText("detail", "no object named \{hex} in this pack");
     return;
   }
   u8[] name = u8[].filled(20, 0);
   for (i32 k = 0; k < 20; k++) { name[k] = idx.names[at * 20 + k]; }
 
   match (objectNamed(p, name)) {
-    Absent(why): { page.setText("detail", "could not read it: \{why}").wait(); }
+    Absent(why): { page.setText("detail", "could not read it: \{why}"); }
     Found(kind, data): {
       match (parseCommit(data)) {
-        Malformed(why): { page.setText("detail", "not a commit: \{why}").wait(); }
+        Malformed(why): { page.setText("detail", "not a commit: \{why}"); }
         Understood(c): {
           // Names are twenty raw bytes here, not text — `hexOf` is where they become readable, and
           // doing it at the edge rather than in the parser is why `objectNamed` can compare them
@@ -285,7 +279,7 @@ void detail(Page page, u8[] pack, PackIndex idx, string hex) {
           out = out + "author  \{c.author.name}\n";
           out = out + "\n\{c.message}\n";
           out = out + "\n--- the tree it names ---\n\{treeListing(p, idx, hexOf(c.tree))}";
-          page.setText("detail", out).wait();
+          page.setText("detail", out);
         }
       }
     }

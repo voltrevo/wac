@@ -13,7 +13,7 @@
 // **Skipped loudly** when there is no browser, in the same words `browser_live.test.ts` uses — a
 // skip that reads like a pass is how a differential comes to compare nothing.
 
-import { buildApp } from "../../platform/build.ts";
+import { buildPage } from "../../../harness/buildPage.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -60,7 +60,7 @@ if (cannotBecause !== "") {
   );
 }
 
-/** Serve a directory with the two headers a cross-origin-isolated page needs. */
+/** Serve a directory. A page built by `packages/web` needs no special headers. */
 function serve(dir: string): { port: number; stop: () => Promise<void> } {
   const server = Deno.serve({ port: 0, onListen: () => {} }, async (req) => {
     const name = new URL(req.url).pathname.replace(/^\//, "") || "index.html";
@@ -68,8 +68,6 @@ function serve(dir: string): { port: number; stop: () => Promise<void> } {
       return new Response(await Deno.readFile(`${dir}/${name}`), {
         headers: {
           "content-type": "text/html; charset=utf-8",
-          "cross-origin-opener-policy": "same-origin",
-          "cross-origin-embedder-policy": "require-corp",
         },
       });
     } catch {
@@ -90,7 +88,7 @@ Deno.test({
     let browser;
     let http: { port: number; stop(): Promise<void> } | undefined;
     try {
-      await buildApp("packages/raster/example/rasterdesk.wac", `${dir}/index.html`, {}, "browser");
+      await buildPage("packages/raster/example/rasterdesk.wac", dir);
       const port = (http = serve(dir)).port;
       // --no-proxy-server: this container sets HTTP_PROXY, and Chromium would send 127.0.0.1
       // through Squid, which cannot reach it.
@@ -100,7 +98,7 @@ Deno.test({
       page.on("pageerror", (e: Error) => failures.push(String(e)));
       await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
 
-      // The program draws and exits, so wait for the canvas to have been sized by `drawPixels`
+      // Wait for the canvas to have been sized by `drawPixels`
       // rather than for a fixed time — the same lesson as the TLS fixture earlier today.
       // **Page code as strings, not closures**, as `browser_live.test.ts` does: `document` is not
       // in Deno's type environment, and a closure would have to be type-checked against types the
@@ -111,8 +109,7 @@ Deno.test({
         undefined,
         { timeout: 30_000 },
       ).catch(async (e: Error) => {
-        // What the page actually says, because "timed out" names nothing. The launcher prints the
-        // program's output and its exit line into the body.
+        // What the page actually says, because "timed out" names nothing.
         const body = await page.evaluate("document.body.innerText") as string;
         throw new Error(`${e.message}
 the page says: ${JSON.stringify(body.slice(0, 400))}

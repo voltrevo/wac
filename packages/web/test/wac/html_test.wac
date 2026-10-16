@@ -1,0 +1,31 @@
+// `htmlOf` — a markup tree as the text a browser parses, with nothing in it read as markup that was
+// not built as markup.
+
+import { Check } from "./check.wac";
+import { Attr, Node, html.p, html.b, html.br, html.input, html.a } from "core";
+import { htmlOf } from "../../src/page.wac";
+
+export string test_elements_text_and_attributes() {
+  Check t = Check.create();
+  t.eqStr(htmlOf(<p class="note">Clicks: <b id="n">0</b></p>), "<p class=\"note\">Clicks: <b id=\"n\">0</b></p>",
+          "an element, an attribute and a nested element");
+  t.eqStr(htmlOf(Node.Fragment([Node.Text("a"), <b>c</b>])), "a<b>c</b>", "a fragment is its children");
+  return t.report();
+}
+
+export string test_text_and_attribute_values_are_escaped() {
+  Check t = Check.create();
+  string evil = "<script>alert(\"x\")</script> & more";
+  t.eqStr(htmlOf(<p>{Node.Text(evil)}</p>),
+          "<p>&lt;script&gt;alert(\"x\")&lt;/script&gt; &amp; more</p>", "text is data");
+  t.eqStr(htmlOf(<a href={evil}>x</a>),
+          "<a href=\"&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; more\">x</a>",
+          "an attribute value cannot end its quotes");
+  return t.report();
+}
+
+export string test_a_void_element_has_no_end_tag() {
+  Check t = Check.create();
+  t.eqStr(htmlOf(<p>a<br/>b<input id="q"/></p>), "<p>a<br>b<input id=\"q\"></p>", "br and input stand alone");
+  return t.report();
+}

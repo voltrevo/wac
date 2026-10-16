@@ -1,6 +1,7 @@
 // Life, seeded from a file you drop — so the pattern is yours rather than one we chose.
 //
-//   wac task app:build packages/platform/example/life.wac --target browser -o page/index.html
+//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+//       packages/platform/example/life.wac .cache/life --page ./packages/web
 //
 // Conway's rule is four lines. What makes this worth a page is the seed: drop any file and its bytes
 // become the starting grid, one bit per cell. A photograph, a wasm module, this page's own source —
@@ -20,10 +21,35 @@
 // cells at whatever rate the tab allows, in WebAssembly compiled from wac, and the millisecond
 // counter is not decoration.
 
-import { Cli, Core, Event, Page, Pending, Picked } from "std";
+import { Event, Page, Picked } from "../../web";
+import { Ticket, html.a, html.b, html.button, html.canvas, html.code, html.div, html.footer, html.h1,
+         html.input, html.p, html.span, html.style } from "core";
 
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/life.wac";
+
+static string STYLE =
+  ":root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
+  "        --dim: #5b7073; --key: #0e8c78; }" +
+  "@media (prefers-color-scheme: dark) {" +
+  "  :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
+  "          --dim: #8ba3a4; --key: #46d9c0; } }" +
+  "body { background: var(--ink); color: var(--text); }" +
+  "#tool { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
+  "h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
+  "p.sub { margin: 0 0 1.2rem; color: var(--dim); font-size: .95rem; }" +
+  "canvas { width: 100%; image-rendering: pixelated; border: 1px solid var(--line);" +
+  "         border-radius: 6px; background: #101f23; display: block; }" +
+  "#row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
+  "button { font: inherit; font-size: .88rem; padding: .3rem .8rem; cursor: pointer;" +
+  "         color: var(--text); background: var(--slab); border: 1px solid var(--line);" +
+  "         border-radius: 5px; }" +
+  "button:hover { border-color: var(--key); color: var(--key); }" +
+  "input[type=file] { font: inherit; font-size: .85rem; color: var(--dim); }" +
+  "code { font-family: ui-monospace, monospace; font-size: .9em; }" +
+  ".dim { color: var(--dim); font-size: .88rem; }" +
+  "footer { margin-top: 1.6rem; font-size: .85rem; color: var(--dim); }" +
+  "footer a { color: var(--key); }";
 
 static i32 W = 128;
 static i32 H = 96;
@@ -75,7 +101,7 @@ void paint(Page page, u8[] cells, u8[] rgba) {
       }
     }
   }
-  page.drawPixels("c", W * SCALE, H * SCALE, rgba).wait();
+  page.drawPixels("c", W * SCALE, H * SCALE, rgba);
 }
 
 /**
@@ -92,53 +118,30 @@ void sow(u8[] cells, u8[] seed) {
   }
 }
 
-export i32 page(Core core, Cli cli, Page page) {
-  page.title("wac: life, from a file you drop").wait();
+export async i32 main(Page page) {
+  page.title("wac: life, from a file you drop");
   page.render(
-    "<style>" +
-    "  :root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
-    "          --dim: #5b7073; --key: #0e8c78; }" +
-    "  @media (prefers-color-scheme: dark) {" +
-    "    :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
-    "            --dim: #8ba3a4; --key: #46d9c0; } }" +
-    "  body { background: var(--ink); color: var(--text); }" +
-    "  #tool { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
-    "  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
-    "  p.sub { margin: 0 0 1.2rem; color: var(--dim); font-size: .95rem; }" +
-    "  canvas { width: 100%; image-rendering: pixelated; border: 1px solid var(--line);" +
-    "           border-radius: 6px; background: #101f23; display: block; }" +
-    "  #row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
-    "  button { font: inherit; font-size: .88rem; padding: .3rem .8rem; cursor: pointer;" +
-    "           color: var(--text); background: var(--slab); border: 1px solid var(--line);" +
-    "           border-radius: 5px; }" +
-    "  button:hover { border-color: var(--key); color: var(--key); }" +
-    "  input[type=file] { font: inherit; font-size: .85rem; color: var(--dim); }" +
-    "  code { font-family: ui-monospace, monospace; font-size: .9em; }" +
-    "  .dim { color: var(--dim); font-size: .88rem; }" +
-    "  footer { margin-top: 1.6rem; font-size: .85rem; color: var(--dim); }" +
-    "  footer a { color: var(--key); }" +
-    "</style>" +
-    "<div id=\"tool\">" +
-    "  <h1>life, from a file you drop</h1>" +
-    "  <p class=\"sub\">Conway&rsquo;s rule over 128&times;96 cells, in wac. Drop any file and its" +
-    "    bytes become the seed, one bit per cell — a photograph and a <code>.zip</code> behave" +
-    "    completely differently, because a compressed file is the closest thing on your disk to" +
-    "    random soup. This one proves nothing; it is here to be played with.</p>" +
-    "  <canvas id=\"c\"></canvas>" +
-    "  <div id=\"row\">" +
-    "    <button id=\"go\">pause</button>" +
-    "    <button id=\"again\">re-seed</button>" +
-    "    <input type=\"file\" id=\"f\">" +
-    "    <span id=\"note\" class=\"dim\">or drop one anywhere on this page</span>" +
-    "  </div>" +
-    "  <p class=\"dim\">generation <b id=\"gen\">0</b>, <b id=\"live\">0</b> alive," +
-    "    <span id=\"ms\">0</span> ms a step</p>" +
-    "  <footer>The rule, the rendering and this page are wac. " +
-    "    <a href=\"\{SOURCE}\">source</a>.</footer>" +
-    "</div>"
-  ).wait();
-  page.on("#go", "click").wait();
-  page.on("#again", "click").wait();
+    <div id="tool">
+      <style>{STYLE}</style>
+      <h1>life, from a file you drop</h1>
+      <p class="sub">Conway’s rule over 128×96 cells, in wac. Drop any file and its bytes become the
+        seed, one bit per cell — a photograph and a <code>.zip</code> behave completely differently,
+        because a compressed file is the closest thing on your disk to random soup. This one proves
+        nothing; it is here to be played with.</p>
+      <canvas id="c"></canvas>
+      <div id="row">
+        <button id="go">pause</button>
+        <button id="again">re-seed</button>
+        <input type="file" id="f"/>
+        <span id="note" class="dim">or drop one anywhere on this page</span>
+      </div>
+      <p class="dim">generation <b id="gen">0</b>, <b id="live">0</b> alive,
+        <span id="ms">0</span> ms a step</p>
+      <footer>The rule, the rendering and this page are wac. <a href={SOURCE}>source</a>.</footer>
+    </div>
+  );
+  page.on("#go", "click");
+  page.on("#again", "click");
 
   u8[] cells = u8[].filled(W * H, 0);
   u8[] next = u8[].filled(W * H, 0);
@@ -152,60 +155,57 @@ export i32 page(Core core, Cli cli, Page page) {
   i32 gen = 0;
   bool running = true;
 
-  Pending<Event> ev = page.nextEvent();
-  Pending<Picked> file = page.nextFile();
-  Pending<i64> tick = core.sleepMillis(60);
+  Ticket<Event> ev = page.nextEvent();
+  Ticket<Picked> file = page.nextFile();
+  Ticket<f64> tick = page.sleep(60);
 
   while (true) {
-    // Three things to wait on and one call that waits on all of them — the same `waitAny` a relay
-    // uses over two sockets. A frame timer is a ticket like any other, which is the argument for
-    // events being tickets rather than callbacks.
-    i32 which = core.waitAny([ev.id, file.id, tick.id], -1);
-    if (which < 0) { return 0; }
+    // Three things to wait on and one `await` for whichever comes first. A frame timer is a ticket
+    // like any other, which is the argument for events being tickets rather than callbacks.
+    await Ticket.any(ev, file, tick);
 
-    if (which == 3) {
-      tick.wait();
-      tick = core.sleepMillis(60);
+    if (tick.settled()) {
+      tick = page.sleep(60);
       if (running) {
-        i64 began = core.monotonicNanos().wait();
+        f64 began = page.now();
         step(cells, next);
         for (i32 i = 0; i < W * H; i++) { cells[i] = next[i]; }
-        i64 took = (core.monotonicNanos().wait() - began) / 1000000;
+        f64 took = page.now() - began;
         gen = gen + 1;
         i32 live = 0;
         for (i32 i = 0; i < W * H; i++) { live = live + cells[i] as i32; }
         paint(page, cells, rgba);
-        page.setText("gen", "\{gen}").wait();
-        page.setText("live", "\{live}").wait();
-        page.setText("ms", "\{took as@ i32}").wait();
+        page.setText("gen", "\{gen}");
+        page.setText("live", "\{live}");
+        page.setText("ms", "\{took as~ i32}");
       }
-      continue;
     }
 
-    if (which == 2) {
-      Picked f = file.wait();
+    if (file.settled()) {
+      Picked f = file.value();
       file = page.nextFile();
       if (!f.ok) {
-        page.setText("note", "could not read it: \{f.error}").wait();
-        continue;
+        page.setText("note", "could not read it: \{f.error}");
+      } else {
+        seed = f.bytes;
+        sow(cells, seed);
+        gen = 0;
+        paint(page, cells, rgba);
+        page.setText("note", "\{f.name} — \{f.bytes.len()} bytes of seed");
       }
-      seed = f.bytes;
-      sow(cells, seed);
-      gen = 0;
-      paint(page, cells, rgba);
-      page.setText("note", "\{f.name} — \{f.bytes.len()} bytes of seed").wait();
-      continue;
     }
 
-    Event e = ev.wait();
-    ev = page.nextEvent();
-    if (e.kind == "click" && e.id == "go") {
-      running = !running;
-      page.setText("go", running ? "pause" : "run").wait();
-    } else if (e.kind == "click" && e.id == "again") {
-      sow(cells, seed);
-      gen = 0;
-      paint(page, cells, rgba);
+    if (ev.settled()) {
+      Event e = ev.value();
+      ev = page.nextEvent();
+      if (e.kind == "click" && e.id == "go") {
+        running = !running;
+        page.setText("go", running ? "pause" : "run");
+      } else if (e.kind == "click" && e.id == "again") {
+        sow(cells, seed);
+        gen = 0;
+        paint(page, cells, rgba);
+      }
     }
   }
 }

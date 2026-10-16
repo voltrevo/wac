@@ -7,7 +7,7 @@
 //
 // A program is a `.wac` file outside a `test/` directory exporting `main` or `page`. That is the
 // whole rule — `packages/platform`'s entry point dispatches on exactly those two names, so anything
-// else is a library however it is written.
+// else is a library however it is written. A `main` taking a `Page` is a page too: `packages/web`'s.
 //
 // This was `harness/programs.ts`, and it is the reason the map generator could not be ported on its
 // own: seven tools files read that one definition, and moving the map without moving this would have
@@ -19,7 +19,7 @@ import { isSpace } from "../../packages/wactest/src/strings.wac";
 
 /** A `main` — something with a command line. */
 export static i32 KIND_CLI = 0;
-/** A `page` — something a browser opens. */
+/** A `page`, or a `main(Page page)` — something a browser opens. */
 export static i32 KIND_PAGE = 1;
 
 export struct Program {
@@ -49,16 +49,38 @@ string trim(string s) {
 }
 
 /** Whether `src` has `export i32 <name>(` at the start of a line. */
-bool exportsEntry(string src, string name) {
-  string needle = "export i32 " + name + "(";
-  i32 at = src.indexOf(needle);
-  while (at >= 0) {
-    if (at == 0 || src.slice(at - 1, at) == "\n") { return true; }
-    i32 next = src.slice(at + 1, src.len()).indexOf(needle);
-    if (next < 0) { return false; }
-    at = at + 1 + next;
+bool exportsEntry(string src, string name) { return entryLine(src, name) != ""; }
+
+/**
+ * The line exporting `name` as an entry — `export <type> name(`, at the start of a line, with or
+ * without `async` — from the parameters on, or "" when there is none. **Any return type**: a `main`
+ * answers `i32`, `Result<i32, string>` (`packages/ethrpc/example`) or, `async`, a page's `i32` — and
+ * matching only `export i32 main(` had dropped both of the others from this list, and from everything
+ * that compiles what it finds.
+ */
+string entryLine(string src, string name) {
+  string needle = " " + name + "(";
+  i32 from = 0;
+  while (from < src.len()) {
+    i32 nl = src.slice(from, src.len()).indexOf("\n");
+    string line = nl < 0 ? src.slice(from, src.len()) : src.slice(from, from + nl);
+    if (line.len() > 7 && line.slice(0, 7) == "export ") {
+      i32 at = line.indexOf(needle);
+      // The name comes after a type and before its parameters; `export { … }` and a field never match.
+      if (at > 7 && line.slice(0, at).indexOf("(") < 0 && line.slice(0, at).indexOf("=") < 0) {
+        return line.slice(at + needle.len(), line.len());
+      }
+    }
+    if (nl < 0) { break; }
+    from = from + nl + 1;
   }
-  return false;
+  return "";
+}
+
+/** Whether `main` takes a `Page` — a `packages/web` page, which a browser opens. */
+bool isWebPage(string src) {
+  string params = entryLine(src, "main");
+  return params.len() >= 5 && params.slice(0, 5) == "Page ";
 }
 
 bool hasSuffix(string s, string suffix) {
@@ -97,7 +119,7 @@ export Program[] findPrograms(Cli cli) {
       string src = string.fromBytes(r.bytes);
       string blurb = blurbOf(src);
       if (exportsEntry(src, "main")) {
-        out[n] = Program(rel, KIND_CLI, pkg, blurb);
+        out[n] = Program(rel, isWebPage(src) ? KIND_PAGE : KIND_CLI, pkg, blurb);
         n = n + 1;
       }
       if (exportsEntry(src, "page")) {
