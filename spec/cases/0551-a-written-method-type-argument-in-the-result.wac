@@ -1,0 +1,13 @@
+// expect: f() = 7
+// spec: §wacc-method-type-args
+// why: a method's own type argument, written at the call, is substituted into the type the call answers — a `Box<U>` result is a `Box<i64>` here, not a `Box<U>` the return beside it cannot be
+struct Box<T> { T v; }
+
+struct Maker {
+  i32 base;
+  Box<U> make<U>(this, fn<U(i32)> from) { return Box(from(this.base)); }
+}
+
+Box<i64> wide(Maker m) { return m.make<i64>((i32 x) => x as i64); }
+
+export i32 f() { return wide(Maker(7)).v as! i32; }

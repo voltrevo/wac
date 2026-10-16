@@ -1099,11 +1099,13 @@ i32 templateStaticShape(Env env, u8[] src, Lexed lexed, string tmpl, string mn) 
     Lexed ml = lexFor(env.fileLexeds, lexed, env.declFile(d));
     match (md[d].kind) {
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-        if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(ms, ml, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (methods[m].hasThis) { continue; }
           if (tokenTextOf(ms, ml, methods[m].nameTok) != mn) { continue; }
+          // **A plain static of a plain struct is not a template's**: `Sha512.create` is one ordinary
+          // function. Only a method with letters of its own makes one a method instance there.
+          if (typeParams.len() == 0 && methods[m].typeParams.len() == 0) { return -1; }
           i32 shape = methods[m].typeParams.len() > 0 ? 2 : 0;
           if (methodUsesOwnerLetters(ms, ml, methods[m], typeParams)) { shape = shape + 1; }
           return shape;
@@ -1267,7 +1269,7 @@ string methodInstanceInferred(Env env, u8[] src, Lexed lexed, string ownerInst, 
     Lexed ml = lexFor(env.fileLexeds, lexed, env.declFile(d));
     match (md[d].kind) {
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-        if (typeParams.len() == 0) { continue; }
+        // A plain owner's generic method is a method instance too — `Maker.make<U>`, with no owner letters.
         if (tokenTextOf(ms, ml, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (tokenTextOf(ms, ml, methods[m].nameTok) != mname) { continue; }
@@ -3013,6 +3015,16 @@ export struct Env {
   i32 safeDepth;
   /** Why the last `static_if` condition had no static value — the evaluator's own words. */
   string staticWhy;
+  /**
+   * Whether the walk running is `collectInstances`' discovery, whose verdict is thrown away and
+   * whose point is the instances it names on the way. A call to a function declined *for now* — an
+   * instance whose lambdas are not recorded yet — must not stop it there, or every instance named
+   * after that call in the same body is never found: `Core.of(() => ready(0), (i32 ms) => a.get<i64>(…))`
+   * stopped at `ready<i64>` and the module lost `A.get<i64>`.
+   */
+  bool discovering;
+  /** What the next lambda the array-type walk enters returns, from the parameter it is passed to. */
+  string lambdaReturn;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -3332,7 +3344,7 @@ export struct Env {
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
                Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";", 0, "", "", 0,
-               null, 0 - 1, 0, "");
+               null, 0 - 1, 0, "", false, "");
   }
 
   
@@ -6286,6 +6298,9 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           registerNamed(env, ft2);
         }
         for (i32 m = 0; m < methods.len(); m++) {
+          // Not a method with letters of its own: what it names is in terms of them, and its
+          // instances register their types with the letters bound. `issues/lang/0277b`.
+          if (methods[m].typeParams.len() > 0) { continue; }
           string mrt = typeOfTyName(env, src, lexed, methods[m].returnType);
           registerNamed(env, mrt);
           for (i32 i = 0; i < methods[m].params.len(); i++) {
@@ -6965,7 +6980,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         lexed = lexFor(env.fileLexeds, blobLexed, env.curFile);
         match (pd7[md].kind) {
           StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-            if (typeParams.len() == 0) { continue; }
+            // A plain owner's generic method is a method instance too — `Maker.make<U>`, with no owner letters.
             if (tokenTextOf(src, lexed, nameTok) != mtmpl) { continue; }
             for (i32 m = 0; m < methods.len(); m++) {
               if (tokenTextOf(src, lexed, methods[m].nameTok) != mnm) { continue; }
@@ -10999,8 +11014,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             return;
           }
           i32 at = env.funcAt(cname);
-          if (at < 0) { at = env.funcAt(genericCallInstance(env, src, lexed, tok, args)); }
-          if (!haveRequired(env, at, cname)) { return; }
+          // A generic function is called as an instance, and an instance that is not there is named:
+          // `ready<u8[]?>` says which arguments failed to monomorphise, where `ready` says nothing.
+          string gci = "";
+          if (at < 0) {
+            gci = genericCallInstance(env, src, lexed, tok, args);
+            at = env.funcAt(gci);
+          }
+          if (!haveRequired(env, at, gci != "" ? gci : cname)) { return; }
           for (i32 i = 0; i < args.len(); i++) {
             emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(at, i));
           }
@@ -11800,6 +11821,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(fft)) { return sigReturn(fft); }
           i32 mi = methodSlotForArgs(env, src, lexed, ot, mn, callTargs, args);
+          // **A template's return is not a type here.** A method with letters of its own is found as
+          // its template until the instance the call names is registered, and the template answers
+          // `Cell<U>` — a letter no caller binds, which instantiated as it stands is a struct no
+          // section can write. Unknown is the truth until the instance exists, and the rounds supply it.
+          if (mi >= 0 && mi < env.funcMethodGeneric.len() && env.funcMethodGeneric[mi]) { return ""; }
           return mi < 0 ? "" : env.funcReturns[mi];
         }
       }
@@ -13115,6 +13141,8 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         }
         if (typeParams.len() == 0) {
           for (i32 m = 0; m < methods.len(); m++) {
+            // A method with letters of its own records its lambdas per instance, where they resolve.
+            if (methods[m].typeParams.len() > 0) { continue; }
             env.walkCount = 0;
             env.assignedCount = 0;
             env.walkFuncLine = lexedLine(lexed, methods[m].nameTok);
@@ -13147,6 +13175,8 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         }
         if (typeParams.len() == 0) {
           for (i32 m = 0; m < methods.len(); m++) {
+            // A method with letters of its own records its lambdas per instance, where they resolve.
+            if (methods[m].typeParams.len() > 0) { continue; }
             env.walkCount = 0;
             env.assignedCount = 0;
             env.walkFuncLine = lexedLine(lexed, methods[m].nameTok);
@@ -13229,7 +13259,7 @@ i32 pushMethodInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, i32
     lexed = lexFor(env.fileLexeds, w2l, env.curFile);
     match (w2d[d].kind) {
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-        if (typeParams.len() == 0) { continue; }
+        // A plain owner's generic method is a method instance too — `Maker.make<U>`, with no owner letters.
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
@@ -13350,7 +13380,7 @@ void findLambdasInMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i
     lexed = lexFor(env.fileLexeds, w4l, env.curFile);
     match (w4d[d].kind) {
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-        if (typeParams.len() == 0) { continue; }
+        // A plain owner's generic method is a method instance too — `Maker.make<U>`, with no owner letters.
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
@@ -13712,6 +13742,68 @@ void findLambdasTy(Env env, u8[] src, Lexed lexed, Ty t) {
   }
 }
 
+/**
+ * The type parameters a method declares of its own, by the function's registered name — `Owner.name`
+ * or `Owner<…>.name` — or none when no declaration matches.
+ */
+string[] methodLettersOf(Env env, u8[] src, Lexed lexed, string fname) {
+  if (env.prog is null) { return string[](); }
+  i32 dot = 0 - 1;
+  for (i32 i = 0; i < fname.len(); i++) {
+    if (fname.slice(i, i + 1) == ".") { dot = i; }
+  }
+  if (dot <= 0) { return string[](); }
+  string tmpl = ownerTemplateOf(fname.slice(0, dot));
+  string mname = fname.slice(dot + 1, fname.len());
+  Program pg = env.prog!;
+  Decl[] md = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
+  for (i32 d = 0; d < md.len(); d++) {
+    u8[] ms = srcFor(env.fileSrcs, src, env.declFile(d));
+    Lexed ml = lexFor(env.fileLexeds, lexed, env.declFile(d));
+    match (md[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (tokenTextOf(ms, ml, nameTok) != tmpl) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) {
+          if (tokenTextOf(ms, ml, methods[m].nameTok) != mname) { continue; }
+          string[] out = string[].filled(methods[m].typeParams.len(), "");
+          for (i32 k = 0; k < out.len(); k++) { out[k] = tokenTextOf(ms, ml, methods[m].typeParams[k]); }
+          return out;
+        }
+      }
+      default: { }
+    }
+  }
+  return string[]();
+}
+
+/**
+ * Whether `e` is a lambda, or a call or construction one of whose arguments holds one — the shapes
+ * through which an argument's wanted type reaches a lambda. A lambda further in (an operand, an
+ * element) takes its type from what encloses it there, not from an argument.
+ */
+bool holdsLambda(Expr e) {
+  match (e.kind) {
+    Lambda(lp, lb, la): { return true; }
+    Call(callee, args, targs): {
+      for (i32 i = 0; i < args.len(); i++) {
+        if (holdsLambda(args[i])) { return true; }
+      }
+      return false;
+    }
+    Construct(ctype, args, named): {
+      for (i32 i = 0; i < args.len(); i++) {
+        if (holdsLambda(args[i])) { return true; }
+      }
+      for (i32 i = 0; i < named.len(); i++) {
+        if (holdsLambda(named[i].value)) { return true; }
+      }
+      return false;
+    }
+    Unwrap(operand): { return holdsLambda(operand); }
+    default: { return false; }
+  }
+}
+
 void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
   match (e.kind) {
     // The names inside a `typeof` are read for their types, which a lambda needs as much as their
@@ -13887,8 +13979,26 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       // they are built per body during emission — but a local's type is written down where it is
       // declared, and `walkDeclare` records it as the walk goes.
       string calleeSig = fat >= 0 ? "" : walkCalleeSig(env, src, lexed, callee);
+      // **A template's parameters, with the letters the call wrote put in.** The walk reaches a call
+      // before the instance it names is registered, so the slot found is the template's and reads
+      // `fn<T(Answer)>` — and a lambda typed from that has a signature no section can write. The
+      // call says what `T` is, so the walk says it too.
+      string[] mletters = string[]();
+      string[] margs = string[]();
+      if (fat >= 0 && fat < env.funcMethodGeneric.len() && env.funcMethodGeneric[fat] && callTargs.len() > 0) {
+        mletters = methodLettersOf(env, src, lexed, env.funcs[fat]);
+        if (mletters.len() == callTargs.len()) {
+          margs = string[].filled(callTargs.len(), "");
+          for (i32 k = 0; k < callTargs.len(); k++) {
+            margs[k] = env.canonType(typeOfTyName(env, src, lexed, callTargs[k]));
+          }
+        }
+      }
       for (i32 i = 0; i < args.len(); i++) {
         string pw = fat < 0 ? "" : env.paramTypeAt(fat, i);
+        if (margs.len() > 0) {
+          for (i32 k = 0; k < margs.len(); k++) { pw = replaceWord(pw, mletters[k], margs[k]); }
+        }
         if (fat < 0 && isFuncrefType(calleeSig)) { pw = sigParamAt(calleeSig, i); }
         findLambdasExpr(env, src, lexed, args[i], inst == "" ? pw : substGeneric(env, inst, pw));
       }
@@ -13938,12 +14048,16 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
         }
         default: { }
       }
+      // **A lambda inside an argument counts**, as one written as the argument does: the argument's
+      // wanted type is what a nested call reads its own from. `Table(Map.create((i32 k) => k, …))`
+      // has no lambda at the top level, and with the field's type withheld `Map.create` could not
+      // say which instance it was, so the lambdas it took had no target.
       bool anyLambda = false;
       for (i32 i = 0; i < args.len(); i++) {
-        match (args[i].kind) { Lambda(lp, lb, la): { anyLambda = true; } default: { } }
+        if (holdsLambda(args[i])) { anyLambda = true; }
       }
       for (i32 i = 0; i < named.len(); i++) {
-        match (named[i].value.kind) { Lambda(lp, lb, la): { anyLambda = true; } default: { } }
+        if (holdsLambda(named[i].value)) { anyLambda = true; }
       }
       if (!anyLambda) {
         for (i32 i = 0; i < args.len(); i++) { findLambdasExpr(env, src, lexed, args[i], ""); }
@@ -15222,7 +15336,12 @@ string unsupportedIn(u8[] src, Lexed lexed, Env env, Stmt[] body) {
   i32 saved = env.localCount;
   i32 mark = bindBlockStatics(B.create(), src, lexed, env, body, false);
   string r = "";
-  for (i32 i = 0; i < body.len() && r == ""; i++) { r = unsupportedStmt(src, lexed, env, body[i]); }
+  // **Every statement, while discovering** — what stops a body is no reason not to find the instances
+  // named after it. See `Env.discovering`.
+  for (i32 i = 0; i < body.len() && (r == "" || env.discovering); i++) {
+    string si = unsupportedStmt(src, lexed, env, body[i]);
+    if (r == "") { r = si; }
+  }
   if (mark >= 0) {
     Ev back = staticEvalOf(env, src, lexed);
     back.localCount = mark;
@@ -15639,7 +15758,17 @@ string unsupportedConstructOf(u8[] src, Lexed lexed, Env env, string n, Expr[] a
           return "";
 }
 
+/**
+ * Why `e` cannot be emitted into a slot of type `want`, or `""`. While discovering, always `""` once the
+ * value has been walked: an argument that stops the emitter is no reason to stop looking at the next
+ * one, and every call checks its arguments through here.
+ */
 string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
+  string r = unsupportedValueAtJudged(src, lexed, env, e, want);
+  return env.discovering ? "" : r;
+}
+
+string unsupportedValueAtJudged(u8[] src, Lexed lexed, Env env, Expr e, string want) {
   match (e.kind) {
     // **A bare generic constructor takes its instance from the slot** — `MapEntry(k, v)` into a
     // `MapEntry<K,V>` field. The language spells it this way everywhere else too, and
@@ -15713,7 +15842,7 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
           if (smw != "") {
             i32 smwAt = env.funcAt(smw);
             if (smwAt < 0) { return ""; }
-            if (!env.funcOk[smwAt]) { return declinedBecause("a static " + smw, env, smwAt); }
+            if (stopsAt(env, smwAt)) { return declinedBecause("a static " + smw, env, smwAt); }
             if (env.funcParamCount[smwAt] != args.len()) { return "a static with the wrong count"; }
             for (i32 i = 0; i < args.len(); i++) {
               string smwArg = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(smwAt, i));
@@ -15725,7 +15854,7 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
           if (tw == "") { return unsupportedValue(src, lexed, env, e); }
           i32 ta = env.funcAt(tw + "." + tn);
           if (ta < 0) { return "no static " + tw + "." + tn; }
-          if (!env.funcOk[ta]) { return declinedBecause("a static " + tw + "." + tn, env, ta); }
+          if (stopsAt(env, ta)) { return declinedBecause("a static " + tw + "." + tn, env, ta); }
           if (env.funcParamCount[ta] != args.len()) { return "a static with the wrong count"; }
           for (i32 i = 0; i < args.len(); i++) {
             string a6 = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(ta, i));
@@ -16015,6 +16144,10 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         env.localCount = lsaved;
         env.captureFloor = floorWas;
       }
+      // **And on to whatever follows, while discovering.** No lambda is recorded yet then, so the
+      // decline below — *a lambda this module has not recorded* — stopped the walk after the first
+      // lambda in a body, and an instance named only inside the second was never built.
+      if (env.discovering) { return ""; }
       if (li >= 0 && env.lambdaSigs[li] != "") {
         //
         // This walk is what *discovers* generic instantiations: `genericFuncInstance` and
@@ -16100,7 +16233,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (ci < 0) {
         i32 fr2 = env.funcAt(nm);
         if (fr2 >= 0) {
-          return env.funcOk[fr2] ? "" : declinedBecause("a reference to " + nm, env, fr2);
+          return !stopsAt(env, fr2) ? "" : declinedBecause("a reference to " + nm, env, fr2);
         }
       }
       if (ci < 0) {
@@ -16316,7 +16449,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           // category at 66 files and said nothing about any of them; the name turns a category into
           // a diagnosis, which is the difference between a slot of guessing and one of fixing.
           if (fa < 0) { return "a call to " + tokenTextOf(src, lexed, tok); }
-          if (!env.funcOk[fa]) {
+          if (stopsAt(env, fa)) {
             return declinedBecause("a call to " + tokenTextOf(src, lexed, tok), env, fa);
           }
           for (i32 i = 0; i < args.len(); i++) {
@@ -16376,7 +16509,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (smc != "") {
             i32 smcAt = env.funcAt(smc);
             if (smcAt < 0) { return ""; }
-            if (!env.funcOk[smcAt]) { return declinedBecause("a static " + smc, env, smcAt); }
+            if (stopsAt(env, smcAt)) { return declinedBecause("a static " + smc, env, smcAt); }
             if (env.funcParamCount[smcAt] != args.len()) { return "a static with the wrong count"; }
             for (i32 i = 0; i < args.len(); i++) {
               string smcArg = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(smcAt, i));
@@ -16388,7 +16521,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (owner != "") {
             i32 sa = env.funcAt(owner + "." + mn);
             if (sa < 0) { return "no static " + owner + "." + mn; }
-            if (!env.funcOk[sa]) { return declinedBecause("a static " + owner + "." + mn, env, sa); }
+            if (stopsAt(env, sa)) { return declinedBecause("a static " + owner + "." + mn, env, sa); }
             for (i32 i = 0; i < args.len(); i++) {
               string a = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(sa, i));
               if (a != "") { return a; }
@@ -16491,7 +16624,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             // the checker has already spoken.
             return "";
           }
-          if (!env.funcOk[ma]) { return declinedBecause("a method " + ot + "." + mn, env, ma); }
+          if (stopsAt(env, ma)) { return declinedBecause("a method " + ot + "." + mn, env, ma); }
           for (i32 i = 0; i < args.len(); i++) {
             // A method is registered with its declared parameters; the receiver is pushed at the
             // call site and is not one of them.
@@ -16625,6 +16758,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
  * anything wrong. The reason a callee recorded when it was declined is carried here, and since it
  * was itself built this way the message unrolls the whole chain.
  */
+/** Whether a call to function `at` stops the walk here: it was declined, and this walk decides. */
+bool stopsAt(Env env, i32 at) { return !env.funcOk[at] && !env.discovering; }
+
 string declinedBecause(string what, Env env, i32 at) {
   string why = at >= 0 && at < env.funcWhy.len() ? env.funcWhy[at] : "";
   return why == "" ? what + ", declined" : what + ", declined: " + why;
@@ -16832,6 +16968,8 @@ string blockedOf(Front f) {
         if (typeParams.len() > 0) { continue; }
         string owner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
+          // A method with letters of its own is a template here too; its instances are asked.
+          if (methods[m].typeParams.len() > 0) { continue; }
           canEmit(src, lexed, env, methods[m].params, methods[m].body,
                   methods[m].hasThis ? owner : "",
                   typeOfTyName(env, src, lexed, methods[m].returnType));
@@ -16944,7 +17082,7 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
       lexed = lexFor(env.fileLexeds, w6l, env.curFile);
       match (w6d[d].kind) {
         StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-          if (typeParams.len() == 0) { continue; }
+          // A plain owner's generic method is a method instance too — `Maker.make<U>`, with no owner letters.
           if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
           for (i32 m = 0; m < methods.len(); m++) {
             if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
@@ -17032,7 +17170,7 @@ void registerMethodInstanceTypes(Env env, u8[] src, Lexed lexed, Program prog, i
     lexed = lexFor(env.fileLexeds, w7l, env.curFile);
     match (w7d[d].kind) {
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-        if (typeParams.len() == 0) { continue; }
+        // A plain owner's generic method is a method instance too — `Maker.make<U>`, with no owner letters.
         if (tokenTextOf(src, lexed, nameTok) != tmpl) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (tokenTextOf(src, lexed, methods[m].nameTok) != mname) { continue; }
@@ -17069,6 +17207,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
     // `canEmit` remembers the first thing that stopped it for the report. Keeping that would name a
     // round-zero shortage as the reason a file was not emitted.
     string savedBlocked = env.blocked;
+    env.discovering = true;
     Decl[] w8d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
     u8[] w8s = src; Lexed w8l = lexed; i32 w8f = env.curFile;
     for (i32 d = 0; d < w8d.len(); d++) {
@@ -17089,6 +17228,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           if (typeParams.len() > 0) { continue; }
           string sowner = nameKeyOf(env, src, lexed, nameTok);
           for (i32 m = 0; m < methods.len(); m++) {
+            if (methods[m].typeParams.len() > 0) { continue; }
             canEmit(src, lexed, env, methods[m].params, methods[m].body,
                     methods[m].hasThis ? sowner : "",
                     typeOfTyName(env, src, lexed, methods[m].returnType));
@@ -17105,6 +17245,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           if (typeParams.len() > 0) { continue; }
           string eowner = nameKeyOf(env, src, lexed, nameTok);
           for (i32 m = 0; m < methods.len(); m++) {
+            if (methods[m].typeParams.len() > 0) { continue; }
             canEmit(src, lexed, env, methods[m].params, methods[m].body,
                     methods[m].hasThis ? eowner : "",
                     typeOfTyName(env, src, lexed, methods[m].returnType));
@@ -17114,6 +17255,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
       }
     }
     env.curFile = w8f; src = w8s; lexed = w8l;
+    env.discovering = false;
     env.blocked = savedBlocked;
     for (i32 i = 0; i < env.instCount; i++) {
       string inst = env.instName[i];
@@ -17644,6 +17786,18 @@ void declareFuncs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           if (env.funcCount - 1 < env.funcMethodGeneric.len()) {
             env.funcMethodGeneric[env.funcCount - 1] = methods[i].typeParams.len() > 0;
           }
+          // **A method with letters of its own is a template, on a plain struct as on a generic
+          // one**: registered for the numbering, declined, and compiled only as the instances its
+          // calls name (`Maker.make<i64>`). Walked as an ordinary method its body reads `U`, which no
+          // table knows, and the decline that walk recorded refused the whole module — a generic
+          // method nobody called was enough.
+          if (methods[i].typeParams.len() > 0) {
+            i32 tat = env.funcCount - 1;
+            env.funcOk[tat] = false;
+            if (tat < env.funcWhy.len()) {
+              env.funcWhy[tat] = "a method with its own type parameters, compiled per instance";
+            }
+          }
         }
       }
       // **An enum declares methods exactly as a struct does**, and this walk had no arm for it — so
@@ -17692,6 +17846,7 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
+          if (methods[m].typeParams.len() > 0) { continue; }
           collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
         }
       }
@@ -17707,6 +17862,7 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
       EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
+          if (methods[m].typeParams.len() > 0) { continue; }
           collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
         }
       }
@@ -18587,6 +18743,13 @@ void assignGlobals(Env env, u8[] src, Lexed lexed) {
 }
 
 /** Every array type an expression constructs, which a constant's initialiser can do at module level. */
+/** An argument, in the position of a parameter of type `want` — which says what a lambda there returns. */
+void collectArgTypes(Env env, u8[] src, Lexed lexed, Expr arg, string want) {
+  env.lambdaReturn = isFuncrefType(want) ? sigReturn(want) : "";
+  collectArrayTypesOfExpr(env, src, lexed, arg);
+  env.lambdaReturn = "";
+}
+
 void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
   match (e.kind) {
     TupleLit(elements): {
@@ -18627,7 +18790,13 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
         default: { }
       }
       registerNamed(env, typeOfTyName(env, src, lexed, ctype));
-      for (i32 i = 0; i < args.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, args[i]); }
+      string kname = typeOfTyName(env, src, lexed, ctype);
+      bool kstruct = env.isStructName(kname);
+      i32 kslot = kstruct ? -1 : env.funcAt(kname);
+      for (i32 i = 0; i < args.len(); i++) {
+        string kw = kstruct ? env.fieldTypeAt(kname, i) : (kslot < 0 ? "" : env.paramTypeAt(kslot, i));
+        collectArgTypes(env, src, lexed, args[i], kw);
+      }
       for (i32 i = 0; i < named.len(); i++) {
         collectArrayTypesOfExpr(env, src, lexed, named[i].value);
       }
@@ -18647,7 +18816,20 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
     }
     Call(callee, args, callTargs): {
       collectArrayTypesOfExpr(env, src, lexed, callee);
-      for (i32 i = 0; i < args.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, args[i]); }
+      i32 cslot = -1;
+      match (callee.kind) {
+        Member(cobj, cnameTok): {
+          string cmn = tokenTextOf(src, lexed, cnameTok);
+          string cown = staticOwner(src, lexed, env, cobj);
+          if (cown != "") { cslot = env.funcAt(cown + "." + cmn); }
+          else {
+            string cot = typeOfE(src, lexed, env, cobj);
+            if (cot != "") { cslot = methodSlotFor(env, src, lexed, cot, cmn, callTargs); }
+          }
+        }
+        default: { }
+      }
+      for (i32 i = 0; i < args.len(); i++) { collectArgTypes(env, src, lexed, args[i], cslot < 0 ? "" : env.paramTypeAt(cslot, i)); }
     }
     // **A lambda\'s body is code like any other.** Without this arm nothing inside one was visited:
     // an array type first named there went unregistered, and — the one that bit — a *generic* called
@@ -18657,7 +18839,17 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
     // It went unnoticed because until `issues/lang/0142` a lambda could not be written inside a
     // generic and nothing in the tree called one *from* a lambda: `packages/platform`\'s `ready<T>`,
     // three concrete copies until that landed, is the first.
-    Lambda(lamParams, lamBody, lamAsync): { collectArrayTypes(env, src, lexed, lamBody); }
+    // **Its returns answer the lambda**, not the function around it: a `return ready(0 - 1)` read against
+    // the enclosing function's type bound `T` from the wrong slot, or from none. What the lambda
+    // returns is what its argument position says — `collectArgTypes` — and nothing when it is
+    // written anywhere else.
+    Lambda(lamParams, lamBody, lamAsync): {
+      string retWas = env.walkReturn;
+      env.walkReturn = env.lambdaReturn;
+      env.lambdaReturn = "";
+      collectArrayTypes(env, src, lexed, lamBody);
+      env.walkReturn = retWas;
+    }
     Member(obj, nameTok): { collectArrayTypesOfExpr(env, src, lexed, obj); }
     // **A written instantiation as a receiver** — `Cell<i32>.of(3)` — is an instance, registered here
     // so its methods exist by the time the walk that judges the call asks for one.

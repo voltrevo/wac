@@ -1,0 +1,13 @@
+// expect: f() = 7
+// spec: §wacc-lambda-generic
+// why: a generic named only inside a lambda is instantiated whatever comes before it in the same call — an earlier lambda argument calling another generic does not hide it
+struct Pair { fn<i64()> a; fn<i64(i32)> b; Pair of(fn<i64()> a, fn<i64(i32)> b) { return Pair(a, b); } }
+struct Box { i32 k; U get<U>(this, fn<U(i32)> f) { return f(this.k); } }
+
+T ident<T>(T v) { return v; }
+
+Pair make(Box box) {
+  return Pair.of(() => ident(1 as i64), (i32 n) => box.get<i64>((i32 x) => (x + n) as i64));
+}
+
+export i32 f() { return make(Box(3)).b(4) as! i32; }

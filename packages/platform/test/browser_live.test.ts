@@ -315,6 +315,25 @@ Deno.test({
       // And the centre of the default view is inside the set, so it never escapes.
       assertEquals(pos.includes("never (inside)"), true, pos);
 
+      // A page with a `Sys`: built with `--grant read,write`, its `main` reads and writes the Origin
+      // Private File System through the same `sys.readFile` a command-line program calls. The claim
+      // is persistence, so the check is a reload — and a page that only kept the text in memory, or
+      // only in the textarea, would fail it.
+      await buildPage("packages/platform/example/notes.wac", `${dir}/notes`, ["--grant", "read,write"]);
+      await page.goto(`http://127.0.0.1:${port}/notes/index.html`, { waitUntil: "load" });
+      await page.waitForFunction("(document.getElementById('said')?.textContent ?? '') !== ''", null,
+        { timeout: 30_000 });
+      assertEquals(page.workers().length, 1, "notes: the program runs in a worker");
+      const note = `written at ${Date.now()}\nand a second line`;
+      await page.fill("#text", note);
+      await page.click("#save");
+      await page.waitForFunction("document.getElementById('said').textContent.startsWith('saved')", null,
+        { timeout: 30_000 });
+      await page.reload({ waitUntil: "load" });
+      await page.waitForFunction("(document.getElementById('said')?.textContent ?? '').startsWith('read')", null,
+        { timeout: 30_000 });
+      assertEquals(await page.inputValue("#text"), note, "the note survived the reload");
+
       // A file in and a file back out, checked against this runtime's own crypto and gzip rather
       // than against more wac. It drives `box/example/hash.wac`, which is where `nextFile` lives
       // now: a page that hashes a file you drop on it has a reason to want one, and a Mandelbrot

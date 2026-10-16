@@ -34,11 +34,16 @@ struct Asked {
   string title;
   /** Run the program on the page's own thread rather than in a worker. */
   bool inPage;
+  /**
+   * What the program's `Sys` holds, as `GRANT_*` bits — or -1 for a page whose `main` takes no `Sys`.
+   * `--grant read,write` asks for one, holding those.
+   */
+  i32 grants;
 }
 
 /** The arguments, or a usage line in `title` and empty `entry` when they do not make sense. */
 Asked askedOf(Cli cli) {
-  Asked a = Asked("", "", "wac", "web", "wac", false);
+  Asked a = Asked("", "", "wac", "web", "wac", false, 0 - 1);
   i32 argc = cli.argCount().wait();
   string[] args = string[].filled(argc, "");
   for (i32 k = 0; k < argc; k++) { args[k] = string.fromBytes(cli.arg(k).wait()); }
@@ -57,11 +62,39 @@ Asked askedOf(Cli cli) {
       i++;
       continue;
     }
+    // `--grant read,write` rather than `--allow-read`: after the entry, `wac run` takes `--allow-…` as
+    // a grant spelled in the wrong place and refuses it, which is right — those are the builder's own.
+    if (w == "--grant" && i + 1 < argc) {
+      if (a.grants < 0) { a.grants = 0; }
+      string[] names = partsOfList(args[i + 1]);
+      for (string g in names) {
+        if (g == "read") { a.grants = a.grants | 1; }
+        else if (g == "write") { a.grants = a.grants | 2; }
+        else { a.title = "unknown grant: " + g; a.entry = ""; }
+      }
+      i += 2;
+      continue;
+    }
     if (positional == 0) { a.entry = w; } else if (positional == 1) { a.out = w; }
     positional++;
     i++;
   }
   return a;
+}
+
+/** `read,write` as its names. */
+string[] partsOfList(string s) {
+  Vec<string> out = Vec.create();
+  string rest = s;
+  while (rest.len() > 0) {
+    i32 cut = rest.indexOf(",");
+    string p = cut < 0 ? rest : rest.slice(0, cut);
+    if (p != "") { out.push(p); }
+    rest = cut < 0 ? "" : rest.slice(cut + 1, rest.len());
+  }
+  string[] parts = string[].filled(out.len(), "");
+  for (i32 i = 0; i < out.len(); i++) { parts[i] = out.get(i); }
+  return parts;
 }
 
 /** The parts of a relative path, with `.` dropped and `..` taken against what comes before it. */
@@ -111,37 +144,51 @@ export string relativeTo(string from, string to) {
  * vectors cross into JavaScript, where nothing could use them. Handing over the `Page` itself did:
  * 24 classes and 71 KB of glue for a counter.
  */
-export string wrapperFor(string entrySpec, string pageSpec) {
-  return "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
-       + "import { main } from \"\{entrySpec}\";\n"
-       + "import { Dom, Page, deliver, fileArrived, timerFired, valueArrived } from \"\{pageSpec}\";\n"
-       + """
+export string wrapperFor(string entrySpec, string pageSpec, i32 grants) {
+  bool sys = grants >= 0;
+  string w = "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
+           + "import { main } from \"\{entrySpec}\";\n"
+           + "import { Dom, Page, deliver, fileArrived, timerFired, valueArrived"
+           + (sys ? ", System, World, answered" : "") + " } from \"\{pageSpec}\";\n\n"
+           + "export struct Host {\n"
+           + "  private Page page;\n";
+  if (sys) {
+    // **A page with a `Sys` holds its world beside the page**, made inside the page's schedule so the
+    // scheduler it builds does not become the program's default target: everything that resumes the
+    // program comes through the host, and the host resumes it under the page.
+    w = w + "  private World world;\n\n"
+          + "  Host create(Dom dom, System system) {\n"
+          + "    Page page = Page.create(dom);\n"
+          + "    schedule page.take;\n"
+          + "    return Host(page, World.create(system, \{grants}));\n"
+          + "  }\n\n"
+          + "  void answer(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
+          + "    answered(this.page, this.world, req, fault, text, bytes, n, m, flags);\n"
+          + "  }\n";
+  } else {
+    w = w + "\n  Host create(Dom dom) { return Host(Page.create(dom)); }\n";
+  }
+  w = w + "\n  /** Run the program, with the page as its schedule target, until it first waits. */\n"
+        + "  void start(this) {\n"
+        + "    schedule this.page.take;\n"
+        + (sys ? "    main(this.page, this.world.sys);\n" : "    main(this.page);\n")
+        + "    this.page.drain();\n"
+        + "  }\n";
+  return w + """
 
-           export struct Host {
-             private Page page;
-
-             Host create(Dom dom) { return Host(Page.create(dom)); }
-
-             /** Run the program, with the page as its schedule target, until it first waits. */
-             void start(this) {
-               schedule this.page.take;
-               main(this.page);
-               this.page.drain();
-             }
-
-             void event(this, string kind, string id, string value, i32 x, i32 y) {
-               deliver(this.page, kind, id, value, x, y);
-             }
-
-             void timer(this, i32 id) { timerFired(this.page, id); }
-
-             void file(this, bool ok, string name, u8[] bytes, string error) {
-               fileArrived(this.page, ok, name, bytes, error);
-             }
-
-             void value(this, i32 req, string value) { valueArrived(this.page, req, value); }
+           void event(this, string kind, string id, string value, i32 x, i32 y) {
+             deliver(this.page, kind, id, value, x, y);
            }
-           """;
+
+           void timer(this, i32 id) { timerFired(this.page, id); }
+
+           void file(this, bool ok, string name, u8[] bytes, string error) {
+             fileArrived(this.page, ok, name, bytes, error);
+           }
+
+           void value(this, i32 req, string value) { valueArrived(this.page, req, value); }
+         }
+         """;
 }
 
 /**
@@ -153,10 +200,15 @@ export string wrapperFor(string entrySpec, string pageSpec) {
  * `wacProgram(post)` starts the program and answers `receive`. A buffer is handed over rather than
  * copied when it is the whole of its own memory, which is what `wac bindgen` gives a `u8[]`.
  */
-export string programSide() {
+export string programSide(bool sys) {
+  // The one line that differs: a page with grants hands its `Host` a `System` as well.
+  string make = sys ? "const makeHost = (dom) => Host.create(dom, wacSystem((...a) => host.answer(...a)));\n"
+                    : "const makeHost = (dom) => Host.create(dom);\n";
   return """
       const wacProgram = (post) => {
         let host = null;
+      """ + make + """
+      
         const own = (bytes) => bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? [bytes.buffer] : [];
         const dom = Dom.of(
           (html) => post(["render", html]),
@@ -175,7 +227,7 @@ export string programSide() {
           (id, x, y, w, h, rgba) => post(["drawPixelsIn", id, x, y, w, h, rgba], own(rgba)),
           (name, bytes) => post(["download", name, bytes], own(bytes)),
         );
-        host = Host.create(dom);
+        host = makeHost(dom);
         host.start();
         return (m) => {
           switch (m[0]) {
@@ -185,6 +237,131 @@ export string programSide() {
             case "value": host.value(m[1], m[2]); break;
           }
         };
+      };
+      """;
+}
+
+/**
+ * The system's half, for a page built with grants: `System`'s calls on the Origin Private File System,
+ * each answered later through `answer(req, fault, text, bytes, n, m, flags)` — `system.wac` says what
+ * each call's answer holds. It runs where the program does: a worker has the file system too.
+ *
+ * **A fault is a number from `std`'s table**, chosen here from the error the browser threw, and the
+ * browser's own message rides along for a fault the table has no words for. Paths are relative to the
+ * file system's root, which is also where a page's working directory is: `.` and empty parts are
+ * dropped, `..` climbs and stops at the root.
+ */
+export string systemSide() {
+  return """
+      const wacSystem = (answer) => {
+        const enc = new TextEncoder();
+        const NONE = new Uint8Array(0);
+        let rootP = null;
+        const root = () => (rootP ??= navigator.storage.getDirectory());
+        const parts = (path) => {
+          const out = [];
+          for (const p of String(path).split("/")) {
+            if (p === "" || p === ".") continue;
+            if (p === "..") out.pop(); else out.push(p);
+          }
+          return out;
+        };
+        const dirAt = async (ps, create) => {
+          let d = await root();
+          for (const p of ps) d = await d.getDirectoryHandle(p, { create });
+          return d;
+        };
+        // The directory holding a path's last part, and that part — or a refusal for the root itself.
+        const parentOf = async (path, create) => {
+          const ps = parts(path);
+          if (ps.length === 0) throw Object.assign(new Error("the root"), { name: "TypeMismatchError" });
+          return [await dirAt(ps.slice(0, -1), create), ps[ps.length - 1]];
+        };
+        const faultOf = (e, isDir) => {
+          switch (e?.name) {
+            case "NotFoundError": return 1;
+            case "NotAllowedError": case "NoModificationAllowedError": case "SecurityError": return 2;
+            case "InvalidModificationError": return 4;
+            case "TypeMismatchError": return isDir ? 8 : 10;
+            case "QuotaExceededError": return 14;
+            default: return 5;
+          }
+        };
+        const fail = (req, e, isDir) =>
+          answer(req, faultOf(e, isDir), String(e?.message ?? e), NONE, 0n, 0n, 0);
+        const ok = (req, bytes = NONE, n = 0n, m = 0n, flags = 0) => answer(req, 0, "", bytes, n, m, flags);
+        const run = (req, isDir, work) => { work().then((a) => a, (e) => fail(req, e, isDir)); };
+        const writeTo = async (dir, name, bytes) => {
+          const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+          await w.write(bytes);
+          await w.close();
+        };
+        const fileOf = async (path) => {
+          const [dir, name] = await parentOf(path, false);
+          return await (await dir.getFileHandle(name)).getFile();
+        };
+        return System.of(
+          (req, path) => run(req, true, async () => ok(req, new Uint8Array(await (await fileOf(path)).arrayBuffer()))),
+          (req, path, bytes) => run(req, true, async () => {
+            const [dir, name] = await parentOf(path, false);
+            await writeTo(dir, name, bytes);
+            ok(req);
+          }),
+          (req, path) => run(req, false, async () => {
+            try {
+              const f = await fileOf(path);
+              return ok(req, NONE, BigInt(f.size), BigInt(f.lastModified), 1 | 2);
+            } catch (e) {
+              if (e?.name !== "TypeMismatchError" && e?.name !== "NotFoundError") throw e;
+            }
+            try {
+              await dirAt(parts(path), false);
+              return ok(req, NONE, 0n, 0n, 1 | 4);
+            } catch (e) {
+              if (e?.name !== "TypeMismatchError" && e?.name !== "NotFoundError") throw e;
+            }
+            ok(req);
+          }),
+          (req, path) => run(req, false, async () => {
+            const d = await dirAt(parts(path), false);
+            const names = [];
+            for await (const k of d.keys()) names.push(k);
+            ok(req, enc.encode(names.sort().map((n) => n + String.fromCharCode(0)).join("")));
+          }),
+          (req, path, parentsToo) => run(req, false, async () => {
+            const [dir, name] = await parentOf(path, parentsToo);
+            if (!parentsToo) {
+              let there = true;
+              try { await dir.getDirectoryHandle(name); } catch { there = false; }
+              if (there) return answer(req, 3, "", NONE, 0n, 0n, 0);
+            }
+            await dir.getDirectoryHandle(name, { create: true });
+            ok(req);
+          }),
+          (req, path, recursive) => run(req, false, async () => {
+            const [dir, name] = await parentOf(path, false);
+            await dir.removeEntry(name, { recursive });
+            ok(req);
+          }),
+          // No rename in the Origin Private File System: a copy and a delete, which is not atomic.
+          (req, from, to) => run(req, true, async () => {
+            const bytes = new Uint8Array(await (await fileOf(from)).arrayBuffer());
+            const [dir, name] = await parentOf(to, false);
+            await writeTo(dir, name, bytes);
+            const [fdir, fname] = await parentOf(from, false);
+            await fdir.removeEntry(fname);
+            ok(req);
+          }),
+          (req, ms) => { setTimeout(() => ok(req, NONE, BigInt(Math.round(performance.now() * 1e6))), ms); },
+          () => BigInt(Date.now()),
+          () => BigInt(Math.round(performance.now() * 1e6)),
+          (n) => crypto.getRandomValues(new Uint8Array(n)),
+          (line) => { console.log(line); },
+          (line) => { console.warn(line); },
+          (bytes) => { console.log(new TextDecoder().decode(bytes)); },
+          (bytes) => { console.warn(new TextDecoder().decode(bytes)); },
+          (code) => { throw new Error("the program exited with " + code); },
+        );
       };
       """;
 }
@@ -288,9 +465,10 @@ export string documentSide() {
  * worker, which is why the glue is `wac bindgen --script`: a module worker made from a blob is refused
  * on a `file://` page, and a `data:` one would lose the page's origin and the storage that goes with it.
  */
-export string workerIndexFor(string title, string module) {
+export string workerIndexFor(string title, string module, bool sys) {
   return head(title)
-       + "<script type=\"text/plain\" id=\"wac-program\">\n" + module + "\n" + programSide()
+       + "<script type=\"text/plain\" id=\"wac-program\">\n" + module + "\n" + (sys ? systemSide() : "")
+       + programSide(sys)
        + "const receive = wacProgram((m, transfer) => postMessage(m, transfer ?? []));\n"
        + "onmessage = (e) => receive(e.data);\n</script>\n"
        + "<script type=\"module\">\n" + documentSide()
@@ -305,8 +483,9 @@ export string workerIndexFor(string title, string module) {
 }
 
 /** The page, with the program on the page's own thread: the two halves joined directly. */
-export string inPageIndexFor(string title, string module) {
-  return head(title) + "<script type=\"module\">\n" + module + "\n" + programSide() + documentSide()
+export string inPageIndexFor(string title, string module, bool sys) {
+  return head(title) + "<script type=\"module\">\n" + module + "\n" + (sys ? systemSide() : "")
+       + programSide(sys) + documentSide()
        + """
          let receive = null;
          const apply = wacDocument(document.getElementById("app"), (m) => receive(m));
@@ -325,7 +504,7 @@ string head(string title) {
 export i32 buildPage(Core core, Cli cli) {
   Asked a = askedOf(cli);
   if (a.entry == "" || a.out == "") {
-    cli.writeErr("usage: build.wac <entry.wac> <out-dir> [--in-page] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
+    cli.writeErr("usage: build.wac <entry.wac> <out-dir> [--in-page] [--grant read,write] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
     return 2;
   }
   // **The wrapper is a module of this project**, so it is written inside it: from anywhere else its
@@ -340,7 +519,7 @@ export i32 buildPage(Core core, Cli cli) {
   bool pagePath = a.pageSpec.len() > 0 && (a.pageSpec.slice(0, 1) == "." || a.pageSpec.slice(0, 1) == "/");
   string pageSpec = pagePath ? relativeTo(a.out, a.pageSpec) : a.pageSpec;
   string entrySpec = relativeTo(a.out, a.entry);
-  cli.writeFile(wrapper, wrapperFor(entrySpec, pageSpec).toBytes()).wait();
+  cli.writeFile(wrapper, wrapperFor(entrySpec, pageSpec, a.grants).toBytes()).wait();
   string js = a.out + "/page.js";
   Exec made = cli.exec(a.wac, ["bindgen", wrapper, js, "--script"], u8[]()).wait();
   if (!made.ok()) {
@@ -355,8 +534,9 @@ export i32 buildPage(Core core, Cli cli) {
     return 1;
   }
   string index = a.out + "/index.html";
-  string page = a.inPage ? inPageIndexFor(a.title, string.fromBytes(module.bytes))
-                          : workerIndexFor(a.title, string.fromBytes(module.bytes));
+  bool sys = a.grants >= 0;
+  string page = a.inPage ? inPageIndexFor(a.title, string.fromBytes(module.bytes), sys)
+                          : workerIndexFor(a.title, string.fromBytes(module.bytes), sys);
   cli.writeFile(index, page.toBytes()).wait();
   core.log("\{index}: \{module.bytes.len()} bytes of module");
   return 0;

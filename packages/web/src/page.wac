@@ -26,6 +26,11 @@
 // is still outstanding queues a second waiter rather than replacing the first.
 
 import { Attr, Buf, Continuation, Node, Queue, Ticket, TicketBase } from "core";
+import { Answer, World } from "./system.wac";
+
+// A page's system — `main(Page page, Sys sys)` — is `system.wac`, exported from here because a package
+// is one module.
+export { Answer, Answers, STAT_DIR, STAT_EXISTS, STAT_FILE, System, World } from "./system.wac";
 
 /** Something that happened on the page. */
 export struct Event {
@@ -284,6 +289,17 @@ export void valueArrived(Page page, i32 req, string value) {
   Ticket<string>? t = page.asked.take(req);
   if (t is null) { return; }
   t!.resolve(value);
+  page.drain();
+}
+
+/**
+ * The browser answered request `req` of the program's system — a file read, a directory listing, a
+ * sleep. Settles the ticket the request was handed out as, and runs on whatever was waiting for it.
+ */
+export void answered(Page page, World world, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m,
+                     i32 flags) {
+  schedule page.take;
+  world.answers.arrive(req, Answer(fault, text, bytes, n, m, flags));
   page.drain();
 }
 

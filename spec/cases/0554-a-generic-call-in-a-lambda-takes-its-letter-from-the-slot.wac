@@ -1,0 +1,12 @@
+// expect: f() = -1
+// spec: §wac-generic-expected-position-3qmz8vk
+// why: a lambda's return is the slot a generic call in it fills — `ready(0 - 1)` in a `fn<Box<i32>()>` is `ready<i32>`, as the checker says, and arithmetic on literals binds nothing by itself
+struct Box<T> { T v; }
+struct Holder { fn<Box<i32>()> make; }
+
+Box<T> ready<T>(T v) { return Box(v); }
+
+export i32 f() {
+  Holder h = Holder(() => ready(0 - 1));
+  return h.make().v;
+}

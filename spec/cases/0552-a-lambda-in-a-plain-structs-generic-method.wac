@@ -1,0 +1,15 @@
+// expect: f() = 12
+// spec: §wacc-method-type-args
+// why: a method with type parameters of its own on a struct with none is compiled per instance, lambdas included — and one nobody calls does not stop the module
+struct Reader {
+  i32 base;
+  i32 take(this, i32 id) { return id + this.base; }
+  fn<T()> later<T>(this, i32 id, fn<T(i32)> read) { return () => read(this.take(id)); }
+  fn<T()> unused<T>(this, T v) { return () => v; }
+}
+
+export i32 f() {
+  Reader r = Reader(1);
+  fn<i32()> g = r.later<i32>(5, (i32 x) => x * 2);
+  return g();
+}

@@ -302,3 +302,33 @@ export string test_detach_takes_the_handler_and_leaves_the_ticket() {
   t.isFalse(s.detach(7), "detaching what is no longer registered is silent");
   return t.report();
 }
+
+/**
+ * `fire` is dispatch without waiting — for a world where nothing may block, which learns that a ticket
+ * answered because the host calls in to say so (a page). It runs exactly what `run` would have run for
+ * that id, and nothing else.
+ */
+export string test_fire_runs_what_is_registered_for_one_id() {
+  T t = T.create();
+  Sched s = Sched.create();
+  i32[] ran = i32[].filled(3, 0);
+  s.on(7, (i32 id) => { ran[0] = ran[0] + id; }, (i32 id) => { trap; });
+  s.on(9, (i32 id) => { ran[1] = ran[1] + 1; }, (i32 id) => { trap; });
+  s.on(7, (i32 id) => { ran[2] = ran[2] + 1; }, (i32 id) => { trap; });
+
+  t.eqI32(s.fire(7), 2, "both registered for 7 ran");
+  t.eqI32(ran[0], 7, "the first, handed its id");
+  t.eqI32(ran[2], 1, "and the second, in order");
+  t.eqI32(ran[1], 0, "and not the one for 9");
+  t.eqI32(s.pending(), 1, "which is still outstanding");
+  t.eqI32(s.fire(7), 0, "a second answer for 7 finds nothing — each ran once");
+
+  // A handler that registers again for its own id is a new registration, for the next answer.
+  s.on(5, (i32 id) => { s.on(5, (i32 again) => { ran[1] = ran[1] + 10; }, (i32 x) => { }); },
+       (i32 id) => { });
+  t.eqI32(s.fire(5), 1, "the re-arming handler ran");
+  t.eqI32(ran[1], 0, "and what it registered did not run in the same answer");
+  t.eqI32(s.fire(5), 1, "it runs on the next one");
+  t.eqI32(ran[1], 10, "once");
+  return t.report();
+}

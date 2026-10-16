@@ -1,0 +1,169 @@
+// A page's system driven with no browser: a `System` that records what it was asked, and the
+// answers a browser would give made by hand with `answered`. What a browser adds is the Origin Private
+// File System, and `tools/build.wac`'s system half is the whole of that — so what a program sees, in
+// every order the answers can arrive, is tested here.
+
+import { Check } from "./check.wac";
+import { Ticket } from "core";
+import { FAULT_NOT_FOUND, FAULT_NOT_GRANTED, GRANT_READ, GRANT_WRITE, Stat, Sys } from "std";
+import { Dom, Page, STAT_EXISTS, STAT_FILE, System, World, answered } from "../../src/page.wac";
+
+/** What the fake browser was asked, one line per request. */
+struct Asked {
+  string log;
+}
+
+System recording(Asked asked) {
+  System s = System.inert();
+  s.readFile = (i32 req, string p) => { asked.log = asked.log + "read \{req} " + p + "\n"; };
+  s.writeFile = (i32 req, string p, u8[] b) => { asked.log = asked.log + "write \{req} " + p + " \{b.len()}\n"; };
+  s.stat = (i32 req, string p) => { asked.log = asked.log + "stat \{req} " + p + "\n"; };
+  s.readDir = (i32 req, string p) => { asked.log = asked.log + "dir \{req} " + p + "\n"; };
+  s.sleep = (i32 req, i32 ms) => { asked.log = asked.log + "sleep \{req} \{ms}\n"; };
+  s.monotonicNanos = () => 42 as i64;
+  return s;
+}
+
+/** Answer request `req` with bytes and no fault, as the browser would. */
+void give(Page page, World w, i32 req, string text) {
+  answered(page, w, req, 0, "", text.toBytes(), 0 as i64, 0 as i64, 0);
+}
+
+async i32 copies(Page page, Sys sys) {
+  u8[] bytes = u8[]();
+  match (await sys.readFile("in.txt")) {
+    Ok(b): { bytes = b; }
+    Err(why): { return 0 - 1; }
+  }
+  match (await sys.writeFile("out.txt", bytes)) {
+    Ok(): { return bytes.len(); }
+    Err(why): { return 0 - 2; }
+  }
+}
+
+/** What the build's wrapper does: run the program with the page as its schedule target, then drain. */
+Ticket<i32> startCopies(Page page, Sys sys) {
+  schedule page.take;
+  Ticket<i32> t = copies(page, sys);
+  page.drain();
+  return t;
+}
+
+export string test_a_read_waits_for_the_browser_and_the_answer_runs_it_on() {
+  Check t = Check.create();
+  Asked asked = Asked("");
+  Page page = Page.create(Dom.inert());
+  World w = World.create(recording(asked), GRANT_READ | GRANT_WRITE);
+  Ticket<i32> done = startCopies(page, w.sys);
+  t.eqStr(asked.log, "read 1 in.txt\n", "it asked, and waits");
+  t.isFalse(done.settled(), "nothing has answered");
+  give(page, w, 1, "hello");
+  t.eqStr(asked.log, "read 1 in.txt\nwrite 2 out.txt 5\n", "the answer ran it on to the write");
+  answered(page, w, 2, 0, "", u8[](), 0 as i64, 0 as i64, 0);
+  t.isTrue(done.settled(), "the write's answer finished it");
+  t.eqI32(done.value(), 5, "with what it read");
+  return t.report();
+}
+
+export string test_a_missing_file_is_an_err_in_the_programs_words() {
+  Check t = Check.create();
+  Asked asked = Asked("");
+  Page page = Page.create(Dom.inert());
+  World w = World.create(recording(asked), GRANT_READ | GRANT_WRITE);
+  Ticket<i32> done = startCopies(page, w.sys);
+  answered(page, w, 1, FAULT_NOT_FOUND(), "NotFoundError: A requested file or directory could not be found",
+           u8[](), 0 as i64, 0 as i64, 0);
+  t.isTrue(done.settled(), "a failed read finished it");
+  t.eqI32(done.value(), 0 - 1, "as an Err");
+  return t.report();
+}
+
+export string test_what_the_page_was_not_granted_is_refused_without_asking() {
+  Check t = Check.create();
+  Asked asked = Asked("");
+  Page page = Page.create(Dom.inert());
+  World w = World.create(recording(asked), GRANT_READ);
+  Ticket<i32> done = startCopies(page, w.sys);
+  give(page, w, 1, "hi");
+  t.isTrue(done.settled(), "the write was refused at once");
+  t.eqI32(done.value(), 0 - 2, "as an Err");
+  t.eqStr(asked.log, "read 1 in.txt\n", "and the browser was never asked to write");
+
+  // Through `sys.cli` as well, which is no way around the grant.
+  World none = World.create(recording(asked), 0);
+  t.isFalse(none.sys.cli.readFile("x").wait().ok, "the raw capability refuses too");
+  t.eqI32(none.sys.cli.readFile("x").wait().fault, FAULT_NOT_GRANTED(), "as not granted");
+  t.eqStr(asked.log, "read 1 in.txt\n", "still without asking");
+  return t.report();
+}
+
+async i32 clocked(Sys sys) {
+  i64 a = await sys.monotonicNanos();
+  await sys.sleepMillis(5);
+  i64 b = await sys.monotonicNanos();
+  return (a + b) as! i32;
+}
+
+Ticket<i32> startClocked(Page page, Sys sys) {
+  schedule page.take;
+  Ticket<i32> t = clocked(sys);
+  page.drain();
+  return t;
+}
+
+export string test_what_this_side_knows_settles_at_once_and_a_sleep_waits() {
+  Check t = Check.create();
+  Asked asked = Asked("");
+  Page page = Page.create(Dom.inert());
+  World w = World.create(recording(asked), 0);
+  Ticket<i32> done = startClocked(page, w.sys);
+  t.eqStr(asked.log, "sleep 1 5\n", "the clock answered without a request, and the sleep asked");
+  answered(page, w, 1, 0, "", u8[](), 7 as i64, 0 as i64, 0);
+  t.isTrue(done.settled(), "the sleep's answer finished it");
+  t.eqI32(done.value(), 84, "reading the clock twice");
+  return t.report();
+}
+
+async string listed(Sys sys) {
+  string[]? names = await sys.cli.readDir("/").ticket();
+  Stat s = await sys.cli.stat("a").ticket();
+  if (names is null) { return "none"; }
+  string out = "";
+  for (string n in names!) { out = out + n + ","; }
+  return out + (s.exists && s.isFile && !s.isDir ? " file \{s.size}" : " not a file");
+}
+
+Ticket<string> startListed(Page page, Sys sys) {
+  schedule page.take;
+  Ticket<string> t = listed(sys);
+  page.drain();
+  return t;
+}
+
+export string test_a_listing_and_a_stat_are_read_from_the_answer() {
+  Check t = Check.create();
+  Asked asked = Asked("");
+  Page page = Page.create(Dom.inert());
+  World w = World.create(recording(asked), GRANT_READ);
+  Ticket<string> done = startListed(page, w.sys);
+  u8[] names = "a\0b c\0".toBytes();
+  answered(page, w, 1, 0, "", names, 0 as i64, 0 as i64, 0);
+  answered(page, w, 2, 0, "", u8[](), 12 as i64, 0 as i64, STAT_EXISTS | STAT_FILE);
+  t.isTrue(done.settled(), "both answers finished it");
+  t.eqStr(done.value(), "a,b c, file 12", "names split on NUL, spaces kept, and the stat's flags");
+  return t.report();
+}
+
+export string test_an_answer_nobody_asked_for_and_a_late_one_are_dropped() {
+  Check t = Check.create();
+  Asked asked = Asked("");
+  Page page = Page.create(Dom.inert());
+  World w = World.create(recording(asked), GRANT_READ);
+  give(page, w, 99, "stray");
+  t.isFalse(w.answers.has(99), "an answer to a request never made is not kept");
+  // A read whose ticket is abandoned before the browser answers: the late answer is not kept.
+  w.sys.cli.readFile("x").cancel();
+  give(page, w, 1, "late");
+  t.isFalse(w.answers.has(1), "the late answer was dropped");
+  return t.report();
+}

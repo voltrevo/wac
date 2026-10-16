@@ -56,17 +56,32 @@ while (true) {
 string as text — there is no call that hands the browser a string as markup. A `<style>`'s text is
 CSS rather than HTML and goes out as written, with `<` escaped so nothing can close the element.
 
+## Files, and the rest of `Sys`
+
+A page built with `--grant read,write` is handed a `Sys` beside its `Page` —
+`export async i32 main(Page page, Sys sys)` — the same `Sys` a program on a command line gets, with
+the browser's Origin Private File System as its disk. `await sys.readFile(path)` and
+`await sys.writeFile(path, bytes)` work as they do anywhere; what the page was not granted, its `Cli`
+refuses too, so `sys.cli` is no way around the grants. [`packages/platform/example/notes.wac`](../platform/example/notes.wac)
+keeps a note that survives a reload.
+
+Nothing waits for the browser: each call that reaches it returns a ticket at once, and the browser
+calls back when the work is done. So a host ticket is `await`ed — `await cli.readFile(p).ticket()` —
+and `.wait()` on one that has not arrived traps saying so, where on a command line it would block.
+
 ## Testing a page without a browser
 
 `Page.create(dom)` takes a `Dom` — a struct of functions — and the host's three calls, `deliver`,
-`timerFired`, `fileArrived` and `valueArrived`, are ordinary exports. A test hands the program a `Dom` of lambdas that
+`timerFired`, `fileArrived` and `valueArrived`, are ordinary exports. A page's `Sys` is the same: a
+`World` built from a `System` of lambdas, answered by hand with `answered` —
+[`test/wac/system_test.wac`](test/wac/system_test.wac). A test hands the program a `Dom` of lambdas that
 record what it did, and makes the calls a browser would. [`test/wac/page_test.wac`](test/wac/page_test.wac)
 does that for every order in which things can arrive.
 
 ## Building one
 
     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-        <entry.wac> <out-dir> [--in-page] [--title <t>] [--page <spec>] [--wac <binary>]
+        <entry.wac> <out-dir> [--in-page] [--grant read,write] [--title <t>] [--page <spec>] [--wac <binary>]
 
 `packages/web/tools/build.wac` writes three files: `page.wac`, a wrapper exporting `Host` — the one thing the
 browser's side holds, with the page in a private field and a method for each call the host makes;

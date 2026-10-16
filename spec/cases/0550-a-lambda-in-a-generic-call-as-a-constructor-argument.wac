@@ -1,0 +1,15 @@
+// expect: f() = 2
+// spec: §wacc-lambda-after-a-funcref-call
+// why: a lambda argument is typed from the generic static it is passed to when that call is itself a constructor's argument — the constructor's field is what says which instance the static is
+import { Map } from "core";
+
+struct Table {
+  Map<i32, i32> m;
+  Table create() { return Table(Map.create((i32 k) => k, (i32 a, i32 b) => a == b)); }
+}
+
+export i32 f() {
+  Table t = Table.create();
+  t.m.set(1, 2);
+  return t.m.getOr(1, 0);
+}

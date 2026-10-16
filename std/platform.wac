@@ -198,6 +198,34 @@ export struct Sched {
     return true;
   }
 
+  /**
+   * Run what is registered for `id`, now, and answer how many ran — for a world that is **told** a
+   * ticket answered rather than waiting to find out.
+   *
+   * `run` learns which ticket answered by parking in `waitAny`, and a page cannot park: its host
+   * calls in when an answer arrives, and this is what that call does. Each registration for `id` is
+   * taken off before any of them runs, as `run` does, so a handler that registers for the same id
+   * again is waiting for the *next* answer rather than this one.
+   */
+  i32 fire(this, i32 id) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.n; i++) {
+      if (this.ids[i] == id) { n = n + 1; }
+    }
+    if (n == 0) { return 0; }
+    fn<void(i32)>[] due = fn<void(i32)>[].filled(n, schedIdle);
+    i32 k = 0;
+    while (true) {
+      i32 at = this.indexOf(id);
+      if (at < 0) { break; }
+      due[k] = this.handlers[at];
+      k = k + 1;
+      this.removeAt(at);
+    }
+    for (i32 i = 0; i < n; i++) { due[i](id); }
+    return n;
+  }
+
   /** Where `id` is registered, or -1. */
   i32 indexOf(const this, i32 id) {
     for (i32 i = 0; i < this.n; i++) {
@@ -491,6 +519,14 @@ export struct Pending<T> {
    */
   Ticket<T> ticket(this) {
     Ticket<T> t;
+    // **An answer already here settles the ticket now.** Registering it instead would leave it to
+    // whoever dispatches the scheduler — a `drain` on a command line, and in a page, where the host
+    // says when an answer arrives and has already said it, nobody: a page awaiting the clock waited
+    // for ever.
+    if (this.settled(this.id)) {
+      t.resolve(this.resolve(this.id));
+      return t;
+    }
     if (this.sched is not null) {
       this.sched!.on(this.id, (i32 id) => { if (!t.done) { t.resolve(this.resolve(id)); } }, this.drop);
     }

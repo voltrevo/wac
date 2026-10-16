@@ -1,0 +1,42 @@
+// A page with files: a note that is still there after a reload.
+//
+//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+//       packages/platform/example/notes.wac .cache/notes --page ./packages/web --grant read,write
+//
+// Built with grants, a page's `main` is handed a `Sys` beside its `Page`, and `sys.readFile` and
+// `sys.writeFile` reach the browser's Origin Private File System — storage that belongs to the page's
+// origin and survives a reload. The same two calls a program on a command line makes, awaited the same
+// way; what answers them is the browser.
+
+import { Event, Page } from "../../web";
+import { Sys } from "std";
+import { html.button, html.div, html.p, html.span, html.textarea } from "core";
+
+static string FILE = "notes.txt";
+
+export async i32 main(Page page, Sys sys) {
+  page.title("notes");
+  page.render(
+    <div>
+      <p><textarea id="text" rows="8" cols="60"></textarea></p>
+      <p><button id="save">save</button> <span id="said"></span></p>
+    </div>
+  );
+  match (await sys.readFile(FILE)) {
+    Ok(bytes): {
+      page.setValue("text", string.fromBytes(bytes));
+      page.setText("said", "read \{bytes.len()} bytes");
+    }
+    Err(why): { page.setText("said", "nothing saved yet"); }
+  }
+  page.on("#save", "click");
+  while (true) {
+    Event e = await page.nextEvent();
+    if (e.id != "save") { continue; }
+    string text = await page.getValue("text");
+    match (await sys.writeFile(FILE, text.toBytes())) {
+      Ok(): { page.setText("said", "saved \{text.len()} bytes"); }
+      Err(why): { page.setText("said", "could not save: \{why}"); }
+    }
+  }
+}
