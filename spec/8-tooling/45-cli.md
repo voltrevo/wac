@@ -13,7 +13,7 @@ output.
 | `wac build main.wac -o stem` | a module carrying its own manifest and grants |
 | `wac run main.wac [args…]` | compile and run, with no file left behind |
 | `wac test [paths…]` | run every test ([47](47-testing.md)) |
-| `wac bindgen main.wac [--js]` | the glue a host calls a module through ([48](48-bindgen.md)) |
+| `wac bindgen main.wac [--js\|--script]` | the glue a host calls a module through ([48](48-bindgen.md)) |
 | `wac audit main.wac [--verbose]` | what each dependency can reach ([49](49-audit.md)) |
 | `wac update [project]` | fetch what the lock does not cover, and write the lock ([46](46-manifest-and-lock.md)) |
 | `wac app main.wac -o thing` | an executable file that runs itself |

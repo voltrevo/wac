@@ -5,7 +5,7 @@
 
 import { Check } from "./check.wac";
 import { Ticket, html.p, html.b } from "core";
-import { Dom, Event, Page, deliver, timerFired } from "../../src/page.wac";
+import { Dom, Event, Page, deliver, timerFired, valueArrived } from "../../src/page.wac";
 
 /** What the fake document saw, as one line per call. */
 struct Seen {
@@ -20,7 +20,7 @@ Dom fakeDom(Seen seen) {
     (string id, string text) => { seen.log = seen.log + "text " + id + "=" + text + "\n"; },
     (string id, string value) => { seen.log = seen.log + "value " + id + "=" + value + "\n"; },
     (string id, string style) => { seen.log = seen.log + "style " + id + "=" + style + "\n"; },
-    (string id) => "typed",
+    (i32 req, string id) => { seen.log = seen.log + "ask \{req} " + id + "\n"; },
     (string selector, string kind) => { seen.log = seen.log + "listen " + selector + " " + kind + "\n"; },
     (string t) => { seen.log = seen.log + "title " + t + "\n"; },
     (string line) => { seen.log = seen.log + "log " + line + "\n"; },
@@ -218,5 +218,32 @@ export string test_waiting_on_all_of_several() {
   deliver(page, "click", "de", "", 0, 0);
   t.isTrue(done.settled(), "both");
   t.eqI32(done.value(), 32, "in order");
+  return t.report();
+}
+
+async i32 asks(Page page) {
+  string a = await page.getValue("what");
+  string b = await page.getValue("who");
+  return a.len() * 10 + b.len();
+}
+
+Ticket<i32> startAsks(Page page) {
+  schedule page.take;
+  return asks(page);
+}
+
+export string test_an_inputs_value_is_waited_for() {
+  Check t = Check.create();
+  Seen seen = Seen("", 0);
+  Page page = Page.create(fakeDom(seen));
+  Ticket<i32> done = startAsks(page);
+  t.eqStr(seen.log, "ask 0 what\n", "it asked, and waits for the answer");
+  valueArrived(page, 0, "hello");
+  t.eqStr(seen.log, "ask 0 what\nask 0 who\n", "the answer ran it on, and the slot was free again");
+  valueArrived(page, 7, "stray");
+  t.isFalse(done.settled(), "an answer nobody asked for is dropped");
+  valueArrived(page, 0, "ab");
+  t.isTrue(done.settled(), "both answered");
+  t.eqI32(done.value(), 52, "in order");
   return t.report();
 }

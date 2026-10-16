@@ -1,8 +1,9 @@
 # web — a page, as a wac program sees it
 
-`export async i32 main(Page page)` is a web page. It runs on the page's own thread as an `async`
-function: it changes the document with plain calls, and waits for what happens later with `await`.
-There is no worker, no shared memory and nothing the server has to send, so a built page is one
+`export async i32 main(Page page)` is a web page. It is an `async` function: it changes the document
+with plain calls, and waits for what happens later with `await`. It runs in a worker, so a program
+that computes for a while never freezes the tab — or, built with `--in-page`, on the page's own
+thread. There is no shared memory and nothing the server has to send, so a built page is one
 `index.html` that works from a `file://` URL or any static server.
 
 ```wac
@@ -28,7 +29,8 @@ depends on this package by git and builds with nothing but `wac`.
 | | |
 |---|---|
 | `render(node)`, `renderInto(id, node)` | replace the page, or one element's contents, with JSX — escaped, always |
-| `setText`, `setValue`, `setStyle`, `getValue`, `title`, `log` | the targeted changes that would otherwise mean re-rendering |
+| `setText`, `setValue`, `setStyle`, `title`, `log` | the targeted changes that would otherwise mean re-rendering |
+| `await getValue(id)` | an input's value — waited for, because a program in a worker cannot read the document |
 | `drawPixels(id, w, h, rgba)`, `drawPixelsIn(id, x, y, w, h, rgba)` | fill a `<canvas>` from a buffer, or part of one |
 | `download(name, bytes)` | offer bytes to the user as a file |
 | `now()` | milliseconds, from a clock that only goes forward |
@@ -57,22 +59,24 @@ CSS rather than HTML and goes out as written, with `<` escaped so nothing can cl
 ## Testing a page without a browser
 
 `Page.create(dom)` takes a `Dom` — a struct of functions — and the host's three calls, `deliver`,
-`timerFired` and `fileArrived`, are ordinary exports. A test hands the program a `Dom` of lambdas that
+`timerFired`, `fileArrived` and `valueArrived`, are ordinary exports. A test hands the program a `Dom` of lambdas that
 record what it did, and makes the calls a browser would. [`test/wac/page_test.wac`](test/wac/page_test.wac)
 does that for every order in which things can arrive.
 
 ## Building one
 
     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-        <entry.wac> <out-dir> [--title <t>] [--page <spec>] [--wac <binary>]
+        <entry.wac> <out-dir> [--in-page] [--title <t>] [--page <spec>] [--wac <binary>]
 
 `packages/web/tools/build.wac` writes three files: `page.wac`, a wrapper exporting `Host` — the one thing the
 browser's side holds, with the page in a private field and a method for each call the host makes;
-`page.js`, that wrapper through `wac bindgen --js`; and `index.html`, both in one `<script>` with the
-host — the few lines of JavaScript that turn the document into a `Dom` and forward events, timers
-and files to the `Host`. The host makes no decisions; everything a page does is in `src/page.wac`.
-Because the page is private, none of its interior crosses into JavaScript: the glue is two classes,
-`Host` and `Dom`.
+`page.js`, that wrapper through `wac bindgen --script`; and `index.html`, which holds both with the
+host. The host is two halves that talk by messages: the program's half makes a `Dom` whose every
+call is a message, and the document's half applies each message and sends back events, frames,
+files and values. By default the program's half runs in a worker started from the page's own text;
+`--in-page` joins the two halves directly on the page's thread. Neither half makes a decision;
+everything a page does is in `src/page.wac`. Because the page is private, none of its interior
+crosses into JavaScript: the glue is two classes, `Host` and `Dom`.
 
 The output directory has to be inside the directory the build runs in, since the wrapper is written
 there and imports the program.

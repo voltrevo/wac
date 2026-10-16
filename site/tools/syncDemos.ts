@@ -3,8 +3,8 @@
 //
 //   deno run -A site/tools/syncDemos.ts [repo-root]
 //
-// These are whole applications, not snippets. Most are `packages/web` pages — a wac program on the
-// page's own thread, waiting with `await` — and the shell and the desktop are a wac program on a
+// These are whole applications, not snippets. Most are `packages/web` pages — a wac program in a
+// worker of its own, waiting with `await` — and the shell and the desktop are a wac program on a
 // worker, talking to a capability world on the page's own thread over a `SharedArrayBuffer`. Nothing
 // about them is specific to this site: each file is what its builder produces, which is the point.
 // What you can open on the website is the artifact you would build yourself.
@@ -29,7 +29,7 @@ type Demo = {
   grants: string[];
   what: string;
   /**
-   * `"web"` for a page built by `packages/web` — `main(Page)`, on the page's own thread, needing no
+   * `"web"` for a page built by `packages/web` — `main(Page)`, in a worker of its own, needing no
    * headers — and absent for one that still runs on `packages/platform`'s worker host because it
    * needs `Cli`: the shell and the desktop.
    */

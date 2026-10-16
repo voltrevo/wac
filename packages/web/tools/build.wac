@@ -3,10 +3,18 @@
 //     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac src/app.wac dist
 //
 // **Three steps, all of them visible in the output directory.** A wrapper module, `page.wac`, gives the
-// host the four calls it makes — make a page, start the program, deliver an event, fire a timer — and
-// imports the program's `main`. `wac bindgen --js` turns the wrapper into `page.js`, the module with
-// the program inside it. `index.html` is that module and `host.js` — the browser's side, written below —
-// in one `<script type="module">`, so the page is a single file any static server can serve.
+// host the calls it makes — make a page, start the program, deliver an event, a timer, a file or a
+// value — and imports the program's `main`. `wac bindgen --script` turns the wrapper into `page.js`,
+// the glue with the program inside it. `index.html` is that module and the host — the browser's side,
+// written below — so the page is a single file any static server, or none, can serve.
+//
+// **The program runs in a worker unless `--in-page` says otherwise.** A worker is the default because
+// a page's program is a program: a loop that computes for a second, or forever, should cost the
+// program its own responsiveness and not the tab's — scrolling, selecting and closing the tab keep
+// working whatever it does. The worker is made from the page's own text, so there is still one file
+// and nothing the server has to send. `--in-page` runs the same program on the page's own thread, for
+// a page small enough that a worker is only overhead; nothing in the program changes either way,
+// because the host is two halves that talk by messages, and in a page they are joined directly.
 //
 // **A program, not a script in someone else's language**, so a project outside this repository builds
 // a page with the `wac` it already has and this package as a dependency (`templates/webapp/`). It
@@ -24,11 +32,13 @@ struct Asked {
   string wac;
   string pageSpec;
   string title;
+  /** Run the program on the page's own thread rather than in a worker. */
+  bool inPage;
 }
 
 /** The arguments, or a usage line in `title` and empty `entry` when they do not make sense. */
 Asked askedOf(Cli cli) {
-  Asked a = Asked("", "", "wac", "web", "wac");
+  Asked a = Asked("", "", "wac", "web", "wac", false);
   i32 argc = cli.argCount().wait();
   string[] args = string[].filled(argc, "");
   for (i32 k = 0; k < argc; k++) { args[k] = string.fromBytes(cli.arg(k).wait()); }
@@ -40,6 +50,11 @@ Asked askedOf(Cli cli) {
       string v = args[i + 1];
       if (w == "--wac") { a.wac = v; } else if (w == "--page") { a.pageSpec = v; } else { a.title = v; }
       i += 2;
+      continue;
+    }
+    if (w == "--in-page") {
+      a.inPage = true;
+      i++;
       continue;
     }
     if (positional == 0) { a.entry = w; } else if (positional == 1) { a.out = w; }
@@ -99,7 +114,7 @@ export string relativeTo(string from, string to) {
 export string wrapperFor(string entrySpec, string pageSpec) {
   return "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
        + "import { main } from \"\{entrySpec}\";\n"
-       + "import { Dom, Page, deliver, fileArrived, timerFired } from \"\{pageSpec}\";\n"
+       + "import { Dom, Page, deliver, fileArrived, timerFired, valueArrived } from \"\{pageSpec}\";\n"
        + """
 
            export struct Host {
@@ -123,21 +138,69 @@ export string wrapperFor(string entrySpec, string pageSpec) {
              void file(this, bool ok, string name, u8[] bytes, string error) {
                fileArrived(this.page, ok, name, bytes, error);
              }
+
+             void value(this, i32 req, string value) { valueArrived(this.page, req, value); }
            }
            """;
 }
 
 /**
- * The browser's side: the document as a `Dom`, and each event, timer and file handed back. No
- * decisions are made here — everything a page does is in `src/page.wac`, where it is tested without
- * a browser.
+ * The program's half of the host: a `Dom` that turns each change into a message for the document,
+ * and `receive`, which turns each message back into a call on the `Host`. It runs wherever the
+ * program does — in a worker, or on the page — and touches nothing of the document itself. Timers
+ * and the clock are here because a worker has both; a frame is the document's to give.
+ *
+ * `wacProgram(post)` starts the program and answers `receive`. A buffer is handed over rather than
+ * copied when it is the whole of its own memory, which is what `wac bindgen` gives a `u8[]`.
  */
-export string hostScript() {
+export string programSide() {
   return """
-      {
-        const root = document.getElementById("app");
-        const listening = new Set();
+      const wacProgram = (post) => {
         let host = null;
+        const own = (bytes) => bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? [bytes.buffer] : [];
+        const dom = Dom.of(
+          (html) => post(["render", html]),
+          (id, html) => post(["renderInto", id, html]),
+          (id, text) => post(["setText", id, text]),
+          (id, value) => post(["setValue", id, value]),
+          (id, style) => post(["setStyle", id, style]),
+          (req, id) => post(["getValue", req, id]),
+          (selector, kind) => post(["listen", selector, kind]),
+          (title) => post(["title", title]),
+          (line) => { console.log(line); },
+          () => performance.now(),
+          (id, ms) => { setTimeout(() => host.timer(id), ms); },
+          (id) => post(["frame", id]),
+          (id, w, h, rgba) => post(["drawPixels", id, w, h, rgba], own(rgba)),
+          (id, x, y, w, h, rgba) => post(["drawPixelsIn", id, x, y, w, h, rgba], own(rgba)),
+          (name, bytes) => post(["download", name, bytes], own(bytes)),
+        );
+        host = Host.create(dom);
+        host.start();
+        return (m) => {
+          switch (m[0]) {
+            case "event": host.event(m[1], m[2], m[3], m[4], m[5]); break;
+            case "timer": host.timer(m[1]); break;
+            case "file": host.file(m[1], m[2], m[3], m[4]); break;
+            case "value": host.value(m[1], m[2]); break;
+          }
+        };
+      };
+      """;
+}
+
+/**
+ * The document's half: each message from the program applied to the document, and each event, frame
+ * and file sent back with `emit`. No decisions are made here — everything a page does is in
+ * `src/page.wac`, where it is tested without a browser.
+ *
+ * **Every answer is sent later, never during the call that asked.** On the page the two halves are
+ * joined directly, so an answer sent at once would run the program inside its own `getValue` call.
+ */
+export string documentSide() {
+  return """
+      const wacDocument = (root, emit) => {
+        const listening = new Set();
         const byId = (id) => document.getElementById(id);
         const canvas = (id, what) => {
           const el = byId(id);
@@ -159,14 +222,18 @@ export string hostScript() {
           const sy = el.height !== undefined && r.height > 0 ? el.height / r.height : 1;
           return [Math.round((ev.clientX - r.left) * sx), Math.round((ev.clientY - r.top) * sy)];
         };
-        const dom = Dom.of(
-          (html) => { root.innerHTML = html; },
-          (id, html) => { const el = byId(id); if (el) el.innerHTML = html; },
-          (id, text) => { const el = byId(id); if (el) el.textContent = text; },
-          (id, value) => { const el = byId(id); if (el) el.value = value; },
-          (id, style) => { const el = byId(id); if (el) el.setAttribute("style", style); },
-          (id) => { const el = byId(id); return el && "value" in el ? String(el.value) : ""; },
-          (selector, kind) => {
+        const ops = {
+          render: (html) => { root.innerHTML = html; },
+          renderInto: (id, html) => { const el = byId(id); if (el) el.innerHTML = html; },
+          setText: (id, text) => { const el = byId(id); if (el) el.textContent = text; },
+          setValue: (id, value) => { const el = byId(id); if (el) el.value = value; },
+          setStyle: (id, style) => { const el = byId(id); if (el) el.setAttribute("style", style); },
+          getValue: (req, id) => {
+            const el = byId(id);
+            const value = el && "value" in el ? String(el.value) : "";
+            queueMicrotask(() => emit(["value", req, value]));
+          },
+          listen: (selector, kind) => {
             const key = selector + " " + kind;
             if (listening.has(key)) return;
             listening.add(key);
@@ -176,60 +243,89 @@ export string hostScript() {
               if (kind === "submit") ev.preventDefault();
               const value = kind === "keydown" ? ev.key : ("value" in el ? String(el.value) : "");
               const [x, y] = within(el, ev);
-              host.event(kind, el.id || "", value, x, y);
+              emit(["event", kind, el.id || "", value, x, y]);
             });
           },
-          (title) => { document.title = title; },
-          (line) => { console.log(line); },
-          () => performance.now(),
-          (id, ms) => { setTimeout(() => host.timer(id), ms); },
-          (id) => { requestAnimationFrame(() => host.timer(id)); },
-          (id, w, h, rgba) => {
+          title: (title) => { document.title = title; },
+          frame: (id) => { requestAnimationFrame(() => emit(["timer", id])); },
+          drawPixels: (id, w, h, rgba) => {
             const [el, ctx] = canvas(id, "drawPixels");
             // Resizing clears a canvas, so only when the size changes.
             if (el.width !== w) el.width = w;
             if (el.height !== h) el.height = h;
             blit(ctx, w, h, rgba, 0, 0);
           },
-          (id, x, y, w, h, rgba) => { blit(canvas(id, "drawPixelsIn")[1], w, h, rgba, x, y); },
-          (name, bytes) => {
+          drawPixelsIn: (id, x, y, w, h, rgba) => { blit(canvas(id, "drawPixelsIn")[1], w, h, rgba, x, y); },
+          download: (name, bytes) => {
             const a = document.createElement("a");
             a.href = URL.createObjectURL(new Blob([bytes]));
             a.download = name;
             a.click();
             setTimeout(() => URL.revokeObjectURL(a.href), 1000);
           },
-        );
+        };
         // Files arrive whether or not the program has asked yet; the page keeps them until it does.
         const take = (files) => {
           for (const f of files ?? []) {
             f.arrayBuffer().then(
-              (buf) => host.file(true, f.name, new Uint8Array(buf), ""),
-              (e) => host.file(false, f.name, new Uint8Array(0), String(e?.message ?? e)));
+              (buf) => emit(["file", true, f.name, new Uint8Array(buf), ""], [buf]),
+              (e) => emit(["file", false, f.name, new Uint8Array(0), String(e?.message ?? e)]));
           }
         };
         root.addEventListener("change", (ev) => { if (ev.target?.files) take(ev.target.files); });
         // Without preventing dragover a dropped file replaces the page.
         document.addEventListener("dragover", (ev) => ev.preventDefault());
         document.addEventListener("drop", (ev) => { ev.preventDefault(); take(ev.dataTransfer?.files); });
-        host = Host.create(dom);
-        host.start();
-      }
+        return (m) => ops[m[0]](...m.slice(1));
+      };
       """;
 }
 
-/** The page: the module and the host in one script. */
-export string indexFor(string title, string module) {
+/**
+ * The page, with the program in a worker: the glue and the program's half in a script the browser
+ * does not run, and the document's half starting a worker from that script's text. A blob rather than
+ * a second file, so the page stays one file that also works from a `file://` URL — and a **classic**
+ * worker, which is why the glue is `wac bindgen --script`: a module worker made from a blob is refused
+ * on a `file://` page, and a `data:` one would lose the page's origin and the storage that goes with it.
+ */
+export string workerIndexFor(string title, string module) {
+  return head(title)
+       + "<script type=\"text/plain\" id=\"wac-program\">\n" + module + "\n" + programSide()
+       + "const receive = wacProgram((m, transfer) => postMessage(m, transfer ?? []));\n"
+       + "onmessage = (e) => receive(e.data);\n</script>\n"
+       + "<script type=\"module\">\n" + documentSide()
+       + """
+         const source = document.getElementById("wac-program").textContent;
+         const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
+         const apply = wacDocument(document.getElementById("app"), (m, transfer) => worker.postMessage(m, transfer ?? []));
+         worker.onmessage = (e) => apply(e.data);
+         worker.onerror = (e) => console.error(e.message);
+         """
+       + "</script>\n</body>\n</html>\n";
+}
+
+/** The page, with the program on the page's own thread: the two halves joined directly. */
+export string inPageIndexFor(string title, string module) {
+  return head(title) + "<script type=\"module\">\n" + module + "\n" + programSide() + documentSide()
+       + """
+         let receive = null;
+         const apply = wacDocument(document.getElementById("app"), (m) => receive(m));
+         receive = wacProgram((m) => apply(m));
+         """
+       + "</script>\n</body>\n</html>\n";
+}
+
+/** Everything before the script: the document the program draws into. */
+string head(string title) {
   return "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
        + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-       + "<title>" + title + "</title>\n</head>\n<body>\n<div id=\"app\"></div>\n"
-       + "<script type=\"module\">\n" + module + "\n" + hostScript() + "</script>\n</body>\n</html>\n";
+       + "<title>" + title + "</title>\n</head>\n<body>\n<div id=\"app\"></div>\n";
 }
 
 export i32 buildPage(Core core, Cli cli) {
   Asked a = askedOf(cli);
   if (a.entry == "" || a.out == "") {
-    cli.writeErr("usage: build.wac <entry.wac> <out-dir> [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
+    cli.writeErr("usage: build.wac <entry.wac> <out-dir> [--in-page] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
     return 2;
   }
   // **The wrapper is a module of this project**, so it is written inside it: from anywhere else its
@@ -246,7 +342,7 @@ export i32 buildPage(Core core, Cli cli) {
   string entrySpec = relativeTo(a.out, a.entry);
   cli.writeFile(wrapper, wrapperFor(entrySpec, pageSpec).toBytes()).wait();
   string js = a.out + "/page.js";
-  Exec made = cli.exec(a.wac, ["bindgen", wrapper, js, "--js"], u8[]()).wait();
+  Exec made = cli.exec(a.wac, ["bindgen", wrapper, js, "--script"], u8[]()).wait();
   if (!made.ok()) {
     cli.writeErr(made.stderr);
     cli.writeErr(made.stdout);
@@ -259,7 +355,9 @@ export i32 buildPage(Core core, Cli cli) {
     return 1;
   }
   string index = a.out + "/index.html";
-  cli.writeFile(index, indexFor(a.title, string.fromBytes(module.bytes)).toBytes()).wait();
+  string page = a.inPage ? inPageIndexFor(a.title, string.fromBytes(module.bytes))
+                          : workerIndexFor(a.title, string.fromBytes(module.bytes));
+  cli.writeFile(index, page.toBytes()).wait();
   core.log("\{index}: \{module.bytes.len()} bytes of module");
   return 0;
 }

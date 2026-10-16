@@ -228,21 +228,30 @@ Deno.test({
       assertEquals(ent.includes("[exit 0]"), true, ent);
 
       // An interactive page, driven by real clicks. Built by `packages/web`, as every page is: the
-      // program runs on the page's own thread and waits with `await`, so delegated listeners
-      // surviving a `render` and state kept in a local across events are both its claims to check.
-      await buildPage("packages/platform/example/counter.wac", `${dir}/counter`);
-      await page.goto(`http://127.0.0.1:${port}/counter/index.html`, { waitUntil: "load" });
-      await page.waitForSelector("#up", { timeout: 30_000 });
+      // program waits with `await`, so delegated listeners surviving a `render` and state kept in a
+      // local across events are both its claims to check — once in a worker, which is the default,
+      // and once on the page's own thread, which `--in-page` asks for. The same program, and the
+      // worker count says which one ran.
+      for (const [where, extra, workers] of [["counter", [], 1], ["counter-inpage", ["--in-page"], 0]] as const) {
+        await buildPage("packages/platform/example/counter.wac", `${dir}/${where}`, [...extra]);
+        await page.goto(`http://127.0.0.1:${port}/${where}/index.html`, { waitUntil: "load" });
+        await page.waitForSelector("#up", { timeout: 30_000 });
+        assertEquals(page.workers().length, workers, `${where}: workers`);
 
-      await page.click("#up");
-      await page.click("#up");
-      await page.click("#up");
-      await page.click("#down");
-      assertEquals(await page.textContent("#n"), "2", "three up and one down");
+        await page.click("#up");
+        await page.click("#up");
+        await page.click("#up");
+        await page.click("#down");
+        await page.waitForFunction("document.getElementById('n').textContent === '2'", null, { timeout: 30_000 })
+          .catch(() => {});
+        assertEquals(await page.textContent("#n"), "2", `${where}: three up and one down`);
 
-      // Typing, which arrives as `input` events carrying the value.
-      await page.fill("#echo", "typed");
-      assertEquals(await page.textContent("#said"), "you typed: typed");
+        // Typing, which arrives as `input` events carrying the value.
+        await page.fill("#echo", "typed");
+        await page.waitForFunction("document.getElementById('said').textContent === 'you typed: typed'", null,
+          { timeout: 30_000 }).catch(() => {});
+        assertEquals(await page.textContent("#said"), "you typed: typed", where);
+      }
 
       // Pixels, a pointer and files — the three that only a browser can answer for.
       await buildPage("packages/platform/example/pixels.wac", `${dir}/pixels`);

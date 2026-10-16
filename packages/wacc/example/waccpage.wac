@@ -251,7 +251,7 @@ export async i32 main(Page page) {
     } else if (e.kind == "click" && e.id == "go") {
       // Read back rather than remembered: the textarea is the source of truth once a reader has
       // typed in it, and holding a copy here would compile what was loaded instead of what is there.
-      string text = page.getValue("src");
+      string text = await page.getValue("src");
       compile(page, text, "typed.wac");
     }
   }

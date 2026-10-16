@@ -48,7 +48,7 @@ export function circle_area(radius: number): number { /* … */ }
 `circle_area(5.0)` returns `78.53981633974483`.
 
 `[§wac-cli-bindgen-5tqm7wn]` `wac bindgen` writes the glue a host calls a module through, with `--js` for JavaScript instead of
-TypeScript. Each exported function appears as a typed wrapper, so a host calls `gcd(48, 18)` rather than marshalling by hand.
+TypeScript, and `--script` for JavaScript as a classic script: the same declarations, none of them exported. Each exported function appears as a typed wrapper, so a host calls `gcd(48, 18)` rather than marshalling by hand.
 
 A generated name is the wac export's name, exactly.
 

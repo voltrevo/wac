@@ -714,12 +714,35 @@ string outText(Out o) {
 /**
  * The glue for a module, given the compiler's own description of it.
  *
- * `sigs` is `exportSigsLinked`, `wire` is `bindTypesLinked`, and `lang` is `"ts"` or `"js"` —
- * **JavaScript is this output minus its annotations**, which is why one generator writes both rather
- * than there being two to keep in step.
+ * `sigs` is `exportSigsLinked`, `wire` is `bindTypesLinked`, and `lang` is `"ts"`, `"js"` or
+ * `"script"` — **JavaScript is this output minus its annotations**, which is why one generator writes
+ * both rather than there being two to keep in step, and **a script is the JavaScript minus `export`**:
+ * the same declarations for a classic script, which cannot export and which nothing imports — a page
+ * runs its program in a worker made from its own text, and a module worker made from a blob is
+ * refused on a `file://` page where a classic one is not.
  */
 export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool coverage) {
-  G g = readWires(wire, sigs, lang == "js");
+  string glue = moduleGlue(wasm, sigs, wire, lang == "js" || lang == "script", coverage);
+  if (lang == "script") { return unexported(glue); }
+  return glue;
+}
+
+/** `glue` with each line's leading `export ` taken off — every export this file writes begins a line. */
+string unexported(string glue) {
+  Out o = newOut();
+  i32 start = 0;
+  while (start < glue.len()) {
+    i32 nl = glue.slice(start, glue.len()).indexOf("\n");
+    i32 end = nl < 0 ? glue.len() : start + nl + 1;
+    string ln = glue.slice(start, end);
+    if (ln.len() > 7 && ln.slice(0, 7) == "export ") { put(o, ln.slice(7, ln.len())); } else { put(o, ln); }
+    start = end;
+  }
+  return outText(o);
+}
+
+string moduleGlue(u8[] wasm, string sigs, string wire, bool js, bool coverage) {
+  G g = readWires(wire, sigs, js);
   bool[] usable = bool[].filled(g.sCount, false);
   for (i32 s = 0; s < g.sCount; s++) { usable[s] = supported(g, s); }
   string[] crossing = string[].filled(512, "");

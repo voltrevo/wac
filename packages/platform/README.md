@@ -872,8 +872,8 @@ it can report instead of one protocol that works by accident. `box get`, `box ge
 ### Interactive pages
 
 **A page that needs only the page is built with [`packages/web`](../web/README.md)**:
-`export async i32 main(Page page)`, run on the page's own thread and waiting with `await`, with no
-worker, no `SharedArrayBuffer` and no headers to serve. `example/{life,pixels,ripple}.wac` are
+`export async i32 main(Page page)`, run in a worker (or with `--in-page` on the page's own thread)
+and waiting with `await`, with no `SharedArrayBuffer` and no headers to serve. `example/{life,pixels,ripple}.wac` are
 those. What follows is the worker host's `Page`, which is still what a page that also needs `Cli` —
 a filesystem, `packages/sh` — runs on: `packages/box/example/{term,desk,rasterterm}.wac`.
 

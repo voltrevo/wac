@@ -380,7 +380,7 @@ string fieldOf(string line, i32 n) {
  */
 
 string usage() {
-  return "usage: wac check|compile|bindgen <entry.wac> [out]   # --js for bindgen's glue\n"
+  return "usage: wac check|compile|bindgen <entry.wac> [out]   # --js for bindgen's glue, --script without exports\n"
        + "       wac build <entry.wac> -o <stem> [--coverage|--trace [--trace-slots n]] [--quiet]\n"
        + "                [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
        + "       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
@@ -601,7 +601,7 @@ string[] flagsFor(string cmd) {
   }
   // `--js` asks for the glue rather than the bindings, so it is `bindgen`'s alone: on `check` or
   // `compile` it was accepted and read by nobody.
-  if (cmd == "bindgen") { return ["--js", "--quiet"]; }
+  if (cmd == "bindgen") { return ["--js", "--script", "--quiet"]; }
   if (cmd == "compile") { return ["--quiet"]; }
   if (cmd == "audit") { return ["--verbose"]; }
   if (cmd == "ctcompare") { return ["--all"]; }
@@ -1659,14 +1659,17 @@ export i32 main(Sys sys) {
   // reported rather than skipped: a caller told `makeP(i32) -> P` was declined can change the
   // signature, and one handed glue missing a function finds out at the call site.
   if (cmd == "bindgen") {
-    bool js = hasFlag(cli, argc, "--js");
+    // `--script` is the JavaScript as a classic script, exporting nothing — for a worker made from a
+    // page's own text, which may not be a module.
+    bool script = hasFlag(cli, argc, "--script");
+    bool js = script || hasFlag(cli, argc, "--js");
     string declined = bindgenDeclinedFilesIn(paths, texts, res, entry);
     if (declined != "") {
       core.warn("wacc bindgen: not bound yet — \{oneLine(declined)}");
     }
     // From the metadata already in hand: `bindgenFiles` would build two more front ends to derive
     // exactly these two strings.
-    string glue = bindgenWire(wasm, sigs, types, js ? "js" : "ts");
+    string glue = bindgenWire(wasm, sigs, types, script ? "script" : js ? "js" : "ts");
     // **The positional output the usage line has always advertised.** `wac check|compile|bindgen
     // <entry.wac> [out]` — `compile` reads `pos[1]` twelve lines down and this did not, so a caller
     // who wrote one was handed `main.gen.ts` beside the entry and no word about the path they asked

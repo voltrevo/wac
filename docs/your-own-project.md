@@ -404,6 +404,7 @@ wac hello.wasm                        # run a built artefact — the manifest sa
 wac app     src/main.wac -o hello     # an executable you can run directly: ./hello
 wac test    src/math_test.wac         # or a directory
 wac bindgen src/main.wac [--js]       # src/main.wac.ts — the glue a JS host calls it through
+                                      # (--script: the same JavaScript, exporting nothing)
 ```
 
 **`--` means something in one of these and not the other**, which is easy to miss because the two

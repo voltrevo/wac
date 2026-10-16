@@ -31,7 +31,7 @@ export async i32 main(Page page) {
     Event e = await page.nextEvent();
     bool adding = e.id == "add" || (e.kind == "keydown" && e.value == "Enter");
     if (!adding) { continue; }
-    string what = page.getValue("what");
+    string what = await page.getValue("what");
     if (what == "" || n == items.len()) { continue; }
     items[n] = what;
     n += 1;

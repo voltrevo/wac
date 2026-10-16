@@ -1,14 +1,19 @@
 // A web page, as a wac program sees it: `export async i32 main(Page page)`.
 //
-// **The program runs on the page's own thread, as an `async` function.** It changes the document
-// with plain calls — `render`, `setText`, `drawPixels` — which happen at once, and it waits for what
-// happens later — the next event, a timer, a file — with `await`. Each `await` hands control back to
-// the browser, and the host calls back in when something arrives. There is no worker, no shared
-// memory and no blocking, so a built page needs nothing from the server that serves it.
+// **The program is an `async` function.** It changes the document with plain calls — `render`,
+// `setText`, `drawPixels` — and it waits for what happens later — the next event, a timer, a file, an
+// input's value — with `await`. Each `await` hands control back, and the host calls back in when
+// something arrives. Nothing blocks and no memory is shared, so a built page needs nothing from the
+// server that serves it.
+//
+// **Where it runs is the build's choice, not the program's.** In a worker by default, so a program
+// that computes for a long time costs its own responsiveness and not the tab's; on the page's own
+// thread with `--in-page`. Nothing here can tell: every change goes out through the `Dom` and nothing
+// the program asks for is answered during the call that asked, which is why `getValue` is waited for.
 //
 // **The host is small and has no decisions in it.** It supplies a `Dom` — a struct of functions that
-// touch the document — and forwards each event, timer and file to `deliver`, `timerFired` and
-// `fileArrived`. Everything else, including the waiting, is here.
+// send changes to the document — and forwards each event, timer, file and value to `deliver`,
+// `timerFired`, `fileArrived` and `valueArrived`. Everything else, including the waiting, is here.
 //
 // **Waiting resumes at once.** The program runs with this page as its schedule target (spec ch35) —
 // when it starts and each time the host calls in — so each machine that suspends hands its
@@ -62,8 +67,11 @@ export struct Dom {
   fn<void(string, string)> setValue;
   /** Replace an element's inline style, by id. */
   fn<void(string, string)> setStyle;
-  /** An input's value, by id; `""` when there is no such element. */
-  fn<string(string)> getValue;
+  /**
+   * Ask for an input's value, by id, and answer with `valueArrived(req, value)` — `""` when there is no
+   * such element. Asked rather than read, because a program in a worker cannot read the document.
+   */
+  fn<void(i32, string)> getValue;
   /** Deliver events of a kind on elements matching a selector — delegated, so they survive `render`. */
   fn<void(string, string)> listen;
   /** The document's title. */
@@ -91,7 +99,7 @@ export struct Dom {
   Dom inert() {
     return Dom(
       (string html) => { }, (string id, string html) => { }, (string id, string text) => { },
-      (string id, string value) => { }, (string id, string style) => { }, (string id) => "",
+      (string id, string value) => { }, (string id, string style) => { }, (i32 req, string id) => { },
       (string selector, string kind) => { }, (string t) => { }, (string line) => { }, () => 0.0,
       (i32 id, i32 ms) => { }, (i32 id) => { }, (string id, i32 w, i32 h, u8[] rgba) => { },
       (string id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => { }, (string name, u8[] bytes) => { }
@@ -110,7 +118,9 @@ export struct Page {
   Queue<Picked> files;
   Queue<Ticket<Picked>> wantsFile;
   /** Each timer's ticket, by id, until it fires. */
-  Ticket<f64>?[] timers;
+  Slots<f64> timers;
+  /** Each `getValue`'s ticket, by request, until its answer arrives. */
+  Slots<string> asked;
   /** Continuations with nothing to wait on — a bare `await;` — run before control goes back. */
   Queue<Continuation> ready;
 
@@ -120,7 +130,7 @@ export struct Page {
     Queue<Picked> files;
     Queue<Ticket<Picked>> wantsFile;
     Queue<Continuation> ready;
-    return Page(dom, arrived, waiting, files, wantsFile, Ticket<f64>?[](), ready);
+    return Page(dom, arrived, waiting, files, wantsFile, Slots<f64>(Ticket<f64>?[]()), Slots<string>(Ticket<string>?[]()), ready);
   }
 
   /** Replace what the page shows with `n`, escaped. */
@@ -135,7 +145,12 @@ export struct Page {
   void setText(this, string id, string text) { this.dom.setText(id, text); }
   void setValue(this, string id, string value) { this.dom.setValue(id, value); }
   void setStyle(this, string id, string style) { this.dom.setStyle(id, style); }
-  string getValue(this, string id) { return this.dom.getValue(id); }
+  /** An input's value, by id, waited for: `string v = await page.getValue("name");`. */
+  Ticket<string> getValue(this, string id) {
+    Ticket<string> t;
+    this.dom.getValue(this.asked.add(t), id);
+    return t;
+  }
   void title(this, string t) { this.dom.title(t); }
   void log(this, string line) { this.dom.log(line); }
   f64 now(this) { return this.dom.now(); }
@@ -191,41 +206,26 @@ export struct Page {
   /** A ticket that settles after `ms` milliseconds, answering `now()` when it did. */
   Ticket<f64> sleep(this, i32 ms) {
     Ticket<f64> t;
-    this.dom.timer(this.timerFor(t), ms);
+    this.dom.timer(this.timers.add(t), ms);
     return t;
   }
 
   /** A ticket that settles before the browser next paints, answering `now()` — one per frame drawn. */
   Ticket<f64> nextFrame(this) {
     Ticket<f64> t;
-    this.dom.frame(this.timerFor(t));
+    this.dom.frame(this.timers.add(t));
     return t;
   }
 
   /**
    * Settles once the browser has painted what the page shows now, answering `now()`. Before long work,
-   * so a "reading…" note is on screen while it runs: the program runs on the page's own thread, and a
-   * frame callback runs *before* the paint it belongs to, so the wait is a frame and then a timer.
+   * so a "reading…" note is on screen while it runs: on the page's own thread (`--in-page`) nothing is
+   * painted while the program computes, and a frame callback runs *before* the paint it belongs to, so
+   * the wait is a frame and then a timer. In a worker the page paints regardless, and this is a frame.
    */
   async f64 painted(this) {
     await this.nextFrame();
     return await this.sleep(0);
-  }
-
-  /** `t`'s id, for `timerFired`: a free slot, or a new one. */
-  i32 timerFor(this, Ticket<f64> t) {
-    for (i32 i = 0; i < this.timers.len(); i++) {
-      if (this.timers[i] is null) {
-        this.timers[i] = t;
-        return i;
-      }
-    }
-    i32 id = this.timers.len();
-    Ticket<f64>?[] more = Ticket<f64>?[].defaulted(id + 1);
-    for (i32 i = 0; i < id; i++) { more[i] = this.timers[i]; }
-    more[id] = t;
-    this.timers = more;
-    return id;
   }
 
   /**
@@ -278,13 +278,20 @@ export void deliver(Page page, string kind, string id, string value, i32 x, i32 
   page.arrived.push(e);
 }
 
+/** The answer to `getValue` request `req`. One nobody is waiting for is dropped. */
+export void valueArrived(Page page, i32 req, string value) {
+  schedule page.take;
+  Ticket<string>? t = page.asked.take(req);
+  if (t is null) { return; }
+  t!.resolve(value);
+  page.drain();
+}
+
 /** Timer `id` is due — a `sleep` or a `nextFrame`. */
 export void timerFired(Page page, i32 id) {
   schedule page.take;
-  if (id < 0 || id >= page.timers.len()) { return; }
-  Ticket<f64>? t = page.timers[id];
+  Ticket<f64>? t = page.timers.take(id);
   if (t is null) { return; }
-  page.timers[id] = null;
   t!.resolve(page.now());
   page.drain();
 }
@@ -300,6 +307,38 @@ export void fileArrived(Page page, bool ok, string name, u8[] bytes, string erro
   }
   w!.resolve(f);
   page.drain();
+}
+
+/**
+ * Tickets the host answers by number — timers, and the answers to `getValue`. Each waits in a slot
+ * until the host calls back with its number, and the slot is free again once it has.
+ */
+struct Slots<T> {
+  Ticket<T>?[] held;
+
+  /** The number `t` waits under: a free slot, or a new one. */
+  i32 add(this, Ticket<T> t) {
+    for (i32 i = 0; i < this.held.len(); i++) {
+      if (this.held[i] is null) {
+        this.held[i] = t;
+        return i;
+      }
+    }
+    i32 id = this.held.len();
+    Ticket<T>?[] more = Ticket<T>?[].defaulted(id + 1);
+    for (i32 i = 0; i < id; i++) { more[i] = this.held[i]; }
+    more[id] = t;
+    this.held = more;
+    return id;
+  }
+
+  /** The ticket waiting under `id`, freeing its slot — or null for a number nothing waits under. */
+  Ticket<T>? take(this, i32 id) {
+    if (id < 0 || id >= this.held.len()) { return null; }
+    Ticket<T>? t = this.held[id];
+    this.held[id] = null;
+    return t;
+  }
 }
 
 // ── A markup tree as HTML ─────────────────────────────────────────────────────

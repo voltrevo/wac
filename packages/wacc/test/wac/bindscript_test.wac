@@ -1,0 +1,48 @@
+// `wac bindgen --script`: the JavaScript glue as a classic script, with nothing exported.
+//
+//     wac test --allow-read packages/wacc/test/wac/bindscript_test.wac
+//
+// A page runs its program in a worker made from the page's own text, and a module worker made from a
+// blob is refused on a `file://` page — a classic one is not, and keeps the page's origin, which a
+// `data:` worker would not. A classic script cannot say `export`, and nothing imports a worker anyway,
+// so the glue is the same declarations without the word.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { bindgenFiles, emitFiles } from "../../src/api.wac";
+
+static string SRC =
+  "export struct Box {\n" +
+  "  i32 v;\n" +
+  "  Box make(i32 v) { return Box(v); }\n" +
+  "}\n" +
+  "export i32 twice(i32 x) { return x * 2; }\n";
+
+export string test_the_script_glue_is_the_module_glue_without_export() {
+  T t = T.create();
+  string[] paths = string[].filled(1, "main.wac");
+  string[] sources = string[].filled(1, SRC);
+  u8[] wasm = emitFiles(paths, sources, "main.wac");
+  string js = bindgenFiles(wasm, paths, sources, "main.wac", "js");
+  string script = bindgenFiles(wasm, paths, sources, "main.wac", "script");
+  t.isTrue(contains(js, "export class Box {"), "the module glue exports — " + js);
+  t.isTrue(contains(script, "\nclass Box {"), "the script declares the class — " + script);
+  t.isTrue(contains(script, "\nfunction twice("), "and the function");
+  t.isFalse(contains(script, "export "), "and exports nothing");
+  i32 exports = occurrences(js, "export ");
+  t.isTrue(exports >= 3, "the module glue has exports to remove");
+  t.eqI32(script.len(), js.len() - exports * 7, "and is otherwise the same length");
+  return t.report();
+}
+
+/** How many times `needle` occurs in `s`. */
+i32 occurrences(string s, string needle) {
+  i32 n = 0;
+  i32 from = 0;
+  while (true) {
+    i32 at = s.slice(from, s.len()).indexOf(needle);
+    if (at < 0) { return n; }
+    n++;
+    from = from + at + needle.len();
+  }
+}

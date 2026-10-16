@@ -147,8 +147,8 @@ export async i32 main(Page page) {
 
       // Said before the work, and shown: rebuilding an index means inflating every object and
       // walking every delta chain, which took twelve seconds for one megabyte of this repository's
-      // own history. The work runs on the page's own thread, so the note is only on screen if the
-      // browser paints before it starts — which is what waiting for `painted` is.
+      // own history. Built `--in-page`, the work runs on the page's own thread, so the note is only on
+      // screen if the browser paints before it starts — which is what waiting for `painted` is.
       page.setText("note", "reading \{f.name}…");
       await page.painted();
       f64 began = page.now();

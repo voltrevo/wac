@@ -163,11 +163,11 @@ export default function Run() {
       <Section id="how" kicker="what makes it possible" title="An await, a page, and for the shell a worker">
         <P>
           Most of these are {m({ children: "packages/web" })} pages: {m({ children: "main(Page page)" })}, an{" "}
-          {m({ children: "async" })} function on the page&rsquo;s own thread. It changes the document
-          with plain calls and waits for the next click, frame or file with{" "}
-          {m({ children: "await" })}, and each wait hands control back to the browser until
-          something arrives. State is ordinary locals, the program reads top to bottom, and the
-          page needs nothing from the server that serves it.
+          {m({ children: "async" })} function in a worker. It changes the document with plain calls
+          and waits for the next click, frame or file with {m({ children: "await" })}, and each wait
+          hands control back until something arrives. State is ordinary locals, the program reads
+          top to bottom, a long computation never freezes the tab, and the page needs nothing from
+          the server that serves it.
         </P>
         <P>
           The shell and the desktop are different, because they run programs that expect to read a
