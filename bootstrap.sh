@@ -207,7 +207,13 @@ done
 # compiles wacc, and wacc compiles the wac command. See `bootstrap/README.md`.
 
 LADDER=bootstrap/rust-ladder/target/release/ladder
-GRANTS="--allow-read --allow-write --allow-env --allow-net"
+# **Every capability, `--allow-run` included**, because the command is the toolchain: the native hosts
+# give it all of them whatever its manifest says (`native/v8/src/main.rs`, *"The built-in program holds
+# every capability"*), and what a program it loads may do is decided by the seed, narrowed from these.
+# Without `--allow-run` the JavaScript hosts — which read the manifest — could not pass on a grant the
+# command did not hold: `packages/web`'s builder runs `wac bindgen`, and on `--host deno`, the one host
+# CI has, it was refused with *Not granted to this application*.
+GRANTS="--allow-read --allow-write --allow-env --allow-net --allow-run"
 
 # **One seed, both native hosts.** The payload is `packages/wac/src/wac.wac` compiled by wacc — a
 # wac program — so the engine underneath it is the only difference between the two binaries. Each

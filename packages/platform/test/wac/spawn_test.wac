@@ -433,6 +433,32 @@ export string test_a_parent_hands_a_child_a_subset_of_its_own_grants_and_cannot_
   return t.report();
 }
 
+export string test_a_parent_hands_a_child_the_run_grant_on_a_javascript_host(Core core, Cli cli) {
+  // **`run` is a grant like the others, and the JavaScript hosts never passed it on.** Their
+  // `startChild` narrowed read, write, net and env and left `run` out, so a child could not run a host
+  // program whatever its parent held — `wac run --allow-run` on `--host deno` refused `packages/web`'s
+  // builder its `wac bindgen`, on the one host CI has. The native hosts always passed it.
+  T t = T.create();
+  string dir = freshScratch(t, cli, "run");
+  string parent = "\{dir}/parent";
+  string child = "\{dir}/runprobe.worker.js";
+  string why = build(cli, "packages/platform/example/runner.wac", parent,
+                     ["--allow-read", "--allow-run"], "deno", false) +
+               build(cli, "packages/platform/example/runprobe.wac", child, none(), "deno", true);
+  t.eqStr(why, "", "the two programs built");
+  if (why != "") { return t.report(); }
+
+  Ran granted = run(cli, parent, [child, "", "run"]);
+  t.eqI32(granted.code, 0, granted.err);
+  t.eqStr(trimmed(granted.out), "run=ok", granted.out + granted.err);
+  // And not without asking: a parent that may run programs hands that on only when it says so.
+  Ran withheld = run(cli, parent, [child, "", ""]);
+  t.eqI32(withheld.code, 0, withheld.err);
+  t.isTrue(contains(trimmed(withheld.out), "run=no"), withheld.out + withheld.err);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
 export string test_a_bundle_that_parses_and_never_speaks_the_protocol_is_a_failed_child(
     Core core, Cli cli) {
   // Two shapes of the same wedge, and only the second one needed a timer. A file that is not a bundle

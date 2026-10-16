@@ -1,0 +1,16 @@
+// Whether this program may run a host program: `run=ok` when `/bin/sh -c true` ran, and otherwise
+// `run=no` with what the host said.
+//
+//   runner runprobe.worker.js "" run      ->  ok, if the runner itself may run programs
+//
+// The child half of `test/wac/spawn_test.wac`'s run-grant case. `probe.wac` reports the other grants
+// by their fault; `Exec` carries no fault, only its message, so this reports the one distinction that
+// does not depend on how a host words a refusal — whether the program ran.
+
+import { Exec, Sys } from "std";
+
+export i32 main(Sys sys) {
+  Exec e = sys.cli.exec("/bin/sh", ["-c", "true"], u8[]()).wait();
+  sys.core.log(e.error == "" && e.status == 0 ? "run=ok" : "run=no: " + e.error);
+  return 0;
+}

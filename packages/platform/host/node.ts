@@ -12,7 +12,7 @@
 
 import { type Handlers } from "./respond.ts";
 import { EMPTY_ARG, argBytes, i32le, i64le, readI32le, str, unstr } from "./call.ts";
-import { GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, OP } from "./ops.ts";
+import { GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_RUN, GRANT_WRITE, OP } from "./ops.ts";
 import { randomBytes } from "./entropy.ts";
 import { ChildStack, envRecord, joinPath, packCaptured, unpackExec, unpackPush } from "./child.ts";
 import { ByteQueue } from "./queue.ts";
@@ -341,6 +341,11 @@ export function nodeWorld(
       write: (wanted & GRANT_WRITE) !== 0 && opts.fs?.write === true,
       net: (wanted & GRANT_NET) !== 0 && opts.net === true,
       env: (wanted & GRANT_ENV) !== 0 && opts.env !== undefined,
+      // **`run` too, which no child here had ever been given.** The four above were narrowed and this
+      // one was left out, so `wac run --allow-run` on a JavaScript host refused the program's every
+      // `exec` with *Not granted to this application* — `packages/web`'s builder, which runs
+      // `wac bindgen`, on the one host CI has. The native hosts always passed it on.
+      run: (wanted & GRANT_RUN) !== 0 && opts.run === true,
     };
     const h = nextHandle++;
     const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr, parentFs, childSelf) => {
@@ -369,6 +374,7 @@ export function nodeWorld(
         ...(give.read || give.write ? { fs: { read: give.read, write: give.write } } : {}),
         ...(give.net ? { net: true } : {}),
         ...(give.env ? { env: opts.env } : {}),
+        ...(give.run ? { run: true } : {}),
         // A line of output is bytes on the handle, with the newline `log` implies.
         log: async (l: string) => { await out.push(enc.encode(l + "\n")); },
         warn: async (l: string) => { await cerr.push(enc.encode(l + "\n")); },
