@@ -100,8 +100,13 @@ export type PendingClasses = {
  */
 /** What `Core.exit` throws: the program asked to end now with `code`. Caught where `main` was called. */
 export class WacExit extends Error {
-  constructor(readonly code: number) {
+  // A declared field rather than a parameter property: our TypeScript is erasable by design
+  // (`design/system/0009` D4), and `readonly code` in the parameter list is the one construct that is
+  // not — TypeScript writes a field for it and an erasing stripper cannot. `issues/system/0360a`.
+  readonly code: number;
+  constructor(code: number) {
     super(`the program exited with ${code}`);
+    this.code = code;
   }
 }
 
