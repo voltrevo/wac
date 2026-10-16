@@ -13,4 +13,5 @@ i32 score(Read r) {
 }
 
 export i32 f() { return score(Read.End); }
-export i32 main(Sys sys) { return 0; }
+// Taking a `Sys` is what brings std into the program; no `main`, which a case cannot have.
+export i32 probe(Sys sys) { return 0; }
