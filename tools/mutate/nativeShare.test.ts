@@ -303,7 +303,10 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
   const FIXTURE = [
     `import { wacTestRun } from "../harness/wacTestRun.ts";`,
     `await wacTestRun("packages/quic/test/wac/varint_test.wac", "quic");`,
-    `await wacTestRun("core/test/option_test.wac", "option");`,
+    // Any ordinary wac test: it was `core/test/option_test.wac`, which went with `Option` and left
+    // this fixture naming a file that is not there — the run failed and the share came back null,
+    // which reads exactly like the bug this test is for (`issues/system/0361a`).
+    `await wacTestRun("core/test/result_test.wac", "result");`,
     ``,
   ].join("\n");
   const reg = wacTestRegistrations(FIXTURE);
@@ -333,7 +336,7 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
     // Both registrations, because `nativeShare` loops and a version that took the first and stopped
     // would leave every later entry's lines unprofiled.
     const prefixes = new Set(Object.keys(share.tests).map((k) => k.slice(0, k.indexOf(": "))));
-    if (!prefixes.has("quic") || !prefixes.has("option")) {
+    if (!prefixes.has("quic") || !prefixes.has("result")) {
       throw new Error(
         `the native share covers ${[...prefixes].join(", ") || "nothing"}; it must cover both ` +
           `registrations, or the entries after the first go unprofiled`,
@@ -370,7 +373,10 @@ Deno.test("a file that also declares host tests is left to Deno", async () => {
   // invisible to the test walk that would otherwise try to run it.
   const FIXTURE = [
     `import { wacTestRun } from "../harness/wacTestRun.ts";`,
-    `await wacTestRun("core/test/option_test.wac", "option");`,
+    // Any ordinary wac test: it was `core/test/option_test.wac`, which went with `Option` and left
+    // this fixture naming a file that is not there — the run failed and the share came back null,
+    // which reads exactly like the bug this test is for (`issues/system/0361a`).
+    `await wacTestRun("core/test/result_test.wac", "result");`,
     `Deno.test("a host-side test declared in the same file", () => {});`,
     ``,
   ].join("\n");
