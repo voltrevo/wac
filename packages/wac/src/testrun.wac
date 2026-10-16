@@ -360,7 +360,9 @@ void walkTests(Fs fs, string dir, Vec<string> out) {
     string name = names[i];
     if (name == "" || name.slice(0, 1) == ".") { continue; }
     if (name == "node_modules" || name == "target") { continue; }
-    string path = dir + (dir.len() > 0 && dir.slice(dir.len() - 1, dir.len()) == "/" ? "" : "/") + name;
+    // `wac test .` arrives here as "", the current directory normalised, and "" + "/" + name is a file
+    // at the root of the filesystem: *cannot read /a_test.wac*.
+    string path = dir == "" ? name : dir + (dir.slice(dir.len() - 1, dir.len()) == "/" ? "" : "/") + name;
     if (fs.stat(path).isDir) {
       walkTests(fs, path, out);
       continue;

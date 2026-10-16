@@ -195,3 +195,68 @@ export string test_the_cleanup_leaves_the_projects_own_files_alone(Core core, Cl
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/** `wac test <target>` run from `dir`, through a shell so the working directory is `dir`. */
+Exec testFrom(Cli cli, string dir, string target) {
+  string line = "cd '" + dir + "' && exec '" + binaryPath(cli) + "' test " + target;
+  return cli.exec("/bin/sh", ["-c", line], u8[]()).wait();
+}
+
+string saidBy(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
+
+export string test_a_file_importing_a_namespace_member_is_not_dropped_from_a_directory_run(Core core, Cli cli) {
+  // `import { html.p } from "core"` is how every JSX test brings in its tags. The walk found a file's
+  // tests by parsing it without lowering its namespaces first, so such a file had none, and the run
+  // dropped it without a word — "1 file: 1 ok" for a directory of two.
+  T t = T.create();
+  string dir = scratch(cli, "agg-ns");
+  t.eqStr(freshDir(cli, dir), "", "a fresh directory");
+  t.eqStr(putFile(cli, "\{dir}/test/a_test.wac",
+                  "import { Node, html.p } from \"core\";\n"
+                  + "export string test_tagged() { Node n = <p>x</p>; return \"\"; }\n"), "", "a JSX test");
+  t.eqStr(putFile(cli, "\{dir}/test/b_test.wac", "export string test_plain() { return \"\"; }\n"), "",
+          "and a plain one");
+  Exec r = testFrom(cli, dir, "test");
+  string out = saidBy(r);
+  t.eqI32(r.status, 0, "both pass — \{out}");
+  t.isTrue(contains(out, "2 files: 2 ok"), "and both are counted — \{out}");
+  t.isTrue(contains(out, "test_tagged"), "the JSX one ran — \{out}");
+  return t.report();
+}
+
+export string test_dot_is_the_current_directory(Core core, Cli cli) {
+  // `wac test .` arrived at the walk as "", and "" + "/" + name read a file at the filesystem's root.
+  T t = T.create();
+  string dir = scratch(cli, "agg-dot");
+  t.eqStr(freshDir(cli, dir), "", "a fresh directory");
+  t.eqStr(putFile(cli, "\{dir}/a_test.wac", "export string test_here() { return \"\"; }\n"), "", "a test");
+  Exec r = testFrom(cli, dir, ".");
+  string out = saidBy(r);
+  t.eqI32(r.status, 0, "it runs — \{out}");
+  t.isTrue(contains(out, "ok   test_here"), "the test here — \{out}");
+  return t.report();
+}
+
+export string test_a_nested_project_s_tests_run_from_outside_it(Core core, Cli cli) {
+  // A directory with its own `wac.json5` is a project nothing outside may reach into, so an aggregate
+  // in the outer project's `.cache/` importing its tests was refused. Run from outside, the aggregate
+  // goes beside the files instead, inside their project — which is how the suite, run from the
+  // repository's root, reaches `packages/web`.
+  T t = T.create();
+  string dir = scratch(cli, "agg-nested");
+  t.eqStr(freshDir(cli, dir), "", "a fresh directory");
+  t.eqStr(putFile(cli, "\{dir}/inner/wac.json5", "{ exports: './lib.wac' }\n"), "", "a nested project");
+  t.eqStr(putFile(cli, "\{dir}/inner/lib.wac", "export i32 two() { return 2; }\n"), "", "its module");
+  t.eqStr(putFile(cli, "\{dir}/inner/test/a_test.wac",
+                  "import { two } from \"../lib.wac\";\n"
+                  + "export string test_inside() { return two() == 2 ? \"\" : \"wrong\"; }\n"), "", "its test");
+  t.eqStr(putFile(cli, "\{dir}/inner/test/b_test.wac", "export string test_also() { return \"\"; }\n"), "",
+          "and another");
+  Exec r = testFrom(cli, dir, "inner/test");
+  string out = saidBy(r);
+  t.eqI32(r.status, 0, "run from outside the project, both pass — \{out}");
+  t.isTrue(contains(out, "2 files: 2 ok"), "and both are counted — \{out}");
+  string[]? left = cli.readDir("\{dir}/inner/test").wait();
+  t.isTrue(left is not null && left!.len() == 2, "and nothing is left beside them");
+  return t.report();
+}

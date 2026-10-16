@@ -1333,6 +1333,17 @@ export i32 main(Sys sys) {
     // `../` is not needed at all.
     string up = "../";
     string[] imports = importable(cli, walked);
+    // **Files in a project of their own go `beside` too.** A directory with its own `wac.json5` is a
+    // project nothing outside it may reach into, so an aggregate in this project's `.cache/` importing
+    // `packages/web/test/wac/page_test.wac` was refused — *reaches a file inside the nested project*
+    // — and the suite, which runs `wac test` from the repository's root, could not run that package's
+    // tests at all. Written beside them, the aggregate is inside their project and imports them there.
+    if (imports.len() > 0 && walked.len() > 0) {
+      Fs tfs = Fs.onHost(cli, 0);
+      string here = normalisePath(cli.cwd().wait());
+      string theirs = projectRootAbs(tfs, here, walked[0]);
+      if (theirs != projectRootAbs(tfs, here, ".")) { imports = string[](); }
+    }
     if (imports.len() == 0) {
       // **`beside` needs one directory, and several paths do not name one.** One target *is* the
       // directory that was walked; several have to be asked for the deepest directory they are all
@@ -1346,7 +1357,7 @@ export i32 main(Sys sys) {
       }
       imports = beside(dir, walked);
       up = "";
-      aggregate = "\{dir}/\{baseName(aggregatePath(core, cli))}";
+      aggregate = dir == "" ? baseName(aggregatePath(core, cli)) : "\{dir}/\{baseName(aggregatePath(core, cli))}";
     } else {
       // **`.cache/` is made, not assumed.** A fresh project has never built anything, so the directory
       // the aggregate goes in does not exist and `writeFile` answered "No such file or directory" —

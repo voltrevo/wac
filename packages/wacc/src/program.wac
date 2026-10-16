@@ -14,6 +14,8 @@ import { Lexed, lex, tokenStride } from "./lex.wac";
 import { endsWith, startsWith } from "./path.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Decl, DeclKind, ImportItem, Param, Program, Ty, TyKind } from "./ast.wac";
+import { lowerNamespaces } from "./namespaces.wac";
+import { Res } from "./path.wac";
 
 export struct ProgramEntry {
   /** Why this entry cannot be built as a program, or `""`. */
@@ -297,14 +299,27 @@ string progText(u8[] src, Lexed lexed, i32 t) {
 // ---- Tests — spec ch47 ----
 
 /**
+ * `text` as the parser is handed it in a build: with its namespaces lowered away (spec ch03), which is
+ * the step before anything else reads a source. Without it a test file importing a namespace member —
+ * `import { html.p } from "core"`, which every JSX test does — did not parse here, so a directory run
+ * found no tests in it and dropped the file without a word. A build lowers again, and lowering a
+ * lowered text changes nothing.
+ */
+string asParsed(string text) {
+  string[] lowered = lowerNamespaces(string[].filled(1, "test.wac"), string[].filled(1, text), Res.empty());
+  return lowered[0];
+}
+
+/**
  * A test file as a test build compiles it: every exported `test*` that takes a `Sys` or is `async` is
  * renamed and given an adapter taking `(Core, Cli)`, which the runner can call, that makes the `Sys`
  * and settles an `async` answer — "a test may take the capabilities it needs as parameters, as `main`
  * does" (ch47). The `Sys` is made from the run's own `Core` and `Cli`, so it holds only what the run
  * granted. Idempotent: the adapters take `Core` and `Cli`, which this leaves alone.
  */
-export string testEntry(string text) {
-  if (text.indexOf("Sys") < 0 && text.indexOf("async") < 0) { return text; }
+export string testEntry(string text0) {
+  if (text0.indexOf("Sys") < 0 && text0.indexOf("async") < 0) { return text0; }
+  string text = asParsed(text0);
   u8[] src = text.toBytes();
   Lexed lexed = lex(src);
   P p = P.create(src, lexed);
@@ -411,7 +426,8 @@ export struct DeclaredTest {
 }
 
 /** The exported, non-generic, synchronous `test*` functions `text` declares, in order. */
-export DeclaredTest[] declaredTests(string text) {
+export DeclaredTest[] declaredTests(string text0) {
+  string text = asParsed(text0);
   u8[] src = text.toBytes();
   Lexed lexed = lex(src);
   P p = P.create(src, lexed);
