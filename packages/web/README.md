@@ -66,10 +66,16 @@ does that for every order in which things can arrive.
     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
         <entry.wac> <out-dir> [--title <t>] [--page <spec>] [--wac <binary>]
 
-`tools/build.wac` writes three files: `page.wac`, a wrapper exporting the calls the host makes;
-`page.js`, that wrapper through `wac bindgen --js`; and `index.html`, both in one `<script>` with
-the host — the few lines of JavaScript that turn the document into a `Dom` and forward events,
-timers and files. The host makes no decisions; everything a page does is in `src/page.wac`.
+`tools/build.wac` writes three files: `page.wac`, a wrapper exporting `Host` — the one thing the
+browser's side holds, with the page in a private field and a method for each call the host makes;
+`page.js`, that wrapper through `wac bindgen --js`; and `index.html`, both in one `<script>` with the
+host — the few lines of JavaScript that turn the document into a `Dom` and forward events, timers
+and files to the `Host`. The host makes no decisions; everything a page does is in `src/page.wac`.
+Because the page is private, none of its interior crosses into JavaScript: the glue is two classes,
+`Host` and `Dom`.
+
+The output directory has to be inside the directory the build runs in, since the wrapper is written
+there and imports the program.
 
 `--page` names the module the wrapper imports `Page` from: `web` by default, which is how a project
 that depends on this package spells it, and `./packages/web` from this repository's root.

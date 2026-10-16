@@ -20231,6 +20231,29 @@ i32 structGetOp(string t) {
  * has to be bound wherever it was declared, which is usually an imported file. -1 means no bound,
  * which is what a single-file source wants.
  */
+/** The private fields of the plain struct `name`, as ` a b ` — empty for anything else. */
+string privateMembersOf(Env env, u8[] src, Lexed lexed, Program prog, string name) {
+  string out = " ";
+  Decl[] ds = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
+  u8[] s0 = src; Lexed l0 = lexed; i32 f0 = env.curFile;
+  for (i32 d = 0; d < ds.len(); d++) {
+    env.curFile = env.declFile(d);
+    src = srcFor(env.fileSrcs, s0, env.curFile);
+    lexed = lexFor(env.fileLexeds, l0, env.curFile);
+    match (ds[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0 || tokenTextOf(src, lexed, nameTok) != name) { continue; }
+        for (i32 k = 0; k < fields.len(); k++) {
+          if (fields[k].isPrivate) { out = out + tokenTextOf(src, lexed, fields[k].nameTok) + " "; }
+        }
+      }
+      default: { }
+    }
+  }
+  env.curFile = f0; src = s0; lexed = l0;
+  return out;
+}
+
 i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] out, i32 entryDecls) {
   i32 n = 0;
   Decl[] w20d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
@@ -20294,8 +20317,14 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
   for (i32 round = 0; round < 8; round++) {
     i32 before = n;
     for (i32 i = 0; i < before; i++) {
+      // **Not through a private member**, which is not bound (spec ch48 `§wac-bind-private-7kpcy8t`):
+      // a type only a private field or method names is one the glue never hands out, and following
+      // it bound a page's whole interior — its queues, tickets and vectors, 24 classes and 71 KB of
+      // JavaScript — behind a struct whose one field was private.
+      string hidden = privateMembersOf(env, src, lexed, prog, out[i]);
       i32 fc = env.fieldCountOf(out[i]);
       for (i32 f = 0; f < fc; f++) {
+        if (hidden.indexOf(" " + env.fieldNameAt(out[i], f) + " ") >= 0) { continue; }
         n = noteBindStructIn(env, out, n, env.fieldTypeAt(out[i], f));
       }
       Decl[] w21d = env.mergedDecls.len() > 0 ? env.mergedDecls : prog.decls;
@@ -20309,6 +20338,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
             if (typeParams.len() > 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != out[i]) { continue; }
             for (i32 m = 0; m < methods.len(); m++) {
+              if (methods[m].isPrivate) { continue; }
               n = noteBindStruct(env, out, n,
                                  baseOfType(typeOfTyName(env, src, lexed, methods[m].returnType)));
               for (i32 pi = 0; pi < methods[m].params.len(); pi++) {

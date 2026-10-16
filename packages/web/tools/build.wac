@@ -88,31 +88,41 @@ export string relativeTo(string from, string to) {
   return out.len() >= 3 && out.slice(0, 3) == "../" ? out : "./" + out;
 }
 
-/** The wrapper: the program's `main`, and the five calls the host makes. */
+/**
+ * The wrapper: the program's `main`, and `Host`, the one thing the browser's side holds.
+ *
+ * **`Host` is opaque on purpose.** Its page is a private field, so the glue `wac bindgen` writes for
+ * it has no members to bind but these five methods — and none of the page's queues, tickets and
+ * vectors cross into JavaScript, where nothing could use them. Handing over the `Page` itself did:
+ * 24 classes and 71 KB of glue for a counter.
+ */
 export string wrapperFor(string entrySpec, string pageSpec) {
   return "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
        + "import { main } from \"\{entrySpec}\";\n"
        + "import { Dom, Page, deliver, fileArrived, timerFired } from \"\{pageSpec}\";\n"
-       + "import { Ticket } from \"core\";\n"
        + """
 
-           export Page __page(Dom dom) { return Page.create(dom); }
+           export struct Host {
+             private Page page;
 
-           export Ticket<i32> __start(Page page) {
-             schedule page.take;
-             Ticket<i32> run = main(page);
-             page.drain();
-             return run;
-           }
+             Host create(Dom dom) { return Host(Page.create(dom)); }
 
-           export void __event(Page page, string kind, string id, string value, i32 x, i32 y) {
-             deliver(page, kind, id, value, x, y);
-           }
+             /** Run the program, with the page as its schedule target, until it first waits. */
+             void start(this) {
+               schedule this.page.take;
+               main(this.page);
+               this.page.drain();
+             }
 
-           export void __timer(Page page, i32 id) { timerFired(page, id); }
+             void event(this, string kind, string id, string value, i32 x, i32 y) {
+               deliver(this.page, kind, id, value, x, y);
+             }
 
-           export void __file(Page page, bool ok, string name, u8[] bytes, string error) {
-             fileArrived(page, ok, name, bytes, error);
+             void timer(this, i32 id) { timerFired(this.page, id); }
+
+             void file(this, bool ok, string name, u8[] bytes, string error) {
+               fileArrived(this.page, ok, name, bytes, error);
+             }
            }
            """;
 }
@@ -127,7 +137,7 @@ export string hostScript() {
       {
         const root = document.getElementById("app");
         const listening = new Set();
-        let page = null;
+        let host = null;
         const byId = (id) => document.getElementById(id);
         const canvas = (id, what) => {
           const el = byId(id);
@@ -166,14 +176,14 @@ export string hostScript() {
               if (kind === "submit") ev.preventDefault();
               const value = kind === "keydown" ? ev.key : ("value" in el ? String(el.value) : "");
               const [x, y] = within(el, ev);
-              __event(page, kind, el.id || "", value, x, y);
+              host.event(kind, el.id || "", value, x, y);
             });
           },
           (title) => { document.title = title; },
           (line) => { console.log(line); },
           () => performance.now(),
-          (id, ms) => { setTimeout(() => __timer(page, id), ms); },
-          (id) => { requestAnimationFrame(() => __timer(page, id)); },
+          (id, ms) => { setTimeout(() => host.timer(id), ms); },
+          (id) => { requestAnimationFrame(() => host.timer(id)); },
           (id, w, h, rgba) => {
             const [el, ctx] = canvas(id, "drawPixels");
             // Resizing clears a canvas, so only when the size changes.
@@ -194,16 +204,16 @@ export string hostScript() {
         const take = (files) => {
           for (const f of files ?? []) {
             f.arrayBuffer().then(
-              (buf) => __file(page, true, f.name, new Uint8Array(buf), ""),
-              (e) => __file(page, false, f.name, new Uint8Array(0), String(e?.message ?? e)));
+              (buf) => host.file(true, f.name, new Uint8Array(buf), ""),
+              (e) => host.file(false, f.name, new Uint8Array(0), String(e?.message ?? e)));
           }
         };
         root.addEventListener("change", (ev) => { if (ev.target?.files) take(ev.target.files); });
         // Without preventing dragover a dropped file replaces the page.
         document.addEventListener("dragover", (ev) => ev.preventDefault());
         document.addEventListener("drop", (ev) => { ev.preventDefault(); take(ev.dataTransfer?.files); });
-        page = __page(dom);
-        __start(page);
+        host = Host.create(dom);
+        host.start();
       }
       """;
 }

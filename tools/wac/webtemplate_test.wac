@@ -60,7 +60,7 @@ export string test_the_template_builds_and_tests_outside_the_repository(Core cor
   t.isTrue(page.ok, "dist/index.html exists");
   string html = page.ok ? string.fromBytes(page.bytes) : "";
   t.isTrue(contains(html, "<script type=\"module\">"), "a module script");
-  t.isTrue(contains(html, "__start(page)"), "that starts the program");
+  t.isTrue(contains(html, "host.start()"), "that starts the program");
 
   // `wac task test`.
   Exec tested = wacIn(cli, project, home, "test test");

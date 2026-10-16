@@ -1,0 +1,36 @@
+// A type only a private member names is not bound — spec ch48 `§wac-bind-private-7kpcy8t`.
+//
+//     wac test --allow-read packages/wacc/test/wac/bindprivate_test.wac
+//
+// A private member is not bound, so the glue never hands out what it holds — and the walk that decides
+// which classes to write followed private fields and methods anyway. A page's wrapper keeps the page in
+// one private field, and the glue for a counter came out as 24 classes and 71 KB of JavaScript for the
+// page's queues, tickets and vectors, none of which JavaScript could reach.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { bindgenFiles, emitFiles } from "../../src/api.wac";
+
+static string SRC =
+  "struct Inner { i32 v; }\n" +
+  "struct Secret { i32 w; }\n" +
+  "struct Shown { i32 x; }\n" +
+  "export struct Outer {\n" +
+  "  private Inner inner;\n" +
+  "  Shown shown;\n" +
+  "  Outer make() { return Outer(Inner(1), Shown(2)); }\n" +
+  "  private Secret secret(this) { return Secret(this.inner.v); }\n" +
+  "  i32 peek(this) { return this.secret().w; }\n" +
+  "}\n";
+
+export string test_a_private_member_binds_nothing_it_names() {
+  T t = T.create();
+  string[] paths = string[].filled(1, "main.wac");
+  string[] sources = string[].filled(1, SRC);
+  string js = bindgenFiles(emitFiles(paths, sources, "main.wac"), paths, sources, "main.wac", "js");
+  t.isTrue(contains(js, "export class Outer {"), "the exported struct is bound — " + js);
+  t.isTrue(contains(js, "export class Shown {"), "and what its public field holds");
+  t.isFalse(contains(js, "export class Inner {"), "not what only a private field holds");
+  t.isFalse(contains(js, "export class Secret {"), "nor what only a private method answers");
+  return t.report();
+}
