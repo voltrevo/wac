@@ -19,6 +19,12 @@ import {
   test_nearF64_tolerance as asse__nearF64_tolerance,
 } from "./wac/assert_test.wac";
 import {
+  test_a_program_that_stopped_compiling_is_not_served_from_before as buil__a_program_that_stopped_compiling_is_not_served_from_before,
+  test_a_built_app_runs_and_answers_its_own_exit_status as buil__a_built_app_runs_and_answers_its_own_exit_status,
+  test_sourcesof_reads_a_whole_closure_and_reports_a_hole as buil__sourcesof_reads_a_whole_closure_and_reports_a_hole,
+  test_sourcesof_enters_a_nested_project_at_its_exports as buil__sourcesof_enters_a_nested_project_at_its_exports,
+} from "./wac/built_test.wac";
+import {
   test_a_lambda_is_a_value as clos__a_lambda_is_a_value,
   test_a_lambda_captures_by_reference as clos__a_lambda_captures_by_reference,
   test_a_lambda_captures_a_parameter as clos__a_lambda_captures_a_parameter,
@@ -97,6 +103,22 @@ export i32 main(Sys sys) {
   }
   if (asse__nearF64_tolerance().len() > 0) {
     core.warn("error: FAILED assert_test test_nearF64_tolerance");
+    bad = bad + 1;
+  }
+  if (buil__a_program_that_stopped_compiling_is_not_served_from_before(core, cli).len() > 0) {
+    core.warn("error: FAILED built_test test_a_program_that_stopped_compiling_is_not_served_from_before");
+    bad = bad + 1;
+  }
+  if (buil__a_built_app_runs_and_answers_its_own_exit_status(core, cli).len() > 0) {
+    core.warn("error: FAILED built_test test_a_built_app_runs_and_answers_its_own_exit_status");
+    bad = bad + 1;
+  }
+  if (buil__sourcesof_reads_a_whole_closure_and_reports_a_hole(core, cli).len() > 0) {
+    core.warn("error: FAILED built_test test_sourcesof_reads_a_whole_closure_and_reports_a_hole");
+    bad = bad + 1;
+  }
+  if (buil__sourcesof_enters_a_nested_project_at_its_exports(core, cli).len() > 0) {
+    core.warn("error: FAILED built_test test_sourcesof_enters_a_nested_project_at_its_exports");
     bad = bad + 1;
   }
   if (clos__a_lambda_is_a_value().len() > 0) {

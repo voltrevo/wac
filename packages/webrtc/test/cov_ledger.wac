@@ -111,24 +111,12 @@ Rule[] rules() {
          "The same family in the session layer's helpers — `labelOf` and `transactionOf` reading a " +
          "message too short to carry what is being asked for. Reached through `Session.receive`, " +
          "which is the entry the browser test drives and this driver cannot see."),
-    Rule("packages/webrtc/src/stun.wac", "export i32 ", "line", false,
-         "**Attribute and method identifiers from RFC 5389's table that nothing here compares " +
-         "against.** MAPPED-ADDRESS (superseded by the XOR form), ERROR-CODE, UNKNOWN-ATTRIBUTES, " +
-         "REALM, NONCE, ALTERNATE-SERVER, the Binding indication and error responses.\n" +
-         "         They are declared rather than omitted because the table is the specification and a " +
-         "reader checking this file against the RFC should find the whole of it. `proven: false`: an " +
-         "attribute the parser does not know is skipped, so a peer sending one reaches nothing — but " +
-         "the constants become live the moment somebody implements TURN, which needs REALM and NONCE."),
-    Rule("packages/webrtc/src/dtls.wac", "export i32 hs", "line", false,
-         "DTLS handshake message types this implementation neither sends nor branches on: " +
-         "ServerHelloDone, ClientKeyExchange, Finished, ServerKeyExchange. The state machine keys off " +
-         "the ones it needs and the rest are here to name the protocol's table."),
-    Rule("packages/webrtc/src/sctp.wac", "export i32 ppid", "line", false,
-         "SCTP payload protocol identifiers for message kinds a data channel can carry and this " +
-         "package's tests do not send — binary, and the zero-length binary form. The empty variants " +
-         "exist because SCTP cannot carry a zero-length DATA chunk, so an empty message is signalled " +
-         "by its PPID rather than by its length, which is the kind of detail that is wrong until " +
-         "something sends one."),
+    // Dropped 2026-10-16: the line rules over `stun.wac`'s `export i32 `, `dtls.wac`'s `export i32 hs`
+    // and `sctp.wac`'s `export i32 ppid`, and the pins on `sctp.wac:208` (`initWindow` — the gap is
+    // `issues/system/0251b`), `sctp.wac:245` (`dataFlagUnordered`) and `dtls.wac:35`
+    // (`typeApplicationData`). Nothing calls those functions, so they are no longer compiled into the
+    // exercise and have no points; the ones that are called are covered. The `dtls.wac` `Certificate`
+    // rule went too: `leafCertificate`'s short-body arms are all covered now.
     Rule("packages/webrtc/src/session.wac", "export i32 dcep", "line", false,
          "The DCEP message types. `Session` answers an open with an ack, so both are used at run " +
          "time — through the browser test and the example, neither of which this driver sees."),
@@ -150,9 +138,6 @@ Rule[] rules() {
          "claiming a four-hundred-byte list in a four-byte extension walked off the end of the " +
          "array. What is left in this family is the rest of the hello readers — a cookie where one " +
          "is required, a HelloVerifyRequest this client does not send."),
-    Rule("packages/webrtc/src/dtls.wac", "Certificate", "decl", false,
-         "Reading a peer's certificate chain out of a DTLS Certificate message when it is absent, " +
-         "empty, or shorter than its own length prefix. The peers in the corpus all send one."),
     Rule("packages/webrtc/src/sctp.wac", "chunk", "decl", false,
          "The chunk accessors asked for a chunk that is not there — an index past the end, a length " +
          "field that overruns the packet, a value shorter than its own header. An SCTP packet carries " +
@@ -178,19 +163,6 @@ Rule[] rules() {
 
 Pin[] pins() {
   return [
-        Pin("packages/webrtc/src/sctp.wac", 208, "export i32 initWindow(u8[] value) {", false,
-        "**An uncovered entry.** The advertised receive window out of an INIT — the peer telling us " +
-        "how much it will accept before an acknowledgement. Nothing reads it, which means nothing " +
-        "here does receiver-side flow control, which is a gap in the implementation rather than in " +
-        "the tests. Now filed as `issues/system/0251b` rather than only recorded here — a coverage " +
-        "ledger is read by someone moving a number, and an implementation gap has to be findable by " +
-        "someone deciding what to implement.\n" +
-        "         **Its twin `initTsn` was the same shape and was a bug, not a gap**, fixed " +
-        "2026-08-24: the association adopted whichever DATA chunk arrived first as its cumulative " +
-        "point, which claims everything below it arrived. One reorder and a chunk still in flight " +
-        "was acknowledged, refused as a duplicate when it landed, and never named in a gap block. " +
-        "Worth the sentence here because the two pins were written together and read the same, and " +
-        "only one of them was harmless."),
     Pin("packages/webrtc/src/session.wac", 266, "u8[] labelOf(u8[] msg) {", false,
         "The DCEP label accessor's entry — see the pin on `:271` for its body and for why the whole " +
         "function is reached only through the browser test."),
@@ -199,26 +171,22 @@ Pin[] pins() {
         "`sctp.wac` has its own `appendPacket` doing the identical job, also uncovered. Two copies of " +
         "six lines, neither reached by a test, which is the shape this repository's guidance says to " +
         "collapse — recorded rather than done because both are in a package with an owner."),
-    Pin("packages/webrtc/src/stun.wac", 367, "if (((msg[at] << 8) | msg[at + 1]) != attrFingerprint()) { return false; }", false,
+    Pin("packages/webrtc/src/stun.wac", 367, "if (((msg[at] as i32 << 8) | msg[at + 1] as i32) != attrFingerprint()) { return false; }", false,
         "FINGERPRINT not being the last attribute, which RFC 5389 §15.5 requires it to be. A message " +
         "that puts it elsewhere is refused, and every message in the corpus puts it last."),
-    Pin("packages/webrtc/src/stun.wac", 368, "if (((msg[at + 2] << 8) | msg[at + 3]) != 4) { return false; }", false,
+    Pin("packages/webrtc/src/stun.wac", 368, "if (((msg[at + 2] as i32 << 8) | msg[at + 3] as i32) != 4) { return false; }", false,
         "A FINGERPRINT attribute whose length is not four. Same family as `:367` — the attribute is " +
         "fixed-width by definition and nothing has ever sent one that is not."),
-    Pin("packages/webrtc/src/dtls.wac", 365, "export i32 curveSecp256r1() { return 0x0017; }", false,
+    Pin("packages/webrtc/src/dtls.wac", 364, "export i32 curveSecp256r1() { return 0x0017; }", false,
         "The named-curve identifier, never compared against because the ServerKeyExchange reader " +
         "takes the curve the peer names rather than checking it is the one we offered. That is worth " +
         "a second look rather than a pin — an unchecked curve is how a peer moves a key exchange to " +
         "a group it prefers — but it is `packages/webrtc`'s call, and `issues/system/0151` is already " +
         "open about this message."),
-    Pin("packages/webrtc/src/dtls.wac", 565, "if (!r.ok) { return \"not a record\"; }", false,
+    Pin("packages/webrtc/src/dtls.wac", 564, "if (!r.ok) { return \"not a record\"; }", false,
         "`describe` on a record that did not parse. A diagnostic helper, reached only when something " +
         "wants to print a malformed record — which is the situation the tests do not produce because " +
         "they do not produce malformed records."),
-    Pin("packages/webrtc/src/dtls.wac", 36, "export i32 typeApplicationData() { return 23; }", false,
-        "The application-data record type. Every application record in this package goes through " +
-        "`Session`, whose exercise is the browser test — so the constant is read at run time and not " +
-        "here. Same reason as `session.wac`'s DCEP constants."),
     Pin("packages/webrtc/src/sctp.wac", 86, "if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[]()); }", false,
         "A chunk header too short to hold its own length. The entry to every SCTP walk, and the one " +
         "malformation the corpus does not contain."),
@@ -227,9 +195,6 @@ Pin[] pins() {
         "doubling, and reaching the cap needs six consecutive timeouts — about two minutes of a peer " +
         "not answering. No test waits that long and none should; a test that wanted this would inject " +
         "the try count rather than the time, which `backoff` already takes as an argument."),
-    Pin("packages/webrtc/src/sctp.wac", 245, "export i32 dataFlagUnordered() { return 0x04; }", false,
-        "The unordered-delivery flag. A data channel can be negotiated unordered and nothing here " +
-        "negotiates one, so the flag is defined and never set or tested."),
     Pin("packages/webrtc/src/session.wac", 271, "for (i32 i = 0; i < labelLen; i++) { out[i] = msg[12 + i]; }", false,
         "Copying a DCEP channel label out of an open message — reached whenever a label is non-empty, " +
         "which is every real channel and no test channel. Through `Session.receive`, which the " +

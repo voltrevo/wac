@@ -3,7 +3,7 @@
 //   wac task coverage:json
 //   wac task coverage:json --verbose
 //
-// **602 of 602**, from 590 of 602, and both lists below are empty: every branch point is expected to
+// **625 of 625**, from 590 of 602, and both lists below are empty: every branch point is expected to
 // be covered and the first one that is not fails by name. `issues/system/0205`.
 //
 // ## Thirty-four of the 57 tests were not being called

@@ -22,16 +22,9 @@ string[] grants() {
 
 Rule[] rules() {
   return [
-         Rule("packages/ens/src/verified.wac", "Record", "decl", false,
-         "**The verified path: an ENS record proved against a state root rather than asked of " +
-         "a node.** `recordOf` walks a Merkle proof to a registry slot and answers what it " +
-         "found; the arms here are for a proof that does not reach the slot, a slot that is " +
-         "empty, and a resolver address that is not twenty bytes. \n" +
-         "Reachable with a proof the fixtures do not contain, and this is the half of the " +
-         "package worth the input: the unverified half asks a node and believes it, and this " +
-         "one is the reason the package exists."),
     Rule("packages/ens/src/verified.wac", "slotOf", "decl", false,
-         "The slot walk's absent-record arm — see `Record`."),
+         "The slot walk's no-account arm: a proof that there is no account at the registry " +
+         "address. The fixture is one capture with the registry deployed, so it has no such proof."),
     Rule("packages/ens/src/verified.wac", "addressOfSlot", "decl", false,
          "A stored value longer than an address, which is a slot holding something that is not " +
          "one."),

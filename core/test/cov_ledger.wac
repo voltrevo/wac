@@ -68,6 +68,26 @@ export i32 main(Sys sys) {
 
   report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
   return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
-                 Pin[].filled(0, Pin("", 0, "", true, "")),
-                 Rule[].filled(0, Rule("", "", "line", true, ""))) ? 1 : 0;
+                 Pin[].filled(0, Pin("", 0, "", true, "")), rules()) ? 1 : 0;
+}
+
+/**
+ * **Four files `core/test` has no tests for, and why that is not a hole.** This ledger was written
+ * when `core` was the five files its own tests cover. `buf.wac`, `text.wac` and `number.wac` came with
+ * interpolation converting through `toString`, and `ticket.wac` with `async` — and each is the
+ * language's machinery rather than a library: it is reached by every program that interpolates or
+ * awaits, so what tests it is the spec corpus (`packages/wacc/test/wac/cases_test.wac`,
+ * `specexamples_test.wac`) and the compiler's own tests, which run programs that use it and check
+ * their answers. This exercise runs neither, so a whole-file rule says so rather than 254 pins
+ * repeating it — and a point in one of these files that a *core* test does reach still counts.
+ */
+Rule[] rules() {
+  string why = "the language's own machinery, tested by the spec corpus and the compiler's tests, " +
+               "which run programs that use it; core/test has no tests of its own for it";
+  return [
+    Rule("core/buf.wac", "", "line", false, "Buf: " + why),
+    Rule("core/text.wac", "", "line", false, "toString: " + why),
+    Rule("core/number.wac", "", "line", false, "numeric literals: " + why),
+    Rule("core/ticket.wac", "", "line", false, "tickets and async: " + why)
+  ] as Rule[];
 }

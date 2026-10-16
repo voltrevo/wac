@@ -471,6 +471,12 @@ export string test_check_exclude_is_a_list_of_dot_slash_patterns_2ixx2cu_yfwkbsg
   t.isTrue(!bare.ok && bare.code == M_PATH_FORM(), "a pattern without `./` is refused");
   Manifest kind = readManifest("{ check: { exclude: \"./x\" } }".toBytes());
   t.isTrue(!kind.ok && kind.code == M_CHECK_KIND(), "one string is not a list");
+  Manifest item = readManifest("{ check: { exclude: [\"./x\", 1] } }".toBytes());
+  t.isTrue(!item.ok && item.code == M_CHECK_KIND(), "a list holding a number is refused");
+  Manifest notObj = readManifest("{ check: \"./x\" }".toBytes());
+  t.isTrue(!notObj.ok && notObj.code == M_CHECK_KIND(), "`check` itself must be an object");
+  Manifest empty = readManifest("{ check: {} }".toBytes());
+  t.isTrue(empty.ok && empty.checkExclude.len() == 0, "a `check` with no `exclude` excludes nothing");
   Manifest none = readManifest("{}".toBytes());
   t.isTrue(none.ok && none.checkExclude.len() == 0, "and none is none");
   return t.report();

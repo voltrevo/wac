@@ -44,11 +44,6 @@ string[] grants() {
 
 Rule[] rules() {
   return [
-         Rule("packages/ethrpc/src/jsonhex.wac", "hexArray", "decl", false,
-         "**An uncovered entry.** `hexArray` reads a JSON array of hex strings — the shape " +
-         "`eth_getProof` returns for a proof path — and nothing calls it, because " +
-         "`getproof.wac` is its only caller and `getproof.wac` is one of the two files still " +
-         "contributing no points at all."),
     Rule("packages/ethrpc/src/jsonhex.wac", "fromHexQuantity", "decl", false,
          "A quantity that is empty after its `0x`, and one whose digits are not hex. " +
          "`header_test.wac` drives the well-formed quantities; these are the malformed ones a " +

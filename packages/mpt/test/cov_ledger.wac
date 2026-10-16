@@ -50,7 +50,7 @@ string[] grants() {
 
 Pin[] pins() {
   return [
-        Pin("packages/mpt/src/proof.wac", 167, "if (w.error != \"\") { return; }", true,
+        Pin("packages/mpt/src/proof.wac", 166, "if (w.error != \"\") { return; }", true,
         "**Every caller checks first, which is what this guard is for.** `verify` reads `w.error` " +
         "immediately before and immediately after each `step` at `:113` and `:115` and returns on " +
         "either, so a walk that has failed never reaches another node. The two recursive calls at " +

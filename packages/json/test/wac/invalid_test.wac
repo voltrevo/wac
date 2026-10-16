@@ -21,6 +21,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std";
 import { canonicalize } from "../../src/json.wac";
+import { faultOf } from "./faults.wac";
 
 static string ORACLE = "packages/json/test/oracle.ts";
 
@@ -77,6 +78,11 @@ export string test_invalid_documents_are_rejected(Core core, Cli cli) {
     lines.add("parses \{hex(bad[i].toBytes())} 0");
   }
   checkDeno(t, cli, ORACLE, lines, "the invalid corpus really is invalid");
+  // **And refused for the right reason**, for the faults no other test names: a document refused
+  // only as `isErr()` would pass with every fault reported as `Unexpected`.
+  t.eqStr(faultOf(canonicalize("[1,".toBytes())), "end of input", "a document that stops early");
+  t.eqStr(faultOf(canonicalize("[01]".toBytes())), "bad number", "a leading zero");
+  t.eqStr(faultOf(canonicalize("\"\\q\"".toBytes())), "bad escape", "an escape JSON does not have");
   return t.report();
 }
 

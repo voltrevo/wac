@@ -55,19 +55,11 @@ Pin[] pins() {
 }
 
 Rule[] rules() {
-  return [
-         Rule("packages/tty/example/ttycat.wac", "main", "decl", true,
-         "**An example's `main` is run as a program, and this driver imports it as a module.** " +
-         "`ttycat.wac` is what the pty tests build and execute — `line_test.wac` imports `ttycatBytes` " +
-         "from it, which is the part that is a function — and `main` reads stdin, picks a mode from " +
-         "`argv` and writes. A coverage driver calls exported functions; it does not start programs, " +
-         "so the entry and the argument-parsing ternary inside it are unreachable from here by " +
-         "construction rather than by omission.\n" +
-         "         Not a gap in the example's testing: `test_the_live_pty_still_answers_what_was_" +
-         "recorded` runs this program against a real pty in every mode, which is what the ternary " +
-         "exists for. What cannot see it is *this measurement*, which is a different statement — the " +
-         "same one `packages/raster`'s ledger makes about its two-host test.")
-  ];
+  // There was one rule here, for `example/ttycat.wac`'s `main`. The function is still there, but
+  // the instrument reports no uncovered point in it any more — the file reads 15 of 15 — and the
+  // rule's other claim, that a pty test runs the program, stopped being true when the tests moved
+  // to calling `ttycatBytes` (see that function's doc comment).
+  return Rule[]();
 }
 
 export i32 main(Sys sys) {

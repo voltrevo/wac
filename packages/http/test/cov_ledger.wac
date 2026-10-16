@@ -78,30 +78,13 @@ Pin[] pins() {
   ];
 }
 
+// No rules. `connectThrough` and `replyCap`, the socket half of `proxy.wac`, used to be explained
+// here; nothing the exercise calls reaches them now, so they contribute no points rather than
+// uncovered ones. Their tests are `test/wac/tunnel_test.wac`'s, which dial this container's actual
+// proxy and stay out of the exercise on purpose — a floor over a figure that needs the network is a
+// floor over the weather.
 Rule[] rules() {
-  return [
-         Rule("packages/http/src/proxy.wac", "replyCap", "decl", false,
-         "**How much of a reply to read before giving up, which only the socket path asks.** One " +
-         "line, one caller, and that caller is `connectThrough` below — so this is uncovered for " +
-         "exactly the reason the rule under it gives, and is listed separately only because a rule " +
-         "matches an enclosing declaration and this is its own."),
-    Rule("packages/http/src/proxy.wac", "connectThrough", "decl", false,
-         "**The only thing in this package that owns a socket, and the driver must not open one.**\n" +
-         "         Every uncovered point in `proxy.wac` is inside `connectThrough` — the dial, the " +
-         "send, the three `recv` arms, the four reply outcomes and the reply cap. It is tested, by " +
-         "`test/wac/tunnel_test.wac`'s three cases, which dial this container's *actual* proxy and " +
-         "pass in the suite. They are left out of the exercise on purpose: a coverage driver that " +
-         "needs the network reports a different number when the network is down, and a floor over a " +
-         "figure like that is a floor over the weather. `packages/server`'s ledger leaves its " +
-         "`live_test.wac` out for the same reason, and `interop_test.wac`'s five are out of this one " +
-         "for the port-binding half of it — `issues/system/0216`.\n" +
-         "         `proven: false`, and the distinction matters here more than usual: this is not " +
-         "code no input reaches, it is code whose inputs exist, are written down, and run every " +
-         "time the suite does. What is unreachable is not the branch but the *driver*.\n" +
-         "         `readReply`, `parseProxy` and `connectRequest` — the pure functions this splits " +
-         "the work into so that most of it needs no socket — are fully covered by " +
-         "`proxy_test.wac`'s eight, which is the argument for having split them.")
-  ];
+  return Rule[].filled(0, Rule("", "", "line", true, ""));
 }
 
 export i32 main(Sys sys) {

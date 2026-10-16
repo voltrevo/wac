@@ -38,7 +38,7 @@ string[] grants() {
 
 Pin[] pins() {
   return [
-        Pin("packages/rlp/src/rlp.wac", 134, "if (len < 0) { trap; }", true,
+        Pin("packages/rlp/src/rlp.wac", 133, "if (len < 0) { trap; }", true,
         "**Both callers pass a length they just measured.** `header` is called at `:102` with the " +
         "summed size of an encoded list and at `:119` with `v.len()`, and neither can be negative — an " +
         "array's length is not, and the sum of non-negative sizes is not until it overflows, which is " +
@@ -46,7 +46,7 @@ Pin[] pins() {
         "         Kept as a trap rather than a clamp because of what the alternative writes: a negative " +
         "length reaching `[short + len]` produces a *prefix byte* below the base, which is a " +
         "different, valid RLP tag. The failure would be a well-formed encoding of the wrong thing."),
-    Pin("packages/rlp/src/rlp.wac", 205, "if (c.error != \"\") { return empty; }", true,
+    Pin("packages/rlp/src/rlp.wac", 204, "if (c.error != \"\") { return empty; }", true,
         "**Every caller checks first.** The list loop at `:261` reads `c.error` immediately after each " +
         "`item` and returns on it, so a cursor that has failed is never handed to `item` again.\n" +
         "         Tried and did not reach it: a four-byte list whose first member is a truncated " +

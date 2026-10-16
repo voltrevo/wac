@@ -77,7 +77,7 @@ string[] cases() { return ["trapCase:145", "trapProbe:35"]; }
 /** Points nothing here reaches, each with the argument for it. */
 Pin[] pins() {
   return [
-        Pin("packages/crypto/src/ed25519.wac", 339, "if (byteShift + i < 64)", true,
+        Pin("packages/crypto/src/ed25519.wac", 334, "if (byteShift + i < 64)", true,
         "The bound holds by construction: this shifts a 32-byte value left within a 64-byte " +
         "buffer, and `byteShift` is derived from the same bit count that sizes the loop. The " +
         "guard is what makes the shift correct *as written* rather than by the caller's " +
@@ -106,9 +106,9 @@ Pin[] pins() {
         "same reason as the guard above — every field element originates from a decode that " +
         "already checked — and kept because the alternative to trapping is returning P-384's " +
         "prime for a P-521 element."),
-    Pin("packages/crypto/src/fieldp.wac", 66, "if (n != 12) { trap; }", true,
+    Pin("packages/crypto/src/fieldp.wac", 68, "if (n != 12) { trap; }", true,
         "foldVector's copy of that same guard."),
-    Pin("packages/crypto/src/fieldp.wac", 327, "if (k != 0) { trap; }", true,
+    Pin("packages/crypto/src/fieldp.wac", 329, "if (k != 0) { trap; }", true,
         "**The bound `FOLD_ROUNDS` asserts, and the assertion is the reason it is here.** " +
         "`reduceWide` folds the leftover carry a fixed four times rather than `while (k != 0)`, " +
         "because the old loop's trip count was a function of the operands and therefore of the " +
@@ -137,7 +137,7 @@ Pin[] pins() {
         "toBytes' overflow guard. Every caller passes a length taken from the modulus and a " +
         "value already reduced below it, so the value always fits. Defensive against a future " +
         "caller that computes the length some other way."),
-    Pin("packages/crypto/src/rsa.wac", 286, "if (unusedBits > 0)", false,
+    Pin("packages/crypto/src/rsa.wac", 292, "if (unusedBits > 0)", false,
         "**`unusedBits` is never zero for a modulus anyone has.** `emBits = bitLen(n) - 1` " +
         "and `emLen = ceil(emBits / 8)`, so `unusedBits = 8*emLen - emBits` is zero exactly " +
         "when `emBits` is a multiple of eight — that is, when the modulus is 1 bit more than " +
@@ -145,7 +145,7 @@ Pin[] pins() {
         "else produces a multiple of eight. Reachable, not unreachable: a caller may pass " +
         "such a modulus, and then this masks nothing because there is nothing to mask. " +
         "issues/lang/0112."),
-    Pin("packages/crypto/src/rsa.wac", 479, "if (unusedBits > 0)", false,
+    Pin("packages/crypto/src/rsa.wac", 485, "if (unusedBits > 0)", false,
         "The signing side of the same arithmetic — see the entry for `rsa.wac:272`. Both are " +
         "the `else`: the mask *is* applied on every key anyone uses, and the branch that " +
         "skips it needs a modulus of 8k+1 bits."),
@@ -194,13 +194,13 @@ Pin[] pins() {
         "later point at which the mistake looks like a mistake.\n" +
         "         It is not dead code, and that was measured rather than argued: four Newton " +
         "steps instead of five makes `test/wac/scalarn_test.wac` trap immediately."),
-    Pin("packages/crypto/src/bcryptpbkdf.wac", 134, "if (dest >= origKeylen) { break; }", false,
+    Pin("packages/crypto/src/bcryptpbkdf.wac", 135, "if (dest >= origKeylen) { break; }", false,
         "The striped write's bound: it fires when a destination lands past the end of the " +
         "key, which needs a stride and a block count that overrun together. Seven key lengths " +
         "from 1 to 65 are driven here — including the 48 `packages/ssh` asks for, a 32-byte " +
         "key and a 16-byte IV — and none produced that arrangement. Reachable, and not " +
         "constructed."),
-    Pin("packages/crypto/src/bcryptpbkdf.wac", 138, "if (written == 0) { break; }", false,
+    Pin("packages/crypto/src/bcryptpbkdf.wac", 139, "if (written == 0) { break; }", false,
         "The anti-hang guard the comment beside it describes, and it only fires once the " +
         "write above has placed nothing — which is the same arrangement as the entry for line " +
         "134. The two go together and will go together."),
@@ -210,37 +210,37 @@ Pin[] pins() {
         "rejections — so `sampleNTT` cannot run out. Kept because the bound is what makes the " +
         "sampler correct on its own terms rather than by the length its one caller happens to " +
         "pick."),
-    Pin("packages/crypto/src/rsagen.wac", 144, "if (cmp(n, small(primes[i] as i64)) != 0) { return true; }", true,
+    Pin("packages/crypto/src/rsagen.wac", 146, "if (cmp(n, small(prime as i64)) != 0) { return true; }", true,
         "The `else` — a candidate that is *equal* to one of the small primes rather than " +
         "divisible by it, which is not a factor in the sense that matters. `randomPrime` " +
         "forces the top two bits of the candidate, so the smallest it can be is 3 * " +
         "2^(bits-2); for the 256-bit widths driven here that is about 10^76 against a largest " +
         "small prime under a thousand."),
-    Pin("packages/crypto/src/rsagen.wac", 220, "if (bitLen(candidate) != bits) { continue; }", true,
+    Pin("packages/crypto/src/rsagen.wac", 222, "if (bitLen(candidate) != bits) { continue; }", true,
         "A candidate of the wrong width. The two lines above it force the top two bits and " +
         "the low one, so `bitLen` is exactly `bits` for every draw — the guard cannot fire " +
         "while that forcing is there. Kept because it is the check that would catch the " +
         "forcing being removed, which the comment beside the odd-bit line says is an " +
         "efficiency rather than a correctness property."),
-    Pin("packages/crypto/src/rsagen.wac", 252, "if (isZero(p)) { return bad; }", false,
+    Pin("packages/crypto/src/rsagen.wac", 254, "if (isZero(p)) { return bad; }", false,
         "`suitablePrime` exhausting its search. Reachable in the sense that the search is " +
         "probabilistic and not in any sense a test can use: it would need every one of a " +
         "million counters to yield a composite or a prime for which e has no inverse. Not " +
         "constructed, and no plan to."),
-    Pin("packages/crypto/src/rsagen.wac", 254, "if (isZero(q)) { return bad; }", false,
+    Pin("packages/crypto/src/rsagen.wac", 256, "if (isZero(q)) { return bad; }", false,
         "The same for the second prime. One gap counted twice rather than two."),
-    Pin("packages/crypto/src/rsagen.wac", 255, "if (cmp(p, q) == 0) { return bad; }", true,
+    Pin("packages/crypto/src/rsagen.wac", 257, "if (cmp(p, q) == 0) { return bad; }", true,
         "The two primes coming out equal. They are searched from counters a million apart — " +
         "the comment above says why, so that one prime's candidates can never be the other's " +
         "— and the stream is keyed on the counter, so the two draw from disjoint sequences. " +
         "Kept because that property lives in the two constants above rather than in anything " +
         "this line can see."),
-    Pin("packages/crypto/src/rsagen.wac", 258, "if (bitLen(n) != bits) { return bad; }", true,
+    Pin("packages/crypto/src/rsagen.wac", 260, "if (bitLen(n) != bits) { return bad; }", true,
         "The modulus coming out the wrong width. Each prime has its top two bits set, so each " +
         "is in [3*2^(h-2), 2^h) and the product is in [9*2^(2h-4), 2^2h) — which has exactly " +
         "2h bits. The guard is a statement about the forcing in `randomPrime` two functions " +
         "away."),
-    Pin("packages/crypto/src/rsagen.wac", 269, "if (isZero(d)) { return bad; }", true,
+    Pin("packages/crypto/src/rsagen.wac", 271, "if (isZero(d)) { return bad; }", true,
         "`e` having no inverse mod λ(n). `suitablePrime` already rejects any prime for which " +
         "e has no inverse mod p-1 — `test_a_prime_is_rejected_when_e_has_no_inverse` in " +
         "`rsagen_test.wac` is that check — and λ is a divisor of (p-1)(q-1), so an inverse " +

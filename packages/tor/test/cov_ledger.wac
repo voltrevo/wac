@@ -62,25 +62,7 @@ string[] grants() {
 
 Rule[] rules() {
   return [
-         Rule("packages/tor/src/relayd.wac", "", "line", false,
-         "**The relay daemon, and the largest unmeasured thing in the repository: 1,890 lines of " +
-         "which one point is reachable from here.** `relayd.wac` is a *program* — `wac run … " +
-         "relayd.wac -- <dir>` — and `entries_test.wac`, `network_tor_test.wac`, " +
-         "`relayring_test.wac` and `ctor_live_test.wac` build it into a binary and spawn it. Two " +
-         "of those put the **real C tor** on the other end, and are 21 of this suite's 50 " +
-         "seconds. \n" +
-         "So it is thoroughly tested and almost entirely unmeasured, which is the distinction " +
-         "this ledger exists to draw. A third of this package is programs — eleven files, 5,334 " +
-         "of 15,913 lines — and ten of the eleven do not appear in the table above at all, " +
-         "because a file nothing imports contributes no points and is therefore *absent* rather " +
-         "than low. The line naming them under the report was added on 2026-08-24 for exactly " +
-         "this; see `issues/system/0241b`. \n" +
-         "A whole-file rule, which gives up this file's floor, and that is the honest trade: a " +
-         "floor over one reachable point is not a floor. What would earn one back is the shape " +
-         "`packages/tls/test/wac/loopback_test.wac` used — the parts below the sockets are " +
-         "already separate and separately tested, so what is unmeasured is the *joining*, and a " +
-         "test feeding one relay's output to another's input would measure it in-process."),
-    Rule("packages/tor/src/link.wac", "", "line", false,
+         Rule("packages/tor/src/link.wac", "", "line", false,
          "**The client's reusable half — a link to a relay and a circuit through relays — at 18 " +
          "of 208.** Its own header says what happened: *this is everything `app.wac` had inside " +
          "it before there was a second program that wanted it*. Both of those callers, `app.wac` " +
@@ -185,10 +167,6 @@ Rule[] rules() {
          "Onion address refusals — a checksum that does not match, a version byte that is not " +
          "three, a length that is not fifty-six. **The one input in this package a human " +
          "types**, and every refusal unexercised."),
-    Rule("packages/tor/src/socks5.wac", "return", "line", false,
-         "SOCKS5 refusals for a request this proxy does not implement."),
-    Rule("packages/tor/src/dirclient.wac", "return", "line", false,
-         "A directory response that is not one."),
     Rule("packages/tor/src/introrelay.wac", "return", "line", false,
          "Introduction relay refusals — see `hsservice.wac`."),
     Rule("packages/tor/src/rendrelay.wac", "return", "line", false,
@@ -281,8 +259,6 @@ Rule[] rules() {
          "The small helpers under the consensus parser: PEM extraction, certificate parsing, " +
          "time fields and case folding, each with an arm for a document shaped differently from " +
          "the real one."),
-    Rule("packages/tor/src/cell.wac", "encodeDestroy", "decl", false,
-         "A DESTROY cell with a reason this package never sends."),
     Rule("packages/tor/src/hsdesc.wac", "keywordValue", "decl", false,
          "Keyword lookup in a descriptor that does not contain the keyword — see " +
          "`consensus.wac`."),
@@ -302,8 +278,6 @@ Rule[] rules() {
     Rule("packages/tor/src/pool.wac", "selectCircuit", "decl", false,
          "Choosing between two circuits that are equally good, which needs a pool holding two of " +
          "them."),
-    Rule("packages/tor/src/relay.wac", "wrapForClient", "decl", false,
-         "Wrapping a relay cell for a client at a hop count the tests do not build."),
     Rule("packages/tor/src/relaycircuit.wac", "receiveFromClient", "decl", false,
          "The relay side receiving a cell whose length field does not validate — see the " +
          "`return` rule over this file."),

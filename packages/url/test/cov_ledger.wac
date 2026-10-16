@@ -74,7 +74,7 @@ Pin[] pins() {
         "with a negative length, which traps. A guard whose absence turns a caller's arithmetic " +
         "mistake into a crash is worth one comparison, and the next caller to compute a range from " +
         "two searches that can both fail is the one that needs it."),
-    Pin("packages/url/src/url.wac", 108, "if (n == 2) { return true; }", false,
+    Pin("packages/url/src/url.wac", 107, "if (n == 2) { return true; }", false,
         "**A Windows drive letter that ends the input** — `c:` with nothing after it, so there is no " +
         "third byte to test for a separator. `file:///c:`, `file:///c|` and `file:///C:` are in " +
         "`parse_test.wac` and none reaches this: by the time the path state asks, the pointer has " +
@@ -82,7 +82,7 @@ Pin[] pins() {
         "         Reachable, and I did not build it. What would do it is a *base* whose path ends " +
         "exactly at the drive with a reference that re-enters the path state at that offset, which " +
         "is a two-part input rather than a URL — the reason it is not in a list of strings."),
-    Pin("packages/url/src/url.wac", 430, "if (!startsWithWindowsDrive(input, pointer)) {", false,
+    Pin("packages/url/src/url.wac", 429, "if (!startsWithWindowsDrive(input, pointer)) {", false,
         "**The `else`: a drive letter found where a path segment would otherwise be shortened.** " +
         "This is the rule that stops `..` climbing out of `file:///c:/a` into `file:///`, and it is " +
         "the one place the standard treats a drive as a floor rather than a segment.\n" +
@@ -91,14 +91,14 @@ Pin[] pins() {
         "drive at the moment of the check, which is the same offset problem as the pin above and " +
         "unbuilt for the same reason. Both would fall to one input, and it is worth someone finding " +
         "it: what is untested here is a path escape."),
-    Pin("packages/url/src/url.wac", 498, "if (c != '/') { continue; }", false,
+    Pin("packages/url/src/url.wac", 497, "if (c != '/') { continue; }", false,
         "**Entering the path state on a byte that is not a slash**, which re-reads that byte as the " +
         "first of a segment rather than consuming it. Every route into `S_PATH` from this state in " +
         "the corpus arrives on a `/`.\n" +
         "         Reachable — a non-special URL whose authority ends at a byte that begins a path — " +
         "and not built. The `continue` is what makes the byte not be swallowed, so what an uncovered " +
         "arm here would cost is a lost first character of a path."),
-    Pin("packages/url/src/url.wac", 563, "} else if (state == S_FRAGMENT()) {", true,
+    Pin("packages/url/src/url.wac", 562, "} else if (state == S_FRAGMENT()) {", true,
         "**The end of the state chain: no state matched.** The parser's states are an exhaustive " +
         "`else if` ladder over the WHATWG list, and `S_FRAGMENT` is the last of them — so the `else` " +
         "the report names is the ladder falling off its end, which needs a state value that is none " +

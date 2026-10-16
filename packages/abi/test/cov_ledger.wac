@@ -61,12 +61,12 @@ Rule[] rules() {
 
 Pin[] pins() {
   return [
-        Pin("packages/abi/src/abi.wac", 198, "if (at > end) {", false,
+        Pin("packages/abi/src/abi.wac", 197, "if (at > end) {", false,
         "A head that runs past the end of its own region. Reachable — it is the same family as the " +
         "offset checks the new tests do drive — and not built: the inputs that reach it need a schema " +
         "whose head is longer than the data supplied for it, which is a third shape beyond the two " +
         "the array tests construct."),
-    Pin("packages/abi/src/abi.wac", 271, "if (t == T_TUPLE()) {", false,
+    Pin("packages/abi/src/abi.wac", 270, "if (t == T_TUPLE()) {", false,
         "**The corpus has no tuple.** `T_TUPLE` appears three times in this package's tests and every " +
         "one is a tag comparison or a descriptor entry, never a value with a tuple in it. So the " +
         "decode arm at `:271` and the encode arm at `:475` are the whole of tuple support and neither " +
@@ -74,18 +74,18 @@ Pin[] pins() {
         "         `proven: false` and worth someone's time: a tuple is how a Solidity struct crosses " +
         "the boundary, and the arms are written but unexercised. This is a gap in the *corpus* rather " +
         "than a branch that cannot run, which is the distinction this file is for."),
-    Pin("packages/abi/src/abi.wac", 325, "if (at < 0 || at + n > r.data.len()) {", false,
+    Pin("packages/abi/src/abi.wac", 324, "if (at < 0 || at + n > r.data.len()) {", false,
         "The read-past-the-end guard in `bytesAt`. Every caller computes `at` from a word this decoder " +
         "has already range-checked, so reaching it needs an offset that passed the earlier checks and " +
         "still overruns — the same family as `:198` and unbuilt for the same reason."),
-    Pin("packages/abi/src/abi.wac", 365, "if (items.len() != count) {", false,
+    Pin("packages/abi/src/abi.wac", 364, "if (items.len() != count) {", false,
         "An encode whose value list does not match the count its schema declares. The check-then-" +
         "encode path refuses a mismatched tree in `check` first — which the new `test_encoding_a_" +
         "value_of_the_wrong_shape_says_which_and_where` drives — so this is the same rule enforced a " +
         "second time, inside the encoder, for a caller that reached it another way."),
-    Pin("packages/abi/src/abi.wac", 475, "if (t == T_TUPLE()) { return encodeTuple(listOf(v), schema, s + 2, schema[s + 1]); }", false,
+    Pin("packages/abi/src/abi.wac", 474, "if (t == T_TUPLE()) { return encodeTuple(listOf(v), schema, s + 2, schema[s + 1]); }", false,
         "The encode half of the missing tuple case — see `:271`."),
-    Pin("packages/abi/src/abi.wac", 526, "if (v < 0) { trap; }", true,
+    Pin("packages/abi/src/abi.wac", 525, "if (v < 0) { trap; }", true,
         "**`wordOf` is called with lengths and counts, never with a signed quantity.** Its callers pass " +
         "`xs.len()`, a byte count, or a value the decoder has already refused as negative, and an " +
         "array's length is not negative.\n" +

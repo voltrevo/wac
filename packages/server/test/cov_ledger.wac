@@ -35,7 +35,7 @@ static string PREFIX = "packages/server/";
 
 Pin[] pins() {
   return [
-        Pin("packages/server/src/routes.wac", 66, "out.push(hi < 10 ? 48 + hi : 87 + hi);", true,
+        Pin("packages/server/src/routes.wac", 66, "out.push((hi < 10 ? 48 + hi : 87 + hi) as@ u8);", true,
         "**The high nibble of a control character is never ten or more.** This is inside " +
         "`writeJsonString`'s `else if (c < 0x20)`, so `c` is at most 0x1F and " +
         "`hi = (c >> 4) & 15` is 0 or 1. The `87 + hi` arm — the one that produces a letter — cannot " +

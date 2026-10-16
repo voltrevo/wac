@@ -124,7 +124,7 @@ Rule[] rules() {
 
 Pin[] pins() {
   return [
-        Pin("packages/bls/src/verify.wac", 271, "if (k[0] == 0 && k[1] == 0) { k[0] = 1; }", false,
+        Pin("packages/bls/src/verify.wac", 273, "if (k[0] == 0 && k[1] == 0) { k[0] = 1; }", false,
         "**The zero batch weight, excluded rather than reasoned about.** A weight of zero drops its " +
         "term out of the batch equation entirely, so a signature carrying one is not checked at all " +
         "— which is the single value that must not occur. Reaching this line needs a transcript " +
@@ -133,7 +133,7 @@ Pin[] pins() {
         "work this line exists to make unnecessary. The surrounding contract is tested instead — " +
         "`test_a_batch_weight_is_two_words_and_never_zero` asserts the weights are not all zero, not " +
         "all equal, and depend on both the index and the transcript."),
-    Pin("packages/bls/src/verify.wac", 340, "if (g2IsInfinity(sigSum)) { return false; }", false,
+    Pin("packages/bls/src/verify.wac", 342, "if (g2IsInfinity(sigSum)) { return false; }", false,
         "The weighted signatures summing to the identity. An adversary would have to choose points " +
         "that cancel under weights derived from those same points, which is what committing the " +
         "transcript prevents — and a test cannot build it for the same reason. Reachable in " +
@@ -243,7 +243,7 @@ Pin[] pins() {
         "`fpFromWideBytes` handling an input whose length is not a multiple of four, in its leading " +
         "partial word. Its two callers pass `L`-byte buffers, and `L` is 64. Reachable by any caller " +
         "with another length, of which there are none."),
-    Pin("packages/bls/src/fp.wac", 410, "for (i32 i = 0; i < lead; i++) { w = (w << 8) | (s[i] as@ u32); }", false,
+    Pin("packages/bls/src/fp.wac", 410, "for (i32 i = 0; i < lead; i++) { w = (w << 8) | (s[i] as u32); }", false,
         "The loop inside `:407` — see there.")
   ];
 }

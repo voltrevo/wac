@@ -6,7 +6,8 @@
 // **134 of 473 — 28.3%**, the lowest number `issues/system/0205` has produced, over the package every
 // other package's tests are built on.
 //
-//     packages/wactest/src/built.wac    134    0    0.0
+//     packages/wactest/src/built.wac    134    0    0.0   (since 2026-10-16 its own test is in the
+//                                                        exercise, and it reads ~80%)
 //     packages/wactest/src/oracle.wac   123   14   11.4
 //     packages/wactest/src/host.wac      34    2    5.9
 //
@@ -62,14 +63,16 @@ Rule[] rules() {
          "is the union pass `0241b` describes: run every driver, union the point sets per " +
          "file, and this file's real reading falls out of thirty exercises that already run."),
     Rule("packages/wactest/src/built.wac", "", "line", false,
-         "**The build-and-cache helper, at 0 of 134 — nothing in this package's own tests " +
-         "calls it, and thirty files elsewhere do.** `builtProgram` compiles a wac program to " +
-         "a binary once and reuses it, and `newestInClosure` is what decides the cached copy " +
-         "is stale: it walks a program's import graph and compares mtimes. \n" +
-         "That freshness rule is the interesting part and the reason a floor here would be " +
-         "worth having — a stale binary is how `issues/system/0160` produced a coverage report " +
-         "that named real files, real lines, and was 40% wrong. Same reason as `oracle.wac` " +
-         "for why it is a whole-file rule."),
+         "**The build cache's freshness decisions.** `built_test.wac` is in the exercise now, " +
+         "so `sourcesOf` (nested projects included) and the *rebuild* path of `builtProgram` " +
+         "and `builtApp` are measured. What is left is the half those tests do not vary: they " +
+         "pass no grants, so the flags loops never iterate; every build they ask for is stale, " +
+         "so the warm-cache return never runs; their programs import only `std`, so " +
+         "`closureOf`'s walk over real imports and `newestUnderExcept`'s `skip` list are dark; " +
+         "the unreadable-file answers need a file to vanish between `stat` and `read`; and a " +
+         "few defensive guards in the path and import scanners take inputs no fixture here " +
+         "writes. Thirty files elsewhere drive the cache half on every warm run — the " +
+         "same consumer story as `oracle.wac`, and the same fix (`issues/system/0241b`)."),
     Rule("packages/wactest/src/host.wac", "", "line", false,
          "The host helpers — an agent's directory, writing a file for a child to read — used " +
          "by seventy-four files elsewhere and two here. Same story as `oracle.wac`."),
@@ -85,9 +88,7 @@ Rule[] rules() {
     Rule("packages/wactest/src/daemon.wac", "", "line", false,
          "The daemon helper's refusals: a child that never announced itself, a port that would " +
          "not bind, a log that could not be read. Driven by `packages/tls`, `packages/tor` and " +
-         "`packages/ethrpc` when a spawn goes wrong, which in a green run it does not."),
-    Rule("packages/wactest/src/childenv.wac", "", "line", false,
-         "Child environment construction for shapes the callers do not build.")
+         "`packages/ethrpc` when a spawn goes wrong, which in a green run it does not.")
   ];
 }
 

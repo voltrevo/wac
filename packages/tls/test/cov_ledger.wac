@@ -152,24 +152,16 @@ Rule[] rules() {
          "spelled as an empty answer rather than a trap — which the header explains: a certificate " +
          "whose `notAfter` precedes its `notBefore` parses and is never valid, and that is worse than " +
          "not existing."),
-    Rule("packages/tls/src/handshake.wac", "parseServerHello", "decl", false,
-         "**`parseServerHello` and `clientHello`, which this package does not call.** `client.wac` " +
-         "reads a ServerHello inline; these are the shared spellings, and the caller is " +
-         "`packages/quic/src/client.wac`.\n" +
-         "         Written first as \"quic and webrtc\", which was wrong and was caught within the " +
-         "day by `packages/webrtc`'s own driver measuring zero points in this file: " +
-         "`webrtc/src/dtls.wac` **declares its own** `clientHello` and `serverHello`, because DTLS " +
-         "1.2's handshake is a different wire format. A claim that somebody else covers a line is " +
-         "the one kind of ledger entry nothing checks, and this one was half wrong the moment it was " +
-         "written — see `issues/system/0241b`, which this is now the worked example for.\n" +
-         "         Tested elsewhere, and this is the third kind of elsewhere this package has " +
-         "turned up: `server.wac` was tested in another **process**, the RSA path in another process " +
-         "too, and this in another **package**. A ledger's prefix is a directory, so a shared helper " +
-         "reads as dead from the side that exports it. Named rather than pinned because the fix is " +
-         "not a test here — it is knowing which consumer to run, and `wac task coverage:quic` does " +
-         "not exist yet."),
     Rule("packages/tls/src/handshake.wac", "parseClientHello", "decl", false,
-         "The HelloRetryRequest comparison, whose constant is pinned at `:105` — see there."),
+         "The ClientHello reader's untaken arms: a hello with no extensions at all, a " +
+         "`supported_versions` entry other than TLS 1.3, and a `server_name` entry whose type is not " +
+         "`host_name`. Reachable from a peer's hello; the clients this exercise drives send none of " +
+         "them."),
+    // Dropped 2026-10-16: rules over `parseServerHello`, `tlsRecordNeeded`, `tlsServerAlert` and
+    // `export i32 sigRsa`, and the pin on `handshake.wac:105` (`helloRetryRandom`, called only from
+    // `parseServerHello`). Nothing the exercise reaches calls any of them, so they are no longer
+    // compiled into it and have no points left to explain. Their callers are elsewhere — `packages/quic`
+    // for `parseServerHello`, `test/wac/tlsserved.wac` in a subprocess for `tlsRecordNeeded`.
     Rule("packages/tls/src/server.wac", "tlsServerFeed", "decl", false,
          "**KeyUpdate, and the whole post-handshake message path with it.** RFC 8446 §4.6.3: a peer " +
          "moves its write key on and may ask us to move ours. Neither end here ever sends one — the " +
@@ -183,14 +175,6 @@ Rule[] rules() {
          "A client Finished that decrypts and does not match — the proof that both ends saw the same " +
          "handshake, failing. Reachable only from a peer that holds the handshake keys and computed " +
          "the wrong transcript, which is a specific hostile client the loopback can now build."),
-    Rule("packages/tls/src/server.wac", "tlsRecordNeeded", "decl", false,
-         "How many more bytes a caller needs before it has a whole record. Called by " +
-         "`test/wac/tlsserved.wac`, in the subprocess, on every read from the socket — so it is " +
-         "exercised on every interop run and measured on none."),
-    Rule("packages/tls/src/server.wac", "tlsServerAlert", "decl", false,
-         "Sending an alert on demand, which no in-process caller does: the loopback's refusals come " +
-         "from `tlsServerFeed` deciding, not from an embedder choosing. `tlsserved.wac` does not use " +
-         "it either — it is API for a program that wants to reject a connection for its own reasons."),
     Rule("packages/tls/src/x509.wac", "certSignedBy", "decl", false,
          "**A certificate whose signature algorithm names a key type its signer does not have** — " +
          "`signer.keyType != 3` on the RSA arms, and the neighbouring arms for the same confusion " +
@@ -288,9 +272,6 @@ Rule[] rules() {
          "Certificate fields no corpus certificate carries: an ed25519 or P-384 public key where the " +
          "corpus has P-256 and RSA, a two-byte `pathLenConstraint`, an RSA-PSS signature algorithm. " +
          "Reachable by presenting one, and every certificate here came out of OpenSSL with defaults."),
-    Rule("packages/tls/src/x509.wac", "export i32 sigRsa", "line", false,
-         "The RSA-SHA384, RSA-SHA512 and RSA-PSS algorithm constants, unread because nothing hands " +
-         "this package a certificate signed that way — see the rule over `certSignedBy`."),
     Rule("packages/tls/src/handshake.wac", "serverHello(", "decl", false,
          "Building a ServerHello with a session id to echo, or a group other than the hybrid one. " +
          "Our server echoes what it was sent and offers one group, so the alternatives are for " +
@@ -332,12 +313,6 @@ Pin[] pins() {
         "`interop_test.wac` negotiates `http/1.1` with OpenSSL in the subprocess. One line, and it is " +
         "here rather than in a rule because the extension is a whole feature and a reader looking for " +
         "why it is dark deserves to find it named."),
-    Pin("packages/tls/src/handshake.wac", 105, "u8[] helloRetryRandom() {", false,
-        "**HelloRetryRequest**: the server telling a client its key share was in a group the server " +
-        "will not use, identified by a fixed magic `random`. Ours never sends one — it offers one " +
-        "group and accepts or refuses — so the constant and the comparison at `:151` are for reading " +
-        "a *peer's* retry, which no test peer produces. OpenSSL can be made to send one; nothing " +
-        "asks it to."),
     Pin("packages/tls/src/hybrid.wac", 71, "if (share.len() != hybridClientShareLen()) { return false; }", true,
         "**A width its only caller has already enforced.** `hybridClientShareValid` is asked by " +
         "`server.wac` about a share `parseClientHello` accepted, and that parser takes a hybrid share " +

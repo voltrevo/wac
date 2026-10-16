@@ -48,8 +48,8 @@ Rule[] rules() {
          "That is the package's whole subject — *no ambient capabilities* — and the refusals " +
          "are the part with no inputs. `packages/box` is the consumer that drives them, and " +
          "`box` has no coverage task, so nothing measures the narrowing at all."),
-    Rule("packages/platform/src/frame.wac", "childCore", "decl", false,
-         "The `Core` half of the same narrowing — see `childCli`."),
+    // No rule for `childCore`: no test this exercise runs calls it, so it is not compiled in and
+    // contributes no points at all. Its callers are `packages/box` and `packages/sh` tests.
     Rule("packages/platform/src/frame.wac", "joinPath", "decl", false,
          "Path joining for shapes the frame's callers do not construct — an absolute path, a " +
          "`..` that escapes, an empty component."),

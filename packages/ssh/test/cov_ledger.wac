@@ -8,13 +8,11 @@
 // and eleven that were always there, which is the state `issues/system/0222` was filed about. Of the
 // five drivers it names this was the one most likely to go red on being given a ratchet.
 //
-// It does not. **605 of 672**, and the 67 left are two claims rather than sixty-seven:
-//
-//   1. `conn.wac`'s `struct Conn` — the whole client session, driven only by tests that bind a real
-//      port;
-//   2. one line in `privatekey.wac`, for a key file that disagrees with itself.
-//
-// The other eleven source files are at 100%.
+// It does not. It measured **605 of 672** then, and the 67 left were two claims rather than
+// sixty-seven: `conn.wac`'s `struct Conn` as the whole client session, and one line in
+// `privatekey.wac`. The session has since moved to `client.wac`, which this driver does not
+// compile, so today it reads **605 of 606** and the one point left is the `privatekey.wac` line,
+// for a key file that disagrees with itself. The other twelve measured files are at 100%.
 //
 // ## Where the 44 points came from
 //
@@ -69,7 +67,7 @@ string[] cases() { return ["trapProbe:13"]; }
 
 Pin[] pins() {
   return [
-        Pin("packages/ssh/src/privatekey.wac", 173,
+        Pin("packages/ssh/src/privatekey.wac", 179,
         "if (blobPoint[i] != pub[i]) { return fail(KeyError.Malformed); }", false,
         "A key file whose header public key disagrees with the one inside the private section. An " +
         "`openssh-key-v1` file carries the point twice — once in the clear and once inside the part " +
@@ -84,23 +82,10 @@ Pin[] pins() {
 }
 
 Rule[] rules() {
-  return [
-         Rule("packages/ssh/src/conn.wac", "struct Conn", "struct", false,
-         "The client session, end to end: the version exchange, the key exchange, NEWKEYS, the " +
-         "service request, public-key authentication, the channel, and the exit status. All of it is " +
-         "one struct's methods and all of it needs a peer — and not a peer this driver can be, " +
-         "because the peer that matters is a real OpenSSH server. `test/wac/live_test.wac` and " +
-         "`test/wac/cli_test.wac` are where it is driven, and both declare `test-lane: exclusive` " +
-         "because they bind a real port and start a real `sshd`: 26 of this package's 58 tests are in " +
-         "that lane. A coverage driver that ran them would race it, and two runs binding the same " +
-         "port do not fail cleanly — they interleave, and the loser reports a protocol error about " +
-         "the wrong thing.\n" +
-         "         So this is where the measurement stops rather than where the testing does. The " +
-         "parts of a session that can be checked without a peer are not in here: every message this " +
-         "struct sends and every one it parses has its own function in `packet.wac`, `kexinit.wac`, " +
-         "`kex.wac`, `cipher.wac`, `auth.wac` and `channel.wac`, and all six of those files are at " +
-         "100%. What is left is the sequencing, which is the thing a real server is the only judge of.")
-  ];
+  // There was one rule here, for `conn.wac`'s `struct Conn` as the whole client session. The
+  // handshake moved to `client.wac`, which nothing this driver compiles imports, and what stayed
+  // in `conn.wac` is the shared transport, whose points the exercise reaches.
+  return Rule[]();
 }
 
 export i32 main(Sys sys) {

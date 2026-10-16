@@ -25,7 +25,7 @@
 //
 // ## The rest is the same finding as everywhere else
 //
-// Refusals. `fetch.wac`'s `parseAdvertisement`, `shallowsIn` and `findPack` read what a server sent;
+// Refusals. `fetch.wac`'s `parseAdvertisement` and `findPack` read what a server sent;
 // `pack.wac` refuses a packfile that is not one; `ignore.wac` matches patterns whose corner cases the
 // fixtures avoid. The corpus is GitHub, git itself, and this package's own writers — all of which
 // produce well-formed input.
@@ -67,8 +67,8 @@ Rule[] rules() {
          "Commit formatting and parsing arms for headers the corpus does not carry."),
     Rule("packages/git/src/fetch.wac", "return", "line", false,
          "**The fetch protocol's parsers, and the largest gap outside `repo.wac`.** " +
-         "`shallowsIn`, `parseAdvertisement`, `symrefOfHead` and `findPack` read what a server " +
-         "sent — a ref advertisement, a shallow list, a packfile response — and every arm here " +
+         "`parseAdvertisement` and `findPack` read what a server sent — a ref advertisement, a " +
+         "packfile response — and every arm here " +
          "is for a server that sent something else. The corpus is GitHub and our own " +
          "`dirserve`, both of which speak the protocol correctly. \n" +
          "Worth building: a git client talks to whatever URL it is given, and these are the " +
@@ -101,15 +101,9 @@ Rule[] rules() {
          "Refusals in `tree.wac` for input the corpus does not contain — see `fetch.wac`."),
     Rule("packages/git/src/zlib.wac", "return", "line", false,
          "Refusals in `zlib.wac` for input the corpus does not contain — see `fetch.wac`."),
-    Rule("packages/git/src/fetch.wac", "shallowsIn", "decl", false,
-         "`shallowsIn`'s remaining arms — the branches a well-formed input does not take. See " +
-         "the `return` rule over this file for the corpus that shapes them."),
     Rule("packages/git/src/config.wac", "parseConfig", "decl", false,
          "`parseConfig`'s remaining arms — the branches a well-formed input does not take. See " +
          "the `return` rule over this file for the corpus that shapes them."),
-    Rule("packages/git/src/fetch.wac", "symrefOfHead", "decl", false,
-         "`symrefOfHead`'s remaining arms — the branches a well-formed input does not take. " +
-         "See the `return` rule over this file for the corpus that shapes them."),
     Rule("packages/git/src/fetch.wac", "parseAdvertisement", "decl", false,
          "`parseAdvertisement`'s remaining arms — the branches a well-formed input does not " +
          "take. See the `return` rule over this file for the corpus that shapes them."),
@@ -140,12 +134,6 @@ Rule[] rules() {
     Rule("packages/git/src/pack.wac", "objectAt", "decl", false,
          "`objectAt`'s remaining arms — the branches a well-formed input does not take. See " +
          "the `return` rule over this file for the corpus that shapes them."),
-    Rule("packages/git/src/receive.wac", "advertisedTargets", "decl", false,
-         "`advertisedTargets`'s remaining arms — the branches a well-formed input does not " +
-         "take. See the `return` rule over this file for the corpus that shapes them."),
-    Rule("packages/git/src/receive.wac", "updateRequest", "decl", false,
-         "`updateRequest`'s remaining arms — the branches a well-formed input does not take. " +
-         "See the `return` rule over this file for the corpus that shapes them."),
     Rule("packages/git/src/refs.wac", "parsePackedRefs", "decl", false,
          "`parsePackedRefs`'s remaining arms — the branches a well-formed input does not take. " +
          "See the `return` rule over this file for the corpus that shapes them."),

@@ -139,7 +139,7 @@ Pin[] pins() {
         "which nothing here writes, as the comment three lines above already says. Kept because an " +
         "offset code may carry 31 extra bits and silently dropping them would be a corruption that " +
         "only shows up on data nobody has yet."),
-    Pin("packages/zstd/src/sequences.wac", 101, "if (c < 0 || c > maxSymbol) { trap; }", true,
+    Pin("packages/zstd/src/sequences.wac", 105, "if (c < 0 || c > maxSymbol) { trap; }", true,
         "A symbol outside the alphabet in a table this package just built. Both callers hand over a " +
         "table from readTable or rleTable, and each of those has already refused a symbol past its " +
         "own bound — so this is the third check of the same fact. Kept because it is the one standing " +
@@ -185,7 +185,7 @@ Pin[] pins() {
         "does not get there: damaging the size field of a treeless section is refused by the block " +
         "bounds first. The *valid* treeless path beside it is covered now, by the reference's " +
         "many-block frame."),
-    Pin("packages/zstd/src/sequences.wac", 360, "if (offset <= 0) { trap; }", false,
+    Pin("packages/zstd/src/sequences.wac", 367, "if (offset <= 0) { trap; }", false,
         "The `else` — a repeat-offset code 4 that resolves to a usable distance. Code 4 means \"the " +
         "most recent offset, minus one\", and it is only selected when a sequence has no literals, so " +
         "it needs one match immediately following another at a distance the encoder had already used " +
