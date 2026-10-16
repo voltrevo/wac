@@ -1,7 +1,7 @@
 # 0361a — `nativeShare.test.ts`: a pure wrapper is not taken natively
 
 - **Status:** closed — the fixture named a file that `Option` took with it
-- **Fixed in:** (this commit)
+- **Fixed in:** b68b9ed86
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-15
