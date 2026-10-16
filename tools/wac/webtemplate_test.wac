@@ -52,7 +52,7 @@ export string test_the_template_builds_and_tests_outside_the_repository(Core cor
                         LockEntry("webbuild", GIT, "master", "./packages/web/tools", COMMIT)];
   t.isTrue(cli.writeFile(project + "/wac.lock", writeLock(locked)).wait().ok(), "and locked to it");
 
-  // `wac task build`, spelled out so the binary under test is the one that runs the builder too.
+  // The template's build task, spelled out so the binary under test is the one that runs the builder too.
   Exec built = wacIn(cli, project, home,
                      "run --allow-read --allow-write --allow-run build.wac src/app.wac dist --wac '" + binaryPath(cli) + "'");
   t.eqI32(built.status, 0, "the page builds — " + said(built));
@@ -62,7 +62,7 @@ export string test_the_template_builds_and_tests_outside_the_repository(Core cor
   t.isTrue(contains(html, "<script type=\"module\">"), "a module script");
   t.isTrue(contains(html, "host.start()"), "that starts the program");
 
-  // `wac task test`.
+  // And its test task.
   Exec tested = wacIn(cli, project, home, "test test");
   t.eqI32(tested.status, 0, "the template's tests pass — " + said(tested));
   t.isTrue(contains(said(tested), "2 passed"), "both of them — " + said(tested));

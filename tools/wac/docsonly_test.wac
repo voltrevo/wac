@@ -139,7 +139,10 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
     // The three false friends: prose, not parsers.
     "packages/wacc/src/coretext.wac",
     "std/platform.wac",
-    "core/map.wac"
+    "core/map.wac",
+    // The site's spec page, which numbers the spec's examples the way the test above counts them.
+    "site/src/next/specModel.ts",
+    "site/tools/site.test.ts"
   ];
   string[] why = [
     "runs every example in spec",
@@ -148,7 +151,9 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
     "this file, which contains the search needle itself",
     "embeds std/ and core/'s doc comments as string literals, and parses nothing",
     "doc comments with wac examples in them",
-    "a doc comment with a wac example in it"
+    "a doc comment with a wac example in it",
+    "numbers spec/'s fences for display, in step with specexamples.wac, and runs none",
+    "checks that numbering against the page"
   ];
   t.eqI32(known.len(), why.len(), "every known file needs its reason");
 

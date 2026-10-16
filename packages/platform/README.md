@@ -32,14 +32,15 @@ outside, so an application can only touch what it is handed. The capability stru
 program can do**:
 
 ```wac
-export i32 main(Core core, Cli cli) { … }
+export i32 main(Sys sys) { … }
 ```
 
-Reading `main`'s parameters tells you the application reads the clock, prints, and touches
-the filesystem. Nothing else is reachable, because there is nowhere else to reach.
+Reading `main`'s parameter tells you the application may read the clock, print, and touch the
+filesystem — `sys.core` and `sys.cli`. Nothing else is reachable, because there is nowhere else to
+reach.
 
-An interactive browser application exports `page(Core, Cli, Page)` instead, and the entry
-point's name is how a program says which kind it is. A module may export both.
+A browser page built with `packages/web` exports `main(Page page)` and reaches nothing but the page;
+one on this package's worker host exports `page(Core, Cli, Page)`.
 
 `Core` is what every host provides — clock, monotonic clock, secure random, output. `Cli`
 is arguments, the standard streams and the filesystem, which a browser has none of; that
@@ -563,9 +564,9 @@ the opcodes because the call that discovers the full ring is rarely the one that
 A ticket can carry a continuation, and the world carries somewhere for it to wait:
 
 ```wac
-export i32 main(Core core, Cli cli) {
-  core.delay(500).then((i64 at) => { core.log("tick"); });
-  return core.drain();
+export i32 main(Sys sys) {
+  sys.core.delay(500).then((i64 at) => { sys.core.log("tick"); });
+  return sys.core.drain();
 }
 ```
 

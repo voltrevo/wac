@@ -281,7 +281,10 @@ bool foreign(string pkg, string name) {
   // `struct Box<T>` appears in generics.md and nowhere in the tree.
   if (pkg == "wacc") {
     return name == "Box" || name == "XList" || name == "f64.toBits" || name == "String"
-        || name == "parseFloat" || name == "generate";
+        || name == "parseFloat" || name == "generate"
+        // History: the README records how the compiler learned generic enums on `core`'s `Option`,
+        // which left `core` in `ab37f1544`; renaming the example would rewrite the record.
+        || name == "Option.Some" || name == "mapOption";
   }
   if (pkg == "platform") { return name == "page" || name == "inputError"; }
   if (pkg == "ssh") { return name == "cliFeed"; }
@@ -354,6 +357,10 @@ export string test_an_export_signature_in_a_readme_is_the_signature_in_the_sourc
       for (i32 l = 0; l < lines.len(); l++) {
         string name = exportedName(lines[l]);
         if (name == "" || foreign(pkg, name)) { continue; }
+        // **Not `main`**, which is every program's entry with that program's own parameters — `Sys`
+        // for a command, `Page` for a page — so there is no one signature for a README to agree with;
+        // which declaration this compared against was whichever of a dozen `src/` mains came first.
+        if (name == "main") { continue; }
         // **Only a line that *ends* at the signature.** `export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; … }`
         // is a fragment showing shape, not a claim about a declaration, and the TypeScript's regex
         // skipped it by anchoring to end-of-line after an optional `{` or `;`. Stripping the trailing

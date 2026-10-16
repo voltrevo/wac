@@ -29,6 +29,7 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 import { splitLines, startsWith, contains } from "../../packages/wactest/src/strings.wac";
 import { isBuiltinSpec } from "../../packages/wacc/src/coretext.wac";
+import { Manifest, matchSpecifier, readManifest } from "../../packages/wacpkg/src/manifest.wac";
 
 /** The specifier of an `import { … } from "…";` line, or empty for a line that is not one. */
 string specifierOf(string line) {
@@ -53,6 +54,25 @@ bool defined(string spec) {
       || isBuiltinSpec(spec);
 }
 
+/**
+ * Whether the nearest `wac.json5` above `file` maps `spec` to a package (spec ch04). Most of this
+ * repository declares no mappings, but `templates/webapp` is a project of its own that does — its
+ * `"web"` is defined, by its manifest.
+ */
+bool mapped(Cli cli, string file, string spec) {
+  string dir = file;
+  while (true) {
+    i32 cut = -1;
+    for (i32 i = 0; i < dir.len(); i++) { if (dir.slice(i, i + 1) == "/") { cut = i; } }
+    if (cut < 0) { return false; }
+    dir = dir.slice(0, cut);
+    FileResult m = cli.readFile(dir + "/wac.json5").wait();
+    if (!m.ok) { continue; }
+    Manifest mf = readManifest(m.bytes);
+    return mf.ok && matchSpecifier(mf, spec).found;
+  }
+}
+
 export string test_every_import_in_the_repository_is_a_specifier_the_language_defines(
     Core core, Cli cli) {
   T t = T.create();
@@ -63,12 +83,16 @@ export string test_every_import_in_the_repository_is_a_specifier_the_language_de
   i32 n = 0;
   i32 imports = 0;
   for (i32 f = 0; f < files.len(); f++) {
-    string[] lines = splitLines(readFile(core, cli, files[f]));
+    string text = readFile(core, cli, files[f]);
+    // **A case that exists to be refused** names what the language does not define on purpose:
+    // `0327` imports `core/vec.wac` to show a path below a built-in is refused.
+    if (startsWith(files[f], "spec/cases/") && startsWith(text, "// expect: refused")) { continue; }
+    string[] lines = splitLines(text);
     for (i32 i = 0; i < lines.len(); i++) {
       string spec = specifierOf(lines[i]);
       if (spec == "") { continue; }
       imports = imports + 1;
-      if (defined(spec)) { continue; }
+      if (defined(spec) || mapped(cli, files[f], spec)) { continue; }
       if (n < bad.len()) { bad[n] = files[f] + ": \"" + spec + "\""; }
       n = n + 1;
     }

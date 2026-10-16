@@ -148,6 +148,19 @@ string[] mayNameTheOldRunner() {
   ];
 }
 
+/** The nearest `tasks.json5` at or above `file`'s directory — the repository's when there is none closer. */
+string registryFor(Cli cli, string file) {
+  string dir = file;
+  while (true) {
+    i32 cut = -1;
+    for (i32 i = 0; i < dir.len(); i++) { if (dir.slice(i, i + 1) == "/") { cut = i; } }
+    if (cut < 0) { return tasksFile(); }
+    dir = dir.slice(0, cut);
+    string here = dir + "/tasks.json5";
+    if (cli.stat(here).wait().isFile) { return here; }
+  }
+}
+
 export string test_every_wac_task_named_in_the_tree_is_in_the_registry(Core core, Cli cli) {
   T t = T.create();
   Task[] tasks = tasksIn(readAll(cli, tasksFile()).toBytes());
@@ -161,11 +174,17 @@ export string test_every_wac_task_named_in_the_tree_is_in_the_registry(Core core
   for (i32 i = 0; i < files.len(); i++) {
     if (!isCurrent(files[i])) { continue; }
     Named[] said = namesAfter(readAll(cli, files[i]), "wac");
+    if (said.len() == 0) { continue; }
+    // **Against the registry that would run it** — the nearest `tasks.json5` at or above the file,
+    // which is the one `wac task` reads there. `templates/webapp` is a project of its own with its
+    // own `build`, and its README naming it is right.
+    string registry = registryFor(cli, files[i]);
+    Task[] own = registry == tasksFile() ? tasks : tasksIn(readAll(cli, registry).toBytes());
     for (i32 k = 0; k < said.len(); k++) {
       checked = checked + 1;
-      if (hasTask(tasks, said[k].name)) { continue; }
+      if (hasTask(own, said[k].name)) { continue; }
       wrong = wrong + "\n  " + files[i] + ":" + itoa(said[k].line) + ": `wac task " + said[k].name
-            + "` is not in " + tasksFile();
+            + "` is not in " + registry;
     }
   }
   // A floor, because a scan that stops matching reports a clean tree.

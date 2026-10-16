@@ -139,10 +139,11 @@
 //      10/200.
 //
 //      Narrowing came last and brought a second rule with it. `Bs bv = Sb(1, 2)` puts a subtype in a
-//      parent-typed local, so `bv is Sb` is true — and `bv.tag()` answers the **parent's** 11 rather
-//      than the child's 22, because `override` is a source-level check and WasmGC has no virtual
-//      dispatch. `spec/tour.wac` marks that CRITICAL, and a compiler that ever dispatched
-//      dynamically would answer 22. Canary 4/200 — the thinnest row here, because it is one call
+//      parent-typed local, so `bv is Sb` is true — and `bv.tag()` answers the **child's** 22, since
+//      `tag` is `virtual` and a call to one dispatches on the receiver's type
+//      (`§wac-virtual-dispatch-a4xhpib`). It answered the parent's 11 until the language gained
+//      `virtual`, which made an `override` of a plain method a compile error and this prelude refused
+//      in every seed. Canary 4/200 — the thinnest row here, because it is one call
 //      site among seven expression arms, but it watches a rule nothing else does;
 //   4. arrays, with in-bounds indices — **done, 2026-09-01.** One `i32[]` built by `mkArr()` and
 //      read at constant in-range indices, plus `.len()`. Nothing writes to it, so every read is a
@@ -616,7 +617,12 @@ export struct Gen {
         i32 op = this.rng.intTop(6);
         Expr a = this.expr(it, depth - 1);
         Expr b = this.expr(it, depth - 1);
-        return Expr("(" + a.src + " " + cmpOpText(op) + " " + b.src + ")", ty,
+        // **A left side of literals alone says its width.** Two operands built only of literals have
+        // nothing to type them, and wac refuses that comparison rather than picking a width (*these
+        // literals have no type*) — the generator meant `it` all along. Only then: an `as` to the type
+        // an operand already has is refused too (*a cast between one type and itself*).
+        string left = onlyLiterals(a.src) ? "(" + a.src + " as " + typeText(it) + ")" : a.src;
+        return Expr("(" + left + " " + cmpOpText(op) + " " + b.src + ")", ty,
                     (Env e) => applyCmp(op, a.evalIn(e), b.evalIn(e)));
       }
       bool isAnd = this.coin();
@@ -686,8 +692,8 @@ export struct Gen {
         // the array read is: a helper cannot see `ev`.
         if (!this.inHelper && ty == TY_I32() && this.rng.intTop(7) == 0) {
           if (this.coin()) {
-            // Static dispatch: the local's type decides, not the value's.
-            return Expr("bv.tag()", ty, (Env e) => 11);
+            // Virtual dispatch: the value's type decides, not the local's.
+            return Expr("bv.tag()", ty, (Env e) => 22);
           }
           i64 yes = 40 + (this.rng.intTop(50) as i64);
           i64 no = 900 + (this.rng.intTop(50) as i64);
@@ -1087,9 +1093,7 @@ export struct Gen {
     // here, so a field read is answerable without the environment holding a reference.
     // **A subtype held in a parent-typed local.** Two rules come out of this and both are known
     // here: `is` answers true because that is what was constructed, and `bv.tag()` answers the
-    // *parent's* 11 rather than the child's 22, because `override` is a source-level check and
-    // WasmGC has no virtual dispatch — `spec/tour.wac` marks that CRITICAL. A compiler that ever
-    // dispatched dynamically would answer 22 and this would see it.
+    // child's 22, because `tag` is `virtual` and dispatches on the receiver (spec ch12).
     this.emit("Bs bv = Sb(1, 2);");
     this.ptX = 300000 + (this.rng.intTop(500) as i64);
     this.ptY = 700000 + (this.rng.intTop(500) as i64);
@@ -1182,7 +1186,7 @@ export struct Gen {
     string src = "import { sideValue } from \"./s.wac\";\n"
                + "enum En { A, B(i32 v), C }\n"
                + "struct Pt { i32 x; i32 y; }\n"
-               + "struct Bs { i32 a; i32 tag(const this) { return 11; } }\n"
+               + "struct Bs { i32 a; virtual i32 tag(const this) { return 11; } }\n"
                + "struct Sb : Bs { i32 b; override i32 tag(const this) { return 22; } }\n";
     for (i32 i = 0; i < this.helpers.len(); i++) { src = src + this.helpers.get(i) + "\n"; }
     src = src + "export i32 main() {\n";
@@ -1194,6 +1198,27 @@ export struct Gen {
                 + "export i32 sideValue() { return h0(); }\n";
     return Program(src + "  return " + result.src + ";\n}\n", want, side);
   }
+}
+
+/**
+ * Whether `src` is built of literals alone — no name in it but `true` and `false` — so nothing in it
+ * gives an integer literal a type.
+ */
+bool onlyLiterals(string src) {
+  u8[] b = src.toBytes();
+  i32 i = 0;
+  while (i < b.len()) {
+    u8 c = b[i];
+    bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+    if (!letter) { i = i + 1; continue; }
+    i32 j = i;
+    while (j < b.len() && ((b[j] >= 'a' && b[j] <= 'z') || (b[j] >= 'A' && b[j] <= 'Z')
+                           || (b[j] >= '0' && b[j] <= '9') || b[j] == '_')) { j = j + 1; }
+    string word = src.slice(i, j);
+    if (word != "true" && word != "false") { return false; }
+    i = j;
+  }
+  return true;
 }
 
 /** How a type is spelled in the generated source. */

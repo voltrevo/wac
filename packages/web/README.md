@@ -66,7 +66,7 @@ does that for every order in which things can arrive.
     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
         <entry.wac> <out-dir> [--title <t>] [--page <spec>] [--wac <binary>]
 
-`tools/build.wac` writes three files: `page.wac`, a wrapper exporting `Host` — the one thing the
+`packages/web/tools/build.wac` writes three files: `page.wac`, a wrapper exporting `Host` — the one thing the
 browser's side holds, with the page in a private field and a method for each call the host makes;
 `page.js`, that wrapper through `wac bindgen --js`; and `index.html`, both in one `<script>` with the
 host — the few lines of JavaScript that turn the document into a `Dom` and forward events, timers

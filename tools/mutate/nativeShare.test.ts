@@ -303,7 +303,7 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
   const FIXTURE = [
     `import { wacTestRun } from "../harness/wacTestRun.ts";`,
     `await wacTestRun("packages/quic/test/wac/varint_test.wac", "quic");`,
-    // Any ordinary wac test: it was `core/test/option_test.wac`, which went with `Option` and left
+    // Any ordinary wac test: it was `option_test.wac` beside it, which went with `Option` and left
     // this fixture naming a file that is not there — the run failed and the share came back null,
     // which reads exactly like the bug this test is for (`issues/system/0361a`).
     `await wacTestRun("core/test/result_test.wac", "result");`,
@@ -373,7 +373,7 @@ Deno.test("a file that also declares host tests is left to Deno", async () => {
   // invisible to the test walk that would otherwise try to run it.
   const FIXTURE = [
     `import { wacTestRun } from "../harness/wacTestRun.ts";`,
-    // Any ordinary wac test: it was `core/test/option_test.wac`, which went with `Option` and left
+    // Any ordinary wac test: it was `option_test.wac` beside it, which went with `Option` and left
     // this fixture naming a file that is not there — the run failed and the share came back null,
     // which reads exactly like the bug this test is for (`issues/system/0361a`).
     `await wacTestRun("core/test/result_test.wac", "result");`,
