@@ -10520,6 +10520,11 @@ void checkMember(C c, Expr at, Expr obj, string name) {
                      name + " carries a payload, and constructing it must supply one");
         return;
       }
+      // **And a variant without one is a value, whatever else the tables say about the name.**
+      // `Read.End` was refused as *no Read.End* in any file that imports from `std` — which imports
+      // core's `Read` under another name, `Chunk`, and leaves `isStruct("Read")` answering yes — so the
+      // struct rule below ran for an enum and found no static method called `End`. Case 0549.
+      if (c.isEnum(en) && c.typeOfName(en) == typeNone() && c.variantArityIn(en, name) == 0) { return; }
       // **And the struct sibling of that rule**, which was missing: `P.nope`, `P.v` and `P.m` all
       // named something through a *type* rather than a value, so every rule below had nothing to ask
       // and stayed silent — the reference refuses all three. `P.s`, a static, is the one form that is

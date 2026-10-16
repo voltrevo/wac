@@ -1,0 +1,16 @@
+// expect: f() = 3
+// spec: §enum-construct-qualified-iuubvew
+// why: `Read.End` is a value in a file that imports from std as in one that does not — std importing `Read` under another name made the checker read it as a struct
+import { Sys } from "std";
+import { Read } from "core";
+
+i32 score(Read r) {
+  return match (r) {
+    Data(bytes): bytes.len(),
+    End: 3,
+    Failed(why): -1,
+  };
+}
+
+export i32 f() { return score(Read.End); }
+export i32 main(Sys sys) { return 0; }
