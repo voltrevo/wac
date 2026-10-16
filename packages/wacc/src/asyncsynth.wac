@@ -24,7 +24,7 @@
 // as its largest async function needs.
 
 import { Lexed, tokenStride } from "./lex.wac";
-import { kIdent, kInt, kAssign, kVoid } from "./kinds.wac";
+import { kIdent, kInt, kAssign, kVoid, kLt, kPlus } from "./kinds.wac";
 
 /** The names that do not depend on the function being lowered. */
 string[] fixedWords() {
@@ -34,7 +34,7 @@ string[] fixedWords() {
                   "__wacSetScheduleTarget", "=", "i32", "bool", "void", "__wacStepFn",
                   "Ok", "Err", "Result", "__wacTryV", "__wacTryE", "Generator", "AsyncGenerator", "start",
                   "__wacNext", "__wacCurrent", "step", "__wacIsDone", "__wacYieldedOf",
-                  "__wacScheduleTarget"
+                  "__wacScheduleTarget", "hypothetical", "<", "+", "len", "isArray", "element"
   ] as string[];
 }
 
@@ -84,9 +84,23 @@ export i32 synthIsDoneName() { return 30; }
 export i32 synthYieldedName() { return 31; }
 /** core's read of the schedule target, which a coroutine starts out running under. */
 export i32 synthTargetGet()  { return 32; }
+/**
+ * core's `hypothetical<T>()`, which a lowering writes inside a `typeof` for the arm a pattern binding
+ * does not come from: `hypothetical<never>()` answers no value, so the arm adds nothing to the type.
+ */
+export i32 synthHypothetical() { return 33; }
+/**
+ * What a `for (x in e)` whose body suspends is written with: `i < e.len()`, `i = i + 1`, and
+ * `typeref(typeof(e)).isArray()` / `.element()` to choose and type the loop without knowing `e`'s type.
+ */
+export i32 synthLt() { return 34; }
+export i32 synthPlus() { return 35; }
+export i32 synthLen() { return 36; }
+export i32 synthIsArray() { return 37; }
+export i32 synthElement() { return 38; }
 
 /** How many words come before the generated suspension slots. */
-export i32 synthFixedCount() { return 33; }
+export i32 synthFixedCount() { return 39; }
 
 /**
  * The ticket slot for await number `k` — what a value-reading `await` suspended on, read back with
@@ -260,6 +274,8 @@ export Lexed synthTokens(Lexed lexed, u8[] src, i32 ups, i32 states, i32 args, i
     i32 k = kIdent();
     if (i >= synthNum(ups, args, 0)) { k = kInt(); }
     else if (i == synthAssign()) { k = kAssign(); }
+    else if (i == synthLt()) { k = kLt(); }
+    else if (i == synthPlus()) { k = kPlus(); }
     else if (i == synthVoid()) { k = kVoid(); }
     out[at] = k;
     out[at + 1] = synthOffset(src, ups, states, args, i);

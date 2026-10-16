@@ -922,6 +922,12 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
     Ident(tok): {
       string nm = tokText(src, lx, tok);
       i32 li = ev.localAt(nm, ev.frameBase);
+      // A local declared by its type alone — a runtime one, so that `typeof` can ask about it — has no
+      // value here, and reading one is the refusal reading an unknown name is.
+      if (li >= 0 && ev.localVals[li].kind == vNone()) {
+        ev.unsupported("`" + nm + "`, which is neither a local nor a module constant here");
+        return noneValue();
+      }
       if (li >= 0) { return ev.localVals[li]; }
       i32 ci = cx.constAt(nm, fi);
       if (ci >= 0) { return demandConst(ev, cx, ci); }
@@ -1818,6 +1824,10 @@ export Value readLvalue(Ev ev, Decls cx, i32 fi, Lvalue lv) {
     LIdent(tok): {
       string nm = tokText(src, lx, tok);
       i32 li = ev.localAt(nm, ev.frameBase);
+      if (li >= 0 && ev.localVals[li].kind == vNone()) {
+        ev.unsupported("`" + nm + "`, which is neither a local nor a module constant here");
+        return noneValue();
+      }
       if (li >= 0) { return ev.localVals[li]; }
       i32 ci = cx.constAt(nm, fi);
       if (ci >= 0) { return demandConst(ev, cx, ci); }
@@ -2438,6 +2448,19 @@ export Value typerefMethod(Ev ev, string t, string m) {
   bool nullable = t.len() > 0 && t.slice(t.len() - 1, t.len()) == "?";
   if (m == "isNullable") { return boolValue(nullable); }
   if (m == "isRef") { return boolValue(nullable || !isValueTypeName(t)); }
+  // `isArray()` and `element()` — what `for (x in e)` walks, asked of `e`'s type: an array's
+  // element, or what a generator yields (spec ch30). How an `async` function's loop over either is
+  // written without knowing which it is.
+  bool arr = !nullable && t.len() > 2 && t.slice(t.len() - 2, t.len()) == "[]";
+  if (m == "isArray") { return boolValue(arr); }
+  if (m == "element") {
+    if (arr) { return typeValue(ev, t.slice(0, t.len() - 2)); }
+    string gb = genericBase(t);
+    string[] ga = genericArgs(t);
+    if ((gb == "Generator" || gb == "AsyncGenerator") && ga.len() == 2) { return typeValue(ev, ga[0]); }
+    ev.raise("`element()` of " + t + ", which is neither an array nor a generator");
+    return noneValue();
+  }
   if (m == "pushNull") { return typeValue(ev, t + "?"); }
   if (m == "popNull") {
     if (!nullable) { ev.raise("`popNull` on " + t + ", which has no nullable layer"); return noneValue(); }
@@ -2696,6 +2719,14 @@ string evTypeOfExpr(Ev ev, Decls cx, i32 fi, Expr e) {
         }
         default: { }
       }
+    }
+    // `a[i]`: an array's element — how a lowered machine's cell, `x[0]`, is asked about.
+    Index(arr, index): {
+      string at = evTypeOfExpr(ev, cx, fi, arr);
+      if (!evFinished(ev.status) || at == "") { return ""; }
+      if (at.len() > 2 && at.slice(at.len() - 2, at.len()) == "[]") { return at.slice(0, at.len() - 2); }
+      ev.unsupported("`typeof` of an index into " + at);
+      return "";
     }
     Member(obj, ftok): {
       string ot = evTypeOfExpr(ev, cx, fi, obj);

@@ -1,0 +1,15 @@
+// expect: f() = 7
+// spec: §wac-typeref-element-h7q2xvd
+// why: `typeref(T).isArray()` and `.element()` answer about an array and a generator alike, including of a local's type through `typeof`
+import { Generator } from "core";
+gen<string> void words() { yield "x"; }
+export i32 f() {
+  i32[] xs = [4, 5];
+  Generator<string, void> g = words();
+  i32 n = 0;
+  static_if (typeref(typeof(xs)).isArray()) { n += 1; } else { n += 100; }
+  static_if (typeref(typeof(g)).isArray()) { n += 100; } else { n += 2; }
+  static_if (typeref(typeof(g)).element() == typeref(string)) { n += 4; } else { n += 100; }
+  type(typeref(typeof(xs)).element()) first = xs[0];
+  return n + first - 4;
+}

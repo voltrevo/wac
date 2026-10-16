@@ -35,7 +35,7 @@
 import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
          stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt, unfoldTypeName, intOf,
-         vNum, declsOfFiles } from "./consteval.wac";
+         vNum, declsOfFiles, noneValue } from "./consteval.wac";
 import { P, parseProgram } from "./parse.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
@@ -1054,6 +1054,24 @@ void checkStaticForBody(C c, Stmt[] body, Ty want) {
  * Which branch of a `static_if` is in the program — 1 the first, 0 the other — or -1 where this checker
  * cannot say: before the declarations are in, or for a condition this evaluator cannot run.
  */
+/**
+ * The locals in scope, declared to the static evaluator by type alone, so a condition may ask
+ * `typeref(typeof(x))` of one (spec ch30): its type is known here even though its value is not, and
+ * `typeof` never evaluates its operand. Only a function's own names — a module-level one may be a
+ * `static` the condition reads by value.
+ */
+void declareLocalTypes(C c, Ev ev) {
+  for (i32 i = 0; i < c.nameCount; i++) {
+    if (c.depthOf(i) <= 0 || c.findName(c.names[i]) != i) { continue; }
+    string t = c.types[i];
+    if (t == typeNone() || t == "") { continue; }
+    // **Not a name the evaluator already holds by value** — a `static_for` variable is a local here
+    // too, and declared again by type alone it hid the value every turn's `static_if` reads.
+    if (ev.localAt(c.names[i], 0) >= 0) { continue; }
+    ev.declare(c.names[i], t, noneValue());
+  }
+}
+
 i32 liveBranch(C c, Expr cond) {
   if ((c.sEv is null) || (c.sCx is null)) { return 0 - 1; }
   Ev ev = c.sEv!;
@@ -1063,6 +1081,7 @@ i32 liveBranch(C c, Expr cond) {
   i32 tpMark = ev.tpCount;
   for (i32 i = 0; i < c.activeParamCount; i++) { ev.bindType(c.activeParams[i], ""); }
   bindInstanceLetters(c, ev);
+  declareLocalTypes(c, ev);
   Value v = evalExpr(ev, c.sCx!, c.sFile, cond, "bool");
   ev.tpCount = tpMark;
   ev.localCount = mark;
@@ -1323,7 +1342,10 @@ string computedTypeC(C c, Ty t) {
   ev.message = "";
   i32 savedGuards = ev.guards;
   ev.guards = c.tyGuards;
+  i32 localMark = ev.localCount;
+  declareLocalTypes(c, ev);
   string spelled = evTyName(ev, c.sCx!, c.sFile, t);
+  ev.localCount = localMark;
   ev.guards = savedGuards;
   bool ok = evFinished(ev.status);
   ev.status = evOk();
@@ -1467,6 +1489,11 @@ bool hasDefaultValue(C c, string t, i32 depth) {
     string parent = c.parentOf(tmpl);
     return parent == "" || hasDefaultValue(c, parent, depth + 1);
   }
+  // **An imported name this check has not read is unknown, and unknown stays silent.** A single-file
+  // check declares each imported name with no type behind it, so `Ticket<i32> t; t.resolve(1);` was
+  // *read where not every path has assigned it* — `Ticket` is a struct whose every field has a
+  // default, and this check simply had not seen it. A project check reads `core` and answers right.
+  if (c.isDeclaredName(tmpl) && c.typeOfName(tmpl) == typeNone()) { return true; }
   return false;
 }
 
@@ -6231,6 +6258,18 @@ export string typeOfExpr(C c, Expr e) {
           return typeNone();
         }
       }
+      // **A local of function type is the call's, before any function** — `[§wac-param-shadows-func-5nkq2wp]`,
+      // the order `checkCallee` already keeps. This asked `funcAt` first, so the call was *checked* as
+      // the local's and *typed* as the module function's: `fn<string(i32)> twice = …; string s =
+      // twice(4);` beside `i32 twice(i32)` was "expected string, found i32", and so was every `await f()`
+      // in a file whose `export i32 f()` was its entry point.
+      if (c.isDeclaredName(name)) {
+        string local = c.typeOfName(name);
+        if (startsWithFn(local)) {
+          string lret = funcrefReturn(local);
+          return lret == "" ? typeNone() : lret;
+        }
+      }
       i32 at = c.funcAt(name);
       if (at < 0) {
         // **A name holding a funcref is callable, and says what it answers.** `fn<Read()> read` is a
@@ -7313,7 +7352,9 @@ void checkExpr(C c, Expr e) {
         return;
       }
       // A literal has no type of its own to be a ticket of — `await 5` (`§wac-await-pending-9km2xtr`).
-      if (litKindOf(operand!) != litNone()) {
+      // Nor has arithmetic on literals alone: `await (3 + 4)` is a number before it is any type, and
+      // checking it as unknown let a module through that the engine refused (`issues/lang/0323a`).
+      if (litKindOf(operand!) != litNone() || holdsUntypedNumber(c, operand!)) {
         c.reportWith(errAwaitNotPending(), e.line, e.col, "`await` wants a Ticket<T>, and this is a literal");
         return;
       }
@@ -9711,6 +9752,10 @@ bool hasDefault(C c, string t, i32 depth) {
   // A funcref has no zero: there is no function to point at until something points it somewhere.
   if (startsWithFn(t)) { return false; }
   if (c.isEnum(t)) { return false; }
+  // **Nor does a union** (ch08 lists what does): choosing one member's default would be inventing a
+  // value of a type the source never picked. Answering yes here let `union<i32, string>[].defaulted(2)`
+  // through, and the emitter, asked for a default it has no rule for, wrote an `i32` into an `anyref`.
+  if (isUnionName(t)) { return false; }
   if (!c.isStruct(t) || c.isGeneric(t)) { return true; }
   for (i32 i = 0; i < c.fieldCount; i++) {
     if (c.fieldOwners[i] != t) { continue; }

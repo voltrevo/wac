@@ -1,0 +1,9 @@
+// expect: f() = 2
+// spec: §wac-param-shadows-func-5nkq2wp
+// why: a call through a local of function type answers what the local's type says, not what a same-named function answers
+i32 twice(i32 x) { return x * 2; }
+export i32 f() {
+  fn<string(i32)> twice = (i32 x) => "s\{x}";
+  string s = twice(4);
+  return s.len();
+}

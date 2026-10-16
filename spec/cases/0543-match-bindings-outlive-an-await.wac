@@ -1,0 +1,18 @@
+// expect: f() = 444
+// why: the names a `match` arm binds survive a suspension in the arm, whatever the subject — an `await` included — and a local an arm declares from them may be `auto` in an arm that does not suspend
+import { Ticket } from "core";
+enum Ev { Click(string id, i32 x), Key(i32 code), Quit }
+async Ev next(i32 k) { return k == 0 ? Ev.Click("abcd", 3) : k == 1 ? Ev.Key(7) : Ev.Quit; }
+async i32 delay(i32 v) { return v; }
+async i32 go() {
+  i32 total = 0;
+  for (i32 k = 0; k < 3; k++) {
+    match (await next(k)) {
+      Click(id, x): { i32 d = await delay(1); total += id.len() * 100 + x * 10 * d; }
+      Key(code): { auto twice = code * 2; total += twice; }
+      Quit: { total += 0; }
+    }
+  }
+  return total;
+}
+export i32 f() { return go().wait()!; }

@@ -1,0 +1,19 @@
+// expect: f() = 1066
+// why: two locals of one name in different blocks of an `async` function are two locals, whatever their types, across any suspension
+// spec: §wac-shadow-8u8qh2j
+import { Ticket } from "core";
+async i32 one(i32 k) { return k; }
+async i32 go() {
+  i32 x = 1;
+  {
+    string x = "abc";
+    i32 v = await one(2);
+    x = x + "d";
+    if (x.len() != 4) { return -1; }
+  }
+  auto y = x + await one(2);                     // 3, an `auto` local across a suspension
+  for (i32 i = 0; i < 2; i++) { i32 t = await one(i); y += t; }
+  for (i32 i = 0; i < 2; i++) { string t = "\{await one(i)}"; y += t.len(); }
+  return x * 1000 + y * 10 + 6;
+}
+export i32 f() { return go().wait()!; }

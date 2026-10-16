@@ -47,25 +47,25 @@
 // leaves the lambda and must be left exactly as it is — the same distinction the checker makes when
 // it clears `inAsync` for a lambda body.
 //
-// **What an `await` answers has to be written somewhere**, because this pass runs on a tree with no
-// types: the slot a value-reading `await` keeps its ticket in is a `Ticket<X>?`. `T x = await e;`
-// writes `X`, and `return await e;` writes the function's return type; an `await` nested in a larger
-// expression is hoisted into a temporary when `e` is a parameter, a local or a call whose declaration
-// in this file says what ticket it is — and declined by name when it is not. An `await` whose value
-// is thrown away needs no slot at all: its ticket is parked as a `TicketBase?`.
+// **What an `await` answers is written as `typeof`.** This pass runs on a tree with no types, and
+// every local of a machine is a cell declared before anything runs, so each needs its type spelled. A
+// local that wrote one keeps it; `auto`, a temporary, and a ticket's slot are typed `typeof(e)` with
+// each `await x` in `e` read as `x.value()` — the compiler works the type out later, and nothing here
+// is refused for want of it. Until 2026-10-16 only an `await` whose ticket type this file wrote could
+// be hoisted, and one in a condition, a loop's test or the right of `&&` was declined.
 
 import {
-  Arm, Case, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param,
-  Program, Stmt, StmtKind, Ty, TyKind,
+  Arm, Case, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Pattern,
+  Program, Stmt, StmtKind, Ty, TyKind, lvalueExpr, safeCallName, safeCallReceiver,
 } from "./ast.wac";
 import { Lexed, lex, tokenStride } from "./lex.wac";
 import { P, parseType } from "./parse.wac";
-import { AsyncPlan, awaitInBody, awaitInExpr, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
+import { AsyncPlan, awaitInBody, awaitInExpr, awaitInLvalue, awaitInStmt, planBody, planSuspends, statesNeeded } from "./asyncplan.wac";
 import {
   synthSource, synthTokens, synthTok, synthTextAt,
   synthTicket, synthValue, synthStep, synthWaiting, synthYielded, synthDone, synthCoroutine,
   synthTicketBase, synthNever, synthState, synthRes, synthMachine, synthStartName, synthOrReady,
-  synthTargetSet, synthTargetGet, synthNextName, synthCurrentName, synthStepCall, synthIsDoneName, synthYieldedName,
+  synthTargetSet, synthTargetGet, synthHypothetical, synthLt, synthPlus, synthLen, synthIsArray, synthElement, synthNextName, synthCurrentName, synthStepCall, synthIsDoneName, synthYieldedName,
   synthAssign, synthI32, synthBool, synthVoid, synthStepFn,
   synthOk, synthErr, synthResult, synthTryV, synthTryE, synthGenerator, synthAsyncGenerator,
   synthSlot, synthAw, synthNum, synthZero, synthOne, synthArg,
@@ -108,6 +108,101 @@ struct Ctx {
    * a file the lowering writes into need not have imported core's.
    */
   Ty?[] stepWyr;
+  /** How `subExpr` copies beyond the machine's own substitutions — the split copies too. */
+  CopyMode copy;
+}
+
+/**
+ * The two ways the split asks `subExpr` for a copy that is not the machine's.
+ *
+ * **`awaitValue`**: an `await x` is copied as `x.value()`, what it would answer — for the operand of
+ * a `typeof`, which is never evaluated and so never suspends. **`renFrom`/`renTo`**: a local that
+ * shares its name with one declared earlier in the body is read under a fresh name, because every
+ * local of a machine becomes a cell of the function and two cells cannot share a name.
+ */
+struct CopyMode {
+  bool awaitValue;
+  string renFrom;
+  i32 renTo;
+  /**
+   * Where `break` and `continue` go in the statement being copied — so an arm of a value-giving
+   * `match` that leaves with one reaches the loop's state rather than the dispatch loop around the
+   * machine, which is the only real loop left after flattening (`issues/lang/0362a`: such an arm
+   * spun for ever).
+   */
+  i32 loopBrk;
+  i32 loopCont;
+  /**
+   * Names bound in a scope the copy is inside — a `match` arm's, a lambda's parameters and locals, a
+   * loop variable, a `matches` binding — which shadow a hoisted local of the same name there, so a read
+   * of one is not the cell's. `match (t) { Leaf(v): v, … }` copied inside a `typeof` read `v[0]` once
+   * a local `v` was hoisted, and the module was refused.
+   */
+  string[] shadow;
+  i32 shadowN;
+  /**
+   * The file's count of temporaries — `Lw.next`, shared — for the one name the copy writes itself: the
+   * local a `match` on a hoisted local reads its subject into (`narrowedSubject`).
+   */
+  i32[] next;
+  /**
+   * Declarations waiting to go before the statement being copied, and how many. `subBody` puts them
+   * in its list ahead of the statement; a statement copied on its own is wrapped in a block with them.
+   */
+  Stmt[] pre;
+  i32 preN;
+  /** Set while copying what runs more than once or must stay one statement — a loop's condition, a `for`'s init. */
+  bool noPre;
+  /** Set by `subBody` for the one statement it is about to copy, which it can put declarations before. */
+  bool atBody;
+
+  CopyMode create(i32[] next) {
+    return CopyMode(false, "", 0 - 1, 0 - 1, 0 - 1, string[].filled(16, ""), 0, next, Stmt[](), 0, false, false);
+  }
+
+  void pushPre(this, Stmt st) {
+    if (this.preN == this.pre.len()) {
+      Stmt[] more = Stmt[].filled(this.preN * 2 + 4, st);
+      for (i32 i = 0; i < this.preN; i++) { more[i] = this.pre[i]; }
+      this.pre = more;
+    }
+    this.pre[this.preN] = st;
+    this.preN = this.preN + 1;
+  }
+
+  void push(this, string name) {
+    if (this.shadowN == this.shadow.len()) {
+      string[] more = string[].filled(this.shadowN * 2, "");
+      for (i32 i = 0; i < this.shadowN; i++) { more[i] = this.shadow[i]; }
+      this.shadow = more;
+    }
+    this.shadow[this.shadowN] = name;
+    this.shadowN = this.shadowN + 1;
+  }
+
+  bool shadows(const this, string name) {
+    for (i32 i = 0; i < this.shadowN; i++) { if (this.shadow[i] == name) { return true; } }
+    return false;
+  }
+}
+
+/** Shadow the names a condition's `matches` bind, for the block it guards; answers the mark to restore. */
+i32 shadowCond(Ctx c, Expr cond) {
+  i32[] bound = i32[].filled(32, 0);
+  i32 n = condBindings(cond, bound, 0);
+  i32[] toks = i32[].filled(n, 0);
+  for (i32 i = 0; i < n; i++) { toks[i] = bound[i]; }
+  return shadowToks(c, toks);
+}
+
+/** Shadow each of `toks` for the scope about to be copied, answering the mark to restore. */
+i32 shadowToks(Ctx c, i32[] toks) {
+  i32 mark = c.copy.shadowN;
+  for (i32 i = 0; i < toks.len(); i++) {
+    string nm = synthTextAt(c.src, c.lexed, toks[i]);
+    if (nm != "" && nm != "_") { c.copy.push(nm); }
+  }
+  return mark;
 }
 
 i32 tTicket(Ctx c)     { return synthTok(c.first, synthTicket()); }
@@ -139,6 +234,12 @@ i32 tGenerator(Ctx c)  { return synthTok(c.first, synthGenerator()); }
 i32 tAsyncGenerator(Ctx c) { return synthTok(c.first, synthAsyncGenerator()); }
 i32 tNextName(Ctx c)   { return synthTok(c.first, synthNextName()); }
 i32 tTargetGet(Ctx c)  { return synthTok(c.first, synthTargetGet()); }
+i32 tHypothetical(Ctx c) { return synthTok(c.first, synthHypothetical()); }
+i32 tLt(Ctx c)         { return synthTok(c.first, synthLt()); }
+i32 tPlus(Ctx c)       { return synthTok(c.first, synthPlus()); }
+i32 tLen(Ctx c)        { return synthTok(c.first, synthLen()); }
+i32 tIsArray(Ctx c)    { return synthTok(c.first, synthIsArray()); }
+i32 tElement(Ctx c)    { return synthTok(c.first, synthElement()); }
 i32 tCurrentName(Ctx c) { return synthTok(c.first, synthCurrentName()); }
 i32 tStepCall(Ctx c)   { return synthTok(c.first, synthStepCall()); }
 i32 tIsDoneName(Ctx c) { return synthTok(c.first, synthIsDoneName()); }
@@ -301,6 +402,36 @@ Ty lowTicketTy(Ctx c, Ty el) {
 }
 Ty lowFnTy(Ctx c, Ty ret, Ty[] ps) { return Ty(TyKind.Funcref(ret, ps), c.line, c.col); }
 
+/**
+ * `t` for a declaration the machine writes at the top of the function: a copy, with every hoisted
+ * name in a `typeof` read through its cell as `subExpr` reads it everywhere else — `typeof(x + 1)`
+ * is `typeof(x[0] + 1)` there, since `x` is a cell by then.
+ */
+Ty subTy(Ctx c, Ty t) {
+  match (t.kind) {
+    TypeOf(e): { return Ty(TyKind.TypeOf(subExpr(c, e)), t.line, t.col); }
+    TypeofExpr(e): { return Ty(TyKind.TypeofExpr(subExpr(c, e)), t.line, t.col); }
+    Prim(tok): { return Ty(TyKind.Prim(tok), t.line, t.col); }
+    Named(tok, typeArgs): {
+      Ty[] args = Ty[].filled(typeArgs.len(), t);
+      for (i32 i = 0; i < typeArgs.len(); i++) { args[i] = subTy(c, typeArgs[i]); }
+      return Ty(TyKind.Named(tok, args), t.line, t.col);
+    }
+    Arr(elem): { return Ty(TyKind.Arr(subTy(c, elem)), t.line, t.col); }
+    Nullable(inner): { return Ty(TyKind.Nullable(subTy(c, inner)), t.line, t.col); }
+    Funcref(ret, params): {
+      Ty[] ps = Ty[].filled(params.len(), t);
+      for (i32 i = 0; i < params.len(); i++) { ps[i] = subTy(c, params[i]); }
+      return Ty(TyKind.Funcref(subTy(c, ret), ps), t.line, t.col);
+    }
+    TupleOf(members): {
+      Ty[] ms = Ty[].filled(members.len(), t);
+      for (i32 i = 0; i < members.len(); i++) { ms[i] = subTy(c, members[i]); }
+      return Ty(TyKind.TupleOf(ms), t.line, t.col);
+    }
+  }
+}
+
 /** `T[] name = T[].defaulted(1);` */
 Stmt sCellDecl(Ctx c, i32 nameTok, Ty el) {
   Expr mk = Expr(ExprKind.ArrNew(el, eInt(c, 1), null, Expr[]()), c.line, c.col);
@@ -363,10 +494,67 @@ Expr doneStep(Ctx c, bool isVoid) {
 bool isHoisted(Ctx c, i32 tok) {
   string nm = synthTextAt(c.src, c.lexed, tok);
   if (nm == "") { return false; }
+  if (c.copy.shadows(nm)) { return false; }
   for (i32 i = 0; i < c.hoisted.len(); i++) {
     if (c.hoisted[i] == nm) { return true; }
   }
   return false;
+}
+
+/**
+ * A fresh local holding `subject`'s cell, declared before the statement, when `subject` is a hoisted
+ * local — its name, or -1 when the `match` is copied as written.
+ *
+ * **Only a name narrows** (`§wac-union-match-type-rj837up`: in each arm *the subject* has the arm's
+ * type), and a hoisted local is a cell by now, so `match (v) { string: v.len() }` copied as
+ * `match (v[0]) { string: v[0].len() }` read a union in an arm that promised a string. Read through a
+ * local, the arms narrow it, and nothing is lost by the copy: the subject is `const` in its arms, so
+ * no arm can write `v`.
+ */
+i32 narrowedSubject(Ctx c, Expr subject) {
+  if (c.copy.noPre || c.copy.renFrom != "") { return 0 - 1; }
+  match (subject.kind) {
+    Ident(tok): {
+      if (!isHoisted(c, tok)) { return 0 - 1; }
+      i32 k = c.copy.next[0];
+      c.copy.next[0] = k + 1;
+      i32 f = tAw(c, k);
+      Expr cell = eIx(c, eId(c, tok), eInt(c, 0));
+      Ty t = typeofTy(c, eIx(c, eId(c, tok), eInt(c, 0)));
+      c.copy.pushPre(Stmt(StmtKind.Var(t, f, cell, false), subject.line, freshCol(c)));
+      return f;
+    }
+    default: { return 0 - 1; }
+  }
+}
+
+/** The arms of a `match` copied with its subject's name read as `nf`, or as written when `nf` is -1. */
+Arm[] subArms(Ctx c, Expr subject, i32 nf, Arm[] arms, bool inLambda, i32 brkTo, i32 contTo) {
+  string renWas = c.copy.renFrom;
+  i32 toWas = c.copy.renTo;
+  if (nf >= 0) {
+    match (subject.kind) {
+      Ident(tok): {
+        c.copy.renFrom = synthTextAt(c.src, c.lexed, tok);
+        c.copy.renTo = nf;
+      }
+      default: { }
+    }
+  }
+  Arm[] out = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0]
+                                                   : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
+  for (i32 i = 0; i < arms.len(); i++) {
+    string ren = shadowStartAny(c, arms[i].bindingToks);
+    i32 mark = shadowToks(c, arms[i].bindingToks);
+    Expr? av = (arms[i].value is null) ? null : subExpr(c, arms[i].value!);
+    out[i] = Arm(arms[i].variantTok, arms[i].elseTok, arms[i].bindingToks,
+                 subBody(c, arms[i].body, inLambda, brkTo, contTo), av);
+    c.copy.shadowN = mark;
+    c.copy.renFrom = ren;
+  }
+  c.copy.renFrom = renWas;
+  c.copy.renTo = toWas;
+  return out;
 }
 
 Expr[] subExprs(Ctx c, Expr[] es) {
@@ -378,15 +566,19 @@ Expr[] subExprs(Ctx c, Expr[] es) {
 /** `e` with every hoisted name replaced by its cell. Descends into lambdas: they capture the array. */
 Expr subExpr(Ctx c, Expr e) {
   match (e.kind) {
-    TypeRefOf(t): { return e; }
+    // A type inside an expression reads names too — `typeref(typeof(x))` is `typeref(typeof(x[0]))`
+    // once `x` is a cell — so it is copied through `subTy` as a declaration's type is.
+    TypeRefOf(t): { return Expr(ExprKind.TypeRefOf(subTy(c, t)), e.line, e.col); }
     StaticMatch(subject, types, values, defaultAt): { return e; }
     StaticTrapE(message): { return e; }
     Ident(tok): {
+      if (renamesTok(c, tok)) { return Expr(ExprKind.Ident(c.copy.renTo), e.line, e.col); }
       if (!isHoisted(c, tok)) { return e; }
       return eIx(c, e, eInt(c, 0));
     }
     Await(operand): {
       if (operand is null) { return e; }
+      if (c.copy.awaitValue) { return eMethod(c, subExpr(c, operand!), tValue(c), Expr[]()); }
       return Expr(ExprKind.Await(subExpr(c, operand!)), e.line, e.col);
     }
     // **In the machine's own body a `try` cannot leave by returning** — that would return from the
@@ -409,11 +601,12 @@ Expr subExpr(Ctx c, Expr e) {
       return Expr(ExprKind.Binary(op, subExpr(c, left), subExpr(c, right)), e.line, e.col);
     }
     Cast(op, operand, target): {
-      return Expr(ExprKind.Cast(op, subExpr(c, operand), target), e.line, e.col);
+      return Expr(ExprKind.Cast(op, subExpr(c, operand), subTy(c, target)), e.line, e.col);
     }
     Is(left, target, other, negated): {
       Expr? o = (other is null) ? null : subExpr(c, other!);
-      return Expr(ExprKind.Is(subExpr(c, left), target, o, negated), e.line, e.col);
+      Ty? tg = (target is null) ? null : subTy(c, target!);
+      return Expr(ExprKind.Is(subExpr(c, left), tg, o, negated), e.line, e.col);
     }
     Matches(pat, subject): { return Expr(ExprKind.Matches(pat, subExpr(c, subject)), e.line, e.col); }
     Ternary(cond, then, els): {
@@ -450,23 +643,25 @@ Expr subExpr(Ctx c, Expr e) {
     ArrNew(elem, size, fill, elements): {
       Expr? sz = (size is null) ? null : subExpr(c, size!);
       Expr? fl = (fill is null) ? null : subExpr(c, fill!);
-      return Expr(ExprKind.ArrNew(elem, sz, fl, subExprs(c, elements)), e.line, e.col);
+      return Expr(ExprKind.ArrNew(subTy(c, elem), sz, fl, subExprs(c, elements)), e.line, e.col);
     }
     // **Inside, but as a lambda.** The names it captures are cells now, so the substitution goes in;
     // its `return`s are its own, so `inLambda` stops the finish rewrite at the boundary.
     Lambda(params, body, lamAsync): {
-      return Expr(ExprKind.Lambda(params, subBody(c, body, true, 0 - 1, 0 - 1), lamAsync),
-                  e.line, e.col);
+      i32[] ptoks = i32[].filled(params.len(), 0);
+      for (i32 i = 0; i < params.len(); i++) { ptoks[i] = params[i].nameTok; }
+      string ren = shadowStartAny(c, ptoks);
+      i32 mark = shadowToks(c, ptoks);
+      Stmt[] lb = subBody(c, body, true, 0 - 1, 0 - 1);
+      c.copy.shadowN = mark;
+      c.copy.renFrom = ren;
+      return Expr(ExprKind.Lambda(params, lb, lamAsync), e.line, e.col);
     }
     MatchExpr(subject, arms): {
-      Arm[] out = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0]
-                                                       : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
-      for (i32 i = 0; i < arms.len(); i++) {
-        Expr? av = (arms[i].value is null) ? null : subExpr(c, arms[i].value!);
-        out[i] = Arm(arms[i].variantTok, arms[i].elseTok, arms[i].bindingToks,
-                     subBody(c, arms[i].body, c.inLam[0], 0 - 1, 0 - 1), av);
-      }
-      return Expr(ExprKind.MatchExpr(subExpr(c, subject), out), e.line, e.col);
+      i32 nf = narrowedSubject(c, subject);
+      Expr subj = nf >= 0 ? eId(c, nf) : subExpr(c, subject);
+      Arm[] out = subArms(c, subject, nf, arms, c.inLam[0], c.copy.loopBrk, c.copy.loopCont);
+      return Expr(ExprKind.MatchExpr(subj, out), e.line, e.col);
     }
     // Same reasoning as the `match` arms: an attribute's value and a child are expressions, and a
     // hoisted name can appear in either.
@@ -491,6 +686,7 @@ Expr subExpr(Ctx c, Expr e) {
 Lvalue subLv(Ctx c, Lvalue lv) {
   match (lv.kind) {
     LIdent(tok): {
+      if (renamesTok(c, tok)) { return Lvalue(LvalueKind.LIdent(c.copy.renTo), lv.line, lv.col); }
       if (!isHoisted(c, tok)) { return lv; }
       return Lvalue(LvalueKind.LIndex(lv, eInt(c, 0)), lv.line, lv.col);
     }
@@ -514,14 +710,111 @@ Lvalue subLv(Ctx c, Lvalue lv) {
  */
 Stmt[] subBody(Ctx c, Stmt[] body, bool inLambda, i32 brkTo, i32 contTo) {
   bool was = c.inLam[0];
+  string ren = c.copy.renFrom;
+  i32 mark = c.copy.shadowN;
   c.inLam[0] = inLambda;
+  bool noPreWas = c.copy.noPre;
+  c.copy.noPre = false;
   Stmt[] out = Stmt[].filled(body.len(), body.len() > 0 ? body[0] : sRet(c, null));
-  for (i32 i = 0; i < body.len(); i++) { out[i] = subStmt(c, body[i], inLambda, brkTo, contTo); }
+  i32 n = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    i32 pmark = c.copy.preN;
+    c.copy.atBody = true;
+    Stmt one = subStmt(c, body[i], inLambda, brkTo, contTo);
+    // What `narrowedSubject` declared for this statement, ahead of it.
+    if (c.copy.preN > pmark) {
+      Stmt[] more = Stmt[].filled(out.len() + c.copy.preN - pmark, one);
+      for (i32 k = 0; k < n; k++) { more[k] = out[k]; }
+      out = more;
+      for (i32 k = pmark; k < c.copy.preN; k++) { out[n] = c.copy.pre[k]; n = n + 1; }
+      c.copy.preN = pmark;
+    }
+    out[n] = one;
+    n = n + 1;
+    // A declaration of the name being renamed starts a new local: past it, the name is that one's.
+    if (ren != "" && declaresName(c, body[i], ren)) { c.copy.renFrom = ""; }
+    // A lambda's own local is not the machine's cell of that name, from its declaration on.
+    if (inLambda) {
+      match (body[i].kind) {
+        Var(vt, vtok, vinit, vconst): { c.copy.push(synthTextAt(c.src, c.lexed, vtok)); }
+        default: { }
+      }
+    }
+  }
+  c.copy.shadowN = mark;
+  c.copy.renFrom = ren;
+  c.copy.noPre = noPreWas;
   c.inLam[0] = was;
   return out;
 }
 
+/**
+ * Stop renaming if `tok` binds the name being renamed — a new local for the scope it opens — and
+ * answer what the rename was, for the caller to restore when that scope ends.
+ */
+string shadowStart(Ctx c, i32 tok) {
+  string ren = c.copy.renFrom;
+  if (ren != "" && synthTextAt(c.src, c.lexed, tok) == ren) { c.copy.renFrom = ""; }
+  return ren;
+}
+
+/** `shadowStart` for several bindings at once — a lambda's parameters, an arm's names. */
+string shadowStartAny(Ctx c, i32[] toks) {
+  string ren = c.copy.renFrom;
+  for (i32 i = 0; i < toks.len(); i++) {
+    if (ren != "" && synthTextAt(c.src, c.lexed, toks[i]) == ren) { c.copy.renFrom = ""; }
+  }
+  return ren;
+}
+
+/** Whether `tok` spells the name the copy is renaming. */
+bool renamesTok(Ctx c, i32 tok) {
+  return c.copy.renFrom != "" && synthTextAt(c.src, c.lexed, tok) == c.copy.renFrom;
+}
+
+/** Whether `s` declares a local called `name` — the end of an outer one's reach in this block. */
+bool declaresName(Ctx c, Stmt s, string name) {
+  match (s.kind) {
+    Var(type, nameTok, init, isConst): { return synthTextAt(c.src, c.lexed, nameTok) == name; }
+    default: { return false; }
+  }
+}
+
 Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
+  i32 wasBrk = c.copy.loopBrk;
+  i32 wasCont = c.copy.loopCont;
+  c.copy.loopBrk = brkTo;
+  c.copy.loopCont = contTo;
+  // **Declarations go before this statement** (`narrowedSubject`): into `subBody`'s list when it is
+  // copying one of a block's statements, and otherwise into a block wrapped around it — except for a
+  // declaration, which a block would scope away.
+  bool atBody = c.copy.atBody;
+  c.copy.atBody = false;
+  bool noPreWas = c.copy.noPre;
+  if (!atBody && declaresAny(s)) { c.copy.noPre = true; }
+  i32 mark = c.copy.preN;
+  Stmt out = subStmtIn(c, s, inLambda, brkTo, contTo);
+  c.copy.noPre = noPreWas;
+  c.copy.loopBrk = wasBrk;
+  c.copy.loopCont = wasCont;
+  if (atBody || c.copy.preN == mark) { return out; }
+  Stmt[] wrapped = Stmt[].filled(c.copy.preN - mark + 1, out);
+  for (i32 i = mark; i < c.copy.preN; i++) { wrapped[i - mark] = c.copy.pre[i]; }
+  c.copy.preN = mark;
+  return sBlock(c, wrapped);
+}
+
+/** Whether `s` is a declaration — which a block wrapped around it would scope away. */
+bool declaresAny(Stmt s) {
+  match (s.kind) {
+    Var(type, nameTok, init, isConst): { return true; }
+    Destructure(whole, pattern, init): { return true; }
+    default: { return false; }
+  }
+}
+
+/** `subStmt`, with the loop targets recorded for the expressions inside it. */
+Stmt subStmtIn(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
   match (s.kind) {
     // The condition is static and is left as written; the bodies are walked as any block's are.
     StaticIf(cond, then, els): {
@@ -541,11 +834,12 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
       // A hoisted local with no initialiser is already its cell, holding its default.
       if (init is null) {
         if (!inLambda && isHoisted(c, nameTok)) { return sBlock(c, Stmt[]()); }
-        return s;
+        return Stmt(StmtKind.Var(subTy(c, type), nameTok, null, isConst), s.line, s.col);
       }
       Expr v = subExpr(c, init!);
       if (!inLambda && isHoisted(c, nameTok)) { return sCellSet(c, nameTok, v); }
-      return Stmt(StmtKind.Var(type, nameTok, v, isConst), s.line, s.col);
+      // The type too: a `typeof` in it reads names, which are cells or renamed like any others.
+      return Stmt(StmtKind.Var(subTy(c, type), nameTok, v, isConst), s.line, s.col);
     }
     Assign(target, op, rhs): {
       return Stmt(StmtKind.Assign(subLv(c, target), op, subExpr(c, rhs)), s.line, s.col);
@@ -554,11 +848,22 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
       return Stmt(StmtKind.IncrStmt(subLv(c, target), op), s.line, s.col);
     }
     If(cond, then, els): {
-      return Stmt(StmtKind.If(subExpr(c, cond), subBody(c, then, inLambda, brkTo, contTo),
-                              subBody(c, els, inLambda, brkTo, contTo)), s.line, s.col);
+      Expr cnd = subExpr(c, cond);
+      i32 mark = shadowCond(c, cond);
+      Stmt[] tb = subBody(c, then, inLambda, brkTo, contTo);
+      c.copy.shadowN = mark;
+      return Stmt(StmtKind.If(cnd, tb, subBody(c, els, inLambda, brkTo, contTo)), s.line, s.col);
     }
     While(cond, body): {
-      return Stmt(StmtKind.While(subExpr(c, cond), subBody(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
+      // Run each time round, so nothing it reads can be read once before the loop.
+      bool np = c.copy.noPre;
+      c.copy.noPre = true;
+      Expr cnd = subExpr(c, cond);
+      c.copy.noPre = np;
+      i32 mark = shadowCond(c, cond);
+      Stmt[] wb = subBody(c, body, inLambda, 0 - 1, 0 - 1);
+      c.copy.shadowN = mark;
+      return Stmt(StmtKind.While(cnd, wb), s.line, s.col);
     }
     Destructure(whole, pattern, init): {
       return Stmt(StmtKind.Destructure(whole, pattern, subExpr(c, init)), s.line, s.col);
@@ -569,24 +874,44 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
       return Stmt(StmtKind.TupleAssign(ts, subExpr(c, rhs)), s.line, s.col);
     }
     ForIn(elemTy, nameTok, iterable, body): {
-      return Stmt(StmtKind.ForIn(elemTy, nameTok, subExpr(c, iterable),
-                                 subBody(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
+      Expr it = subExpr(c, iterable);
+      string ren = shadowStart(c, nameTok);
+      i32 mark = shadowToks(c, i32[].filled(1, nameTok));
+      Stmt[] fb = subBody(c, body, inLambda, 0 - 1, 0 - 1);
+      c.copy.shadowN = mark;
+      c.copy.renFrom = ren;
+      return Stmt(StmtKind.ForIn(elemTy, nameTok, it, fb), s.line, s.col);
     }
     For(init, cond, update, body): {
+      bool np = c.copy.noPre;
+      c.copy.noPre = true;
       Stmt? i2 = (init is null) ? null : subStmt(c, init!, inLambda, 0 - 1, 0 - 1);
+      // A loop variable of the renamed name is a new local for the rest of the loop.
+      string ren = c.copy.renFrom;
+      if (init is not null && ren != "" && declaresName(c, init!, ren)) { c.copy.renFrom = ""; }
       Expr? c2 = (cond is null) ? null : subExpr(c, cond!);
       Stmt? u2 = (update is null) ? null : subStmt(c, update!, inLambda, 0 - 1, 0 - 1);
-      return Stmt(StmtKind.For(i2, c2, u2, subBody(c, body, inLambda, 0 - 1, 0 - 1)), s.line, s.col);
+      c.copy.noPre = np;
+      Stmt[] fb = subBody(c, body, inLambda, 0 - 1, 0 - 1);
+      c.copy.renFrom = ren;
+      return Stmt(StmtKind.For(i2, c2, u2, fb), s.line, s.col);
     }
     DoWhile(body, cond): {
-      return Stmt(StmtKind.DoWhile(subBody(c, body, inLambda, 0 - 1, 0 - 1), subExpr(c, cond)), s.line, s.col);
+      Stmt[] db = subBody(c, body, inLambda, 0 - 1, 0 - 1);
+      bool np = c.copy.noPre;
+      c.copy.noPre = true;
+      Expr cnd = subExpr(c, cond);
+      c.copy.noPre = np;
+      return Stmt(StmtKind.DoWhile(db, cnd), s.line, s.col);
     }
     Switch(subject, cases): {
       Case[] cs = Case[].filled(cases.len(), cases.len() > 0 ? cases[0]
                                                           : Case(null, Stmt[](), s.line, s.col));
       for (i32 i = 0; i < cases.len(); i++) {
         Expr? v = (cases[i].value is null) ? null : subExpr(c, cases[i].value!);
-        cs[i] = Case(v, subBody(c, cases[i].body, inLambda, 0 - 1, 0 - 1), cases[i].line, cases[i].col);
+        // `break` leaves the `switch` (ch25), so it stays as written; `continue` belongs to the loop
+        // around it, which in a machine is states — so it passes through.
+        cs[i] = Case(v, subBody(c, cases[i].body, inLambda, 0 - 1, contTo), cases[i].line, cases[i].col);
       }
       return Stmt(StmtKind.Switch(subExpr(c, subject), cs), s.line, s.col);
     }
@@ -617,14 +942,10 @@ Stmt subStmt(Ctx c, Stmt s, bool inLambda, i32 brkTo, i32 contTo) {
     // stayed empty and a server that sent nothing, with no diagnostic anywhere. `issues/lang/0005`
     // is the same lesson from the other direction: five AST walks were missing enum arms.
     Match(subject, arms): {
-      Arm[] out = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0]
-                                                       : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
-      for (i32 i = 0; i < arms.len(); i++) {
-        Expr? av = (arms[i].value is null) ? null : subExpr(c, arms[i].value!);
-        out[i] = Arm(arms[i].variantTok, arms[i].elseTok, arms[i].bindingToks,
-                     subBody(c, arms[i].body, inLambda, brkTo, contTo), av);
-      }
-      return Stmt(StmtKind.Match(subExpr(c, subject), out), s.line, s.col);
+      i32 nf = narrowedSubject(c, subject);
+      Expr subj = nf >= 0 ? eId(c, nf) : subExpr(c, subject);
+      Arm[] out = subArms(c, subject, nf, arms, inLambda, brkTo, contTo);
+      return Stmt(StmtKind.Match(subj, out), s.line, s.col);
     }
     // **A `break` whose loop is gone has to go somewhere.** After flattening there is no `while` for
     // it to leave — the only loop left is the dispatch, and breaking that would resume the machine at
@@ -851,11 +1172,12 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
     }
     Block(body): { return lowerSeq(b, body, next); }
     If(cond, then, els): {
-      i32 tEntry = lowerSeq(b, then, next);
+      i32 copies = condCopies(c, cond, then);
+      i32 tEntry = lowerSeq(b, dropFirst(then, copies), next);
       i32 eEntry = els.len() > 0 ? lowerSeq(b, els, next) : next;
       i32 head = lowAlloc(b);
       Stmt[] hd = Stmt[].filled(2, sRet(c, null));
-      hd[0] = Stmt(StmtKind.If(subExpr(c, cond), gotoS(c, tEntry), Stmt[]()), c.line, c.col);
+      hd[0] = Stmt(StmtKind.If(subExpr(c, cond), copiesAndGo(c, then, copies, tEntry), Stmt[]()), c.line, c.col);
       hd[1] = sBlock(c, gotoS(c, eEntry));
       lowPut(b, head, hd);
       return head;
@@ -867,10 +1189,11 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
     While(cond, body): {
       i32 head = lowAlloc(b);
       lowPush(b, next, head);
-      i32 bodyEntry = lowerSeq(b, body, head);
+      i32 copies = condCopies(c, cond, body);
+      i32 bodyEntry = lowerSeq(b, dropFirst(body, copies), head);
       lowPop(b);
       Stmt[] hd = Stmt[].filled(2, sRet(c, null));
-      hd[0] = Stmt(StmtKind.If(subExpr(c, cond), gotoS(c, bodyEntry), Stmt[]()), c.line, c.col);
+      hd[0] = Stmt(StmtKind.If(subExpr(c, cond), copiesAndGo(c, body, copies, bodyEntry), Stmt[]()), c.line, c.col);
       hd[1] = sBlock(c, gotoS(c, next));
       lowPut(b, head, hd);
       return head;
@@ -881,10 +1204,17 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
       lowPush(b, next, step);
       i32 bodyEntry = lowerSeq(b, body, step);
       lowPop(b);
-      Stmt[] up = Stmt[].filled(1, (update is null) ? sRet(c, null)
-                                                : subStmt(c, update!, false, 0 - 1, 0 - 1));
-      if (update is null) { up = Stmt[](); }
-      lowPut(b, step, lowJoin(c, up, gotoS(c, head)));
+      // An update that suspends — the block the split made of it — is states of its own, entered
+      // from `step` so `continue` still reaches it.
+      if (update is not null && awaitInStmt(update!)) {
+        i32 upEntry = lowerSeq(b, Stmt[].filled(1, update!), head);
+        lowPut(b, step, gotoS(c, upEntry));
+      } else {
+        Stmt[] up = Stmt[].filled(1, (update is null) ? sRet(c, null)
+                                                  : subStmt(c, update!, false, 0 - 1, 0 - 1));
+        if (update is null) { up = Stmt[](); }
+        lowPut(b, step, lowJoin(c, up, gotoS(c, head)));
+      }
       Stmt[] hd = Stmt[].filled(2, sRet(c, null));
       Expr test = (cond is null) ? eBool(c, true) : subExpr(c, cond!);
       hd[0] = Stmt(StmtKind.If(test, gotoS(c, bodyEntry), Stmt[]()), c.line, c.col);
@@ -896,6 +1226,49 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
       lowPut(b, entry, lowJoin(c, pre, gotoS(c, head)));
       return entry;
     }
+    // **A `static_if` whose branches suspend** — one `for … in` written both ways becomes this. The
+    // compiler keeps one branch, so the states each branch flattened into are kept only where it
+    // does: each is wrapped in the same `static_if`, and the branch that does not apply leaves empty
+    // states nothing jumps to.
+    StaticIf(cond, then, els): {
+      i32 m0 = b.n;
+      i32 tEntry = lowerSeq(b, then, next);
+      i32 m1 = b.n;
+      i32 eEntry = lowerSeq(b, els, next);
+      i32 m2 = b.n;
+      for (i32 k = m0; k < m1; k++) {
+        b.states[k] = Stmt[].filled(1, Stmt(StmtKind.StaticIf(subExpr(c, cond), b.states[k], Stmt[]()), c.line, c.col));
+      }
+      for (i32 k = m1; k < m2; k++) {
+        b.states[k] = Stmt[].filled(1, Stmt(StmtKind.StaticIf(subExpr(c, cond), Stmt[](), b.states[k]), c.line, c.col));
+      }
+      i32 head = lowAlloc(b);
+      lowPut(b, head, Stmt[].filled(1, Stmt(StmtKind.StaticIf(subExpr(c, cond), gotoS(c, tEntry), gotoS(c, eEntry)),
+                                            c.line, c.col)));
+      return head;
+    }
+    // **A `switch` whose cases suspend** — a head state that sets the state to the matching case's
+    // entry, or to `next` when none matches. Each case sets the state and does not `break`: a `break`
+    // inside the `switch` would leave it rather than the dispatch around it, so one `break` follows.
+    // `break` in a case body leaves the `switch` (ch25), and `continue` is the enclosing loop's.
+    Switch(subject, cases): {
+      i32 contTo = b.depth > 0 ? b.cont[b.depth - 1] : 0 - 1;
+      lowPush(b, next, contTo);
+      Case[] heads = Case[].filled(cases.len(), cases.len() > 0 ? cases[0] : Case(null, Stmt[](), c.line, c.col));
+      for (i32 i = 0; i < cases.len(); i++) {
+        i32 entry = lowerSeq(b, cases[i].body, next);
+        heads[i] = Case(cases[i].value, Stmt[].filled(1, sCellSet(c, tState(c), eInt(c, entry))),
+                        cases[i].line, cases[i].col);
+      }
+      lowPop(b);
+      i32 head = lowAlloc(b);
+      Stmt[] hd = Stmt[].filled(3, sRet(c, null));
+      hd[0] = sCellSet(c, tState(c), eInt(c, next));
+      hd[1] = Stmt(StmtKind.Switch(subExpr(c, subject), heads), c.line, c.col);
+      hd[2] = Stmt(StmtKind.Break, c.line, c.col);
+      lowPut(b, head, hd);
+      return head;
+    }
     default: {
       // Unreachable: the plan refuses every other shape holding a suspension, by name.
       i32 e = lowAlloc(b);
@@ -903,6 +1276,66 @@ i32 lowerOne(Bld b, Stmt s, i32 next) {
       return e;
     }
   }
+}
+
+/**
+ * How many of `body`'s leading statements copy a name `cond`'s `matches` bound — the locals
+ * `rebindMatches` declared. They have to run in the state that tests the condition, because that is
+ * the only state the binding exists in; the body's own states come after it.
+ */
+i32 condCopies(Ctx c, Expr cond, Stmt[] body) {
+  i32[] bound = i32[].filled(32, 0);
+  i32 nb = condBindings(cond, bound, 0);
+  i32 k = 0;
+  while (k < body.len()) {
+    bool copy = false;
+    match (body[k].kind) {
+      Var(type, nameTok, init, isConst): {
+        if (init is not null) {
+          match (init!.kind) {
+            Ident(tok): { for (i32 i = 0; i < nb; i++) { if (bound[i] == tok) { copy = true; } } }
+            default: { }
+          }
+        }
+      }
+      default: { }
+    }
+    if (!copy) { return k; }
+    k = k + 1;
+  }
+  return k;
+}
+
+/** The names `cond`'s `matches` patterns bind, through `&&`, into `out` from `n`. */
+i32 condBindings(Expr cond, i32[] out, i32 n) {
+  match (cond.kind) {
+    Matches(pat, subject): {
+      i32 k = n;
+      if (pat.nameTok >= 0 && k < out.len()) { out[k] = pat.nameTok; k = k + 1; }
+      for (i32 i = 0; i < pat.slotNames.len(); i++) {
+        if (pat.slotNames[i] >= 0 && k < out.len()) { out[k] = pat.slotNames[i]; k = k + 1; }
+      }
+      return k;
+    }
+    Binary(op, left, right): { return condBindings(right, out, condBindings(left, out, n)); }
+    default: { return n; }
+  }
+}
+
+Stmt[] dropFirst(Stmt[] body, i32 k) {
+  if (k == 0) { return body; }
+  Stmt[] out = Stmt[].filled(body.len() - k, body[0]);
+  for (i32 i = k; i < body.len(); i++) { out[i - k] = body[i]; }
+  return out;
+}
+
+/** The first `k` statements of `body`, as cell writes, then the jump to `entry`. */
+Stmt[] copiesAndGo(Ctx c, Stmt[] body, i32 k, i32 entry) {
+  Stmt[] go = gotoS(c, entry);
+  Stmt[] out = Stmt[].filled(k + go.len(), go[0]);
+  for (i32 i = 0; i < k; i++) { out[i] = subStmt(c, body[i], false, 0 - 1, 0 - 1); }
+  for (i32 i = 0; i < go.len(); i++) { out[k + i] = go[i]; }
+  return out;
 }
 
 void lowPush(Bld b, i32 brkTo, i32 contTo) {
@@ -930,8 +1363,13 @@ struct Arms {
 }
 
 Arms buildArms(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet) {
-  Bld b = Bld(c, Stmt[][].filled(256, Stmt[]()), 0, i32[].filled(64, 0), i32[].filled(64, 0), 0, i32[].filled(1, 0),
-              Ty[].filled(64, fnRet), bool[].filled(64, false), fnRet);
+  // Sized from the body rather than fixed: past a fixed size `lowAlloc` reused the last state and a
+  // slot went undeclared, silently, and splitting writes states and suspensions of its own.
+  i32 nStates = statesNeeded(body) + 8;
+  i32 nSlots = planSuspends(plan) + 1;
+  i32 nDepth = nStates;
+  Bld b = Bld(c, Stmt[][].filled(nStates, Stmt[]()), 0, i32[].filled(nDepth, 0), i32[].filled(nDepth, 0), 0, i32[].filled(1, 0),
+              Ty[].filled(nSlots, fnRet), bool[].filled(nSlots, false), fnRet);
   // The state a finished machine stays in, answering `Done` again with what it kept.
   i32 fin = lowAlloc(b);
   c.finState[0] = fin;
@@ -977,11 +1415,11 @@ Stmt[] machineBody(Ctx c, Stmt[] body, AsyncPlan plan, Ty fnRet, Ty? yieldTy, bo
   out[at] = sCellDecl(c, tState(c), lowPrimTy(c, tI32(c))); at = at + 1;
   if (!isVoidTy(c, fnRet)) { out[at] = sCellDecl(c, tRes(c), cloneTy(fnRet)); at = at + 1; }
   for (i32 i = 0; i < plan.hoist.len(); i++) {
-    out[at] = sCellDecl(c, plan.hoist[i], cloneTy(plan.hoistTy[i])); at = at + 1;
+    out[at] = sCellDecl(c, plan.hoist[i], subTy(c, plan.hoistTy[i])); at = at + 1;
   }
   for (i32 k = 0; k < made.slots; k++) {
     if (!made.slotUsed[k]) { continue; }
-    out[at] = sSlotDecl(c, tUp(c, k), cloneTy(made.slotTy[k]));
+    out[at] = sSlotDecl(c, tUp(c, k), subTy(c, made.slotTy[k]));
     at = at + 1;
   }
 
@@ -1234,6 +1672,61 @@ struct Rz {
   string[] why;
   /** `Lw.sigs`, for the types this file's declarations do not say. */
   string sigs;
+  /**
+   * The names that can change while the body is suspended — its parameters, `this`, its locals and
+   * its loop variables — so the linearising knows what has to be read before a suspension rather
+   * than after. A pattern's bindings are not here: they cannot be assigned, so reading one later
+   * answers the same.
+   */
+  string[] locals;
+}
+
+/** `names` with `n` used, and `w` appended — the growing array `localNamesIn` fills. */
+i32 addName(string[] names, i32 n, string w) {
+  if (n >= names.len()) { return n; }
+  names[n] = w;
+  return n + 1;
+}
+
+/** Every name `body` declares at any depth, outside a lambda, appended to `names` from `n`. */
+i32 localNamesIn(Ctx c, Stmt[] body, string[] names, i32 n) {
+  i32 k = n;
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      Var(type, nameTok, init, isConst): { k = addName(names, k, synthTextAt(c.src, c.lexed, nameTok)); }
+      If(cond, then, els): { k = localNamesIn(c, els, names, localNamesIn(c, then, names, k)); }
+      While(cond, b): { k = localNamesIn(c, b, names, k); }
+      DoWhile(b, cond): { k = localNamesIn(c, b, names, k); }
+      For(init, cond, update, b): {
+        if (init is not null) { k = localNamesIn(c, Stmt[].filled(1, init!), names, k); }
+        k = localNamesIn(c, b, names, k);
+      }
+      ForIn(elemTy, nameTok, iterable, b): {
+        k = addName(names, k, synthTextAt(c.src, c.lexed, nameTok));
+        k = localNamesIn(c, b, names, k);
+      }
+      Block(b): { k = localNamesIn(c, b, names, k); }
+      Switch(subject, cases): {
+        for (i32 j = 0; j < cases.len(); j++) { k = localNamesIn(c, cases[j].body, names, k); }
+      }
+      Match(subject, arms): {
+        for (i32 j = 0; j < arms.len(); j++) { k = localNamesIn(c, arms[j].body, names, k); }
+      }
+      default: { }
+    }
+  }
+  return k;
+}
+
+/** `Rz.locals` for a body and its parameters. */
+string[] localsOf(Ctx c, Param[] params, Stmt[] body) {
+  string[] names = string[].filled(4096, "");
+  i32 n = addName(names, 0, "this");
+  for (i32 i = 0; i < params.len(); i++) { n = addName(names, n, synthTextAt(c.src, c.lexed, params[i].nameTok)); }
+  n = localNamesIn(c, body, names, n);
+  string[] out = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { out[i] = names[i]; }
+  return out;
 }
 
 string rzText(Rz z, i32 tok) { return synthTextAt(z.c.src, z.c.lexed, tok); }
@@ -1243,23 +1736,6 @@ bool isAutoTyL(Rz z, Ty t) {
     Named(tok, typeArgs): { return typeArgs.len() == 0 && rzText(z, tok) == "auto"; }
     default: { return false; }
   }
-}
-
-/** Whether `s` declares a local, with an initialiser, whose written type holds a `union` placeholder. */
-bool declaresPlaceholder(Rz z, Stmt s) {
-  match (s.kind) {
-    Var(type, nameTok, init, isConst): { return init is not null && placeholderInArgsL(z, type); }
-    If(cond, then, els): { return anyDeclaresPlaceholder(z, then) || anyDeclaresPlaceholder(z, els); }
-    While(cond, b): { return anyDeclaresPlaceholder(z, b); }
-    For(init, cond, update, b): { return anyDeclaresPlaceholder(z, b); }
-    Block(b): { return anyDeclaresPlaceholder(z, b); }
-    default: { return false; }
-  }
-}
-
-bool anyDeclaresPlaceholder(Rz z, Stmt[] body) {
-  for (i32 i = 0; i < body.len(); i++) { if (declaresPlaceholder(z, body[i])) { return true; } }
-  return false;
 }
 
 /** Whether a written type's arguments, at any depth, include the bare placeholder `union`. */
@@ -1648,18 +2124,37 @@ Ty? awaitedTy(Rz z, Expr operand) {
 
 // ── An `await` inside a larger expression ─────────────────────────────────────
 //
-// `return (await t) * 2;` becomes `X __wacAw0 = await t; return __wacAw0 * 2;` — the shapes the
-// flattening already takes. **The awaits run before the rest of their statement**, which is the
-// order a reader expects only where nothing to their left has an effect; where something must run
-// conditionally — the right of `&&`, `||` or `??`, an arm of `?:` or `match`, a lambda — the `await`
-// is left in place and the plan declines it.
+// **Every statement holding an `await` is first made linear**: rewritten into statements in which
+// each `await` stands alone — `T x = await e;`, `await e;` or `return await e;` — which are the shapes
+// the flattening takes. `return f() + (await t) * 2;` becomes
+//
+//     typeof(f()) __wacAw0 = f();
+//     typeof(t.value()) __wacAw1 = await t;
+//     return __wacAw0 + __wacAw1 * 2;
+//
+// **Evaluation order is the source's.** Whatever is evaluated before an `await` — the operands to its
+// left, a call's receiver and earlier arguments — is put in a temporary first, so its effects happen
+// before the suspension rather than after it. Only what cannot answer differently later is left in
+// place: a literal, and a name that is not a local (a function, a constant, a type).
+//
+// **What runs only sometimes becomes control flow.** The right of `&&`, `||` and `??`, an arm of `?:`
+// or of a value-giving `match`, and the arguments of a `?.` call run only when their condition holds,
+// so an `await` there is lowered as the `if` or the `match` it means, assigning a temporary.
+//
+// **Every temporary is typed `typeof(e)`** (spec ch30), with each `await x` in `e` read as
+// `x.value()` — so nothing here needs to know a type, and nothing is refused for want of one. Every
+// local of a machine is hoisted into a cell declared at the top of the function, so the names a
+// `typeof` mentions are in scope there: cells are declared in the order their locals are, and a
+// temporary is declared after everything it reads.
 
-/** What hoisting one statement's awaits produced. */
+/** What making one statement linear produced: the statements to run before it, in order. */
 struct Pulled {
   Stmt[] pre;
   i32 n;
   bool failed;
 }
+
+Pulled newPulled() { return Pulled(Stmt[](), 0, false); }
 
 void pushPre(Pulled p, Stmt s) {
   if (p.n >= p.pre.len()) {
@@ -1671,81 +2166,360 @@ void pushPre(Pulled p, Stmt s) {
   p.n = p.n + 1;
 }
 
-bool isShortCircuit(Rz z, i32 op) {
-  i32 k = z.c.lexed.tokens[op * tokenStride()];
-  return k == kAndAnd() || k == kOrOr() || k == kQuestion();
-}
-
-Expr[] pullAll(Rz z, Expr[] es, Pulled p) {
-  Expr[] out = Expr[].filled(es.len(), es.len() > 0 ? es[0] : eNull(z.c));
-  for (i32 i = 0; i < es.len(); i++) { out[i] = pullE(z, es[i], p); }
+/** `p`'s statements followed by `tail`. */
+Stmt[] preThen(Pulled p, Stmt[] tail) {
+  Stmt[] out = Stmt[].filled(p.n + tail.len(), tail.len() > 0 ? tail[0] : (p.n > 0 ? p.pre[0] : Stmt(StmtKind.Break, 0, 0)));
+  for (i32 i = 0; i < p.n; i++) { out[i] = p.pre[i]; }
+  for (i32 i = 0; i < tail.len(); i++) { out[p.n + i] = tail[i]; }
   return out;
 }
 
-/** `e` with each `await` in it replaced by a temporary declared in `p.pre`, in evaluation order. */
-Expr pullE(Rz z, Expr e, Pulled p) {
+/** A temporary's name, fresh. */
+i32 freshTmp(Rz z) {
+  i32 k = z.next[0];
+  z.next[0] = k + 1;
+  return tAw(z.c, k);
+}
+
+/** `typeof(e)`, as a type. */
+Ty typeofTy(Ctx c, Expr e) { return Ty(TyKind.TypeofExpr(e), c.line, c.col); }
+
+/**
+ * `e` with every `await x` read as `x.value()` — what `typeof` is given, since it never evaluates its
+ * operand and so never suspends. A copy: the operand of a `typeof` and the expression that is run are
+ * different nodes, as source would have them.
+ */
+Expr valueForm(Rz z, Expr e) {
+  bool was = z.c.copy.awaitValue;
+  z.c.copy.awaitValue = true;
+  Expr out = subExpr(z.c, e);
+  z.c.copy.awaitValue = was;
+  return out;
+}
+
+/** Whether `name` is a local or a parameter of the body being lowered — something that can change. */
+bool isLocalName(Rz z, string name) {
+  for (i32 i = 0; i < z.locals.len(); i++) {
+    if (z.locals[i] == name) { return true; }
+  }
+  return false;
+}
+
+/**
+ * Whether evaluating `e` now or after a suspension must answer the same — so it may stay where it is
+ * rather than be put in a temporary. A literal, a name that is not a local, and a member of such a
+ * name (a variant, a static) are all fixed; anything that reads a local is not, since the suspension
+ * may run code that writes it.
+ */
+bool fixedE(Rz z, Expr e) {
+  match (e.kind) {
+    IntLit(tok): { return true; }
+    FloatLit(tok): { return true; }
+    StrLit(tok): { return true; }
+    BoolLit(value): { return true; }
+    NullLit: { return true; }
+    TypeName(q): { return true; }
+    Ident(tok): { return !isLocalName(z, rzText(z, tok)); }
+    Member(obj, nameTok): {
+      match (obj.kind) {
+        Ident(otok): { return !isLocalName(z, rzText(z, otok)); }
+        TypeName(q): { return true; }
+        default: { return false; }
+      }
+    }
+    default: { return false; }
+  }
+}
+
+/** `typeof(e) t = e;` — `e` evaluated now and kept — answering `t`, or `e` itself when it is fixed. */
+Expr bindTmp(Rz z, Expr e, Pulled p) {
+  if (fixedE(z, e)) { return e; }
+  Ctx c = z.c;
+  i32 t = freshTmp(z);
+  pushPre(p, Stmt(StmtKind.Var(typeofTy(c, valueForm(z, e)), t, e, false), e.line, freshCol(c)));
+  return Expr(ExprKind.Ident(t), e.line, e.col);
+}
+
+/** `typeof(shape) t;` — a temporary assigned on every path that follows, answering its name. */
+i32 declTmp(Rz z, Expr shape, Pulled p) {
+  Ctx c = z.c;
+  i32 t = freshTmp(z);
+  pushPre(p, Stmt(StmtKind.Var(typeofTy(c, valueForm(z, shape)), t, null, false), shape.line, freshCol(c)));
+  return t;
+}
+
+i32 tokKind(Rz z, i32 tok) { return z.c.lexed.tokens[tok * tokenStride()]; }
+
+/**
+ * `es`, evaluated left to right: everything before the last one holding an `await` is kept in a
+ * temporary, the one holding it is made linear, and those after it stay — they run after it anyway.
+ */
+Expr[] linKids(Rz z, Expr[] es, Pulled p) {
+  i32 last = 0 - 1;
+  for (i32 i = 0; i < es.len(); i++) { if (awaitInExpr(es[i])) { last = i; } }
+  Expr[] out = Expr[].filled(es.len(), es.len() > 0 ? es[0] : eNull(z.c));
+  for (i32 i = 0; i < es.len(); i++) {
+    if (i < last) { out[i] = bindTmp(z, linE(z, es[i], p), p); }
+    else if (i == last) { out[i] = linE(z, es[i], p); }
+    else { out[i] = es[i]; }
+  }
+  return out;
+}
+
+/** Two halves of a list, rejoined: for a node whose children are not one array. */
+Expr[] join2(Expr[] a, Expr[] b) {
+  Expr[] out = Expr[].filled(a.len() + b.len(), a.len() > 0 ? a[0] : (b.len() > 0 ? b[0] : Expr(ExprKind.NullLit, 0, 0)));
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+Expr[] sliceE(Expr[] es, i32 from, i32 to) {
+  Expr[] out = Expr[].filled(to - from, es.len() > 0 ? es[0] : Expr(ExprKind.NullLit, 0, 0));
+  for (i32 i = from; i < to; i++) { out[i - from] = es[i]; }
+  return out;
+}
+
+/**
+ * `e` made linear: statements pushed onto `p`, and what is left to evaluate, which holds no `await`.
+ * Running `p` and then evaluating the answer is evaluating `e`.
+ */
+Expr linE(Rz z, Expr e, Pulled p) {
   if (p.failed || !awaitInExpr(e)) { return e; }
   Ctx c = z.c;
   match (e.kind) {
     Await(operand): {
-      if (operand is null) { p.failed = true; return e; }
-      Expr inner = pullE(z, operand!, p);
-      Ty? x = awaitedTy(z, inner);
-      if (x is null) {
-        // **The type is what is missing, so that is what to say** — and the fix that works today.
-        if (z.why[0] == "") {
-          z.why[0] = "line " + lineOf(e.line) + ": an `await` inside a larger expression, on a ticket whose type "
-                   + "nothing in this file writes — await it into a local first, `T x = await …;`";
-        }
+      if (operand is null) {
+        if (z.why[0] == "") { z.why[0] = "line " + lineOf(e.line) + ": a bare `await` used as a value — it answers nothing"; }
         p.failed = true;
         return e;
       }
-      i32 k = z.next[0];
-      z.next[0] = z.next[0] + 1;
-      pushPre(p, Stmt(StmtKind.Var(cloneTy(x!), tAw(c, k), Expr(ExprKind.Await(inner), e.line, e.col),
-                                   false), e.line, freshCol(c)));
-      return Expr(ExprKind.Ident(tAw(c, k)), e.line, e.col);
+      Expr op = linE(z, operand!, p);
+      i32 t = freshTmp(z);
+      Expr shape = eMethod(c, op, tValue(c), Expr[]());
+      pushPre(p, Stmt(StmtKind.Var(typeofTy(c, valueForm(z, shape)), t, Expr(ExprKind.Await(op), e.line, e.col), false),
+                      e.line, freshCol(c)));
+      return Expr(ExprKind.Ident(t), e.line, e.col);
     }
     Binary(op, left, right): {
-      if (isShortCircuit(z, op) && awaitInExpr(right)) { p.failed = true; return e; }
-      Expr l = pullE(z, left, p);
-      return Expr(ExprKind.Binary(op, l, pullE(z, right, p)), e.line, e.col);
+      i32 k = tokKind(z, op);
+      if (!awaitInExpr(right)) { return Expr(ExprKind.Binary(op, linE(z, left, p), right), e.line, e.col); }
+      // `a && await b` — `b` runs only when `a` holds.
+      if (k == kAndAnd() || k == kOrOr()) {
+        Expr l = linE(z, left, p);
+        i32 t = freshTmp(z);
+        pushPre(p, Stmt(StmtKind.Var(lowPrimTy(c, tBool(c)), t, l, false), e.line, freshCol(c)));
+        Pulled q = newPulled();
+        Expr r = linE(z, right, q);
+        if (q.failed) { p.failed = true; return e; }
+        Stmt[] body = preThen(q, Stmt[].filled(1, sSet(c, t, r)));
+        Stmt test = k == kAndAnd()
+          ? Stmt(StmtKind.If(eId(c, t), body, Stmt[]()), e.line, e.col)
+          : Stmt(StmtKind.If(eId(c, t), Stmt[](), body), e.line, e.col);
+        pushPre(p, test);
+        return Expr(ExprKind.Ident(t), e.line, e.col);
+      }
+      // `a ?? await b` — `b` runs only when `a` is absent.
+      if (k == kQuestion()) {
+        Expr l = bindTmp(z, linE(z, left, p), p);
+        i32 t = declTmp(z, Expr(ExprKind.Binary(op, l, right), e.line, e.col), p);
+        Pulled q = newPulled();
+        Expr r = linE(z, right, q);
+        if (q.failed) { p.failed = true; return e; }
+        Stmt[] absent = preThen(q, Stmt[].filled(1, sSet(c, t, r)));
+        Stmt[] present = Stmt[].filled(1, sSet(c, t, eBang(c, l)));
+        pushPre(p, Stmt(StmtKind.If(Expr(ExprKind.Is(l, null, null, false), e.line, e.col), absent, present), e.line, e.col));
+        return Expr(ExprKind.Ident(t), e.line, e.col);
+      }
+      Expr l2 = bindTmp(z, linE(z, left, p), p);
+      return Expr(ExprKind.Binary(op, l2, linE(z, right, p)), e.line, e.col);
     }
-    Unary(op, operand): { return Expr(ExprKind.Unary(op, pullE(z, operand, p)), e.line, e.col); }
-    Cast(op, operand, target): {
-      return Expr(ExprKind.Cast(op, pullE(z, operand, p), target), e.line, e.col);
+    Ternary(cond, then, els): {
+      if (!awaitInExpr(then) && !awaitInExpr(els)) {
+        return Expr(ExprKind.Ternary(linE(z, cond, p), then, els), e.line, e.col);
+      }
+      Expr cnd = linE(z, cond, p);
+      i32 t = declTmp(z, Expr(ExprKind.Ternary(cnd, then, els), e.line, e.col), p);
+      Pulled qa = newPulled();
+      Expr a = linE(z, then, qa);
+      Pulled qb = newPulled();
+      Expr b = linE(z, els, qb);
+      if (qa.failed || qb.failed) { p.failed = true; return e; }
+      pushPre(p, Stmt(StmtKind.If(cnd, preThen(qa, Stmt[].filled(1, sSet(c, t, a))),
+                                  preThen(qb, Stmt[].filled(1, sSet(c, t, b)))), e.line, e.col));
+      return Expr(ExprKind.Ident(t), e.line, e.col);
+    }
+    // A value-giving `match` whose arms suspend: the `match` statement it means, each arm assigning
+    // the temporary. An arm that leaves keeps its statements.
+    MatchExpr(subject, arms): {
+      bool armAwaits = false;
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (arms[i].value is not null && awaitInExpr(arms[i].value!)) { armAwaits = true; }
+        if (awaitInBody(arms[i].body)) { armAwaits = true; }
+      }
+      if (!armAwaits) { return Expr(ExprKind.MatchExpr(linE(z, subject, p), arms), e.line, e.col); }
+      Expr subj = linE(z, subject, p);
+      i32 t = declTmp(z, Expr(ExprKind.MatchExpr(subj, arms), e.line, e.col), p);
+      Arm[] out = Arm[].filled(arms.len(), arms[0]);
+      for (i32 i = 0; i < arms.len(); i++) {
+        Arm a = arms[i];
+        if (a.value is null) {
+          out[i] = Arm(a.variantTok, a.elseTok, a.bindingToks, a.body, null);
+          continue;
+        }
+        Pulled q = newPulled();
+        Expr v = linE(z, a.value!, q);
+        if (q.failed) { p.failed = true; return e; }
+        out[i] = Arm(a.variantTok, a.elseTok, a.bindingToks, preThen(q, Stmt[].filled(1, sSet(c, t, v))), null);
+      }
+      Stmt m = Stmt(StmtKind.Match(subj, out), e.line, e.col);
+      pushPre(p, splitMatch(z, m, subj, out, null));
+      return Expr(ExprKind.Ident(t), e.line, e.col);
+    }
+    // `p?.m(await a)` — the arguments run only when `p` is present.
+    SafeCall(call): {
+      Expr recv = safeCallReceiver(call);
+      i32 nameTok = safeCallName(call);
+      Expr[] args = Expr[]();
+      Ty[] targs = Ty[]();
+      match (call.kind) {
+        Call(callee, cargs, ctargs): { args = cargs; targs = ctargs; }
+        default: { }
+      }
+      bool argAwaits = false;
+      for (i32 i = 0; i < args.len(); i++) { if (awaitInExpr(args[i])) { argAwaits = true; } }
+      if (!argAwaits) {
+        Expr r0 = linE(z, recv, p);
+        return Expr(ExprKind.SafeCall(safeCallOf(c, r0, nameTok, args, targs, call)), e.line, e.col);
+      }
+      Expr r = bindTmp(z, linE(z, recv, p), p);
+      i32 t = declTmp(z, Expr(ExprKind.SafeCall(safeCallOf(c, r, nameTok, args, targs, call)), e.line, e.col), p);
+      Pulled q = newPulled();
+      Expr[] argv = linKids(z, args, q);
+      if (q.failed) { p.failed = true; return e; }
+      Expr made = Expr(ExprKind.Call(Expr(ExprKind.Member(eBang(c, r), nameTok), call.line, call.col), argv, targs),
+                       call.line, call.col);
+      pushPre(p, Stmt(StmtKind.If(eNotNull(c, r), preThen(q, Stmt[].filled(1, sSet(c, t, made))), Stmt[]()),
+                      e.line, e.col));
+      return Expr(ExprKind.Ident(t), e.line, e.col);
     }
     Call(callee, args, typeArgs): {
-      Expr cl = pullE(z, callee, p);
-      return Expr(ExprKind.Call(cl, pullAll(z, args, p), typeArgs), e.line, e.col);
+      match (callee.kind) {
+        Member(obj, nameTok): {
+          Expr[] ks = linKids(z, join2(Expr[].filled(1, obj), args), p);
+          Expr cal = Expr(ExprKind.Member(ks[0], nameTok), callee.line, callee.col);
+          return Expr(ExprKind.Call(cal, sliceE(ks, 1, ks.len()), typeArgs), e.line, e.col);
+        }
+        Ident(tok): { return Expr(ExprKind.Call(callee, linKids(z, args, p), typeArgs), e.line, e.col); }
+        TypeName(q): { return Expr(ExprKind.Call(callee, linKids(z, args, p), typeArgs), e.line, e.col); }
+        default: {
+          Expr[] ks = linKids(z, join2(Expr[].filled(1, callee), args), p);
+          return Expr(ExprKind.Call(ks[0], sliceE(ks, 1, ks.len()), typeArgs), e.line, e.col);
+        }
+      }
     }
     Construct(ctype, args, named): {
-      if (named.len() > 0) { p.failed = true; return e; }
-      return Expr(ExprKind.Construct(ctype, pullAll(z, args, p), named), e.line, e.col);
+      Expr[] vals = Expr[].filled(named.len(), eNull(c));
+      for (i32 i = 0; i < named.len(); i++) { vals[i] = named[i].value; }
+      Expr[] ks = linKids(z, join2(args, vals), p);
+      NamedArg[] ns = NamedArg[].filled(named.len(), named.len() > 0 ? named[0] : NamedArg(0 - 1, eNull(c)));
+      for (i32 i = 0; i < named.len(); i++) { ns[i] = NamedArg(named[i].nameTok, ks[args.len() + i]); }
+      return Expr(ExprKind.Construct(ctype, sliceE(ks, 0, args.len()), ns), e.line, e.col);
     }
-    Member(obj, nameTok): { return Expr(ExprKind.Member(pullE(z, obj, p), nameTok), e.line, e.col); }
-    Unwrap(operand): { return Expr(ExprKind.Unwrap(pullE(z, operand, p)), e.line, e.col); }
-    Try(operand): { return Expr(ExprKind.Try(pullE(z, operand, p)), e.line, e.col); }
+    ArrLit(elements): { return Expr(ExprKind.ArrLit(linKids(z, elements, p)), e.line, e.col); }
+    TupleLit(elements): { return Expr(ExprKind.TupleLit(linKids(z, elements, p)), e.line, e.col); }
+    ArrNew(elem, size, fill, elements): {
+      i32 ns = size is null ? 0 : 1;
+      i32 nf = fill is null ? 0 : 1;
+      Expr[] heads = Expr[].filled(ns + nf, eNull(c));
+      if (size is not null) { heads[0] = size!; }
+      if (fill is not null) { heads[ns] = fill!; }
+      Expr[] ks = linKids(z, join2(heads, elements), p);
+      Expr? s2 = size is null ? null : ks[0];
+      Expr? f2 = fill is null ? null : ks[ns];
+      return Expr(ExprKind.ArrNew(elem, s2, f2, sliceE(ks, ns + nf, ks.len())), e.line, e.col);
+    }
     Index(arr, index): {
-      Expr a = pullE(z, arr, p);
-      return Expr(ExprKind.Index(a, pullE(z, index, p)), e.line, e.col);
+      Expr[] ks = linKids(z, join2(Expr[].filled(1, arr), Expr[].filled(1, index)), p);
+      return Expr(ExprKind.Index(ks[0], ks[1]), e.line, e.col);
     }
-    ArrLit(elements): { return Expr(ExprKind.ArrLit(pullAll(z, elements, p)), e.line, e.col); }
-    TupleLit(elements): { return Expr(ExprKind.TupleLit(pullAll(z, elements, p)), e.line, e.col); }
     Is(left, target, other, negated): {
-      if (other is not null) { p.failed = true; return e; }
-      return Expr(ExprKind.Is(pullE(z, left, p), target, other, negated), e.line, e.col);
+      if (other is null) { return Expr(ExprKind.Is(linE(z, left, p), target, other, negated), e.line, e.col); }
+      Expr[] ks = linKids(z, join2(Expr[].filled(1, left), Expr[].filled(1, other!)), p);
+      return Expr(ExprKind.Is(ks[0], target, ks[1], negated), e.line, e.col);
     }
-    // **A `match`'s subject runs first and always**, so an `await` there can go before the statement —
-    // which is what `try await t` becomes once `try` is lowered. One in an arm runs only sometimes.
-    MatchExpr(subject, arms): {
-      for (i32 i = 0; i < arms.len(); i++) {
-        if (arms[i].value is not null && awaitInExpr(arms[i].value!)) { p.failed = true; return e; }
-        if (awaitInBody(arms[i].body)) { p.failed = true; return e; }
+    Member(obj, nameTok): { return Expr(ExprKind.Member(linE(z, obj, p), nameTok), e.line, e.col); }
+    SafeMember(obj, nameTok): { return Expr(ExprKind.SafeMember(linE(z, obj, p), nameTok), e.line, e.col); }
+    Unary(op, operand): { return Expr(ExprKind.Unary(op, linE(z, operand, p)), e.line, e.col); }
+    Cast(op, operand, target): { return Expr(ExprKind.Cast(op, linE(z, operand, p), target), e.line, e.col); }
+    Unwrap(operand): { return Expr(ExprKind.Unwrap(linE(z, operand, p)), e.line, e.col); }
+    Try(operand): { return Expr(ExprKind.Try(linE(z, operand, p)), e.line, e.col); }
+    Matches(pat, subject): { return Expr(ExprKind.Matches(pat, linE(z, subject, p)), e.line, e.col); }
+    CoroutineOf(call): { return Expr(ExprKind.CoroutineOf(linE(z, call, p)), e.line, e.col); }
+    Incr(target, op, prefix): { return Expr(ExprKind.Incr(linLv(z, target, p), op, prefix), e.line, e.col); }
+    Jsx(tagTok, closeTok, attrs, kids): {
+      Expr[] vals = Expr[].filled(attrs.len(), eNull(c));
+      for (i32 i = 0; i < attrs.len(); i++) { vals[i] = attrs[i].value; }
+      Expr[] ks = linKids(z, join2(vals, kids), p);
+      JsxAttr[] as2 = JsxAttr[].filled(attrs.len(), attrs.len() > 0 ? attrs[0] : JsxAttr(0 - 1, eNull(c)));
+      for (i32 i = 0; i < attrs.len(); i++) { as2[i] = JsxAttr(attrs[i].nameTok, ks[i]); }
+      return Expr(ExprKind.Jsx(tagTok, closeTok, as2, sliceE(ks, attrs.len(), ks.len())), e.line, e.col);
+    }
+    default: {
+      if (z.why[0] == "") { z.why[0] = "line " + lineOf(e.line) + ": an `await` inside this kind of expression"; }
+      p.failed = true;
+      return e;
+    }
+  }
+}
+
+/** `recv?.m(args)`'s call, rebuilt over a new receiver. */
+Expr safeCallOf(Ctx c, Expr recv, i32 nameTok, Expr[] args, Ty[] targs, Expr at) {
+  Expr callee = Expr(ExprKind.Member(eBang(c, recv), nameTok), at.line, at.col);
+  return Expr(ExprKind.Call(callee, args, targs), at.line, at.col);
+}
+
+/** An assignment target made linear: an index holding an `await`, and what it indexes, evaluated first. */
+Lvalue linLv(Rz z, Lvalue lv, Pulled p) {
+  if (!awaitInLvalue(lv)) { return lv; }
+  match (lv.kind) {
+    LIdent(tok): { return lv; }
+    LField(base, nameTok): { return Lvalue(LvalueKind.LField(linLv(z, base, p), nameTok), lv.line, lv.col); }
+    LUnwrap(base): { return Lvalue(LvalueKind.LUnwrap(linLv(z, base, p)), lv.line, lv.col); }
+    LIndex(base, index): {
+      Lvalue b = bindLv(z, base, p);
+      return Lvalue(LvalueKind.LIndex(b, linE(z, index, p)), lv.line, lv.col);
+    }
+  }
+}
+
+/**
+ * What an assignment writes into, evaluated now: `a.f = await v` reads `a` before it suspends. A
+ * plain name is the target itself rather than something evaluated, and stays.
+ */
+Lvalue bindLv(Rz z, Lvalue lv, Pulled p) {
+  match (lv.kind) {
+    LIdent(tok): { return lv; }
+    default: {
+      Expr v = bindTmp(z, linE(z, lvalueExpr(lv), p), p);
+      match (v.kind) {
+        Ident(t): { return Lvalue(LvalueKind.LIdent(t), lv.line, lv.col); }
+        default: { return lv; }
       }
-      return Expr(ExprKind.MatchExpr(pullE(z, subject, p), arms), e.line, e.col);
     }
-    default: { p.failed = true; return e; }
+  }
+}
+
+/** The parts of a target an assignment evaluates before its right side, each kept. */
+Lvalue bindTarget(Rz z, Lvalue lv, Pulled p) {
+  match (lv.kind) {
+    LIdent(tok): { return lv; }
+    LField(base, nameTok): { return Lvalue(LvalueKind.LField(bindLv(z, base, p), nameTok), lv.line, lv.col); }
+    LUnwrap(base): { return Lvalue(LvalueKind.LUnwrap(bindLv(z, base, p)), lv.line, lv.col); }
+    LIndex(base, index): {
+      Lvalue b = bindLv(z, base, p);
+      return Lvalue(LvalueKind.LIndex(b, bindTmp(z, linE(z, index, p), p)), lv.line, lv.col);
+    }
   }
 }
 
@@ -1756,197 +2530,525 @@ bool isAwaitL(Expr e) {
   }
 }
 
-/** `s` preceded by the temporaries its nested awaits became — or `s` alone when it cannot be split. */
-Stmt[] splitStmt(Rz z, Stmt s) {
-  Pulled p = Pulled(Stmt[](), 0, false);
-  Stmt made = s;
-  match (s.kind) {
-    Var(type0, nameTok, init, isConst): {
-      if (init is null) { return Stmt[].filled(1, s); }
-      // **`Result<i32> r = load(k);` — a placeholder in a hoisted local's type** (spec ch33): the
-      // default wrote `Result<i32, union>`, and a hoisted local becomes a cell declared with its
-      // written type, where nothing is left to gather the `union` from. The initialiser says what it
-      // is, as it does for `auto`, so the local gets that written. Without this the cell held an
-      // unresolved type and a program trapped reading it — *requested new array is too large*.
-      Ty type = type0;
-      if (placeholderInArgsL(z, type0)) {
-        Ty? got = isAwaitL(init!) ? awaitedTy(z, innerAwait(z.c, init!)) : tyOfE(z, init!);
-        if (got is not null) {
-          type = cloneTy(got!);
-          s = Stmt(StmtKind.Var(type, nameTok, init!, isConst), s.line, s.col);
+/** `p`'s statements, then `s`, each split again — a `match` the linearising wrote still needs its arms'. */
+Stmt[] withPre(Rz z, Pulled p, Stmt s) {
+  if (p.failed) { return Stmt[].filled(1, s); }
+  Stmt[] out = preThen(p, Stmt[].filled(1, s));
+  return out;
+}
+
+/** The names declared so far in a body being made unique. */
+struct Seen {
+  string[] names;
+  i32 n;
+
+  Seen create() { return Seen(string[].filled(16, ""), 0); }
+
+  bool has(const this, string w) {
+    for (i32 i = 0; i < this.n; i++) { if (this.names[i] == w) { return true; } }
+    return false;
+  }
+
+  void add(this, string w) {
+    if (this.n == this.names.len()) {
+      string[] more = string[].filled(this.n * 2, "");
+      for (i32 i = 0; i < this.n; i++) { more[i] = this.names[i]; }
+      this.names = more;
+    }
+    this.names[this.n] = w;
+    this.n = this.n + 1;
+  }
+}
+
+/** `body` read with the local `from` called `to`, up to wherever another declaration of `from` takes over. */
+Stmt[] renameIn(Rz z, Stmt[] body, string from, i32 to) {
+  Ctx c = z.c;
+  string was = c.copy.renFrom;
+  i32 wasTo = c.copy.renTo;
+  c.copy.renFrom = from;
+  c.copy.renTo = to;
+  Stmt[] out = subBody(c, body, true, 0 - 1, 0 - 1);
+  c.copy.renFrom = was;
+  c.copy.renTo = wasTo;
+  return out;
+}
+
+/** `e` read with `from` called `to`. */
+Expr renameE(Rz z, Expr e, string from, i32 to) {
+  Ctx c = z.c;
+  string was = c.copy.renFrom;
+  i32 wasTo = c.copy.renTo;
+  bool lam = c.inLam[0];
+  c.copy.renFrom = from;
+  c.copy.renTo = to;
+  c.inLam[0] = true;
+  Expr out = subExpr(c, e);
+  c.copy.renFrom = was;
+  c.copy.renTo = wasTo;
+  c.inLam[0] = lam;
+  return out;
+}
+
+/**
+ * `body` with each local whose name an earlier declaration in the function already used given a
+ * fresh name, and every read of it within its reach rewritten.
+ *
+ * **Every local of a machine is a cell named after it**, declared once at the top of the function, so
+ * two locals of one name are one cell: `{ string x = "abc"; … } i32 x = 1;` gave both the first's
+ * type and the module was refused by the engine. Names are made unique *before* planning, after the
+ * split, so the locals the split wrote — the copies of a `match` arm's bindings — are made unique too.
+ */
+Stmt[] uniqueLocals(Rz z, Stmt[] body, Seen seen) {
+  Stmt[] cur = Stmt[].filled(body.len(), body.len() > 0 ? body[0] : sRet(z.c, null));
+  for (i32 i = 0; i < body.len(); i++) { cur[i] = body[i]; }
+  for (i32 i = 0; i < cur.len(); i++) {
+    Stmt s = cur[i];
+    match (s.kind) {
+      Var(type, nameTok, init, isConst): {
+        string nm = rzText(z, nameTok);
+        if (seen.has(nm)) {
+          i32 t = freshTmp(z);
+          cur[i] = Stmt(StmtKind.Var(type, t, init, isConst), s.line, s.col);
+          Stmt[] rest = Stmt[].filled(cur.len() - i - 1, s);
+          for (i32 j = i + 1; j < cur.len(); j++) { rest[j - i - 1] = cur[j]; }
+          Stmt[] renamed = renameIn(z, rest, nm, t);
+          for (i32 j = i + 1; j < cur.len(); j++) { cur[j] = renamed[j - i - 1]; }
+        } else {
+          seen.add(nm);
         }
       }
-      if (isAwaitL(init!)) {
-        // `auto x = await e;` — the slot needs `X`, so the local gets it written.
-        if (!isAutoTyL(z, type)) { return Stmt[].filled(1, s); }
-        Ty? x = awaitedTy(z, innerAwait(z.c, init!));
-        if (x is null) { return Stmt[].filled(1, s); }
-        return Stmt[].filled(1, Stmt(StmtKind.Var(cloneTy(x!), nameTok, init!, isConst), s.line, s.col));
+      If(cond, then, els): {
+        cur[i] = Stmt(StmtKind.If(cond, uniqueLocals(z, then, seen), uniqueLocals(z, els, seen)), s.line, s.col);
       }
-      made = Stmt(StmtKind.Var(type, nameTok, pullE(z, init!, p), isConst), s.line, s.col);
+      While(cond, b): { cur[i] = Stmt(StmtKind.While(cond, uniqueLocals(z, b, seen)), s.line, s.col); }
+      DoWhile(b, cond): { cur[i] = Stmt(StmtKind.DoWhile(uniqueLocals(z, b, seen), cond), s.line, s.col); }
+      Block(b): { cur[i] = Stmt(StmtKind.Block(uniqueLocals(z, b, seen)), s.line, s.col); }
+      For(init, cond, update, b): {
+        Stmt? i2 = init;
+        Expr? c2 = cond;
+        Stmt? u2 = update;
+        Stmt[] b2 = b;
+        if (init is not null) {
+          match (init!.kind) {
+            Var(it, itok, iinit, iconst): {
+              string nm = rzText(z, itok);
+              if (seen.has(nm)) {
+                i32 t = freshTmp(z);
+                i2 = Stmt(StmtKind.Var(it, t, iinit, iconst), init!.line, init!.col);
+                if (cond is not null) { c2 = renameE(z, cond!, nm, t); }
+                if (update is not null) { u2 = renameIn(z, Stmt[].filled(1, update!), nm, t)[0]; }
+                b2 = renameIn(z, b, nm, t);
+              } else {
+                seen.add(nm);
+              }
+            }
+            default: { }
+          }
+        }
+        cur[i] = Stmt(StmtKind.For(i2, c2, u2, uniqueLocals(z, b2, seen)), s.line, s.col);
+      }
+      ForIn(elemTy, nameTok, iterable, b): {
+        string nm = rzText(z, nameTok);
+        i32 tok = nameTok;
+        Stmt[] b2 = b;
+        if (seen.has(nm)) {
+          tok = freshTmp(z);
+          b2 = renameIn(z, b, nm, tok);
+        } else {
+          seen.add(nm);
+        }
+        cur[i] = Stmt(StmtKind.ForIn(elemTy, tok, iterable, uniqueLocals(z, b2, seen)), s.line, s.col);
+      }
+      Switch(subject, cases): {
+        Case[] cs = Case[].filled(cases.len(), cases.len() > 0 ? cases[0] : Case(null, Stmt[](), s.line, s.col));
+        for (i32 j = 0; j < cases.len(); j++) {
+          cs[j] = Case(cases[j].value, uniqueLocals(z, cases[j].body, seen), cases[j].line, cases[j].col);
+        }
+        cur[i] = Stmt(StmtKind.Switch(subject, cs), s.line, s.col);
+      }
+      Match(subject, arms): {
+        Arm[] out = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0] : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
+        for (i32 j = 0; j < arms.len(); j++) {
+          Arm a = arms[j];
+          out[j] = Arm(a.variantTok, a.elseTok, a.bindingToks, uniqueLocals(z, a.body, seen), a.value);
+        }
+        cur[i] = Stmt(StmtKind.Match(subject, out), s.line, s.col);
+      }
+      default: { }
+    }
+  }
+  return cur;
+}
+
+/** `s` split around its nested awaits — linear, in the shapes the flattening takes. */
+Stmt[] splitStmt(Rz z, Stmt s) {
+  Ctx c = z.c;
+  Pulled p = newPulled();
+  match (s.kind) {
+    Var(type, nameTok, init, isConst): {
+      if (init is null) { return Stmt[].filled(1, s); }
+      // `T x = await e;` is already a shape the flattening takes; only its operand is made linear.
+      if (isAwaitL(init!)) {
+        Expr op = linE(z, innerAwait(c, init!), p);
+        Ty t = type;
+        if (wantsTypeof(z, type)) { t = typeofTy(c, valueForm(z, eMethod(c, op, tValue(c), Expr[]()))); }
+        return withPre(z, p, Stmt(StmtKind.Var(t, nameTok, Expr(ExprKind.Await(op), init!.line, init!.col), isConst),
+                                  s.line, s.col));
+      }
+      Expr v = linE(z, init!, p);
+      Ty t2 = wantsTypeof(z, type) ? typeofTy(c, valueForm(z, v)) : type;
+      return withPre(z, p, Stmt(StmtKind.Var(t2, nameTok, v, isConst), s.line, s.col));
     }
     Return(value): {
-      if (value is null || isAwaitL(value!)) { return Stmt[].filled(1, s); }
-      made = Stmt(StmtKind.Return(pullE(z, value!, p)), s.line, s.col);
+      if (value is null) { return Stmt[].filled(1, s); }
+      if (isAwaitL(value!)) {
+        Expr op = linE(z, innerAwait(c, value!), p);
+        return withPre(z, p, Stmt(StmtKind.Return(Expr(ExprKind.Await(op), value!.line, value!.col)), s.line, s.col));
+      }
+      return withPre(z, p, Stmt(StmtKind.Return(linE(z, value!, p)), s.line, s.col));
     }
     ExprStmt(expr): {
-      if (isAwaitL(expr)) { return Stmt[].filled(1, s); }
-      made = Stmt(StmtKind.ExprStmt(pullE(z, expr, p)), s.line, s.col);
+      if (isAwaitL(expr)) {
+        Expr? inner = null;
+        match (expr.kind) {
+          Await(operand): { inner = operand; }
+          default: { }
+        }
+        if (inner is null) { return Stmt[].filled(1, s); }
+        Expr op = linE(z, inner!, p);
+        return withPre(z, p, Stmt(StmtKind.ExprStmt(Expr(ExprKind.Await(op), expr.line, expr.col)), s.line, s.col));
+      }
+      // `p?.close(await why)` as a statement answers nothing, so it needs no temporary.
+      match (expr.kind) {
+        SafeCall(call): { return splitSafeCallStmt(z, s, call); }
+        default: { }
+      }
+      return withPre(z, p, Stmt(StmtKind.ExprStmt(linE(z, expr, p)), s.line, s.col));
     }
     Yield(value): {
       if (value is null) { return Stmt[].filled(1, s); }
-      made = Stmt(StmtKind.Yield(pullE(z, value!, p)), s.line, s.col);
+      return withPre(z, p, Stmt(StmtKind.Yield(linE(z, value!, p)), s.line, s.col));
     }
+    // The target's parts first, then the right side: `a[i] = await v` reads `a` and `i` before it
+    // suspends, as it would before a call.
     Assign(target, op, rhs): {
-      if (isAwaitL(rhs)) {
-        Pulled q = Pulled(Stmt[](), 0, false);
-        Expr v = pullE(z, rhs, q);
-        if (q.failed) { return Stmt[].filled(1, s); }
-        p = q;
-        made = Stmt(StmtKind.Assign(target, op, v), s.line, s.col);
-      } else {
-        made = Stmt(StmtKind.Assign(target, op, pullE(z, rhs, p)), s.line, s.col);
-      }
+      Lvalue lv = awaitInExpr(rhs) ? bindTarget(z, linLv(z, target, p), p) : linLv(z, target, p);
+      Expr r = linE(z, rhs, p);
+      return withPre(z, p, Stmt(StmtKind.Assign(lv, op, r), s.line, s.col));
+    }
+    IncrStmt(target, op): {
+      return withPre(z, p, Stmt(StmtKind.IncrStmt(linLv(z, target, p), op), s.line, s.col));
     }
     If(cond, then, els): {
-      made = Stmt(StmtKind.If(pullE(z, cond, p), splitBody(z, then), splitBody(z, els)), s.line, s.col);
+      Expr cnd = linE(z, cond, p);
+      Stmt[] copies = Stmt[].filled(32, s);
+      i32[] nc = i32[].filled(1, 0);
+      if (awaitInBody(then)) { cnd = rebindMatches(z, cnd, copies, nc); }
+      return withPre(z, p, Stmt(StmtKind.If(cnd, copiesThen(copies, nc[0], splitBody(z, then)), splitBody(z, els)), s.line, s.col));
     }
-    While(cond, b): { return Stmt[].filled(1, Stmt(StmtKind.While(cond, splitBody(z, b)), s.line, s.col)); }
+    // `while (await more())` — the condition is the loop's first act each time round, so it moves to
+    // the top of the body as `if (!c) break;`, where `continue` reaches it too.
+    While(cond, b): {
+      if (!awaitInExpr(cond)) {
+        Stmt[] copies = Stmt[].filled(32, s);
+        i32[] nc = i32[].filled(1, 0);
+        Expr wc = awaitInBody(b) ? rebindMatches(z, cond, copies, nc) : cond;
+        return Stmt[].filled(1, Stmt(StmtKind.While(wc, copiesThen(copies, nc[0], splitBody(z, b))), s.line, s.col));
+      }
+      Pulled q = newPulled();
+      Expr cnd = linE(z, cond, q);
+      if (q.failed) { return Stmt[].filled(1, s); }
+      Stmt leave = Stmt(StmtKind.If(cnd, Stmt[](), Stmt[].filled(1, Stmt(StmtKind.Break, s.line, s.col))), s.line, s.col);
+      Stmt[] body = preThen(q, joinS(Stmt[].filled(1, leave), splitBody(z, b)));
+      return Stmt[].filled(1, Stmt(StmtKind.While(eBool(c, true), body), s.line, s.col));
+    }
+    // `for (init; cond; update)`: an initialiser's temporaries run before the loop, a condition's at
+    // the top of the body as a `while`'s do, and an update holding an `await` becomes a block the
+    // flattening sequences where the update goes — so `continue` still runs it.
     For(init, cond, update, b): {
-      return Stmt[].filled(1, Stmt(StmtKind.For(init, cond, update, splitBody(z, b)), s.line, s.col));
+      Stmt? init2 = init;
+      if (init is not null && awaitInStmt(init!)) {
+        Stmt[] parts = splitStmt(z, init!);
+        for (i32 i = 0; i + 1 < parts.len(); i++) { pushPre(p, parts[i]); }
+        init2 = parts[parts.len() - 1];
+      }
+      Expr? cond2 = cond;
+      Stmt[] body = splitBody(z, b);
+      if (cond is not null && awaitInExpr(cond!)) {
+        Pulled q = newPulled();
+        Expr cnd = linE(z, cond!, q);
+        if (q.failed) { return Stmt[].filled(1, s); }
+        Stmt leave = Stmt(StmtKind.If(cnd, Stmt[](), Stmt[].filled(1, Stmt(StmtKind.Break, s.line, s.col))), s.line, s.col);
+        body = preThen(q, joinS(Stmt[].filled(1, leave), body));
+        cond2 = eBool(c, true);
+      }
+      Stmt? update2 = update;
+      if (update is not null && awaitInStmt(update!)) {
+        update2 = Stmt(StmtKind.Block(splitStmt(z, update!)), update!.line, update!.col);
+      }
+      return withPre(z, p, Stmt(StmtKind.For(init2, cond2, update2, body), s.line, s.col));
+    }
+    // `do { … } while (c);` — a `while` whose test is skipped the first time round, so `continue`
+    // reaches the test as the language says it does (`§wac-continue-apojox2`).
+    DoWhile(b, cond): {
+      i32 first = freshTmp(z);
+      pushPre(p, Stmt(StmtKind.Var(lowPrimTy(c, tBool(c)), first, eBool(c, true), false), s.line, freshCol(c)));
+      Pulled q = newPulled();
+      Expr cnd = linE(z, cond, q);
+      if (q.failed) { return Stmt[].filled(1, s); }
+      Stmt leave = Stmt(StmtKind.If(cnd, Stmt[](), Stmt[].filled(1, Stmt(StmtKind.Break, s.line, s.col))), s.line, s.col);
+      Stmt gate = Stmt(StmtKind.If(eId(c, first), Stmt[].filled(1, sSet(c, first, eBool(c, false))),
+                                   preThen(q, Stmt[].filled(1, leave))), s.line, s.col);
+      Stmt[] body = joinS(Stmt[].filled(1, gate), splitBody(z, b));
+      return withPre(z, p, Stmt(StmtKind.While(eBool(c, true), body), s.line, s.col));
+    }
+    Switch(subject, cases): {
+      Expr subj = linE(z, subject, p);
+      Case[] cs = Case[].filled(cases.len(), cases.len() > 0 ? cases[0] : Case(null, Stmt[](), s.line, s.col));
+      for (i32 i = 0; i < cases.len(); i++) {
+        cs[i] = Case(cases[i].value, splitBody(z, cases[i].body), cases[i].line, cases[i].col);
+      }
+      return withPre(z, p, Stmt(StmtKind.Switch(subj, cs), s.line, s.col));
     }
     Block(b): { return Stmt[].filled(1, Stmt(StmtKind.Block(splitBody(z, b)), s.line, s.col)); }
     ForIn(elemTy, nameTok, iterable, b): { return splitForIn(z, s, elemTy, nameTok, iterable, b); }
-    // **`match (await e)`** — the subject is pulled into a temporary like any nested `await`, now
-    // that its type can be read from the file that writes it, and the arms are split as before.
     Match(subject, arms): {
       Ty? st = tyOfE(z, subject);
       match (subject.kind) {
         Await(sop): { if (sop is not null) { st = awaitedTy(z, sop!); } }
         default: { }
       }
-      Expr subj = pullE(z, subject, p);
+      Expr subj = linE(z, subject, p);
       if (p.failed) { return Stmt[].filled(1, s); }
-      Stmt m = splitMatch(z, s, subj, arms, st);
-      if (m is s) { return Stmt[].filled(1, s); }
-      made = m;
+      return withPre(z, p, splitMatch(z, s, subj, arms, st));
     }
     default: { return Stmt[].filled(1, s); }
   }
-  if (p.failed) { return Stmt[].filled(1, s); }
-  Stmt[] out = Stmt[].filled(p.n + 1, made);
-  for (i32 i = 0; i < p.n; i++) { out[i] = p.pre[i]; }
-  out[p.n] = made;
+}
+
+/** `p?.m(args)` as a statement: `if (p is not null) { p!.m(args); }`, with the arguments made linear inside. */
+Stmt[] splitSafeCallStmt(Rz z, Stmt s, Expr call) {
+  Ctx c = z.c;
+  Pulled p = newPulled();
+  Expr recv = safeCallReceiver(call);
+  i32 nameTok = safeCallName(call);
+  Expr[] args = Expr[]();
+  Ty[] targs = Ty[]();
+  match (call.kind) {
+    Call(callee, cargs, ctargs): { args = cargs; targs = ctargs; }
+    default: { }
+  }
+  Expr r = bindTmp(z, linE(z, recv, p), p);
+  Pulled q = newPulled();
+  Expr[] argv = linKids(z, args, q);
+  if (p.failed || q.failed) { return Stmt[].filled(1, s); }
+  Expr made = Expr(ExprKind.Call(Expr(ExprKind.Member(eBang(c, r), nameTok), call.line, call.col), argv, targs),
+                   call.line, call.col);
+  Stmt run = Stmt(StmtKind.If(eNotNull(c, r), preThen(q, Stmt[].filled(1, sExpr(c, made))), Stmt[]()), s.line, s.col);
+  return withPre(z, p, run);
+}
+
+Stmt[] joinS(Stmt[] a, Stmt[] b) {
+  Stmt[] out = Stmt[].filled(a.len() + b.len(), a.len() > 0 ? a[0] : (b.len() > 0 ? b[0] : Stmt(StmtKind.Break, 0, 0)));
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
 }
 
 /**
- * A `for … in` whose body suspends, or a `for await`, as a `while` the flattening can take (ch36) —
- * over a generator `Generator<Y, R> g = it; while (g.__wacNext()) { T x = g.__wacCurrent(); … }`, and
- * over an async one `AsyncGenerator<Y, R> g = it; while (true) { Step<never, Y, R> s = await g.step();
- * if (s.__wacIsDone()) { break; } T x = s.__wacYieldedOf(); … }`. Left as written when the iterable's
- * type is not one this file writes, or it is not a generator, and the plan declines it by name.
+ * Whether a local's written type has to come from its initialiser: `auto`, and a type with the
+ * `union` placeholder in its arguments (spec ch33). A machine's locals are cells declared before
+ * anything runs, so each needs its type spelled — and `typeof` spells any type there is.
+ */
+bool wantsTypeof(Rz z, Ty t) { return isAutoTyL(z, t) || placeholderInArgsL(z, t); }
+
+/**
+ * A `for … in` whose body suspends, or a `for await`, as loops the flattening takes (ch25, ch36).
+ *
+ * **`for (T x in e)` walks an array or a generator, and nothing here knows which `e` is** — this pass
+ * runs before types exist. So both loops are written, under a `static_if` the compiler decides once
+ * it does know:
+ *
+ *     typeof(e) it = e;
+ *     static_if (typeref(typeof(it)).isArray()) {
+ *       for (i32 i = 0; i < it.len(); i = i + 1) { T x = it[i]; … }
+ *     } else {
+ *       while (it.__wacNext()) { T x = it.__wacCurrent(); … }
+ *     }
+ *
+ * and `auto x` is `type(typeref(typeof(it)).element())`, which is the same for both. A `for await`
+ * walks an async generator: `while (true) { … s = await it.step(); if (s.__wacIsDone()) { break; }
+ * T x = s.__wacYieldedOf(); … }`.
  */
 Stmt[] splitForIn(Rz z, Stmt s, Ty? elemTy, i32 nameTok, Expr iterable, Stmt[] body) {
   Ctx c = z.c;
-  Expr it = iterable;
+  Pulled p = newPulled();
+  Expr itE = iterable;
   bool awaiting = false;
   match (iterable.kind) {
-    Await(op): { if (op is not null) { it = op!; awaiting = true; } }
+    Await(op): { if (op is not null) { itE = op!; awaiting = true; } }
     default: { }
   }
-  Ty? t = tyOfE(z, it);
-  if (t is null) { return Stmt[].filled(1, s); }
-  string tname = "";
-  Ty[] targs = Ty[]();
-  match (t!.kind) {
-    Named(tok, typeArgs): { tname = rzText(z, tok); targs = typeArgs; }
-    default: { }
-  }
-  if (targs.len() != 2) { return Stmt[].filled(1, s); }
-  if (!(tname == "Generator" && !awaiting) && !(tname == "AsyncGenerator" && awaiting)) { return Stmt[].filled(1, s); }
-  Ty elem = (elemTy is null) ? targs[0] : elemTy!;
-  i32 k = z.next[0];
-  z.next[0] = z.next[0] + 2;
-  i32 g = tAw(c, k);
-  Stmt[] inner = splitBody(z, body);
-  Stmt[] out = Stmt[].filled(2, sRet(c, null));
-  out[0] = Stmt(StmtKind.Var(cloneTy(t!), g, it, false), s.line, freshCol(c));
-  if (!awaiting) {
-    Stmt[] wb = Stmt[].filled(inner.len() + 1, sRet(c, null));
-    wb[0] = Stmt(StmtKind.Var(cloneTy(elem), nameTok, eMethod(c, eId(c, g), tCurrentName(c), Expr[]()), false),
+  Expr itv = linE(z, itE, p);
+  if (p.failed) { return Stmt[].filled(1, s); }
+  i32 it = freshTmp(z);
+  pushPre(p, Stmt(StmtKind.Var(typeofTy(c, valueForm(z, itv)), it, itv, false), s.line, freshCol(c)));
+  Expr ref = Expr(ExprKind.TypeRefOf(typeofTy(c, eId(c, it))), s.line, s.col);
+  Ty elem = (elemTy is null || isAutoTyL(z, elemTy!))
+    ? Ty(TyKind.TypeOf(eMethod(c, ref, tElement(c), Expr[]())), s.line, s.col)
+    : elemTy!;
+  if (awaiting) {
+    i32 st = freshTmp(z);
+    Expr stepCall = eMethod(c, eId(c, it), tStepCall(c), Expr[]());
+    Ty stepTy = typeofTy(c, eMethod(c, eMethod(c, eId(c, it), tStepCall(c), Expr[]()), tValue(c), Expr[]()));
+    Stmt[] wb = Stmt[].filled(3, sRet(c, null));
+    wb[0] = Stmt(StmtKind.Var(stepTy, st, Expr(ExprKind.Await(stepCall), s.line, s.col), false), s.line, freshCol(c));
+    wb[1] = Stmt(StmtKind.If(eMethod(c, eId(c, st), tIsDoneName(c), Expr[]()),
+                             Stmt[].filled(1, Stmt(StmtKind.Break, s.line, s.col)), Stmt[]()), s.line, s.col);
+    wb[2] = Stmt(StmtKind.Var(elem, nameTok, eMethod(c, eId(c, st), tYieldedName(c), Expr[]()), false),
                  s.line, freshCol(c));
-    for (i32 i = 0; i < inner.len(); i++) { wb[i + 1] = inner[i]; }
-    out[1] = Stmt(StmtKind.While(eMethod(c, eId(c, g), tNextName(c), Expr[]()), wb), s.line, s.col);
-    return out;
+    return withPre(z, p, Stmt(StmtKind.While(eBool(c, true), joinS(wb, splitBody(z, body))), s.line, s.col));
   }
-  i32 st = tAw(c, k + 1);
-  Ty[] wyrT = Ty[].filled(3, cloneTy(targs[1]));
-  wyrT[0] = lowPrimTy(c, tNever(c));
-  wyrT[1] = cloneTy(targs[0]);
-  Ty stepT = Ty(TyKind.Named(tStep(c), wyrT), c.line, c.col);
-  Stmt[] wb = Stmt[].filled(inner.len() + 3, sRet(c, null));
-  wb[0] = Stmt(StmtKind.Var(stepT, st, Expr(ExprKind.Await(eMethod(c, eId(c, g), tStepCall(c), Expr[]())), s.line, s.col),
-                            false), s.line, freshCol(c));
-  wb[1] = Stmt(StmtKind.If(eMethod(c, eId(c, st), tIsDoneName(c), Expr[]()),
-                           Stmt[].filled(1, Stmt(StmtKind.Break, s.line, s.col)), Stmt[]()), s.line, s.col);
-  wb[2] = Stmt(StmtKind.Var(cloneTy(elem), nameTok, eMethod(c, eId(c, st), tYieldedName(c), Expr[]()), false),
-               s.line, freshCol(c));
-  for (i32 i = 0; i < inner.len(); i++) { wb[i + 3] = inner[i]; }
-  out[1] = Stmt(StmtKind.While(eBool(c, true), wb), s.line, s.col);
-  return out;
+  // Over an array: an index.
+  i32 ix = freshTmp(z);
+  Stmt init = Stmt(StmtKind.Var(lowPrimTy(c, tI32(c)), ix, eInt(c, 0), false), s.line, freshCol(c));
+  Expr more = Expr(ExprKind.Binary(tLt(c), eId(c, ix), eMethod(c, eId(c, it), tLen(c), Expr[]())), s.line, s.col);
+  Stmt step = sSet(c, ix, Expr(ExprKind.Binary(tPlus(c), eId(c, ix), eInt(c, 1)), s.line, s.col));
+  Stmt bindA = Stmt(StmtKind.Var(cloneTy(elem), nameTok, eIx(c, eId(c, it), eId(c, ix)), false), s.line, freshCol(c));
+  Stmt overArray = Stmt(StmtKind.For(init, more, step, joinS(Stmt[].filled(1, bindA), splitBody(z, body))), s.line, s.col);
+  // Over a generator: its own protocol.
+  Stmt bindG = Stmt(StmtKind.Var(cloneTy(elem), nameTok, eMethod(c, eId(c, it), tCurrentName(c), Expr[]()), false),
+                    s.line, freshCol(c));
+  Stmt overGen = Stmt(StmtKind.While(eMethod(c, eId(c, it), tNextName(c), Expr[]()),
+                                     joinS(Stmt[].filled(1, bindG), splitBody(z, body))), s.line, s.col);
+  Expr isArr = eMethod(c, Expr(ExprKind.TypeRefOf(typeofTy(c, eId(c, it))), s.line, s.col), tIsArray(c), Expr[]());
+  return withPre(z, p, Stmt(StmtKind.StaticIf(isArr, Stmt[].filled(1, overArray), Stmt[].filled(1, overGen)), s.line, s.col));
 }
 
 /**
  * A `match` statement whose arms suspend, made ready to flatten: each arm's bindings become fresh
  * names, copied at the arm's head into locals of the bindings' own names — `A(x): { … }` is
- * `A(__wacAwK): { T x = __wacAwK; … }` — so they are hoisted like any local, and `lowerOne` keeps the
- * copies in the state that dispatches. Left as written when a binding's type is not one this file
- * writes, and the plan declines it.
+ * `A(__wacAwK): { typeof(…) x = __wacAwK; … }` — so they are hoisted like any local, and `lowerOne`
+ * keeps the copies in the state that dispatches.
+ *
+ * **Every arm's, not only the arms that suspend**: every local in every arm is hoisted, and one whose
+ * type is a `typeof` naming a binding needs the binding to be a cell too. Each copy's type is written
+ * as `typeof(match (s) { A(…, x, …): x, default: hypothetical<never>() })` — what the binding is,
+ * read off the subject without running it — so no payload type has to be known here.
  */
 Stmt splitMatch(Rz z, Stmt s, Expr subject, Arm[] arms, Ty? st) {
   Ctx c = z.c;
+  bool suspends = false;
+  for (i32 a = 0; a < arms.len(); a++) { if (awaitInBody(arms[a].body)) { suspends = true; } }
   Arm[] out = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0] : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
   for (i32 a = 0; a < arms.len(); a++) {
     Arm arm = arms[a];
-    // An arm that does not suspend keeps its bindings as they are: they are hoisted only so that a
-    // value bound before a suspension is still there after it, and there is none here.
-    if (!awaitInBody(arm.body)) {
-      out[a] = Arm(arm.variantTok, arm.elseTok, arm.bindingToks, arm.body, arm.value);
+    Stmt[] body = splitBody(z, arm.body);
+    i32 nb = arm.bindingToks.len();
+    if (!suspends || nb == 0 || arm.variantTok < 0) {
+      out[a] = Arm(arm.variantTok, arm.elseTok, arm.bindingToks, body, arm.value);
       continue;
     }
-    i32 nb = arm.bindingToks.len();
     i32[] fresh = i32[].filled(nb, 0);
-    Stmt[] body = splitBody(z, arm.body);
-    Stmt[] full = Stmt[].filled(nb + body.len(), sRet(c, null));
+    Stmt[] copies = Stmt[].filled(nb, sRet(c, null));
     i32 kept = 0;
     for (i32 k = 0; k < nb; k++) {
-      string bn = rzText(z, arm.bindingToks[k]);
-      if (bn == "_") { fresh[k] = arm.bindingToks[k]; continue; }
-      Ty? bt = (st is null || arm.variantTok < 0) ? null : payloadTy(z, st!, rzText(z, arm.variantTok), k);
-      if (bt is null) { return s; }
-      i32 f = tAw(c, z.next[0]);
-      z.next[0] = z.next[0] + 1;
+      if (rzText(z, arm.bindingToks[k]) == "_") { fresh[k] = arm.bindingToks[k]; continue; }
+      i32 f = freshTmp(z);
       fresh[k] = f;
-      full[kept] = Stmt(StmtKind.Var(cloneTy(bt!), arm.bindingToks[k], eId(c, f), false), s.line, freshCol(c));
+      Ty bt = typeofTy(c, bindingShape(z, subject, arm.variantTok, arm.bindingToks, k));
+      copies[kept] = Stmt(StmtKind.Var(bt, arm.bindingToks[k], eId(c, f), false), s.line, freshCol(c));
       kept = kept + 1;
     }
-    Stmt[] trimmed = Stmt[].filled(kept + body.len(), sRet(c, null));
-    for (i32 i = 0; i < kept; i++) { trimmed[i] = full[i]; }
-    for (i32 i = 0; i < body.len(); i++) { trimmed[kept + i] = body[i]; }
-    out[a] = Arm(arm.variantTok, arm.elseTok, fresh, trimmed, arm.value);
+    Stmt[] full = Stmt[].filled(kept + body.len(), sRet(c, null));
+    for (i32 i = 0; i < kept; i++) { full[i] = copies[i]; }
+    for (i32 i = 0; i < body.len(); i++) { full[kept + i] = body[i]; }
+    out[a] = Arm(arm.variantTok, arm.elseTok, fresh, full, arm.value);
   }
   return Stmt(StmtKind.Match(subject, out), s.line, s.col);
 }
 
-/** `body` with every statement split around its nested awaits. */
+/**
+ * `match (subject) { V(b0, …, bn): bk, default: hypothetical<never>() }` — an expression whose type
+ * is the type of binding `k` of variant `V`, for a `typeof`. Never evaluated.
+ */
+Expr bindingShape(Rz z, Expr subject, i32 variantTok, i32[] bindings, i32 k) {
+  Ctx c = z.c;
+  Arm[] arms = Arm[].filled(2, Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
+  arms[0] = Arm(variantTok, 0 - 1, bindings, Stmt[](), eId(c, bindings[k]));
+  Ty never = lowPrimTy(c, tNever(c));
+  Expr nothing = Expr(ExprKind.Construct(Ty(TyKind.Named(tHypothetical(c), Ty[].filled(1, never)), c.line, c.col),
+                                         Expr[](), NamedArg[]()), c.line, c.col);
+  arms[1] = Arm(0 - 1, tNever(c), i32[](), Stmt[](), nothing);
+  return Expr(ExprKind.MatchExpr(valueForm(z, subject), arms), c.line, c.col);
+}
+
+/**
+ * A condition's `matches` patterns with their bindings renamed fresh, and a local of each binding's
+ * own name declared from it into `copies` — for an `if` or a `while` whose body suspends, where a
+ * binding read after the suspension has to be a cell like any local (`issues/lang/0364a`). A type
+ * pattern says its type; a variant's binding takes it from `bindingShape`. Only the condition's own
+ * `matches` and the `&&` joining them are looked into: a binding under `||` or `!` binds nothing the
+ * body may read.
+ */
+Expr rebindMatches(Rz z, Expr cond, Stmt[] copies, i32[] n) {
+  Ctx c = z.c;
+  match (cond.kind) {
+    Matches(pat, subject): {
+      if (pat.type is not null && pat.nameTok >= 0) {
+        i32 f = freshTmp(z);
+        if (n[0] < copies.len()) {
+          copies[n[0]] = Stmt(StmtKind.Var(cloneTy(pat.type!), pat.nameTok, eId(c, f), false), cond.line, freshCol(c));
+          n[0] = n[0] + 1;
+        }
+        Pattern p2 = Pattern(pat.type, f, pat.variantTok, pat.slotNames, pat.slotTests, pat.line, pat.col);
+        return Expr(ExprKind.Matches(p2, subject), cond.line, cond.col);
+      }
+      if (pat.variantTok < 0 || pat.slotNames.len() == 0) { return cond; }
+      i32 ns = pat.slotNames.len();
+      i32[] names = i32[].filled(ns, 0);
+      for (i32 k = 0; k < ns; k++) { names[k] = pat.slotNames[k] >= 0 ? pat.slotNames[k] : freshTmp(z); }
+      i32[] slots2 = i32[].filled(ns, 0);
+      for (i32 k = 0; k < ns; k++) {
+        if (pat.slotNames[k] < 0) { slots2[k] = pat.slotNames[k]; continue; }
+        i32 f = freshTmp(z);
+        slots2[k] = f;
+        if (n[0] < copies.len()) {
+          Ty bt = typeofTy(c, bindingShape(z, subject, pat.variantTok, names, k));
+          copies[n[0]] = Stmt(StmtKind.Var(bt, pat.slotNames[k], eId(c, f), false), cond.line, freshCol(c));
+          n[0] = n[0] + 1;
+        }
+      }
+      Pattern p3 = Pattern(pat.type, pat.nameTok, pat.variantTok, slots2, pat.slotTests, pat.line, pat.col);
+      return Expr(ExprKind.Matches(p3, subject), cond.line, cond.col);
+    }
+    Binary(op, left, right): {
+      if (tokKind(z, op) != kAndAnd()) { return cond; }
+      Expr l = rebindMatches(z, left, copies, n);
+      return Expr(ExprKind.Binary(op, l, rebindMatches(z, right, copies, n)), cond.line, cond.col);
+    }
+    default: { return cond; }
+  }
+}
+
+/** `copies[0 .. n]` followed by `body`. */
+Stmt[] copiesThen(Stmt[] copies, i32 n, Stmt[] body) {
+  Stmt[] out = Stmt[].filled(n + body.len(), n > 0 ? copies[0] : (body.len() > 0 ? body[0] : Stmt(StmtKind.Break, 0, 0)));
+  for (i32 i = 0; i < n; i++) { out[i] = copies[i]; }
+  for (i32 i = 0; i < body.len(); i++) { out[n + i] = body[i]; }
+  return out;
+}
+
+/**
+ * `body` with every statement split around its nested awaits, and every local whose type comes from
+ * its initialiser given that type as `typeof` — a machine's locals are cells declared before
+ * anything runs, so each one's type has to be spelled, whether or not its statement suspends.
+ */
 Stmt[] splitBody(Rz z, Stmt[] body) {
   i32 n = 0;
   Stmt[][] parts = Stmt[][].filled(body.len(), Stmt[]());
   for (i32 i = 0; i < body.len(); i++) {
-    // A declaration with a placeholder in its type is rewritten whether or not it awaits: it is
-    // still hoisted into a cell, which needs the type spelled.
-    parts[i] = awaitInStmt(body[i]) || declaresPlaceholder(z, body[i]) ? splitStmt(z, body[i]) : Stmt[].filled(1, body[i]);
+    parts[i] = awaitInStmt(body[i]) ? splitStmt(z, body[i]) : Stmt[].filled(1, spellTypes(z, body[i]));
     n = n + parts[i].len();
   }
   Stmt[] out = Stmt[].filled(n, body.len() > 0 ? body[0] : sRet(z.c, null));
@@ -1955,6 +3057,40 @@ Stmt[] splitBody(Rz z, Stmt[] body) {
     for (i32 j = 0; j < parts[i].len(); j++) { out[at] = parts[i][j]; at = at + 1; }
   }
   return out;
+}
+
+/** `s`, holding no `await`, with each `auto` or placeholder-typed local in it typed by `typeof`. */
+Stmt spellTypes(Rz z, Stmt s) {
+  match (s.kind) {
+    Var(type, nameTok, init, isConst): {
+      if (init is null || !wantsTypeof(z, type)) { return s; }
+      return Stmt(StmtKind.Var(typeofTy(z.c, valueForm(z, init!)), nameTok, init!, isConst), s.line, s.col);
+    }
+    If(cond, then, els): { return Stmt(StmtKind.If(cond, splitBody(z, then), splitBody(z, els)), s.line, s.col); }
+    While(cond, b): { return Stmt(StmtKind.While(cond, splitBody(z, b)), s.line, s.col); }
+    DoWhile(b, cond): { return Stmt(StmtKind.DoWhile(splitBody(z, b), cond), s.line, s.col); }
+    For(init, cond, update, b): {
+      Stmt? i2 = init is null ? null : spellTypes(z, init!);
+      return Stmt(StmtKind.For(i2, cond, update, splitBody(z, b)), s.line, s.col);
+    }
+    Block(b): { return Stmt(StmtKind.Block(splitBody(z, b)), s.line, s.col); }
+    Switch(subject, cases): {
+      Case[] cs = Case[].filled(cases.len(), cases.len() > 0 ? cases[0] : Case(null, Stmt[](), s.line, s.col));
+      for (i32 i = 0; i < cases.len(); i++) {
+        cs[i] = Case(cases[i].value, splitBody(z, cases[i].body), cases[i].line, cases[i].col);
+      }
+      return Stmt(StmtKind.Switch(subject, cs), s.line, s.col);
+    }
+    Match(subject, arms): {
+      Arm[] out = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0] : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
+      for (i32 i = 0; i < arms.len(); i++) {
+        Arm a = arms[i];
+        out[i] = Arm(a.variantTok, a.elseTok, a.bindingToks, splitBody(z, a.body), a.value);
+      }
+      return Stmt(StmtKind.Match(subject, out), s.line, s.col);
+    }
+    default: { return s; }
+  }
 }
 
 /** The number of `await` tokens in a file — at least as many as any machine in it suspends. */
@@ -2201,26 +3337,16 @@ struct Lw {
   string[] why;
   /** What other files' functions and methods answer, when it is a ticket — `ticketSigsOf`. */
   string sigs;
+  /**
+   * The most states any machine in the file numbered, as the flattening's bound on its split body.
+   * With `next`, what the tail of spellings had to hold — `lowerProgram` lowers again with these when
+   * the first guess was short, because splitting writes temporaries and states nothing can count
+   * before it has run.
+   */
+  i32[] statesWanted;
 }
 
 void noteWhy(Lw w, string why) { if (w.why[0] == "") { w.why[0] = why; } }
-
-/** Whether `body` still holds `auto x = await e;` — a slot whose ticket type nothing wrote. */
-bool autoAwaitIn(Rz z, Stmt[] body) {
-  for (i32 i = 0; i < body.len(); i++) {
-    match (body[i].kind) {
-      Var(type, nameTok, init, isConst): {
-        if (init is not null && isAwaitL(init!) && isAutoTyL(z, type)) { return true; }
-      }
-      If(cond, then, els): { if (autoAwaitIn(z, then) || autoAwaitIn(z, els)) { return true; } }
-      While(cond, b): { if (autoAwaitIn(z, b)) { return true; } }
-      For(init, cond, update, b): { if (autoAwaitIn(z, b)) { return true; } }
-      Block(b): { if (autoAwaitIn(z, b)) { return true; } }
-      default: { }
-    }
-  }
-  return false;
-}
 
 /** Where one machine sits: its parameters, its receiver's struct, its position. */
 struct Site {
@@ -2242,20 +3368,19 @@ struct Site {
  */
 Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
   Ctx c0 = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
-               i32[].filled(1, at.colBase), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3));
-  Rz z = Rz(c0, at.params, body, w.prog, at.selfTok, w.next, string[].filled(1, ""), w.sigs);
-  Stmt[] split = splitBody(z, body);
+               i32[].filled(1, at.colBase), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next));
+  Rz z = Rz(c0, at.params, body, w.prog, at.selfTok, w.next, string[].filled(1, ""), w.sigs,
+           localsOf(c0, at.params, body));
+  Stmt[] split = uniqueLocals(z, splitBody(z, body), Seen.create());
+  i32 wantStates = statesNeeded(split) + 10;   // `buildArms` numbers up to `statesNeeded + 8`
+  if (wantStates > w.statesWanted[0]) { w.statesWanted[0] = wantStates; }
   AsyncPlan plan = planBody(split);
   if (!plan.ok) { noteWhy(w, z.why[0] != "" ? z.why[0] : plan.why); return null; }
-  if (autoAwaitIn(z, split)) {
-    noteWhy(w, "an `await` into an `auto` local, on a ticket whose type this file does not write — write the type");
-    return null;
-  }
   string[] names = string[].filled(plan.hoist.len() + extra.len(), "");
   for (i32 i = 0; i < plan.hoist.len(); i++) { names[i] = synthTextAt(w.src, w.lexed, plan.hoist[i]); }
   for (i32 i = 0; i < extra.len(); i++) { names[plan.hoist.len() + i] = extra[i]; }
   Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, names, w.src, w.lexed, c0.col2, c0.inLam,
-              c0.finState, c0.stepWyr);
+              c0.finState, c0.stepWyr, c0.copy);
   Ty[] gp = genParts(w.src, w.lexed, ret);
   if (gp.len() == 2) { return machineBody(c, split, plan, gp[1], gp[0], at.isAsync, at.raw); }
   return machineBody(c, split, plan, ret, null, true, at.raw);
@@ -2289,7 +3414,7 @@ Stmt[] lowerLambdasIn(Lw w, Stmt[] body, i32 selfTok) {
             Stmt[]? mach = machineOf(w, at, lbody, tick!, pnames);
             if (mach is null) { continue; }
             Ctx c = Ctx(w.first, w.ups, w.args, init!.line, init!.col, pnames, w.src, w.lexed,
-                        i32[].filled(1, init!.col + 9000), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3));
+                        i32[].filled(1, init!.col + 9000), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next));
 
             Param[] ps2 = Param[].filled(lps.len(), lps.len() > 0 ? lps[0]
                                                                : Param(0 - 1, type, false));
@@ -2345,7 +3470,7 @@ Method[] loweredMethods(Lw w, Decl at) {
   for (i32 m = 0; m < ms.len(); m++) {
     Method me = ms[m];
     Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
-                i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3));
+                i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next));
     Stmt[] body2 = coRewrite(c, lowerLambdasIn(w, me.body, self));
     if (!isMachineDecl(w.src, w.lexed, me.returnType, me.isAsync)) {
       out[n] = Method(me.nameTok, me.returnType, me.params, body2, me.isOverride, me.overrideTok,
@@ -2357,11 +3482,15 @@ Method[] loweredMethods(Lw w, Decl at) {
                                 body2, me.returnType, string[]());
     i32 coTok = coTokFor(c, "__wacCo_" + synthTextAt(w.src, w.lexed, me.nameTok));
     i32 thisTok = coTokFor(c, "this");
-    if (machine is null || coTok < 0 || thisTok < 0 || !me.hasThis) { out[n] = me; n = n + 1; continue; }
+    // **A method with no receiver is lowered as one with**, its form called through the type rather
+    // than through `this`: `Plain.ten()` calls `Plain.__wacCo_ten()`. Left as written it reached the
+    // emitter answering `i32` where `Ticket<i32>` was promised (`issues/lang/0375a`).
+    i32 recvTok = me.hasThis ? thisTok : self;
+    if (machine is null || coTok < 0 || recvTok < 0) { out[n] = me; n = n + 1; continue; }
     out[n] = Method(coTok, coroutineTy(c, me.returnType, me.isAsync), me.params, machine!,
                     false, 0 - 1, me.hasThis, me.thisConst, me.typeParams, false, me.isPrivate, false);
     out[n + 1] = Method(me.nameTok, machineCallerTy(c, me.returnType, me.isAsync), me.params,
-                        coWrapperBody(c, coTok, me.params, me.returnType, me.isAsync, thisTok),
+                        coWrapperBody(c, coTok, me.params, me.returnType, me.isAsync, recvTok),
                         me.isOverride, me.overrideTok, me.hasThis, me.thisConst, me.typeParams, false,
                         me.isPrivate, me.isVirtual);
     n = n + 2;
@@ -2394,7 +3523,20 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed, string sigs) {
   i32 ups = awaitTokens(lexed);
   i32 states = numsNeeded(prog, src, lexed) + 4 * ups;
   i32 args = argsNeeded(prog, src, lexed);
+  i32[] used = i32[].filled(2, 0);
+  Lowered first = lowerSized(prog, src, lexed, sigs, ups, states, args, used);
+  // **Splitting writes temporaries and states nothing can count before it has run**, so the tail of
+  // spellings is a guess the first time. A guess that was short is answered by lowering again with
+  // what the first run measured — and the second run's measure cannot exceed it, since the split
+  // depends only on the source.
+  if (used[0] <= ups && used[1] <= states) { return first; }
+  i32 ups2 = used[0] > ups ? used[0] : ups;
+  i32 states2 = used[1] > states ? used[1] : states;
+  return lowerSized(prog, src, lexed, sigs, ups2, states2, args, i32[].filled(2, 0));
+}
 
+/** `lowerProgram` with the tail of spellings sized: `used` comes back with what it needed. */
+Lowered lowerSized(Program prog, u8[] src, Lexed lexed, string sigs, i32 ups, i32 states, i32 args, i32[] used) {
   u8[] srcA = synthSource(src, ups, states, args);
   // Where the words start: after the parser's own appended tokens, which `synthTokens` keeps (a `.[i]`).
   i32 first = lexed.tokenCount + lexed.synthCount;
@@ -2404,7 +3546,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed, string sigs) {
   Tail tl = appendWords(srcA, lexedA, "// wac:co-synth ", joinWords(coWords(prog, src, lexed), sigWords(sigs)));
   u8[] src2 = tl.src;
   Lexed lexed2 = tl.lexed;
-  Lw w = Lw(first, ups, args, src2, lexed2, prog, i32[].filled(1, 0), string[].filled(1, ""), sigs);
+  Lw w = Lw(first, ups, args, src2, lexed2, prog, i32[].filled(1, 0), string[].filled(1, ""), sigs, i32[].filled(1, 0));
 
   // A machine function becomes two: the function calling its coroutine form, where it was, and the
   // form itself after every declaration the file wrote — whose count is how the emitter tells the
@@ -2419,7 +3561,7 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed, string sigs) {
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         Ctx c = Ctx(first, ups, args, prog.decls[d].line, prog.decls[d].col, string[](), src2, lexed2,
-                    i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3));
+                    i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next));
         // **Lambdas first.** An `async` function's own machine substitutes its hoisted names into
         // everything its body contains, lambdas included — so a lambda lowered beforehand is
         // ordinary code by the time that walk reaches it.
@@ -2464,6 +3606,8 @@ export Lowered lowerProgram(Program prog, u8[] src, Lexed lexed, string sigs) {
   Decl[] exact = Decl[].filled(n + nf, prog.decls[0]);
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   for (i32 i = 0; i < nf; i++) { exact[n + i] = forms[i]; }
+  used[0] = w.next[0];
+  used[1] = w.statesWanted[0];
   return Lowered(Program(exact), src2, lexed2, true, w.why[0]);
 }
 

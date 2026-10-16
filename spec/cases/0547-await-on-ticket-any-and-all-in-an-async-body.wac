@@ -1,0 +1,27 @@
+// expect: f() = 434
+// spec: §wac-ticket-any-v8nr3r9 §wac-ticket-all-2h6iwfr
+// why: an async body may await Ticket.any and Ticket.all, whose instances are named only inside the machine's step
+import { Ticket } from "core";
+
+async i32 first(Ticket<i32> a, Ticket<string> b) {
+  union<i32, string> v = await Ticket.any(a, b);
+  return match (v) {
+    i32:    v,
+    string: v.len(),
+  };
+}
+
+async i32 both(Ticket<i32> a, Ticket<string> b) {
+  (i32, string) v = await Ticket.all(a, b);
+  return v.0 * 10 + v.1.len();
+}
+
+export i32 f() {
+  Ticket<i32> a;
+  Ticket<string> b;
+  Ticket<i32> one = first(a, b);
+  Ticket<i32> two = both(a, b);
+  b.resolve("four");
+  a.resolve(3);
+  return one.wait()! * 100 + two.wait()!;
+}

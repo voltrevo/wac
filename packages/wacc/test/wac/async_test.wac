@@ -197,16 +197,16 @@ export string test_an_await_on_a_ticket_another_file_types_is_lowered() {
 
 export string test_an_await_the_lowering_cannot_take_is_refused_by_check_as_by_a_build() {
   // **`check` says what a build will refuse.** The emitter declines an `async` function the lowering
-  // cannot take, and `check` never runs the emitter — so it runs the lowering itself, and names the line
-  // and the shape. A `for … in` over an array whose body suspends is the shape left: the split rewrites a
-  // loop over a generator and not this one, and it used to be reported as an `await` *nested inside a
-  // larger expression* when the `await` stood alone on its line.
+  // cannot take, and `check` never runs the emitter — so it runs the lowering itself, and names the
+  // shape. An `await` inside a `static_for` is the shape left (`issues/lang/0372a`): the turns are
+  // known only once the loop is evaluated, and the lowering runs before that. Until 2026-10-16 this
+  // test held a `for … in` over an array, which the lowering now takes.
   T t = T.create();
   string main = "import { Ticket } from \"core\";\n"
     + "async i32 one(i32 k) { return k; }\n"
-    + "export async i32 go(i32[] ks) {\n"
+    + "export async i32 go() {\n"
     + "  i32 total = 0;\n"
-    + "  for (i32 k in ks) {\n"
+    + "  static_for (i32 k = 0; k < 2; k++) {\n"
     + "    i32 v = await one(k);\n"
     + "    total += v;\n"
     + "  }\n"
@@ -214,7 +214,6 @@ export string test_an_await_the_lowering_cannot_take_is_refused_by_check_as_by_a
     + "}\n";
   string out = diagnoseGraph([ENTRY], [main], ENTRY);
   t.isTrue(contains(out, "an `async` function this compiler cannot lower"), "refused — got \"" + out + "\"");
-  t.isTrue(contains(out, "for … in"), "naming the loop — got \"" + out + "\"");
-  t.isTrue(contains(out, "index it instead"), "and the fix — got \"" + out + "\"");
+  t.isTrue(contains(out, "static_for"), "naming the loop — got \"" + out + "\"");
   return t.report();
 }

@@ -1,0 +1,22 @@
+// expect: f() = 6403
+// why: a `for … in` whose body suspends walks an array or a generator alike, `auto` takes the element type, and `continue` reaches the next element
+// spec: §wac-for-in-qkcbmxf
+import { Ticket } from "core";
+gen<i32> void upTo(i32 n) {
+  for (i32 i = 1; i <= n; i++) { yield i; }
+}
+async i32 one(i32 k) { return k; }
+i32[] items() { return [1, 2, 3]; }
+async i32 go() {
+  i32 overArray = 0;
+  for (i32 k in items()) { overArray += await one(k); }        // 6
+  i32 overGen = 0;
+  for (auto k in upTo(3)) {
+    if (k == 2) { continue; }
+    overGen += await one(k);                                   // 1 + 3 = 4
+  }
+  string words = "";
+  for (string w in ["a", "bc"]) { words = words + w + "\{await one(w.len())}"; }   // "a1bc2"
+  return overArray * 1000 + overGen * 100 + words.len() * 4 + 3 - 20 + 0;
+}
+export i32 f() { return go().wait()!; }

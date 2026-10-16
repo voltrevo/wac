@@ -15,24 +15,13 @@
 //
 // ## What this cut can flatten
 //
-// A suspension may be a statement of the top-level block, in one of two shapes — `T x = await e;`
-// and `return await e;`. **Both are the shapes that name the ticket's type**, which is not a
-// coincidence: the machine keeps the ticket it suspended at in a slot of type `Pending<X>`, and the
-// only way to know `X` from the AST alone is to have it written. `T x = await e;` says `T`, and
-// `return await e;` says the function's own return type. A bare `await e;` says neither, so it is
-// declined here rather than guessed at.
-//
-// Anything else is declined **by name**, because a lowering that silently mis-flattens is worse than
-// one that refuses: an `await` nested inside a larger expression needs the expression's evaluation
-// order split around it.
-//
-// **A loop body is no longer in that list, and this paragraph said it was.** The increment landed:
-// the walk descends into `While`, `For` and `DoWhile`, `hoistTy`'s doc records that locals *"started
-// being hoisted out of loop bodies and `for` initialisers as well as the top level"*, `suspendAt`'s
-// records that an index into the top-level block stopped meaning anything *"with loops"*, and
-// `test/wac/asyncplan_test.wac` pins it — an `await` in a `for` body plans `ok suspends=1 hoist=3`,
-// *"total, i and a hoisted"*. What still declines is an `await` in a loop's **condition, initialiser
-// or update**, and one nested in a larger expression; `declineFor` names each.
+// **Every statement holding an `await` reaches the plan already linear**: `asynclower.wac`'s split has
+// rewritten it so each `await` stands alone — `T x = await e;`, `await e;` or `return await e;` — with
+// whatever ran before it in temporaries and whatever runs only sometimes (the right of `&&`, an arm of
+// `?:` or `match`, a loop's test) made into the control flow it means. So the plan counts those three
+// shapes, hoists every local at any depth, and walks into `if`, the loops, `switch`, `match` arms and
+// the `static_if` a `for … in` is written as. What it still declines, by name, is a `defer` in the
+// machine's own body and an `await` inside a `static_for`.
 
 import {
   Arm, Case, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Program, Stmt, StmtKind, Ty,
@@ -76,6 +65,11 @@ export bool awaitInExpr(Expr e) {
     MatchExpr(subject, arms): {
       if (awaitInExpr(subject)) { return true; }
       for (i32 i = 0; i < arms.len(); i++) {
+        // **An expression arm keeps its value in `value`, not `body`** — `Err(_): await p` has no
+        // statements at all. Asking only the body missed it, so the statement was never split and
+        // the `await` ran in place: a trap the first time the ticket was not yet settled
+        // (`issues/lang/0363a`).
+        if (arms[i].value is not null && awaitInExpr(arms[i].value!)) { return true; }
         if (awaitInBody(arms[i].body)) { return true; }
       }
       return false;
@@ -157,7 +151,7 @@ export bool awaitInExpr(Expr e) {
   }
 }
 
-bool awaitInLvalue(Lvalue lv) {
+export bool awaitInLvalue(Lvalue lv) {
   match (lv.kind) {
     LIdent(tok): { return false; }
     LField(base, nameTok): { return awaitInLvalue(base); }
@@ -357,8 +351,21 @@ void walkPlan(Stmt[] body, Walked w) {
           }
         }
         if ((cond is not null) && awaitInExpr(cond!)) { w.why = "an `await` in a `for` condition"; }
-        if ((update is not null) && awaitInStmt(update!)) { w.why = "an `await` in a `for` update"; }
         walkPlan(body2, w);
+        // An update that suspends arrives as a block of linear statements, flattened where the update
+        // goes; its suspensions are counted and its temporaries hoisted like the body's.
+        if ((update is not null) && awaitInStmt(update!)) { walkPlan(Stmt[].filled(1, update!), w); }
+      }
+      // A `static_if` whose branches suspend — a `for … in` written both ways. Both are walked: their
+      // locals are hoisted and their suspensions counted, and the compiler keeps one.
+      StaticIf(cond, then, els): {
+        walkPlan(then, w);
+        walkPlan(els, w);
+      }
+      // A `switch` whose cases suspend: the subject is evaluated in the state that dispatches.
+      Switch(subject, cases): {
+        if (awaitInExpr(subject)) { w.why = "an `await` in a `switch` subject"; }
+        for (i32 j = 0; j < cases.len(); j++) { walkPlan(cases[j].body, w); }
       }
       Block(body2): { walkPlan(body2, w); }
       // A `match` statement's arms, which the lowering flattens once `splitMatch` has given their

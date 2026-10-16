@@ -1,0 +1,7 @@
+// expect: refused
+// spec: §wac-default-absence-8mxpz7y §wac-arr-defaulted-needs-default-8kbgqzf
+// why: a union has no default, so an array of them cannot be defaulted — this was let through, and emitted a module the engine refused
+export i32 f() {
+  union<i32, string>[] a = union<i32, string>[].defaulted(2);
+  return a.len();
+}

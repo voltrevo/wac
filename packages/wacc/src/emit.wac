@@ -19,7 +19,7 @@
 import {
   Decls, Ev, StaticBind, Value, bindStaticLocals, demandConst, evFinished, isIntName, outcomeName, declExportedOf, declNameOf,
   decimalText, evalExpr, evLimit, evUnsupported, numValue, staticForCap, staticForName,
-  staticForType, staticForValues, truthy, wrapTo, vF32, vF64, vNum, evTyName, typeDeclAt, unfoldTypeName, intOf,
+  staticForType, staticForValues, truthy, wrapTo, vF32, vF64, vNum, evTyName, typeDeclAt, unfoldTypeName, intOf, noneValue,
 } from "./consteval.wac";
 import { stringLiteralBytes } from "./strlit.wac";
 import { programGraph } from "./program.wac";
@@ -262,6 +262,9 @@ bool isArrayType(string t) {
 /** A wac type's element, for an array. */
 string elemOf(string t) {
   u8[] a = t.toBytes();
+  // An unknown type has no element, and asking must not trap the compiler: the caller has a type it
+  // could not work out, and declines where it is used.
+  if (a.len() < 2) { return ""; }
   u8[] out = u8[].filled(a.len() - 2, 0);
   for (i32 i = 0; i < out.len(); i++) { out[i] = a[i]; }
   return string.fromBytes(out);
@@ -2643,8 +2646,8 @@ export struct Env {
    * captures; a name that resolves nowhere is a function, a struct or a constant, not a local, and
    * is not captured either.
    */
-  string[] capNames;
-  string[] capTypes;
+  string[][] capNames;
+  string[][] capTypes;
   i32[] lambdaCapCount;
   /**
    * The lambdas currently being walked, innermost last, with the scope mark each one opened at.
@@ -3008,6 +3011,8 @@ export struct Env {
   Expr? safeHeld;
   i32 safeHeldLocal;
   i32 safeDepth;
+  /** Why the last `static_if` condition had no static value — the evaluator's own words. */
+  string staticWhy;
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -3111,9 +3116,8 @@ export struct Env {
   /** The index of `name` among lambda `li`'s captures, or -1. */
   i32 captureAt(const this, i32 li, string name) {
     if (li < 0) { return -1; }
-    i32 from = li * capsPerLambda();
     for (i32 c = 0; c < this.lambdaCapCount[li]; c++) {
-      if (this.capNames[from + c] == name) { return c; }
+      if (this.capNames[li][c] == name) { return c; }
     }
     return -1;
   }
@@ -3177,18 +3181,24 @@ export struct Env {
 
   /** Record a capture, ignoring one already recorded for this lambda. */
   void noteCapture(this, i32 li, string name, string ty) {
-    i32 from = li * capsPerLambda();
     i32 n = this.lambdaCapCount[li];
     for (i32 i = 0; i < n; i++) {
-      if (this.capNames[from + i] == name) { return; }
+      if (this.capNames[li][i] == name) { return; }
     }
-    // **A slab per lambda, not one flat run.** A flat table assumes each lambda's captures are
-    // contiguous, and nesting breaks that: reading a name inside an inner lambda appends to the
-    // inner's run *and* the outer's, alternately, so the runs interleave and every count after the
-    // first names the wrong entries. The nested case reported `a` for both lambdas and lost `b`.
-    if (n >= capsPerLambda()) { this.ranOut("captures in one lambda"); return; }
-    this.capNames[from + n] = name;
-    this.capTypes[from + n] = ty;
+    // **An array per lambda, grown as it fills.** These were one flat table with thirty-two slots per
+    // lambda, and a machine's step captures every local of the `async` function it came from — a
+    // body with a few dozen locals and temporaries ran out of room, and the module was declined. A
+    // slab each is still what keeps nesting from interleaving two lambdas' runs.
+    if (n == this.capNames[li].len()) {
+      i32 grown = n < 8 ? 8 : n * 2;
+      string[] nn = string[].filled(grown, "");
+      string[] nt = string[].filled(grown, "");
+      for (i32 i = 0; i < n; i++) { nn[i] = this.capNames[li][i]; nt[i] = this.capTypes[li][i]; }
+      this.capNames[li] = nn;
+      this.capTypes[li] = nt;
+    }
+    this.capNames[li][n] = name;
+    this.capTypes[li][n] = ty;
     this.lambdaCapCount[li] = n + 1;
   }
 
@@ -3313,7 +3323,7 @@ export struct Env {
                string[].filled(1024, ""), i32[].filled(1024, 0), i32[].filled(1024, 0), string[].filled(1024, ""),
                i32[].filled(1024, 0), 0, 0,
                string[].filled(4096, ""), string[].filled(4096, ""), i32[].filled(4096, 0), i32[].filled(4096, 0), 0,
-               string[].filled(32768, ""), string[].filled(32768, ""), i32[].filled(1024, 0),
+               string[][].filled(1024, string[]()), string[][].filled(1024, string[]()), i32[].filled(1024, 0),
                0, 0, i32[].filled(64, 0), i32[].filled(64, 0), 0, -1, string[].filled(4096, ""), 0, bool[].filled(1024, false), bool[].filled(1024, false),
                false, string[].filled(1024, ""), string[].filled(1024, ""), 0,
                i32[].filled(4096, 0), i32[].filled(4096, 0), i32[].filled(4096, 0), string[].filled(4096, ""), 0,
@@ -3322,7 +3332,7 @@ export struct Env {
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
                Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";", 0, "", "", 0,
-               null, 0 - 1, 0);
+               null, 0 - 1, 0, "");
   }
 
   
@@ -5153,10 +5163,9 @@ export string lambdaReportLinked(string[] paths, string[] sources, Res res, stri
       i32 st = env.structType(captureStructName(li));
       out = out + (st < 0 ? "NOSTRUCT" : captureStructName(li)) + "=";
     }
-    i32 from = li * capsPerLambda();
     for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
       if (c > 0) { out = out + ","; }
-      out = out + env.capNames[from + c] + ":" + env.capTypes[from + c];
+      out = out + env.capNames[li][c] + ":" + env.capTypes[li][c];
     }
     out = out + "\n";
   }
@@ -5237,7 +5246,7 @@ string cellStructName(string ty) {
 bool emitNameValue(B fb, u8[] src, Lexed lexed, Env env, string nm) {
   i32 capIx = env.captureAt(env.emittingLambda, nm);
   // A captured `void` is a cell holding a placeholder, and reading it is reading nothing.
-  if (capIx >= 0 && env.capTypes[env.emittingLambda * capsPerLambda() + capIx] == "void") { return true; }
+  if (capIx >= 0 && env.capTypes[env.emittingLambda][capIx] == "void") { return true; }
   if (capIx >= 0) {
     fb.byte(32); fb.u32leb(0);                    // local.get 0 — the capture struct
     fb.byte(251); fb.u32leb(2);                   // struct.get — the cell
@@ -5245,7 +5254,7 @@ bool emitNameValue(B fb, u8[] src, Lexed lexed, Env env, string nm) {
     fb.u32leb(capIx);
     fb.byte(251); fb.u32leb(2);                   // struct.get — the value in it
     fb.u32leb(env.structType(cellStructName(
-      env.capTypes[env.emittingLambda * capsPerLambda() + capIx])));
+      env.capTypes[env.emittingLambda][capIx])));
     fb.u32leb(0);
     return true;
   }
@@ -5741,9 +5750,6 @@ bool isWordByte(i32 b) {
 /** The generated struct a capturing lambda carries — unwritable, so no source can collide with it. */
 string captureStructName(i32 li) { return "$cap$" + numText(li); }
 
-/** How many captures one lambda has room for — a slab each, so nesting cannot interleave them. */
-i32 capsPerLambda() { return 32; }
-
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
 u8[] bareModule() {
   u8[] out = u8[].filled(8, 0);
@@ -6101,20 +6107,19 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
     env.structParentToks[env.structCount] = -1;
     env.structParents[env.structCount] = "";
     env.structCount = env.structCount + 1;
-    i32 from = li * capsPerLambda();
     for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
       if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); break; }
       env.fieldOwners[env.fieldCount] = cname;
-      env.fieldNames[env.fieldCount] = env.capNames[from + c];
+      env.fieldNames[env.fieldCount] = env.capNames[li][c];
       // **The cell, not the value** — which is the whole of reference semantics: the lambda and the
       // enclosing function hold the same one-field struct, so a write through either is seen by both.
-      env.fieldTypes[env.fieldCount] = cellStructName(env.capTypes[from + c]);
+      env.fieldTypes[env.fieldCount] = cellStructName(env.capTypes[li][c]);
       env.fieldNullable[env.fieldCount] = false;
       env.fieldCount = env.fieldCount + 1;
     }
     // The cell struct for each captured type, registered once.
     for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
-      string cellName = cellStructName(env.capTypes[from + c]);
+      string cellName = cellStructName(env.capTypes[li][c]);
       if (env.structType(cellName) >= 0) { continue; }
       if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); break; }
       env.structNames[env.structCount] = cellName;
@@ -6124,7 +6129,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
       if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); break; }
       env.fieldOwners[env.fieldCount] = cellName;
       env.fieldNames[env.fieldCount] = "v";
-      env.fieldTypes[env.fieldCount] = env.capTypes[from + c];
+      env.fieldTypes[env.fieldCount] = env.capTypes[li][c];
       env.fieldNullable[env.fieldCount] = false;
       env.fieldCount = env.fieldCount + 1;
     }
@@ -7606,7 +7611,13 @@ string computedTypeE(Env env, u8[] src, Lexed lexed, Ty t) {
   ev.message = "";
   i32 savedGuards = ev.guards;
   ev.guards = env.tyGuards;
+  // `type(typeref(typeof(x)).element())` asks about a local — a lowered `for … in`'s variable is
+  // declared this way — so the locals in scope are declared to the evaluator by type, as a `static_if`
+  // condition's are.
+  i32 localMark = ev.localCount;
+  declareRuntimeTypes(env, ev);
   string spelled = evTyName(ev, env.staticCx!, env.curFile, t);
+  ev.localCount = localMark;
   ev.guards = savedGuards;
   bool ok = evFinished(ev.status);
   string why = ev.message;
@@ -8222,6 +8233,11 @@ void emitDefault(B fb, Env env, string t) {
   // to build, and an `anyref[].defaulted(3)` is three empty slots by the same argument that makes a nullable
   // field's default a null.
   if (t == "anyref" || t == "i31ref") { emitNull(fb, env, t); return; }
+  // **A union has no default either** (ch08 lists what does), so nothing reads this slot before it is
+  // written: the checker refuses that read in source, and the cell an `async` body's union local is
+  // hoisted into is written before it is read. Null is what the slot's `anyref` holds meanwhile — an
+  // `i32.const 0` there was a module the engine refused.
+  if (isUnionName(t)) { emitNull(fb, env, t); return; }
   if (t == "string") {
     fb.byte(65);
     fb.i32leb(0);
@@ -9477,6 +9493,32 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
   env.retireMatchBound(bound);
 }
 
+/**
+ * The function's locals, and the lambda's captures when one is being emitted, declared to the static
+ * evaluator by type alone — so a condition can ask `typeref(typeof(x))` of a value that exists only at
+ * run time. Nothing reads their values: `typeof` never evaluates its operand. A lowered `for … in`
+ * chooses its loop this way (spec ch30 `§wac-typeref-element-h7q2xvd`).
+ */
+void declareRuntimeTypes(Env env, Ev ev) {
+  for (i32 i = 0; i < env.localCount; i++) {
+    // A name with a space is the emitter's own scratch, which no source can spell.
+    if (env.localTypes[i] == "" || env.locals[i].indexOf(" ") >= 0) { continue; }
+    // Not one the evaluator holds by value already: a `static_for` variable, in its turn.
+    if (ev.localAt(env.locals[i], 0) >= 0) { continue; }
+    ev.declare(env.locals[i], env.localTypes[i], noneValue());
+  }
+  // During the lambda walk the locals are the walk's, and the emitter's do not exist yet.
+  for (i32 i = 0; i < env.walkCount; i++) {
+    if (env.walkTypes[i] == "") { continue; }
+    ev.declare(env.walkNames[i], env.walkTypes[i], noneValue());
+  }
+  i32 li = env.emittingLambda;
+  if (li < 0) { return; }
+  for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
+    ev.declare(env.capNames[li][c], env.capTypes[li][c], noneValue());
+  }
+}
+
 /** Which branch of a `static_if` this build takes — 1 the first, 0 the other — or -1 where it cannot say. */
 i32 liveBranchOf(Env env, u8[] src, Lexed lexed, Expr cond) {
   Ev ev = staticEvalOf(env, src, lexed);
@@ -9485,10 +9527,11 @@ i32 liveBranchOf(Env env, u8[] src, Lexed lexed, Expr cond) {
   ev.message = "";
   i32 mark = ev.localCount;
   i32 tpMark = bindInstanceTypes(env, ev);
+  declareRuntimeTypes(env, ev);
   Value v = evalExpr(ev, env.staticCx!, env.curFile, cond, "bool");
   ev.tpCount = tpMark;
   ev.localCount = mark;
-  if (!evFinished(ev.status)) { ev.status = 0; return 0 - 1; }
+  if (!evFinished(ev.status)) { env.staticWhy = ev.message; ev.status = 0; return 0 - 1; }
   ev.status = 0;
   return truthy(v) ? 1 : 0;
 }
@@ -9512,7 +9555,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     // Only the branch in the program is written (spec ch31).
     StaticIf(cond, then, els): {
       i32 live = liveBranchOf(env, src, lexed, cond);
-      if (live < 0) { env.declineFor("a `static_if` whose condition has no static value"); return; }
+      if (live < 0) { env.declineFor("a `static_if` whose condition has no static value — " + env.staticWhy); return; }
       Stmt[] body = live == 1 ? then : els;
       for (i32 i = 0; i < body.len(); i++) { emitStmt(fb, src, lexed, env, body[i]); }
     }
@@ -9682,7 +9725,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           // the enclosing side already had reference semantics.
           i32 wcap = env.captureAt(env.emittingLambda, name);
           if (wcap >= 0) {
-            string wty = env.capTypes[env.emittingLambda * capsPerLambda() + wcap];
+            string wty = env.capTypes[env.emittingLambda][wcap];
             i32 wk = lexed.tokens[op * tokenStride()];
             fb.byte(32); fb.u32leb(0);                  // the capture record
             fb.byte(251); fb.u32leb(2);                 // its cell
@@ -9935,7 +9978,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           // nothing, so a captured counter stayed put while every other mutation worked.
           i32 icap = env.captureAt(env.emittingLambda, tokenTextOf(src, lexed, tok));
           if (icap >= 0) {
-            string ity = env.capTypes[env.emittingLambda * capsPerLambda() + icap];
+            string ity = env.capTypes[env.emittingLambda][icap];
             i32 capT = env.structType(captureStructName(env.emittingLambda));
             i32 cellT = env.structType(cellStructName(ity));
             fb.byte(32); fb.u32leb(0);
@@ -10488,9 +10531,8 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         // reason this works: the values are read at the point the lambda is created.
         fb.byte(210);                                   // ref.func <bound wrapper>
         fb.u32leb(env.boundAt + env.lambdaFirst + li);
-        i32 from = li * capsPerLambda();
         for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
-          emitExprName(fb, src, lexed, env, env.capNames[from + c], env.capTypes[from + c]);
+          emitExprName(fb, src, lexed, env, env.capNames[li][c], env.capTypes[li][c]);
         }
         fb.byte(251); fb.u32leb(0);                     // struct.new — the capture record
         fb.u32leb(env.structType(captureStructName(li)));
@@ -10883,7 +10925,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           i32 lcap = -1;
           if (!isFuncrefType(lty)) {
             lcap = env.captureAt(env.emittingLambda, lraw);
-            if (lcap >= 0) { lty = env.capTypes[env.emittingLambda * capsPerLambda() + lcap]; }
+            if (lcap >= 0) { lty = env.capTypes[env.emittingLambda][lcap]; }
           }
           if (isFuncrefType(lty)) {
             // **The env first, then the arguments, then the funcref** — `design/lang/0002`. A `fn[…]`
@@ -11650,7 +11692,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       string nm = tokenTextOf(src, lexed, tok);
       // A captured name has a type without having a local — the capture struct's field.
       i32 ic = env.captureAt(env.emittingLambda, nm);
-      if (ic >= 0) { return env.capTypes[env.emittingLambda * capsPerLambda() + ic]; }
+      if (ic >= 0) { return env.capTypes[env.emittingLambda][ic]; }
       string lt = env.localType(nm);
       if (lt != "") { return lt; }
       // **During the lambda walk a local is in the walk's scope**, not the emitter's, which does not
@@ -11916,7 +11958,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           // `li < 0`, so outside a lambda this asks and gets -1.
           if (!isFuncrefType(lt3)) {
             i32 cap3 = env.captureAt(env.emittingLambda, nm3);
-            if (cap3 >= 0) { lt3 = env.capTypes[env.emittingLambda * capsPerLambda() + cap3]; }
+            if (cap3 >= 0) { lt3 = env.capTypes[env.emittingLambda][cap3]; }
           }
           if (isFuncrefType(lt3)) { return sigReturn(lt3); }
           string n2 = typeOfTyName(env, src, lexed, ctype);
@@ -13007,9 +13049,8 @@ void findLambdas(Env env, u8[] src, Lexed lexed, Stmt[] body, string ret) {
 /** Mark every lambda from `first` on whose captures include a name this function assigns. */
 void markWritingLambdas(Env env, i32 first) {
   for (i32 li = first; li < env.lambdaCount; li++) {
-    i32 from = li * capsPerLambda();
     for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
-      if (env.isAssigned(env.capNames[from + c])) { env.lambdaWrites[li] = true; }
+      if (env.isAssigned(env.capNames[li][c])) { env.lambdaWrites[li] = true; }
     }
   }
 }
@@ -13446,6 +13487,9 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
     // Only the live branch, or a lambda the build drops is still hoisted — and the count sizes the
     // function section, so one too many renames every function index after it.
     StaticIf(cond, then, els): {
+      // The condition too: it is compiled where the statement is, and what it reads — through a
+      // `typeof` included — a lambda around it has to capture to answer it there.
+      findLambdasExpr(env, src, lexed, cond, "bool");
       i32 live = liveBranchOf(env, src, lexed, cond);
       Stmt[] body = live == 1 ? then : els;
       if (live >= 0) {
@@ -13651,9 +13695,29 @@ string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
   }
 }
 
+/** The expressions inside a type — a `typeof`'s operand — walked as `findLambdasExpr` walks any. */
+void findLambdasTy(Env env, u8[] src, Lexed lexed, Ty t) {
+  match (t.kind) {
+    TypeofExpr(e): { findLambdasExpr(env, src, lexed, e, ""); }
+    TypeOf(e): { findLambdasExpr(env, src, lexed, e, ""); }
+    Named(tok, typeArgs): { for (i32 i = 0; i < typeArgs.len(); i++) { findLambdasTy(env, src, lexed, typeArgs[i]); } }
+    Arr(elem): { findLambdasTy(env, src, lexed, elem); }
+    Nullable(inner): { findLambdasTy(env, src, lexed, inner); }
+    Funcref(ret, params): {
+      findLambdasTy(env, src, lexed, ret);
+      for (i32 i = 0; i < params.len(); i++) { findLambdasTy(env, src, lexed, params[i]); }
+    }
+    TupleOf(members): { for (i32 i = 0; i < members.len(); i++) { findLambdasTy(env, src, lexed, members[i]); } }
+    Prim(tok): { }
+  }
+}
+
 void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
   match (e.kind) {
-    TypeRefOf(t): { }
+    // The names inside a `typeof` are read for their types, which a lambda needs as much as their
+    // values: `static_if (typeref(typeof(x)).isArray())` in a lambda asks about `x`, so `x` is one of
+    // its captures even where nothing else in the body mentions it.
+    TypeRefOf(t): { findLambdasTy(env, src, lexed, t); }
     StaticMatch(subject, types, values, defaultAt): {
       i32 armF = staticArmOf(env, src, lexed, subject, types, defaultAt);
       if (armF >= 0) { findLambdasExpr(env, src, lexed, values[armF], want); }
@@ -14879,7 +14943,7 @@ string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
       // emitted `array.set` against type index 0: a trap where the write should have been.
       string ln = tokenTextOf(src, lexed, tok);
       i32 lc = env.captureAt(env.emittingLambda, ln);
-      if (lc >= 0) { return env.capTypes[env.emittingLambda * capsPerLambda() + lc]; }
+      if (lc >= 0) { return env.capTypes[env.emittingLambda][lc]; }
       return env.localType(ln);
     }
     LUnwrap(base): { return typeOfLv(src, lexed, env, base); }
@@ -15270,7 +15334,7 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
     StaticIf(cond, then, els): {
       i32 live = liveBranchOf(env, src, lexed, cond);
-      if (live < 0) { return "a `static_if` whose condition has no static value"; }
+      if (live < 0) { return "a `static_if` whose condition has no static value — " + env.staticWhy; }
       Stmt[] body = live == 1 ? then : els;
       return unsupportedIn(src, lexed, env, body);
     }
@@ -15938,7 +16002,16 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           env.addLocal(tokenTextOf(src, lexed, params[pi].nameTok),
                        typeOfTyName(env, src, lexed, params[pi].type));
         }
+        // **Not the enclosing function's return type.** A `return` in here answers the lambda, and
+        // read against the function around it every one looked like a return of the wrong type — so
+        // the walk stopped at the first, and a generic named after it was never collected. That is
+        // every `async` body: its machine's step is a lambda whose first states return a `Step`, and
+        // `await Ticket.any(a, b)` came after them. What the lambda answers is not known here, and an
+        // unknown slot asks nothing of what is returned into it.
+        string retWas = env.returnType;
+        env.returnType = "";
         string inner = unsupportedIn(src, lexed, env, body);
+        env.returnType = retWas;
         env.localCount = lsaved;
         env.captureFloor = floorWas;
       }
@@ -19394,8 +19467,24 @@ string bindNameFor(Env env, u8[] src, Lexed lexed, string key) {
 }
 
 string bareVariantName(string key) {
-  i32 at = key.indexOf("@");
-  return at > 0 ? key.slice(0, at) : key;
+  // **A generic enum's variant is keyed under its instance** — `Step<TicketBase,never,f64>.Waiting` —
+  // and that whole key went onto the bind wire as the variant's name, so the glue declared a method
+  // called `Step<TicketBase,never,f64>.Waiting`, which no JavaScript parser will read. The variant is
+  // what follows the instance; the instance's own `@`s, inside its type arguments, are not a suffix.
+  string k = key;
+  u8[] b = key.toBytes();
+  i32 close = 0 - 1;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == 62) { close = i; } }   // `>`
+  if (close >= 0) {
+    for (i32 i = close + 1; i < b.len(); i++) {
+      if (b[i] == 46) {                                                  // `.`
+        k = key.slice(i + 1, key.len());
+        break;
+      }
+    }
+  }
+  i32 at = k.indexOf("@");
+  return at > 0 ? k.slice(0, at) : k;
 }
 
 /**
@@ -20083,7 +20172,9 @@ void emitEnumHelpers(B funcs, B code, Env env, string ename) {
 /** The part of an enum field name after the `<Variant>.`, which is what a host asks for. */
 string payloadFieldName(string qualified) {
   u8[] a = qualified.toBytes();
-  for (i32 i = 0; i < a.len(); i++) {
+  // The *last* `.`: a generic enum's variant is `Step<…>.Waiting`, so its field is
+  // `Step<…>.Waiting.ticket`, and a field's own name never holds one.
+  for (i32 i = a.len() - 1; i >= 0; i--) {
     if (a[i] != 46) { continue; }                               // `.`
     u8[] out = u8[].filled(a.len() - i - 1, 0);
     for (i32 k = 0; k < out.len(); k++) { out[k] = a[i + 1 + k]; }

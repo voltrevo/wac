@@ -1,0 +1,9 @@
+// expect: f() = 10
+// why: a method with no receiver may be `async`, and calling it through its type hands back its ticket
+// from: issues/lang/0375a
+import { Ticket } from "core";
+struct Plain {
+  i32 v;
+  async i32 ten() { return 10; }
+}
+export i32 f() { Ticket<i32> t = Plain.ten(); return t.wait()!; }

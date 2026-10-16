@@ -1,0 +1,20 @@
+// expect: f() = 3001
+// why: an `await` on the right of `&&`, `||` or `??`, in an arm of `?:`, or in the arguments of a `?.` call runs only when that part would be evaluated
+// spec: §wac-await-pending-9km2xtr
+import { Ticket } from "core";
+struct Log { i32 n; }
+async i32 count(Log l, i32 v) { l.n += 1; return v; }
+struct P { i32 k; i32 plus(const this, i32 d) { return this.k + d; } }
+async i32 go(Log l) {
+  bool a = false && (await count(l, 1)) > 0;     // not run
+  bool b = true || (await count(l, 1)) > 0;      // not run
+  i32? none = null;
+  i32 c = none ?? await count(l, 4);             // run: 4
+  i32 d = c > 0 ? 10 : await count(l, 9);        // not run
+  P? p = null;
+  i32? e = p?.plus(await count(l, 7));           // not run
+  P? q = P(1);
+  i32? g = q?.plus(await count(l, 2));           // run: 3
+  return (a || !b ? 9000 : 0) + c * 0 + d * 100 + (e ?? 0) + (g ?? 0) * 0 + l.n * 1000 + 1;
+}
+export i32 f() { Log l = Log(0); return go(l).wait()!; }

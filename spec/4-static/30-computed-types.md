@@ -85,7 +85,8 @@ bool check() {
   bool same = typeref(Node) == b && typeref(Node?) == b.pushNull();
   bool built = typeref.tuple([a, b]) == typeref((i32, Node));
   bool either = typeref.union([b, a, b]) == typeref(union<i32, Node>);
-  return refs && nulls && roundTrip && members && same && built && either;
+  bool arrays = typeref(Node[]).isArray() && !b.isArray() && typeref(Node[]).element() == b;
+  return refs && nulls && roundTrip && members && same && built && either && arrays;
 }
 
 static bool OK = check();                  // evaluated by the compiler
@@ -95,6 +96,10 @@ export bool typerefOps() { return OK; }
 
 `[§wac-typeref-ops-u2h77nf]` A `typeref` supports `pushNull()` (one more nullable layer), `popNull()` (one fewer),
 `isNullable()`, `isRef()`, `tupleMembers()` (a tuple's member types, as a `typeref[]`) and `==` (the same type).
+
+`[§wac-typeref-element-h7q2xvd]` `isArray()` says whether a type is an array, and `element()` is what `for (x in e)`
+binds for `e` of that type: an array's element type, or what a generator yields
+([36](../6-concurrency/36-coroutines-and-generators.md)). `element()` of any other type is an error.
 
 `[§wac-typeref-tuple-68c06fi]` `typeref.tuple(ts)` is the tuple type whose members are the types in `ts`, in order:
 the inverse of `tupleMembers()`.

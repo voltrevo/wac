@@ -1,0 +1,37 @@
+// A generic enum's variants, reaching the generated glue under their own names.
+//
+//     wac test --allow-read packages/wacc/test/wac/genericenumbind_test.wac
+//
+// An instance's variants are keyed under the instance — `Opt<i32>.Some` — so that `Opt<i32>` and
+// `Opt<string>` keep apart, and that key went onto the bind wire whole. The glue then declared
+//
+//     static Opt<i32>.Some(Some.value) {
+//
+// which no JavaScript parser reads, so a page whose module returned one never started. It surfaced
+// through an `async` method: its machine's `Step<TicketBase, never, f64>` crosses with the struct that
+// owns the method, and a `packages/web` page failed at its first token.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { bindgenFiles, emitFiles } from "../../src/api.wac";
+
+static string SRC =
+  "export enum Opt<T> { Some(T value), None }\n" +
+  "export Opt<i32> make(i32 v) { return Opt<i32>.Some(v); }\n";
+
+string glue() {
+  string[] paths = string[].filled(1, "main.wac");
+  string[] sources = string[].filled(1, SRC);
+  u8[] wasm = emitFiles(paths, sources, "main.wac");
+  return bindgenFiles(wasm, paths, sources, "main.wac", "js");
+}
+
+export string test_a_generic_enums_variants_are_named_as_variants() {
+  T t = T.create();
+  string js = glue();
+  t.isTrue(contains(js, "export class Opt_i32 {"), "the instance is a class");
+  t.isTrue(contains(js, "  static Some(value) {"), "Some, taking its field by its own name — " + js);
+  t.isTrue(contains(js, "  static None() {"), "and None");
+  t.isFalse(contains(js, "static Opt<"), "no variant is named after its instance");
+  return t.report();
+}

@@ -1,0 +1,11 @@
+// expect: late() = 5
+// why: an `await` in an arm of a value-giving `match` suspends there, like one anywhere else
+// from: issues/lang/0363a
+import { Ticket } from "core";
+async i32 recover(Ticket<i32> p) {
+  return match (p.wait()) {
+    Ok(v):  v,
+    Err(_): await p,
+  };
+}
+export i32 late() { Ticket<i32> p; Ticket<i32> r = recover(p); p.resolve(5); return r.wait()!; }

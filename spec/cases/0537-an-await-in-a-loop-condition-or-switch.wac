@@ -1,0 +1,22 @@
+// expect: f() = 3112
+// why: an `await` may stand in a `while` or `do` condition and in a `switch`, and `continue` still reaches the condition
+// spec: §wac-continue-apojox2
+import { Ticket } from "core";
+async i32 one(i32 k) { return k; }
+async i32 go() {
+  i32 w = 0;
+  while ((await one(w)) < 3) { w++; }
+  i32 d = 0;
+  do {
+    d++;
+    if (d == 1) { continue; }
+  } while ((await one(d)) < 1);
+  i32 s = 0;
+  switch (await one(2)) {
+    case 1: { s = 5; }
+    case 2: { s = await one(1); }
+    default: { s = 9; }
+  }
+  return w * 1000 + d * 100 + s * 10 + (await one(2));
+}
+export i32 f() { return go().wait()!; }

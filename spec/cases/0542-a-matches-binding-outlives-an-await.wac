@@ -1,0 +1,9 @@
+// expect: go() = 0
+// why: a name a `matches` condition binds is a local of the block it guards, and survives a suspension in it
+// from: issues/lang/0364a
+import { Continuation, Queue, Ticket } from "core";
+struct Box { Queue<Continuation> q;
+  async void run1(this) { while (Continuation c matches this.q.pop()) { await; c.call(); } }
+}
+async void tick() { await; }
+export i32 go() { Box b; { schedule b.q.push; tick(); } b.run1().wait()!; return b.q.len(); }

@@ -1,0 +1,18 @@
+// expect: t() = 2
+// why: an arm of a value-giving `match` that continues a loop continues it in an `async` function too
+// from: issues/lang/0362a
+enum E { A(i32 n), B }
+async i32 f() {
+  i32 total = 0;
+  for (i32 i = 0; i < 3; i++) {
+    await;
+    E e = i == 1 ? E.B : E.A(i);
+    i32 v = match (e) {
+      A(n): n,
+      B:    continue,
+    };
+    total += 1;
+  }
+  return total;
+}
+export i32 t() { return f().wait()!; }

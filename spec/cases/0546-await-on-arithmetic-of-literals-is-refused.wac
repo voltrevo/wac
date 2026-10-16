@@ -1,0 +1,6 @@
+// expect: refused
+// why: an `await` needs a ticket, and arithmetic on literals alone is a number before it is any type
+// from: issues/lang/0323a
+// spec: §wac-await-pending-9km2xtr
+async i32 f() { return await (3 + 4); }
+export i32 main() { return f().wait()!; }

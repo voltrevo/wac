@@ -1,0 +1,13 @@
+// expect: f() = gAhB
+// why: whatever an expression evaluates before an `await` happens before the suspension, so effects keep the order they are written in
+// spec: §wac-await-pending-9km2xtr
+import { Ticket } from "core";
+struct Log { string s; }
+i32 note(Log l, string what, i32 v) { l.s = l.s + what; return v; }
+async i32 one(Log l, string what, i32 k) { l.s = l.s + what; return k; }
+i32 add(i32 a, i32 b) { return a + b; }
+async i32 go(Log l) {
+  i32 x = note(l, "g", 1) + (await one(l, "A", 2));
+  return add(note(l, "h", x), await one(l, "B", 3));
+}
+export string f() { Log l = Log(""); go(l).wait()!; return l.s; }

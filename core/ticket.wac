@@ -57,6 +57,28 @@ export struct TicketBase {
   bool settled(const this) { return this.done; }
 
   /**
+   * Advance this ticket — `Ticket.all` or `Ticket.any` of `parts` — as soon as `parts` allow: every one
+   * of them settled, or with `every` false any one. Not only when something drives it
+   * (`§wac-ticket-any-v8nr3r9` says it *settles with* the first).
+   *
+   * **A scheduler that resumes on settling never drives.** A page resumes a machine when the ticket it
+   * waits on settles (`whenSettled`), and nothing on a page calls `advance`; driven only, `await
+   * Ticket.any(click, frame)` there waited for ever. `advance` runs the ticket's own `drive`, which by
+   * then has nothing left to step: the parts it needs are settled.
+   */
+  void settleWhenParts(this, TicketBase[] parts, bool every) {
+    for (i32 k = 0; k < parts.len(); k++) { this.advanceOnSettle(parts, parts[k], every); }
+    if (canSettle(parts, every)) { this.advance(); }
+  }
+
+  /** When `t` settles, advance this ticket if `parts` now allow it. */
+  void advanceOnSettle(this, TicketBase[] parts, TicketBase t, bool every) {
+    t.whenSettled(() => {
+      if (!this.done && canSettle(parts, every)) { this.advance(); }
+    });
+  }
+
+  /**
    * One step towards settling. False when nothing a `wait` may drive can advance this ticket — it was
    * made directly and nobody has resolved it, or what it is parked on is in that state.
    *
@@ -149,6 +171,7 @@ export struct Ticket<T> : TicketBase {
       out.resolve(v);
       return true;
     };
+    out.settleWhenParts(parts, true);
     return out;
   }
 
@@ -174,6 +197,7 @@ export struct Ticket<T> : TicketBase {
       }
       return true;
     };
+    out.settleWhenParts(parts, false);
     return out;
   }
 
@@ -198,6 +222,7 @@ export struct Ticket<T> : TicketBase {
       }
       return true;
     };
+    out.settleWhenParts(parts, false);
     return out;
   }
 }
@@ -223,6 +248,14 @@ export type Values<Ts> {
  */
 export type AnyValue<Ts> {
   return typeref.union(typeref(Values<Ts>).tupleMembers());
+}
+
+/** Whether every one of `parts` has settled, or with `every` false any one. */
+bool canSettle(TicketBase[] parts, bool every) {
+  for (i32 k = 0; k < parts.len(); k++) {
+    if (parts[k].done != every) { return !every; }
+  }
+  return every;
 }
 
 /**
