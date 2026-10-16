@@ -5,9 +5,9 @@
 // `spawn` takes wasm there and a bundle here — the split `issues/system/0144` is about. `driver.ts`
 // is the other half, and this is the check that it agrees with what it replaces.
 //
-// **The subject is `packages/json`**, because it needs no capabilities: strings and byte arrays
-// cross in both directions and nothing has to be granted, so a disagreement here is a marshalling
-// bug and cannot be anything else.
+// **The subject is `test/driven.wac`, a fixture over `packages/json`**, because it needs no capabilities:
+// strings and byte arrays cross in both directions and nothing has to be granted, so a disagreement
+// here is a marshalling bug and cannot be anything else.
 
 import { buildNative } from "../native.ts";
 import { drive, hostName, manifestIn } from "../host/driver.ts";
@@ -22,26 +22,28 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-const ENTRY = "packages/json/src/json.wac";
+// **A fixture of its own**, built on `json`: the test is about the driver, and when it bound `json.wac`
+// directly a change to `json`'s API — `Result`s and `f64?`, which the glue does not carry — failed it.
+const ENTRY = "packages/platform/test/driven.wac";
 
 Deno.test("a module driven from its manifest gives the generated glue's answers", async () => {
   const dir = await Deno.makeTempDir({ prefix: "wac-driver-" });
   try {
-    await buildNative(ENTRY, `${dir}/json`, {});
-    const wasm = await Deno.readFile(`${dir}/json.wasm`);
+    await buildNative(ENTRY, `${dir}/driven`, {});
+    const wasm = await Deno.readFile(`${dir}/driven.wasm`);
 
     // **From the module itself**, which is the point: one artefact describes the program.
     const manifest = manifestIn(wasm);
     if (manifest === null) throw new Error("the module carries no wac.manifest section");
 
-    // Nothing here reaches out: `json` takes no capabilities, so no slot is ever registered and no
+    // Nothing here reaches out: the fixture takes no capabilities, so no slot is ever registered and no
     // dispatcher can fire.
     const driven = drive(wasm, manifest);
 
     // The oracle: the same program through `wacBind`, which is the generated glue.
     const bound = await wacBind(ENTRY) as unknown as {
-      canonicalize(src: Uint8Array): { ok: boolean; code: number; pos: number; text: Uint8Array };
-      parseNumberValue(src: Uint8Array): number;
+      canonical(src: Uint8Array): { ok: boolean; text: Uint8Array };
+      number(src: Uint8Array): number;
     };
 
     const cases = [
@@ -52,11 +54,11 @@ Deno.test("a module driven from its manifest gives the generated glue's answers"
       `{"unicode":"héllo → 世界"}`,
     ];
 
-    // **`canonicalize` is the useful one**: `u8[]` in, and a struct out whose `text` field is
+    // **`canonical` is the useful one**: `u8[]` in, and a struct out whose `text` field is
     // `u8[]` again — so bytes cross in both directions and a *named* type comes back as a reference
     // the host reads through the module's own getters.
-    const canon = driven.exports["canonicalize"];
-    const number = driven.exports["parseNumberValue"];
+    const canon = driven.exports["canonical"];
+    const number = driven.exports["number"];
     if (typeof canon !== "function" || typeof number !== "function") {
       throw new Error(
         `the module is missing an export this test needs; it has ${
@@ -70,13 +72,13 @@ Deno.test("a module driven from its manifest gives the generated glue's answers"
 
     for (const text of cases) {
       const src = enc.encode(text);
-      const viaGlue = bound.canonicalize(src);
+      const viaGlue = bound.canonical(src);
       const out = (canon as CallableFunction)(driven.toWasm("u8[]", src));
-      assertEquals(getOk(out) === 1 || getOk(out) === true, viaGlue.ok, `canonicalize(${text}).ok`);
+      assertEquals(getOk(out) === 1 || getOk(out) === true, viaGlue.ok, `canonical(${text}).ok`);
       assertEquals(
         driven.fromWasm("u8[]", getText(out)),
         viaGlue.text,
-        `canonicalize(${text}).text`,
+        `canonical(${text}).text`,
       );
     }
 
@@ -84,8 +86,8 @@ Deno.test("a module driven from its manifest gives the generated glue's answers"
     // if every conversion above were broken, which is why it is here and not instead of them.
     assertEquals(
       (number as CallableFunction)(driven.toWasm("u8[]", enc.encode("-3.5"))),
-      bound.parseNumberValue(enc.encode("-3.5")),
-      "parseNumberValue",
+      bound.number(enc.encode("-3.5")),
+      "number",
     );
 
     // And the names a host reaches for are the names it has always used.
@@ -205,13 +207,13 @@ Deno.test("a capability answering an array of references is built, not passed th
 Deno.test("an array the old list did not name still crosses, in both directions", async () => {
   const dir = await Deno.makeTempDir({ prefix: "wac-driver-nested-" });
   try {
-    await buildNative(ENTRY, `${dir}/json`, {});
-    const wasm = await Deno.readFile(`${dir}/json.wasm`);
+    await buildNative(ENTRY, `${dir}/driven`, {});
+    const wasm = await Deno.readFile(`${dir}/driven.wasm`);
     const manifest = manifestIn(wasm);
     if (manifest === null) throw new Error("the module carries no wac.manifest section");
     const driven = drive(wasm, manifest);
 
-    // `u8[][]` is in `json`'s reach; the nested case is the one the list handled by accident.
+    // `u8[][]` is in the fixture's reach; the nested case is the one the list handled by accident.
     const want = [new Uint8Array([1, 2, 3]), new Uint8Array([]), new Uint8Array([255])];
     const there = driven.toWasm("u8[][]", want);
     if (there === null || there === undefined) throw new Error("toWasm built nothing");
@@ -224,7 +226,7 @@ Deno.test("an array the old list did not name still crosses, in both directions"
     const none = driven.fromWasm("u8[][]", driven.toWasm("u8[][]", [])) as Uint8Array[];
     assertEquals(none.length, 0, "an empty array of arrays did not come back empty");
 
-    // **And a helper the module does not have is named, not swallowed.** `json` never reaches
+    // **And a helper the module does not have is named, not swallowed.** The fixture never reaches
     // `string[]`, so the compiler emitted no `$bind$arr_string_*` for it — asking anyway must say
     // which export is missing. A driver that returned the JavaScript array instead would hand the
     // module a value it cannot hold, and the trap would name a wasm offset instead of a type.

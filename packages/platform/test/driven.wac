@@ -1,0 +1,27 @@
+// The module `driver.test.ts` drives, shaped for the boundary it checks and for nothing else: bytes
+// in, a struct holding bytes out, a number, and a `u8[][]` in reach with no `string[]` anywhere.
+//
+// It was `packages/json/src/json.wac` itself until `json` answered `Result`s and `f64?`, which the glue
+// does not carry — so the test about the driver failed for a reason about `json`. The work is still
+// `json`'s; only the surface is this file's.
+
+import { canonicalize, parseNumberValue } from "../../json/src/json.wac";
+
+export struct Canonical {
+  bool ok;
+  u8[] text;
+}
+
+/** `src` canonicalised, or what was wrong with it. */
+export Canonical canonical(u8[] src) {
+  match (canonicalize(src)) {
+    Ok(text): { return Canonical(true, text); }
+    Err(e): { return Canonical(false, e.text().toBytes()); }
+  }
+}
+
+/** The number `src` spells, or 0 when it spells none. */
+export f64 number(u8[] src) { return parseNumberValue(src) ?? 0.0; }
+
+/** `src` twice — what puts `u8[][]` in this module's reach. */
+export u8[][] twice(u8[] src) { return [src, src]; }
