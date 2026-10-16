@@ -12286,7 +12286,12 @@ void checkStmt(C c, Stmt s, Ty want) {
         return;
       }
       c.expected = typeOfLvalue(c, target);
+      // **A target whose type this file cannot see wants nothing it can be wrong about** — a field of
+      // an imported struct when the import was not supplied. The rule `C.expectedUnknown` keeps for an
+      // argument to an unseen callee: a lambda assigned there is not a lambda nothing wants.
+      c.expectedUnknown = c.expected == typeNone();
       checkExpr(c, rhs);
+      c.expectedUnknown = false;
       // The same rule as an element of a literal, at the other way of writing one. `b[0] = 'é'`
       // stores 233 into a byte that will never be read back as that character.
       checkPackedLiteral(c, typeOfLvalue(c, target), rhs);
