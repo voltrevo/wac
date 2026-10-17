@@ -47,7 +47,7 @@
 
 import { Buf } from "core";
 import { Read, Ticket, TicketBase } from "core";
-import { Change, Cli, FAULT_OTHER, FileResult, Pending, Stat }
+import { Change, Cli, Core, FAULT_OTHER, FileResult, Pending, Stat }
   from "std";
 import { Reader, putI64, putString } from "./wire.wac";
 
@@ -141,16 +141,16 @@ export struct Chan {
    * frame in more than one piece. So the channel holds the ticket and lends its id — `armed` is
    * what says whether the one in `pending` has been collected yet.
    *
-   * Armed from construction, so a caller can put the ticket into a `Ticket.first` before anything has
-   * been asked. That costs one call slot per channel, which is what a shell serving its children
-   * spends and is bounded by how many children it has.
+   * **Armed when first wanted**, by `waiting` or by a question — not at construction: a child's
+   * channel to its parent was otherwise a read in flight for the child's whole life, still registered
+   * when it finished.
    */
-  Ticket<Read> pending;
+  Ticket<Read>? pending;
+  /** The host's half of `pending`, which is what `close` withdraws. */
+  Pending<Read>? read;
   bool armed;
 
-  Chan of(Cli cli, i32 handle) {
-    return Chan(cli, handle, Buf.create(), 0, false, cli.recv(handle).ticket(), true);
-  }
+  Chan of(Cli cli, i32 handle) { return Chan(cli, handle, Buf.create(), 0, false, null, null, false); }
 
   /**
    * The read a caller should watch to know this channel has something to say — one ticket among
@@ -158,15 +158,35 @@ export struct Chan {
    */
   TicketBase waiting(this) {
     this.rearm();
-    return this.pending;
+    return this.pending!;
   }
 
   /** Put a read back in flight if the last one has been collected. */
   void rearm(this) {
     if (!this.armed && !this.broken) {
-      this.pending = this.cli.recv(this.handle).ticket();
+      Pending<Read> r = this.cli.recv(this.handle);
+      this.read = r;
+      this.pending = r.ticket();
       this.armed = true;
     }
+  }
+
+  /**
+   * Done with this channel: the read still in flight is withdrawn, so nothing is left waiting on it.
+   *
+   * A server stops asking when its child's streams close, which is before the channel's own end
+   * arrives — and the read armed for that end was a continuation still registered when the program
+   * finished, which a host that counts them refuses (`finished with 1 continuation(s) still waiting`).
+   */
+  void close(this, Core core) {
+    Pending<Read>? r = this.read;
+    Ticket<Read>? t = this.pending;
+    if (this.armed && r is not null && t is not null && !t!.settled()) {
+      r!.cancel();
+      core.cancel(r!.id);
+    }
+    this.armed = false;
+    this.broken = true;
   }
 }
 
@@ -214,7 +234,7 @@ export async Reader answer(Chan c) {
     // Collected, so the next turn of this loop arms a fresh one. A read is in flight exactly when
     // `armed` says it is, which is what lets a `Ticket.first` elsewhere hold this channel's ticket.
     c.armed = false;
-    match (await c.pending) {
+    match (await c.pending!) {
       Data(bytes): { c.held.pushAll(bytes); }
       // The far end has gone. Not an error in itself — a parent that has finished with a child
       // closes the channel — but every question still outstanding is now unanswerable.

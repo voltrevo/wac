@@ -192,7 +192,7 @@ export async i32 init(Core core, Cli cli, Fs fs, Args a) {
       i32 which = await Ticket.first(parts);
       i32 kind = what[which];
       if (kind >= 0) {
-        if (!(await serveOn(chans.get(kind)!, fs))) { chans.set(kind, null); }
+        if (!(await serveOn(chans.get(kind)!, fs))) { chans.get(kind)!.close(core); chans.set(kind, null); }
       } else if (kind == -2) {
         match (outT.value()) {
           Data(bytes): { cli.write(bytes); outT = cli.recv(h).ticket(); }
@@ -208,6 +208,7 @@ export async i32 init(Core core, Cli cli, Fs fs, Args a) {
       }
     }
     // This service will ask nothing more; the others still might.
+    if (chans.get(i) is not null) { chans.get(i)!.close(core); }
     chans.set(i, null);
     i32 code = await cli.exitCode(h).ticket();
     cli.closeSocket(h);

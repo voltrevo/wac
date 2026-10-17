@@ -99,7 +99,7 @@ async void serveJobs(Shell sh) {
     sh.fs.procs.current = j.pid;
     bool alive = await serveOn(j.chan!, sh.fs);
     sh.fs.procs.current = was;
-    if (!alive) { j.chan = null; }
+    if (!alive) { j.chan!.close(sh.core); j.chan = null; }
   }
 }
 
@@ -1155,6 +1155,7 @@ i32 jobOfPid(Shell sh, i32 pid) {
  */
 void endJob(Shell sh, i32 index, i32 sig) {
   Job j = sh.jobs.get(index);
+  if (j.chan is not null) { j.chan!.close(sh.core); j.chan = null; }
   sh.cli.closeSocket(j.handle);
   if (j.errHandle >= 0) { sh.cli.closeSocket(j.errHandle); }
   j.done = true;
@@ -1233,6 +1234,7 @@ async void reapJob(Shell sh, i32 index) {
     }
     if (!reading && !complaining) { asking = false; }
   }
+  if (j.chan is not null) { j.chan!.close(sh.core); }
   j.chan = null;
   j.code = await sh.cli.exitCode(j.handle).ticket();
   sh.cli.closeSocket(j.handle);
@@ -1744,6 +1746,7 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
   }
 
   tick.stop();
+  for (i32 k = 0; k < fsC.len(); k++) { fsC.get(k).close(sh.core); }
 
   // **A pipeline the user interrupted is stopped**, not waited for. Its stages are real children
   // with handles, so this is the same `closeSocket` that `kill %1` delivers with — and it has to
@@ -3684,6 +3687,7 @@ async Output collectChild(Shell sh, string name, Child child, bool inherited) {
     if (!reading && !complaining) { asking = false; }
   }
   tick.stop();
+  if (fsC is not null) { fsC!.close(sh.core); }
 
   // **A child the user interrupted is stopped rather than waited for.** `exitCode` blocks until the
   // child finishes, and the whole point of the interrupt is that it was not going to: `yes` writes
