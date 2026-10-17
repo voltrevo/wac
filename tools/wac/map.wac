@@ -422,12 +422,11 @@ string render(Cli cli, Package[] pkgs, Program[] programs) {
     "\n" +
     "## Pages\n" +
     "\n" +
-    "Every `export i32 page`: an interactive browser application, built with `--target browser`\n" +
-    "and served with the two cross-origin isolation headers that `SharedArrayBuffer` needs.\n" +
+    "Every `main(Page page, …)`: a `packages/web` page — the program in a worker of its own, built by\n" +
+    "`packages/web/tools/build.wac` into one HTML file that needs no particular headers.\n" +
     "\n" +
     "```sh\n" +
-    "wac task app:build <path> --target browser -o page/index.html\n" +
-    "box httpd -8080 page -x\n" +
+    "wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac <path> <dir> --page ./packages/web\n" +
     "```\n" +
     "\n" +
     "| page | what it does |\n" +

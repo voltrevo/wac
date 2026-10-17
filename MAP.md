@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `wac task map` after adding a package or an entry point; `wac task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-41 packages, 173,959 lines of wac, 3041 tests,
+41 packages, 173,751 lines of wac, 3031 tests,
 86 command-line programs and 13 browser pages.
 
 ## Packages
@@ -42,7 +42,7 @@ In dependency order: nothing here imports anything below it.
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,763 | 60 | `bytes` `codec` `crypto` `fs` `gzip` `http` `tls` |
 | [`lightclient`](packages/lightclient/) | A light client follows the beacon chain without downloading it. | 642 | 12 | `bls` `ssz` |
 | [`mpt`](packages/mpt/) | Merkle-Patricia proofs, verified — the piece that turns "a provider told me" into "the state root I already verified commits to this". | 487 | 33 | `codec` `crypto` `rlp` |
-| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,477 | 299 | `json` `wacc` |
+| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,477 | 289 | `json` `wacc` |
 | [`quic`](packages/quic/) | QUIC version 1 — RFC 9000 and RFC 9001 — in wac. | 3,281 | 98 | `crypto` `tls` |
 | [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,608 | 43 | `codec` `fmt` `fs` `platform` |
 | [`ssh`](packages/ssh/) | An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them. | 4,159 | 58 | `box` `bytes` `codec` `crypto` `fs` `sh` `tty` |
@@ -50,7 +50,7 @@ In dependency order: nothing here imports anything below it.
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,435 | 200 | `bytes` `codec` `crypto` |
 | [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 17,685 | 326 | `bytes` `codec` `crypto` `datetime` `http` `json` `tls` `wactest` |
 | [`wac`](packages/wac/) | The command. | 5,650 | 82 | `box` `fmt` `fs` `json` `platform` `sh` `wacc` `wacpkg` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 65,859 | 451 | `codec` `crypto` `fmt` `sh` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 65,651 | 451 | `codec` `crypto` `fmt` `sh` |
 | [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 1,827 | 55 | `codec` `git` `json` `tls` `wacc` |
 | [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 2,547 | 41 | `crypto` `fmt` `json` `wacpkg` |
 | [`webrtc`](packages/webrtc/) | WebRTC in wac — the data channel half, following `design/system/0008`. | 3,752 | 79 | `crypto` `gzip` `tls` |
@@ -157,12 +157,11 @@ reach — see `packages/platform/README.md`.
 
 ## Pages
 
-Every `export i32 page`: an interactive browser application, built with `--target browser`
-and served with the two cross-origin isolation headers that `SharedArrayBuffer` needs.
+Every `main(Page page, …)`: a `packages/web` page — the program in a worker of its own, built by
+`packages/web/tools/build.wac` into one HTML file that needs no particular headers.
 
 ```sh
-wac task app:build <path> --target browser -o page/index.html
-box httpd -8080 page -x
+wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac <path> <dir> --page ./packages/web
 ```
 
 | page | what it does |

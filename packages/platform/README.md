@@ -39,15 +39,12 @@ Reading `main`'s parameter tells you the application may read the clock, print, 
 filesystem — `sys.core` and `sys.cli`. Nothing else is reachable, because there is nowhere else to
 reach.
 
-A browser page built with `packages/web` exports `main(Page page)` and reaches nothing but the page;
-one on this package's worker host exports `page(Core, Cli, Page)`.
+A browser page is built with `packages/web`: it exports `main(Page page)`, and `main(Page page, Sys sys)`
+when it is granted files.
 
 `Core` is what every host provides — clock, monotonic clock, secure random, output. `Cli`
 is arguments, the standard streams and the filesystem, which a browser has none of; that
 split is why it is a second struct rather than more fields.
-
-`Page` is a third profile and only a browser provides it. A page capability that pretended to
-work in a terminal would be a lie, which is the whole reason these are separate structs.
 
 | | capability | grant |
 |---|---|---|
@@ -70,8 +67,6 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 | | `execWithIn` | `--allow-run` — a **host program**, which `spawn` is not; a page has no form of it. `cwd` empty means wherever this program already is, as `spawn`'s does. `Cli.execWith` is the short form with no directory, and `Cli.exec` the shorter one with no environment either, nothing cleared and output buffered |
 | | `load`, `call`, `unload` | — (a **module** rather than a program: its exports called in this program's own world, with this program's own authority, so there is no grant to pass. Not `Pending`, because nothing crosses to a host. `spawn` is still what confines something: a loaded export runs on the caller's thread and nothing can stop it) |
 | | `validated` | — (whether the *engine* would accept some bytes as a module, compiled and no further. No grant: it reads no file, starts nothing, and the bytes came from the caller. The one thing about a module only a host can answer, which is why `wac validate` was a host command until there was a field for it) |
-| `Page` | `render`, `setText`, `setValue`, `setStyle`, `getValue`, `on`, `nextEvent`, `title` | browser only |
-| | `drawPixels`, `drawPixelsIn`, `nextFile`, `offerDownload` | browser only |
 
 `packages/box` is the widest consumer of all this — 65 applets in one program, and the differential
 suite that keeps them honest. The rest of this section is one subsection per family of capability,
@@ -673,9 +668,8 @@ gives its children a page's world and Deno gives them Deno's.
 A page could always have done this; nothing about a browser forbade it. A worker can create a worker,
 each program needs its own `SharedArrayBuffer` and a responder for it, and the page's own thread hosts
 the second as easily as the first — the parent is parked in `Atomics.wait` while its child runs, and
-that is fine precisely because the child's calls are answered by the *page*. A child gets no `Page`
-profile: its output goes to the parent through the handle, and a child that could draw would be
-drawing over the program that started it.
+that is fine precisely because the child's calls are answered by the *page*. Its output goes to the
+parent through the handle.
 
 **`spawn` answers only once the source has loaded**, so a file that is not a worker bundle is a
 failed child rather than a dead parent. That took two things. Deno re-raises an unhandled worker
@@ -713,9 +707,8 @@ no file, no path and no grant of its own — and a program whose `main` dispatch
 Child kid = cli.spawnSelf(["sort", "-n"], GRANT_READ).wait();
 ```
 
-A child runs `main` even when the program also exports `page`, because it was spawned: it has a handle
-and nowhere to draw. One bundle can therefore be both a terminal and the programs the terminal runs —
-see `packages/platform/example/twin.wac`, which is the whole idea in forty lines, and issue
+One bundle can be both a program and the programs it runs — see `packages/platform/example/twin.wac`,
+which is the whole idea in forty lines, and issue
 [0030](../../issues/system/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md).
 
 **A child has two handles, because a program has two output streams.** `recv(handle)` is its output
@@ -871,111 +864,15 @@ it can report instead of one protocol that works by accident. `box get`, `box ge
 
 ### Interactive pages
 
-**A page that needs only the page is built with [`packages/web`](../web/README.md)**:
-`export async i32 main(Page page)`, run in a worker (or with `--in-page` on the page's own thread)
-and waiting with `await`, with no `SharedArrayBuffer` and no headers to serve. `example/{life,pixels,ripple}.wac` are
-those. What follows is the worker host's `Page`, which is still what a page that also needs `Cli` —
-a filesystem, `packages/sh` — runs on: `packages/box/example/{term,desk,rasterterm}.wac`.
+**A page is built with [`packages/web`](../web/README.md)**: `export async i32 main(Page page)`, run in a
+worker (or with `--in-page` on the page's own thread) and waiting with `await`, with no
+`SharedArrayBuffer` and no headers to serve — and `main(Page page, Sys sys)` with `--grant read,write`,
+whose files are the browser's own storage. `example/{life,pixels,ripple,notes,procs}.wac` are those, and
+so are the shell and the desktop in `packages/box/example/`.
 
-A third profile beside `Core` and `Cli`, and only a browser provides it. The entry point says
-which kind of program this is: a module exporting `page` gets `Page`, one exporting `main` gets
-`Cli`, and a module may export both.
-
-```wac
-export i32 page(Core core, Page page) {
-  page.render("<button id=\"go\">go</button><p id=\"out\"></p>").wait();
-  page.on("button", "click").wait();
-  i32 clicks = 0;                                  // state, in a local
-  while (true) {
-    Event e = page.nextEvent().wait();
-    clicks = clicks + 1;
-    page.setText("out", itoa(clicks)).wait();
-  }
-}
-```
-
-**An event is just another ticket.** `nextEvent` parks the worker exactly as `recv` parks it on
-a socket, while the page's own thread — the host — stays free to run the real event loop and
-queue what arrives. Three things follow, and they are the reason for the shape:
-
-- **It is a loop, so state lives in locals.** Callbacks would need somewhere to put `clicks`,
-  and wac has no mutable globals; the alternative is threading a state struct through every
-  handler, which is the service shape and is heavier than this needs to be.
-- **`waitAny` composes over it.** A click *or* a five-second deadline is
-  `core.waitAny([e.id, file.id], -1)` — a click *or* a dropped file, one call. That is
-  the thing callbacks make hard.
-- **The application decides when it is over.** Returning from `page` ends it and the launcher
-  prints the exit line; the document stays as the program left it.
-
-Beyond drawing and events there are four more: `drawPixels(id, w, h, rgba)` blits a buffer wac
-filled into a `<canvas>`, and `nextFile`/`offerDownload` carry bytes between the user and the
-program.
-
-`drawPixelsIn(id, x, y, w, h, rgba)` is the same blit into part of a canvas, **without resizing it**.
-A desktop redrawn whole is four bytes times width times height across the bridge every frame — 8 MB
-at 1920x1080, which is already at the capability's 8 MiB cap before anything else is in flight — and
-a drag moves one window while a keystroke changes one glyph cell. `design/system/0004`'s D1.
-
-The two are separate calls rather than one with a rectangle, because they differ in more than that:
-`drawPixels` *sizes* the canvas to the buffer, and the pages that use it rely on that — their markup
-is `<canvas id="c"></canvas>` with no dimensions. A partial blit must not resize, since resizing
-clears the canvas and would throw away everything outside the rectangle. So `drawPixels` establishes
-the canvas and `drawPixelsIn` updates part of it.
-
-**One coarse capability is the whole raster story**, and deliberately so. A 2D context would be
-dozens of calls, each a round trip across a thread boundary to touch an object this side cannot
-hold. A buffer is one call, and wac is good at filling a buffer — a plot, a fractal, a decoded
-image and a sprite are all a loop over bytes, compiled.
-
-**There is no "open a file dialog".** A browser opens one only during a real user gesture, and
-by the time a request has crossed to the worker and back, that gesture is over — the capability
-would work when tested by hand and fail in the field. So the user does the handing: an
-`<input type="file">` in the application's own markup, or a drop anywhere on it, and `nextFile`
-answers with the bytes and the name.
-
-The operations are coarse, for the reason at the top of `platform.wac`. `render` replaces the
-application root in one call; `setText` and `setValue` are for the targeted updates that would
-otherwise mean re-rendering to change a word. There is no `querySelector`-shaped surface — every
-property poke would be a round trip across a thread boundary, to reach an object this side
-cannot hold. `setText` is `textContent`, so a value carrying `<script>` lands as those
-characters; `render` is the one that parses, and that difference is where an injection bug in a
-page like this would come from.
-
-Subscriptions are **delegated from the document**, so they survive a `render` that replaces the
-elements they were asked about. Attaching to the elements themselves would break on the next
-redraw, and the symptom — the first click works and the second does not — sends you looking in
-the wrong place.
-
-`packages/box/example/term.wac` is `packages/sh` with a keyboard in front of it — a real shell
-in a tab, with pipelines, loops and redirection into OPFS that survives a reload; what it cannot
-run is `$WACPATH` programs, since those need `spawn` and `spawn` is Deno-only.
-
-**`rename` is the promise a page cannot keep.** OPFS has no rename, so it is a copy and a
-delete. Atomicity is the entire reason `rename` exists — `cp` and `sponge` write beside
-their target and move it into place — so those applets are genuinely weaker in a browser
-than on a filesystem, and there is nothing this side can do about it.
-
-`SharedArrayBuffer` needs the page cross-origin isolated, so the launcher checks
-`crossOriginIsolated` first and names the two headers rather than letting `newBridge`
-throw a bare TypeError. `box httpd -x` sends them, which makes the whole loop wac: a wac
-server delivering a wac application to a browser.
-
-**Run in a real browser**, on Chromium 151 — `test/browser_live.test.ts`, which builds the
-page, serves it with the two headers, and drives it with Playwright. It is *ignored* unless a
-browser is installed, so the suite stays zero-dependency and offline by default; the file says
-how to install one in three commands, and the skip costs 3ms and no network.
-
-It was worth the trouble immediately. `readDir(".")` had passed against the in-memory OPFS for
-a week and answered **"not a directory"** in Chromium: OPFS has no `.` entry, and the double's
-path handling had been written from the same assumption as the code it was checking, so it
-agreed with the bug. Deno and Node both answer `.` with the listing, so portable code asked the
-obvious question and silently got nothing. Fixed, and `browser.test.ts` now has the case —
-which fails against the old code, in the double as well.
-
-The argument that the rest was safe held up: `SharedArrayBuffer` under genuine cross-origin
-isolation, `Atomics.wait` on a real `Worker`, and the blob-URL worker all worked first time,
-because they are shared verbatim with the targets that were already tested. It was the
-browser-specific part that was wrong, which is the part a double cannot check.
+This host's `Page` — a third profile served over the bridge, with `page(Core, Cli, Page)` as its entry
+point — was deleted in design/system/0011 step 7, once nothing ran on it. `--target browser` still
+builds a program with a `Cli` into a page that shows its output.
 
 ## How an asynchronous host looks synchronous
 
@@ -1082,8 +979,7 @@ have a seam rather than a mode, but the seam is in rather than retrofitted.
 
 ## What is not here yet
 
-- **A service shape.** `main(Core, Cli) -> i32` is the CLI application and
-  `page(Core, Cli, Page) -> i32` is the interactive one, and each *call* runs a program and
+- **A service shape.** `main(Core, Cli) -> i32` is the CLI application, and each *call* runs a program and
   returns — a worker will now serve several such calls, but that is the launcher's business
   and not a shape the application can see. A long-running *server*, which keeps state
   **between** requests, wants `onBytes(this, u8[]) -> Served`; `packages/server` already

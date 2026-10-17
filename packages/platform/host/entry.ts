@@ -75,20 +75,8 @@ export type AppModule = {
   // **Variadic on purpose**: a program is handed the capabilities it named and no others, so a
   // `main(Core)` is called with one argument. `worldFor` builds the list. `issues/lang/0107`.
   main: (...caps: unknown[]) => number;
-
-  // Only an interactive browser application has these, and bindgen emits a class only for a
-  // struct the module actually mentions — so a `wc` that never names `Page` has no `Page`
-  // here, and the browser launcher checks for `page` before offering one.
-  Page?: { of(...a: unknown[]): unknown };
-  Event?: { of(...a: unknown[]): unknown };
-  Picked?: { of(...a: unknown[]): unknown };
-  Pending_Event?: { of(...a: unknown[]): unknown };
-  Pending_Picked?: { of(...a: unknown[]): unknown };
-  /** The interactive entry point: draw, subscribe, and loop on `nextEvent`. */
-  page?: (core: unknown, cli: unknown, page: unknown) => number;
 };
 
-/** `child` is set by `spawnChild`: a spawned program runs `main`, never `page`. */
 type Start = { sab: SharedArrayBuffer; child?: boolean };
 type Result = { ok: true; code: number } | { ok: false; error: string };
 

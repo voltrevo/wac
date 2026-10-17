@@ -947,23 +947,6 @@ export function cliOf(
 }
 
 /**
- * The `Page` capabilities, for an interactive application in a browser.
- *
- * Built like `Cli`: positionally, with one hoisted resolver per return shape, and every
- * argument tagged so `test/wac/order_test.wac` can check this list against `platform.wac`.
- */
-export type PageClasses = {
-  // `PendingClass` is the four-argument ticket shape; a struct's `of` takes its own fields.
-  Page: { of(...a: unknown[]): unknown };
-  Event: { of(...a: unknown[]): unknown };
-  Picked: { of(...a: unknown[]): unknown };
-  Pending_Event: PendingClass;
-  Pending_Picked: PendingClass;
-  Pending_bool: PendingClass;
-  Pending_string: PendingClass;
-};
-
-/**
  * The capabilities this module actually asked for, in `main`'s order.
  *
  * **A program gets what it declared and nothing else.** `main(Core)` is handed a `Core`; building a
@@ -1011,106 +994,6 @@ export function worldFor(
     out.push(cliOf(b, app as unknown as Parameters<typeof cliOf>[1], grants, sched));
   }
   return out;
-}
-
-export function pageOf(b: Bridge, cls: PageClasses): unknown {
-  const settled = (id: number) => isDone(b, unpack(id));
-  const drop = (id: number) => { cancel(b, unpack(id)); };
-  const ok = (id: number) => { realCollect(b, unpack(id)); return true; };
-  const text = (id: number) => unstr(realCollect(b, unpack(id)));
-  const event = (id: number) => {
-    const parts = unstr(realCollect(b, unpack(id))).split("\u0000");
-    return cls.Event.of(
-      parts[0] ?? "",
-      parts[1] ?? "",
-      parts[2] ?? "",
-      Number(parts[3] ?? 0),
-      Number(parts[4] ?? 0),
-    );
-  };
-  const picked = (id: number) => {
-    const out = realCollect(b, unpack(id));
-    const nameLen = readI32le(out.subarray(1));
-    const errLen = readI32le(out.subarray(5 + nameLen));
-    return cls.Picked.of(
-      out[0] === 1,
-      unstr(out.subarray(5, 5 + nameLen)),
-      // A copy, because `collect` already gave us one and a subarray of it would keep the
-      // whole file alive for the sake of its name.
-      out.slice(9 + nameLen + errLen),
-      unstr(out.subarray(9 + nameLen, 9 + nameLen + errLen)),
-    );
-  };
-
-  /** A length-prefixed string and then the rest: how two strings cross as one payload. */
-  const two = (a: string, bs: string): Uint8Array => {
-    const x = str(a);
-    const y = str(bs);
-    const out = new Uint8Array(4 + x.length + y.length);
-    out.set(i32le(x.length), 0);
-    out.set(x, 4);
-    out.set(y, 4 + x.length);
-    return out;
-  };
-
-  const asOk = (t: Ticket) => cls.Pending_bool.of(pack(t), ok, settled, drop);
-  const asText = (t: Ticket) => cls.Pending_string.of(pack(t), text, settled, drop);
-  const asEvent = (t: Ticket) => cls.Pending_Event.of(pack(t), event, settled, drop);
-  const asPicked = (t: Ticket) => cls.Pending_Picked.of(pack(t), picked, settled, drop);
-
-  return cls.Page.of(
-    /*= render */
-    (html: string) => asOk(submit(b, OP.RENDER, str(html))),
-    /*= setText */
-    (id: string, t: string) => asOk(submit(b, OP.SET_TEXT, two(id, t))),
-    /*= setValue */
-    (id: string, v: string) => asOk(submit(b, OP.SET_VALUE, two(id, v))),
-    /*= setStyle */
-    (id: string, css: string) => asOk(submit(b, OP.SET_STYLE, two(id, css))),
-    /*= getValue */
-    (id: string) => asText(submit(b, OP.GET_VALUE, str(id))),
-    /*= on */
-    (sel: string, kind: string) => asOk(submit(b, OP.ON, two(sel, kind))),
-    /*= nextEvent */
-    () => asEvent(submit(b, OP.NEXT_EVENT, EMPTY)),
-    /*= title */
-    (t: string) => asOk(submit(b, OP.TITLE, str(t))),
-    /*= drawPixels */
-    (id: string, w: number, h: number, rgba: Uint8Array) => {
-      const name = str(id);
-      const out = new Uint8Array(12 + name.length + rgba.length);
-      out.set(i32le(w), 0);
-      out.set(i32le(h), 4);
-      out.set(i32le(name.length), 8);
-      out.set(name, 12);
-      out.set(rgba, 12 + name.length);
-      return asOk(submit(b, OP.DRAW_PIXELS, out));
-    },
-    /*= drawPixelsIn */
-    (id: string, x: number, y: number, w: number, h: number, rgba: Uint8Array) => {
-      const name = str(id);
-      const out = new Uint8Array(20 + name.length + rgba.length);
-      out.set(i32le(x), 0);
-      out.set(i32le(y), 4);
-      out.set(i32le(w), 8);
-      out.set(i32le(h), 12);
-      out.set(i32le(name.length), 16);
-      out.set(name, 20);
-      out.set(rgba, 20 + name.length);
-      return asOk(submit(b, OP.DRAW_PIXELS_IN, out));
-    },
-    /*= nextFile */
-    () => asPicked(submit(b, OP.NEXT_FILE, EMPTY)),
-    /*= offerDownload */
-    (name: string, bytes: Uint8Array) => {
-      const n = str(name);
-      const out = new Uint8Array(4 + n.length + bytes.length);
-      out.set(i32le(n.length), 0);
-      out.set(n, 4);
-      out.set(bytes, 4 + n.length);
-      return asOk(submit(b, OP.OFFER_DOWNLOAD, out));
-    },
-  );
 }
 
 export { HostCallError };

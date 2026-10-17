@@ -189,63 +189,13 @@ export type BrowserWorldOptions = {
   /** Whether writes are allowed, when a root is granted at all. */
   writable?: boolean;
   /**
-   * The page itself, if the application is an interactive one.
+   * How this world answers `Core.askInterrupt`. A child is handed its parent's answer, so the one
+   * that has to stop learns that the user asked. Absent answers no.
    *
-   * Injected rather than reached for, the same way `root` is, and for the same two reasons:
-   * this module then contains no reference to `document` and can be tested against a double,
-   * and a page that wants to give an application one corner of itself can pass a `Dom` scoped
-   * to that corner. Absent means every `Page` capability is refused.
-   */
-  dom?: Dom;
-
-  /**
-   * How this world answers `Core.askInterrupt` — separate from `dom`, and deliberately.
-   *
-   * A child is given no `dom` because **a child that could draw would be drawing over the program
-   * that started it**. Learning that the user pressed `^C` is not drawing: it is a fact about the
-   * keyboard, it grants nothing, and a child is exactly who needs it — a running applet in a page is
-   * a spawned worker, and it is the one that has to stop. Bundling the two authorities together is
-   * what made the first version of this answer "no" for every applet in the terminal.
-   *
-   * Defaults to the `dom`'s own reader, so a page that passes a `Dom` gets it without asking.
+   * There was a `dom` beside it until design/system/0011 step 7: std's `Page`, served over this
+   * bridge. A page is `packages/web`'s now, and talks to its document by messages.
    */
   askInterrupt?: () => boolean;
-};
-
-/**
- * What a page has to be able to do for an interactive application.
- *
- * Deliberately small and string-shaped. An element is a live object on the other side of a
- * thread; a capability that handed one back would be handing back something this side cannot
- * hold, so everything here is named by id or selector and answers with text.
- */
-export type Dom = {
-  render(html: string): void;
-  setText(id: string, text: string): void;
-  setValue(id: string, value: string): void;
-  /** Replace an element's inline style, by id — whole-value, no merging. */
-  setStyle(id: string, css: string): void;
-  value(id: string): string;
-  /** Subscribe, delegated from the document so it survives a `render`. */
-  on(selector: string, kind: string): void;
-  title(text: string): void;
-  /** The next event, waiting for one. One waiter, like a child's output queue. */
-  next(): Promise<{ kind: string; id: string; value: string; x: number; y: number }>;
-  /** Blit `w * h * 4` bytes of RGBA into a canvas, resizing it to match. */
-  drawPixels(id: string, w: number, h: number, rgba: Uint8Array): void;
-  drawPixelsIn(id: string, x: number, y: number, w: number, h: number, rgba: Uint8Array): void;
-  /** The next file the user picks or drops, waiting for one. */
-  nextFile(): Promise<{ ok: boolean; name: string; bytes: Uint8Array; error: string }>;
-  /** Hand bytes back to the user as a download. */
-  offerDownload(name: string, bytes: Uint8Array): void;
-  /**
-   * Whether a `^C` has arrived since this was last asked, clearing it — `OP.ASK_INTERRUPT`'s answer.
-   *
-   * On the `Dom` because that is the object the page hands in, and the page is where the keystroke
-   * is: `pageDom` installs the listener and `serveHostCalls` answers the bridge, both on the main
-   * thread. A `Dom` that does not implement it — a headless test double — simply never interrupts.
-   */
-  takeInterrupt?(): boolean;
 };
 
 /** A path resolved to the directory that holds it, and its last component. */
@@ -253,14 +203,9 @@ type Resolved = { dir: DirHandle; name: string };
 
 export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
   /**
-   * The one reader, resolved once: the explicit option, or the `Dom`'s own if a page passed one.
-   *
-   * Children are handed *this*, not `opts.askInterrupt`, so a page that supplied only a `Dom` still
-   * gives its children the answer — which is the case that matters, since every applet in the
-   * browser terminal is a spawned child.
+   * The one reader, resolved once, and what a child is handed.
    */
-  const asked = (): boolean =>
-    opts.askInterrupt !== undefined ? opts.askInterrupt() : opts.dom?.takeInterrupt?.() === true;
+  const asked = (): boolean => opts.askInterrupt !== undefined && opts.askInterrupt();
 
   const args = opts.args ?? [];
   const log = opts.log ?? ((l: string) => console.log(l));
@@ -291,9 +236,8 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
   /**
    * Start a child on `source`, with `want` narrowed to what this page itself was given.
    *
-   * Shared by `spawn` and `spawnSelf`, which differ only in where the source comes from. A child
-   * gets no `dom`: its output reaches the parent through its handle, and a child that could draw
-   * would be drawing over the program that started it.
+   * Shared by `spawn` and `spawnSelf`, which differ only in where the source comes from. Its output
+   * reaches the parent through its handle.
    */
   const startChild = async (
     // A worker bundle as text, or a wasm module as bytes — `spawnChild` tells them apart.
@@ -313,8 +257,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       const enc = new TextEncoder();
       return serveHostCalls(bridgeOf(sab), browserWorld({
         args: cargs,
-        // Not `dom` — see `askInterrupt` above. A child may learn that the user interrupted and may
-        // not draw, and those are two authorities rather than one.
+        // See `askInterrupt` above: a child learns that the user interrupted.
         askInterrupt: asked,
         // **Its parent's filesystem, on a handle of its own** — wac-mono 0116. A third authority
         // beside those two and separate from both: a child may learn that the user interrupted, may
@@ -408,17 +351,8 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
   };
 
   const root = (): DirHandle => opts.root ?? deny("filesystem read");
-  /** The page, or a refusal naming what is missing rather than a TypeError. */
-  const dom = (): Dom => {
-    if (opts.dom === undefined) deny("the page");
-    return opts.dom as Dom;
-  };
 
   /** A length-prefixed string followed by the rest, which is how two strings cross. */
-  const twoStrings = (p: Uint8Array): [string, string] => {
-    const n = readI32le(p);
-    return [unstr(p.subarray(4, 4 + n)), unstr(p.subarray(4 + n))];
-  };
 
   // A program running inside this one. Both path walkers above go through `kids.path`, so a
   // child's relative paths resolve from where the shell put it; with nothing pushed it is the
@@ -562,74 +496,6 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     // A timer, which is what makes a timeout expressible: waited on beside another ticket,
     // whichever lands first decides. Resolves to the monotonic nanoseconds at which it fired
     // rather than to nothing, so a caller can see the overshoot.
-    // ── The page ──────────────────────────────────────────────────────────────
-    // Refused rather than ignored when no `dom` was given: an application that thinks it has
-    // drawn something and has not is worse off than one told it cannot draw.
-    [OP.RENDER]: (p) => { dom().render(unstr(p)); return EMPTY; },
-    [OP.SET_TEXT]: (p) => { const [a, b] = twoStrings(p); dom().setText(a, b); return EMPTY; },
-    [OP.SET_VALUE]: (p) => { const [a, b] = twoStrings(p); dom().setValue(a, b); return EMPTY; },
-    // A position, without rebuilding the document — see `setStyle` in platform.wac.
-    [OP.SET_STYLE]: (p) => { const [a, b] = twoStrings(p); dom().setStyle(a, b); return EMPTY; },
-    [OP.GET_VALUE]: (p) => str(dom().value(unstr(p))),
-    [OP.ON]: (p) => { const [a, b] = twoStrings(p); dom().on(a, b); return EMPTY; },
-    [OP.TITLE]: (p) => { dom().title(unstr(p)); return EMPTY; },
-    [OP.NEXT_EVENT]: async () => {
-      const e = await dom().next();
-      // NUL-separated fields, in the order `Event` declares them. None can contain a NUL: two
-      // are an id and an event kind, one is an input's value, and two are numbers.
-      return str(`${e.kind}\u0000${e.id}\u0000${e.value}\u0000${e.x}\u0000${e.y}`);
-    },
-    [OP.DRAW_PIXELS]: (p) => {
-      const w = readI32le(p);
-      const h = readI32le(p.subarray(4));
-      const n = readI32le(p.subarray(8));
-      const id = unstr(p.subarray(12, 12 + n));
-      const rgba = p.subarray(12 + n);
-      // Checked here rather than trusted: a short buffer would otherwise be a confusing
-      // DOMException from `putImageData`, several layers from the wac that got it wrong.
-      if (rgba.length !== w * h * 4) {
-        throw new Error(`drawPixels: ${w}x${h} needs ${w * h * 4} bytes, got ${rgba.length}`);
-      }
-      dom().drawPixels(id, w, h, rgba);
-      return EMPTY;
-    },
-    [OP.DRAW_PIXELS_IN]: (p) => {
-      const x = readI32le(p);
-      const y = readI32le(p.subarray(4));
-      const w = readI32le(p.subarray(8));
-      const h = readI32le(p.subarray(12));
-      const n = readI32le(p.subarray(16));
-      const id = unstr(p.subarray(20, 20 + n));
-      const rgba = p.subarray(20 + n);
-      // The same check `DRAW_PIXELS` makes, and for the same reason: a short buffer is otherwise a
-      // DOMException from `putImageData`, several layers from the wac that got the arithmetic wrong.
-      if (rgba.length !== w * h * 4) {
-        throw new Error(`drawPixelsIn: ${w}x${h} needs ${w * h * 4} bytes, got ${rgba.length}`);
-      }
-      dom().drawPixelsIn(id, x, y, w, h, rgba);
-      return EMPTY;
-    },
-    [OP.NEXT_FILE]: async () => {
-      const f = await dom().nextFile();
-      // A flag, the name length-prefixed, then the bytes — the name can hold anything but a
-      // NUL, and so can an error message, so neither can be a separator here.
-      const name = str(f.name);
-      const err = str(f.error);
-      const out = new Uint8Array(1 + 4 + name.length + 4 + err.length + f.bytes.length);
-      out[0] = f.ok ? 1 : 0;
-      out.set(i32le(name.length), 1);
-      out.set(name, 5);
-      out.set(i32le(err.length), 5 + name.length);
-      out.set(err, 9 + name.length);
-      out.set(f.bytes, 9 + name.length + err.length);
-      return out;
-    },
-    [OP.OFFER_DOWNLOAD]: (p) => {
-      const n = readI32le(p);
-      dom().offerDownload(unstr(p.subarray(4, 4 + n)), p.subarray(4 + n));
-      return EMPTY;
-    },
-
     // A page has no process directory. The root of the Origin Private File System is where its
     // relative paths land, so that is the true answer and not a placeholder.
     [OP.CWD]: () => str(opts.cwd !== undefined && opts.cwd !== "" ? opts.cwd : "/"),
@@ -726,10 +592,8 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
      * is the whole reason that function takes its world and its worker as arguments. What differs
      * between the two hosts is which world a child gets, and that is one expression.
      *
-     * **A child gets no page.** Its `log`, `warn`, `write` and `writeErr` go to the parent through
-     * the handle, its reads come from what the parent sends, and `dom` is deliberately absent: a
-     * child that could draw would be drawing over the program that started it, and a handle is not
-     * a place to put a canvas.
+     * Its `log`, `warn`, `write` and `writeErr` go to the parent through the handle, and its reads
+     * come from what the parent sends.
      */
     [OP.SPAWN]: (p) => {
       // **`inheritOut` is decoded and not honoured here, deliberately.** A page has no descriptors

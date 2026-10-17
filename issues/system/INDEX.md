@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0363a](open/0363a-core-askinterrupt-has-no-host-left-that-can-answer-yes.md) | `Core.askInterrupt` has no host left that can answer yes: std's `Page` on the browser worker host was the one, and it is gone; a `packages/web` terminal interrupts its shell through `Shell.askInterrupt`. Whether the capability goes from every host | missing feature | not implemented |
 | [0362a](open/0362a-an-applet-in-wac-sh-says-nothing-until-it-exits.md) | An applet run by `wac sh` says nothing until it exits: its `Core` writes to the frame, which delivers when the frame ends, so `wac sh -c 'httpd -8080 dist'` serves without ever saying it is listening — `templates/webapp`'s `serve` task is that command | bug | output of a long-running applet never appears |
 | [0361a](closed/0361a-nativeshare-says-a-pure-wrapper-is-not-taken-natively.md) | `tools/mutate/nativeShare.test.ts`'s *a pure wrapper is actually taken natively* fails on `origin/master` with that commit's binary: either the binary is not where `buildProfile` looks or the file stopped qualifying, and which was not checked | bug | wrong answer |
 | [0360a](closed/0360a-the-strip-differential-disagrees-with-tsc-on-a-parameter-property.md) | `packages/ts/test/stripDifferential.test.ts` fails on `packages/platform/host/provider.ts`: `WacExit`'s `constructor(readonly code: number)` is a parameter property, and `tsc` writes a field declaration (`code;`) where the wac stripper goes straight to the constructor. Fails on `origin/master` too | bug | wrong answer |
@@ -126,7 +127,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-341 issues, 244 closed.
+342 issues, 244 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on

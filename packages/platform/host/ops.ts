@@ -35,16 +35,10 @@ export const OP = {
   EXIT_CODE: 28,
   CLOSE_FEED: 29,
   SLEEP_MILLIS: 30,
-  RENDER: 31,
-  SET_TEXT: 32,
-  SET_VALUE: 33,
-  GET_VALUE: 34,
-  ON: 35,
-  NEXT_EVENT: 36,
-  TITLE: 37,
-  DRAW_PIXELS: 38,
-  NEXT_FILE: 39,
-  OFFER_DOWNLOAD: 40,
+  // 31–40 were std's `Page` — render, text, values, events, title, pixels, files, downloads — and
+  // 51 and 56 its style and partial blit. Retired rather than reused: a page is `packages/web`'s
+  // `main(Page)` now, which talks to the document by messages and needs no bridge
+  // (design/system/0011 step 7).
   CWD: 41,
   PUSH_CHILD: 42,
   POP_CHILD: 43,
@@ -61,7 +55,6 @@ export const OP = {
    * every opcode, and that is the point rather than the cost — see the note in `provider.ts`.
    */
   ASK_INTERRUPT: 50,
-  SET_STYLE: 51,
   /**
    * "Make this file executable, or stop it being" — see `Cli.setExecutable` in `platform.wac`.
    *
@@ -78,8 +71,6 @@ export const OP = {
   BIND_DATAGRAM: 53,
   RECEIVE_FROM: 54,
   SEND_TO: 55,
-  /** A partial canvas blit — `design/system/0004` D1. `DRAW_PIXELS` sizes; this one does not. */
-  DRAW_PIXELS_IN: 56,
   /**
    * End a socket's outbound direction and keep reading — `issues/system/0215`.
    *

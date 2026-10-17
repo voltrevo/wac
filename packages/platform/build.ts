@@ -238,40 +238,6 @@ const PAGE_CLI = `<!doctype html>
 `;
 
 /**
- * The page for an interactive application — one that exports \`page\`.
- *
- * Bare on purpose. The chrome above is furniture for a harness, and on an application it was
- * worse than noise: every one of them opened with its own filename as a heading and a sentence
- * about a query string it never reads. An interactive program owns the document, so it gets an
- * empty one, and \`render\` may bring its own \`<style>\` — innerHTML applies it.
- *
- * The log stays, because \`core.log\` has to go somewhere and a program that warns before it
- * draws would otherwise do so invisibly. It is empty until something is written to it.
- */
-const PAGE_APP = `<!doctype html>
-<meta charset="utf-8">
-<title>%TITLE%</title>
-<style>
-  :root { color-scheme: light dark; }
-  body {
-    margin: 0; padding: 0;
-    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    background: Canvas; color: CanvasText;
-  }
-  #out { margin: 0; padding: 0 1rem; white-space: pre-wrap; word-break: break-word;
-         font: 13px/1.5 ui-monospace, monospace; }
-  #out:empty { display: none; }
-  .warn { color: #b00; }
-  .meta { opacity: 0.6; }
-</style>
-<div id="app"></div>
-<pre id="out"></pre>
-<script type="module">
-%LAUNCHER%
-</script>
-`;
-
-/**
  * The cache key for a built application, or null when it cannot be computed.
  *
  * `host/` is in the key because the bundle *is* that code: a fix to `deno.ts` changes every built
@@ -557,7 +523,6 @@ async function produceApp(
   let wasm: Uint8Array;
   let glue: string;
   let covLines: string[];
-  let exportNames: string[];
   // **One compiler.** `WAC_APP_FROM=reference` chose the TypeScript one here until 2026-08-28, as a
   // differential: build the same application both ways and compare. That compiler is gone, and a
   // switch with one position is not a switch.
@@ -569,7 +534,6 @@ async function produceApp(
       base,
     });
     ({ wasm, glue, covLines } = a);
-    exportNames = a.exports;
   }
 
   // **A path that is a function of what is being built**, so Deno's transpile cache — keyed on the
@@ -718,7 +682,7 @@ async function produceApp(
     const launcher = target === "browser"
       ? await bundle(
         "launcher",
-        `import { argsFromLocation, pageDom, runInPage } from "${browserRuntime}";\n` +
+        `import { argsFromLocation, runInPage } from "${browserRuntime}";\n` +
           `const out = document.getElementById("out");\n` +
           `const line = (t, cls) => {\n` +
           `  const s = document.createElement("span");\n` +
@@ -745,17 +709,6 @@ async function produceApp(
           `    write: raw,\n` +
           `    root,\n` +
           `    writable: ${grants.write === true},\n` +
-          // The page itself. Always offered: unlike the filesystem or the network, a page is
-          // not authority over anything the user has not already given by opening it, and the
-          // application only reaches it if it exported `page` to begin with.
-          `    dom: pageDom(document.getElementById("app"), document, (name, bytes) => {\n` +
-          `      const url = URL.createObjectURL(new Blob([bytes]));\n` +
-          `      const a = document.createElement("a");\n` +
-          `      a.href = url; a.download = name; a.click();\n` +
-          // Revoked on a turn of the event loop rather than at once: revoking
-          // synchronously after click() races the download and yields an empty file.
-          `      setTimeout(() => URL.revokeObjectURL(url), 10000);\n` +
-          `    }),\n` +
           `  });\n` +
           `  line("[exit " + code + "]", "meta");\n` +
           `} catch (e) {\n` +
@@ -798,13 +751,10 @@ async function produceApp(
       );
 
     if (target === "browser") {
-      // A page, not an executable.
+      // A program with a `Cli`, run in a page that shows its output. An interactive page is
+      // `packages/web`'s `main(Page)`, built by `packages/web/tools/build.wac`.
       const title = entry.split("/").pop() ?? "wac";
-      // Which document depends on which entry point the module has. The compiler already told
-      // us: a `page` export is an interactive application and gets the bare one.
-      const interactive = exportNames.includes("page");
-      const template = interactive ? PAGE_APP : PAGE_CLI;
-      return template.replaceAll("%TITLE%", title).replace("%LAUNCHER%", launcher);
+      return PAGE_CLI.replaceAll("%TITLE%", title).replace("%LAUNCHER%", launcher);
     }
     return shebangFor(grants, target, coverage) + launcher;
   } finally {

@@ -266,7 +266,7 @@ export string test_clis_fields_and_the_providers_arguments_are_in_the_same_order
   string wac = sourceOf(cli, "std/platform.wac");
   string prov = sourceOf(cli, "packages/platform/host/provider.ts");
 
-  string[] structs = ["Cli", "Core", "Page"];
+  string[] structs = ["Cli", "Core"];
   for (i32 i = 0; i < structs.len(); i++) {
     string[] declared = wacOrder(wac, structs[i]);
     string[] passed = providerOrder(t, prov, structs[i]);
@@ -274,7 +274,7 @@ export string test_clis_fields_and_the_providers_arguments_are_in_the_same_order
             structs[i] + " is built positionally and the two orders disagree. platform.wac: " +
             joined(declared, ", ") + " | provider.ts: " + joined(passed, ", "));
     // A guard against the parser silently finding nothing and the comparison passing on two empty
-    // lists. Core has six capabilities, Page seven, Cli twenty-five.
+    // lists. Core has six capabilities and Cli twenty-five.
     t.isTrue(declared.len() >= 5,
              "only \{declared.len()} parsed for \{structs[i]}");
   }

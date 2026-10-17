@@ -417,8 +417,8 @@ Cover? entryFor(Cover[] all, string op) {
 export string test_the_readmes_capability_table_lists_every_capability_there_is(Core core, Cli cli) {
   // The table in `packages/platform/README.md` is the first thing a person reads to find out what a
   // program may ask for, and it is the kind of list that goes quietly short: three capabilities had
-  // been added to `platform.wac` without it — `Core.askInterrupt`, `Cli.spawnSelf` and `Page.setStyle`
-  // — each by a different piece of work, none of which was looking at a README.
+  // been added to `platform.wac` without it — `Core.askInterrupt`, `Cli.spawnSelf` and the since-deleted
+  // `Page.setStyle` — each by a different piece of work, none of which was looking at a README.
   //
   // `tools/wac/docsignatures_test.wac` checks that every name a README *quotes* exists. This is the other
   // direction, which nothing had: that every name that exists is quoted. A reader cannot tell a
@@ -431,7 +431,7 @@ export string test_the_readmes_capability_table_lists_every_capability_there_is(
   i32 span = src.slice(from, src.len()).indexOf("\n\n");
   string table = src.slice(from, span < 0 ? src.len() : from + span);
 
-  string[] structs = ["Core", "Cli", "Page"];
+  string[] structs = ["Core", "Cli"];
   for (i32 s = 0; s < structs.len(); s++) {
     string[] declared = declaredFields(cli, structs[s]);
     string missing = "";
@@ -452,9 +452,8 @@ export string test_every_capability_the_language_declares_the_host_with_no_js_su
   // without it. That makes "is anything in the JavaScript hosts load-bearing that the wasm side cannot
   // supply?" a question with a definite answer, and this is it: for `Cli` and `Core`, nothing.
   //
-  // The two known exceptions are behavioural rather than structural and are covered elsewhere: `spawn`
-  // of a *foreign* program answers -1 with a reason on the native host (see `SPAWN` above), and `Page`
-  // does not exist there at all — which is the next assertion rather than a hole.
+  // The known exception is behavioural rather than structural and is covered elsewhere: `spawn` of a
+  // *foreign* program answers -1 with a reason on the native host (see `SPAWN` above).
   T t = T.create();
   string[] caps = nativeCapabilities(cli);
   t.isTrue(caps.len() >= 30,
@@ -477,18 +476,6 @@ export string test_every_capability_the_language_declares_the_host_with_no_js_su
             "traps with \"not implemented in the native runtime yet\" rather than getting an answer");
   }
 
-  // And `Page` is the whole of what it cannot supply — stated as an equality rather than "some are
-  // missing", so a capability *moved* onto `Page` to dodge the check above would fail here instead.
-  string[] page = declaredFields(cli, "Page");
-  string wired = "";
-  for (i32 i = 0; i < page.len(); i++) {
-    if (has(caps, page[i])) { wired = wired + (wired == "" ? "" : " ") + page[i]; }
-  }
-  t.eqStr(wired, "",
-          "a `Page` field has a native arm, which means either the host grew a page or the struct " +
-          "grew a field that is not about one");
-  t.eqI32(page.len(), 12,
-          "Page declares \{page.len()} fields; the ledger's page-only list has 12");
   return t.report();
 }
 
@@ -511,25 +498,21 @@ export string test_every_opcode_on_the_two_host_surface_is_accounted_for(Core co
   t.isTrue(ops.len() >= 38, "only \{ops.len()} opcodes found — has the extraction broken?");
 
   string[] shared = sharedOpcodes(cli, ops, caps);
-  string[] pageOnly = string[].filled(ops.len() - shared.len(), "");
+  string[] jsOnly = string[].filled(ops.len() - shared.len(), "");
   i32 p = 0;
   for (i32 i = 0; i < ops.len(); i++) {
-    if (!has(caps, camel(ops[i]))) { pageOnly[p] = ops[i]; p = p + 1; }
+    if (!has(caps, camel(ops[i]))) { jsOnly[p] = ops[i]; p = p + 1; }
   }
 
   // The derivation itself, asserted: a mapping that silently stopped matching would report the whole
-  // surface as page-only and this file would have nothing to say while looking complete.
+  // surface as JavaScript-only and this file would have nothing to say while looking complete.
   t.isTrue(shared.len() >= 35,
            "only \{shared.len()} shared opcodes — has the mapping broken?");
-  // Pinned rather than derived, on purpose and against this file's own grain: a capability the native
-  // host *dropped* would arrive here looking exactly like a page-only one, so this is the assertion
-  // that has to be a written-down expectation. It was wrong when first typed — `GET_VALUE` was
-  // missed — which is the argument for pinning it against a measured set rather than a remembered
-  // one, and for the count check above catching the coarse version of the same mistake.
-  t.eqStr(joined(sorted(pageOnly), " "),
-          "DRAW_PIXELS DRAW_PIXELS_IN GET_VALUE NEXT_EVENT NEXT_FILE OFFER_DOWNLOAD ON RENDER " +
-          "SET_STYLE SET_TEXT SET_VALUE TITLE",
-          "the page-only set moved; a capability the native host dropped would look like one");
+  // **Empty, written down.** Every opcode the JavaScript hosts answer has a native arm: the twelve
+  // that did not were std's `Page`, deleted in design/system/0011 step 7. A capability the native
+  // host *dropped* would arrive here, so this stays a written expectation rather than a derived one.
+  t.eqStr(joined(sorted(jsOnly), " "), "",
+          "an opcode with no native arm — a capability the native host dropped, or one only JavaScript has");
 
   Cover[] all = coverage();
   string unlisted = "";

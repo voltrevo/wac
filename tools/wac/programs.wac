@@ -122,10 +122,6 @@ export Program[] findPrograms(Cli cli) {
         out[n] = Program(rel, isWebPage(src) ? KIND_PAGE : KIND_CLI, pkg, blurb);
         n = n + 1;
       }
-      if (exportsEntry(src, "page")) {
-        out[n] = Program(rel, KIND_PAGE, pkg, blurb);
-        n = n + 1;
-      }
     }
   }
   Program[] exact = Program[].filled(n, Program("", 0, "", ""));

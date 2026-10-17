@@ -3,7 +3,7 @@
 A wac program is a function that takes the world as parameters. There is no `extern`, no
 declaration form, no way to write the name of a function that lives outside the program — so the
 only host code a module can call is a value someone handed it, and a whole application is
-`main(Core core, Cli cli)` or `page(Core core, Cli cli, Page page)`.
+`main(Sys sys)`, or `main(Page page)` for a [`packages/web`](../../web/README.md) page.
 
 Everything here is one `.wac` file with no TypeScript beside it. If you followed a link here from a
 page on the website, the file you can build below is byte for byte the file you were looking at.
@@ -31,27 +31,19 @@ head -1 wc      # #!/usr/bin/env -S deno run --allow-read
 A program given no grants has no capability to read a file, and a module that takes no `fn<…>`
 parameter has no wasm imports at all — not "none that it uses", none in the binary.
 
-### The two that build for a browser
+### The pages
 
-`counter.wac` and `pixels.wac` export `page` instead of `main`, and want `--target browser`:
-
-```sh
-wac task app:build packages/platform/example/pixels.wac --target browser -o page/index.html
-```
-
-That writes a single HTML file. Serve it — `file://` will not do, because a page needs an origin
-before it may have a worker — and serve it *cross-origin isolated*, because the program parks on
-`Atomics.wait` while the page answers its calls and a browser only gives a `SharedArrayBuffer` to
-an isolated page. `box`'s web server does it with `-x`:
+`counter.wac`, `pixels.wac`, `life.wac`, `ripple.wac`, `notes.wac` and `procs.wac` are
+[`packages/web`](../../web/README.md) pages — `main(Page page)` — built by its builder:
 
 ```sh
-wac task app:build packages/box/src/main.wac --allow-read --allow-net -o box
-./box httpd -8080 page -x        # -x adds COOP and COEP
+wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+    packages/platform/example/pixels.wac .cache/pixels --page ./packages/web
 ```
 
-Any server sending `Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: require-corp` will do. `SharedArrayBuffer is not defined` means
-those two headers and nothing else.
+That writes one HTML file with the program inside it. Serve it from anywhere — it needs no
+particular headers, because nothing in it shares memory — though not from `file://`, which gives a
+page no origin to start a worker under.
 
 ## pixels.wac
 
@@ -59,19 +51,15 @@ A Mandelbrot set: 38400 pixels, each an iteration loop, all of it fixed-point `i
 from scratch on every zoom while the page stays responsive. Click the picture to centre there and
 halve the view; the escape count under the pointer is displayed as you move.
 
-```sh
-wac task app:build packages/platform/example/pixels.wac --target browser -o page/index.html
-```
-
 No grants — it reads nothing and opens nothing. Three capabilities carry the whole application:
 
 - `drawPixels` blits a buffer wac filled. A drawing API would have made this the slow way to do
   it; one call with 38400 finished pixels is the fast way.
 - `Event.x` / `Event.y` say where in *that buffer* the pointer is, scaled from the element by the
-  host. Without them the only zoom possible is the middle of the picture, which is the least
+  document's side. Without them the only zoom possible is the middle of the picture, which is the least
   interesting part of any fractal — and the escape count on screen is what proves the scaling,
   since an off-by-a-scroll shows up there at once.
-- `offerDownload` hands the frame back as a [PPM](https://netpbm.sourceforge.net/doc/ppm.html) —
+- `download` hands the frame back as a [PPM](https://netpbm.sourceforge.net/doc/ppm.html) —
   a format whose entire header is three lines of ASCII, so the file is written by the same
   fixed-point loop that drew the screen.
 

@@ -574,64 +574,7 @@ export struct FileResult {
   }
 }
 
-/**
- * Something the user did.
- *
- * `id` is the `id` attribute of the element it happened on, and empty when it has none —
- * which is why the examples give ids to everything they care about. Matching on ids rather
- * than handing back an element reference keeps the boundary to strings: an element is a live
- * object on the other side of a thread, and a handle to one would have to be freed.
- *
- * `value` carries whatever the event's kind makes useful — an input's text for `input` and
- * `change`, the key's name for `keydown`, and empty otherwise. One field rather than a union
- * because the alternative is four structs to say the same thing.
- */
-export struct Event {
-  /** "click", "input", "change", "keydown", "submit", "pointermove", "pointerdown", "drop". */
-  string kind;
-  string id;
-  /**
-   * What happened, in the kind's own terms — and for `keydown` that is **the bytes a terminal sends**.
-   *
-   * `Ctrl-C` is 0x03, Backspace is 0x7f (DEL, which is what the key sends; 0x08 is `Ctrl-H` and the
-   * kernel does not treat it as erase), Enter is CR, an arrow is `ESC [ A`, and a key that puts
-   * nothing on the wire — `Shift`, `Control`, `F1` — is the empty string.
-   *
-   * It used to be the browser's `ev.key`: the strings "a", "Enter", "ArrowUp", "Control". That is a
-   * vocabulary nothing else in this system speaks. `packages/tty`'s line discipline consumes bytes,
-   * because a terminal is a byte stream, so a page built on key names could not reach it — and
-   * design/0001 step 5 wants one discipline for the ssh channel and the browser's keydown loop both.
-   * Translating at the edge, in `host/entryBrowser.ts`, is what lets everything above it be bytes.
-   *
-   * For every other kind this is the element's `value`, unchanged.
-   */
-  string value;
-  /**
-   * Where in the element it happened, in its own pixels. Zero for anything not pointer-shaped.
-   *
-   * The element's own coordinates rather than the page's, because the caller of `drawPixels`
-   * thinks in the buffer it drew and would otherwise have to subtract a position it has no way
-   * to ask for.
-   *
-   * For a `<canvas>` that means the *backing store*, not the CSS box: one drawn 480 wide and
-   * shown at `width: 100%` reports 0..479 whatever the window is doing. Anything else would make
-   * click-to-zoom land near the click at one window size and visibly wrong at every other.
-   */
-  i32 x;
-  i32 y;
 
-  Event of(string kind, string id, string value, i32 x, i32 y) {
-    return Event(kind, id, value, x, y);
-  }
-}
-
-/**
- * A file the user handed over, by picking it or dropping it.
- *
- * Separate from `FileResult` because a file that arrived this way has a *name* the application
- * did not choose and usually wants — to echo it, to derive an output name from it, or to decide
- * what it is.
- */
 /**
  * What a child program wrote, once it has finished.
  *
@@ -670,158 +613,7 @@ export struct Captured {
   Captured of(const u8[] out, const u8[] err, bool truncated) { return Captured(out, err, truncated); }
 }
 
-export struct Picked {
-  bool ok;
-  string name;
-  u8[] bytes;
-  string error;
 
-  Picked of(bool ok, string name, u8[] bytes, string error) {
-    return Picked(ok, name, bytes, error);
-  }
-}
-
-/**
- * A page to draw on and events to answer, for `--target browser`.
- *
- * A third profile beside `Core` and `Cli`, and only a browser provides it: a page capability
- * that pretended to work in a terminal would be a lie, and the whole point of these structs is
- * that reading one tells you what a program can reach.
- *
- * **An interactive application is a loop, not a set of callbacks:**
- *
- * ```wac
- * page.render("<button id=\'go\'>go</button><p id=\'out\'></p>");
- * page.on("#go", "click");
- * while (true) {
- *   Event e = page.nextEvent().wait();
- *   if (e.id == "go") { page.setText("out", "hello"); }
- * }
- * ```
- *
- * That works because an event is just another ticket. `nextEvent` parks the worker exactly as
- * `recv` parks it on a socket, and the page's main thread — which is the *host* — stays free to
- * run the real event loop and queue what arrives. So `waitAny` composes over it: a click or a
- * five-second deadline is `waitAny([e.id], 5000)`, which is the thing callbacks make hard.
- *
- * The operations are coarse for the reason given at the top of this file. `render` replaces the
- * application's whole root in one call, which suits building strings; `setText` and `setValue`
- * are for the targeted updates that would otherwise mean re-rendering to change a word. There
- * is deliberately no `querySelector`-shaped surface: every property poke would be a round trip
- * across a thread boundary, to arrive at an object this side cannot hold.
- */
-export struct Page {
-  /** Replace the application root's markup. The application builds it; nothing escapes it. */
-  fn<Pending<bool>(string)> render;
-  /**
-   * Set an element's *text*, by id.
-   *
-   * Text, not markup: this is `textContent`, so a value that happens to contain `<script>`
-   * lands as those characters. `render` is the one that parses, and the difference is where
-   * every injection bug in a page like this would come from.
-   */
-  fn<Pending<bool>(string, string)> setText;
-  /** Set an input's value, by id. */
-  fn<Pending<bool>(string, string)> setValue;
-  /**
-   * Replace an element's inline style, by id.
-   *
-   * **The third member of `render`/`setText`'s family, and it exists for the same reason.** `render`
-   * rebuilds the document, which is what a window manager does when its *frame* changes; `setText`
-   * writes content into an element that stays. A window being **dragged** changes neither — it
-   * changes a position — and doing that through `render` rebuilds every terminal on the desktop
-   * several times a second, which loses whatever was half-typed in one and costs a document per
-   * pointer move.
-   *
-   * Whole-value, not a property: the caller writes the style it wants, exactly as it would in the
-   * markup it rendered, and the host does not merge. Merging would need a parser here and would make
-   * what the element ends up with depend on what it had before.
-   */
-  fn<Pending<bool>(string, string)> setStyle;
-  /** Read an input's value, by id. Empty if there is no such element. */
-  fn<Pending<string>(string)> getValue;
-  /**
-   * Ask for an event kind on everything matching a CSS selector.
-   *
-   * Delegated from the document, so it keeps working after `render` replaces the elements it
-   * was asked about — which it otherwise would not, and the bug would look like "the second
-   * click does nothing".
-   */
-  fn<Pending<bool>(string, string)> on;
-  /** The next event, waiting for one. */
-  fn<Pending<Event>()> nextEvent;
-  /** The document title. */
-  fn<Pending<bool>(string)> title;
-  /**
-   * Blit a pixel buffer into a `<canvas>`, by id: width, height, then `w * h * 4` bytes of
-   * RGBA. The canvas is resized to match.
-   *
-   * One coarse capability instead of a drawing API, and it is the whole of the raster story on
-   * purpose. A 2D context would be dozens of calls, each a round trip across a thread boundary
-   * to touch an object this side cannot hold; a buffer is one call, and wac is *good* at
-   * filling a buffer. Anything a drawing API would do — lines, text, sprites, a plot, a
-   * fractal, a decoded image — is a loop over bytes here, and that loop is compiled.
-   */
-  fn<Pending<bool>(string, i32, i32, u8[])> drawPixels;
-  /**
-   * Blit a `w` by `h` buffer **into** a canvas at `x`, `y`, without resizing it.
-   *
-   * `design/system/0004`'s D1: a desktop redrawn whole is 4 bytes times width times height across
-   * the bridge every frame — 8 MB at 1920x1080, which is already at the capability's 8 MiB cap
-   * before anything else is in flight. A drag moves one window and a keystroke changes one glyph
-   * cell, so the blit takes the rectangle the caller already knows.
-   *
-   * **Separate from `drawPixels` rather than an argument on it**, because the two differ in more
-   * than a rectangle: `drawPixels` *sizes* the canvas to the buffer, and every page that uses it
-   * relies on that — their markup is `<canvas id="c"></canvas>` with no dimensions, so the backing
-   * store is whatever the last blit made it. A partial blit must not resize, since resizing clears
-   * the canvas and would throw away everything outside the rectangle. Folding both into one call
-   * would mean a rule about when it resizes, and a rule like that is remembered wrongly.
-   *
-   * So: `drawPixels` establishes the canvas, `drawPixelsIn` updates part of it. A caller that has
-   * never sized the canvas gets whatever the element had, which is the browser's default 300x150 —
-   * not an error, because a partial blit into an unsized canvas is a caller's mistake about its own
-   * layout rather than something this layer can diagnose.
-   */
-  fn<Pending<bool>(string, i32, i32, i32, i32, u8[])> drawPixelsIn;
-  /**
-   * The next file the user hands over, waiting for one.
-   *
-   * The user does the handing: a `<input type="file">` in the application's own markup, or a
-   * file dropped anywhere on it. There is deliberately no "open a file dialog" capability,
-   * because a browser will only open one during a real user gesture and by the time a request
-   * has crossed to the worker and back that gesture is over — an `openDialog` would work when
-   * tested by hand and fail in the field, which is the worst kind of capability.
-   */
-  fn<Pending<Picked>()> nextFile;
-  /**
-   * Offer bytes to the user as a download, under a name.
-   *
-   * The counterpart to `nextFile`, and the reason both are needed: a page that can read the
-   * user's file but cannot give one back can only ever be a viewer.
-   */
-  fn<Pending<bool>(string, u8[])> offerDownload;
-
-  Page of(
-    fn<Pending<bool>(string)> render,
-    fn<Pending<bool>(string, string)> setText,
-    fn<Pending<bool>(string, string)> setValue,
-    fn<Pending<bool>(string, string)> setStyle,
-    fn<Pending<string>(string)> getValue,
-    fn<Pending<bool>(string, string)> on,
-    fn<Pending<Event>()> nextEvent,
-    fn<Pending<bool>(string)> title,
-    fn<Pending<bool>(string, i32, i32, u8[])> drawPixels,
-    fn<Pending<bool>(string, i32, i32, i32, i32, u8[])> drawPixelsIn,
-    fn<Pending<Picked>()> nextFile,
-    fn<Pending<bool>(string, u8[])> offerDownload
-  ) {
-    return Page(
-      render, setText, setValue, setStyle, getValue, on, nextEvent, title,
-      drawPixels, drawPixelsIn, nextFile, offerDownload
-    );
-  }
-}
 
 /**
  * What every host can do, synchronously or made to look so.
@@ -933,11 +725,11 @@ export struct Core {
    * executing. An applet is handed `Core`, `Cli`, `Fs` and `Args` and never a `Page` or a `Conn`, so
    * whatever it polls must be one of those four.
    *
-   * **Only a host that owns the keyboard can answer yes.** In a page the keydown listener and the
-   * code that services the bridge are both on the main thread, so while the worker is parked waiting
-   * for this very answer the page is free to have seen the keystroke. Under Deno, Node and wasmtime
-   * the terminal belongs to whatever started the program — over ssh, to `sshd` on the far side of an
-   * encrypted socket — so those answer *no*. That is the true answer where nothing can ask, not a stub.
+   * **Only a host that owns the keyboard can answer yes, and today none does.** Under Deno, Node and
+   * wasmtime the terminal belongs to whatever started the program — over ssh, to `sshd` on the far
+   * side of an encrypted socket — so those answer *no*. The one that answered yes was std's `Page` on
+   * the browser host, which is gone (design/system/0011 step 7); a `packages/web` terminal hands its
+   * shell an interrupt of its own, `Shell.askInterrupt`. `issues/system/0363a` is whether this goes.
    *
    * Reading clears it, so two callers do not both act on one `^C`.
    *

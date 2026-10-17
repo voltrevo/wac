@@ -1,6 +1,6 @@
 # 0011 — programs in a page, without shared memory
 
-- **Status:** active
+- **Status:** done
 - **Raised by:** agent-a, 2026-10-16, on the operator's instruction to move the shell and the desktop onto
   `packages/web` ("Do it. Also make running in a worker the default. In page is now too but should be opt
   in.")
@@ -67,4 +67,4 @@ It is **not** a second shell or a second set of applets for the browser. The sam
 | 4 | done — `Fs` is `async`; a stage serving its parent's filesystem and `packages/sh`'s relays watch tickets with `Ticket.first` |
 | 5 | done — `--spawn`, a child's streams and its parent's filesystem driven in Chromium (`browser_live.test.ts`, `packages/platform/example/procs.wac`); a page also streams a file a stage opens itself (`openInput`) |
 | 6 | done — `term.wac` and `desk.wac` are `packages/web` pages; the command runs as a task beside the keyboard, so `^C` stops it, lines typed meanwhile wait their turn, and the scrollback is bounded; `site/tools/syncDemos.ts` builds every demo with `packages/web` |
-| 7 | not started |
+| 7 | done — std's `Page`, `Event` and `Picked` are gone, with the worker host's page ops, `pageOf`, the `page` entry and its template; `rasterterm.wac` moved to `packages/web` first; `coi-serviceworker.js` is gone from the site. What is left with no host to answer it is `Core.askInterrupt` — `issues/system/0363a` |

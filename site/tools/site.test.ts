@@ -817,10 +817,6 @@ Deno.test("site: no runtime URL is relative to the directory it was written in",
   // was served at `/next/` and wrong once it moved — and nothing else can see that: it typechecks,
   // it builds, and a screenshot of the page it breaks looks like a screenshot of a page.
   //
-  // The one that matters most is `coi-serviceworker.js`. It supplies the cross-origin isolation
-  // `SharedArrayBuffer` needs, so losing it does not break a link — it turns every demo on the
-  // site into an error message about headers.
-  //
   // Module specifiers are exempt: `../snippets` is resolved by the bundler and has nothing to do
   // with where a page is served. What is checked is strings naming a file a browser will fetch.
   const dir = new URL("../src/next/", import.meta.url).pathname;
