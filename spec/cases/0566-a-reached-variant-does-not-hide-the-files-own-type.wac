@@ -1,0 +1,15 @@
+// expect: f() = 5
+// spec: §wac-type-name-scope-8vqk3mn
+// why: an enum reached through an imported struct brings its variants into scope as names nobody may write, and a variant `Host` of `lib.wac`'s private `Backing` hid `main.wac`'s own `struct Host` — "unknown type 'Host'" on a type declared four lines up
+// ---- lib.wac ----
+enum Backing { Host(i32 c), Mem }
+export struct Fs { Backing b; i32 n; }
+export Fs make() { return Fs(Backing.Mem, 2); }
+// ---- main.wac ----
+import { Fs, make } from "./lib.wac";
+export struct Host { i32 x; }
+export i32 f() {
+  Host h = Host(3);
+  Fs fs = make();
+  return h.x + fs.n;
+}

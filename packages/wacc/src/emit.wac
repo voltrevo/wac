@@ -5948,11 +5948,19 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
     Merged mg = mergedTreeOf(progs);
     env.mergedDecls = mg.decls;
     env.mergedFiles = mg.files;
+    // **A field's type found while the table is still partial is a guess, and so is any ambiguity it
+    // finds.** Every one is resolved again by `resolveStructRefs` once every file is declared; an
+    // ambiguity marked on the way — `Url.host`'s `Host`, looked up before `host.wac` was walked, met
+    // two other files' `Host`s — declined the whole module although the second answer was exact.
+    bool wasAmbiguous = env.ambiguous;
+    string wasAmbiguousName = env.ambiguousName;
     for (i32 i = 0; i < progs.len(); i++) {
       if (progs[i] is null) { continue; }
       env.curFile = i;
       declareStructs(env, srcs[i], lexeds[i]!, progs[i]!, i);
     }
+    env.ambiguous = wasAmbiguous;
+    env.ambiguousName = wasAmbiguousName;
     env.curFile = 0 - 1;
     resolveStructRefs(env, src, lexed, srcs, lexeds);
     for (i32 i = 0; i < progs.len(); i++) {

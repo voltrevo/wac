@@ -1,0 +1,39 @@
+// expect: f() = 86
+// spec: §wac-generic-instantiation-identity-6pnq4wj
+// why: a field's type is looked up while the declaration table is still partial and again once every file is declared — `Url.host`'s `Host`, met before `host.wac` was walked, found `main.wac`'s `Host` and `fs.wac`'s variant, and that guess marked the module ambiguous for good although the second lookup was exact
+// ---- host.wac ----
+export enum Host { Named(u8[] name), Other }
+export struct HostResult { Host? host; bool ok; }
+export HostResult parseHost(u8[] b) { return HostResult(Host.Named(b), true); }
+// ---- url.wac ----
+import { Host, HostResult, parseHost } from "./host.wac";
+export struct Url { Host? host; i32 port; }
+export Url? parseUrl(u8[] raw) {
+  HostResult hr = parseHost(raw);
+  Host? chosen = hr.host;
+  return Url(chosen, 80);
+}
+export i32 hostLen(Url u) {
+  match (u.host!) { Named(n): { return n.len(); } Other: { return 0; } }
+  return 0;
+}
+// ---- routes.wac ----
+import { Url, parseUrl, hostLen } from "./url.wac";
+export i32 route(u8[] target) {
+  Url? parsed = parseUrl(target);
+  Url u = parsed!;
+  return hostLen(u) + u.port;
+}
+// ---- fs.wac ----
+export enum Backing { Host(i32 c), Mem }
+export struct Fs { Backing b; i32 n; }
+export Fs make() { return Fs(Backing.Mem, 2); }
+// ---- main.wac ----
+import { route } from "./routes.wac";
+import { Fs, make } from "./fs.wac";
+export struct Host { i32 x; }
+export i32 f() {
+  Host h = Host(1);
+  Fs fs = make();
+  return h.x + fs.n + route("abc".toBytes());
+}
