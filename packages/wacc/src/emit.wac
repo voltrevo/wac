@@ -783,14 +783,17 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
       // file that writes the call.** Both are in play in one iteration, which is why this cannot use
       // the walk preamble the pass-level loops use: only the name comparison moves.
       Decl[] gd = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
+      i32 named = genericFuncFor(env, raw, env.curFile);
       for (i32 d = 0; d < gd.len(); d++) {
+        if (named >= 0 && d != named) { continue; }
         u8[] gs = srcFor(env.fileSrcs, src, env.declFile(d));
         Lexed gl = lexFor(env.fileLexeds, lexed, env.declFile(d));
         match (gd[d].kind) {
           Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
             if (typeParams.len() != targs.len()) { continue; }
             if (tokenTextOf(gs, gl, nameTok) != raw) { continue; }
-            string inst = raw + "<";
+            string key = genericFuncKey(env, d, raw);
+            string inst = key + "<";
             for (i32 i = 0; i < targs.len(); i++) {
               string a = env.canonType(typeOfTyName(env, src, lexed, targs[i]));
               if (a == "") { return ""; }
@@ -798,7 +801,7 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
               inst = inst + a;
             }
             inst = inst + ">";
-            env.instantiate(inst, raw);
+            env.instantiate(inst, key);
             return inst;
           }
           default: { }
@@ -823,13 +826,16 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
   Program pg = env.prog!;
   // The name and the parameter types belong to the declaring file; the arguments to this one.
   Decl[] cd = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
+  i32 named = genericFuncFor(env, raw, env.curFile);
   for (i32 d = 0; d < cd.len(); d++) {
+    if (named >= 0 && d != named) { continue; }
     u8[] cs = srcFor(env.fileSrcs, src, env.declFile(d));
     Lexed cl = lexFor(env.fileLexeds, lexed, env.declFile(d));
     match (cd[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(cs, cl, nameTok) != raw) { continue; }
+        string key = genericFuncKey(env, d, raw);
         if (params.len() != args.len()) { return ""; }
         string[] bound = string[].defaulted(typeParams.len());
         for (i32 i = 0; i < args.len(); i++) {
@@ -878,7 +884,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
             for (i32 j = 0; j < bound.len(); j++) { if (bound[j] == "" && fromNum[j] != "") { bound[j] = fromNum[j]; } }
           }
         }
-        string inst = raw + "<";
+        string inst = key + "<";
         for (i32 i = 0; i < bound.len(); i++) {
           // A parameter no argument mentions cannot be inferred, and guessing would compile a
           // different function from the one that was called.
@@ -908,7 +914,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
         // order is the module's numbering and the emission passes iterate the instance list. Doing
         // the registration here instead put a generic function's entry ahead of the methods of an
         // instance discovered before it, and every call after that point reached the wrong index.
-        env.instantiate(inst, raw);
+        env.instantiate(inst, key);
         if (open) { env.wantInsts = env.wantInsts + ";" + numText(env.curFile) + ":" + numText(tok) + "=" + inst + ";"; }
         return inst;
       }
@@ -6424,9 +6430,12 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         // One function per instance, in the same place in the order its registration put it.
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           if (env.funcIndex[countAt] >= 0) { count = count + 1; }
           countAt = countAt + 1;
+          // **The first declaration of that name, and no other**, as registration took — see the
+          // emission walk's note on `ready<T>`.
+          break;
         }
         EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
@@ -6597,11 +6606,12 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       match (pd5[di].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           i32 fpushed2 = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
                                           env.instOf[ii]);
           registerFuncTypes(env, src, lexed, returnType, params, "");
           popSubstitution(env, fpushed2);
+          break;
         }
         EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
@@ -7023,8 +7033,15 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         // happened to infer the same one would collide on it.
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
-          if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
+          if (genericFuncKey(env, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          // **The first declaration of that name, and no other.** A function instance is named by its
+          // template's bare name, so `ready<Stat>` matched both `platform/frame.wac`'s `ready<T>` and
+          // `web/system.wac`'s. Registration registered one — the first, then `funcAt` said it was
+          // there — and this walk stepped its cursor once per match, so every instance after it read
+          // its neighbour's slot and `Vec<Event>.fold<U>` was emitted with its letter unbound
+          // (`spec/cases/0568`). An instance is keyed by its declaration now (`genericFuncKey`), so
+          // one declaration matches; the `break` keeps that true if a key ever matched two.
+          if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; break; }
           emitAt = emitAt + 1;
           i32 fpushed3 = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
                                           env.instOf[ii]);
@@ -7032,6 +7049,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
                        "", returnType, params, body, "", index, declTypes, nameTok);
           popSubstitution(env, fpushed3);
           index = index + 1;
+          break;
         }
         EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
@@ -13302,6 +13320,7 @@ string[] genericParamTypes(Env env, u8[] src, Lexed lexed, string raw, string in
     match (gd[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() == 0 || tokenTextOf(ds, dl, nameTok) != raw) { continue; }
+        if (inst.indexOf("<") > 0 && genericFuncKey(env, d, raw) != inst.slice(0, inst.indexOf("<"))) { continue; }
         env.curFile = fi;
         i32 pushed = pushSubstitution(env, ds, dl, typeParams, inst, raw);
         string[] out = string[].filled(params.len(), "");
@@ -13332,7 +13351,7 @@ i32 pushInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, string in
       match (w3d[d].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
           env.curFile = w3f;
           return pushed;
@@ -13438,7 +13457,7 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
       match (w5d[d].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
           env.walkCount = 0;
           env.assignedCount = 0;
@@ -17399,7 +17418,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           // with its parameters and return type resolved under the substitution the name carries.
           Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
             if (typeParams.len() == 0) { continue; }
-            if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
+            if (genericFuncKey(env, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[i]) { continue; }
             if (env.funcAt(inst) >= 0) { continue; }
             i32 fpushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
             string[] fpts = string[].defaulted(params.len());
@@ -17625,6 +17644,62 @@ void scanTokenTypes(Env env, u8[] src, Lexed lexed) {
 //
 // Split so a driver can run **each pass across every file** rather than every pass across one file.
 // Wrapping the old function in a loop over files compiles and produces a compiler that traps.
+
+/** A generic function declaration's name, or "" for any other declaration. */
+string genericDeclName(Env env, i32 d) {
+  if (d < 0 || d >= env.mergedDecls.len()) { return ""; }
+  match (env.mergedDecls[d].kind) {
+    Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+      if (typeParams.len() == 0) { return ""; }
+      i32 f = env.declFile(d);
+      if (f < 0 || f >= env.fileSrcs.len() || f >= env.fileLexeds.len()) { return ""; }
+      Lexed? lx = env.fileLexeds[f];
+      if (lx is null) { return ""; }
+      return tokenTextOf(env.fileSrcs[f], lx!, nameTok);
+    }
+    default: { return ""; }
+  }
+}
+
+/**
+ * The name a generic function's instances carry: its own, or `name@file` when another file declares
+ * a generic function of that name too.
+ *
+ * **An instance names one declaration.** It was named by the bare name, so `ready<Stat>` belonged to
+ * `platform/frame.wac`'s `ready<T>` and to `web/system.wac`'s at once: registration compiled the first
+ * one's body for every call, and the walks that count and emit stepped once per match, so every
+ * function after it took its neighbour's index (`spec/cases/0568`). `text` is the name as written,
+ * which is the answer for a program of one file.
+ */
+string genericFuncKey(Env env, i32 d, string text) {
+  if (env.mergedDecls.len() == 0) { return text; }
+  i32 f = env.declFile(d);
+  for (i32 e = 0; e < env.mergedDecls.len(); e++) {
+    if (e == d || env.declFile(e) == f) { continue; }
+    if (genericDeclName(env, e) == text) { return text + "@" + numText(f); }
+  }
+  return text;
+}
+
+/**
+ * Which generic function `raw` a call in file `f` names — its own file's, then the one its imports
+ * name, then the first — or -1 for a program of one file, where there is only one.
+ */
+i32 genericFuncFor(Env env, string raw, i32 f) {
+  if (env.mergedDecls.len() == 0) { return 0 - 1; }
+  i32 first = 0 - 1;
+  i32 imported = 0 - 1;
+  for (i32 d = 0; d < env.mergedDecls.len(); d++) {
+    if (genericDeclName(env, d) != raw) { continue; }
+    i32 df = env.declFile(d);
+    if (df == f) { return d; }
+    if (first < 0) { first = d; }
+    for (i32 e = 0; e < env.importCount; e++) {
+      if (imported < 0 && env.importFrom[e] == f && env.importNames[e] == raw && env.importTo[e] == df) { imported = d; }
+    }
+  }
+  return imported >= 0 ? imported : first;
+}
 
 /** Whether some file of the program declares a struct or an enum called `name`. */
 bool typeNamedAnywhere(Env env, string name) {

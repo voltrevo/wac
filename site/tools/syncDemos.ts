@@ -3,9 +3,8 @@
 //
 //   deno run -A site/tools/syncDemos.ts [repo-root]
 //
-// These are whole applications, not snippets. Most are `packages/web` pages — a wac program in a
-// worker of its own, waiting with `await` — and the shell and the desktop are a wac program on a
-// worker, talking to a capability world on the page's own thread over a `SharedArrayBuffer`. Nothing
+// These are whole applications, not snippets: `packages/web` pages, each a wac program in a worker of its
+// own, waiting with `await`, with no `SharedArrayBuffer` and so no headers to ask a host for. Nothing
 // about them is specific to this site: each file is what its builder produces, which is the point.
 // What you can open on the website is the artifact you would build yourself.
 //
@@ -18,22 +17,17 @@
 // Run this locally to see them: `deno run -A site/tools/syncDemos.ts`, then `npm run dev`.
 // Without it the demo links are still right and simply 404, which is the honest state of a checkout
 // that has not built them.
-//
-// The worker-hosted ones need cross-origin isolation for `SharedArrayBuffer`, which Pages cannot
-// serve — see `public/coi-serviceworker.js`, which is what makes those work there at all.
 
 type Demo = {
   /** Where it lands in `public/`. */
   file: string;
   entry: string;
-  grants: string[];
-  what: string;
   /**
-   * `"web"` for a page built by `packages/web` — `main(Page)`, in a worker of its own, needing no
-   * headers — and absent for one that still runs on `packages/platform`'s worker host because it
-   * needs `Cli`: the shell and the desktop.
+   * What the builder is told beyond the entry: `--grant read,write` for a page handed a `Sys`, and
+   * `--spawn applet` for one that starts copies of itself as processes — the shell and the desktop.
    */
-  kind?: "web";
+  extra: string[];
+  what: string;
 };
 
 // What each demo *is* — its name, its description and where its source lives — belongs to the site
@@ -42,64 +36,58 @@ const DEMOS: Demo[] = [
   {
     file: "shell.html",
     entry: "packages/box/example/term.wac",
-    grants: ["--allow-read", "--allow-write"],
+    extra: ["--grant", "read,write", "--spawn", "applet"],
     what: "packages/sh with a keyboard: pipelines, loops, redirection into a filesystem that survives a reload",
   },
   {
     file: "desk.html",
     entry: "packages/box/example/desk.wac",
-    grants: ["--allow-read", "--allow-write"],
+    extra: ["--grant", "read,write", "--spawn", "applet"],
     what:
       "a window manager written in wac over the same system: the terminal is one window, /proc is " +
       "another, and `cd` in one changes what the files window lists",
   },
   {
     file: "hash.html",
-    kind: "web",
     entry: "packages/box/example/hash.wac",
-    grants: [],
+    extra: [],
     what:
       "SHA-256 and DEFLATE keeping up with your typing, or with a file you drop, from packages/crypto and packages/gzip",
   },
   {
     file: "pixels.html",
-    kind: "web",
     entry: "packages/platform/example/pixels.wac",
-    grants: [],
+    extra: [],
     what: "a Mandelbrot set recomputed on every zoom, with the escape count under the pointer",
   },
   {
     file: "ripple.html",
-    kind: "web",
     entry: "packages/platform/example/ripple.wac",
-    grants: [],
+    extra: [],
     what:
       "the wave equation over 200x150 cells in fixed-point integers — click the water and watch a " +
       "wave reflect off the walls and interfere with itself",
   },
   {
     file: "life.html",
-    kind: "web",
     entry: "packages/platform/example/life.wac",
-    grants: [],
+    extra: [],
     what:
       "Conway's rule, seeded from a file you drop: one bit per cell, so a photograph and a .zip " +
       "behave completely differently",
   },
   {
     file: "gitpack.html",
-    kind: "web",
     entry: "packages/git/example/gitpage.wac",
-    grants: [],
+    extra: [],
     what:
       "a real packfile from your own machine, opened in the tab: the index rebuilt from the pack alone, " +
       "then commits and trees read out of it — no network, because a page has none",
   },
   {
     file: "wacc.html",
-    kind: "web",
     entry: "packages/wacc/example/waccpage.wac",
-    grants: [],
+    extra: [],
     what:
       "the self-hosted compiler, in the tab: wacc — written in wac, compiled to wasm — compiling " +
       "whatever wac you paste, where the playground elsewhere on this site runs the TypeScript one",
@@ -162,7 +150,7 @@ async function buildWebPage(demo: Demo, dest: string): Promise<void> {
   const r = new Deno.Command(wac, {
     args: [
       "run", "--allow-read", "--allow-write", "--allow-run", "packages/web/tools/build.wac",
-      demo.entry, dir, "--page", "./packages/web", "--wac", wac,
+      demo.entry, dir, "--page", "./packages/web", "--wac", wac, ...demo.extra,
     ],
     cwd: mono,
     stdout: "piped",
@@ -178,91 +166,8 @@ async function buildWebPage(demo: Demo, dest: string): Promise<void> {
 
 for (const demo of DEMOS) {
   const dest = `${out}${demo.file}`;
-  if (demo.kind === "web") {
-    console.log(`building ${demo.file} from ${demo.entry}, with packages/web`);
-    await buildWebPage(demo, dest);
-    const size = (await Deno.stat(dest)).size;
-    sizes.push({ file: demo.file, size: `${Math.round(size / 1024)}K` });
-    console.log(`  ${demo.file}: ${Math.round(size / 1024)}K`);
-    continue;
-  }
-  // **The program the task names, not the task.** `wac task app:build` would need the `wac` binary,
-  // and the one place this script has to work is the one place there isn't one: `pages.yml` checks
-  // out a bare tree, installs Deno and Node, and builds nothing native. Since 2026-08-27 that made
-  // the deploy fail on every push — `deno task` no longer resolves, because the registry moved from
-  // `deno.json` to `tasks.json5` and the runner became a subcommand of the binary.
-  //
-  // **Not because bootstrapping one would be expensive — because nothing here wants one.**
-  // `app:build` is `deno run … packages/platform/build.ts`, which compiles through
-  // `harness/waccBuild.ts` — wacc as a wasm module under Deno. No native binary appears anywhere in
-  // that chain, so a step that produced one would be work with no consumer.
-  //
-  // This said the opposite for one commit, and the correction is worth keeping because the numbers
-  // are the other way round. `./bootstrap.sh` builds from nothing, and a fixed-point round is **10
-  // seconds** — the run that produced this checkout's binary converged on *round 1 of at most 4*.
-  // What costs minutes is `cargo build` of the V8 crate, and that is only the `--host v8` and
-  // `--host wasmtime` paths. `--host deno` and `--host nodejs` need neither cargo nor a C++
-  // toolchain, which is exactly the CI case; they are unfinished rather than slow, and the blocker
-  // `bootstrap.sh` states — that `packages/platform/host/` must be plain JavaScript "before it can
-  // go in a single file without a bundler" — is about shipping one file, which CI does not need,
-  // since CI has Deno and Deno runs TypeScript.
-  //
-  // So this spawns the task's *body* directly. It is a duplicate of one line of `tasks.json5` and
-  // `tools/wac/tasknames_test.wac` is what keeps the two in step.
-  const args = [
-    "run",
-    "--allow-read",
-    "--allow-write",
-    "--allow-run",
-    "--allow-env",
-    "packages/platform/build.ts",
-    demo.entry,
-    "--target",
-    "browser",
-    // **Optimised, because these four files are the artefact a stranger downloads.** Everything else
-    // this repository builds sits on a disk; a demo is fetched over a network by whoever opens the
-    // site. `wasm-opt -O3` takes 18–29% off — 281 KB from `term` — and the cost is a second or so
-    // per megabyte at build time, paid once here rather than by every visitor.
-    //
-    // An optimised page is *known to run*: `packages/platform/test/browser_live.test.ts` builds one
-    // with this flag, serves it under real cross-origin isolation and asserts the output matches the
-    // plain build's — with a size check first, so a build that ignored the flag would fail rather
-    // than pass for the wrong reason. `issues/system/0129`, which names this as the cheapest lead.
-    "--optimize",
-    ...demo.grants,
-    "-o",
-    dest,
-  ];
-  console.log(`building ${demo.file} from ${demo.entry}`);
-  const r = new Deno.Command("deno", { args, cwd: mono, stdout: "piped", stderr: "piped" })
-    .outputSync();
-  if (!r.success) {
-    console.error(new TextDecoder().decode(r.stderr).trim().split("\n").slice(-6).join("\n"));
-    Deno.exit(1);
-  }
-  // Each demo needs cross-origin isolation of its own, because a demo is a page somebody links
-  // to. Registered here rather than in the build: `packages/platform`'s template has no business
-  // knowing that this particular host refuses to set headers.
-  //
-  // Found by navigating straight to one, which is what a bookmark or a shared link does. Every
-  // earlier check had visited the landing page first, so the worker was already installed and the
-  // demos worked — the one path nobody tests is the one a stranger takes.
-  const html = await Deno.readTextFile(dest);
-  const marker = '<meta charset="utf-8">';
-  if (!html.includes(marker)) {
-    console.error(`  ${demo.file}: no <meta charset> to anchor the isolation script to`);
-    Deno.exit(1);
-  }
-  await Deno.writeTextFile(
-    dest,
-    html.replace(
-      marker,
-      `${marker}\n<!-- Cross-origin isolation for SharedArrayBuffer, since Pages will not send the\n` +
-        `     headers. Added by tools/syncDemos.ts; see public/coi-serviceworker.js. -->\n` +
-        `<script src="coi-serviceworker.js"></script>`,
-    ),
-  );
-
+  console.log(`building ${demo.file} from ${demo.entry}, with packages/web`);
+  await buildWebPage(demo, dest);
   const size = (await Deno.stat(dest)).size;
   sizes.push({ file: demo.file, size: `${Math.round(size / 1024)}K` });
   console.log(`  ${demo.file}: ${Math.round(size / 1024)}K`);

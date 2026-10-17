@@ -148,9 +148,13 @@ export string relativeTo(string from, string to) {
 }
 
 /**
- * The wrapper: the program's `main`, and `Host`, the one thing the browser's side holds.
+ * The wrapper: the program's `main`, and `PageHost`, the one thing the browser's side holds.
  *
- * **`Host` is opaque on purpose.** Its page is a private field, so the glue `wac bindgen` writes for
+ * **Not `Host`**, which `packages/fs` and `packages/url` both declare: in a page whose program reaches
+ * them, the wrapper's struct was keyed apart from theirs and the glue's class by that name did not
+ * exist — "Host is not defined" on load.
+ *
+ * **`PageHost` is opaque on purpose.** Its page is a private field, so the glue `wac bindgen` writes for
  * it has no members to bind but these five methods — and none of the page's queues, tickets and
  * vectors cross into JavaScript, where nothing could use them. Handing over the `Page` itself did:
  * 24 classes and 71 KB of glue for a counter.
@@ -162,23 +166,23 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
            + "import { Dom, Page, deliver, fileArrived, timerFired, valueArrived"
            + (sys ? ", System, World, answered" : "") + (spawn != "" ? ", Process, processAnswered" : "")
            + " } from \"\{pageSpec}\";\n\n"
-           + "export struct Host {\n"
+           + "export struct PageHost {\n"
            + "  private Page page;\n";
   if (sys) {
     // **A page with a `Sys` holds its world beside the page**, made inside the page's schedule so the
     // scheduler it builds does not become the program's default target: everything that resumes the
     // program comes through the host, and the host resumes it under the page.
     w = w + "  private World world;\n\n"
-          + "  Host create(Dom dom, System system) {\n"
+          + "  PageHost create(Dom dom, System system) {\n"
           + "    Page page = Page.create(dom);\n"
           + "    schedule page.take;\n"
-          + "    return Host(page, World.create(system, \{grants}));\n"
+          + "    return PageHost(page, World.create(system, \{grants}));\n"
           + "  }\n\n"
           + "  void answer(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
           + "    answered(this.page, this.world, req, fault, text, bytes, n, m, flags);\n"
           + "  }\n";
   } else {
-    w = w + "\n  Host create(Dom dom) { return Host(Page.create(dom)); }\n";
+    w = w + "\n  PageHost create(Dom dom) { return PageHost(Page.create(dom)); }\n";
   }
   w = w + "\n  /** Run the program, with the page as its schedule target, until it first waits. */\n"
         + "  void start(this) {\n"
@@ -187,7 +191,7 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
         + "    this.page.drain();\n"
         + "  }\n";
   // **A copy of the page started by `spawnSelf` is a process, not a page**: no document, a `Sys` holding
-  // what its parent gave it, and `spawn`'s export as its program. Opaque for the reason `Host` is.
+  // what its parent gave it, and `spawn`'s export as its program. Opaque for the reason `PageHost` is.
   string spawned = spawn == "" ? "" : "\nexport struct Spawned {\n"
     + "  private Process p;\n\n"
     + "  Spawned create(System system, i32 grants) { return Spawned(Process.create(system, grants)); }\n\n"
@@ -218,7 +222,7 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
 
 /**
  * The program's half of the host: a `Dom` that turns each change into a message for the document,
- * and `receive`, which turns each message back into a call on the `Host`. It runs wherever the
+ * and `receive`, which turns each message back into a call on the `PageHost`. It runs wherever the
  * program does — in a worker, or on the page — and touches nothing of the document itself. Timers
  * and the clock are here because a worker has both; a frame is the document's to give.
  *
@@ -226,11 +230,11 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
  * copied when it is the whole of its own memory, which is what `wac bindgen` gives a `u8[]`.
  */
 export string programSide(bool sys) {
-  // The one line that differs: a page with grants hands its `Host` a `System` as well.
+  // The one line that differs: a page with grants hands its `PageHost` a `System` as well.
   string make = sys
-    ? "const makeHost = (dom) => Host.create(dom, wacSystem((...a) => host.answer(...a), "
+    ? "const makeHost = (dom) => PageHost.create(dom, wacSystem((...a) => host.answer(...a), "
       + "{ child: false, args: [], cwd: \"/\", post: null }));\n"
-    : "const makeHost = (dom) => Host.create(dom);\n";
+    : "const makeHost = (dom) => PageHost.create(dom);\n";
   return """
       const wacProgram = (post) => {
         let host = null;
@@ -301,6 +305,15 @@ export string systemSide() {
         const enc = new TextEncoder();
         const NONE = new Uint8Array(0);
         let rootP = null;
+        // The file `openInput` selected, served a chunk at a time by `readChunk`; null is standard input.
+        let input = null;
+        const chunkOf = (req) => {
+          if (input.at >= input.bytes.length) return answer(req, 0, "", NONE, 0n, 0n, 1);
+          const end = Math.min(input.at + 65536, input.bytes.length);
+          const bytes = input.bytes.slice(input.at, end);
+          input.at = end;
+          answer(req, 0, "", bytes, 0n, 0n, 0);
+        };
         const root = () => (rootP ??= navigator.storage.getDirectory());
         // Handles below 2 are reserved, as on every host: 0 is standard input, 1 the parent's files.
         const handles = new Map();
@@ -416,7 +429,7 @@ export string systemSide() {
           () => me.args.length,
           (i) => me.args[i] ?? NONE,
           () => me.cwd,
-          (req) => read(req, me.stdin),
+          (req) => input === null ? read(req, me.stdin) : chunkOf(req),
           (req, argBytes, grants, cwd, serveFs) => spawn(req, argBytes, grants, cwd, serveFs),
           (req, h) => read(req, h === 1 && me.child ? me.fsIn : handles.get(h)?.q),
           (req, h, bytes) => {
@@ -433,6 +446,13 @@ export string systemSide() {
             const c = handles.get(h)?.child;
             if (c === undefined) return answer(req, 1, "not a child", NONE, 0n, 0n, 0);
             c.exit.then((code) => ok(req, NONE, BigInt(code)));
+          },
+          (req, path) => {
+            if (path === "") { input = null; return ok(req); }
+            run(req, false, async () => {
+              input = { bytes: new Uint8Array(await (await fileOf(path)).arrayBuffer()), at: 0 };
+              ok(req);
+            });
           },
         );
 

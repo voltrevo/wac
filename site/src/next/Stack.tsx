@@ -250,7 +250,7 @@ export default function Stack() {
             the <em>fallback</em>. The shell spawns them: a worker can create a worker, and a
             browser bundle is its own program, so {m({ children: "sort" })} is this program again
             with {m({ children: "sort" })} as its first argument — its own instance, its own
-            grants, its own {m({ children: "SharedArrayBuffer" })}. Which is why pipeline stages
+            grants, its own worker. Which is why pipeline stages
             run at once and {m({ children: "yes | head -1" })} terminates the way it does in bash.
           </P>
           <P>

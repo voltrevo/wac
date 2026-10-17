@@ -86,6 +86,34 @@ struct Job {
  * Called where the shell already asks whether it has been signalled, because those are exactly the
  * points at which it is between two things and can afford to look.
  */
+/** A read on `h` in flight, with its host half kept at `held[i]` so a relay that stops can withdraw it. */
+Ticket<Read> reading(Shell sh, Vec<Pending<Read>> held, i32 i, i32 h) {
+  Pending<Read> p = sh.cli.recv(h);
+  held.set(i, p);
+  return p.ticket();
+}
+
+/**
+ * Withdraw the reads a relay leaves in flight when it ends — a stopped stage's, or one whose stream
+ * closed before its last read was answered. Each is a continuation the scheduler holds, and a program
+ * that finishes with one registered is refused by the host that counts them: under load,
+ * `yes | head -1` in `sealedsh` finished with `yes`'s read still waiting.
+ */
+/** `withdraw` for a relay holding one read per stream rather than a list. */
+void withdrawRead(Shell sh, Pending<Read> p, Ticket<Read> t) {
+  if (t.settled()) { return; }
+  p.cancel();
+  sh.core.cancel(p.id);
+}
+
+void withdraw(Shell sh, Vec<Pending<Read>> held, Vec<Ticket<Read>> ts) {
+  for (i32 i = 0; i < ts.len() && i < held.len(); i++) {
+    if (ts.get(i).settled()) { continue; }
+    held.get(i).cancel();
+    sh.core.cancel(held.get(i).id);
+  }
+}
+
 async void serveJobs(Shell sh) {
   while (true) {
     i32 ready = -1;
@@ -1199,8 +1227,11 @@ async void reapJob(Shell sh, i32 index) {
   Buf err = Buf.create();
   bool reading = true;
   bool complaining = j.errHandle >= 0;
-  Ticket<Read> outT = sh.cli.recv(j.handle).ticket();
-  Ticket<Read> errT = complaining ? sh.cli.recv(j.errHandle).ticket() : outT;
+  // The host halves too, so a read still in flight when this ends can be withdrawn — see `withdraw`.
+  Pending<Read> outP = sh.cli.recv(j.handle);
+  Ticket<Read> outT = outP.ticket();
+  Pending<Read> errP = complaining ? sh.cli.recv(j.errHandle) : outP;
+  Ticket<Read> errT = complaining ? errP.ticket() : outT;
   bool asking = !(j.chan is null);
   while (reading || complaining || asking) {
     i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0) + (asking ? 1 : 0);
@@ -1221,13 +1252,13 @@ async void reapJob(Shell sh, i32 index) {
       if (!alive) { asking = false; }
     } else if (kind == 0) {
       match (outT.value()) {
-        Data(bytes): { out.pushAll(bytes); outT = sh.cli.recv(j.handle).ticket(); }
+        Data(bytes): { out.pushAll(bytes); outP = sh.cli.recv(j.handle); outT = outP.ticket(); }
         End: { reading = false; }
         Failed(why): { reading = false; }
       }
     } else {
       match (errT.value()) {
-        Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(j.errHandle).ticket(); }
+        Data(bytes): { err.pushAll(bytes); errP = sh.cli.recv(j.errHandle); errT = errP.ticket(); }
         End: { complaining = false; }
         Failed(why): { complaining = false; }
       }
@@ -1236,6 +1267,8 @@ async void reapJob(Shell sh, i32 index) {
   }
   if (j.chan is not null) { j.chan!.close(sh.core); }
   j.chan = null;
+  withdrawRead(sh, outP, outT);
+  if (j.errHandle >= 0) { withdrawRead(sh, errP, errT); }
   j.code = await sh.cli.exitCode(j.handle).ticket();
   sh.cli.closeSocket(j.handle);
   if (j.errHandle >= 0) { sh.cli.closeSocket(j.errHandle); }
@@ -1620,6 +1653,9 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
   // a stage that is stopped or finished is dropped from the wait list rather than polled.
   Vec<Ticket<Read>> outT = Vec.create();
   Vec<Ticket<Read>> errT = Vec.create();
+  // Each read's host half, kept so what is still in flight when the relay ends can be withdrawn.
+  Vec<Pending<Read>> outP = Vec.create();
+  Vec<Pending<Read>> errP = Vec.create();
   bool[] outOpen = bool[].filled(n, true);
   bool[] errOpen = bool[].filled(n, true);
   // A stage stopped for want of a reader is *gone*: its handles are closed, so its exit code cannot
@@ -1633,8 +1669,12 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
   Vec<i32> fsPid = Vec.create();
   bool serving = serveFsFor(sh);
   for (i32 i = 0; i < n; i++) {
-    outT.push(sh.cli.recv(outH[i]).ticket());
-    errT.push(sh.cli.recv(errH[i]).ticket());
+    Pending<Read> po = sh.cli.recv(outH[i]);
+    Pending<Read> pe = sh.cli.recv(errH[i]);
+    outP.push(po);
+    errP.push(pe);
+    outT.push(po.ticket());
+    errT.push(pe.ticket());
     if (serving && fsH[i] >= 0) { fsC.push(Chan.of(sh.cli, fsH[i])); fsPid.push(pids[i]); }
   }
   bool[] fsOpen = bool[].filled(fsC.len(), true);
@@ -1699,7 +1739,7 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
 
     if (isErr[which]) {
       match (errT.get(i).value()) {
-        Data(bytes): { sh.err(bytes); errT.set(i, sh.cli.recv(errH[i]).ticket()); }
+        Data(bytes): { sh.err(bytes); errT.set(i, reading(sh, errP, i, errH[i])); }
         End: { errOpen[i] = false; }
         Failed(why): { errOpen[i] = false; }
       }
@@ -1714,21 +1754,29 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
           if (!(await sh.cli.send(outH[i + 1], bytes).ticket())) {
             stopStage(sh, outH, errH, outOpen, errOpen, stopped, i);
           } else {
-            outT.set(i, sh.cli.recv(outH[i]).ticket());
+            outT.set(i, reading(sh, outP, i, outH[i]));
           }
         } else if (sh.capture && !redirected) {
-          sh.outBuf.pushAll(bytes);
-          outT.set(i, sh.cli.recv(outH[i]).ticket());
+          // **The cap the other routes have, here too.** A capturing shell holds what the last stage
+          // writes, and `yes` in a terminal page held it until the allocator refused — the tab crashed
+          // before `^C` could arrive. Stopped at `HELD_CAP`, and said, rather than held without end.
+          if (sh.outBuf.len + bytes.len() > HELD_CAP()) {
+            sh.err("sh: output exceeded what this shell can hold (\{HELD_CAP() / 1048576} MiB); the command was stopped\n".toBytes());
+            stopStage(sh, outH, errH, outOpen, errOpen, stopped, i);
+          } else {
+            sh.outBuf.pushAll(bytes);
+            outT.set(i, reading(sh, outP, i, outH[i]));
+          }
         } else if (redirected) {
           // Into the file, through the *filesystem*, as it arrives — which is the whole point: a
           // long pipeline writes its first line before its last stage has seen the rest, and it
           // writes it where this session's `>` means rather than where the machine's does.
           await sh.fs.writeOut(bytes);
-          outT.set(i, sh.cli.recv(outH[i]).ticket());
+          outT.set(i, reading(sh, outP, i, outH[i]));
         } else {
           // Straight out as it arrives, for the same reason.
           sh.cli.write(bytes);
-          outT.set(i, sh.cli.recv(outH[i]).ticket());
+          outT.set(i, reading(sh, outP, i, outH[i]));
         }
       }
       End: {
@@ -1747,6 +1795,8 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
 
   tick.stop();
   for (i32 k = 0; k < fsC.len(); k++) { fsC.get(k).close(sh.core); }
+  withdraw(sh, outP, outT);
+  withdraw(sh, errP, errT);
 
   // **A pipeline the user interrupted is stopped**, not waited for. Its stages are real children
   // with handles, so this is the same `closeSocket` that `kill %1` delivers with — and it has to
@@ -1871,14 +1921,19 @@ async Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
       // `spawnSelf` below keeps argv[0], because that is what tells this bundle which applet to be.
       u8[][] outer = u8[][].filled(argv.len() - 1, u8[]());
       for (i32 i = 1; i < argv.len(); i++) { outer[i - 1] = argv.get(i).toBytes(); }
-      Child external = sh.cli
-        .spawn(prog.bytes, outer, grants, sh.cwd, inheritIn ? INHERIT_IN : INHERIT_NONE, serveFs).wait();
+      Child external = await sh.cli
+        .spawn(prog.bytes, outer, grants, sh.cwd, inheritIn ? INHERIT_IN : INHERIT_NONE, serveFs).ticket();
       if (!external.unavailable()) { return external; }
+      // **A path names a file, and a world that cannot start one says so.** Falling through to this
+      // bundle's own applets ran `./shared` as an applet called `./shared`, which answered "command
+      // not found" for a file `ls` lists. A page starts copies of itself and nothing else, so the file
+      // is a program it cannot execute — 126, with the world's own sentence.
+      if (containsSlash(name)) { return Child.of(0 - 1, 0 - 1, 0 - 1, external.error); }
     }
   }
   u8[][] args = u8[][].filled(argv.len(), u8[]());
   for (i32 i = 0; i < argv.len(); i++) { args[i] = argv.get(i).toBytes(); }
-  return sh.cli.spawnSelf(args, grants, sh.cwd, inheritIn, serveFs).wait();
+  return await sh.cli.spawnSelf(args, grants, sh.cwd, inheritIn, serveFs).ticket();
 }
 
 /** Stop one stage and stop reading it: it has nowhere to write, so it is finished whether or not it agrees. */
@@ -3542,19 +3597,23 @@ async Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   //
   // The shell's own directory, so `cd sub; prog f` opens `sub/f`. A spawned program used to inherit
   // the *host's* directory, which meant the shell's `cd` was invisible to everything it ran.
-  Child child = sh.cli.spawn(
+  Child child = await sh.cli.spawn(
     prog.bytes, args,
-    stageGrants(sh), sh.cwd, mayInherit ? INHERIT_IN : INHERIT_NONE, serveFsFor(sh)).wait();
+    stageGrants(sh), sh.cwd, mayInherit ? INHERIT_IN : INHERIT_NONE, serveFsFor(sh)).ticket();
   // No `spawn` in this world at all: nothing was attempted, so this is not a failure of the program
   // and must not be reported as one. Falling through is what keeps `packages/box`'s sixty applets
   // working in a world that answers -2 — before this, setting `$WACPATH` to a directory holding a
   // file called `wc` hid the `wc` that works behind exit 126.
   //
-  // **The browser is not that world**, which this comment said for as long as it took someone to
-  // open `host/browser.ts`: a page implements `spawn` and `spawnSelf`, and every applet in the
-  // browser terminal is a real child. What a page has not got is a *directory of programs* to read a
-  // bundle out of, so `$WACPATH` finds nothing there and this call is never reached with a path.
-  if (child.unavailable()) { return Output.missing(); }
+  // **Except for a path.** A name found on `$WACPATH` may also be an applet, and falling through is
+  // what finds it; `./prog` names this file and nothing else. A `packages/web` page is such a world —
+  // it starts copies of itself and no program files — and falling through ran `./shared` as an applet
+  // called `./shared` and answered "command not found" for a file the line before had read. It exists
+  // and cannot be executed here: 126, in the world's own words.
+  if (child.unavailable()) {
+    if (containsSlash(name)) { return Output.fail("sh: \{name}: \{child.error}\n".toBytes(), 126); }
+    return Output.missing();
+  }
   if (child.handle < 0) {
     // It exists and would not start: that is 126, distinct from the 127 of not existing. One
     // integer cannot say both, which is why `found` is a separate field.
@@ -3619,8 +3678,11 @@ async Output collectChild(Shell sh, string name, Child child, bool inherited) {
   // which is the property that keeps `cat nosuch | wc -c` from counting the complaint.
   bool reading = true;
   bool complaining = child.errHandle >= 0;
-  Ticket<Read> outT = sh.cli.recv(child.handle).ticket();
-  Ticket<Read> errT = complaining ? sh.cli.recv(child.errHandle).ticket() : outT;
+  // The host halves too, so a read still in flight when this ends can be withdrawn — see `withdraw`.
+  Pending<Read> outP = sh.cli.recv(child.handle);
+  Ticket<Read> outT = outP.ticket();
+  Pending<Read> errP = complaining ? sh.cli.recv(child.errHandle) : outP;
+  Ticket<Read> errT = complaining ? errP.ticket() : outT;
   // Built only where this shell serves, because building one starts a read: a shell on a plain host
   // mount would otherwise spend a host call per command on a channel it is never going to answer.
   Chan? fsC = serveFsFor(sh) && child.fsHandle >= 0 ? Chan.of(sh.cli, child.fsHandle) : null;
@@ -3667,7 +3729,8 @@ async Output collectChild(Shell sh, string name, Child child, bool inherited) {
             reading = false;
           } else {
             out.pushAll(bytes);
-            outT = sh.cli.recv(child.handle).ticket();
+            outP = sh.cli.recv(child.handle);
+            outT = outP.ticket();
           }
         }
         End: { reading = false; }
@@ -3677,7 +3740,7 @@ async Output collectChild(Shell sh, string name, Child child, bool inherited) {
       }
     } else {
       match (errT.value()) {
-        Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(child.errHandle).ticket(); }
+        Data(bytes): { err.pushAll(bytes); errP = sh.cli.recv(child.errHandle); errT = errP.ticket(); }
         End: { complaining = false; }
         Failed(why): { complaining = false; }
       }
@@ -3688,6 +3751,8 @@ async Output collectChild(Shell sh, string name, Child child, bool inherited) {
   }
   tick.stop();
   if (fsC is not null) { fsC!.close(sh.core); }
+  withdrawRead(sh, outP, outT);
+  if (complaining) { withdrawRead(sh, errP, errT); }
 
   // **A child the user interrupted is stopped rather than waited for.** `exitCode` blocks until the
   // child finishes, and the whole point of the interrupt is that it was not going to: `yes` writes
@@ -3751,8 +3816,8 @@ async Output trySelf(Shell sh, Vec<string> argv, bool mayInherit) {
   // Everything this shell has, which the host narrows to what it actually holds. An applet run in
   // process had the shell's whole authority implicitly; asking for it explicitly is the same
   // authority said out loud, and a shell granted nothing hands its children nothing.
-  Child child = sh.cli
-    .spawnSelf(args, stageGrants(sh), sh.cwd, mayInherit, serveFsFor(sh)).wait();
+  Child child = await sh.cli
+    .spawnSelf(args, stageGrants(sh), sh.cwd, mayInherit, serveFsFor(sh)).ticket();
   if (child.unavailable()) { return Output.missing(); }
   if (child.handle < 0) {
     return Output.fail("sh: \{name}: \{child.error}\n".toBytes(), 126);

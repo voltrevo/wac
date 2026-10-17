@@ -55,7 +55,7 @@ export async i32 split(Core core, Cli cli, Fs fs, Args a) {
     if (!open) {
       name = prefix + suffix(piece);
       if (streaming) {
-        Change opened = cli.openOutput(name).wait();
+        Change opened = await cli.openOutput(name).ticket();
         if (!opened.ok()) { core.warn("\{a.name}: \{name}: \{reasonOf(opened)}"); return 1; }
       } else {
         held = Buf.create();
@@ -85,7 +85,7 @@ export async i32 split(Core core, Cli cli, Fs fs, Args a) {
   }
   // Back to standard output, which closes the last piece — a file left open is a file that
   // may not be on disk yet.
-  if (streaming) { cli.openOutput("").wait(); }
+  if (streaming) { await cli.openOutput("").ticket(); }
   return 0;
 }
 

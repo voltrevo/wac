@@ -65,6 +65,6 @@ It is **not** a second shell or a second set of applets for the browser. The sam
 | 2 | done — `packages/web/src/system.wac`, `packages/platform/example/notes.wac` |
 | 3 | done — every host answers `readChunk` with a ticket; `Feed`, `nextLine`, the applets that read and `packages/sh`'s runners are `async` |
 | 4 | done — `Fs` is `async`; a stage serving its parent's filesystem and `packages/sh`'s relays watch tickets with `Ticket.first` |
-| 5 | the browser's half written, untested |
-| 6 | not started |
+| 5 | done — `--spawn`, a child's streams and its parent's filesystem driven in Chromium (`browser_live.test.ts`, `packages/platform/example/procs.wac`); a page also streams a file a stage opens itself (`openInput`) |
+| 6 | done — `term.wac` and `desk.wac` are `packages/web` pages; the command runs as a task beside the keyboard, so `^C` stops it, lines typed meanwhile wait their turn, and the scrollback is bounded; `site/tools/syncDemos.ts` builds every demo with `packages/web` |
 | 7 | not started |

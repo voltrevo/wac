@@ -382,14 +382,10 @@ Deno.test({
         "the page's compression ratio",
       );
 
-      // And the shell, which is `packages/sh` unchanged with a keyboard in front of it.
-      await buildApp(
-        "packages/box/example/term.wac",
-        `${dir}/term.html`,
-        { read: true, write: true },
-        "browser",
-      );
-      await page.goto(`http://127.0.0.1:${port}/term.html`, { waitUntil: "load" });
+      // And the shell, which is `packages/sh` unchanged with a keyboard in front of it — a
+      // `packages/web` page handed a `Sys`, its applets copies of itself started as processes.
+      await buildPage("packages/box/example/term.wac", `${dir}/term`, ["--grant", "read,write", "--spawn", "applet"]);
+      await page.goto(`http://127.0.0.1:${port}/term/index.html`, { waitUntil: "load" });
       await page.waitForSelector("#cmd", { timeout: 30_000 });
       // The terminal runs an opening session before it takes the keyboard, so the frame the website
       // embeds shows real output rather than an empty prompt. Wait for the last of it: without this
@@ -401,21 +397,25 @@ Deno.test({
         null,
         { timeout: 60_000 },
       );
-      const command = async (line: string): Promise<string> => {
+      // **Waits for what the command should end with**, not for the scrollback to change: the page runs
+      // a command as a task and shows its line and its output as they arrive, so "something changed" is
+      // true the moment Enter is pressed. The answer is what was printed after the command's own line.
+      const command = async (line: string, ends: string): Promise<string> => {
         const before = (await page.textContent("#scr")) ?? "";
         await page.fill("#cmd", line);
         await page.press("#cmd", "Enter");
         await page.waitForFunction(
-          `document.getElementById('scr').textContent !== ${JSON.stringify(before)}`,
+          `(() => { const t = document.getElementById('scr').textContent; ` +
+            `return t.length > ${before.length} && t.trimEnd().endsWith(${JSON.stringify(ends)}); })()`,
           null,
-          { timeout: 30_000 },
+          { timeout: 60_000 },
         );
         return ((await page.textContent("#scr")) ?? "").slice(before.length).trim();
       };
-      assertEquals((await command("echo hello | tr a-z A-Z")).endsWith("HELLO"), true);
-      assertEquals((await command("for i in 1 2 3; do echo $i; done")).endsWith("1\n2\n3"), true);
+      assertEquals((await command("echo hello | tr a-z A-Z", "HELLO")).endsWith("HELLO"), true);
+      assertEquals((await command("for i in 1 2 3; do echo $i; done", "1\n2\n3")).endsWith("1\n2\n3"), true);
       // Redirection into OPFS and back out again: a shell with a real filesystem under it.
-      assertEquals((await command("echo kept > note.txt; cat note.txt")).endsWith("kept"), true);
+      assertEquals((await command("echo kept > note.txt; cat note.txt", "kept")).endsWith("kept"), true);
 
       // **The same system in a tab** — design/0001's own words, and what these used to assert the
       // absence of.
@@ -429,7 +429,7 @@ Deno.test({
       //
       // So each of these is asked **through a pipe**, which is the spawning route. Answered by a
       // builtin they would say nothing about the thing that was broken.
-      const devnull = await command("cat /dev/null | wc -c");
+      const devnull = await command("cat /dev/null | wc -c", "\n0");
       assertEquals(
         devnull.endsWith("0"),
         true,
@@ -441,7 +441,7 @@ Deno.test({
       const listed = boxSrc.match(/string\[\] appletNames\(\) \{[\s\S]*?\n\}/)?.[0] ?? "";
       const APPLETS = (listed.match(/"[a-z0-9-]+"/g) ?? []).length;
       assertEquals(APPLETS > 50, true, "the applet list did not parse");
-      const bin = await command("ls /bin | wc -l");
+      const bin = await command("ls /bin | wc -l", String(APPLETS));
       assertEquals(
         bin.endsWith(String(APPLETS)),
         true,
@@ -449,7 +449,7 @@ Deno.test({
       );
       // `/proc/self` is the process asking, which in a pipeline is the spawned stage rather than the
       // page's shell — the same rule `packages/box/test/wac/synth_test.wac` checks against bash.
-      const self = await command("cat /proc/self/cmdline | tr '\\0' ' '");
+      const self = await command("cat /proc/self/cmdline | tr '\\0' ' '", "cat /proc/self/cmdline");
       assertEquals(
         self.includes("cat /proc/self/cmdline"),
         true,
@@ -474,16 +474,15 @@ Deno.test({
         throw new Error(`\`^C\` did not abandon the line: ${JSON.stringify(afterIntr?.slice(-120))}`);
       }
 
-      // **`^C` ends a running command** — design/system/0001 step 5's own criterion, and the first
-      // thing in this system that stops something already running. `yes` never returns on its own;
-      // what stops it is `Core.askInterrupt`, which only a page can answer yes to, because here the
-      // keydown listener and the code servicing the bridge are the same thread. While the worker is
-      // parked asking, the page has already seen the keystroke.
+      // **`^C` ends a running command** — design/system/0001 step 5's own criterion. `yes` never
+      // returns on its own; the page runs the command as a task and goes on taking keys, and the `^C`
+      // it sees is the answer to the shell's `askInterrupt` the next time the shell looks.
       //
       // Driven as a person would: type it, let it run, press the key. The assertion is the *status* —
       // 130 is `128 + SIGINT` — because "the page came back" alone would also be true of a command
-      // that finished, and `yes` never does.
-      await page.fill("#cmd", "yes");
+      // that finished. Not `yes`, which now meets the shell's output cap in a fraction of a second:
+      // a pipeline that takes many seconds and prints one line.
+      await page.fill("#cmd", "seq 1 100000000 | wc -l");
       await page.press("#cmd", "Enter");
       await new Promise((r) => setTimeout(r, 400));
       await page.press("#cmd", "Control+c");
@@ -520,7 +519,7 @@ Deno.test({
       // `clientHeight`. That shipped, and one `ls` was enough to lose the answer off the top. What
       // makes it worth a test rather than a comment is that everything else still passes: the text
       // is in `#scr`, so every assertion above is happy about output nobody can see.
-      await command("seq 1 200");
+      await command("seq 1 200", "\n200");
       const scroll = await page.evaluate(`(() => {
         const w = document.getElementById("wrap");
         w.scrollTop = -1e6; // a reversed column scrolls to negative; clamped to the top either way
@@ -584,7 +583,7 @@ Deno.test({
         .decode((await new Deno.Command("bash", { args: ["-c", big], stdout: "piped" }).output()).stdout)
         .trim();
       assertEquals(
-        (await command(big)).endsWith(gnu),
+        (await command(big, gnu)).endsWith(gnu),
         true,
         `the page truncated where a spawned child would not — applets are running in-process. ` +
           `bash says ${gnu}`,
@@ -665,12 +664,7 @@ Deno.test({
       // The assertion that matters is the *shared system*: two windows, one shell, and a `cd` typed
       // in the terminal changing what the files window lists. Two windows that each held their own
       // world would pass every other check here and be a picture of a desktop rather than one.
-      await buildApp(
-        "packages/box/example/desk.wac",
-        `${dir}/desk.html`,
-        { read: true, write: true },
-        "browser",
-      );
+      await buildPage("packages/box/example/desk.wac", `${dir}/desk`, ["--grant", "read,write", "--spawn", "applet"]);
       // **Its own context, which is its own origin storage and its own workers.** Everything above
       // has run in one page, and a desktop is the first thing here that opens *more* of the system
       // rather than replacing it — a second shell, a second set of children. Sharing a context with a
@@ -683,7 +677,7 @@ Deno.test({
       const deskCtx = await browser.newContext();
       const page2 = await deskCtx.newPage();
       page2.on("pageerror", (e: Error) => failures.push(`desktop: ${e.message}`));
-      await page2.goto(`http://127.0.0.1:${port}/desk.html`, { waitUntil: "load" });
+      await page2.goto(`http://127.0.0.1:${port}/desk/index.html`, { waitUntil: "load" });
       await page2.waitForSelector("#cmd0", { timeout: 30_000 });
       // The desktop opens on a session that has already made something, so the files window has
       // something to show — wait for it rather than for a timer.
@@ -767,13 +761,11 @@ Deno.test({
       await desk(2, "pwd", "\n/\n");
       await desk(0, "echo from-the-first > /shared", "$ echo from-the-first > /shared");
       await desk(2, "cat /shared", "from-the-first");
-      // **A file that is not a program, in the third host.** Written to check what a page says when it
-      // cannot run something — the guess being that a page cannot spawn at all and would need a
-      // sentence of its own. It spawns: this is the *same* answer Deno gives, from the worker route,
-      // which makes the browser and Deno one host for this purpose and the native runtime the odd one
-      // out (`native_hostfs` pins both of those). The guess was wrong and the code written for it is
-      // gone; this line is what the run actually said.
-      await desk(2, "./shared", "not a wac program");
+      // **A file run as a program, in a page.** A page starts copies of itself and nothing else, so a
+      // path names a program it cannot execute, and the shell says so with the page's own sentence —
+      // rather than looking `./shared` up as an applet and answering "command not found" for a file
+      // the previous line just read.
+      await desk(2, "./shared", "this page cannot start programs");
       assertEquals(
         ((await page2.textContent("#scr2")) ?? "").includes("from-the-first"),
         true,

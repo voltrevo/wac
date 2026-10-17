@@ -62,9 +62,6 @@ Rule[] rules() {
     Rule("packages/platform/src/frame.wac", "write", "decl", false,
          "`write`'s remaining arms — see the rule over `frame.wac` for the corpus that shapes " +
          "them."),
-    Rule("packages/platform/src/frame.wac", "redirectOutput", "decl", false,
-         "`redirectOutput`'s remaining arms — see the rule over `frame.wac` for the corpus " +
-         "that shapes them."),
     Rule("packages/platform/src/frame.wac", "warn", "decl", false,
          "`warn`'s remaining arms — see the rule over `frame.wac` for the corpus that shapes " +
          "them."),

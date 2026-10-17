@@ -69,6 +69,8 @@ A page built with `--spawn <export>` can start copies of itself: `sys.cli.spawnS
 `export async i32 <export>(Sys sys)` in a worker of its own, with those arguments, its input fed by the
 parent, its output and errors read back on handles, and — when asked — its files reached through the
 parent's. That is how a shell's pipeline stages are processes in a page.
+[`packages/platform/example/procs.wac`](../platform/example/procs.wac) is the smallest one: a page that
+starts a copy of itself, streams text into it and reads it back upper-cased.
 
 Nothing waits for the browser: each call that reaches it returns a ticket at once, and the browser
 calls back when the work is done. So a host ticket is `await`ed — `await cli.readFile(p).ticket()` —
@@ -88,7 +90,7 @@ does that for every order in which things can arrive.
     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
         <entry.wac> <out-dir> [--in-page] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
 
-`packages/web/tools/build.wac` writes three files: `page.wac`, a wrapper exporting `Host` — the one thing the
+`packages/web/tools/build.wac` writes three files: `page.wac`, a wrapper exporting `PageHost` — the one thing the
 browser's side holds, with the page in a private field and a method for each call the host makes;
 `page.js`, that wrapper through `wac bindgen --script`; and `index.html`, which holds both with the
 host. The host is two halves that talk by messages: the program's half makes a `Dom` whose every
@@ -96,7 +98,7 @@ call is a message, and the document's half applies each message and sends back e
 files and values. By default the program's half runs in a worker started from the page's own text;
 `--in-page` joins the two halves directly on the page's thread. Neither half makes a decision;
 everything a page does is in `src/page.wac`. Because the page is private, none of its interior
-crosses into JavaScript: the glue is two classes, `Host` and `Dom`.
+crosses into JavaScript: the glue is two classes, `PageHost` and `Dom`.
 
 The output directory has to be inside the directory the build runs in, since the wrapper is written
 there and imports the program.
@@ -106,11 +108,13 @@ that depends on this package spells it, and `./packages/web` from this repositor
 
 ## Where it is used
 
-`packages/platform/example/{counter,life,pixels,ripple}.wac`, `packages/box/example/hash.wac`,
+`packages/platform/example/{counter,life,pixels,ripple,notes,procs}.wac`,
+`packages/box/example/{hash,term,desk,rasterterm}.wac`,
 `packages/git/example/gitpage.wac`, `packages/wacc/example/waccpage.wac` and
 `packages/raster/example/rasterdesk.wac` — outside this package, because a page's wrapper imports its
 program from outside it, and this package is a project of its own.
 
-The shell and the desktop (`packages/box/example/{term,desk,rasterterm}.wac`) are not, yet: they run
-`packages/sh` against a filesystem and spawn programs, which is `Cli` — and a page has no `Cli`. They
-stay on `packages/platform`'s worker host until that has an answer.
+The shell and the desktop are `packages/web` pages built `--grant read,write --spawn applet`: every
+applet a process, every file in the Origin Private File System, and the command a task the page keeps
+reading the keyboard beside — so `^C` stops it. `packages/box/example/rasterterm.wac` is the same
+shell drawn on a canvas.

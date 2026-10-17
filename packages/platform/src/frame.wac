@@ -156,12 +156,12 @@ export struct Frame {
    * capability a question and "the file could not be written" is the answer it has to be able to get —
    * the old wiring passed the parent's answer through and then ignored the bytes.
    */
-  Change redirectOutput(this, const Cli parent, string path) {
-    Change closed = this.flushOutput(parent);
-    if (path == "") { return closed; }
-    if (!closed.ok()) { return closed; }
-    this.outPath = this.path(path);
-    return Change.of(FAULT_NONE(), "");
+  Pending<Change> redirectOutput(this, const Cli parent, string path) {
+    string next = path == "" ? "" : this.path(path);
+    return this.flushOutput(parent).map<Change>((Change closed) => {
+      if (next != "" && closed.ok()) { this.outPath = next; }
+      return closed;
+    });
   }
 
   /**
@@ -170,12 +170,14 @@ export struct Frame {
    * Safe to call when nothing is redirected — it is then the empty statement, which is what lets a caller
    * that does not know whether its child closed its own output call this and be sure.
    */
-  Change flushOutput(this, const Cli parent) {
-    if (this.outPath == "") { return Change.of(FAULT_NONE(), ""); }
+  // **The parent's answer, not a wait for it**: a page answers a write later, and waiting on a ticket
+  // nothing has answered traps there. `redirectOutput` maps it.
+  Pending<Change> flushOutput(this, const Cli parent) {
+    if (this.outPath == "") { return ready(Change.of(FAULT_NONE(), "")); }
     string path = this.outPath;
     u8[] bytes = this.held.take();
     this.outPath = "";
-    return parent.writeFile(path, bytes).wait();
+    return parent.writeFile(path, bytes);
   }
 
   /**
@@ -433,7 +435,7 @@ export Cli childCli(Frame f, const Cli parent) {
     // output", which here means back to the capture, and closing is when the held bytes are written —
     // see `Frame.held` and `issues/system/0166`. Opening a second redirection closes the first, which is
     // what a program doing this per piece expects: `split` opens one output per piece and closes the last.
-    (string p) => ready(f.redirectOutput(parent, p)),
+    (string p) => f.redirectOutput(parent, p),
     parent.connect,
     parent.listen,
     parent.accept,

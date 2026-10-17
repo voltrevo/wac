@@ -10,7 +10,7 @@
 // it is checked elsewhere against my own code. A browser typing `echo hi` and the letters appearing
 // in the right cell is the only assertion that spans all of them at once.
 
-import { buildApp } from "../../platform/build.ts";
+import { buildPage } from "../../../harness/buildPage.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -80,12 +80,7 @@ Deno.test({
     let browser;
     let http: { port: number; stop(): Promise<void> } | undefined;
     try {
-      await buildApp(
-        "packages/box/example/rasterterm.wac",
-        `${dir}/index.html`,
-        { read: true, write: true },
-        "browser",
-      );
+      await buildPage("packages/box/example/rasterterm.wac", dir, ["--grant", "read,write", "--spawn", "applet"]);
       const port = (http = serve(dir)).port;
       browser = await chromium.launch({ args: ["--no-proxy-server"] });
       const page = await browser.newPage();
@@ -179,12 +174,7 @@ Deno.test({
     let browser;
     let http: { port: number; stop(): Promise<void> } | undefined;
     try {
-      await buildApp(
-        "packages/box/example/rasterterm.wac",
-        `${dir}/index.html`,
-        { read: true, write: true },
-        "browser",
-      );
+      await buildPage("packages/box/example/rasterterm.wac", dir, ["--grant", "read,write", "--spawn", "applet"]);
       const port = (http = serve(dir)).port;
       browser = await chromium.launch({ args: ["--no-proxy-server"] });
       const page = await browser.newPage();
@@ -328,12 +318,7 @@ Deno.test({
     let browser;
     let http: { port: number; stop(): Promise<void> } | undefined;
     try {
-      await buildApp(
-        "packages/box/example/rasterterm.wac",
-        `${dir}/index.html`,
-        { read: true, write: true },
-        "browser",
-      );
+      await buildPage("packages/box/example/rasterterm.wac", dir, ["--grant", "read,write", "--spawn", "applet"]);
       const port = (http = serve(dir)).port;
       browser = await chromium.launch({ args: ["--no-proxy-server"] });
       const page = await browser.newPage();
@@ -472,12 +457,7 @@ Deno.test({
     let browser;
     let http: { port: number; stop(): Promise<void> } | undefined;
     try {
-      await buildApp(
-        "packages/box/example/rasterterm.wac",
-        `${dir}/index.html`,
-        { read: true, write: true },
-        "browser",
-      );
+      await buildPage("packages/box/example/rasterterm.wac", dir, ["--grant", "read,write", "--spawn", "applet"]);
       const port = (http = serve(dir)).port;
       browser = await chromium.launch({ args: ["--no-proxy-server"] });
       const page = await browser.newPage();

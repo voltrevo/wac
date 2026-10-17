@@ -38,7 +38,7 @@ export async Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string pat
   string tmp = tempName(core, path);
   // The `Change` is returned as it came: it used to be flattened to `FAULT_OTHER` because `openOutput`
   // answered a bare string, so a caller could not tell "no such directory" from "not permitted".
-  Change opened = cli.openOutput(tmp).wait();
+  Change opened = await cli.openOutput(tmp).ticket();
   if (!opened.ok()) { return opened; }
   bool copying = true;
   string broke = "";
@@ -47,7 +47,7 @@ export async Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string pat
       Data(bytes): {
         if (!cli.write(bytes)) {
           copying = false;
-          broke = cli.outputError().wait();
+          broke = await cli.outputError().ticket();
           if (broke == "") { broke = "could not write \{tmp}"; }
         }
       }
@@ -58,13 +58,13 @@ export async Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string pat
     }
   }
   if (broke != "") {
-    cli.openOutput("").wait();
+    await cli.openOutput("").ticket();
     await fs.remove(tmp, false);
     return Change.of(FAULT_OTHER(), broke);
   }
   // Back to standard output, which closes the temporary file — a rename over a file still
   // open would move it half-written.
-  cli.openOutput("").wait();
+  await cli.openOutput("").ticket();
   return await finish(cli, fs, tmp, path);
 }
 

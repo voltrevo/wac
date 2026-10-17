@@ -25,6 +25,26 @@ import { boxNames, boxRun } from "../shrun.wac";
 /** How many commands the ring remembers. */
 export i32 HISTORY() { return 64; }
 
+/**
+ * How much of the screen is kept, in bytes, and how much a caller is handed to draw while a command runs.
+ *
+ * **A terminal has a scrollback, not a transcript.** `yes` held output up to the shell's cap and the page
+ * drew all of it ten times a second until the tab crashed; the screen grew by every command's output
+ * for the life of the session as well.
+ */
+export i32 SCROLLBACK() { return 262144; }
+export i32 SHOWN() { return 65536; }
+
+/** The last `max` bytes of `b` as text, starting on a character rather than inside one. */
+string tailText(const u8[] b, i32 max) {
+  if (b.len() <= max) { return string.fromBytes(b); }
+  i32 from = b.len() - max;
+  while (from < b.len() && (b[from] & 0xC0) == 0x80) { from++; }
+  u8[] out = u8[].filled(b.len() - from, 0);
+  for (i32 i = 0; i < out.len(); i++) { out[i] = b[from + i]; }
+  return string.fromBytes(out);
+}
+
 export struct Session {
   Shell sh;
   /** Everything printed so far, which is what a caller draws. */
@@ -40,6 +60,11 @@ export struct Session {
   Vec<string> history;
   i32 count;
   i32 cursor;
+  /**
+   * A `^C` a page has seen while a command runs and the shell has not yet asked about — the answer to
+   * `Shell.askInterrupt`, which `startOn` points at `arrived`.
+   */
+  bool stopping;
 
   /**
    * A shell over this program's own system, with its applets.
@@ -100,7 +125,9 @@ export struct Session {
     // Spawned rather than called, which is what makes an applet a real program here — see
     // `shrun.wac`, and wac-mono 0116 for what it can see.
     sh.externalSpawnable = true;
-    return Session(sh, "", Vec.fromArray(string[].filled(HISTORY(), "")), 0, 0);
+    Session s = Session(sh, "", Vec.fromArray(string[].filled(HISTORY(), "")), 0, 0, false);
+    sh.askInterrupt = s.arrived;
+    return s;
   }
 
   string prompt(const this) { return "\{this.sh.cwd} $"; }
@@ -120,6 +147,7 @@ export struct Session {
    */
   async void feedLine(this, string line) {
     this.cursor = 0;
+    this.stopping = false;
     if (line == "") { return; }
     this.history.set(this.count % HISTORY(), line);
     this.count = this.count + 1;
@@ -131,6 +159,27 @@ export struct Session {
       + string.fromBytes(this.sh.outBuf.take())
       + string.fromBytes(this.sh.errOut.take());
     if (status != 0) { this.screen = this.screen + "[exit \{status}]\n"; }
+    if (this.screen.len() > SCROLLBACK()) { this.screen = tailText(this.screen.toBytes(), SCROLLBACK()); }
+  }
+
+  /**
+   * `^C` while a command runs: the shell stops it the next time it asks, through its own interrupt, so
+   * `$?` is 130 and the rest of the line does not run.
+   */
+  void stop(this) { this.stopping = true; }
+
+  /** The shell's question: whether a `^C` arrived, clearing it. */
+  bool arrived(this) {
+    bool was = this.stopping;
+    this.stopping = false;
+    return was;
+  }
+
+  /** The screen with whatever a running command has printed so far — what a caller draws while it runs. */
+  string showing(const this) {
+    // Each part's tail first, so a command that has printed megabytes is not turned into text whole.
+    string live = tailText(this.sh.outBuf.bytes(), SHOWN()) + tailText(this.sh.errOut.bytes(), SHOWN());
+    return tailText((tailText(this.screen.toBytes(), SHOWN()) + live).toBytes(), SHOWN());
   }
 
   /** `^C` at the prompt: the line is echoed, thrown away, and a fresh one begins. */

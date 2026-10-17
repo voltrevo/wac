@@ -1,7 +1,7 @@
 // A shell, in a browser tab.
 //
-//   wac task app:build packages/box/example/term.wac --target browser --allow-read --allow-write -o page/index.html
-//   box httpd -8080 page -x
+//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+//       packages/box/example/term.wac .cache/term --page ./packages/web --grant read,write --spawn applet
 //
 // `packages/sh` unchanged: quoting, parameter expansion, command substitution, arithmetic,
 // pipelines, redirection, `&&`/`||`, `if`/`while`/`for`/`case`, functions, subshells, globbing.
@@ -9,87 +9,48 @@
 // is different here — what is different is that its `Cli` reaches the Origin Private File System
 // instead of a disk, and its output goes to an element instead of a pipe.
 //
-// The shell was already able to run in a page before any of this existed: it built, started, and
-// exited immediately, because a page's standard input is empty and a shell with no input has
-// nothing to do. All that was missing was a keyboard.
-//
 // What runs here is the shell's own built-ins — including `cd`, `pwd` and `ls` — and then every
-// applet in `packages/box`, wired in with `sh.external = boxRun`. `sort`, `sha256sum`, `gzip`,
-// `cut`, `diff`, `shuf`, `strings`, `tar`: the same code the command-line `box` runs, in the page.
+// applet in `packages/box`, wired in with `sh.external = boxRun`: the same code the command-line
+// `box` runs, in the page.
 //
-// **It spawns them.** This paragraph used to say the opposite — "`spawn` is Deno-only", so `platform`
-// grew `pushChild`/`popChild` and an applet ran inside the shell's own instance with the page's whole
-// authority. A worker can create a worker, and `spawnSelf` needs no filesystem: this bundle is its own
-// program, so `sort` is this program again with `sort` as its first argument. Each stage is a separate
-// worker with its own `SharedArrayBuffer`, its own grants and its own instance, answered by the page
-// while its parent is parked. Issue 0030, closed.
+// **A `packages/web` page** (design/system/0011): the program runs in a worker of its own, nothing in
+// it waits for the browser — every capability hands back a ticket and the program `await`s it — and
+// there is no `SharedArrayBuffer`, so no cross-origin-isolation headers and no service worker faking
+// them.
 //
-// `pushChild`/`popChild` are still here and still the fallback — a world that cannot spawn degrades to
-// them rather than reporting a program broken — which is exactly what makes the difference invisible
-// from the outside. `browser_live.test.ts` tells the two apart in a real Chromium by the one place
-// they differ: a called applet's output is captured and capped at 8 MiB, so `seq 1 1500000 | wc -c`
-// truncates, and a spawned one's queue drains as the next stage reads it, so it answers what GNU
-// answers.
+// **Each applet is a process.** `--spawn applet` builds the page so that a copy of it started by
+// `spawnSelf` runs `applet` below: `sort` is this same program again with `sort` as its first argument,
+// in a worker of its own, streaming to the next stage by messages. A stage that reads a file asks this
+// shell over a channel, and the shell answers from the one filesystem — so `cd` here and a file
+// written by a pipeline are the same world.
 //
-// Pipeline stages therefore run at once as well, and `yes | head -1` terminates the way it does in
-// bash rather than stopping at the cap. What has not changed is inside a stage: a `box` applet
-// streams through `Sink`, but `packages/sh`'s own twelve fallback programs return all their output at
-// once, which is issue 0061.
+// **The command runs while the keyboard is read.** The loop below starts a line as a task and keeps
+// taking events while it runs, so `^C` reaches a running `yes | head -c 1000000000` and ends it, as at
+// an ssh prompt, and the scrollback shows output as it arrives rather than when the line finishes.
 //
 // ## Why the terminal is built the way it is
 //
 // **The scrollback pins itself with CSS, not with a capability.** A terminal has to show the
 // newest line, and `setText` cannot scroll anything. Rather than adding a `scrollToEnd`
 // capability for one caller, the scroller is `flex-direction: column-reverse`, which anchors it
-// to the end — the browser keeps a reversed column scrolled to its bottom for free. A reversed
-// column also pins a *short* session to the bottom of the frame, under a screenful of nothing,
-// which is what this looked like embedded in a page; `justify-content: flex-end` is the top in a
-// reversed column, so a short session starts at the top and a long one still ends at the bottom.
+// to the end — the browser keeps a reversed column scrolled to its bottom for free.
 //
-// **History is a ring in a local.** Up and Down arrive as `keydown` events with the bytes a terminal
-// would send in `Event.value`, so the whole feature is a `string[]` and two integers in the loop — no
-// state outside the program, and nothing the page has to know about.
+// **History is a ring in a local.** Up and Down arrive as `keydown` events, so the whole feature is
+// a `string[]` and two integers in `Session` — no state outside the program.
 //
-// ## What this is still not, and the decision it waits on
-//
-// design/0001 step 5 asks for "one module for both the ssh channel and the browser's keydown loop",
-// and `packages/tty` is that module — echo, erase, `^U`, `^W`, `^C`, `^D`, `^V`, every rule read off
-// the kernel's own discipline through a pty. **This page does not use it.** Keystrokes now arrive as
-// the bytes a terminal sends, which is the half that was in the way; what is left is that the editing
-// happens in an `<input>` and the browser does it.
-//
-// That is a decision rather than an oversight, and it is not free either way. Taking the editing over
-// means `packages/tty` decides what the line is, so `^C`, `^D`, `^U` and `^W` work here exactly as
-// they do over ssh — and it means giving up what the `<input>` supplies for nothing: the block caret
-// the CSS below goes to some length for, IME composition for every language that needs one, and
-// paste. Over ssh those are the client's terminal's problem; in a page they would become ours.
-//
-// So: the vocabulary is shared, the discipline is not yet, and the cost of sharing it is written down
-// here rather than discovered by whoever tries.
+// **The line is edited by the browser.** design/0001 step 5 asks for one line discipline for the ssh
+// channel and this keyboard, and `packages/tty` is that module — echo, erase, `^U`, `^W`, `^C`, `^D`,
+// every rule read off the kernel's own discipline through a pty. This page does not use it: the
+// editing happens in an `<input>`, which supplies the block caret, IME composition and paste for
+// nothing. Taking the editing over would make `^U` and `^W` work here exactly as over ssh, and would
+// make those three our problem. A decision rather than an oversight, written down here.
 
-import { Cli, Core, Event, Page, Sys } from "std";
-import { Shell, runScript } from "../../sh/src/exec.wac";
-// `fmt`'s, not a fourth copy: this file had one, and the copies had already drifted — the i32-minimum
-// bug (GitHub wac-mono#6) was fixed in each of them separately, which is the drift a copy guarantees.
-import { boxApplet, boxNames, boxRun } from "../src/shrun.wac";
+import { Core, Cli, Sys } from "std";
+import { Event, MOD_CTRL, Page } from "../../web";
+import { Ticket, TicketBase, Vec } from "core";
+import { html.a, html.div, html.input, html.label, html.pre, html.span, html.style } from "core";
+import { boxApplet } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";
-import { mountSystem } from "../../fs/src/fs.wac";
-import { Vec } from "core";
-
-/**
- * The bytes a terminal sends for the three keys this loop reads.
- *
- * Written as bytes rather than as escapes in a string literal because that is what they are, and
- * because a reader should be able to check them against `infocmp` without decoding an escape twice.
- */
-string cr() { return string.fromCodepoint(13); }
-/** `^C`. The same byte `packages/tty`'s discipline calls `INTR`. */
-string intr() { return string.fromCodepoint(3); }
-string upArrow() { return "\{string.fromCodepoint(27)}[A"; }
-string downArrow() { return "\{string.fromCodepoint(27)}[B"; }
-
-/** How many commands to remember. A ring, so the oldest falls off rather than growing forever. */
-static i32 HISTORY = 64;
 
 /** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
 static string SOURCE =
@@ -98,192 +59,196 @@ static string SOURCE =
 static string BANNER =
   "wac sh — packages/sh with every packages/box applet, in a browser tab. Type at the\n" +
   "prompt; `help` lists the sixty programs, Up and Down walk the history, `clear` empties\n" +
-  "the screen. / is an Origin Private File System: what you write survives a reload and is\n" +
-  "visible to nothing outside this tab.\n" +
+  "the screen and ^C stops what is running. / is an Origin Private File System: what you\n" +
+  "write survives a reload and is visible to nothing outside this tab.\n" +
   "\n";
 
+/** How often the scrollback is redrawn while a command runs, in milliseconds. */
+static i32 REDRAW_MS = 100;
+
+static string STYLE =
+  // Tuned to sit inside the website's terminal frame: the same ground, text and accent the page
+  // around it uses, so the embed reads as one object rather than a window into another site.
+  //
+  // The root is a `<label for="cmd">`, which is the whole of click-anywhere-to-type. A page has
+  // no way to move focus — there is no `focus` capability and adding one for this would be a
+  // capability per widget — but a label focuses its control natively, so clicking dead space in
+  // the scrollback puts the keyboard back in the prompt. Dragging still selects: a label focuses
+  // on click and does not eat a drag, which is what makes copying output out of here still work.
+  // A page with no stylesheet under it is `content-box`, and `#wrap` below is `height: 100%`
+  // with padding: those two make the scroller 44px taller than the frame that clips it, which
+  // put the prompt below the visible edge — reading as no bottom margin, and as a scrollback
+  // that stopped just short of the newest line until a keystroke scrolled the caret into view.
+  "  #term, #term * { box-sizing: border-box; }" +
+  "  #term { position: fixed; inset: 0; overflow: hidden; display: block; cursor: text;" +
+  "          background: #06070a; color: #d7dde6;" +
+  "          font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }" +
+  "  #term ::selection { background: #1c4b45; color: #eafffb; }" +
+  // `column-reverse` is what makes new output stick to the bottom without scripting, and the
+  // prompt is inside the scroller rather than below it so that it is the next line of the
+  // session rather than a footer bolted to the window. Reversed, so both come first in the
+  // markup and render last.
+  //
+  // On its own the reversal also pins a *short* session to the bottom of the frame, under a
+  // screenful of nothing. `justify-content: flex-end` looks like the fix and is a trap: in an
+  // overflowing flex scroller, content pushed past the start edge by alignment cannot be
+  // scrolled to at all — `scrollHeight` stays equal to `clientHeight` and one `ls` puts the
+  // output somewhere the reader cannot reach. `#pad` does the same job as a flex item instead:
+  // it takes the free space while there is any, and is 0 tall once there is none, so the
+  // overflow is ordinary overflow and scrolls.
+  //
+  // The bottom padding is a reserved strip for `#src`, which is fixed to the frame rather than
+  // sitting in the prompt line: a link floating at the end of the line you are typing on is the
+  // one thing here that never looked like a terminal, and reserving the strip is what stops the
+  // prompt from ever sliding under it.
+  "  #wrap { height: 100%; overflow-y: auto; display: flex;" +
+  "          flex-direction: column-reverse; padding: 14px 16px 30px;" +
+  // Thin, and visible: scrollback nobody can tell is there is scrollback nobody scrolls.
+  "          scrollbar-width: thin; scrollbar-color: #2b3240 transparent; }" +
+  "  #pad { flex: 1 1 0; min-height: 0; }" +
+  "  #scr { margin: 0; white-space: pre-wrap; word-break: break-word; }" +
+  "  #bar { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 1ch; }" +
+  "  #ps1 { color: #5eead4; user-select: none; white-space: pre; }" +
+  // `caret-shape: block` is the cursor, blinking, sized and positioned by the browser rather
+  // than drawn by us. Doing it by hand would mean mirroring the value into a span and tracking
+  // the caret index through every arrow key, paste and IME composition — a second implementation
+  // of text editing, to be wrong in a different way. Where it is unsupported the caret stays a
+  // line, which is the shape it was before.
+  //
+  // The field is `flex: 1` and not `field-sizing: content`, and that is the whole reason this
+  // comment exists. Content sizing is the obvious choice here — it makes prompt, command and
+  // cursor one continuous line instead of a text box with a prompt next to it — and it silently
+  // costs the block: a field exactly as wide as its text has no cell left for a caret past the
+  // last character, so the browser clips the block to a bar. Measured both, zoomed, with
+  // `caret: "initial"` screenshots: identical markup, block in one and a bar in the other. The
+  // width does not show, because the field is transparent and the line has nothing to its right.
+  "  #cmd { flex: 1; min-width: 4ch;" +
+  "         background: transparent; border: 0; outline: 0; color: inherit;" +
+  "         font: inherit; padding: 0; caret-color: #5eead4; caret-shape: block; }" +
+  // A status line rather than part of the prompt: down in the strip `#wrap` reserves for it.
+  "  #src { position: fixed; right: 16px; bottom: 7px; color: #6b7482; font-size: 11.5px;" +
+  "         text-decoration: none; white-space: nowrap; }" +
+  "  #src:hover { color: #5eead4; text-decoration: underline; }";
+
 /**
- * The same bundle, as one of its own programs.
- *
- * A tab is a `page`; a *child* of that tab is a `main`. When the shell runs `sort` it spawns this very
- * bundle with `sort` as the first argument — there is no filesystem of programs in a browser, so the
- * only program a page reliably has is the one it already is — and the child starts here. Which of the
- * two exports runs is decided by how the program was started, not by guessing.
- *
- * Without this, `externalSpawnable` below would spawn a child with nothing to run.
+ * What a copy of this page started by `spawnSelf` runs — `--spawn applet`. Its first argument names the
+ * `box` applet, as on a command line.
  */
-export async i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return await boxApplet(core, cli); }
+export async i32 applet(Sys sys) { return await boxApplet(sys.core, sys.cli); }
 
-// The prompt — where you are, and a `$` — is `Session.prompt`, and this file calls it as
-// `s.prompt()`. A copy of it lived here as a free function taking a `Shell`, left behind when
-// `Session` was extracted and called by nothing since. Two spellings of "where you are" is exactly
-// the pair that drifts, and the reason the prompt says a directory at all is written down where the
-// live one is: a prompt that never changes is decoration, and `cd` here moves through a real
-// filesystem somebody can get lost in.
+/** Whether `e` is `^C`. */
+bool isIntr(Event e) { return (e.mods & MOD_CTRL) != 0 && (e.value == "c" || e.value == "C"); }
 
-export async i32 page(Core core, Cli cli, Page page) {
-  page.title("wac sh").wait();
-
-  // The style travels with the markup: `render` sets innerHTML, and a `<style>` in there applies.
-  // That is why the launcher's page is bare now — an application dresses itself.
+export async i32 main(Page page, Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
+  page.title("wac sh");
+  // The root is a `<label for="cmd">`, which is the whole of click-anywhere-to-type: a label focuses its
+  // control natively, and dragging still selects, so copying output out of here works.
   page.render(
-    "<style>" +
-    // Tuned to sit inside the website's terminal frame: the same ground, text and accent the page
-    // around it uses, so the embed reads as one object rather than a window into another site.
-    //
-    // The root is a `<label for="cmd">`, which is the whole of click-anywhere-to-type. A page has
-    // no way to move focus — there is no `focus` capability and adding one for this would be a
-    // capability per widget — but a label focuses its control natively, so clicking dead space in
-    // the scrollback puts the keyboard back in the prompt. Dragging still selects: a label focuses
-    // on click and does not eat a drag, which is what makes copying output out of here still work.
-    // A page with no stylesheet under it is `content-box`, and `#wrap` below is `height: 100%`
-    // with padding: those two make the scroller 44px taller than the frame that clips it, which
-    // put the prompt below the visible edge — reading as no bottom margin, and as a scrollback
-    // that stopped just short of the newest line until a keystroke scrolled the caret into view.
-    "  #term, #term * { box-sizing: border-box; }" +
-    "  #term { position: fixed; inset: 0; overflow: hidden; display: block; cursor: text;" +
-    "          background: #06070a; color: #d7dde6;" +
-    "          font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }" +
-    "  #term ::selection { background: #1c4b45; color: #eafffb; }" +
-    // `column-reverse` is what makes new output stick to the bottom without scripting, and the
-    // prompt is inside the scroller rather than below it so that it is the next line of the
-    // session rather than a footer bolted to the window. Reversed, so both come first in the
-    // markup and render last.
-    //
-    // On its own the reversal also pins a *short* session to the bottom of the frame, under a
-    // screenful of nothing. `justify-content: flex-end` looks like the fix and is a trap: in an
-    // overflowing flex scroller, content pushed past the start edge by alignment cannot be
-    // scrolled to at all — `scrollHeight` stays equal to `clientHeight` and one `ls` puts the
-    // output somewhere the reader cannot reach. `#pad` does the same job as a flex item instead:
-    // it takes the free space while there is any, and is 0 tall once there is none, so the
-    // overflow is ordinary overflow and scrolls.
-    //
-    // The bottom padding is a reserved strip for `#src`, which is fixed to the frame rather than
-    // sitting in the prompt line: a link floating at the end of the line you are typing on is the
-    // one thing here that never looked like a terminal, and reserving the strip is what stops the
-    // prompt from ever sliding under it.
-    "  #wrap { height: 100%; overflow-y: auto; display: flex;" +
-    "          flex-direction: column-reverse; padding: 14px 16px 30px;" +
-    // Thin, and visible: scrollback nobody can tell is there is scrollback nobody scrolls.
-    "          scrollbar-width: thin; scrollbar-color: #2b3240 transparent; }" +
-    "  #pad { flex: 1 1 0; min-height: 0; }" +
-    "  #scr { margin: 0; white-space: pre-wrap; word-break: break-word; }" +
-    "  #bar { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 1ch; }" +
-    "  #ps1 { color: #5eead4; user-select: none; white-space: pre; }" +
-    // `caret-shape: block` is the cursor, blinking, sized and positioned by the browser rather
-    // than drawn by us. Doing it by hand would mean mirroring the value into a span and tracking
-    // the caret index through every arrow key, paste and IME composition — a second implementation
-    // of text editing, to be wrong in a different way. Where it is unsupported the caret stays a
-    // line, which is the shape it was before.
-    //
-    // The field is `flex: 1` and not `field-sizing: content`, and that is the whole reason this
-    // comment exists. Content sizing is the obvious choice here — it makes prompt, command and
-    // cursor one continuous line instead of a text box with a prompt next to it — and it silently
-    // costs the block: a field exactly as wide as its text has no cell left for a caret past the
-    // last character, so the browser clips the block to a bar. Measured both, zoomed, with
-    // `caret: "initial"` screenshots: identical markup, block in one and a bar in the other. The
-    // width does not show, because the field is transparent and the line has nothing to its right.
-    "  #cmd { flex: 1; min-width: 4ch;" +
-    "         background: transparent; border: 0; outline: 0; color: inherit;" +
-    "         font: inherit; padding: 0; caret-color: #5eead4; caret-shape: block; }" +
-    // A status line rather than part of the prompt: down in the strip `#wrap` reserves for it.
-    "  #src { position: fixed; right: 16px; bottom: 7px; color: #6b7482; font-size: 11.5px;" +
-    "         text-decoration: none; white-space: nowrap; }" +
-    "  #src:hover { color: #5eead4; text-decoration: underline; }" +
-    "</style>" +
-    "<label id=\"term\" for=\"cmd\">" +
-    "  <div id=\"wrap\">" +
-    "    <div id=\"pad\"></div>" +
-    "    <div id=\"bar\"><span id=\"ps1\">$</span>" +
-    "      <input id=\"cmd\" autofocus autocomplete=\"off\" spellcheck=\"false\"" +
-    "             autocapitalize=\"off\" autocorrect=\"off\"></div>" +
-    "    <pre id=\"scr\"></pre>" +
-    "  </div>" +
-    "  <a id=\"src\" href=\"\{SOURCE}\">source &amp; build it</a>" +
-    "</label>"
-  ).wait();
+    <label id="term" for="cmd">
+      <style>{STYLE}</style>
+      <div id="wrap">
+        <div id="pad"></div>
+        <div id="bar">
+          <span id="ps1">$</span>
+          <input id="cmd" autofocus="" autocomplete="off" spellcheck="false"></input>
+        </div>
+        <pre id="scr"></pre>
+      </div>
+      <a id="src" href={SOURCE}>source and how to build it</a>
+    </label>
+  );
+  page.on("#cmd", "keydown");
 
-  page.on("#cmd", "keydown").wait();
-
-  // One shell for the whole session, so variables and functions persist between commands exactly
-  // as they would in a terminal.
-  //
-  // **One `Session`**, which is the shell, the scrollback and the history with no page in it —
-  // `src/lib/session.wac`. It was all inline here until `example/desk.wac` needed the same thing in a
-  // window (design/0001 step 8), and two copies of "what Enter does" is two things to be wrong.
-  //
-  // What stayed here is what a *presentation* owns: the markup, the ids, the caret, and the choice to
-  // fill the frame. What left is what both presentations agree about.
+  // One shell for the whole session, so variables and functions persist between commands exactly as
+  // they would in a terminal — `Session`, which is the shell, the scrollback and the history with no
+  // page in it, shared with `desk.wac`.
   Session s = Session.start(core, cli, "term");
   s.say(BANNER);
-  page.setText("scr", s.screen).wait();
 
-  // Open on a session rather than on a prompt with nothing above it. These are run through the
-  // same `runScript` the keyboard reaches, so what the frame shows on load is this build's real
-  // output — a screenshot of a terminal is a drawing, and a terminal that has already done
-  // something is not. The website prints the same three lines beside the embed, and
-  // `packages/box/test/wac/frontpage_test.wac` fails if either drifts from what the shell actually answers.
+  // Open on a session rather than on a prompt with nothing above it, run through the same `runScript`
+  // the keyboard reaches. The website prints the same three lines beside the embed, and
+  // `packages/box/test/wac/frontpage_test.wac` fails if either drifts from what the shell answers.
   string[] opening = [
     "seq 1 20 | grep 7 | wc -l",
     "echo 'a whole new stack' | gzip -c | wc -c",
     "echo hello | sha256sum"
   ];
-  page.setText("ps1", s.prompt()).wait();
+  page.setText("ps1", s.prompt());
   for (i32 i = 0; i < opening.len(); i++) {
     await s.feedLine(opening[i]);
-    page.setText("scr", s.screen).wait();
+    page.setText("scr", s.screen);
   }
   s.say("\n");
+  page.setText("scr", s.screen);
 
+  Ticket<Event> next = page.nextEvent();
+  Ticket<void>? running = null;
+  // **Lines entered while a command runs**, run in order once it ends — type-ahead, as a terminal keeps
+  // it. Dropping them was a line the user saw accepted and the shell never ran.
+  Vec<string> typedAhead = Vec.create();
   while (true) {
-    Event e = page.nextEvent().wait();
+    if (running is not null) {
+      // **A command in flight, and the keyboard still read.** Whichever comes first — the command
+      // ending, a key, or the redraw timer — and the other two are still there next time round.
+      Ticket<i64> tick = core.sleepMillis(REDRAW_MS).ticket();
+      TicketBase[] parts = [running!, next, tick] as TicketBase[];
+      i32 k = await Ticket.first(parts);
+      if (k == 0) {
+        running = null;
+        page.setText("ps1", s.prompt());
+        page.setText("scr", s.screen);
+        if (s.over()) {
+          page.setText("scr", "\{s.screen}\n[the shell exited \{s.code()}]\n");
+          return s.code();
+        }
+        if (typedAhead.len() > 0) {
+          string ahead = typedAhead.get(0);
+          typedAhead.remove(0);
+          running = s.feedLine(ahead);
+          page.setText("scr", s.showing());
+        }
+      } else if (k == 1) {
+        Event e = await next;
+        next = page.nextEvent();
+        // `^C` ends what is running, through the shell's own interrupt — `$?` is 130 and the next
+        // prompt appears, and what was typed ahead goes with it, as in a terminal. A line entered meanwhile
+        // waits its turn.
+        if (e.kind == "keydown" && isIntr(e)) {
+          s.stop();
+          while (typedAhead.len() > 0) { typedAhead.pop(); }
+        } else if (e.kind == "keydown" && e.value == "Enter") {
+          typedAhead.push(await page.getValue("cmd"));
+          page.setValue("cmd", "");
+        }
+      } else {
+        page.setText("scr", s.showing());
+      }
+      continue;
+    }
+
+    Event e = await next;
+    next = page.nextEvent();
     if (e.kind != "keydown") { continue; }
-
-    // Up and Down walk the ring. Held here rather than in the page because the history *is*
-    // program state: it is what this shell has been asked to do.
-    //
-    // **The escape sequences a terminal sends**, not the key names a browser uses. A `keydown` used
-    // to arrive as `ev.key` — "ArrowUp", "Enter" — and a program in a page therefore saw a vocabulary
-    // nothing else in this system speaks; `packages/tty`'s discipline consumes bytes, because a
-    // terminal is a byte stream. The host translates at the edge now (`terminalBytes` in
-    // `host/entryBrowser.ts`), so above that line everything is bytes, here as over ssh.
-    if (e.value == upArrow() || e.value == downArrow()) {
-      page.setValue("cmd", s.recall(e.value == upArrow())).wait();
+    if (e.value == "ArrowUp" || e.value == "ArrowDown") {
+      page.setValue("cmd", s.recall(e.value == "ArrowUp"));
       continue;
     }
-
-    // **`^C` at a prompt throws away what has been typed and starts a fresh line**, which is exactly
-    // what it does at an ssh prompt — `packages/ssh`'s session loop echoes `^C` and a newline and
-    // moves on. The same key, the same effect, in both places, which is the whole of what step 5
-    // means by one system rather than two ports of the idea. It could not be done here at all until
-    // keystrokes arrived as bytes: `Ctrl-C` and `c` were the same `keydown` value.
-    //
-    // What `^C` still does *not* do here is end a running command, which is step 5's own criterion
-    // and is the same blocker in both places: nothing reads a keystroke while a command runs.
-    if (e.value == intr()) {
-      s.interrupt(page.getValue("cmd").wait());
-      page.setValue("cmd", "").wait();
-      page.setText("scr", s.screen).wait();
+    // **`^C` at a prompt throws away what has been typed and starts a fresh line**, which is what it
+    // does at an ssh prompt.
+    if (isIntr(e)) {
+      s.interrupt(await page.getValue("cmd"));
+      page.setValue("cmd", "");
+      page.setText("scr", s.screen);
       continue;
     }
+    if (e.value != "Enter") { continue; }
 
-    // CR, which is what the Enter key puts on the wire; the discipline is what turns it into a
-    // newline. `packages/tty` implements that rule and this page does not reach it yet — see the
-    // note above `main`.
-    if (e.value != cr()) { continue; }
-
-    string line = page.getValue("cmd").wait();
-    page.setValue("cmd", "").wait();
-    await s.feedLine(line);
-    // `cd` is a built-in, so the directory it moved to is the shell's own field and the prompt has
-    // to be told. After the command rather than before it: the line just echoed belongs to where
-    // it was run, and the next prompt to where that left us.
-    page.setText("ps1", s.prompt()).wait();
-    page.setText("scr", s.screen).wait();
-    if (s.over()) {
-      page.setText("scr", "\{s.screen}\n[the shell exited \{s.code()}]\n").wait();
-      return s.code();
-    }
+    string line = await page.getValue("cmd");
+    page.setValue("cmd", "");
+    running = s.feedLine(line);
+    page.setText("scr", s.showing());
   }
+  return 0;
 }
-

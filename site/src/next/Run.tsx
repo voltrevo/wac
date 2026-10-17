@@ -160,9 +160,9 @@ export default function Run() {
         </P>
       </Section>
 
-      <Section id="how" kicker="what makes it possible" title="An await, a page, and for the shell a worker">
+      <Section id="how" kicker="what makes it possible" title="An await, a page, and processes as workers">
         <P>
-          Most of these are {m({ children: "packages/web" })} pages: {m({ children: "main(Page page)" })}, an{" "}
+          These are {m({ children: "packages/web" })} pages: {m({ children: "main(Page page)" })}, an{" "}
           {m({ children: "async" })} function in a worker. It changes the document with plain calls
           and waits for the next click, frame or file with {m({ children: "await" })}, and each wait
           hands control back until something arrives. State is ordinary locals, the program reads
@@ -170,14 +170,12 @@ export default function Run() {
           the server that serves it.
         </P>
         <P>
-          The shell and the desktop are different, because they run programs that expect to read a
-          file and get an answer. The host&rsquo;s answers are asynchronous, and a browser cannot
-          block the page&rsquo;s thread, so those run on a worker and park on{" "}
-          {m({ children: "Atomics.wait" })} against a {m({ children: "SharedArrayBuffer" })} while
-          the page does the work and writes the reply back. That is also why this site registers a
-          service worker: a {m({ children: "SharedArrayBuffer" })} needs cross-origin isolation
-          headers, and static hosting cannot set them, so the page re-serves itself with the
-          headers it needs and reloads once.
+          The shell and the desktop are the same kind of page, handed a{" "}
+          {m({ children: "Sys" })} as well: files in the browser&rsquo;s own storage, read with the
+          same {m({ children: "await" })} a command-line program uses. Each command they run is a
+          copy of the page started as a process — a worker of its own, streaming to the next stage
+          of the pipeline by messages and asking the shell for files the same way. Nothing shares
+          memory, so nothing needs the cross-origin-isolation headers static hosting cannot send.
         </P>
       </Section>
 

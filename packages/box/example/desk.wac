@@ -1,57 +1,60 @@
-// A desktop, in a tab — design/0001 step 8, and the last of its eight steps to be started.
+// A desktop, in a tab — design/0001 step 8.
 //
-//   wac run packages/box/example/desk.wac
+//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+//       packages/box/example/desk.wac .cache/desk --page ./packages/web --grant read,write --spawn applet
 //
 // The design's own sentence: "`Page` has render, events and pixels; a window manager in wac over the
 // same system, with the terminal as one window. Deliberately last: windows want something to show."
 //
-// There is something to show now. A tab holds a real system — `/bin` with sixty-odd programs, `/proc`
-// with the process table, `/dev`, users, a shell that spawns its applets as actual children — so a
-// window manager over it is showing the machine rather than decorating an empty one.
+// A tab holds a real system — `/bin` with sixty-odd programs, `/proc` with the process table, `/dev`,
+// users, a shell that spawns its applets as processes of their own — so a window manager over it is
+// showing the machine rather than decorating an empty one. Like `term.wac` it is a `packages/web` page:
+// a worker of its own, no shared memory, every applet a copy of this page started with `--spawn applet`.
 //
 // ## What a window is here
 //
-// Markup, not pixels. `Page` has `drawPixels` and a terminal drawn that way would mean reimplementing
-// text layout, selection, the caret and IME to get something worse than the browser already does. So a
-// window is a `<div>` the manager positions, and the terminal's body is the `<pre>` and `<input>` that
-// `example/term.wac` already uses.
+// Markup, not pixels. A terminal drawn with `drawPixels` would mean reimplementing text layout,
+// selection, the caret and IME to get something worse than the browser already does. So a window is a
+// `<div>` the manager positions, and the terminal's body is the `<pre>` and `<input>` that `term.wac`
+// uses.
 //
-// The manager owns `render` and re-renders the **frame** — which windows exist, where they sit, which
-// is on top — while *content* goes through `setText` on a per-window id. That split is the whole of
-// why typing does not flicker: a keystroke touches one text node, and only opening, closing or raising
-// a window rebuilds the document.
+// The manager owns `render` and re-renders the **frame** — which windows exist, which is on top —
+// while *content* goes through `setText` on a per-window id and a move through `setStyle`. That split is
+// why typing does not flicker and a drag does not rebuild every terminal.
 //
 // ## The one thing re-rendering costs, and what is done about it
 //
-// `render` replaces the markup, so the half-typed command in `#cmd` and the caret go with it. Raising a
-// window while somebody is typing would eat their line. So the manager reads `#cmd` before it
-// re-renders and puts it back after — which is what makes raise-on-click safe to do at all.
+// `render` replaces the markup, so a half-typed command and the caret go with it. Raising a window
+// while somebody is typing would eat their line, so the manager reads each command field before it
+// re-renders and puts it back after.
 //
-// ## What is *not* implemented, said rather than approximated
+// ## Every terminal runs at once
 //
-// **Dragging.** A window is where the manager put it. Moving one needs `pointermove` while a button is
-// held, which is an event per pixel across the bridge, and the honest version of that is a design
-// question about coalescing rather than something to bolt on. The positions are a cascade.
+// A command is started as a task and the loop goes on taking events, so a `yes | head -c 100000000` in
+// one window leaves the others typing, `^C` in that window stops it, and every terminal's output shows
+// as it arrives. The windows are one filesystem underneath, so a command in one changes what the files
+// windows list.
 //
-// **Resizing**, for the same reason, and **minimise**: there is no taskbar to minimise *to* yet.
+// ## Not implemented, said rather than approximated
 //
-// What is here is: several windows, each showing something live from the same system; raise and focus
-// by clicking; close; and a terminal that is the whole terminal — the same `Session` the full-frame
-// one uses, so `ls`, `ps`, a pipeline of spawned applets and `^C` all behave as they do everywhere
-// else in this repository.
+// **Resizing** and **minimise** — there is no taskbar to minimise *to* yet.
 
-import { Cli, Core, Event, Page, Sys } from "std";
-import { Vec } from "core";
+import { Core, Cli, Sys } from "std";
+import { Event, MOD_CTRL, Page } from "../../web";
+import { Node, Ticket, TicketBase, Vec } from "core";
+import { html.button, html.div, html.input, html.pre, html.span, html.style } from "core";
 import { boxApplet } from "../src/shrun.wac";
-import { UNKNOWN } from "../src/box.wac";
 import { Session } from "../src/lib/session.wac";
 
-/** This program is also its own applets, so the shell in a window can spawn them. */
-export async i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return await boxApplet(core, cli); }
+/** What a copy of this page started by `spawnSelf` runs — `--spawn applet`. */
+export async i32 applet(Sys sys) { return await boxApplet(sys.core, sys.cli); }
 
 /** What a window shows. */
 i32 SHELL() { return 0; }
 i32 FILES() { return 1; }
+
+/** How often running terminals are redrawn, in milliseconds. */
+static i32 REDRAW_MS = 100;
 
 /**
  * One window: what it shows, its own session where it is a terminal, and the id its markup carries.
@@ -65,27 +68,25 @@ struct Win {
   i32 id;
   /** The session this window is a terminal for. Meaningless for a files window. */
   Session sh;
-  /**
-   * Where it is, in desktop pixels — **the window's own, not its place in the stack**.
-   *
-   * It was `24 + at * 34` computed at render time, so a window moved whenever anything in front of
-   * it closed, and there was nowhere for a drag to put a result. The cascade is still what a new
-   * window *starts* at; after that the window owns it.
-   */
+  /** Where it is, in desktop pixels — the window's own, not its place in the stack. */
   i32 left;
   i32 top;
+  /** The command this terminal is running, or null at its prompt. */
+  Ticket<void>? running;
+  /** Lines entered while it runs, run in order once it ends — type-ahead, as a terminal keeps it. */
+  Vec<string> ahead;
 }
-
-string cr() { return string.fromCodepoint(13); }
-string intr() { return string.fromCodepoint(3); }
-string upArrow() { return "\{string.fromCodepoint(27)}[A"; }
-string downArrow() { return "\{string.fromCodepoint(27)}[B"; }
 
 /** The window's title, which is also what its bar says. */
 string titleOf(Win w) { return w.kind == SHELL() ? "shell \{w.id}" : "files"; }
 
-export async i32 page(Core core, Cli cli, Page page) {
-  page.title("wac desktop").wait();
+/** Whether `e` is `^C`. */
+bool isIntr(Event e) { return (e.mods & MOD_CTRL) != 0 && (e.value == "c" || e.value == "C"); }
+
+export async i32 main(Page page, Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
+  page.title("wac desktop");
 
   // **One filesystem, and every window is on it.** The first session builds the system — `/dev`,
   // `/proc`, `/bin`, the applets — and every terminal opened afterwards is `Session.startOn` over
@@ -98,8 +99,8 @@ export async i32 page(Core core, Cli cli, Page page) {
   // Stacking order, front last. A `Vec` rather than a z-index per window because "which is on top" is
   // an order, and keeping it as one means raising is a move rather than a search for the maximum.
   Vec<Win> wins = Vec.create();
-  wins.push(Win(SHELL(), 0, first, cascadeLeft(0), cascadeTop(0)));
-  wins.push(Win(FILES(), 1, first, cascadeLeft(1), cascadeTop(1)));
+  wins.push(Win(SHELL(), 0, first, cascadeLeft(0), cascadeTop(0), null, Vec.create()));
+  wins.push(Win(FILES(), 1, first, cascadeLeft(1), cascadeTop(1), null, Vec.create()));
   i32 nextId = 2;
 
   draw(page, wins);
@@ -107,37 +108,77 @@ export async i32 page(Core core, Cli cli, Page page) {
   // Delegated selectors rather than ids: `render` replaces the elements, and a handler asked for by
   // id would stop firing the moment a window opened. Which window an event is about comes from
   // `Event.id`, which carries the element's own — see `idOf`.
-  page.on(".cmd", "keydown").wait();
-  page.on(".bar", "mousedown").wait();
-  // **Dragging.** `pointerdown` rather than `mousedown` because a pointer event is a mouse, a pen
-  // and a finger at once; the `mousedown` above stays, because raising a window is what it does and
-  // the browser sends both. The move and the release are asked of `#desk` rather than of the bar:
-  // a pointer that leaves the bar mid-drag — which it does the moment the window catches up with it
-  // — still lands on the desktop, and a window that stopped following would be worse than none.
-  page.on(".bar", "pointerdown").wait();
-  page.on("#desk", "pointermove").wait();
-  page.on("#desk", "pointerup").wait();
-  page.on(".cls", "click").wait();
-  page.on(".lnch", "click").wait();
+  page.on(".cmd", "keydown");
+  page.on(".bar", "mousedown");
+  // **Dragging.** `pointerdown` rather than `mousedown` because a pointer event is a mouse, a pen and a
+  // finger at once; the `mousedown` above stays, because raising a window is what it does and the
+  // browser sends both. The move and the release are asked of `#desk` rather than of the bar: a
+  // pointer that leaves the bar mid-drag still lands on the desktop.
+  page.on(".bar", "pointerdown");
+  page.on("#desk", "pointermove");
+  page.on("#desk", "pointerup");
+  page.on(".cls", "click");
+  page.on(".lnch", "click");
 
-  // Which window is being dragged, and where inside it the pointer took hold. -1 is "none", and the
-  // grab is what makes a drag feel like carrying rather than like the window snapping its corner to
-  // the pointer.
+  // Which window is being dragged, and where inside it the pointer took hold. -1 is "none".
   i32 dragging = -1;
   i32 grabX = 0;
   i32 grabY = 0;
 
+  Ticket<Event> next = page.nextEvent();
   while (true) {
-    Event e = page.nextEvent().wait();
+    // **Whatever comes first**: an event, a running command ending, or — while anything runs — the
+    // redraw timer. The rest are still there next time round.
+    i32 live = 0;
+    for (i32 i = 0; i < wins.len(); i++) { if (wins.get(i).running is not null) { live++; } }
+    if (live > 0) {
+      TicketBase[] parts = TicketBase[].filled(live + 2, next);
+      i32[] whose = i32[].filled(live + 2, -1);
+      parts[1] = core.sleepMillis(REDRAW_MS).ticket();
+      i32 at = 2;
+      for (i32 i = 0; i < wins.len(); i++) {
+        Ticket<void>? r = wins.get(i).running;
+        if (r is not null) { parts[at] = r!; whose[at] = wins.get(i).id; at++; }
+      }
+      i32 k = await Ticket.first(parts);
+      if (k == 1) {
+        for (Win w in wins) {
+          if (w.running is not null) { page.setText("scr\{w.id}", w.sh.showing()); }
+        }
+        continue;
+      }
+      if (k >= 2) {
+        i32 seat = indexOf(wins, whose[k]);
+        if (seat < 0) { continue; }
+        Win done = wins.get(seat);
+        done.running = null;
+        if (done.ahead.len() > 0) {
+          done.running = done.sh.feedLine(done.ahead.remove(0));
+          page.setText("scr\{done.id}", done.sh.showing());
+          continue;
+        }
+        // Every window, not just this one: a command in one terminal changes what the files windows
+        // list, because there is one filesystem underneath.
+        await paint(page, wins);
+        if (done.sh.over()) {
+          // A shell that exits closes its window rather than the desktop — which is what `exit` means
+          // in a terminal on a desktop.
+          close(wins, done.id);
+          await redraw(page, wins);
+        }
+        continue;
+      }
+    }
+
+    Event e = await next;
+    next = page.nextEvent();
 
     // ── Dragging a window by its bar ──────────────────────────────────────────
     if (e.kind == "pointerdown" && startsWith(e.id, "bar")) {
       i32 who = idOf(e.id, 3);
-      i32 seat = indexOf(wins, who);
-      if (seat >= 0) {
+      if (indexOf(wins, who) >= 0) {
         dragging = who;
-        // `Event.x`/`y` are inside the bar, and the bar's top-left *is* the window's, so this is
-        // where in the window the pointer took hold.
+        // `Event.x`/`y` are inside the bar, and the bar's top-left *is* the window's.
         grabX = e.x;
         grabY = e.y;
       }
@@ -148,15 +189,12 @@ export async i32 page(Core core, Cli cli, Page page) {
       i32 seat = indexOf(wins, dragging);
       if (seat < 0) { dragging = -1; continue; }
       Win moving = wins.get(seat);
-      // The pointer is in `#desk`, whose top-left is the desktop's, so subtracting the grab gives
-      // the window's new corner. Clamped at the top so a window cannot be dragged under the
-      // launcher strip and become unreachable — the one place a manager has to say no.
+      // Clamped at the top so a window cannot be dragged under the launcher strip and become
+      // unreachable — the one place a manager has to say no.
       moving.left = e.x - grabX;
       moving.top = e.y - grabY < LAUNCH_H() ? LAUNCH_H() : e.y - grabY;
-      // **`setStyle`, not `redraw`.** One element's position changes; nothing else about the
-      // document does. A `render` here would rebuild every terminal on the desktop for every pixel
-      // of the drag.
-      page.setStyle("win\{moving.id}", placement(moving)).wait();
+      // **`setStyle`, not `redraw`.** One element's position changes; nothing else about the document.
+      page.setStyle("win\{moving.id}", placement(moving));
       continue;
     }
     if (e.kind == "pointerup") { dragging = -1; continue; }
@@ -164,13 +202,13 @@ export async i32 page(Core core, Cli cli, Page page) {
     if (e.kind == "click" && e.id == "newterm") {
       // A second shell on the same filesystem, and its own row in the shared process table.
       wins.push(Win(SHELL(), nextId, Session.startOn(core, cli, first.sh.fs, "sh"),
-                    cascadeLeft(wins.len()), cascadeTop(wins.len())));
+                    cascadeLeft(wins.len()), cascadeTop(wins.len()), null, Vec.create()));
       nextId = nextId + 1;
       await redraw(page, wins);
       continue;
     }
     if (e.kind == "click" && e.id == "newfiles") {
-      wins.push(Win(FILES(), nextId, first, cascadeLeft(wins.len()), cascadeTop(wins.len())));
+      wins.push(Win(FILES(), nextId, first, cascadeLeft(wins.len()), cascadeTop(wins.len()), null, Vec.create()));
       nextId = nextId + 1;
       await redraw(page, wins);
       continue;
@@ -187,36 +225,39 @@ export async i32 page(Core core, Cli cli, Page page) {
     }
     if (e.kind != "keydown" || !startsWith(e.id, "cmd")) { continue; }
 
-    i32 at = indexOf(wins, idOf(e.id, 3));
-    if (at < 0) { continue; }
-    Win w = wins.get(at);
+    i32 seat = indexOf(wins, idOf(e.id, 3));
+    if (seat < 0) { continue; }
+    Win w = wins.get(seat);
     string field = "cmd\{w.id}";
 
-    if (e.value == upArrow() || e.value == downArrow()) {
-      page.setValue(field, w.sh.recall(e.value == upArrow())).wait();
+    // A terminal with a command running hears `^C`, which stops it and drops what was typed ahead, and
+    // keeps any line entered meanwhile for when its prompt comes back.
+    if (w.running is not null) {
+      if (isIntr(e)) {
+        w.sh.stop();
+        while (w.ahead.len() > 0) { w.ahead.pop(); }
+      } else if (e.value == "Enter") {
+        w.ahead.push(await page.getValue(field));
+        page.setValue(field, "");
+      }
       continue;
     }
-    if (e.value == intr()) {
-      w.sh.interrupt(page.getValue(field).wait());
-      page.setValue(field, "").wait();
+    if (e.value == "ArrowUp" || e.value == "ArrowDown") {
+      page.setValue(field, w.sh.recall(e.value == "ArrowUp"));
+      continue;
+    }
+    if (isIntr(e)) {
+      w.sh.interrupt(await page.getValue(field));
+      page.setValue(field, "");
       await paint(page, wins);
       continue;
     }
-    if (e.value != cr()) { continue; }
+    if (e.value != "Enter") { continue; }
 
-    string line = page.getValue(field).wait();
-    page.setValue(field, "").wait();
-    await w.sh.feedLine(line);
-    // Every window, not just this one: a command in one terminal changes what the files windows list
-    // and what the *other* terminals would see, because there is one filesystem underneath.
-    await paint(page, wins);
-    if (w.sh.over()) {
-      // A shell that exits closes its window rather than the desktop — which is what `exit` means in
-      // a terminal on a desktop, and the difference between a window manager and a program with
-      // windows drawn on it.
-      close(wins, w.id);
-      await redraw(page, wins);
-    }
+    string line = await page.getValue(field);
+    page.setValue(field, "");
+    w.running = w.sh.feedLine(line);
+    page.setText("scr\{w.id}", w.sh.showing());
   }
   return 0;
 }
@@ -268,17 +309,19 @@ void replace(Vec<Win> wins, Vec<Win> order) {
  * `z-index` is needed — which also means raising is "move it to the end of the list" and nothing else.
  */
 void draw(Page page, Vec<Win> wins) {
-  string body = "<style>\{css()}</style><div id=\"desk\">" +
-    "<div id=\"launch\">" +
-    "  <button class=\"lnch\" id=\"newterm\">+ terminal</button>" +
-    "  <button class=\"lnch\" id=\"newfiles\">+ files</button>" +
-    "  <span id=\"hint\">one system; every window is on it</span>" +
-    "</div>";
-  for (i32 i = 0; i < wins.len(); i++) {
-    body = body + window(wins.get(i), i, i == wins.len() - 1);
-  }
-  body = body + "</div>";
-  page.render(body).wait();
+  Node[] shown = Node[].filled(wins.len(), Node.Text(""));
+  for (i32 i = 0; i < wins.len(); i++) { shown[i] = window(wins.get(i), i == wins.len() - 1); }
+  page.render(
+    <div id="desk">
+      <style>{STYLE}</style>
+      <div id="launch">
+        <button class="lnch" id="newterm">+ terminal</button>
+        <button class="lnch" id="newfiles">+ files</button>
+        <span id="hint">one system; every window is on it</span>
+      </div>
+      {Node.Fragment(shown)}
+    </div>
+  );
 }
 
 /**
@@ -302,25 +345,26 @@ string placement(Win w) {
 }
 
 /** One window's markup. `front` gets the accent border, which is the whole of "focused". */
-string window(Win w, i32 at, bool front) {
+Node window(Win w, bool front) {
   string id = "\{w.id}";
-  string pos = placement(w);
-  string inner = w.kind == SHELL()
-    ? "<div class=\"bod term\">" +
-      "  <pre id=\"scr\{id}\"></pre>" +
-      "  <div class=\"line\"><span class=\"ps1\" id=\"ps\{id}\">$</span>" +
-      "    <input class=\"cmd\" id=\"cmd\{id}\" autocomplete=\"off\" spellcheck=\"false\"" +
-      "           autocapitalize=\"off\" autocorrect=\"off\"></div>" +
-      "</div>"
-    : "<pre class=\"bod\" id=\"files\{id}\"></pre>";
+  Node inner = w.kind == SHELL()
+    ? <div class="bod term">
+        <pre id={"scr\{id}"}></pre>
+        <div class="line">
+          <span class="ps1" id={"ps\{id}"}>$</span>
+          <input class="cmd" id={"cmd\{id}"} autocomplete="off" spellcheck="false"></input>
+        </div>
+      </div>
+    : <pre class="bod" id={"files\{id}"}></pre>;
   // **An id on the frame**, which is what lets a drag move it with `setStyle` instead of `render`.
-  // Rebuilding the document to move one window would throw away every terminal's half-typed line
-  // several times a second — the cost `setText` exists to avoid for typing, and the same one here.
-  return "<div class=\"win" + (front ? " front" : "") + "\" id=\"win" + id + "\" style=\"" + pos + "\">" +
-         "  <div class=\"bar\" id=\"bar" + id + "\">" +
-         "    <span class=\"ttl\">" + titleOf(w) + "</span>" +
-         "    <button class=\"cls\" id=\"cls" + id + "\">&#215;</button>" +
-         "  </div>" + inner + "</div>";
+  return
+    <div class={front ? "win front" : "win"} id={"win\{id}"} style={placement(w)}>
+      <div class="bar" id={"bar\{id}"}>
+        <span class="ttl">{Node.Text(titleOf(w))}</span>
+        <button class="cls" id={"cls\{id}"}>×</button>
+      </div>
+      {inner}
+    </div>;
 }
 
 /**
@@ -334,20 +378,16 @@ async void redraw(Page page, Vec<Win> wins) {
   Vec<string> typed = Vec.create();
   for (i32 i = 0; i < wins.len(); i++) {
     Win w = wins.get(i);
-    typed.push(w.kind == SHELL() ? page.getValue("cmd\{w.id}").wait() : "");
+    typed.push(w.kind == SHELL() ? await page.getValue("cmd\{w.id}") : "");
   }
   draw(page, wins);
   await paint(page, wins);
   for (i32 i = 0; i < wins.len(); i++) {
     Win w = wins.get(i);
-    // **Only what was actually read back.** Restoring an empty string to a field is at best a
-    // no-op and at worst destructive: a window that has just been *created* had no field to read
-    // from, so the saved value is empty, and writing it lands after the element exists — erasing
-    // anything typed into the new terminal in between. Measured, not imagined: driving the desktop,
-    // the first command typed into a freshly opened terminal disappeared, every time.
-    if (w.kind == SHELL() && typed.get(i) != "") {
-      page.setValue("cmd\{w.id}", typed.get(i)).wait();
-    }
+    // **Only what was actually read back.** A window that has just been *created* had no field to
+    // read, so its saved value is empty, and writing that after the element exists would erase
+    // anything typed into the new terminal in between.
+    if (w.kind == SHELL() && typed.get(i) != "") { page.setValue("cmd\{w.id}", typed.get(i)); }
   }
 }
 
@@ -355,17 +395,16 @@ async void redraw(Page page, Vec<Win> wins) {
  * Everything the windows *show*, from the one system underneath them.
  *
  * The files panes read the filesystem directly rather than running `ls` through a shell: the point of
- * several windows on one system is that they see the same thing, and routing this through a terminal
- * would put its own output in that terminal's scrollback and prove nothing about sharing.
+ * several windows on one system is that they see the same thing.
  */
 async void paint(Page page, Vec<Win> wins) {
   for (Win w in wins) {
     string id = "\{w.id}";
     if (w.kind == SHELL()) {
-      page.setText("scr\{id}", w.sh.screen).wait();
-      page.setText("ps\{id}", w.sh.prompt()).wait();
+      page.setText("scr\{id}", w.sh.showing());
+      page.setText("ps\{id}", w.sh.prompt());
     } else {
-      page.setText("files\{id}", await listing(w.sh)).wait();
+      page.setText("files\{id}", await listing(w.sh));
     }
   }
 }
@@ -401,8 +440,7 @@ i32 idOf(string s, i32 from) {
   return n;
 }
 
-string css() {
-  return
+static string STYLE =
     "#desk, #desk * { box-sizing: border-box; }" +
     "#desk { position: fixed; inset: 0; overflow: hidden; margin: 0;" +
     "        background: #0b0d12; color: #d7dde6;" +
@@ -438,4 +476,3 @@ string css() {
     "        color: #9ff3e4; font: inherit; font-size: 12px; padding: 3px 9px; cursor: pointer; }" +
     ".lnch:hover { background: #1b2b29; }" +
     "#hint { color: #5b6472; font-size: 11.5px; margin-left: 4px; }";
-}

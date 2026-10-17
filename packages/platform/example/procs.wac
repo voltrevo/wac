@@ -1,0 +1,70 @@
+// Programs in a page: a copy of this page, started as a process, streaming into the one that started it.
+//
+//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+//       packages/platform/example/procs.wac .cache/procs --page ./packages/web --grant read,write \
+//       --spawn upper
+//
+// `--spawn upper` names what a started copy runs: `upper`, below, with a `Sys` holding the arguments,
+// input and directory its parent gave it. Each copy is a worker of its own — no shared memory, so
+// everything between the two crosses as a message, and a copy that never stops can be stopped.
+
+import { Event, Page } from "../../web";
+import { Child, Sys } from "std";
+import { Buf, Read } from "core";
+import { html.button, html.div, html.input, html.p, html.span } from "core";
+
+/** What a started copy runs: its input, upper-cased, to its output. Its status is the byte count. */
+export async i32 upper(Sys sys) {
+  i32 n = 0;
+  while (true) {
+    match (await sys.cli.readChunk().ticket()) {
+      Data(bytes): {
+        u8[] out = u8[].filled(bytes.len(), 0);
+        for (i32 i = 0; i < bytes.len(); i++) {
+          u8 b = bytes[i];
+          out[i] = b >= 97 && b <= 122 ? b - 32 : b;
+        }
+        sys.cli.write(out);
+        n = n + bytes.len();
+      }
+      End: { return n; }
+      Failed(why): { return 0 - 1; }
+    }
+  }
+  return n;
+}
+
+export async i32 main(Page page, Sys sys) {
+  page.title("procs");
+  page.render(
+    <div>
+      <p><input id="text" value="hello from the page"></input> <button id="run">run</button></p>
+      <p>out: <span id="out"></span></p>
+      <p>status: <span id="status"></span></p>
+    </div>
+  );
+  page.on("#run", "click");
+  while (true) {
+    Event e = await page.nextEvent();
+    if (e.id != "run") { continue; }
+    string text = await page.getValue("text");
+    Child c = await sys.cli.spawnSelf([] as u8[][], 0, "/", false, false).ticket();
+    if (c.handle < 0) {
+      page.setText("status", "could not start: \{c.error}");
+      continue;
+    }
+    await sys.cli.send(c.handle, text.toBytes()).ticket();
+    sys.cli.closeFeed(c.handle);
+    Buf got = Buf.create();
+    bool reading = true;
+    while (reading) {
+      match (await sys.cli.recv(c.handle).ticket()) {
+        Data(bytes): { got.pushAll(bytes); }
+        End: { reading = false; }
+        Failed(why): { reading = false; }
+      }
+    }
+    page.setText("out", string.fromBytes(got.bytes()));
+    page.setText("status", "\{await sys.cli.exitCode(c.handle).ticket()}");
+  }
+}

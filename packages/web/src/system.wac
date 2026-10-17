@@ -87,6 +87,12 @@ export struct System {
   fn<void(i32)> closeSocket;
   /** A child's exit status, when it has one. Answers `n`. */
   fn<void(i32, i32)> exitCode;
+  /**
+   * Select a file as the input `readChunk` streams from, or standard input again for `""`. A stage
+   * that may read a path itself streams it rather than asking its parent for every byte, which is
+   * what `packages/box`'s `openStream` does with a host path.
+   */
+  fn<void(i32, string)> openInput;
 
   /**
    * A browser that does nothing: no request is ever answered, the clocks stand at zero, output is
@@ -100,7 +106,8 @@ export struct System {
       (i32 n) => u8[].filled(n, 0), (string l) => { }, (string l) => { }, (u8[] b) => { },
       (u8[] b) => { }, (i32 code) => { }, () => 0, (i32 i) => u8[](), () => "/", (i32 req) => { },
       (i32 req, u8[] args, i32 grants, string cwd, bool serveFs) => { }, (i32 req, i32 h) => { },
-      (i32 req, i32 h, u8[] b) => { }, (i32 h) => { }, (i32 h) => { }, (i32 req, i32 h) => { }
+      (i32 req, i32 h, u8[] b) => { }, (i32 h) => { }, (i32 h) => { }, (i32 req, i32 h) => { },
+      (i32 req, string p) => { }
     );
   }
 }
@@ -253,7 +260,11 @@ Pending<FileResult> refusedRead(string p) {
   return ready(FileResult.of(false, u8[](), faultWords(FAULT_NOT_GRANTED()), FAULT_NOT_GRANTED()));
 }
 Pending<Change> refusedChange() { return ready(Change.of(FAULT_NOT_GRANTED(), faultWords(FAULT_NOT_GRANTED()))); }
-Pending<Change> unsupported() { return ready(Change.of(FAULT_UNSUPPORTED(), faultWords(FAULT_UNSUPPORTED()))); }
+/**
+ * What the browser's storage cannot do at all — saying what, because `FAULT_UNSUPPORTED` has no words
+ * of its own on purpose: `cat: f: ` with nothing after it was this, for a file opened as a stream.
+ */
+Pending<Change> unsupported(string what) { return ready(Change.of(FAULT_UNSUPPORTED(), what)); }
 Pending<Socket> noSocket() { return ready(Socket.of(0 - 1, "a page has no sockets", "", 0, FAULT_UNSUPPORTED())); }
 
 /** A program's world in a page: the answers it waits for, and the `Sys` its `main` is handed. */
@@ -352,17 +363,22 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
       return answers.pending<Change>(req, changeOf);
     },
     // No mode bits in the Origin Private File System: the backing refuses, which is not a missing grant.
-    (string p, bool on) => write ? unsupported() : refusedChange(),
-    (string p, i32 mode) => write ? unsupported() : refusedChange(),
-    // Standard input is the empty path and a page has none; a file as a stream is not here yet.
-    (string p) => p == "" ? ready(Change.of(FAULT_NONE(), "")) : unsupported(),
+    (string p, bool on) => write ? unsupported("the browser's storage has no executable bit") : refusedChange(),
+    (string p, i32 mode) => write ? unsupported("the browser's storage has no mode bits") : refusedChange(),
+    // A file as a stream: read, then served a chunk at a time. Standard input is the empty path.
+    (string p) => {
+      if (p != "" && !read) { return refusedChange(); }
+      i32 req = answers.ask();
+      system.openInput(req, p);
+      return answers.pending<Change>(req, changeOf);
+    },
     () => {
       i32 req = answers.ask();
       system.readChunk(req);
       return answers.pending<Read>(req, readOf);
     },
     () => ready(""),
-    (string p) => p == "" ? ready(Change.of(FAULT_NONE(), "")) : unsupported(),
+    (string p) => p == "" ? ready(Change.of(FAULT_NONE(), "")) : unsupported("a page cannot write a file as a stream yet"),
     (string host, i32 port) => noSocket(),
     (string host, i32 port) => noSocket(),
     (i32 h) => noSocket(),

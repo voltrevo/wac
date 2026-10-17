@@ -1,7 +1,7 @@
 // The shell in a terminal drawn on pixels — `design/system/0004` step 4's own criterion.
 //
-//   wac task app:build packages/box/example/rasterterm.wac --target browser \
-//     --allow-read --allow-write -o page/index.html
+//   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+//     packages/box/example/rasterterm.wac .cache/rasterterm --page ./packages/web --grant read,write --spawn applet
 //
 // `packages/box/example/term.wac` is the same shell in a `<pre>` and an `<input>`, where the browser
 // does the wrapping, the scrolling and the caret. This one has a `<canvas>` and does all three
@@ -13,15 +13,25 @@
 // on purpose. A program is allowed to know about both.
 //
 // All three of the things this said it did not do yet are wired now: PgUp and PgDn move `back` over
-// the grid's scrollback, a drag selects, and the caret blinks on the wait's deadline. What is still
+// the grid's scrollback, a drag selects, and the caret blinks on a timer waited on beside the keys. Like
+// `term.wac` it is a `packages/web` page, and a command runs as a task, so `^C` stops it. What is still
 // missing is the end of the selection story — `Grid.selectedText` exists and nothing here calls it,
 // so text can be selected and not copied out.
 
-import { Cli, Core, Event, Page, Pending } from "std";
+import { Core, Cli, Sys } from "std";
+import { Event, MOD_CTRL, MOD_META, Page } from "../../web";
+import { Ticket, TicketBase } from "core";
+import { html.canvas, html.style } from "core";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
 import { Grid } from "../../raster/src/grid.wac";
 import { Surface, cellHeight, cellWidth } from "../../raster/src/surface.wac";
+import { boxApplet } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";
+
+/** What a copy of this page started by `spawnSelf` runs — `--spawn applet`, as in `term.wac`. */
+export async i32 applet(Sys sys) { return await boxApplet(sys.core, sys.cli); }
+
+static string STYLE = "body { margin: 0; background: #0b0e0f; } canvas { display: block; image-rendering: pixelated; }";
 
 /** Eighty columns is what everything assumes, and twenty-four rows is a terminal. */
 i32 COLS() { return 80; }
@@ -81,17 +91,6 @@ void relay(Grid g, string screen, string pending) {
 }
 
 /**
- * Whether these bytes are `ESC [ <n> ~` — the shape `PageUp` and `PageDown` arrive in.
- *
- * Compared as bytes rather than against a string literal because wac's lexer has no `\u` escape and
- * an escape character cannot be written inline. That is a better test anyway: it says the length as
- * well as the contents, so a longer sequence beginning the same way is not mistaken for this one.
- */
-bool isSeq(u8[] b, i32 n) {
-  return b.len() == 4 && b[0] == 27 && b[1] == 91 && b[2] as i32 == n && b[3] == 126;
-}
-
-/**
  * Draw the grid at `back` and blit only what changed.
  *
  * Shared by the scroll keys and the input path because they must agree: a scroll that redrew the
@@ -106,16 +105,14 @@ void redraw(Page page, Grid g, Surface surf, i32 back, bool caret) {
   if (back == 0 && caret) { g.drawCaret(surf, 0, 0, FG(), BG()); }
   if (surf.damaged()) {
     page.drawPixelsIn("screen", surf.dx0, surf.dy0, surf.dx1 - surf.dx0 + 1,
-                      surf.dy1 - surf.dy0 + 1, surf.damagedPixels()).wait();
+                      surf.dy1 - surf.dy0 + 1, surf.damagedPixels());
   }
 }
 
-export async i32 page(Core core, Cli cli, Page page) {
-  page.render(
-    "<style>body { margin: 0; background: #0b0e0f; }" +
-    " canvas { display: block; image-rendering: pixelated; }</style>" +
-    "<canvas id=\"screen\" tabindex=\"0\"></canvas>",
-  ).wait();
+export async i32 main(Page page, Sys sys) {
+  Core core = sys.core;
+  Cli cli = sys.cli;
+  page.render(<canvas id="screen" tabindex="0"><style>{STYLE}</style></canvas>);
 
   Session s = Session.start(core, cli, "rasterterm");
   Grid g = Grid.create(COLS(), ROWS(), SCROLLBACK());
@@ -134,49 +131,52 @@ export async i32 page(Core core, Cli cli, Page page) {
   relay(g, s.screen, typed);
   g.drawFrom(surf, 0, 0, FG(), BG(), back);
   g.drawCaret(surf, 0, 0, FG(), BG());
-  page.drawPixels("screen", surf.width, surf.height, surf.pixels).wait();
+  page.drawPixels("screen", surf.width, surf.height, surf.pixels);
 
   // The canvas takes the keys, which is why it has a `tabindex` — a `<canvas>` is not focusable
   // otherwise, and a terminal nobody can type into is a picture of a terminal.
-  page.on("#screen", "keydown").wait();
-  page.on("#screen", "click").wait();
+  page.on("#screen", "keydown");
+  page.on("#screen", "click");
   // Selection: a drag over the text. The pointer events carry canvas-relative coordinates, which is
   // what a `Surface` is indexed by, so the cell is a division and nothing more.
-  page.on("#screen", "pointerdown").wait();
-  page.on("#screen", "pointermove").wait();
-  page.on("#screen", "pointerup").wait();
+  page.on("#screen", "pointerdown");
+  page.on("#screen", "pointermove");
+  page.on("#screen", "pointerup");
 
-  // **The blink is the wait's deadline, not a ticket in it.** `nextEvent().wait()` blocks with
-  // nothing able to wake it, which is what made a blinking caret look like a missing capability. It
-  // is not: `core.waitAny` takes a ticket list *and* a deadline, and `-1` back means the deadline
-  // won.
-  //
-  // I built this with `core.sleepMillis` in the list first, which is the shape `platform.wac`
-  // explicitly argues against two doc comments up: a timer ticket costs a ring slot and has to be
-  // disposed of on every path or the ring fills and the next call stops the program. The deadline
-  // costs nothing — `Atomics.wait` already takes one — and it is one line shorter.
-  Pending<Event> ev = page.nextEvent();
+  // **The blink is a timer among the things waited on**: whichever of the next event, the half-blink and
+  // a running command comes first. A command runs as a task, as in `term.wac`, so `^C` reaches it.
+  Ticket<Event> next = page.nextEvent();
+  Ticket<i64> blink = core.sleepMillis(BLINK()).ticket();
+  Ticket<void>? running = null;
 
   for (;;) {
-    i32 which = core.waitAny([ev.id], BLINK());
-    if (which < 0) {
-      // The deadline, which is the ordinary case here rather than a failure. Only where a caret is
-      // drawn at all: scrolled back there is none, and blinking one that is not there would redraw
-      // the whole screen twice a second for nothing.
+    TicketBase[] parts = running is null
+      ? [next, blink] as TicketBase[]
+      : [next, blink, running!] as TicketBase[];
+    i32 which = await Ticket.first(parts);
+    if (which == 1) {
+      blink = core.sleepMillis(BLINK()).ticket();
+      // Only where a caret is drawn at all: scrolled back there is none, and blinking one that is
+      // not there would redraw the whole screen twice a second for nothing.
       if (back == 0) {
         caretOn = !caretOn;
+        if (running is not null) { relay(g, s.showing(), ""); }
         redraw(page, g, surf, back, caretOn);
       }
       continue;
     }
-    Event e = ev.wait();
-    ev = page.nextEvent();
-    // **Activity restarts the blink phase, and a bare pointer move is not activity.** A caret that
-    // is mid-blink when you press a key looks like a dropped keystroke, which is what this is for —
-    // but the host sends a `pointermove` for every move over the canvas, and resetting on those
-    // means the caret stops blinking while the pointer merely rests over the terminal. Typing,
-    // pressing and releasing are activity; moving is only activity while dragging, where it is
-    // changing the selection. `issues/system/0178`.
+    if (which == 2) {
+      running = null;
+      if (s.over()) { return s.code(); }
+      s.say("\{s.prompt()} ");
+      relay(g, s.screen, typed);
+      redraw(page, g, surf, back, caretOn);
+      continue;
+    }
+    Event e = await next;
+    next = page.nextEvent();
+    // **Activity restarts the blink phase, and a bare pointer move is not activity.** Typing, pressing
+    // and releasing are activity; moving is only activity while dragging. `issues/system/0178`.
     if (e.kind != "pointermove" || dragging) {
       caretOn = true;
     }
@@ -187,8 +187,6 @@ export async i32 page(Core core, Cli cli, Page page) {
       continue;
     }
     if (e.kind == "pointermove") {
-      // Only while a button is down: a bare move over the canvas is not a selection, and the host
-      // sends every move.
       if (!dragging) { continue; }
       g.selectTo(e.x / cellWidth(), e.y / cellHeight());
       redraw(page, g, surf, back, caretOn);
@@ -200,40 +198,44 @@ export async i32 page(Core core, Cli cli, Page page) {
     }
     if (e.kind == "keydown") {
       string k = e.value;
-      if (k == "") { continue; }
-      u8[] kb = k.toBytes();
-      // **The scroll keys, before anything that types.** They arrive as the escape sequences a real
-      // terminal sends — `ESC [ 5 ~` and `ESC [ 6 ~` — so they cannot be confused with typed input,
-      // and moving the viewport is the one action here that must not touch the session. The browser
-      // host had no encoding for them at all until this; `entryBrowser.ts`.
-      if (isSeq(kb, 53)) {
+      bool ctrl = (e.mods & (MOD_CTRL | MOD_META)) != 0;
+      // `^C` while a command runs stops it, through the shell's own interrupt.
+      if (ctrl && (k == "c" || k == "C")) {
+        if (running is not null) { s.stop(); }
+        else { s.say("\{typed}^C\n\{s.prompt()} "); typed = ""; }
+        relay(g, s.screen, typed);
+        redraw(page, g, surf, back, caretOn);
+        continue;
+      }
+      // **The scroll keys, before anything that types**: moving the viewport is the one action here
+      // that must not touch the session.
+      if (k == "PageUp") {
         back = back + ROWS() - 1;
         if (back > g.scrollbackRows) { back = g.scrollbackRows; }
         redraw(page, g, surf, back, caretOn);
         continue;
       }
-      if (isSeq(kb, 54)) {
+      if (k == "PageDown") {
         back = back - (ROWS() - 1);
         if (back < 0) { back = 0; }
         redraw(page, g, surf, back, caretOn);
         continue;
       }
+      // Keys that type nothing — Shift, an arrow, a function key — arrive by name; a character arrives
+      // as itself, one code point long.
+      bool typesText = !ctrl && cps(k).len() == 1;
+      if (k != "Enter" && k != "Backspace" && !typesText) { continue; }
+      if (running is not null) { continue; }
       // Any other key is input, and input follows the output: whatever you were reading, you are
-      // now writing at the bottom.
+      // now writing at the bottom — and the selection goes, as a terminal's does.
       back = 0;
-      // **And the selection goes.** Text that stays highlighted while you type reads as though it is
-      // about to be replaced, which is what a text field does and not what a terminal does.
       g.clearSelection();
-      i32 first = kb[0] as i32;
-      if (first == 13) {
-        // Enter: echo what was typed, run it, and start a new prompt — the order `term.wac` uses,
-        // so the transcript reads the same on both.
+      if (k == "Enter") {
+        // Echo what was typed and run it as a task; the prompt comes back when it ends.
         s.say("\{typed}\n");
-        await s.feedLine(typed);
+        running = s.feedLine(typed);
         typed = "";
-        if (s.over()) { return s.code(); }
-        s.say("\{s.prompt()} ");
-      } else if (first == 127) {
+      } else if (k == "Backspace") {
         if (typed.len() > 0) { typed = typed.slice(0, typed.len() - 1); }
       } else {
         typed = typed + k;
@@ -242,7 +244,7 @@ export async i32 page(Core core, Cli cli, Page page) {
       continue;
     }
 
-    relay(g, s.screen, typed);
+    relay(g, running is null ? s.screen : s.showing(), running is null ? typed : "");
     redraw(page, g, surf, back, caretOn);
   }
   return 0;

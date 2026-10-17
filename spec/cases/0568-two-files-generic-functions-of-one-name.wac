@@ -1,0 +1,18 @@
+// expect: f() = 4
+// spec: §wac-generic-instantiation-identity-6pnq4wj
+// why: a generic function's instances were named by its bare name, so two files' `ready<T>` made one `ready<i32>` and one `ready<string>` that both compiled the first file's body — and the walks that count and emit stepped once per declaration of that name, so every function after them took its neighbour's slot and the engine refused the module
+// ---- one.wac ----
+export i32 ready<T>(T v) { return 1; }
+export i32 fromOne() { return ready<i32>(4); }
+// ---- two.wac ----
+export i32 ready<T>(T v) { return 2; }
+export i32 fromTwo() { return ready<string>("x"); }
+// ---- main.wac ----
+import { Vec } from "core";
+import { fromOne } from "./one.wac";
+import { fromTwo } from "./two.wac";
+export i32 f() {
+  Vec<string> v = Vec.create();
+  v.push("a");
+  return fromOne() + fromTwo() + v.len();
+}

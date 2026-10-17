@@ -131,7 +131,7 @@ export async Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap)
   // **Standard input is standard input**, whatever the filesystem is: an operand of `-` or none at all
   // is the process's own stream, which no `Fs` is involved in.
   if (path == "") {
-    Change opened = cli.openInput(path).wait();
+    Change opened = await cli.openInput(path).ticket();
     if (opened.ok()) { return Input(true, u8[](), label, Feed.fromStdin(cli)); }
     core.warn(cannotOpen(a.name, path, reasonOf(opened)));
     return Input(false, u8[](), label, Feed.of(cli, u8[]()));
@@ -139,7 +139,7 @@ export async Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap)
   // A file on the host streams, because it can and because a large one should not be held whole. A file
   // anywhere else is read whole and served from memory — which is where it already was.
   if (await fs.isHostPath(path)) {
-    Change opened = cli.openInput(path).wait();
+    Change opened = await cli.openInput(path).ticket();
     if (opened.ok()) { return Input(true, u8[](), label, Feed.fromStdin(cli)); }
     // The same translation the whole-file path does, which is the point of the `Change`: `cat missing`
     // now says what `cat` says instead of the host's sentence about `open '/tmp/x'`.

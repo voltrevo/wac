@@ -14,7 +14,7 @@ it builds on, and every program and page you can build, each with a line on what
 is generated from the tree by `wac task map` and checked by the suite, so it cannot drift.
 
 Today, give or take whatever landed this morning: **41 packages, 171,876 lines of wac, 3,159
-tests written in wac, 88 command-line programs and 11 browser pages.** Those are MAP.md's own
+tests written in wac, 86 command-line programs and 13 browser pages.** Those are MAP.md's own
 figures, copied on 2026-10-16 — the set before it said 39 packages and 2,480 tests from a week
 earlier, which the doc check caught at exactly its 10% tolerance, and the set before *that* said 32
 packages and ~1,300 tests, which was not "give or take this morning" but a repository two thirds this
@@ -150,7 +150,8 @@ wac run --allow-read <entry.wac> args               # run a wac application
 wac task app:build <entry.wac> --allow-read -o wc   # ...or build one JavaScript file; ./wc needs Deno
 wac app <entry.wac> --allow-read -o wc               # ...or one executable file; ./wc needs `wac`
 wac task app:build <entry.wac> --target node -o wc  # ...for Node instead of Deno
-wac task app:build <entry.wac> --target browser -o page/index.html  # ...or a browser page
+wac task app:build <entry.wac> --target browser -o page/index.html  # ...or a program with a Cli, in a browser
+wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac <entry.wac> <dir>  # ...or a page: main(Page)
 wac task app:build <entry.wac> --worker -o child.worker.js  # ...or something `spawn` can run
 wac task map             # regenerate MAP.md; the suite fails if it is stale
 wac task coverage:all        # branch coverage of every package, from its wac-native tests
