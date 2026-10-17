@@ -133,7 +133,7 @@ export string test_one_introduction_end_to_end(Core core, Cli cli) {
     t.eqI32(got.error, INTRO2_OK, "tor's own INTRODUCE2 is answered");
     t.eqI32(got.rendezvous.error, REND_OK, "the rendezvous point resolves");
     t.eqI32(got.rendezvous.port, 9001, "at the port the client named");
-    t.eqI32(got.rendezvous.address[0], 127, "and the address");
+    t.eqI32(got.rendezvous.address[0] as i32, 127, "and the address");
 
     // RENDEZVOUS1 is the cookie the client chose, then our ephemeral public key and AUTH.
     t.eqI32(got.rendezvous1.len(), 84, "the cell is a 20-byte cookie and a 64-byte handshake");

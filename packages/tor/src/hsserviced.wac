@@ -352,8 +352,8 @@ u8[] linkSpecifiersFor(Network net, i32 i) {
   out[0] = 3;
   out[1] = 0; out[2] = 6;
   for (i32 k = 0; k < 4; k++) { out[3 + k] = v4[k]; }
-  out[7] = (net.relays[i].orPort >> 8) & 0xFF;
-  out[8] = net.relays[i].orPort & 0xFF;
+  out[7] = ((net.relays[i].orPort >> 8) & 0xFF) as! u8;
+  out[8] = (net.relays[i].orPort & 0xFF) as! u8;
   out[9] = 2; out[10] = 20;
   for (i32 k = 0; k < 20; k++) { out[11 + k] = id[k]; }
   out[31] = 3; out[32] = 32;
