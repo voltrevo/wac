@@ -16,7 +16,7 @@ import { Program, BUDGET, NO_MATCH } from "../../../regex/src/program.wac";
 import { tryHelp } from "../lib/operands.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 grep(Core core, Cli cli, Fs fs, Args a) {
+export async i32 grep(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) {
     // GNU's own summary, and **2** rather than 1: for `grep`, 1 means "no line matched".
@@ -103,7 +103,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
     // only true because both were in one buffer. Reading it whole gets the same answer for any file that
     // fits, and gets it for the same reason rather than by accident — the cost is that `grep` no longer
     // streams, which for a *matcher* is the right trade: it has to have seen the file to say "binary".
-    u8[] whole = fed.rest();
+    u8[] whole = await fed.rest();
     bool binary = !asText && hasNul(whole);
     if (binary && skipBinary) { continue; }
     // **In a binary file a NUL ends a line too.** `printf 'a\0b\n' | grep -c .` is 2 in GNU and one
@@ -112,7 +112,7 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
     // splitter sees is what GNU's does.
     Feed held = Feed.of(cli, binary ? nulAsNewline(whole) : whole);
     while (true) {
-      Line l = nextLine(s, held);
+      Line l = await nextLine(s, held);
       if (!l.ok) { break; }
       n++;
     i32 found = search(p, l.bytes, 0, caps, 1000000);

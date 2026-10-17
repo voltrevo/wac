@@ -22,7 +22,7 @@ string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
 string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-behaviour"; }
 
-export string test_every_implemented_flag_still_answers_what_the_real_tool_answered(Core core, Cli cli) {
+export async string test_every_implemented_flag_still_answers_what_the_real_tool_answered(Core core, Cli cli) {
   T t = T.create();
   Loaded v = load(cli, vectorsPath());
   t.isTrue(v.error == "", v.error);
@@ -43,7 +43,7 @@ export string test_every_implemented_flag_still_answers_what_the_real_tool_answe
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran r = runCase(core, cli, dir, list[i]);
+    Ran r = await runCase(core, cli, dir, list[i]);
     ran = ran + 1;
     if (r.out != v.items[i].out || r.status != v.items[i].status) {
       wrong = wrong + 1;
@@ -77,7 +77,7 @@ export string test_every_implemented_flag_still_answers_what_the_real_tool_answe
  * Frozen expectations cannot see the environment move. These can, and they are the cases themselves
  * rather than a hand-written stand-in, so what is checked is the thing the vectors are about.
  */
-export string test_the_live_tools_still_agree_on_a_handful(Core core, Cli cli) {
+export async string test_the_live_tools_still_agree_on_a_handful(Core core, Cli cli) {
   T t = T.create();
   string[] list = cases();
   string dir = caseDir(cli);
@@ -107,7 +107,7 @@ export string test_the_live_tools_still_agree_on_a_handful(Core core, Cli cli) {
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran ours = runCase(core, cli, dir, list[i]);
+    Ran ours = await runCase(core, cli, dir, list[i]);
     checked = checked + 1;
     t.eqStr(ours.out, string.fromBytes(want.stdout), "the live tools disagree: $ \{list[i]}");
     t.eqI32(ours.status, want.status, "the live tools' status disagrees: $ \{list[i]}");

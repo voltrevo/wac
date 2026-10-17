@@ -16,7 +16,7 @@
 // nothing matches, which is bash's default; the last path component is the only one patterned, and the
 // README says so under what this does not do.
 
-import { Vec, Map, hashString, stringEq, Read } from "core";
+import { Vec, Map, hashString, stringEq, Read, Ticket } from "core";
 import { Buf } from "core";
 import { Change, Child, Cli, Core, FAULT_NONE, FAULT_UNSUPPORTED, faultWords, FileResult,
   GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_IN, INHERIT_NONE, Pending, Stat, readReason, reasonOf }
@@ -214,7 +214,7 @@ export struct Shell {
    * has to read the one the shell is talking to, or a session on an image lists one filesystem and reads
    * another (wac-mono 0109).
    */
-  fn<Output(Core, Cli, Fs, string, Vec<string>, u8[], bool)> external;
+  fn<Ticket<Output>(Core, Cli, Fs, string, Vec<string>, u8[], bool)> external;
 
   /**
    * What `external` will answer to, for `help` to list.
@@ -720,13 +720,13 @@ export struct Shell {
 }
 
 /** Run a whole script, writing standard output through the capability. */
-export i32 runScript(Shell sh, string src) {
+export async i32 runScript(Shell sh, string src) {
   Script script = parse(src);
   if (!script.ok) {
     sh.err("sh: \{script.error}\n".toBytes());
     return 2;
   }
-  runList(sh, script.lists);
+  await runList(sh, script.lists);
   // **Outstanding background jobs are waited for**, and that is a difference from bash rather than an
   // omission. There, a job holds the terminal's descriptor and keeps writing after the shell exits;
   // here the shell owns the child's pipes, so exiting would throw away whatever it had not read. The
@@ -999,7 +999,7 @@ bool isAllDigits(string s) {
  * A world with no `spawn` at all — a sealed session, a page — says that instead, which is a different
  * sentence about a different thing: nothing is wrong with the command.
  */
-void runBackground(Shell sh, AndOr list) {
+async void runBackground(Shell sh, AndOr list) {
   if (list.items.len() != 1) {
     sh.err(("sh: `&` on a list is not implemented: it needs a subshell to run in, and this shell's "
           + "subshells run in this instance\n").toBytes());
@@ -1021,7 +1021,7 @@ void runBackground(Shell sh, AndOr list) {
       // `cmd.words` is `for`'s list and `case`'s subject; a plain command's are in `cmd.simple`.
       simple = true;
       for (i32 i = 0; i < cmd.simple.words.len(); i++) {
-        expandInto(sh, cmd.simple.words.get(i), argv);
+        await expandInto(sh, cmd.simple.words.get(i), argv);
       }
       // A redirection on a background command would have to be applied inside the child, which has
       // its own streams — said rather than silently dropped, which is what ignoring it would be.
@@ -1305,15 +1305,15 @@ Output waitBuiltin(Shell sh, Vec<string> argv) {
 }
 
 /** A sequence of `&&`/`||` lists — a script, or the body of a compound command. */
-void runList(Shell sh, Vec<AndOr> lists) {
+async void runList(Shell sh, Vec<AndOr> lists) {
   for (AndOr list in lists) {
     if (unwinding(sh)) { return; }
-    runAndOr(sh, list);
+    await runAndOr(sh, list);
   }
 }
 
-void runAndOr(Shell sh, AndOr list) {
-  if (list.background) { runBackground(sh, list); return; }
+async void runAndOr(Shell sh, AndOr list) {
+  if (list.background) { await runBackground(sh, list); return; }
   for (i32 i = 0; i < list.items.len(); i++) {
     if (unwinding(sh)) { return; }
     Item item = list.items.get(i);
@@ -1322,7 +1322,7 @@ void runAndOr(Shell sh, AndOr list) {
       And: { if (sh.status != 0) { continue; } }
       Or: { if (sh.status == 0) { continue; } }
     }
-    runPipeline(sh, item.pipeline);
+    await runPipeline(sh, item.pipeline);
   }
 }
 
@@ -1340,21 +1340,21 @@ void runAndOr(Shell sh, AndOr list) {
  * it refuses — a builtin, a function, a compound, a redirection — takes the sequential path, which is
  * unchanged and still correct.
  */
-void runPipeline(Shell sh, Pipeline pipeline) {
-  runStages(sh, pipeline);
+async void runPipeline(Shell sh, Pipeline pipeline) {
+  await runStages(sh, pipeline);
   // `! cmd` inverts the *pipeline's* status, after everything it did — including a refusal, which is
   // why it is here rather than beside each `return` in `runStages`: `! false` is 0 and `! true` is 1,
   // and anything non-zero inverts to exactly 0 rather than to its complement.
   if (pipeline.negated) { sh.status = sh.status == 0 ? 1 : 0; }
 }
 
-void runStages(Shell sh, Pipeline pipeline) {
+async void runStages(Shell sh, Pipeline pipeline) {
   // `streamPipeline` answers false for a world that cannot spawn at all, which is not a failure of
   // the pipeline: the sequential path below runs the same stages in process, which is what a browser
   // tab did before a page could spawn. Nothing has started when it answers that, so falling through
   // runs each stage exactly once.
   if (canStream(sh, pipeline)) {
-    if (streamPipeline(sh, pipeline)) { return; }
+    if ((await streamPipeline(sh, pipeline))) { return; }
   }
   // **Every stage of a real pipeline runs in a subshell**, which is bash's rule and was not this
   // shell's: `v=set; v=b | cat; echo [$v]` printed `[b]` here and `[set]` in bash, because a stage
@@ -1369,7 +1369,7 @@ void runStages(Shell sh, Pipeline pipeline) {
   for (i32 i = 0; i < pipeline.stages.len(); i++) {
     bool last = i == pipeline.stages.len() - 1;
     Shell stage = forked ? sh.fork() : sh;
-    carried = runCommand(stage, pipeline.stages.get(i), carried, last, i > 0);
+    carried = await runCommand(stage, pipeline.stages.get(i), carried, last, i > 0);
     if (forked) {
       // **Where the child's output goes depends on us, not on it.** A fork always captures — that is
       // what makes a subshell's output something to hand back — so the last stage of a pipeline no
@@ -1478,7 +1478,7 @@ bool canStream(Shell sh, Pipeline pipeline) {
  * The status of a pipeline is its last stage's, as in bash. A stage stopped early has no status worth
  * reading, and its own exit code is discarded rather than reported as a failure of the script.
  */
-bool streamPipeline(Shell sh, Pipeline pipeline) {
+async bool streamPipeline(Shell sh, Pipeline pipeline) {
   i32 n = pipeline.stages.len();
 
   // Spawn them all, first to last, expanding each stage's arguments as it goes. Expansion happens
@@ -1491,7 +1491,7 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
   for (i32 i = 0; i < n; i++) {
     Simple simple = pipeline.stages.get(i).simple;
     Vec<string> argv = Vec.create();
-    for (i32 w = 0; w < simple.words.len(); w++) { expandInto(sh, simple.words.get(w), argv); }
+    for (i32 w = 0; w < simple.words.len(); w++) { await expandInto(sh, simple.words.get(w), argv); }
     if (argv.len() == 0) {
       // An expansion that vanished — `$empty | wc` — is not a program. Nothing has been spawned
       // that this stage would feed, so stopping here is safe.
@@ -1554,7 +1554,7 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
   bool redirected = false;
   for (i32 i = 0; i < pipeline.stages.get(n - 1).simple.redirs.len(); i++) {
     Redir r = pipeline.stages.get(n - 1).simple.redirs.get(i);
-    string path = sh.resolve(joinWord(sh, r.target));
+    string path = sh.resolve(await joinWord(sh, r.target));
     // **Through the filesystem, not the host.** This called `cli.openOutput` until `Fs` had a
     // streaming write, which meant `>` had two implementations: this one wrote to the machine and
     // the sequential path wrote through `sh.fs`. They agreed only because the shells that reach this
@@ -1565,7 +1565,7 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
       // `reasonOf`, so the words are the ones GNU uses for the category rather than the host's
       // sentence: "No such file or directory", not "No such file or directory (os error 2): open
       // '/tmp/…/sub/out'". Same translation `mkdir` and `rm` go through.
-      sh.err("sh: \{joinWord(sh, r.target)}: \{reasonOf(opened)}\n".toBytes());
+      sh.err("sh: \{(await joinWord(sh, r.target))}: \{reasonOf(opened)}\n".toBytes());
       sh.status = 1;
       stopAll(sh, outH, errH, n);
       return true;
@@ -1954,9 +1954,9 @@ export bool isBuiltin(string name) {
  * *collected* rather than written — and the shell already has a flag for that, so this borrows
  * it and puts it back. Without this `{ echo a; } | rev` would print `a` and pipe nothing.
  */
-u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
+async u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
   match (cmd.kind) {
-    Plain: { return runSimple(sh, cmd.simple, stdin, last, piped); }
+    Plain: { return await runSimple(sh, cmd.simple, stdin, last, piped); }
     default: {}
   }
 
@@ -1988,7 +1988,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
         // first and the read uses the second. Reporting the resolved one leaks an absolute *host*
         // path — `cat < nosuch` answered `sh: /tmp/…/nosuch:` — which is the same leak `> f/g` had,
         // in the redirection nobody looked at because the two are separate code.
-        string given = joinWord(sh, r.target);
+        string given = await joinWord(sh, r.target);
         string path = sh.resolve(given);
         FileResult f = sh.fs.readFile(path);
         if (!f.ok) {
@@ -2004,7 +2004,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
         ownInput = true;
       }
       Here: {
-        sh.stdinBytes = hereBody(sh, r);
+        sh.stdinBytes = await hereBody(sh, r);
         sh.stdinPos = 0;
         sh.heldInput = true;
         ownInput = true;
@@ -2013,7 +2013,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
         // The word, expanded now, with a newline: `cat <<< abc` writes four bytes. A word is a word —
         // quotes come off, `$x` expands — which is why this is `joinWord` rather than the here-document
         // path, whose body was fixed when the script was lexed.
-        sh.stdinBytes = "\{joinWord(sh, r.target)}\n".toBytes();
+        sh.stdinBytes = "\{(await joinWord(sh, r.target))}\n".toBytes();
         sh.stdinPos = 0;
         sh.heldInput = true;
         ownInput = true;
@@ -2049,21 +2049,21 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
       for (i32 i = 0; i < cmd.clauses.len(); i++) {
         Clause c = cmd.clauses.get(i);
         // A clause with no condition is the `else` branch, which always runs if it is reached.
-        if (c.cond.len() == 0) { runList(sh, c.body); break; }
-        runList(sh, c.cond);
+        if (c.cond.len() == 0) { await runList(sh, c.body); break; }
+        await runList(sh, c.cond);
         if (sh.exiting) { break; }
-        if (sh.status == 0) { runList(sh, c.body); break; }
+        if (sh.status == 0) { await runList(sh, c.body); break; }
         // Nothing matched: an `if` whose condition failed and which has no `else` succeeds, so
         // the status of the last *condition* must not leak out as the statement's.
         if (i == cmd.clauses.len() - 1) { sh.status = 0; }
       }
     }
-    While: { runLoop(sh, cmd.clauses.get(0), false); }
-    Until: { runLoop(sh, cmd.clauses.get(0), true); }
+    While: { await runLoop(sh, cmd.clauses.get(0), false); }
+    Until: { await runLoop(sh, cmd.clauses.get(0), true); }
     For: {
       sh.loops = sh.loops + 1;
       Vec<string> items = Vec.create();
-      for (i32 i = 0; i < cmd.words.len(); i++) { expandInto(sh, cmd.words.get(i), items); }
+      for (i32 i = 0; i < cmd.words.len(); i++) { await expandInto(sh, cmd.words.get(i), items); }
       // A `for` over nothing runs its body zero times and succeeds — but **setting the status before
       // the loop is visible from inside it**: `$?` on the body's first line is then 0 rather than what
       // the command before the loop answered. bash reads `for x in 1 2; do echo $?; break; done` after
@@ -2073,22 +2073,22 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
         sh.takeSignal();
         if (sh.exiting) { break; }
         sh.setVar(cmd.varName, items.get(i));
-        runList(sh, cmd.clauses.get(0).body);
+        await runList(sh, cmd.clauses.get(0).body);
         if (caughtBreak(sh)) { break; }
       }
       sh.loops = sh.loops - 1;
     }
-    Brace: { runList(sh, cmd.clauses.get(0).body); }
+    Brace: { await runList(sh, cmd.clauses.get(0).body); }
     Subshell: {
       // A copy, so assignments inside do not reach back out. Its output still belongs to us.
       Shell inner = sh.fork();
-      runList(inner, cmd.clauses.get(0).body);
+      await runList(inner, cmd.clauses.get(0).body);
       sh.outBuf.pushAll(inner.outBuf.take());
       sh.err(inner.errOut.bytes());
       sh.status = inner.exiting ? inner.exitCode : inner.status;
     }
     Case: {
-      string subject = joinWord(sh, cmd.words.get(0));
+      string subject = await joinWord(sh, cmd.words.get(0));
       // **`$?` is not cleared before an arm runs.** `false; case f in *) echo $?;; esac` prints 1 in
       // bash and printed 0 here, because the status was set to zero on the way in — so the first
       // command of an arm could not see what the command before the `case` answered. Same defect
@@ -2102,10 +2102,10 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
         CaseArm arm = cmd.arms.get(i);
         bool hit = false;
         for (i32 j = 0; j < arm.patterns.len() && !hit; j++) {
-          if (patternMatches(sh, arm.patterns.get(j), subject)) { hit = true; }
+          if (await patternMatches(sh, arm.patterns.get(j), subject)) { hit = true; }
         }
         if (hit) {
-          if (arm.body.len() == 0) { sh.status = 0; } else { runList(sh, arm.body); }
+          if (arm.body.len() == 0) { sh.status = 0; } else { await runList(sh, arm.body); }
           ran = true;
           break;
         }
@@ -2138,7 +2138,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
   }
 
   // The same two-entry table the simple path uses, over the two buffers this compound produced.
-  Plan plan = planRedirs(sh, cmd.redirs);
+  Plan plan = await planRedirs(sh, cmd.redirs);
   if (!plan.ok) { return u8[](); }
   if (sameFile(plan.one, plan.two)) {
     emitTo(sh, plan.one, complaints, produced);
@@ -2184,7 +2184,7 @@ bool sameAsStart(Where w, i32 fd) {
  * was put in: a shell that cannot be stopped must not be able to hang the server it runs inside.
  * Which of the two a shell is, is exactly whether it has an interrupt source.
  */
-void runLoop(Shell sh, Clause c, bool untilForm) {
+async void runLoop(Shell sh, Clause c, bool untilForm) {
   i32 limit = sh.askInterrupt is null ? 100000 : -1;
   sh.loops = sh.loops + 1;
   sh.status = 0;
@@ -2203,11 +2203,11 @@ void runLoop(Shell sh, Clause c, bool untilForm) {
     // so `^C` on `while true; do :; done` reported "loop ran 100000 times and was stopped" with
     // status 2 rather than 130. The bound was catching the interrupt's own wreckage.
     if (sh.exiting || sh.returning || sh.interrupted) { sh.loops = sh.loops - 1; return; }
-    runList(sh, c.cond);
+    await runList(sh, c.cond);
     if (sh.exiting || sh.returning || sh.interrupted) { sh.loops = sh.loops - 1; return; }
     bool go = untilForm ? sh.status != 0 : sh.status == 0;
     if (!go) { sh.status = body; sh.loops = sh.loops - 1; return; }
-    runList(sh, c.body);
+    await runList(sh, c.body);
     body = sh.status;
     // A `break` leaves 0 rather than the body's status, which is `break`'s own — bash agrees, and it
     // falls out here because the builtin succeeded.
@@ -2226,11 +2226,11 @@ void runLoop(Shell sh, Clause c, bool untilForm) {
  * The exit status of a pipeline is its *last* command's, which is why only the last stage's
  * status is kept.
  */
-u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
+async u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   sh.ranSub = false;
   Vec<string> argv = Vec.create();
   for (i32 i = 0; i < cmd.words.len(); i++) {
-    expandInto(sh, cmd.words.get(i), argv);
+    await expandInto(sh, cmd.words.get(i), argv);
   }
 
   // `a=1` with no command sets the variable for the shell; `a=1 cmd` sets it for that command
@@ -2239,7 +2239,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   if (argv.len() == 0) {
     for (i32 i = 0; i < cmd.assigns.len(); i++) {
       Assign a = cmd.assigns.get(i);
-      sh.setVar(a.name, joinAssign(sh, a.value));
+      sh.setVar(a.name, await joinAssign(sh, a.value));
     }
     // With no command name the status is the last command substitution's, or zero if there was
     // none: `x=$(false)` reports 1, `x=1` reports 0, and a bare `$(exit 3)` reports 3.
@@ -2247,7 +2247,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
     // **And the redirections still happen**, which is the whole of `> f` as a command. They are read
     // below, after this returned — so `> f` left an existing `f` alone, `> new` created nothing at all,
     // and `< nofile` reported success. See `redirsAlone`.
-    redirsAlone(sh, cmd);
+    await redirsAlone(sh, cmd);
     return u8[]();
   }
   // A prefix assignment applies to *this command only*: `x=1 cmd` leaves `x` as it was
@@ -2263,7 +2263,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
     savedNames.push(a.name);
     savedValues.push(before ?? "");
     savedExisted.push((before is not null) ? 1 : 0);
-    sh.setVar(a.name, joinAssign(sh, a.value));
+    sh.setVar(a.name, await joinAssign(sh, a.value));
   }
 
   // An input redirection replaces whatever the pipeline was carrying.
@@ -2287,7 +2287,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
         // first and the read uses the second. Reporting the resolved one leaks an absolute *host*
         // path — `cat < nosuch` answered `sh: /tmp/…/nosuch:` — which is the same leak `> f/g` had,
         // in the redirection nobody looked at because the two are separate code.
-        string given = joinWord(sh, r.target);
+        string given = await joinWord(sh, r.target);
         string path = sh.resolve(given);
         FileResult f = sh.fs.readFile(path);
         if (!f.ok) {
@@ -2299,14 +2299,14 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
         hasInput = true;
       }
       Here: {
-        input = hereBody(sh, r);
+        input = await hereBody(sh, r);
         hasInput = true;
       }
       HereString: {
         // The word with a newline on the end, expanded now — `cat <<< "$x"` is whatever `$x` is at this
         // moment. This is the *simple command's* copy of the rule; the compound one above holds the
         // same bytes in `stdinBytes` instead, because a compound reads them through the shell.
-        input = "\{joinWord(sh, r.target)}\n".toBytes();
+        input = "\{(await joinWord(sh, r.target))}\n".toBytes();
         hasInput = true;
       }
       default: {}
@@ -2353,7 +2353,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   i32 parent = sh.fs.procs.current;
   i32 pid = sh.fs.procs.start(parent, argv, sh.fs.now);
   sh.fs.procs.current = pid;
-  Output result = dispatch(sh, argv, mayInherit);
+  Output result = await dispatch(sh, argv, mayInherit);
   sh.fs.procs.current = parent;
   // Reaped straight away: nothing can `wait` for a stage yet, so a row left behind would be a leak
   // rather than a status somebody is coming for. `jobs` is what gives these somewhere to wait.
@@ -2388,7 +2388,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   // **Both streams, placed by the plan.** The command's error output used to go straight to the shell's
   // error stream whatever the redirections said, and `2>` was refused for want of anywhere to put it —
   // the seam hands back two byte arrays, and only one of them was being placed.
-  Plan plan = planRedirs(sh, cmd.redirs);
+  Plan plan = await planRedirs(sh, cmd.redirs);
   if (!plan.ok) { return u8[](); }
   u8[] out = result.out;
   u8[] err = result.err;
@@ -2465,7 +2465,7 @@ struct Plan {
  * drop what a closed standard output would have taken, it reports a write error per command, which is
  * a thing to imitate properly or not at all.
  */
-Plan planRedirs(Shell sh, Vec<Redir> redirs) {
+async Plan planRedirs(Shell sh, Vec<Redir> redirs) {
   Where one = Where.Stream(1);
   Where two = Where.Stream(2);
   for (Redir r in redirs) {
@@ -2474,7 +2474,7 @@ Plan planRedirs(Shell sh, Vec<Redir> redirs) {
       Append: { append = true; }
       Out: {}
       Dup: {
-        string target = joinWord(sh, r.target);
+        string target = await joinWord(sh, r.target);
         if (r.fd > 2 || (target != "1" && target != "2" && target != "-")) {
           // bash names the descriptor that does not exist, which is the one out of range — the source
           // for `3>&1` and the target for `1>&3`. Naming the whole redirection instead was our own
@@ -2505,7 +2505,7 @@ Plan planRedirs(Shell sh, Vec<Redir> redirs) {
       sh.status = 1;
       return Plan(one, two, false);
     }
-    string target = joinWord(sh, r.target);
+    string target = await joinWord(sh, r.target);
     Where to = Where.File(target, sh.resolve(target), append);
     if (r.fd == 1) { one = to; } else { two = to; }
   }
@@ -2583,7 +2583,7 @@ bool emitTo(Shell sh, Where w, u8[] data, u8[] alsoHere) {
  * place; an append reads what is there and puts it back, so a missing file appears and an existing one
  * survives. The input side is read only to be refused: there is no command to hand the bytes to.
  */
-void redirsAlone(Shell sh, Simple cmd) {
+async void redirsAlone(Shell sh, Simple cmd) {
   for (i32 i = 0; i < cmd.redirs.len(); i++) {
     Redir r = cmd.redirs.get(i);
     match (r.kind) {
@@ -2591,7 +2591,7 @@ void redirsAlone(Shell sh, Simple cmd) {
         // The word the user wrote in the diagnostic and the resolved path for the read, which is the
         // rule the `In` case below keeps for the same reason: a sealed session's host path is not the
         // caller's business.
-        string given = joinWord(sh, r.target);
+        string given = await joinWord(sh, r.target);
         FileResult f = sh.fs.readFile(sh.resolve(given));
         if (!f.ok) {
           sh.err("sh: \{given}: \{readReason(f)}\n".toBytes());
@@ -2602,7 +2602,7 @@ void redirsAlone(Shell sh, Simple cmd) {
       default: {}
     }
   }
-  Plan p = planRedirs(sh, cmd.redirs);
+  Plan p = await planRedirs(sh, cmd.redirs);
   if (!p.ok) { return; }
   u8[] none = u8[]();
   emitTo(sh, p.one, none, none);
@@ -2631,12 +2631,12 @@ bool sameFile(Where a, Where b) {
  * The same matcher pathname expansion uses, over the subject rather than over a directory — which
  * is why `case $f in *.txt)` and `echo *.txt` agree about what a pattern means.
  */
-bool patternMatches(Shell sh, Word pattern, string subject) {
+async bool patternMatches(Shell sh, Word pattern, string subject) {
   Buf field = Buf.create();
   Buf mask = Buf.create();
   for (i32 i = 0; i < pattern.parts.len(); i++) {
     Part p = pattern.parts.get(i);
-    appendMasked(field, mask, expandPart(sh, p), p.quoted ? 1 : 0);
+    appendMasked(field, mask, (await expandPart(sh, p)), p.quoted ? 1 : 0);
   }
   return globMatch(field.bytes(), mask.bytes(), 0, subject.toBytes(), 0);
 }
@@ -3227,8 +3227,8 @@ Output ls(Shell sh, Vec<string> argv) {
  * Each line, because bash prefixes each: `f() { break; }` called twice complains twice, and both
  * carry it. Lines that already name the shell are left alone rather than becoming `sh: sh:`.
  */
-Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
-  Output out = dispatched(sh, argv, mayInherit);
+async Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
+  Output out = await dispatched(sh, argv, mayInherit);
   if (out.err.len() == 0) { return out; }
   string name = argv.get(0);
   if (sh.funcs.has(name) || !speaksAsTheShell(name)) { return out; }
@@ -3301,11 +3301,11 @@ string prefixed(string line, string name) {
   return "sh: \{line}";
 }
 
-Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
+async Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   string name = argv.get(0);
 
   // Functions shadow builtins, as they do in bash for everything but the special builtins.
-  if (sh.funcs.has(name)) { return callFunction(sh, argv); }
+  if (sh.funcs.has(name)) { return await callFunction(sh, argv); }
 
   if (name == ":" || name == "true") { return Output.ok(u8[]()); }
   if (name == "false") { return Output(u8[](), u8[](), 1, true, false); }
@@ -3376,7 +3376,7 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
     Vec<string> rewritten = Vec.create();
     rewritten.push(named);
     for (i32 i = 1; i < argv.len(); i++) { rewritten.push(argv.get(i)); }
-    return dispatch(sh, rewritten, mayInherit);
+    return await dispatch(sh, rewritten, mayInherit);
   }
 
   // A real program if `$WACPATH` has one. There is no wac implementation behind this any more:
@@ -3403,7 +3403,7 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   // that produced nothing has an input — an empty one. Recomputing the rest and dropping that term made
   // `: | cat` inherit the terminal and wait for a person who was not typing.
   bool inheritIn = mayInherit && !sh.heldInput && sh.ownsStdin && !sh.triedStdin;
-  Output given = sh.external(sh.core, sh.cli, sh.fs, sh.cwd, argv,
+  Output given = await sh.external(sh.core, sh.cli, sh.fs, sh.cwd, argv,
                              inheritIn ? u8[]() : sh.restOfStdin(), inheritIn);
   if (given.found) { return given; }
   // Nothing answered, and there is no last resort to fall back on. `Output.missing()` is 127, which
@@ -3431,7 +3431,7 @@ export string[] builtinNames() {
 string[] noExternalNames() { return string[].filled(0, ""); }
 
 /** The default `Shell.external`: nothing is wired in, so every name falls through. */
-Output noExternal(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin, bool inheritIn) {
+async Output noExternal(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin, bool inheritIn) {
   return Output.missing();
 }
 
@@ -3782,7 +3782,7 @@ bool containsSlash(string s) {
  * The parameters are saved and put back rather than forked, because a function *does* see and
  * change the caller's variables — only the positional parameters are its own.
  */
-Output callFunction(Shell sh, Vec<string> argv) {
+async Output callFunction(Shell sh, Vec<string> argv) {
   Command body = sh.funcs.get(argv.get(0))!;
   Vec<string> saved = sh.params;
   Vec<string> params = Vec.create();
@@ -3819,7 +3819,7 @@ Output callFunction(Shell sh, Vec<string> argv) {
   sh.localValues = Vec.create();
   sh.localExisted = Vec.create();
 
-  runCommand(sh, body, u8[](), true, false);
+  await runCommand(sh, body, u8[](), true, false);
 
   for (i32 i = 0; i < sh.localNames.len(); i++) {
     if (sh.localExisted.get(i) == 1) { sh.setVar(sh.localNames.get(i), sh.localValues.get(i)); }
@@ -4149,7 +4149,7 @@ string wrapNames(string[] ns) {
  * Zero is not a mistake: `x=""; echo $x` passes nothing at all, because an unquoted expansion
  * that yields only whitespace disappears. `echo "$x"` passes one empty argument. Both matter.
  */
-void expandInto(Shell sh, Word word, Vec<string> argv) {
+async void expandInto(Shell sh, Word word, Vec<string> argv) {
   // The field is built as bytes *and* a mask saying which of them were quoted. Globbing needs
   // that per character, not per word: in `echo "*"a` the star is literal and the `a` is not, so a
   // flag on the whole field would either glob a filename nobody asked for or refuse one they did.
@@ -4159,7 +4159,7 @@ void expandInto(Shell sh, Word word, Vec<string> argv) {
 
   for (i32 i = 0; i < word.parts.len(); i++) {
     Part p = word.parts.get(i);
-    string text = expandPart(sh, p);
+    string text = await expandPart(sh, p);
 
     // Tilde expansion, which is a rule about where the `~` *is*: only one that begins the word, and
     // only in literal text, so `echo "a~"~` prints two tildes and `x=~; echo $x/y` does not expand a
@@ -4425,11 +4425,11 @@ bool globMatch(u8[] pat, u8[] quoted, i32 p, u8[] name, i32 n) {
  * Expansion happens only when the delimiter was unquoted, and then by exactly the
  * inside-double-quotes rules: `$x` substitutes and nothing splits.
  */
-u8[] hereBody(Shell sh, Redir r) {
+async u8[] hereBody(Shell sh, Redir r) {
   if (!r.bodyExpand) { return r.body.toBytes(); }
   Vec<Part> parts = lexQuotedText(r.body);
   string expanded = "";
-  for (Part part in parts) { expanded = expanded + expandPart(sh, part); }
+  for (Part part in parts) { expanded = expanded + (await expandPart(sh, part)); }
   return expanded.toBytes();
 }
 
@@ -4452,10 +4452,10 @@ u8[] sliceBytes(u8[] b, i32 from, i32 to) {
  * Tried by length rather than by matching greedily, because the pattern is a glob and "the
  * shortest prefix this matches" is not something a glob matcher answers on its own.
  */
-string trimStart(Shell sh, string value, string pattern, bool longest) {
+async string trimStart(Shell sh, string value, string pattern, bool longest) {
   // `expandQuoted`, because a trim pattern is never subject to word splitting: `${x#a }` has a
   // trailing space in its pattern and `expandText` tokenizes it away.
-  u8[] pat = expandQuoted(sh, pattern).toBytes();
+  u8[] pat = (await expandQuoted(sh, pattern)).toBytes();
   u8[] mask = u8[].filled(pat.len(), 0);
   u8[] v = value.toBytes();
   i32 hit = -1;
@@ -4478,8 +4478,8 @@ string trimStart(Shell sh, string value, string pattern, bool longest) {
  * unexpected part: `${x^^[ab]}` upper-cases only a's and b's, and an absent pattern matches
  * anything at all.
  */
-string convertCase(Shell sh, string value, string pattern, bool up, bool all) {
-  u8[] pat = expandQuoted(sh, pattern).toBytes();
+async string convertCase(Shell sh, string value, string pattern, bool up, bool all) {
+  u8[] pat = (await expandQuoted(sh, pattern)).toBytes();
   u8[] mask = u8[].filled(pat.len(), 0);
   u8[] v = value.toBytes();
   Buf out = Buf.create();
@@ -4518,8 +4518,8 @@ string convertCase(Shell sh, string value, string pattern, bool up, bool all) {
  * An empty specification — `${x:}` — is a bad substitution, and a bad substitution is *fatal*:
  * bash prints nothing, exits 1, and does not run the rest of the line.
  */
-string substring(Shell sh, string name, string value, string spec) {
-  if (spec == "") { return badSubstitution(sh, "${\{name}:}"); }
+async string substring(Shell sh, string name, string value, string spec) {
+  if (spec == "") { return await badSubstitution(sh, "${\{name}:}"); }
 
   // Split on the first colon outside parentheses, so `${x:$((a))}` keeps its own colons if it
   // ever grows any.
@@ -4540,7 +4540,7 @@ string substring(Shell sh, string name, string value, string spec) {
   // Expanded, *then* evaluated. The offset may contain `$((…))` or `$x` of its own, and
   // `expandArith` takes the inside of an arithmetic expansion rather than something still
   // containing one — feeding it `$((1+1))` unexpanded is a syntax error in arithmetic.
-  i32 off = offText == "" ? 0 : atoiOr(expandArith(sh, expandQuoted(sh, offText)), 0);
+  i32 off = offText == "" ? 0 : atoiOr(expandArith(sh, (await expandQuoted(sh, offText))), 0);
   if (off < 0) {
     off = n + off;
     if (off < 0) { return ""; }
@@ -4549,7 +4549,7 @@ string substring(Shell sh, string name, string value, string spec) {
 
   i32 end = n;
   if (haveLen && lenText != "") {
-    i32 count = atoiOr(expandArith(sh, expandQuoted(sh, lenText)), 0);
+    i32 count = atoiOr(expandArith(sh, (await expandQuoted(sh, lenText))), 0);
     if (count < 0) {
       end = n + count;
       if (end < off) {
@@ -4576,7 +4576,7 @@ string substring(Shell sh, string name, string value, string spec) {
  * the rest of the line. Treating it as an empty string instead is the failure mode this whole
  * package is trying to avoid — something that looks like it worked.
  */
-string badSubstitution(Shell sh, string what) {
+async string badSubstitution(Shell sh, string what) {
   sh.err("sh: \{what}: bad substitution\n".toBytes());
   sh.exiting = true;
   sh.exitCode = 1;
@@ -4607,7 +4607,7 @@ string badSubstitution(Shell sh, string what) {
  * The longest match at each position wins, and matching moves left to right, which together are
  * what make `${x/a*\/X}` take everything rather than the first `a`.
  */
-string substitutePattern(Shell sh, string value, string arg, bool all) {
+async string substitutePattern(Shell sh, string value, string arg, bool all) {
   u8[] raw = arg.toBytes();
   // The pattern runs to the first *unescaped* slash, so `${x/\//-}` can replace a slash at all.
   Buf patBuf = Buf.create();
@@ -4632,9 +4632,9 @@ string substitutePattern(Shell sh, string value, string arg, bool all) {
   // `expandQuoted` and not `expandText`: neither of these is subject to word splitting, and
   // `expandText` tokenizes, so a replacement of `[&]` came back as `[ ]` — `&` is a shell
   // delimiter and got split on. The same argument covers a pattern containing a space.
-  u8[] pat = expandQuoted(sh, patText).toBytes();
+  u8[] pat = (await expandQuoted(sh, patText)).toBytes();
   u8[] mask = u8[].filled(pat.len(), 0);
-  string rep = expandQuoted(sh, repText);
+  string rep = await expandQuoted(sh, repText);
   u8[] v = value.toBytes();
   // An empty pattern matches nothing rather than matching everywhere.
   if (pat.len() == 0) { return value; }
@@ -4681,11 +4681,11 @@ string substitutePattern(Shell sh, string value, string arg, bool all) {
  * the shell would, and inside braces that is wrong — it splits on `&`, on spaces, and on anything
  * else the tokenizer treats as an operator.
  */
-string expandQuoted(Shell sh, string text) {
+async string expandQuoted(Shell sh, string text) {
   if (text == "") { return ""; }
   Vec<Part> parts = lexQuotedText(text);
   string out = "";
-  for (Part part in parts) { out = out + expandPart(sh, part); }
+  for (Part part in parts) { out = out + (await expandPart(sh, part)); }
   return out;
 }
 
@@ -4710,10 +4710,10 @@ string applyReplacement(string rep, u8[] matched) {
 }
 
 /** Remove a matching suffix. `longest` picks `%%` over `%`. */
-string trimEnd(Shell sh, string value, string pattern, bool longest) {
+async string trimEnd(Shell sh, string value, string pattern, bool longest) {
   // `expandQuoted`, because a trim pattern is never subject to word splitting: `${x#a }` has a
   // trailing space in its pattern and `expandText` tokenizes it away.
-  u8[] pat = expandQuoted(sh, pattern).toBytes();
+  u8[] pat = (await expandQuoted(sh, pattern)).toBytes();
   u8[] mask = u8[].filled(pat.len(), 0);
   u8[] v = value.toBytes();
   i32 hit = -1;
@@ -4730,7 +4730,7 @@ string trimEnd(Shell sh, string value, string pattern, bool longest) {
   return value.slice(0, hit);
 }
 
-string expandText(Shell sh, string text) {
+async string expandText(Shell sh, string text) {
   if (text == "") { return ""; }
   Vec<Token> toks = tokenize(text);
   string out = "";
@@ -4741,7 +4741,7 @@ string expandText(Shell sh, string text) {
       default: { continue; }
     }
     string piece = "";
-    for (i32 j = 0; j < t.parts.len(); j++) { piece = piece + expandPart(sh, t.parts.get(j)); }
+    for (i32 j = 0; j < t.parts.len(); j++) { piece = piece + (await expandPart(sh, t.parts.get(j))); }
     out = first ? piece : "\{out} \{piece}";
     first = false;
   }
@@ -4901,7 +4901,7 @@ bool isArithNameChar(i32 c) {
   return isArithNameStart(c) || (c >= 0x30 && c <= 0x39);
 }
 
-string expandPart(Shell sh, Part p) {
+async string expandPart(Shell sh, Part p) {
   match (p.kind) {
     Lit: { return p.text; }
     Var: {
@@ -4912,7 +4912,7 @@ string expandPart(Shell sh, Part p) {
         if (p.text == "@" || p.text == "*") { return "\{sh.params.len()}"; }
         return "\{sh.lookUp(p.text).len()}";
       }
-      if (p.op == ":") { return substring(sh, p.text, sh.lookUp(p.text), p.arg); }
+      if (p.op == ":") { return await substring(sh, p.text, sh.lookUp(p.text), p.arg); }
 
       string value = sh.lookUp(p.text);
       // With a colon, "unset or empty" counts as absent; without one, only "unset" does.
@@ -4924,34 +4924,34 @@ string expandPart(Shell sh, Part p) {
       // `#` and `%` trim a *pattern* off an end rather than substituting. They are the reason a
       // shell can do `${f%.txt}` without calling anything, and the doubled forms take the
       // longest match instead of the shortest.
-      if (p.op == "#") { return trimStart(sh, value, p.arg, false); }
-      if (p.op == "##") { return trimStart(sh, value, p.arg, true); }
-      if (p.op == "%") { return trimEnd(sh, value, p.arg, false); }
-      if (p.op == "%%") { return trimEnd(sh, value, p.arg, true); }
+      if (p.op == "#") { return await trimStart(sh, value, p.arg, false); }
+      if (p.op == "##") { return await trimStart(sh, value, p.arg, true); }
+      if (p.op == "%") { return await trimEnd(sh, value, p.arg, false); }
+      if (p.op == "%%") { return await trimEnd(sh, value, p.arg, true); }
 
       // `${x/pat/rep}` replaces the first match, `${x//pat/rep}` every one.
-      if (p.op == "/") { return substitutePattern(sh, value, p.arg, false); }
-      if (p.op == "//") { return substitutePattern(sh, value, p.arg, true); }
+      if (p.op == "/") { return await substitutePattern(sh, value, p.arg, false); }
+      if (p.op == "//") { return await substitutePattern(sh, value, p.arg, true); }
 
       // Case conversion. `^`/`,` do the first character and `^^`/`,,` all of them, and the
       // argument is a *pattern* selecting which characters are eligible — `${x^^[ab]}` upper-cases
       // only a's and b's. An absent pattern matches anything.
-      if (p.op == "^") { return convertCase(sh, value, p.arg, true, false); }
-      if (p.op == "^^") { return convertCase(sh, value, p.arg, true, true); }
-      if (p.op == ",") { return convertCase(sh, value, p.arg, false, false); }
-      if (p.op == ",,") { return convertCase(sh, value, p.arg, false, true); }
+      if (p.op == "^") { return await convertCase(sh, value, p.arg, true, false); }
+      if (p.op == "^^") { return await convertCase(sh, value, p.arg, true, true); }
+      if (p.op == ",") { return await convertCase(sh, value, p.arg, false, false); }
+      if (p.op == ",,") { return await convertCase(sh, value, p.arg, false, true); }
 
-      if (last == "-") { return absent ? expandText(sh, p.arg) : value; }
-      if (last == "+") { return absent ? "" : expandText(sh, p.arg); }
+      if (last == "-") { return absent ? (await expandText(sh, p.arg)) : value; }
+      if (last == "+") { return absent ? "" : (await expandText(sh, p.arg)); }
       if (last == "=") {
         if (!absent) { return value; }
-        string filled = expandText(sh, p.arg);
+        string filled = await expandText(sh, p.arg);
         sh.setVar(p.text, filled);
         return filled;
       }
       if (last == "?") {
         if (!absent) { return value; }
-        string why = p.arg == "" ? "parameter null or not set" : expandText(sh, p.arg);
+        string why = p.arg == "" ? "parameter null or not set" : (await expandText(sh, p.arg));
         sh.err("sh: \{p.text}: \{why}\n".toBytes());
         sh.exiting = true;
         // 127, which is what bash exits with here — not 1, and not the 2 a syntax error gets.
@@ -4962,7 +4962,7 @@ string expandPart(Shell sh, Part p) {
       // An operator nothing above recognised. Reporting it beats returning the value unchanged,
       // which is what this did before and which makes a typo look like a working expansion —
       // `${#x:1}` came back as `0`. bash calls it a bad substitution and so do we.
-      return badSubstitution(sh, "${\{p.text}\{p.op}\{p.arg}}");
+      return await badSubstitution(sh, "${\{p.text}\{p.op}\{p.arg}}");
     }
     Arith: { return expandArith(sh, p.text); }
     Cmd: {
@@ -4990,7 +4990,7 @@ string expandPart(Shell sh, Part p) {
       // The *returned* status, not `inner.status`: `$(exit 3)` leaves the inner shell exiting
       // with a code rather than with a status, and only `runScript` reconciles the two. The exit
       // itself stops there — it ends the substitution, not the shell that asked for it.
-      sh.status = runScript(inner, p.text);
+      sh.status = await runScript(inner, p.text);
       sh.ranSub = true;
       sh.err(inner.errOut.bytes());
       u8[] out = inner.outBuf.take();
@@ -5005,7 +5005,7 @@ string expandPart(Shell sh, Part p) {
 }
 
 /** A word joined without splitting — for a redirection target. */
-string joinWord(Shell sh, Word word) { return joinParts(sh, word, false); }
+async string joinWord(Shell sh, Word word) { return await joinParts(sh, word, false); }
 
 /**
  * The same, for an assignment's value, where a tilde may also follow a colon.
@@ -5014,13 +5014,13 @@ string joinWord(Shell sh, Word word) { return joinParts(sh, word, false); }
  * or the shell keeps a directory called `~` on its search path and quietly finds nothing in it. In a
  * plain word the leading one is the only one, which is why `echo ~:~` prints a tilde on the right.
  */
-string joinAssign(Shell sh, Word word) { return joinParts(sh, word, true); }
+async string joinAssign(Shell sh, Word word) { return await joinParts(sh, word, true); }
 
-string joinParts(Shell sh, Word word, bool colons) {
+async string joinParts(Shell sh, Word word, bool colons) {
   string s = "";
   for (i32 i = 0; i < word.parts.len(); i++) {
     Part p = word.parts.get(i);
-    string text = expandPart(sh, p);
+    string text = await expandPart(sh, p);
     if (!p.quoted) {
       match (p.kind) {
         // A tilde begins the value, or follows a colon in it. `s` is what has been built so far, so a

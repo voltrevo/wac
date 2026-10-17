@@ -202,6 +202,26 @@ export struct Ticket<T> : TicketBase {
   }
 
   /**
+   * Which of `parts` settles first, by its index — `any` for a set that is only known at run time, as
+   * `TicketBase`s whose answers the caller reads for itself. A program watching what is still open of
+   * several streams has a different set each time round, and a tuple cannot say that. Driven as `any`
+   * is; an empty set never settles.
+   */
+  Ticket<i32> first(TicketBase[] parts) {
+    i32[] firstAt = watchFirst(parts);
+    Ticket<i32> out;
+    out.drive = () => {
+      i32 k = stepFirst(parts, firstAt);
+      if (k == -2) { return false; }
+      if (k == -1) { return true; }
+      out.resolve(k);
+      return true;
+    };
+    out.settleWhenParts(parts, false);
+    return out;
+  }
+
+  /**
    * `any`, with the winner's index beside its value (spec ch35 `§wac-ticket-any-with-index-q2v7hcn`) —
    * what says which one won when two of them answer the same type.
    */

@@ -63,11 +63,11 @@ export string test_the_program_runs_until_it_waits_and_each_event_runs_it_on() {
           "it ran to its first wait");
   t.isFalse(done.settled(), "and is waiting");
   seen.log = "";
-  deliver(page, "click", "up", "", 0, 0);
-  deliver(page, "click", "noise", "", 0, 0);
-  deliver(page, "click", "up", "", 0, 0);
+  deliver(page, "click", "up", "", 0, 0, 0);
+  deliver(page, "click", "noise", "", 0, 0, 0);
+  deliver(page, "click", "up", "", 0, 0, 0);
   t.eqStr(seen.log, "text n=1\ntext n=2\n", "each click ran it on, there and then");
-  deliver(page, "click", "quit", "", 0, 0);
+  deliver(page, "click", "quit", "", 0, 0, 0);
   t.isTrue(done.settled(), "quit finished it");
   t.eqI32(done.value(), 2, "with the count");
   return t.report();
@@ -84,8 +84,8 @@ export string test_events_that_arrive_before_a_wait_are_kept_in_order() {
   Check t = Check.create();
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
-  deliver(page, "click", "abc", "", 0, 0);
-  deliver(page, "click", "de", "", 0, 0);
+  deliver(page, "click", "abc", "", 0, 0, 0);
+  deliver(page, "click", "de", "", 0, 0, 0);
   Ticket<i32> done = early(page);
   // Nothing was scheduled for these: both tickets were already settled.
   page.drain();
@@ -149,9 +149,9 @@ export string test_a_wait_on_a_wait_runs_on_through_both() {
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
   Ticket<i32> done = startNested(page);
-  deliver(page, "input", "name", "abcd", 0, 0);
+  deliver(page, "input", "name", "abcd", 0, 0, 0);
   t.isFalse(done.settled(), "one event in, one to go");
-  deliver(page, "input", "name", "xy", 0, 0);
+  deliver(page, "input", "name", "xy", 0, 0, 0);
   t.isTrue(done.settled(), "the second finished both");
   t.eqI32(done.value(), 42, "4 then 2");
   return t.report();
@@ -189,10 +189,10 @@ export string test_waiting_on_whichever_comes_first() {
   t.eqI32(seen.timers, 1, "one frame asked for");
   timerFired(page, 0);
   t.eqI32(seen.timers, 2, "the frame ran it on, and it asked for the next");
-  deliver(page, "click", "noise", "", 0, 0);
+  deliver(page, "click", "noise", "", 0, 0, 0);
   t.eqI32(seen.timers, 2, "an event ran it on without a frame");
   timerFired(page, 0);
-  deliver(page, "click", "quit", "", 0, 0);
+  deliver(page, "click", "quit", "", 0, 0, 0);
   t.isTrue(done.settled(), "quit finished it");
   t.eqI32(done.value(), 2, "after two frames");
   return t.report();
@@ -213,9 +213,9 @@ export string test_waiting_on_all_of_several() {
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
   Ticket<i32> done = startBoth(page);
-  deliver(page, "click", "abc", "", 0, 0);
+  deliver(page, "click", "abc", "", 0, 0, 0);
   t.isFalse(done.settled(), "one of two");
-  deliver(page, "click", "de", "", 0, 0);
+  deliver(page, "click", "de", "", 0, 0, 0);
   t.isTrue(done.settled(), "both");
   t.eqI32(done.value(), 32, "in order");
   return t.report();

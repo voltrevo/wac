@@ -41,7 +41,7 @@ i32 firstDifference(u8[] a, u8[] b) {
   return 0 - 1;
 }
 
-export string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
+export async string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
@@ -49,7 +49,7 @@ export string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
   u8[] data = pattern(500003);
   t.isTrue(cli.writeFile("\{dir}/src", data).wait().ok(), "wrote the source");
 
-  Ran r = runCase(core, cli, dir, "cp src dst");
+  Ran r = await runCase(core, cli, dir, "cp src dst");
   t.eqI32(r.status, 0, "cp succeeded: \{r.err}");
 
   FileResult got = cli.readFile("\{dir}/dst").wait();
@@ -59,7 +59,7 @@ export string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
 
   // Over an existing file, and the rename must not leave the old contents behind.
   cli.writeFile("\{dir}/dst", "stale".toBytes()).wait();
-  t.eqI32(runCase(core, cli, dir, "cp src dst").status, 0, "cp over an existing file");
+  t.eqI32((await runCase(core, cli, dir, "cp src dst")).status, 0, "cp over an existing file");
   FileResult again = cli.readFile("\{dir}/dst").wait();
   t.eqI32(firstDifference(data, again.bytes), 0 - 1, "and it is the new contents, whole");
 
@@ -67,13 +67,13 @@ export string test_cp_copies_across_chunk_boundaries(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_failed_cp_leaves_no_temporary_beside_the_target(Core core, Cli cli) {
+export async string test_a_failed_cp_leaves_no_temporary_beside_the_target(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
   cli.writeFile("\{dir}/src", "small\n".toBytes()).wait();
 
-  t.eqI32(runCase(core, cli, dir, "cp absent never").status, 1, "a missing source fails");
+  t.eqI32((await runCase(core, cli, dir, "cp absent never")).status, 1, "a missing source fails");
 
   // **The assertion the temporary-name strategy needs.** `cp` writes beside its target and renames,
   // so a failure must leave nothing: a stray `never.tmp` would be a file a later run reads as real.
@@ -87,13 +87,13 @@ export string test_a_failed_cp_leaves_no_temporary_beside_the_target(Core core, 
   return t.report();
 }
 
-export string test_tee_writes_to_standard_output_and_to_the_file(Core core, Cli cli) {
+export async string test_tee_writes_to_standard_output_and_to_the_file(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
 
   // `tee` is the first applet with two destinations at once, so both are asked.
-  Ran r = runCase(core, cli, dir, "printf 'through\\n' | tee out");
+  Ran r = await runCase(core, cli, dir, "printf 'through\\n' | tee out");
   t.eqI32(r.status, 0, "tee succeeded: \{r.err}");
   t.eqStr(r.out, "through\n", "tee wrote to standard output");
 
@@ -116,7 +116,7 @@ export string test_tee_writes_to_standard_output_and_to_the_file(Core core, Cli 
  * would pass every content check here and fail only under a reader that arrived mid-write, which is not
  * a thing a test can schedule. What it cannot hide is the temporary it left behind.
  */
-export string test_cp_leaves_no_temporary_behind(Core core, Cli cli) {
+export async string test_cp_leaves_no_temporary_behind(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -125,7 +125,7 @@ export string test_cp_leaves_no_temporary_behind(Core core, Cli cli) {
   u8[] want = cli.readFile(source).wait().bytes;
   t.isTrue(want.len() > 0, "README.md is readable and not empty");
 
-  t.eqI32(runApplet(core, cli, dir, ["cp", source, "\{dir}/copy"]).status, 0, "cp ran");
+  t.eqI32((await runApplet(core, cli, dir, ["cp", source, "\{dir}/copy"])).status, 0, "cp ran");
   t.eqStr(differs(cli.readFile("\{dir}/copy").wait().bytes, want), "", "cp copied it");
 
   string[]? listed = cli.readDir(dir).wait();

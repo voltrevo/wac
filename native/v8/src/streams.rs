@@ -129,26 +129,4 @@ impl Stream {
         self.ready.notify_all();
     }
 
-    /// Everything available, blocking until there is some or the stream has ended.
-    ///
-    /// An empty answer means **the end** — the distinction `Read.End` carries, and the reason this
-    /// cannot simply answer what it has: a reader that got nothing and treated it as the end would
-    /// stop at the first moment the writer was slow.
-    pub fn read(&self) -> Vec<u8> {
-        let mut inner = self.inner.lock().unwrap();
-        loop {
-            if !inner.bytes.is_empty() {
-                let taken: Vec<u8> = inner.bytes.drain(..).collect();
-                drop(inner);
-                // Room, so a writer parked on a full queue may carry on — notified before returning,
-                // because the alternative is a producer left asleep with an empty queue in front of it.
-                self.ready.notify_all();
-                return taken;
-            }
-            if inner.done {
-                return Vec::new();
-            }
-            inner = self.ready.wait(inner).unwrap();
-        }
-    }
 }

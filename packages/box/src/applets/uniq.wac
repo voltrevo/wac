@@ -12,7 +12,7 @@ import { cmpBytes } from "../lib/lines.wac";
 import { extraOperand } from "../lib/operands.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 uniq(Core core, Cli cli, Fs fs, Args a) {
+export async i32 uniq(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // **`uniq INPUT [OUTPUT]`.** The second operand is a *file to write*, not an extra one, so calling it
   // extra blamed the caller for GNU's own syntax — and named the wrong operand as well, since a third is
@@ -41,7 +41,7 @@ export i32 uniq(Core core, Cli cli, Fs fs, Args a) {
   bool lastNl = true;
   i32 run = 0;
   while (true) {
-    Line l = nextLine(s, fed);
+    Line l = await nextLine(s, fed);
     if (!l.ok) { break; }
     if (run > 0 && cmpBytes(l.bytes, prev) == 0) { run++; lastNl = l.nl; continue; }
     if (run > 0) { show(out, prev, run, counting, lastNl, onlyRepeated, onlyUnique); }

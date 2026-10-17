@@ -19,7 +19,7 @@ import { Shell, runScript } from "./exec.wac";
  * into `Shell.external` — `box`'s applets, say — gets argument handling, the file-or-`-c`-or-stdin
  * choice and the standard-error flush rather than reimplementing them and drifting.
  */
-export i32 shellMain(Core core, Cli cli, Shell sh, i32 first) {
+export async i32 shellMain(Core core, Cli cli, Shell sh, i32 first) {
   // **A shell is a process too**, and it was the one this system did not know about: `mountSystem`
   // enters the *program*, which for `sealedsh` is this same thing and for `wacsh` — which builds no
   // system on purpose — is nothing at all. So `$$` had no number to answer with and a signal had
@@ -62,7 +62,7 @@ export i32 shellMain(Core core, Cli cli, Shell sh, i32 first) {
   // Issue 0032.
   sh.ownsStdin = true;
 
-  i32 status = runScript(sh, src);
+  i32 status = await runScript(sh, src);
 
   // A non-capturing shell has already written its diagnostics, in the order it produced them —
   // `Shell.err` does that now, where the whole buffer used to be flushed here through `Core.warn`

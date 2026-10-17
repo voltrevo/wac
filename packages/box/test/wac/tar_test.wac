@@ -26,7 +26,7 @@ string repeated(string c, i32 n) {
   return out;
 }
 
-export string test_a_name_too_long_for_a_ustar_header_is_refused(Core core, Cli cli) {
+export async string test_a_name_too_long_for_a_ustar_header_is_refused(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
@@ -40,7 +40,7 @@ export string test_a_name_too_long_for_a_ustar_header_is_refused(Core core, Cli 
   t.isTrue(cli.writeFile("\{dir}/\{longDir}/\{longFile}", "x".toBytes()).wait().ok(),
            "and the long file in it");
 
-  Ran r = runCase(core, cli, dir, "tar .");
+  Ran r = await runCase(core, cli, dir, "tar .");
   t.eqI32(r.status, 1, "an unarchivable name is a failure");
   t.isTrue(r.err.indexOf("longer than the 100 bytes") >= 0, r.err);
 
@@ -60,7 +60,7 @@ export string test_a_name_too_long_for_a_ustar_header_is_refused(Core core, Cli 
  * if the directory's own entry is written; a file of **exactly one block**, so the padding path has to
  * write nothing rather than a block; and one that is **not** a whole block, so it has to write some.
  */
-export string test_gnu_tar_can_read_list_and_extract_what_box_writes(Core core, Cli cli) {
+export async string test_gnu_tar_can_read_list_and_extract_what_box_writes(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
@@ -72,7 +72,7 @@ export string test_gnu_tar_can_read_list_and_extract_what_box_writes(Core core, 
   t.isTrue(cli.writeFile("\{dir}/src/exact.dat", u8[].filled(512, 7)).wait().ok(), "exactly one block");
   t.isTrue(cli.writeFile("\{dir}/src/ragged.dat", u8[].filled(700, 9)).wait().ok(), "and a ragged one");
 
-  Ran archive = runApplet(core, cli, dir, ["tar", "src"]);
+  Ran archive = await runApplet(core, cli, dir, ["tar", "src"]);
   t.eqI32(archive.status, 0, "tar ran: \{archive.err}");
   // Two zero blocks end an archive; without them GNU tar reads the entries and then says "unexpected
   // EOF", which a round trip with our own reader would not notice.
@@ -97,7 +97,7 @@ export string test_gnu_tar_can_read_list_and_extract_what_box_writes(Core core, 
 
   // And through box's own compressor, which is the composition worth having: two applets of ours and
   // one of theirs, where a fault in either of ours shows up as an unreadable archive.
-  Ran gz = runAppletIn(core, cli, dir, ["gzip"], archive.outBytes);
+  Ran gz = await runAppletIn(core, cli, dir, ["gzip"], archive.outBytes);
   t.eqI32(gz.status, 0, "gzip ran: \{gz.err}");
   string tgzPath = "\{dir}/out.tgz";
   t.isTrue(cli.writeFile(tgzPath, gz.outBytes).wait().ok(), "wrote the compressed archive");
@@ -107,7 +107,7 @@ export string test_gnu_tar_can_read_list_and_extract_what_box_writes(Core core, 
   Exec cmp2 = cli.exec("diff", ["-r", "\{dir}/src", "\{dir}/ex2/src"], u8[]()).wait();
   t.eqI32(cmp2.status, 0, "and the tree still matches: \{string.fromBytes(cmp2.stdout)}");
 
-  t.eqI32(runApplet(core, cli, dir, ["tar", "absent"]).status, 1, "a missing path is an error");
+  t.eqI32((await runApplet(core, cli, dir, ["tar", "absent"])).status, 1, "a missing path is an error");
 
   cli.remove(dir, true).wait();
   return t.report();

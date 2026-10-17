@@ -1,0 +1,28 @@
+// expect: f() = 33
+// spec: §wac-for-in-qkcbmxf
+// why: `for … in` walks a `Vec` in an `async` body as it does anywhere — by index, through `len()` and `get(i)` — not as a generator it is not
+import { Vec } from "core";
+
+async void step(Vec<i32> log, i32 x) {
+  await;
+  log.push(x);
+}
+
+async void each(Vec<i32> log, Vec<i32> xs) {
+  for (i32 x in xs) {
+    if (log.len() > 5) { return; }
+    await step(log, x * 10);
+  }
+  for (auto y in xs) { await step(log, y); }
+}
+
+export i32 f() {
+  Vec<i32> log = Vec.create();
+  Vec<i32> xs = Vec.create();
+  xs.push(1);
+  xs.push(2);
+  each(log, xs).wait()!;
+  i32 sum = 0;
+  for (i32 v in log) { sum += v; }
+  return sum;
+}

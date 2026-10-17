@@ -1752,12 +1752,7 @@ fn dispatch(
                 }
             };
             if let Some(bytes) = framed {
-                results[0] = if bytes.is_empty() {
-                    make_read_end(caller)?
-                } else {
-                    make_read_data(caller, &bytes)?
-                };
-                return Ok(());
+                return settle_now(caller, Kind::Read, Outcome::Bytes(bytes), results);
             }
             // **An explicit `openInput` wins over the parent's queue**, and the order is the whole
             // of the bug it fixes: `openInput` *redirects this process's standard input to a file*,
@@ -1770,27 +1765,22 @@ fn dispatch(
                     use std::io::Read;
                     caller.data_mut().input.as_mut().unwrap().read(&mut buf)
                 };
-                results[0] = match n {
-                    Ok(0) => make_read_end(caller)?,
-                    Ok(n) => make_read_data(caller, &buf[..n])?,
-                    Err(e) => make_read_failed(caller, &e.to_string())?,
+                let outcome = match n {
+                    Ok(n) => Outcome::Bytes(buf[..n].to_vec()),
+                    Err(e) => Outcome::Str(e.to_string().into_bytes()),
                 };
-                return Ok(());
+                return settle_now(caller, Kind::Read, outcome, results);
             }
             // A spawned child reads what its parent sends — unless it inherits, when the queue is
             // finished at spawn and the process's own input is what it meant. See `AsChild::inherits`.
             if let Some(streams) = caller.data().as_child.as_ref().filter(|c| !c.inherits) {
                 let stdin = streams.stdin.clone();
                 let bytes = stdin.read();
-                results[0] = if bytes.is_empty() {
-                    make_read_end(caller)?
-                } else {
-                    make_read_data(caller, &bytes)?
-                };
-                return Ok(());
+                return settle_now(caller, Kind::Read, Outcome::Bytes(bytes), results);
             }
-            // `fn[Read()]` — synchronous and not a ticket, because it is the *bounded* read: it
-            // answers with whatever is there, or that the input has ended.
+            // `fn[Pending<Read>()]` — the *bounded* read: it answers with whatever is there, or that
+            // the input has ended, as a ticket that is settled by the time it is handed back. A ticket
+            // because a world that cannot block (a page) answers it later, and the program awaits it.
             let mut buf = [0u8; 65536];
             let n = {
                 use std::io::Read;
@@ -1799,11 +1789,11 @@ fn dispatch(
                     None => std::io::stdin().read(&mut buf),
                 }
             };
-            results[0] = match n {
-                Ok(0) => make_read_end(caller)?,
-                Ok(n) => make_read_data(caller, &buf[..n])?,
-                Err(e) => make_read_failed(caller, &e.to_string())?,
+            let outcome = match n {
+                Ok(n) => Outcome::Bytes(buf[..n].to_vec()),
+                Err(e) => Outcome::Str(e.to_string().into_bytes()),
             };
+            return settle_now(caller, Kind::Read, outcome, results);
         }
         Cap::Env => {
             // **A grant, and the only capability here that has one so far.** Without `env` in the

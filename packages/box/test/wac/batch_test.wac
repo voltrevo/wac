@@ -22,17 +22,17 @@ string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-batch"; }
  * `sort` has read a byte of it. That is the whole point, and the second assertion — that no temporary
  * file survived — is the half that says *how* it works rather than that it did.
  */
-export string test_sponge_writes_in_place_and_leaves_nothing_behind(Core core, Cli cli) {
+export async string test_sponge_writes_in_place_and_leaves_nothing_behind(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
   string target = "\{dir}/inplace";
 
   t.isTrue(cli.writeFile(target, "delta\nalpha\ncharlie\nbravo\n".toBytes()).wait().ok(), "wrote it");
-  Ran sorted = runApplet(core, cli, dir, ["sort", target]);
+  Ran sorted = await runApplet(core, cli, dir, ["sort", target]);
   t.eqI32(sorted.status, 0, "sort ran: \{sorted.err}");
 
-  Ran soak = runAppletIn(core, cli, dir, ["sponge", target], sorted.outBytes);
+  Ran soak = await runAppletIn(core, cli, dir, ["sponge", target], sorted.outBytes);
   t.eqI32(soak.status, 0, "sponge ran: \{soak.err}");
   t.eqStr(string.fromBytes(cli.readFile(target).wait().bytes), "alpha\nbravo\ncharlie\ndelta\n",
           "sorted in place");
@@ -58,7 +58,7 @@ export string test_sponge_writes_in_place_and_leaves_nothing_behind(Core core, C
 }
 
 /** `zstd`, the largest package here, round-tripped over a real file. */
-export string test_zstd_round_trips(Core core, Cli cli) {
+export async string test_zstd_round_trips(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -66,10 +66,10 @@ export string test_zstd_round_trips(Core core, Cli cli) {
   u8[] raw = cli.readFile("\{cli.cwd().wait()}/README.md").wait().bytes;
   t.isTrue(raw.len() > 0, "README.md is readable and not empty");
 
-  Ran squeezed = runAppletIn(core, cli, dir, ["zstd"], raw);
+  Ran squeezed = await runAppletIn(core, cli, dir, ["zstd"], raw);
   t.eqI32(squeezed.status, 0, "zstd ran: \{squeezed.err}");
   t.isTrue(squeezed.outBytes.len() < raw.len(), "zstd did not compress");
-  t.eqStr(differs(runAppletIn(core, cli, dir, ["unzstd"], squeezed.outBytes).outBytes, raw), "",
+  t.eqStr(differs((await runAppletIn(core, cli, dir, ["unzstd"], squeezed.outBytes)).outBytes, raw), "",
           "zstd round trip");
 
   cli.remove(dir, true).wait();
@@ -83,24 +83,24 @@ export string test_zstd_round_trips(Core core, Cli cli) {
  * having on a pipe rather than as a pretty-printer. Without `-c` it is a validator: silent and 0, so
  * it composes.
  */
-export string test_json_canonicalises_and_reports_a_parse_error(Core core, Cli cli) {
+export async string test_json_canonicalises_and_reports_a_parse_error(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
-  Ran canon = runAppletIn(core, cli, dir, ["json", "-c"],
+  Ran canon = await runAppletIn(core, cli, dir, ["json", "-c"],
                           "{\"b\":1,\"a\":[2, 3 ],\"c\":\"x\"}".toBytes());
   t.eqStr(trimEnd(canon.out), "{\"b\":1,\"a\":[2,3],\"c\":\"x\"}", "canonical output");
 
-  Ran spaced = runAppletIn(core, cli, dir, ["json", "-c"],
+  Ran spaced = await runAppletIn(core, cli, dir, ["json", "-c"],
                            "{ \"b\" : 1 , \"a\" : [ 2 , 3 ] , \"c\" : \"x\" }".toBytes());
   t.eqStr(spaced.out, canon.out, "two spellings canonicalise the same");
 
-  Ran valid = runAppletIn(core, cli, dir, ["json"], "[1,2,3]".toBytes());
+  Ran valid = await runAppletIn(core, cli, dir, ["json"], "[1,2,3]".toBytes());
   t.eqI32(valid.status, 0, "a valid document is 0");
   t.eqI32(valid.outBytes.len(), 0, "a validator says nothing");
 
-  Ran bad = runAppletIn(core, cli, dir, ["json"], "{\"a\":}".toBytes());
+  Ran bad = await runAppletIn(core, cli, dir, ["json"], "{\"a\":}".toBytes());
   t.eqI32(bad.status, 1, "an invalid document is 1");
   t.isTrue(bad.err.indexOf("invalid JSON: unexpected at byte 5") >= 0, bad.err);
 
@@ -115,7 +115,7 @@ export string test_json_canonicalises_and_reports_a_parse_error(Core core, Cli c
  * system `date` rather than against our own parser, so the two are not one function agreeing with its
  * own inverse.
  */
-export string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cli cli) {
+export async string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -123,7 +123,7 @@ export string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cli cli)
   string before = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
   t.isTrue(cli.writeFile("\{dir}/sized", "12345".toBytes()).wait().ok(), "wrote five bytes");
 
-  Ran st = runApplet(core, cli, dir, ["stat", "\{dir}/sized", dir]);
+  Ran st = await runApplet(core, cli, dir, ["stat", "\{dir}/sized", dir]);
   string after = trimEnd(string.fromBytes(cli.exec("date", fmt, u8[]()).wait().stdout));
   t.eqI32(st.status, 0, "stat ran: \{st.err}");
   string[] rows = splitOn(trimEnd(st.out), "\n");
@@ -142,7 +142,7 @@ export string test_stat_names_kinds_sizes_and_a_recent_mtime(Core core, Cli cli)
              "the file was written now: \{when} between \{before} and \{after}");
   }
 
-  t.eqI32(runApplet(core, cli, dir, ["stat", "\{dir}/absent"]).status, 1,
+  t.eqI32((await runApplet(core, cli, dir, ["stat", "\{dir}/absent"])).status, 1,
           "a missing path is an error");
 
   cli.remove(dir, true).wait();
@@ -167,12 +167,12 @@ bool isHex(string s) {
  * the *meaning* — the `4` and the variant nibble — are the ones a generator gets wrong while still
  * producing something that looks like a UUID.
  */
-export string test_uuid_is_version_4_and_never_repeats(Core core, Cli cli) {
+export async string test_uuid_is_version_4_and_never_repeats(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
 
-  string[] ids = splitOn(trimEnd(runApplet(core, cli, dir, ["uuid", "-20"]).out), "\n");
+  string[] ids = splitOn(trimEnd((await runApplet(core, cli, dir, ["uuid", "-20"])).out), "\n");
   t.eqI32(ids.len(), 20, "twenty asked for");
 
   for (i32 i = 0; i < ids.len(); i++) {
@@ -202,7 +202,7 @@ export string test_uuid_is_version_4_and_never_repeats(Core core, Cli cli) {
  * every run. Probabilistic in the direction that cannot fail by accident — 200! orders, and this asks
  * only that two of three runs differ. wac-mono 0005.
  */
-export string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli cli) {
+export async string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -212,7 +212,7 @@ export string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli 
   string path = "\{dir}/lines";
   t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote 200 lines");
 
-  string first = trimEnd(runApplet(core, cli, dir, ["shuf", path]).out);
+  string first = trimEnd((await runApplet(core, cli, dir, ["shuf", path])).out);
   string[] shuffled = splitOn(first, "\n");
   t.eqI32(shuffled.len(), 200, "a permutation has the same length");
 
@@ -225,11 +225,11 @@ export string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli 
   }
   t.eqI32(seen, 200, "the same lines, each exactly once");
 
-  t.eqI32(splitOn(trimEnd(runApplet(core, cli, dir, ["shuf", "-5", path]).out), "\n").len(), 5,
+  t.eqI32(splitOn(trimEnd((await runApplet(core, cli, dir, ["shuf", "-5", path])).out), "\n").len(), 5,
           "and -5 is a sample of five");
 
-  string again = trimEnd(runApplet(core, cli, dir, ["shuf", path]).out);
-  string third = trimEnd(runApplet(core, cli, dir, ["shuf", path]).out);
+  string again = trimEnd((await runApplet(core, cli, dir, ["shuf", path])).out);
+  string third = trimEnd((await runApplet(core, cli, dir, ["shuf", path])).out);
   t.isTrue(first != again || first != third || again != third,
            "three shuffles of the same input gave one order: the draw is not random");
 
@@ -238,7 +238,7 @@ export string test_shuf_permutes_and_draws_differently_each_time(Core core, Cli 
 }
 
 /** `paste`, against the real one — including the ragged case, where the shorter file runs out. */
-export string test_paste_agrees_with_the_real_one(Core core, Cli cli) {
+export async string test_paste_agrees_with_the_real_one(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -249,7 +249,7 @@ export string test_paste_agrees_with_the_real_one(Core core, Cli cli) {
 
   Exec theirs = cli.exec("paste", [p1, p2], u8[]()).wait();
   t.isTrue(theirs.error == "", "there is a real paste: \{theirs.error}");
-  t.eqStr(runApplet(core, cli, dir, ["paste", p1, p2]).out,
+  t.eqStr((await runApplet(core, cli, dir, ["paste", p1, p2])).out,
           string.fromBytes(theirs.stdout), "paste over files of different lengths");
 
   cli.remove(dir, true).wait();

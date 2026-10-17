@@ -32,7 +32,7 @@ import { Feed } from "../../../platform/src/stream.wac";
 /** One file's counts. */
 struct Counts { i32 lines; i32 words; i32 bytes; }
 
-export i32 wc(Core core, Cli cli, Fs fs, Args a) {
+export async i32 wc(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   i32 files = operandCount(a, 0);
   // No operands means standard input, which is one unnamed pass.
@@ -119,7 +119,7 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
     // it was there and was named, while a missing file gets no row at all. Both leave the status at 1.
     bool unread = false;
     while (true) {
-      Chunk got = nextChunk(core, cli, fed, a, in.label);
+      Chunk got = await nextChunk(core, cli, fed, a, in.label);
       if (!got.ok) { unread = true; break; }
       if (!got.more) { break; }
       u8[] data = got.bytes;

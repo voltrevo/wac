@@ -35,14 +35,14 @@ import { shellMain } from "../../../sh/src/entry.wac";
 import { boxApplet, boxNames, boxRun } from "../shrun.wac";
 import { UNKNOWN } from "../box.wac";
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   // **This program is also its own applets**, as `bin/sh.wac` is: the shell spawns a stage by re-entering
   // `main` with the applet's name first. Without grants nothing can actually spawn here, so it is the
   // in-process route that runs — but the entry has to be a multi-call one either way, or a spawned
   // `sort` would start a shell and hand it a script called `sort`.
-  i32 asApplet = boxApplet(core, cli);
+  i32 asApplet = await boxApplet(core, cli);
   if (asApplet != UNKNOWN) { return asApplet; }
 
   Fs fs = Fs.inMemory(0);
@@ -67,5 +67,5 @@ export i32 main(Sys sys) {
   // memory filesystem and nothing else. `test/sealing.test.ts` is where that is checked rather than
   // asserted, including the canary that a stage cannot read a file that exists on the host.
   sh.externalSpawnable = true;
-  return shellMain(core, cli, sh, 0);
+  return await shellMain(core, cli, sh, 0);
 }

@@ -6307,7 +6307,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
             string mpt = typeOfTyName(env, src, lexed, methods[m].params[i].type);
             registerNamed(env, mpt);
           }
-          collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+          collectArrayTypesInOf(env, src, lexed, methods[m].hasThis ? nameKeyOf(env, src, lexed, nameTok) : "", methods[m].params, methods[m].body);
         }
       }
       default: { }
@@ -12658,7 +12658,7 @@ void emitToText(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
   }
   i32 m = env.methodAt(t, "[toString]");
   if (m < 0 || env.funcIndex[m] < 0) {
-    env.declineFor("text from a " + t + ", which has no `[toString]`");
+    env.declineFor("text from a " + t + ", which has no `[toString]`, at " + numText(e.line) + ":" + numText(e.col));
     return;
   }
   emitExprAt(fb, src, lexed, env, e, t);
@@ -17110,7 +17110,7 @@ void registerOneMethodInstance(Env env, u8[] src, Lexed lexed, Program prog, i32
             for (i32 a = 0; a < methods[m].params.len(); a++) {
               ipts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
             }
-            collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+            collectArrayTypesInOf(env, src, lexed, methods[m].hasThis ? ownerInst : "", methods[m].params, methods[m].body);
             i32 slot = env.funcAt(env.instName[i]);
             if (slot < 0) {
               env.addFunc(env.instName[i],
@@ -17342,7 +17342,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               // method instance registers those types itself, with both substitutions pushed, which
               // is the only place they can be resolved. `issues/lang/0277b`.
               if (methods[m].typeParams.len() == 0) {
-                collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+                collectArrayTypesInOf(env, src, lexed, methods[m].hasThis ? inst : "", methods[m].params, methods[m].body);
               }
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok), mret, mpts);
               // **The receiver, which this site did not record.** `addFunc` keeps only the declared
@@ -17474,7 +17474,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               // method instance registers those types itself, with both substitutions pushed, which
               // is the only place they can be resolved. `issues/lang/0277b`.
               if (methods[m].typeParams.len() == 0) {
-                collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+                collectArrayTypesInOf(env, src, lexed, methods[m].hasThis ? inst : "", methods[m].params, methods[m].body);
               }
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), empts);
@@ -17513,6 +17513,18 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
  *
  * `canEmit` already does exactly this before its own walk. Same reason, same shape.
  */
+/**
+ * The same for a method, whose body can name `this`: an `async` method's machine keeps its awaited
+ * values in cells typed `typeof(this.t)`, and without the receiver in scope that type could not be
+ * worked out here — so `Read[]` was first named while emitting, and the module declined.
+ */
+void collectArrayTypesInOf(Env env, u8[] src, Lexed lexed, string receiver, Param[] params, Stmt[] body) {
+  i32 saved = env.localCount;
+  if (receiver != "") { env.addLocal("this", receiver); }
+  collectArrayTypesIn(env, src, lexed, params, body);
+  env.localCount = saved;
+}
+
 void collectArrayTypesIn(Env env, u8[] src, Lexed lexed, Param[] params, Stmt[] body) {
   i32 saved = env.localCount;
   for (i32 i = 0; i < params.len(); i++) {
@@ -17847,7 +17859,7 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (methods[m].typeParams.len() > 0) { continue; }
-          collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+          collectArrayTypesInOf(env, src, lexed, methods[m].hasThis ? nameKeyOf(env, src, lexed, nameTok) : "", methods[m].params, methods[m].body);
         }
       }
       // **An enum's methods are bodies too**, and this walk had only `Func` and `StructDecl` — so a
@@ -17863,7 +17875,7 @@ void declareBodyTypes(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
           if (methods[m].typeParams.len() > 0) { continue; }
-          collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+          collectArrayTypesInOf(env, src, lexed, methods[m].hasThis ? nameKeyOf(env, src, lexed, nameTok) : "", methods[m].params, methods[m].body);
         }
       }
       // **A static's initialiser is a body as well**: a generic it calls is an instance the module

@@ -1,0 +1,11 @@
+// expect: viaUsed() = 4
+// spec: §wac-reach-import-lazy-2jhptfk
+// why: an export list a build keeps is kept whole, so each name it lists must survive in its source — pruning `unused` from `a.wac` left `b.wac` re-exporting a name its source no longer had, and the build refused a program that is correct
+// ---- a.wac ----
+export i32 used() { return 4; }
+export i32 unused() { return 5; }
+// ---- b.wac ----
+export { used, unused } from "./a.wac";
+// ---- main.wac ----
+import { used } from "./b.wac";
+export i32 viaUsed() { return used(); }

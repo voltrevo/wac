@@ -112,7 +112,7 @@ static string BANNER =
  *
  * Without this, `externalSpawnable` below would spawn a child with nothing to run.
  */
-export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return boxApplet(core, cli); }
+export async i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return await boxApplet(core, cli); }
 
 // The prompt — where you are, and a `$` — is `Session.prompt`, and this file calls it as
 // `s.prompt()`. A copy of it lived here as a free function taking a `Shell`, left behind when
@@ -121,7 +121,7 @@ export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return boxAp
 // live one is: a prompt that never changes is decoration, and `cd` here moves through a real
 // filesystem somebody can get lost in.
 
-export i32 page(Core core, Cli cli, Page page) {
+export async i32 page(Core core, Cli cli, Page page) {
   page.title("wac sh").wait();
 
   // The style travels with the markup: `render` sets innerHTML, and a `<style>` in there applies.
@@ -230,7 +230,7 @@ export i32 page(Core core, Cli cli, Page page) {
   ];
   page.setText("ps1", s.prompt()).wait();
   for (i32 i = 0; i < opening.len(); i++) {
-    s.feedLine(opening[i]);
+    await s.feedLine(opening[i]);
     page.setText("scr", s.screen).wait();
   }
   s.say("\n");
@@ -274,7 +274,7 @@ export i32 page(Core core, Cli cli, Page page) {
 
     string line = page.getValue("cmd").wait();
     page.setValue("cmd", "").wait();
-    s.feedLine(line);
+    await s.feedLine(line);
     // `cd` is a built-in, so the directory it moved to is the shell's own field and the prompt has
     // to be told. After the command rather than before it: the line just echoed belongs to where
     // it was run, and the next prompt to where that left us.

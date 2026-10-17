@@ -110,7 +110,7 @@ void redraw(Page page, Grid g, Surface surf, i32 back, bool caret) {
   }
 }
 
-export i32 page(Core core, Cli cli, Page page) {
+export async i32 page(Core core, Cli cli, Page page) {
   page.render(
     "<style>body { margin: 0; background: #0b0e0f; }" +
     " canvas { display: block; image-rendering: pixelated; }</style>" +
@@ -229,7 +229,7 @@ export i32 page(Core core, Cli cli, Page page) {
         // Enter: echo what was typed, run it, and start a new prompt — the order `term.wac` uses,
         // so the transcript reads the same on both.
         s.say("\{typed}\n");
-        s.feedLine(typed);
+        await s.feedLine(typed);
         typed = "";
         if (s.over()) { return s.code(); }
         s.say("\{s.prompt()} ");

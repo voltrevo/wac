@@ -241,11 +241,17 @@ struct Walk {
       if (u.names[d] == name) { u.retained[d] = true; }
       match (ds[d].kind) {
         ExportList(pathTok, items): {
+          bool asked = false;
           for (i32 i = 0; i < items.len(); i++) {
-            if (textOf(u.fe, items[i].aliasTok) != name) { continue; }
-            u.retained[d] = true;
-            this.forward(g, u.fe, pathTok, items[i], depth + 1);
+            if (textOf(u.fe, items[i].aliasTok) == name) { asked = true; }
           }
+          if (!asked || u.retained[d]) { continue; }
+          // **A kept list is kept whole**, so every name in it has to survive where it comes from — or
+          // the list re-exports what its source no longer declares, and the build refuses a correct
+          // program. One source file per list, already needed for the name asked for, so this reads
+          // nothing new and laziness is untouched.
+          u.retained[d] = true;
+          for (i32 i = 0; i < items.len(); i++) { this.forward(g, u.fe, pathTok, items[i], depth + 1); }
         }
         default: { }
       }

@@ -30,7 +30,8 @@ import { Answer, World } from "./system.wac";
 
 // A page's system — `main(Page page, Sys sys)` — is `system.wac`, exported from here because a package
 // is one module.
-export { Answer, Answers, STAT_DIR, STAT_EXISTS, STAT_FILE, System, World } from "./system.wac";
+export { Answer, Answers, Process, READ_DATA, READ_END, READ_FAILED, STAT_DIR, STAT_EXISTS, STAT_FILE, System, World,
+         processAnswered } from "./system.wac";
 
 /** Something that happened on the page. */
 export struct Event {
@@ -46,7 +47,18 @@ export struct Event {
    */
   i32 x;
   i32 y;
+  /**
+   * The modifier keys held when it happened, as `MOD_*` bits — `(e.mods & MOD_CTRL) != 0` is `^C`
+   * when `value` is `"c"`. 0 for an event no key or pointer caused.
+   */
+  i32 mods;
 }
+
+/** `Event.mods`: which modifier keys were held. */
+export static i32 MOD_SHIFT = 1;
+export static i32 MOD_CTRL = 2;
+export static i32 MOD_ALT = 4;
+export static i32 MOD_META = 8;
 
 /** A file the user handed over — chosen with an `<input type="file">`, or dropped on the page. */
 export struct Picked {
@@ -126,16 +138,16 @@ export struct Page {
   Slots<f64> timers;
   /** Each `getValue`'s ticket, by request, until its answer arrives. */
   Slots<string> asked;
-  /** Continuations with nothing to wait on — a bare `await;` — run before control goes back. */
-  Queue<Continuation> ready;
+  /** Where the program's suspended machines wait, and how they are run on. */
+  Runner runner;
 
   Page create(Dom dom) {
     Queue<Event> arrived;
     Queue<Ticket<Event>> waiting;
     Queue<Picked> files;
     Queue<Ticket<Picked>> wantsFile;
-    Queue<Continuation> ready;
-    return Page(dom, arrived, waiting, files, wantsFile, Slots<f64>(Ticket<f64>?[]()), Slots<string>(Ticket<string>?[]()), ready);
+    return Page(dom, arrived, waiting, files, wantsFile, Slots<f64>(Ticket<f64>?[]()), Slots<string>(Ticket<string>?[]()),
+                Runner.create());
   }
 
   /** Replace what the page shows with `n`, escaped. */
@@ -233,6 +245,27 @@ export struct Page {
     return await this.sleep(0);
   }
 
+  /** Where a suspended machine's continuation goes — see `Runner.take`. */
+  void take(this, Continuation k) { this.runner.take(k); }
+
+  /** Run what is ready, until nothing is. */
+  void drain(this) { this.runner.drain(); }
+}
+
+/**
+ * How a program that never blocks is run on: the schedule target its machines hand their
+ * continuations to, and the queue of the ones with nothing to wait for. A page has one, and so does a
+ * copy of it started by `spawnSelf`, which has no page.
+ */
+export struct Runner {
+  /** Continuations with nothing to wait on — a bare `await;` — run before control goes back. */
+  Queue<Continuation> ready;
+
+  Runner create() {
+    Queue<Continuation> ready;
+    return Runner(ready);
+  }
+
   /**
    * Where a suspended machine's continuation goes. A continuation waiting on a ticket runs when that
    * ticket settles; one waiting on nothing runs before control goes back to the browser.
@@ -259,9 +292,9 @@ export struct Page {
 // with none in force here the program's next wait would be dropped.
 
 /** An event happened: settle the oldest ticket waiting for one, or keep it for the next `nextEvent`. */
-export void deliver(Page page, string kind, string id, string value, i32 x, i32 y) {
+export void deliver(Page page, string kind, string id, string value, i32 x, i32 y, i32 mods) {
   schedule page.take;
-  Event e = Event(kind, id, value, x, y);
+  Event e = Event(kind, id, value, x, y, mods);
   Ticket<Event>? w = page.waiting.pop();
   if (w is not null) {
     w!.resolve(e);

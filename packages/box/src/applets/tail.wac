@@ -17,7 +17,7 @@ import { Input, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 tail(Core core, Cli cli, Fs fs, Args a) {
+export async i32 tail(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
   i32 want = a.hasNum ? a.num : 10;
@@ -44,7 +44,7 @@ export i32 tail(Core core, Cli cli, Fs fs, Args a) {
   if (bytes) {
     // Both byte forms have to reach the end — the last N, or everything after the Nth — so both read
     // the input through. Only the amount *held* differs, and for the plus form that is nothing.
-    u8[] all = in.fed.rest();
+    u8[] all = await in.fed.rest();
     i32 from = fromLine ? (want > 0 ? want - 1 : 0) : all.len() - want;
     if (from < 0) { from = 0; }
     if (from > all.len()) { from = all.len(); }
@@ -59,7 +59,7 @@ export i32 tail(Core core, Cli cli, Fs fs, Args a) {
     Lines from = Lines.create();
     Feed feed = in.fed;
     while (true) {
-      Line l = nextLine(from, feed);
+      Line l = await nextLine(from, feed);
       if (!l.ok) { break; }
       at++;
       if (at <= skip) { continue; }
@@ -74,7 +74,7 @@ export i32 tail(Core core, Cli cli, Fs fs, Args a) {
   Lines s = Lines.create();
   Feed fed = in.fed;
   while (true) {
-    Line l = nextLine(s, fed);
+    Line l = await nextLine(s, fed);
     if (!l.ok) { break; }
     ring[seen % want] = l.bytes;
     terminated[seen % want] = l.nl;

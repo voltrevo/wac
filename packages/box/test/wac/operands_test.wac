@@ -37,7 +37,7 @@ string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-operands"; }
  */
 bool shadowedByBuiltin(string script) { return script == "mkdir" || script == "rm"; }
 
-export string test_an_operand_error_says_what_the_real_tool_says(Core core, Cli cli) {
+export async string test_an_operand_error_says_what_the_real_tool_says(Core core, Cli cli) {
   T t = T.create();
   Loaded v = load(cli, vectorsPath());
   t.isTrue(v.error == "", v.error);
@@ -56,7 +56,7 @@ export string test_an_operand_error_says_what_the_real_tool_says(Core core, Cli 
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran r = runCase(core, cli, dir, list[i]);
+    Ran r = await runCase(core, cli, dir, list[i]);
     ran = ran + 1;
     if (trimmed(r.err) != trimmed(v.items[i].err) || r.out != v.items[i].out ||
         r.status != v.items[i].status) {
@@ -86,7 +86,7 @@ export string test_an_operand_error_says_what_the_real_tool_says(Core core, Cli 
 }
 
 /** The canary: five of these invocations asked of the *live* tools, so a changed environment is noticed. */
-export string test_the_live_tools_still_refuse_the_same_way(Core core, Cli cli) {
+export async string test_the_live_tools_still_refuse_the_same_way(Core core, Cli cli) {
   T t = T.create();
   string[] list = operandCases();
   string dir = caseDir(cli);
@@ -115,7 +115,7 @@ export string test_the_live_tools_still_refuse_the_same_way(Core core, Cli cli) 
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran ours = runCase(core, cli, dir, list[i]);
+    Ran ours = await runCase(core, cli, dir, list[i]);
     checked = checked + 1;
     t.eqStr(trimmed(ours.err), trimmed(string.fromBytes(want.stderr)),
             "the live tool refuses differently: $ \{list[i]}");

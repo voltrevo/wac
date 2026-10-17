@@ -18,7 +18,7 @@ import { shellMain } from "../../../sh/src/entry.wac";
 import { boxApplet, boxNames, boxRun } from "../shrun.wac";
 import { UNKNOWN } from "../box.wac";
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   // **This program is also its own applets.** When the shell runs `sort` as a child it spawns *this*
@@ -29,7 +29,7 @@ export i32 main(Sys sys) {
   // Ambiguity is possible in principle — `sh sort` now runs the applet rather than a script called
   // `sort` — and is worth it: the alternative is that the shell's own programs cannot be programs.
   // `sh ./sort` still reads the file, because a name with a slash is a path.
-  i32 asApplet = boxApplet(core, cli);
+  i32 asApplet = await boxApplet(core, cli);
   if (asApplet != UNKNOWN) { return asApplet; }
 
   // **No `mountSystem` here, and that is the decision rather than an omission.** This shell is
@@ -44,5 +44,5 @@ export i32 main(Sys sys) {
   // on the first argument. Its own instance, its own grants — and in a page this is the only route
   // to a real program at all.
   sh.externalSpawnable = true;
-  return shellMain(core, cli, sh, 0);
+  return await shellMain(core, cli, sh, 0);
 }

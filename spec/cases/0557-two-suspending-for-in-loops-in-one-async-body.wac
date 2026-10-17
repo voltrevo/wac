@@ -1,0 +1,22 @@
+// expect: f() = 33
+// spec: §wac-for-in-qkcbmxf
+// why: every state a machine is flattened into is its own, however many a body needs — two `for … in` loops in one `async` function ran past the estimate, the table handed out its last state again, and the first loop's set-up jumped to itself for ever
+import { Vec } from "core";
+
+async void step(Vec<i32> log, i32 x) {
+  await;
+  log.push(x);
+}
+
+async void two(Vec<i32> log, i32[] xs) {
+  for (i32 x in xs) { await step(log, x * 10); }
+  for (i32 y in xs) { await step(log, y); }
+}
+
+export i32 f() {
+  Vec<i32> log = Vec.create();
+  two(log, [1, 2]).wait()!;
+  i32 sum = 0;
+  for (i32 v in log) { sum += v; }
+  return sum;
+}

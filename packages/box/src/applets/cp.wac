@@ -11,7 +11,7 @@ import { missingAfter, missingOperand } from "../lib/operands.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Feed } from "../../../platform/src/stream.wac";
 
-export i32 cp(Core core, Cli cli, Fs fs, Args a) {
+export async i32 cp(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() == 0) { return missingOperand(core, a.name, "file"); }
   // GNU names the one it *did* get, which is the difference between "you forgot both" and "you forgot
@@ -20,7 +20,7 @@ export i32 cp(Core core, Cli cli, Fs fs, Args a) {
   Input in = openStream(core, cli, fs, a, 0, -1);
   if (!in.ok) { return 1; }
   Feed fed = in.fed;
-  Change wrote = streamAtomic(core, cli, fs, fed, a.rest[1]);
+  Change wrote = await streamAtomic(core, cli, fs, fed, a.rest[1]);
   if (wrote.ok()) { return 0; }
   // GNU's frame for a destination it could not write: `cp: cannot create regular file 'x/y': …`.
   //

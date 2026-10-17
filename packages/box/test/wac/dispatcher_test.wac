@@ -24,15 +24,15 @@ struct Said {
   string err;
 }
 
-Said box(Core core, Cli cli, string[] argv) {
+async Said box(Core core, Cli cli, string[] argv) {
   Frame f = Frame.of(argv, u8[](), cli.cwd().wait(), false);
-  i32 code = main(Sys(childCore(f, core), childCli(f, cli), GRANT_ALL()));
+  i32 code = await main(Sys(childCore(f, core), childCli(f, cli), GRANT_ALL()));
   return Said(code, string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()));
 }
 
-export string test_an_unknown_applet_is_a_usage_error(Core core, Cli cli) {
+export async string test_an_unknown_applet_is_a_usage_error(Core core, Cli cli) {
   T t = T.create();
-  Said said = box(core, cli, ["nope"]);
+  Said said = await box(core, cli, ["nope"]);
   t.eqI32(said.code, 2, "an unknown applet is a usage error");
   // The name it did not have, quoted back. A usage message that did not say which name failed would
   // be the same message for every typo.
@@ -41,11 +41,11 @@ export string test_an_unknown_applet_is_a_usage_error(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_help_is_answered_three_ways(Core core, Cli cli) {
+export async string test_help_is_answered_three_ways(Core core, Cli cli) {
   T t = T.create();
   string[] spellings = ["help", "--help", "-h"];
   for (i32 i = 0; i < spellings.len(); i++) {
-    Said said = box(core, cli, [spellings[i]]);
+    Said said = await box(core, cli, [spellings[i]]);
     t.eqI32(said.code, 0, "box \{spellings[i]} should succeed: \{said.err}");
     t.isTrue(said.err.indexOf("usage: box") >= 0, "box \{spellings[i]}: \{said.err}");
   }
@@ -58,9 +58,9 @@ export string test_help_is_answered_three_ways(Core core, Cli cli) {
  * Nothing looked at it, so `wrapped` could return the empty string — and the list of what this program
  * can do would simply be missing, with the exit status and the first line both still right.
  */
-export string test_the_usage_lists_every_applet_and_wraps_it(Core core, Cli cli) {
+export async string test_the_usage_lists_every_applet_and_wraps_it(Core core, Cli cli) {
   T t = T.create();
-  Said help = box(core, cli, string[]());
+  Said help = await box(core, cli, string[]());
   t.eqI32(help.code, 2, "no applet at all is a usage error");
 
   string[] want = ["cat", "grep", "sha256sum", "zstd"];

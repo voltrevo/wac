@@ -20,7 +20,7 @@ import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src
 import { Buf } from "core";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 cat(Core core, Cli cli, Fs fs, Args a) {
+export async i32 cat(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // Every letter GNU has, so an unknown one is the caller's mistake and gets GNU's own sentence. `-u` is
   // accepted and does nothing there too — it means "unbuffered", and this is.
@@ -42,7 +42,7 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
   bool numberFilled = has(a, 'b');
   bool squeeze = has(a, 's');
 
-  if (!ends && !tabs && !nonPrinting && !number && !numberFilled && !squeeze) { return copy(core, cli, fs, a); }
+  if (!ends && !tabs && !nonPrinting && !number && !numberFilled && !squeeze) { return await copy(core, cli, fs, a); }
 
   // Numbering and squeezing run *across* the operands, as GNU's do: `cat -n f g` keeps counting.
   i32 count = 0;
@@ -68,7 +68,7 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
     // filesystem gave it, and an applet that built its own read an empty stdin instead (wac-mono 0109).
     Feed fed = in.fed;
     while (true) {
-      Line l = nextLine(s, fed);
+      Line l = await nextLine(s, fed);
       if (!l.ok) { break; }
       bool blank = l.bytes.len() == 0;
       // `-s`: one blank line stands for a run of them, so the state is "was the last one blank" rather
@@ -109,7 +109,7 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
 }
 
 /** The plain path: bytes through, a chunk at a time, which is what `cat` is for. */
-i32 copy(Core core, Cli cli, Fs fs, Args a) {
+async i32 copy(Core core, Cli cli, Fs fs, Args a) {
   i32 at = 0;
   bool opened = false;
   // An operand that would not open is skipped and remembered: the status at the end, not a stop.
@@ -118,7 +118,7 @@ i32 copy(Core core, Cli cli, Fs fs, Args a) {
   // but a host mount it is serving bytes rather than pulling on the process's own input.
   Feed fed = Feed.of(cli, u8[]());
   while (true) {
-    Span got = nextSpan(core, cli, fs, a, at, opened, fed);
+    Span got = await nextSpan(core, cli, fs, a, at, opened, fed);
     fed = got.fed;
     failed = failed || got.failed;
     if (!got.ok) { return 1; }

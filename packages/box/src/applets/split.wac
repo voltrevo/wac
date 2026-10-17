@@ -13,7 +13,7 @@ import { extraOperand } from "../lib/operands.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Buf } from "core";
 
-export i32 split(Core core, Cli cli, Fs fs, Args a) {
+export async i32 split(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (extraOperand(core, a, 2)) { return 1; }
   if (a.rest.len() < 1) {
@@ -50,7 +50,7 @@ export i32 split(Core core, Cli cli, Fs fs, Args a) {
   Buf held = Buf.create();
   string name = "";
   while (true) {
-    Line l = nextLine(s, fed);
+    Line l = await nextLine(s, fed);
     if (!l.ok) { break; }
     if (!open) {
       name = prefix + suffix(piece);

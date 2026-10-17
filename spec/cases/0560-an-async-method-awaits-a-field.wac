@@ -1,0 +1,23 @@
+// expect: f() = 7
+// spec: §wac-async-method-4kx7vqd
+// why: an `async` method's machine keeps what it awaited in a cell typed from `this` — the type pass walked a method's body without `this` in scope, so the cell's array type was first named while emitting and the module declined
+import { Read, Ticket } from "core";
+
+struct Src {
+  Ticket<Read> t;
+
+  async i32 next(this) {
+    match (await this.t) {
+      Data(bytes): { return bytes.len(); }
+      End: { return 0; }
+      Failed(why): { return 0 - 1; }
+    }
+    return 0;
+  }
+}
+
+export i32 f() {
+  Ticket<Read> t;
+  t.resolve(Read.Data("seven!!".toBytes()));
+  return Src(t).next().wait()!;
+}

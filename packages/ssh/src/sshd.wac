@@ -82,14 +82,14 @@ u8[] serverVersionLine() {
   return b.take();
 }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   // **This program is also `packages/box`'s applets**, so that a session can spawn its pipeline
   // stages: a stage re-enters `main` with the applet's name first. Without it a spawned `sort` would
   // start a second sshd and hand it a script called `sort`. See `sessionShell` for what the stage
   // then reads, which is the session's filesystem rather than this machine's.
-  i32 asApplet = boxApplet(core, cli);
+  i32 asApplet = await boxApplet(core, cli);
   if (asApplet != UNKNOWN) { return asApplet; }
 
   Options o = parseArgs(core, cli);
@@ -155,7 +155,7 @@ export i32 main(Sys sys) {
       core.warn("sshd: accept: \{c.error}");
       break;
     }
-    bool saved = serve(core, cli, c.handle, host, o, fs);
+    bool saved = await serve(core, cli, c.handle, host, o, fs);
     cli.closeSocket(c.handle);
     // **Only when the session did not save for itself.** A session writes the image before it tells
     // the client the command finished (0108), which is what makes "the client has exited" mean the
@@ -251,7 +251,7 @@ Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal) {
  * the handshake has changed nothing, but one that hung up *mid-command* has changed whatever it
  * changed, and that is the case this used to be written for.
  */
-bool serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
+async bool serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
   // Whether this connection has already written the image — see the note above.
   bool saved = false;
   Conn conn = Conn.create(core, cli, sock);
@@ -280,7 +280,7 @@ bool serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
   // being decoration.
   fs.setUser(who);
 
-  bool saved = session(conn, cli, core, o, fs);
+  bool saved = await session(conn, cli, core, o, fs);
   if (conn.failed()) { core.warn("sshd: \{conn.error}"); }
   return saved;
 }
@@ -496,7 +496,7 @@ string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options o, Fs
  * `ssh` returns could stop it before the save had started, and the next boot found the world as it
  * was before the session. Two tests carried a second connection to hide it, saying so in comments.
  */
-bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
+async bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   // False until the save below actually runs: every path that returns before the command has run has
   // changed nothing this function is responsible for writing, and `serve`'s caller saves for those.
   bool saved = false;
@@ -595,8 +595,8 @@ bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   if (!conn.sendPacket(channelSuccess(clientChannel))) { conn.fail("cannot accept the command"); return saved; }
 
   Result result = interactive
-    ? interactiveSession(conn, cli, core, clientChannel, o, fs, pty, terminal)
-    : run(cli, core, command, o, fs, terminal);
+    ? await interactiveSession(conn, cli, core, clientChannel, o, fs, pty, terminal)
+    : await run(cli, core, command, o, fs, terminal);
   if (conn.failed()) { return saved; }
 
   // **The image is written here, before the client is told anything.** A client exits on the exit
@@ -775,7 +775,7 @@ export struct Keystrokes {
 }
 
 
-Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs, bool pty,
+async Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs, bool pty,
                           Terminal terminal) {
   Shell sh = sessionShell(core, cli, o, fs, terminal);
   Buf pending = Buf.create();
@@ -803,7 +803,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
       i32 end = held.len() > 0 && held[held.len() - 1] == 10 ? held.len() - 1 : held.len();
       u8[] cmd = u8[].filled(end, 0);
       cmd.copyFrom(held, 0, 0, end);
-      runScript(sh, string.fromBytes(cmd));
+      await runScript(sh, string.fromBytes(cmd));
       u8[] out = sh.outBuf.take();
       u8[] err = sh.errOut.take();
       if (out.len() > 0) { conn.sendPacket(channelData(channel, forTerminal(out))); }
@@ -842,7 +842,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
         i32 end = t.line.len() > 0 && t.line[t.line.len() - 1] == 10 ? t.line.len() - 1 : t.line.len();
         u8[] cmd = u8[].filled(end, 0);
         cmd.copyFrom(t.line, 0, 0, end);
-        runScript(sh, string.fromBytes(cmd));
+        await runScript(sh, string.fromBytes(cmd));
         u8[] out = sh.outBuf.take();
         u8[] err = sh.errOut.take();
         if (out.len() > 0) { conn.sendPacket(channelData(channel, forTerminal(out))); }
@@ -869,7 +869,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
       line.copyFrom(pending.data, 0, 0, end);
       pending.dropFront(nl + 1);
 
-      runScript(sh, string.fromBytes(line));
+      await runScript(sh, string.fromBytes(line));
       u8[] out = sh.outBuf.take();
       u8[] err = sh.errOut.take();
       if (out.len() > 0) { conn.sendPacket(channelData(channel, out)); }
@@ -880,7 +880,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
 
   // Anything typed without a final newline still runs, as a shell does at end of input.
   if (pending.len > 0) {
-    runScript(sh, pending.toStr());
+    await runScript(sh, pending.toStr());
     u8[] out = sh.outBuf.take();
     u8[] err = sh.errOut.take();
     if (out.len() > 0) { conn.sendPacket(channelData(channel, out)); }
@@ -945,9 +945,9 @@ struct Result {
  * what the server can read and write nothing. That is a real exposure and the operator chooses its
  * size, which is the capability world working as intended rather than a gap.
  */
-Result run(Cli cli, Core core, u8[] command, Options o, Fs fs, Terminal terminal) {
+async Result run(Cli cli, Core core, u8[] command, Options o, Fs fs, Terminal terminal) {
   Shell sh = sessionShell(core, cli, o, fs, terminal);
-  i32 status = runScript(sh, string.fromBytes(command));
+  i32 status = await runScript(sh, string.fromBytes(command));
   return Result(sh.outBuf.take(), sh.errOut.take(), status);
 }
 

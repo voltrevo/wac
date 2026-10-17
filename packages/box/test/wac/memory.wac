@@ -41,7 +41,7 @@ export Fs memoryFs(Core core, string program) {
  * `shellMain`'s `first` is an index into the arguments and a frame's `argv` starts with the child's own
  * name, so the shell's own arguments start at 1.
  */
-export Ran runOn(Core core, Cli cli, Fs fs, string script) {
+export async Ran runOn(Core core, Cli cli, Fs fs, string script) {
   Frame f = Frame.of(["sh", "-c", script], u8[](), "/", false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
@@ -49,6 +49,6 @@ export Ran runOn(Core core, Cli cli, Fs fs, string script) {
   sh.cwd = "/";
   sh.external = boxRun;
   sh.externalNames = boxNames;
-  i32 status = shellMain(c, l, sh, 1);
+  i32 status = await shellMain(c, l, sh, 1);
   return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
 }

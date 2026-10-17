@@ -40,13 +40,13 @@ import { shellMain } from "../../../sh/src/entry.wac";
 import { boxApplet, boxNames, boxRun } from "../shrun.wac";
 import { UNKNOWN } from "../box.wac";
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   // **This program is also its own applets**, as `bin/sh.wac` and `bin/sealedsh.wac` are: the shell runs a
   // stage by re-entering `main` with the applet's name first, and that stage asks this program for every
   // file it touches.
-  i32 asApplet = boxApplet(core, cli);
+  i32 asApplet = await boxApplet(core, cli);
   if (asApplet != UNKNOWN) { return asApplet; }
 
   if (cli.argCount().wait() < 1) {
@@ -72,7 +72,7 @@ export i32 main(Sys sys) {
   // Spawnable, because a stage of this session reads the image rather than the disk this binary was
   // granted — see the note above and wac-mono 0116. Without it the pipeline ran one stage at a time.
   sh.externalSpawnable = true;
-  i32 code = shellMain(core, cli, sh, 1);
+  i32 code = await shellMain(core, cli, sh, 1);
 
   // After the script, whatever happened to it. `save` warns about anything it could not write, which is
   // the whole reason it is a shared function rather than a `writeFile` call: losing a session in silence

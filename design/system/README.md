@@ -65,3 +65,4 @@ which is worth more to the next reader than deleting it.
 | [0008](0008-webrtc-in-wac.md) | WebRTC in wac | met |
 | [0009](0009-a-typescript-to-javascript-bundler-written-in-wac.md) | a TypeScript-to-JavaScript bundler, written in wac | built and in use |
 | [0010](0010-a-handle-carries-its-own-methods.md) | a handle carries its own methods: `sock.recv()`, never `sys.recv(sock)` | decided, unbuilt |
+| [0011](0011-programs-in-a-page-without-shared-memory.md) | programs in a page without shared memory: the shell and the desktop as `packages/web` pages, stages as workers, nothing that waits | active |

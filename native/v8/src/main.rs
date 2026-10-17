@@ -3662,8 +3662,11 @@ fn dispatch(
             }
         }
         Cap::ReadChunk => {
-            // **Not a ticket.** `fn[Read()]` is the *bounded* read: it answers with whatever is
-            // there, or that the input has ended, and a program loops on it.
+            // **A ticket, as every read is.** `fn[Pending<Read>()]` is the *bounded* read: it answers
+            // with whatever is there, or that the input has ended, and a program loops on it —
+            // awaiting each answer, so a world that cannot block (a page) can run the same loop.
+            // Here the answer is usually ready by the time the ticket is made; reading what a parent
+            // sends is the one that waits, and it waits on a thread, as `recv` does.
             // **An explicit `openInput` wins over the frame's queue, and the order is the whole of
             // the bug.** `openInput` redirects *this* program's input to a file, so an applet that
             // opened one and then read the frame's queue instead read what its caller had already
@@ -3674,12 +3677,7 @@ fn dispatch(
             // A child reads what its parent sends — unless it inherits, when the terminal is what
             // was meant.
             // **An explicit `openInput` wins over the parent's queue as well**, and that is the half
-            // of the rule this host was missing. The frame's queue below was ordered correctly and
-            // this branch was not, four lines above the comment that describes the very same bug —
-            // so a spawned applet that had opened a file went on reading what its parent was
-            // feeding it. Usually nothing, so `wc -c f` answered a plausible `0` and `sha256sum`
-            // gave the hash of the empty string; when the parent still had input, the applet
-            // printed *that* in place of the file. `issues/system/0285c`.
+            // of the rule this host was missing. `issues/system/0285c`.
             let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
             let from_parent = if redirected { None } else { HOST.with(|h| {
                 let b = h.borrow();
@@ -3689,32 +3687,23 @@ fn dispatch(
             if let Some(q) = from_parent {
                 let Some(t) = table() else { return throw(scope, "no ticket table") };
                 let id = t.submit();
+                HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().insert(id, STDIN_HANDLE); } });
                 let worker = t.clone();
                 std::thread::spawn(move || {
-                    let bytes = q.read();
+                    let Some(bytes) = q.read_unless(|| !worker.is_live(id)) else { return };
                     let a = if bytes.is_empty() {
                         Answer::Read(ReadAnswer::End)
                     } else {
                         Answer::Read(ReadAnswer::Data(bytes))
                     };
-                    let _ = worker.complete(id, a);
+                    unread_bytes(&q, worker.complete(id, a));
                 });
-                // `readChunk` is `fn[Read()]` — not a ticket — so this one blocks on the table
-                // rather than handing a `Pending` back.
-                // Collected, so nothing can be given up on and the handle note goes — `0308b`.
-                HOST.with(|h| { if let Some(st) = h.borrow().as_ref() { st.reading.lock().unwrap().remove(&id); } });
-                let built = match table().and_then(|t| t.take(id)) {
-                    Some(Answer::Read(ReadAnswer::Data(b))) => build_read_data(scope, &b),
-                    Some(Answer::Read(ReadAnswer::Failed(w))) => build_read_failed(scope, &w),
-                    _ => build_read_end(scope),
-                };
-                match built {
-                    Some(v) => rv.set(v),
-                    None => throw(scope, "could not build a Read for the parent's bytes"),
+                match ticket_pending(scope, "Read", id) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Read> to answer readChunk with"),
                 }
                 return;
             }
-            let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
             // Inside a frame: the bytes it was given, then the end. One chunk rather than a
             // trickle, because the frame has all of them already and splitting would invent a
             // boundary the caller then has to reassemble.
@@ -3730,38 +3719,27 @@ fn dispatch(
                     _ => None,
                 }
             })};
-            if let Some(bytes) = framed {
-                let built =
-                    if bytes.is_empty() { build_read_end(scope) } else { build_read_data(scope, &bytes) };
-                match built {
-                    Some(v) => rv.set(v),
-                    None => throw(scope, "could not build a Read for the frame's input"),
+            let answer = if let Some(bytes) = framed {
+                if bytes.is_empty() { ReadAnswer::End } else { ReadAnswer::Data(bytes) }
+            } else {
+                let mut buf = [0u8; 65536];
+                let n = HOST.with(|h| {
+                    let mut b = h.borrow_mut();
+                    let st = b.as_mut()?;
+                    Some(match st.input.as_mut() {
+                        Some(f) => f.read(&mut buf),
+                        None => std::io::stdin().read(&mut buf),
+                    })
+                });
+                match n {
+                    Some(Ok(0)) | None => ReadAnswer::End,
+                    Some(Ok(n)) => ReadAnswer::Data(buf[..n].to_vec()),
+                    Some(Err(e)) => ReadAnswer::Failed(message_of(&e)),
                 }
-                return;
-            }
-            let mut buf = [0u8; 65536];
-            let n = HOST.with(|h| {
-                let mut b = h.borrow_mut();
-                let st = b.as_mut()?;
-                Some(match st.input.as_mut() {
-                    Some(f) => f.read(&mut buf),
-                    None => std::io::stdin().read(&mut buf),
-                })
-            });
-            let built = match n {
-                Some(Ok(0)) | None => build_read_end(scope),
-                Some(Ok(n)) => build_read_data(scope, &buf[..n]),
-                Some(Err(e)) => build_read_failed(scope, &message_of(&e)),
             };
-            match built {
-                Some(v) => rv.set(v),
-                // Most often an old manifest: `variants` arrived in 0141, and one written before
-                // that names no constructor for `Read.Data`. Saying so beats "could not build".
-                None => throw(
-                    scope,
-                    "could not build a Read — does this manifest carry Read's variants? \
-                     (rebuild it with packages/platform/native.ts)",
-                ),
+            match ticket_for(scope, "Read", Answer::Read(answer)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Read> to answer readChunk with"),
             }
         }
         Cap::OpenOutput => {

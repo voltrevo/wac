@@ -1386,6 +1386,79 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
 
 
 /**
+ * What `core` must declare for a file that imports `only` from this one: each name the reached
+ * signatures mention that this file imports from core under that name — plus `Ticket`, when a reached
+ * function or method is `async`, since its callers are handed one though no signature spells it.
+ *
+ * **A type reached through someone else's signature is still a type with members.** `many()` answering
+ * core's `Vec<i32>`, or an imported `async` function answering a `Ticket<Ran>`, left the importer with a
+ * type it had never declared — unknown, so `many().nope()` and `run().out` passed silently, and the
+ * emitter found them instead.
+ */
+string[] coreNamesReached(u8[] src, Lexed lx, Program prog, string[] reach) {
+  // What this file imports from core, by the name it gave and the name core gave.
+  string[] local = string[].filled(256, "");
+  string[] orig = string[].filled(256, "");
+  i32 ln = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      Import(pathTok, prefixTok, items): {
+        string q = pathTok < 0 ? "" : tokenTextOf(src, lx, pathTok);
+        if (pathTok >= 0 && q != "\"core\"") { continue; }
+        for (i32 j = 0; j < items.len() && ln < local.len(); j++) {
+          if (items[j].nameTok < 0) { continue; }
+          string o = tokenTextOf(src, lx, items[j].nameTok);
+          orig[ln] = o;
+          local[ln] = items[j].aliasTok < 0 ? o : tokenTextOf(src, lx, items[j].aliasTok);
+          ln = ln + 1;
+        }
+      }
+      default: { }
+    }
+  }
+  string[] found = string[].filled(256, "");
+  i32[] seen = i32[].filled(1, 0);
+  bool anyAsync = false;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
+        if (!listHas(reach, reach.len(), tokenTextOf(src, lx, nameTok))) { continue; }
+        if (isAsync) { anyAsync = true; }
+        tyNames(src, lx, returnType, found, seen);
+        for (i32 p = 0; p < params.len(); p++) { tyNames(src, lx, params[p].type, found, seen); }
+      }
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (!listHas(reach, reach.len(), tokenTextOf(src, lx, nameTok))) { continue; }
+        for (i32 i = 0; i < fields.len(); i++) { tyNames(src, lx, fields[i].type, found, seen); }
+        for (i32 i = 0; i < methods.len(); i++) {
+          if (methods[i].isAsync) { anyAsync = true; }
+          tyNames(src, lx, methods[i].returnType, found, seen);
+          for (i32 p = 0; p < methods[i].params.len(); p++) { tyNames(src, lx, methods[i].params[p].type, found, seen); }
+        }
+      }
+      default: { }
+    }
+  }
+  string[] out = string[].filled(seen[0] + 1, "");
+  i32 n = 0;
+  for (i32 i = 0; i < seen[0]; i++) {
+    for (i32 k = 0; k < ln; k++) {
+      if (local[k] == found[i] && !listHas(out, n, orig[k])) {
+        out[n] = orig[k];
+        n = n + 1;
+      }
+    }
+  }
+  if (anyAsync && !listHas(out, n, "Ticket")) {
+    out[n] = "Ticket";
+    n = n + 1;
+  }
+  string[] exact = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/**
  * The same, keeping what it parsed.
  *
  * `checkFilesWith`'s second loop lexes and parses again for every file the entry wants a name from,
@@ -1630,6 +1703,38 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
     }
   }
 
+  // **What the imported signatures hand over from core**, wanted from core as well — declared, so their
+  // members are checked, and not nameable, since the entry never asked for them. See `coreNamesReached`.
+  i32 nExplicit = n;
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (paths[i] == entry || paths[i] == corePath() || isBuiltinSpec(paths[i])) { continue; }
+    i32 asked = 0;
+    for (i32 k = 0; k < nExplicit; k++) {
+      if (wantFrom[k] == paths[i]) { asked = asked + 1; }
+    }
+    if (asked == 0) { continue; }
+    string[] wanted = string[].defaulted(asked);
+    i32 wat = 0;
+    for (i32 k = 0; k < nExplicit; k++) {
+      if (wantFrom[k] == paths[i]) { wanted[wat] = wantName[k]; wat = wat + 1; }
+    }
+    u8[] rsrc = sources[i].toBytes();
+    Lexed rlx = i < lexes.len() && (lexes[i] is not null) ? lexes[i]! : lex(rsrc);
+    Program rpg = i < progs.len() && (progs[i] is not null) ? progs[i]! : parseProgram(P.create(rsrc, rlx));
+    string[] fromCore = coreNamesReached(rsrc, rlx, rpg, closeOverSignatures(rsrc, rlx, rpg, wanted));
+    for (i32 j = 0; j < fromCore.len(); j++) {
+      bool have = false;
+      for (i32 k = 0; k < n; k++) {
+        if (wantFrom[k] == corePath() && wantName[k] == fromCore[j]) { have = true; }
+      }
+      if (have || n >= wantFrom.len()) { continue; }
+      wantFrom[n] = corePath();
+      wantName[n] = fromCore[j];
+      wantAlias[n] = fromCore[j];
+      n = n + 1;
+    }
+  }
+
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == entry) { continue; }
     i32 want = 0;
@@ -1770,13 +1875,19 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
       }
     }
     declareModule(c, iprog, reach);
+    // The ones only a signature asked for are declared and not nameable, as a reached type is.
+    for (i32 k = nExplicit; k < n; k++) {
+      if (wantFrom[k] != paths[i]) { continue; }
+      if (listHas(wantAlias, nExplicit, c.renamed(wantName[k]))) { continue; }
+      c.markUnnameable(c.renamed(wantName[k]));
+    }
     for (i32 k = only.len(); k < reach.len(); k++) {
       // **A name the entry imported is in scope, wherever it came from.** This list is global across
       // every imported file, so hiding by the current file's `only` alone marked a name that another
       // import brought in legitimately — one false alarm on `packages/sh`'s `Word` and two spec
       // cases about same-named structs in two modules. What may not be written is a name the entry
       // never asked anybody for; `wantAlias` is exactly that set, under the entry's own spelling.
-      if (listHas(wantAlias, n, c.renamed(reach[k]))) { continue; }
+      if (listHas(wantAlias, nExplicit, c.renamed(reach[k]))) { continue; }
       c.markUnnameable(c.renamed(reach[k]));
       // **An enum carries more than one name into scope.** Its variants are declared beside it and
       // `is Circle` writes one bare, so hiding only the enum's own name lets every variant in — and

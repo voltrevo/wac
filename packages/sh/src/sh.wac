@@ -39,7 +39,7 @@ import { Fs } from "../../fs/src/fs.wac";
  * its first argument — so nothing about that design was wrong; it moved to the package that has the
  * programs.
  */
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   Shell sh = Shell.create(core, cli);
@@ -49,5 +49,5 @@ export i32 main(Sys sys) {
   // decoded arguments as text, and now carries bytes), and a spawned child did not receive what the
   // shell had left of its standard input (wac-mono 0066: `Shell.heldInput`).
   sh.externalSpawnable = true;
-  return shellMain(core, cli, sh, 0);
+  return await shellMain(core, cli, sh, 0);
 }

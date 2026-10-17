@@ -19,7 +19,7 @@ import { dump } from "../../../fs/src/image.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Feed } from "../../../platform/src/stream.wac";
 
-export i32 fsdump(Core core, Cli cli, Fs fs, Args a) {
+export async i32 fsdump(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // One image per operand, named when there is more than one — the same shape the checksums here use, and
   // for the same reason: reading the first operand and stopping is wac-mono 0096.
@@ -37,7 +37,7 @@ export i32 fsdump(Core core, Cli cli, Fs fs, Args a) {
     // difference from the applets above, which do stream.
     Buf held = Buf.create();
     while (true) {
-      Chunk got = nextChunk(core, cli, fed, a, in.label);
+      Chunk got = await nextChunk(core, cli, fed, a, in.label);
       if (!got.ok) { return 1; }
       if (!got.more) { break; }
       held.pushAll(got.bytes);

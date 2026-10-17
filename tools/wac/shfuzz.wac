@@ -310,14 +310,14 @@ Exec askBash(Cli cli, string dir, string script) {
 }
 
 /** The same script through this repository's own shell, in this process. */
-export Answer askOurs(Core core, Cli cli, string dir, string script) {
+export async Answer askOurs(Core core, Cli cli, string dir, string script) {
   Frame f = Frame.of(["sh", "-c", script], u8[](), dir, false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.create(c, l);
   sh.external = boxRun;
   sh.externalNames = boxNames;
-  i32 status = shellMain(c, l, sh, 1);
+  i32 status = await shellMain(c, l, sh, 1);
   return Answer(normalise(combined(string.fromBytes(f.out.bytes()),
                                    string.fromBytes(f.err.bytes()))), status);
 }
@@ -363,7 +363,7 @@ i32 numberOr(string s, i32 fallback) {
   return v;
 }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   string dir = ".cache/wac-shfuzz";
@@ -373,7 +373,7 @@ export i32 main(Sys sys) {
   }
   if (hasFlag(cli, "--capture")) { return capture(core, cli, dir); }
   if (hasFlag(cli, "--print")) { return printScripts(core, cli); }
-  return explore(core, cli, dir);
+  return await explore(core, cli, dir);
 }
 
 /**
@@ -463,12 +463,12 @@ i32 capture(Core core, Cli cli, string dir) {
  * **The canary is the first thing it does**, because everything below is "these two agree", which a
  * harness that ran neither would also report.
  */
-i32 explore(Core core, Cli cli, string dir) {
+async i32 explore(Core core, Cli cli, string dir) {
   i32 seed = numberOr(flagValue(cli, "--seed", "1"), 1);
   i32 count = numberOr(flagValue(cli, "--count", "200"), 200);
 
-  Answer one = askOurs(core, cli, dir, "echo one");
-  Answer two = askOurs(core, cli, dir, "echo two");
+  Answer one = await askOurs(core, cli, dir, "echo one");
+  Answer two = await askOurs(core, cli, dir, "echo two");
   if (one.text == two.text || one.text.indexOf("one") < 0) {
     core.warn("shfuzz: our shell did not answer `echo one`: " + one.text);
     return 2;
@@ -491,7 +491,7 @@ i32 explore(Core core, Cli cli, string dir) {
     string wanted = normalise(combined(string.fromBytes(want.stdout), string.fromBytes(want.stderr)));
     cli.remove(dir, true).wait();
     fixtures(cli, dir);
-    Answer got = askOurs(core, cli, dir, sc);
+    Answer got = await askOurs(core, cli, dir, sc);
     if (wanted != got.text || want.status != got.status) {
       differ = differ + 1;
       if (differ <= 8) {

@@ -47,7 +47,7 @@ import { UNKNOWN } from "../src/box.wac";
 import { Session } from "../src/lib/session.wac";
 
 /** This program is also its own applets, so the shell in a window can spawn them. */
-export i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return boxApplet(core, cli); }
+export async i32 main(Sys sys) { Core core = sys.core; Cli cli = sys.cli; return await boxApplet(core, cli); }
 
 /** What a window shows. */
 i32 SHELL() { return 0; }
@@ -84,7 +84,7 @@ string downArrow() { return "\{string.fromCodepoint(27)}[B"; }
 /** The window's title, which is also what its bar says. */
 string titleOf(Win w) { return w.kind == SHELL() ? "shell \{w.id}" : "files"; }
 
-export i32 page(Core core, Cli cli, Page page) {
+export async i32 page(Core core, Cli cli, Page page) {
   page.title("wac desktop").wait();
 
   // **One filesystem, and every window is on it.** The first session builds the system — `/dev`,
@@ -92,8 +92,8 @@ export i32 page(Core core, Cli cli, Page page) {
   // that same `Fs`. Two terminals each building their own would be two machines that look alike, and
   // a desktop whose windows do not share a disk is a set of pictures.
   Session first = Session.start(core, cli, "desk");
-  first.feedLine("mkdir -p /home/wac");
-  first.feedLine("seq 1 5 > /home/wac/five");
+  await first.feedLine("mkdir -p /home/wac");
+  await first.feedLine("seq 1 5 > /home/wac/five");
 
   // Stacking order, front last. A `Vec` rather than a z-index per window because "which is on top" is
   // an order, and keeping it as one means raising is a move rather than a search for the maximum.
@@ -206,7 +206,7 @@ export i32 page(Core core, Cli cli, Page page) {
 
     string line = page.getValue(field).wait();
     page.setValue(field, "").wait();
-    w.sh.feedLine(line);
+    await w.sh.feedLine(line);
     // Every window, not just this one: a command in one terminal changes what the files windows list
     // and what the *other* terminals would see, because there is one filesystem underneath.
     paint(page, wins);

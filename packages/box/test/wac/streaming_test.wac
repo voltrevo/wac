@@ -60,7 +60,7 @@ string cols(string s) {
   return out.toStr();
 }
 
-export string test_streaming_applets_agree_across_chunk_boundaries(Core core, Cli cli) {
+export async string test_streaming_applets_agree_across_chunk_boundaries(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -70,15 +70,15 @@ export string test_streaming_applets_agree_across_chunk_boundaries(Core core, Cl
   string path = "\{dir}/spanning.txt";
   t.isTrue(cli.writeFile(path, text).wait().ok(), "wrote the fixture");
 
-  t.eqStr(cols(runApplet(core, cli, dir, ["wc", path]).out),
+  t.eqStr(cols((await runApplet(core, cli, dir, ["wc", path])).out),
           cols(realOut(cli, "wc", [path])), "wc across chunks");
 
-  t.eqStr(runApplet(core, cli, dir, ["strings", path]).out,
+  t.eqStr((await runApplet(core, cli, dir, ["strings", path])).out,
           realOut(cli, "strings", ["-n4", path]), "strings across chunks");
 
   // Two hex characters a byte, and a newline. A framing error is the only thing that can go wrong in a
   // per-byte applet, and a length is what catches it.
-  t.eqI32(runApplet(core, cli, dir, ["hex", path]).out.len(), text.len() * 2 + 1,
+  t.eqI32((await runApplet(core, cli, dir, ["hex", path])).out.len(), text.len() * 2 + 1,
           "hex is two characters a byte");
 
   cli.remove(dir, true).wait();
@@ -92,7 +92,7 @@ export string test_streaming_applets_agree_across_chunk_boundaries(Core core, Cl
  * shorter ones, each ending where a read did. A fixture of ordinary text cannot show it, because no
  * run in it is longer than a word.
  */
-export string test_a_run_spanning_three_chunks_is_one_string(Core core, Cli cli) {
+export async string test_a_run_spanning_three_chunks_is_one_string(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -106,7 +106,7 @@ export string test_a_run_spanning_three_chunks_is_one_string(Core core, Cli cli)
   run[width + 1] = 0x00;
   t.isTrue(cli.writeFile(path, run).wait().ok(), "wrote the spanning run");
 
-  t.eqStr(runApplet(core, cli, dir, ["strings", path]).out,
+  t.eqStr((await runApplet(core, cli, dir, ["strings", path])).out,
           realOut(cli, "strings", ["-n4", path]),
           "a 200K run spanning three chunks is one string");
 
@@ -121,7 +121,7 @@ export string test_a_run_spanning_three_chunks_is_one_string(Core core, Cli cli)
  * the same either way, and the expectation is written down rather than spawned: `tr a-z A-Z` over
  * ASCII is the one transformation this file can state exactly.
  */
-export string test_tr_uppercases_across_chunks(Core core, Cli cli) {
+export async string test_tr_uppercases_across_chunks(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -133,7 +133,7 @@ export string test_tr_uppercases_across_chunks(Core core, Cli cli) {
     want.push((c >= 0x61 && c <= 0x7a ? c - 32 : c) as@ u8);
   }
 
-  Ran got = runAppletIn(core, cli, dir, ["tr", "a-z", "A-Z"], text);
+  Ran got = await runAppletIn(core, cli, dir, ["tr", "a-z", "A-Z"], text);
   t.eqI32(got.status, 0, "tr ran: \{got.err}");
   t.eqStr(got.out, want.toStr(), "tr across chunks");
 
@@ -150,7 +150,7 @@ export string test_tr_uppercases_across_chunks(Core core, Cli cli) {
  * rather than imported: importing the implementation under test would make this assert that a function
  * equals itself.
  */
-export string test_crc32_is_order_dependent_across_chunks(Core core, Cli cli) {
+export async string test_crc32_is_order_dependent_across_chunks(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -180,7 +180,7 @@ export string test_crc32_is_order_dependent_across_chunks(Core core, Cli cli) {
     want = want + "0123456789abcdef".slice(nib, nib + 1);
   }
 
-  Ran got = runApplet(core, cli, dir, ["crc32", path]);
+  Ran got = await runApplet(core, cli, dir, ["crc32", path]);
   i32 sp = got.out.indexOf(" ");
   t.eqStr(sp < 0 ? got.out : got.out.slice(0, sp), want, "crc32 across chunks: \{got.out}");
 

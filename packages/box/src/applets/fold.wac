@@ -8,7 +8,7 @@ import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 fold(Core core, Cli cli, Fs fs, Args a) {
+export async i32 fold(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
   i32 width = a.hasNum ? a.num : 80;
@@ -24,7 +24,7 @@ export i32 fold(Core core, Cli cli, Fs fs, Args a) {
   Sink out = Sink.create(cli);
   Reader r = Reader.create(core, cli, fs, a, 0, out);
   while (true) {
-    Line l = r.next(core, cli, fs, a);
+    Line l = await r.next(core, cli, fs, a);
     if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }
     u8[] line = l.bytes;
     if (line.len() == 0) { emitTo(out, line, l.nl); continue; }

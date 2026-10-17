@@ -25,13 +25,13 @@ import { Feed } from "../../../platform/src/stream.wac";
  * makes it possible: the bytes go straight to the temporary file rather than being
  * gathered first, and the rename still happens only once all of them are there.
  */
-export Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string path) {
+export async Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string path) {
   // **The host streams; anything else is written whole.** `openOutput` redirects this process's standard
   // output to a file — the state is in the capability — and a memory image has no such thing. Writing
   // the bytes in one call is not a compromise there: an image is already in memory, and the
   // write-beside-and-rename that makes this atomic on a disk is not what makes it atomic in a value.
   if (!fs.isHostPath(path)) {
-    u8[] all = fed.rest();
+    u8[] all = await fed.rest();
     if (fed.why != "") { return Change.of(FAULT_OTHER(), fed.why); }
     return fs.writeFile(path, all);
   }
@@ -43,7 +43,7 @@ export Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string path) {
   bool copying = true;
   string broke = "";
   while (copying) {
-    match (cli.readChunk()) {
+    match (await cli.readChunk().ticket()) {
       Data(bytes): {
         if (!cli.write(bytes)) {
           copying = false;

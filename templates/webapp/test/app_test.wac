@@ -42,13 +42,13 @@ export string test_adding_an_item_lists_it_and_clears_the_input() {
   start(page);
   seen.log = "";
   seen.typed = "milk";
-  deliver(page, "click", "add", "", 0, 0);
+  deliver(page, "click", "add", "", 0, 0, 0);
   answer(page, seen);
   string want = "into list=<ul id=\"items\"><li>milk</li></ul>\ntext count=1 to do\n";
   if (seen.log != want) { return "after one add: \{seen.log}"; }
   if (seen.typed != "") { return "the input was not cleared"; }
   seen.typed = "eggs";
-  deliver(page, "keydown", "what", "Enter", 0, 0);
+  deliver(page, "keydown", "what", "Enter", 0, 0, 0);
   answer(page, seen);
   if (seen.log.indexOf("<li>milk</li><li>eggs</li>") < 0) { return "Enter did not add: \{seen.log}"; }
   return "";
@@ -59,8 +59,8 @@ export string test_an_empty_input_adds_nothing() {
   Page page = Page.create(recording(seen));
   start(page);
   seen.log = "";
-  deliver(page, "click", "add", "", 0, 0);
+  deliver(page, "click", "add", "", 0, 0, 0);
   answer(page, seen);
-  deliver(page, "keydown", "what", "a", 0, 0);
+  deliver(page, "keydown", "what", "a", 0, 0, 0);
   return seen.log == "" ? "" : "something happened: \{seen.log}";
 }

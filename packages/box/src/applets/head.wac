@@ -16,7 +16,7 @@ import { Input, labelAt, openStream, operandCount, readFailed } from "../lib/inp
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 head(Core core, Cli cli, Fs fs, Args a) {
+export async i32 head(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // A count that is not a count is a mistake in the command, not a reason to use the default: this
   // used to print ten lines for `head -n x` and exit 0.
@@ -57,7 +57,7 @@ export i32 head(Core core, Cli cli, Fs fs, Args a) {
     // The feed the opener chose — see `lib/input.wac`; not the process's own input.
     Feed fed = in.fed;
     if (bytes) {
-      if (!headBytes(out, fed, want, allButLast)) { out.flush(); return status; }
+      if (!(await headBytes(out, fed, want, allButLast))) { out.flush(); return status; }
       if (unread(core, out, a, fed, f)) { status = 1; }
       continue;
     }
@@ -66,7 +66,7 @@ export i32 head(Core core, Cli cli, Fs fs, Args a) {
       // it. Asking for more than the input holds prints nothing, as GNU does.
       if (want <= 0) {
         while (true) {
-          Line l = nextLine(s, fed);
+          Line l = await nextLine(s, fed);
           if (!l.ok) { break; }
           if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return status; }
         }
@@ -77,7 +77,7 @@ export i32 head(Core core, Cli cli, Fs fs, Args a) {
       bool[] ended = bool[].filled(want, true);
       i32 seen = 0;
       while (true) {
-        Line l = nextLine(s, fed);
+        Line l = await nextLine(s, fed);
         if (!l.ok) { break; }
         if (seen >= want) {
           i32 at = (seen - want) % want;
@@ -91,7 +91,7 @@ export i32 head(Core core, Cli cli, Fs fs, Args a) {
       continue;
     }
     for (i32 i = 0; i < want; i++) {
-      Line l = nextLine(s, fed);
+      Line l = await nextLine(s, fed);
       if (!l.ok) { break; }
       if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return status; }
     }
@@ -123,11 +123,11 @@ bool unread(Core core, Sink out, Args a, Feed fed, i32 f) {
  * is reading when its own write is refused. The all-but-last form cannot: it has to reach the end to
  * know where the end is, so it holds `want` bytes back and no more.
  */
-bool headBytes(Sink out, Feed fed, i32 want, bool allButLast) {
+async bool headBytes(Sink out, Feed fed, i32 want, bool allButLast) {
   if (!allButLast) {
     i32 sent = 0;
     while (sent < want) {
-      u8[] chunk = fed.next();
+      u8[] chunk = await fed.next();
       if (chunk.len() == 0) { return true; }
       i32 take = chunk.len();
       if (sent + take > want) { take = want - sent; }
@@ -138,7 +138,7 @@ bool headBytes(Sink out, Feed fed, i32 want, bool allButLast) {
     }
     return true;
   }
-  u8[] all = fed.rest();
+  u8[] all = await fed.rest();
   i32 upTo = all.len() - want;
   if (upTo < 0) { upTo = 0; }
   u8[] head = u8[].filled(upTo, 0);

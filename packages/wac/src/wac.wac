@@ -802,7 +802,7 @@ void rememberBuild(Cli cli, string cachePath, u8[] whole, string distinct) {
   sweepBuildCache(cli, cacheDir);
 }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 argc = cli.argCount().wait();
@@ -945,7 +945,7 @@ export i32 main(Sys sys) {
     // builtin, worked. `packages/box/src/bin/sealedsh.wac` sets it and can, because its `main`
     // answers as an applet before it answers as a shell. Ours would have to become multi-call
     // first, and running them in process is what the shipped shell already does.
-    return shellMain(core, inner, sh, p.at);
+    return await shellMain(core, inner, sh, p.at);
   }
   // `$WAC_HOME` rather than `fetch.wac`'s own `.wac` default: the compiler reads the cache from
   // there, so defaulting to a relative directory puts a fetched tree where nothing looks for it —

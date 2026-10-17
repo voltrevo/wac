@@ -118,7 +118,7 @@ export struct Session {
    * `clear` is the *terminal's* and not the shell's: `sh` has no notion of a screen, and this is the
    * first thing everybody types.
    */
-  void feedLine(this, string line) {
+  async void feedLine(this, string line) {
     this.cursor = 0;
     if (line == "") { return; }
     this.history.set(this.count % HISTORY(), line);
@@ -126,7 +126,7 @@ export struct Session {
     if (line == "clear") { this.screen = ""; return; }
 
     this.screen = this.screen + "\{this.prompt()} \{line}\n";
-    i32 status = runScript(this.sh, line);
+    i32 status = await runScript(this.sh, line);
     this.screen = this.screen
       + string.fromBytes(this.sh.outBuf.take())
       + string.fromBytes(this.sh.errOut.take());

@@ -35,7 +35,7 @@ depends on this package by git and builds with nothing but `wac`.
 | `download(name, bytes)` | offer bytes to the user as a file |
 | `now()` | milliseconds, from a clock that only goes forward |
 | `on(selector, kind)` | deliver `kind` events on elements matching `selector`, delegated so they survive `render` |
-| `await nextEvent()` | the next event: `kind`, `id`, `value` (an input's value, or the key), `x`, `y` (in the element's own pixels) |
+| `await nextEvent()` | the next event: `kind`, `id`, `value` (an input's value, or the key), `x`, `y` (in the element's own pixels), `mods` (`MOD_SHIFT`, `MOD_CTRL`, `MOD_ALT`, `MOD_META`) |
 | `await nextFile()` | the next file the user picks with an `<input type="file">` or drops on the page |
 | `await sleep(ms)`, `await nextFrame()`, `await painted()` | time: answering `now()` when they settle |
 
@@ -65,6 +65,11 @@ the browser's Origin Private File System as its disk. `await sys.readFile(path)`
 refuses too, so `sys.cli` is no way around the grants. [`packages/platform/example/notes.wac`](../platform/example/notes.wac)
 keeps a note that survives a reload.
 
+A page built with `--spawn <export>` can start copies of itself: `sys.cli.spawnSelf(args, …)` runs
+`export async i32 <export>(Sys sys)` in a worker of its own, with those arguments, its input fed by the
+parent, its output and errors read back on handles, and — when asked — its files reached through the
+parent's. That is how a shell's pipeline stages are processes in a page.
+
 Nothing waits for the browser: each call that reaches it returns a ticket at once, and the browser
 calls back when the work is done. So a host ticket is `await`ed — `await cli.readFile(p).ticket()` —
 and `.wait()` on one that has not arrived traps saying so, where on a command line it would block.
@@ -81,7 +86,7 @@ does that for every order in which things can arrive.
 ## Building one
 
     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-        <entry.wac> <out-dir> [--in-page] [--grant read,write] [--title <t>] [--page <spec>] [--wac <binary>]
+        <entry.wac> <out-dir> [--in-page] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
 
 `packages/web/tools/build.wac` writes three files: `page.wac`, a wrapper exporting `Host` — the one thing the
 browser's side holds, with the page in a private field and a method for each call the host makes;

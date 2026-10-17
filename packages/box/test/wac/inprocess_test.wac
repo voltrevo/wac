@@ -29,7 +29,7 @@ struct Ran {
  * The frame is the child's world: its `argv` is what `shellMain` reads its `-c` from, and its `out` and
  * `err` are where every write lands instead of the host's streams.
  */
-Ran runScript(Core core, Cli cli, string script) {
+async Ran runScript(Core core, Cli cli, string script) {
   // **`shellMain`'s `first` is an index into the arguments, and a frame's `argv` starts with the
   // child's own name** — box's layout, which is how an applet knows what it was called. So the name is
   // argv[0] and the shell is told to start at 1; passing 0 made it read `sh` as a *script to open* and
@@ -40,30 +40,30 @@ Ran runScript(Core core, Cli cli, string script) {
   Shell sh = Shell.create(c, l);
   sh.external = boxRun;
   sh.externalNames = boxNames;
-  i32 status = shellMain(c, l, sh, 1);
+  i32 status = await shellMain(c, l, sh, 1);
   return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
 }
 
-export string test_a_script_runs_in_this_process_and_its_bytes_come_back(Core core, Cli cli) {
+export async string test_a_script_runs_in_this_process_and_its_bytes_come_back(Core core, Cli cli) {
   T t = T.create();
-  Ran r = runScript(core, cli, "echo hi");
+  Ran r = await runScript(core, cli, "echo hi");
   t.eqStr(r.out, "hi\n", "a plain echo");
   t.eqI32(r.status, 0, "and it succeeded: \{r.err}");
   return t.report();
 }
 
-export string test_a_pipeline_through_boxs_applets_runs_here_too(Core core, Cli cli) {
+export async string test_a_pipeline_through_boxs_applets_runs_here_too(Core core, Cli cli) {
   T t = T.create();
   // `seq`, `grep` and `wc` are box applets, reached through `sh.external` rather than by spawning —
   // the same three the website's transcript uses, and the reason `boxRun` exists.
-  Ran r = runScript(core, cli, "seq 1 20 | grep 7 | wc -l");
+  Ran r = await runScript(core, cli, "seq 1 20 | grep 7 | wc -l");
   t.eqStr(r.out, "2\n", "the pipeline's answer");
   return t.report();
 }
 
-export string test_a_failing_command_leaves_its_status(Core core, Cli cli) {
+export async string test_a_failing_command_leaves_its_status(Core core, Cli cli) {
   T t = T.create();
-  Ran r = runScript(core, cli, "false");
+  Ran r = await runScript(core, cli, "false");
   t.eqI32(r.status, 1, "a false exits 1");
   return t.report();
 }

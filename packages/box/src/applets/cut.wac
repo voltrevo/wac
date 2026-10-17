@@ -14,7 +14,7 @@ import { tryHelp } from "../lib/operands.wac";
 import { Ranges, parseRanges } from "../lib/ranges.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 cut(Core core, Cli cli, Fs fs, Args a) {
+export async i32 cut(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   string d = flagValue(a, 'd');
   i32 delim = d == "" ? '\t' : d.toBytes()[0] as i32;
@@ -39,7 +39,7 @@ export i32 cut(Core core, Cli cli, Fs fs, Args a) {
   Sink out = Sink.create(cli);
   Reader r = Reader.create(core, cli, fs, a, 0, out);
   while (true) {
-    Line l = r.next(core, cli, fs, a);
+    Line l = await r.next(core, cli, fs, a);
     if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }
     emitTo(out, byBytes ? bytesOf(l.bytes, want) : fieldsOf(l.bytes, delim, want), true);
   }

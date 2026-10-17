@@ -23,7 +23,7 @@ import { TrSet, complementOf, parseSet } from "../lib/trset.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Feed } from "../../../platform/src/stream.wac";
 
-export i32 tr(Core core, Cli cli, Fs fs, Args a) {
+export async i32 tr(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   u8[] flags = a.flags.toBytes();
   for (u8 flag in flags) {
@@ -117,7 +117,7 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
 
   i32 last = -1;
   while (true) {
-    Chunk got = nextChunk(core, cli, fed, a, in.label);
+    Chunk got = await nextChunk(core, cli, fed, a, in.label);
     if (!got.ok) { return 1; }
     if (!got.more) { return 0; }
     u8[] chunk = got.bytes;

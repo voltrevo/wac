@@ -98,7 +98,7 @@ export bool typerefOps() { return OK; }
 `isNullable()`, `isRef()`, `tupleMembers()` (a tuple's member types, as a `typeref[]`) and `==` (the same type).
 
 `[§wac-typeref-element-h7q2xvd]` `isArray()` says whether a type is an array, and `element()` is what `for (x in e)`
-binds for `e` of that type: an array's element type, or what a generator yields
+binds for `e` of that type: an array's or a `Vec`'s element type, or what a generator yields
 ([36](../6-concurrency/36-coroutines-and-generators.md)). `element()` of any other type is an error.
 
 `[§wac-typeref-tuple-68c06fi]` `typeref.tuple(ts)` is the tuple type whose members are the types in `ts`, in order:

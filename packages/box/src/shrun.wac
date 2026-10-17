@@ -53,7 +53,7 @@ import { Fs } from "../../fs/src/fs.wac";
  * typo. The `UNKNOWN` sentinel exists for exactly this: an applet that ran and failed returns 1,
  * and one that does not exist has to be a different answer.
  */
-export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin, bool inheritIn) {
+export async Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin, bool inheritIn) {
   if (argv.len() == 0) { return Output.missing(); }
 
   // The applet's own name is `argv[0]` here, where under `box` it is `argv[1]` — `box grep x` and
@@ -79,7 +79,7 @@ export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8
   // `cd d` looks under the mount root (wac-mono 0109).
   fs.setCwd(cwd);
   Frame f = Frame.of(args, stdin, cwd, inheritIn);
-  i32 code = dispatch(childCore(f, core), childCli(f, cli), fs, a, name);
+  i32 code = await dispatch(childCore(f, core), childCli(f, cli), fs, a, name);
   Captured got = f.captured();
 
   if (code == UNKNOWN) { return Output.missing(); }
@@ -117,7 +117,7 @@ export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8
  *
  * Answers `UNKNOWN` for a name that is not an applet, so a caller can be a shell instead.
  */
-export i32 boxApplet(Core core, Cli cli) {
+export async i32 boxApplet(Core core, Cli cli) {
   i32 n = cli.argCount().wait();
   if (n < 1) { return UNKNOWN; }
   string[] args = string[].filled(n, "");
@@ -139,7 +139,7 @@ export i32 boxApplet(Core core, Cli cli) {
   // trip to a parent it does not have. `dispatch` would answer `UNKNOWN` a moment later either way;
   // the difference is that building the filesystem is the expensive half.
   if (!isApplet(name)) { return UNKNOWN; }
-  return dispatch(core, cli, Fs.fromParentOrHost(cli, 0), parseList(args, 1, name), name);
+  return await dispatch(core, cli, Fs.fromParentOrHost(cli, 0), parseList(args, 1, name), name);
 }
 
 /**

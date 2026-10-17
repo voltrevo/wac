@@ -28,7 +28,7 @@ string vectorsPath() { return "packages/box/test/operand-error-vectors.txt"; }
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
 string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-operanderrors"; }
 
-export string test_an_operand_that_cannot_be_opened_is_skipped_not_the_end_of_the_run(Core core, Cli cli) {
+export async string test_an_operand_that_cannot_be_opened_is_skipped_not_the_end_of_the_run(Core core, Cli cli) {
   T t = T.create();
   Loaded v = load(cli, vectorsPath());
   t.isTrue(v.error == "", v.error);
@@ -46,7 +46,7 @@ export string test_an_operand_that_cannot_be_opened_is_skipped_not_the_end_of_th
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran r = runCase(core, cli, dir, list[i].script);
+    Ran r = await runCase(core, cli, dir, list[i].script);
     ran = ran + 1;
     string why = complaint(r, v.items[i], list[i]);
     if (why != "") {
@@ -99,7 +99,7 @@ string complaint(Ran ours, Vector want, ErrCase rule) {
 }
 
 /** The canary: five of these asked of the *live* tools, so a changed environment is noticed. */
-export string test_the_live_tools_still_skip_the_same_way(Core core, Cli cli) {
+export async string test_the_live_tools_still_skip_the_same_way(Core core, Cli cli) {
   T t = T.create();
   ErrCase[] list = operandErrorCases();
   string dir = caseDir(cli);
@@ -127,7 +127,7 @@ export string test_the_live_tools_still_skip_the_same_way(Core core, Cli cli) {
       t.isTrue(false, "cannot lay the fixtures in \{dir}");
       return t.report();
     }
-    Ran ours = runCase(core, cli, dir, list[i].script);
+    Ran ours = await runCase(core, cli, dir, list[i].script);
     checked = checked + 1;
     t.eqI32(ours.status, want.status, "the live tool's status differs: $ \{list[i].script}");
     if (list[i].interleaves) {

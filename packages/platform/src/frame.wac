@@ -298,7 +298,7 @@ export Cli childCliGranted(Frame f, const Cli parent, Grants g) {
     fn<Pending<Change>(string)> noOpen =
       (string p) => readyChange(Change.of(FAULT_NOT_GRANTED(), notGranted()));
     c.openInput = noOpen;
-    fn<Read()> noChunk = () => Read.Failed(notGranted());
+    fn<Pending<Read>()> noChunk = () => ready<Read>(Read.Failed(notGranted()));
     c.readChunk = noChunk;
   }
 
@@ -425,8 +425,8 @@ export Cli childCli(Frame f, const Cli parent) {
     () => {
       if (f.inheritIn || f.redirectedIn) { return parent.readChunk(); }
       u8[] chunk = f.readChunk();
-      if (chunk.len() == 0) { return Read.End; }
-      return Read.Data(chunk);
+      if (chunk.len() == 0) { return ready<Read>(Read.End); }
+      return ready<Read>(Read.Data(chunk));
     },
     parent.outputError,
     // **Redirection is the child's, and it lands in a file.** An empty path means "back to standard

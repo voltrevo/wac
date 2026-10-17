@@ -23,24 +23,24 @@ bool freshDir(Cli cli, string dir) {
   return cli.mkdir(dir, true).wait().ok();
 }
 
-export string test_what_one_session_writes_the_next_one_reads(Core core, Cli cli) {
+export async string test_what_one_session_writes_the_next_one_reads(Core core, Cli cli) {
   T t = T.create();
   string dir = workDir(cli);
   t.isTrue(freshDir(cli, dir), "cannot make \{dir}");
   string image = "\{dir}/session.wacimg";
 
-  Ran first = runImaged(core, cli, image, "mkdir /data; mkdir /data/deep; echo one > /data/notes");
+  Ran first = await runImaged(core, cli, image, "mkdir /data; mkdir /data/deep; echo one > /data/notes");
   t.eqI32(first.status, 0, "first run: \{first.err}");
 
   // A second session. Nothing carried over but the file.
-  Ran second = runImaged(core, cli, image, "ls /data; cat /data/notes");
+  Ran second = await runImaged(core, cli, image, "ls /data; cat /data/notes");
   t.eqI32(second.status, 0, "second run: \{second.err}");
   t.eqStr(second.out, "deep\nnotes\none\n", show(second.out));
 
   // And a third, so that saving is not something that only works on a filesystem loaded from nothing.
-  Ran third = runImaged(core, cli, image, "echo two >> /data/notes; cat /data/notes");
+  Ran third = await runImaged(core, cli, image, "echo two >> /data/notes; cat /data/notes");
   t.eqI32(third.status, 0, "third run: \{third.err}");
-  t.eqStr(runImaged(core, cli, image, "cat /data/notes").out, "one\ntwo\n", "the fourth session");
+  t.eqStr((await runImaged(core, cli, image, "cat /data/notes")).out, "one\ntwo\n", "the fourth session");
   cli.remove(dir, true).wait();
   return t.report();
 }
@@ -52,17 +52,17 @@ export string test_what_one_session_writes_the_next_one_reads(Core core, Cli cli
  * host, because that path streams through `openOutput`. It does, but only in a world that can spawn, and
  * neither shell is built with one.
  */
-export string test_a_redirection_lands_in_the_image_and_not_on_the_host(Core core, Cli cli) {
+export async string test_a_redirection_lands_in_the_image_and_not_on_the_host(Core core, Cli cli) {
   T t = T.create();
   string dir = workDir(cli);
   t.isTrue(freshDir(cli, dir), "cannot make \{dir}");
   string image = "\{dir}/session.wacimg";
 
-  runImaged(core, cli, image, "mkdir /d");
-  Ran run = runImaged(core, cli, image, "echo hello | cat > /d/up; echo plain > /d/flat");
+  await runImaged(core, cli, image, "mkdir /d");
+  Ran run = await runImaged(core, cli, image, "echo hello | cat > /d/up; echo plain > /d/flat");
   t.eqI32(run.status, 0, run.err);
 
-  Ran back = runImaged(core, cli, image, "cat /d/up; cat /d/flat");
+  Ran back = await runImaged(core, cli, image, "cat /d/up; cat /d/flat");
   t.eqStr(back.out, "hello\nplain\n", show(back.out));
 
   // Nothing of the sort appeared beside the image on the real disk.
@@ -72,13 +72,13 @@ export string test_a_redirection_lands_in_the_image_and_not_on_the_host(Core cor
   return t.report();
 }
 
-export string test_a_new_image_is_an_empty_world_not_an_error(Core core, Cli cli) {
+export async string test_a_new_image_is_an_empty_world_not_an_error(Core core, Cli cli) {
   T t = T.create();
   string dir = workDir(cli);
   t.isTrue(freshDir(cli, dir), "cannot make \{dir}");
   string image = "\{dir}/session.wacimg";
 
-  Ran run = runImaged(core, cli, image, "ls /");
+  Ran run = await runImaged(core, cli, image, "ls /");
   t.eqI32(run.status, 0, run.err);
   // `/dev`, `/proc` and `/bin` are there from the start — design/0001 steps 6 and 7 — and none of them
   // holds anything that is saved, so an empty session is one with nothing *of its own* in it.
@@ -95,15 +95,15 @@ export string test_a_new_image_is_an_empty_world_not_an_error(Core core, Cli cli
  * The session whose work is most worth keeping is the one that ended badly. A shell that saved only on
  * success would lose exactly that.
  */
-export string test_a_session_that_fails_still_saves_what_it_did(Core core, Cli cli) {
+export async string test_a_session_that_fails_still_saves_what_it_did(Core core, Cli cli) {
   T t = T.create();
   string dir = workDir(cli);
   t.isTrue(freshDir(cli, dir), "cannot make \{dir}");
   string image = "\{dir}/session.wacimg";
 
-  Ran run = runImaged(core, cli, image, "mkdir /kept; nosuchcommand");
+  Ran run = await runImaged(core, cli, image, "mkdir /kept; nosuchcommand");
   t.isTrue(run.status != 0, "the failing script reported success");
-  t.eqStr(runImaged(core, cli, image, "ls /").out, "bin\ndev\nkept\nproc\n", "what the failed session kept");
+  t.eqStr((await runImaged(core, cli, image, "ls /")).out, "bin\ndev\nkept\nproc\n", "what the failed session kept");
   cli.remove(dir, true).wait();
   return t.report();
 }
@@ -114,13 +114,13 @@ export string test_a_session_that_fails_still_saves_what_it_did(Core core, Cli c
  * Starting empty would be worse than stopping: the session would then *save over* the image it could not
  * read, turning one unreadable file into no file at all.
  */
-export string test_an_unreadable_image_is_refused_rather_than_overwritten(Core core, Cli cli) {
+export async string test_an_unreadable_image_is_refused_rather_than_overwritten(Core core, Cli cli) {
   T t = T.create();
   string dir = workDir(cli);
   t.isTrue(freshDir(cli, dir), "cannot make \{dir}");
   string image = "\{dir}/session.wacimg";
 
-  runImaged(core, cli, image, "mkdir /precious");
+  await runImaged(core, cli, image, "mkdir /precious");
   u8[] good = cli.readFile(image).wait().bytes;
   t.isTrue(good.len() > 0, "no image to damage");
   if (good.len() == 0) { return t.report(); }
@@ -131,7 +131,7 @@ export string test_an_unreadable_image_is_refused_rather_than_overwritten(Core c
   damaged[at] = damaged[at] ^ 0xff;
   t.isTrue(cli.writeFile(image, damaged).wait().ok(), "cannot write the damaged image");
 
-  Ran run = runImaged(core, cli, image, "ls /");
+  Ran run = await runImaged(core, cli, image, "ls /");
   t.isTrue(run.status != 0, "a damaged image was accepted");
   t.isTrue(run.err.indexOf("damaged") >= 0, run.err);
   // And it did not save over it: the bytes on disk are still the ones that could not be read.

@@ -458,18 +458,10 @@ export function cliOf(
     if (out[0] === 2) return cls.Read.Failed(unstr(out.subarray(1)));
     return cls.Read.Data(out.subarray(1));
   };
-  /** For the ticket-taking `recv`. A bridge failure is itself a failed read. */
+  /** For `recv` and `readChunk`. A bridge failure is itself a failed read. */
   const read = (id: number) => {
     try {
       return readOf(collect(b, unpack(id)));
-    } catch (e) {
-      return cls.Read.Failed(e instanceof Error ? e.message : String(e));
-    }
-  };
-  /** For the blocking `readChunk`, which has a ticket in hand rather than a packed id. */
-  const readNow = (t: Ticket) => {
-    try {
-      return readOf(collect(b, t));
     } catch (e) {
       return cls.Read.Failed(e instanceof Error ? e.message : String(e));
     }
@@ -670,9 +662,9 @@ export function cliOf(
     // into its own words, rather than an errno in somebody's shell diagnostic.
     (path: string) => T.change(send(OP.OPEN_INPUT, str(path))),
     /*= readChunk */
-    // Blocking, and it answers the three states directly — no ticket, and no way to mistake a broken
-    // read for the end of the input.
-    () => readNow(send(OP.READ_CHUNK, EMPTY)),
+    // A ticket, as `recv`'s is: the three states arrive as a `Read`, so a broken read cannot be
+    // mistaken for the end of the input, and a world that cannot block awaits it like any other.
+    () => T.read(send(OP.READ_CHUNK, EMPTY)),
     /*= outputError */
     () => T.text(send(OP.OUTPUT_ERROR, EMPTY)),
     /*= openOutput */

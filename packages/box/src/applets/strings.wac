@@ -11,7 +11,7 @@ import { Span, nextSpan } from "../lib/input.wac";
 import { Buf } from "core";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 strings(Core core, Cli cli, Fs fs, Args a) {
+export async i32 strings(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   i32 at = 0;
   bool opened = false;
@@ -24,7 +24,7 @@ export i32 strings(Core core, Cli cli, Fs fs, Args a) {
   // The feed travels with the span — see `lib/input.wac`.
   Feed fed = Feed.of(cli, u8[]());
   while (true) {
-    Span got = nextSpan(core, cli, fs, a, at, opened, fed);
+    Span got = await nextSpan(core, cli, fs, a, at, opened, fed);
     fed = got.fed;
     failed = failed || got.failed;
     if (!got.ok) { out.flush(); return 1; }

@@ -12,7 +12,7 @@ import { Sha512 } from "../../../crypto/src/sha512.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Feed } from "../../../platform/src/stream.wac";
 
-export i32 sha512sum(Core core, Cli cli, Fs fs, Args a) {
+export async i32 sha512sum(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // One line per file, as the real one prints — it used to hash the first operand and stop, so
   // `sha256sum *.tar` checksummed one archive and said nothing about the others (wac-mono 0096).
@@ -29,7 +29,7 @@ export i32 sha512sum(Core core, Cli cli, Fs fs, Args a) {
     bool unread = false;
     Sha512 h = Sha512.create();
     while (true) {
-      Chunk got = nextChunk(core, cli, fed, a, in.label);
+      Chunk got = await nextChunk(core, cli, fed, a, in.label);
       // A read that fails part way is a skip like any other, not the end of the run: the files named
       // after it are still hashed. It used to `return`, so `sha256sum a somedir b` never reached `b`.
       if (!got.ok) { status = 1; unread = true; break; }

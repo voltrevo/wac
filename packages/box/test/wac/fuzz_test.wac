@@ -34,7 +34,7 @@ struct Vector {
 
 string caseDir(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-fuzzreplay"; }
 
-export string test_the_generated_scripts_still_answer_what_bash_answered(Core core, Cli cli) {
+export async string test_the_generated_scripts_still_answer_what_bash_answered(Core core, Cli cli) {
   T t = T.create();
   Loaded v = load(cli);
   t.isTrue(v.error == "", v.error);
@@ -65,7 +65,7 @@ export string test_the_generated_scripts_still_answer_what_bash_answered(Core co
         t.isTrue(false, "cannot make the fixtures in \{dir}");
         return t.report();
       }
-      Answer got = askOurs(core, cli, dir, sc);
+      Answer got = await askOurs(core, cli, dir, sc);
       ran = ran + 1;
       if (got.text != vec.text || got.status != vec.status) {
         differ = differ + 1;
@@ -96,7 +96,7 @@ export string test_the_generated_scripts_still_answer_what_bash_answered(Core co
  * of them. These are the generated scripts themselves — the first two of each seed — so what is compared
  * is the thing the vectors are about rather than a hand-written stand-in.
  */
-export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli) {
+export async string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   i32 checked = 0;
@@ -126,7 +126,7 @@ export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli)
       string wanted = normalise(combined(string.fromBytes(want.stdout), string.fromBytes(want.stderr)));
       cli.remove(dir, true).wait();
       fixtures(cli, dir);
-      Answer got = askOurs(core, cli, dir, sc);
+      Answer got = await askOurs(core, cli, dir, sc);
       checked = checked + 1;
       t.eqStr(got.text, wanted, "the live oracle disagrees: \{show(sc)}");
       t.eqI32(got.status, want.status, "the live oracle's status disagrees: \{show(sc)}");

@@ -1,0 +1,9 @@
+// expect: refused
+// spec: §wac-async-decl-h3vq81m
+// why: an `async` function's caller is handed a ticket whichever file it is declared in — read as its body's type across an import, `run().out` passed the checker and the emitter declined the call
+// ---- lib.wac ----
+export struct Ran { string out; }
+export async Ran run() { return Ran("x"); }
+// ---- main.wac ----
+import { run } from "./lib.wac";
+export i32 f() { return run().out.len(); }

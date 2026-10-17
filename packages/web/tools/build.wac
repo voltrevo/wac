@@ -39,11 +39,16 @@ struct Asked {
    * `--grant read,write` asks for one, holding those.
    */
   i32 grants;
+  /**
+   * The export a copy of this page started by `spawnSelf` runs — `async i32 <name>(Sys sys)` — or "" for
+   * a page that starts nothing. A copy has no document, so it cannot run `main(Page …)`.
+   */
+  string spawn;
 }
 
 /** The arguments, or a usage line in `title` and empty `entry` when they do not make sense. */
 Asked askedOf(Cli cli) {
-  Asked a = Asked("", "", "wac", "web", "wac", false, 0 - 1);
+  Asked a = Asked("", "", "wac", "web", "wac", false, 0 - 1, "");
   i32 argc = cli.argCount().wait();
   string[] args = string[].filled(argc, "");
   for (i32 k = 0; k < argc; k++) { args[k] = string.fromBytes(cli.arg(k).wait()); }
@@ -54,6 +59,12 @@ Asked askedOf(Cli cli) {
     if ((w == "--wac" || w == "--page" || w == "--title") && i + 1 < argc) {
       string v = args[i + 1];
       if (w == "--wac") { a.wac = v; } else if (w == "--page") { a.pageSpec = v; } else { a.title = v; }
+      i += 2;
+      continue;
+    }
+    if (w == "--spawn" && i + 1 < argc) {
+      a.spawn = args[i + 1];
+      if (a.grants < 0) { a.grants = 0; }
       i += 2;
       continue;
     }
@@ -144,12 +155,13 @@ export string relativeTo(string from, string to) {
  * vectors cross into JavaScript, where nothing could use them. Handing over the `Page` itself did:
  * 24 classes and 71 KB of glue for a counter.
  */
-export string wrapperFor(string entrySpec, string pageSpec, i32 grants) {
+export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string spawn) {
   bool sys = grants >= 0;
   string w = "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
-           + "import { main } from \"\{entrySpec}\";\n"
+           + "import { main" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
            + "import { Dom, Page, deliver, fileArrived, timerFired, valueArrived"
-           + (sys ? ", System, World, answered" : "") + " } from \"\{pageSpec}\";\n\n"
+           + (sys ? ", System, World, answered" : "") + (spawn != "" ? ", Process, processAnswered" : "")
+           + " } from \"\{pageSpec}\";\n\n"
            + "export struct Host {\n"
            + "  private Page page;\n";
   if (sys) {
@@ -174,10 +186,23 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants) {
         + (sys ? "    main(this.page, this.world.sys);\n" : "    main(this.page);\n")
         + "    this.page.drain();\n"
         + "  }\n";
+  // **A copy of the page started by `spawnSelf` is a process, not a page**: no document, a `Sys` holding
+  // what its parent gave it, and `spawn`'s export as its program. Opaque for the reason `Host` is.
+  string spawned = spawn == "" ? "" : "\nexport struct Spawned {\n"
+    + "  private Process p;\n\n"
+    + "  Spawned create(System system, i32 grants) { return Spawned(Process.create(system, grants)); }\n\n"
+    + "  void start(this) {\n"
+    + "    schedule this.p.runner.take;\n"
+    + "    this.p.started(\{spawn}(this.p.world.sys));\n"
+    + "  }\n\n"
+    + "  void answer(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
+    + "    processAnswered(this.p, req, fault, text, bytes, n, m, flags);\n"
+    + "  }\n"
+    + "}\n";
   return w + """
 
-           void event(this, string kind, string id, string value, i32 x, i32 y) {
-             deliver(this.page, kind, id, value, x, y);
+           void event(this, string kind, string id, string value, i32 x, i32 y, i32 mods) {
+             deliver(this.page, kind, id, value, x, y, mods);
            }
 
            void timer(this, i32 id) { timerFired(this.page, id); }
@@ -188,7 +213,7 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants) {
 
            void value(this, i32 req, string value) { valueArrived(this.page, req, value); }
          }
-         """;
+         """ + spawned;
 }
 
 /**
@@ -202,8 +227,10 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants) {
  */
 export string programSide(bool sys) {
   // The one line that differs: a page with grants hands its `Host` a `System` as well.
-  string make = sys ? "const makeHost = (dom) => Host.create(dom, wacSystem((...a) => host.answer(...a)));\n"
-                    : "const makeHost = (dom) => Host.create(dom);\n";
+  string make = sys
+    ? "const makeHost = (dom) => Host.create(dom, wacSystem((...a) => host.answer(...a), "
+      + "{ child: false, args: [], cwd: \"/\", post: null }));\n"
+    : "const makeHost = (dom) => Host.create(dom);\n";
   return """
       const wacProgram = (post) => {
         let host = null;
@@ -231,7 +258,7 @@ export string programSide(bool sys) {
         host.start();
         return (m) => {
           switch (m[0]) {
-            case "event": host.event(m[1], m[2], m[3], m[4], m[5]); break;
+            case "event": host.event(m[1], m[2], m[3], m[4], m[5], m[6]); break;
             case "timer": host.timer(m[1]); break;
             case "file": host.file(m[1], m[2], m[3], m[4]); break;
             case "value": host.value(m[1], m[2]); break;
@@ -253,14 +280,35 @@ export string programSide(bool sys) {
  */
 export string systemSide() {
   return """
-      const wacSystem = (answer) => {
+      // A queue of byte chunks with one reader at a time: what a child's streams arrive on.
+      const wacQueue = () => {
+        const items = [], waiters = [];
+        let ended = false;
+        return {
+          push(b) { if (waiters.length) waiters.shift()({ bytes: b }); else items.push(b); },
+          end() { ended = true; while (waiters.length) waiters.shift()({ end: true }); },
+          next() {
+            if (items.length) return Promise.resolve({ bytes: items.shift() });
+            if (ended) return Promise.resolve({ end: true });
+            return new Promise((r) => waiters.push(r));
+          },
+        };
+      };
+      const wacOwn = (b) => b.byteOffset === 0 && b.byteLength === b.buffer.byteLength ? [b.buffer] : [];
+      // `me` is who this program is: a page (no arguments, no input, its output on the console), or a
+      // copy of one started by `spawnSelf`, whose arguments, directory and streams its parent supplied.
+      const wacSystem = (answer, me) => {
         const enc = new TextEncoder();
         const NONE = new Uint8Array(0);
         let rootP = null;
         const root = () => (rootP ??= navigator.storage.getDirectory());
+        // Handles below 2 are reserved, as on every host: 0 is standard input, 1 the parent's files.
+        const handles = new Map();
+        let nextHandle = 2;
         const parts = (path) => {
           const out = [];
-          for (const p of String(path).split("/")) {
+          const whole = String(path).startsWith("/") ? String(path) : me.cwd + "/" + String(path);
+          for (const p of whole.split("/")) {
             if (p === "" || p === ".") continue;
             if (p === "..") out.pop(); else out.push(p);
           }
@@ -356,12 +404,109 @@ export string systemSide() {
           () => BigInt(Date.now()),
           () => BigInt(Math.round(performance.now() * 1e6)),
           (n) => crypto.getRandomValues(new Uint8Array(n)),
-          (line) => { console.log(line); },
-          (line) => { console.warn(line); },
-          (bytes) => { console.log(new TextDecoder().decode(bytes)); },
-          (bytes) => { console.warn(new TextDecoder().decode(bytes)); },
-          (code) => { throw new Error("the program exited with " + code); },
+          (line) => { if (me.child) me.post(["out", enc.encode(line + "\\n")]); else console.log(line); },
+          (line) => { if (me.child) me.post(["err", enc.encode(line + "\\n")]); else console.warn(line); },
+          (bytes) => { if (me.child) me.post(["out", bytes], wacOwn(bytes)); else console.log(new TextDecoder().decode(bytes)); },
+          (bytes) => { if (me.child) me.post(["err", bytes], wacOwn(bytes)); else console.warn(new TextDecoder().decode(bytes)); },
+          (code) => {
+            if (!me.child) throw new Error("the program exited with " + code);
+            me.post(["exit", code]);
+            close();
+          },
+          () => me.args.length,
+          (i) => me.args[i] ?? NONE,
+          () => me.cwd,
+          (req) => read(req, me.stdin),
+          (req, argBytes, grants, cwd, serveFs) => spawn(req, argBytes, grants, cwd, serveFs),
+          (req, h) => read(req, h === 1 && me.child ? me.fsIn : handles.get(h)?.q),
+          (req, h, bytes) => {
+            const to = handles.get(h);
+            if (h === 1 && me.child) me.post(["fs", bytes], wacOwn(bytes));
+            else if (to === undefined || to.child.gone) return answer(req, 0, "", NONE, 0n, 0n, 0);
+            else if (to.kind === "out") to.child.worker.postMessage(["stdin", bytes], wacOwn(bytes));
+            else if (to.kind === "fs") to.child.worker.postMessage(["fs", bytes], wacOwn(bytes));
+            answer(req, 0, "", NONE, 0n, 0n, 1);
+          },
+          (h) => { const c = handles.get(h)?.child; if (c && !c.gone) c.worker.postMessage(["stdinEnd"]); },
+          (h) => { const to = handles.get(h); if (to && to.kind === "out") stop(to.child, 143); },
+          (req, h) => {
+            const c = handles.get(h)?.child;
+            if (c === undefined) return answer(req, 1, "not a child", NONE, 0n, 0n, 0);
+            c.exit.then((code) => ok(req, NONE, BigInt(code)));
+          },
         );
+
+        // ── Programs started from this one ───────────────────────────────────────────────────────
+        // A child is a worker on this very script, told who it is by its first message. Its output,
+        // its errors and its questions about files arrive as messages and wait in queues until read;
+        // its input and the answers to its questions go back the same way.
+        function read(req, q) {
+          if (q === undefined) return answer(req, 0, "", NONE, 0n, 0n, 1);
+          q.next().then((r) => r.end ? answer(req, 0, "", NONE, 0n, 0n, 1) : answer(req, 0, "", r.bytes, 0n, 0n, 0));
+        }
+        function stop(c, code) {
+          if (c.gone) return;
+          c.gone = true;
+          c.worker.terminate();
+          c.out.end(); c.err.end(); c.fs.end();
+          c.settle(code);
+        }
+        function spawn(req, argBytes, grants, cwd, serveFs) {
+          if (typeof WorkerGlobalScope === "undefined") {
+            return answer(req, 9, "a page built --in-page cannot start programs", NONE, 0n, 0n, 0);
+          }
+          const args = [];
+          for (let at = 0; at < argBytes.length;) {
+            const end = argBytes.indexOf(0, at);
+            args.push(argBytes.slice(at, end));
+            at = end + 1;
+          }
+          const worker = new Worker(self.location.href);
+          let settle;
+          const c = { worker, out: wacQueue(), err: wacQueue(), fs: wacQueue(), gone: false,
+                      exit: new Promise((r) => { settle = r; }) };
+          c.settle = settle;
+          const h = nextHandle++, eh = nextHandle++, fh = serveFs ? nextHandle++ : -1;
+          handles.set(h, { kind: "out", child: c, q: c.out });
+          handles.set(eh, { kind: "err", child: c, q: c.err });
+          if (fh >= 0) handles.set(fh, { kind: "fs", child: c, q: c.fs });
+          worker.onmessage = (e) => {
+            const [k, v] = e.data;
+            if (k === "out") c.out.push(v);
+            else if (k === "err") c.err.push(v);
+            else if (k === "fs") c.fs.push(v);
+            else if (k === "exit") stop(c, v);
+          };
+          worker.onerror = (e) => {
+            e.preventDefault();
+            c.err.push(enc.encode((e.message || "the program stopped") + "\\n"));
+            stop(c, 134);
+          };
+          worker.postMessage(["init", { args, grants, cwd, serveFs }]);
+          ok(req, NONE, BigInt(h), BigInt(eh), fh);
+        }
+      };
+      """;
+}
+
+/**
+ * A copy of the page started by `spawnSelf`, as the worker it is: its input and the answers to its
+ * questions arrive as messages from the parent, and everything else is the system half as a child.
+ */
+export string childSide() {
+  return """
+      const wacChild = (init) => {
+        const stdin = wacQueue(), fsIn = wacQueue();
+        const me = { child: true, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
+                     post: (m, transfer) => postMessage(m, transfer ?? []) };
+        let p = null;
+        p = Spawned.create(wacSystem((...a) => p.answer(...a), me), init.grants);
+        p.start();
+        return (m) => {
+          if (m[0] === "stdin") stdin.push(m[1]);
+          else if (m[0] === "stdinEnd") stdin.end();
+          else if (m[0] === "fs") fsIn.push(m[1]);
+        };
       };
       """;
 }
@@ -420,7 +565,8 @@ export string documentSide() {
               if (kind === "submit") ev.preventDefault();
               const value = kind === "keydown" ? ev.key : ("value" in el ? String(el.value) : "");
               const [x, y] = within(el, ev);
-              emit(["event", kind, el.id || "", value, x, y]);
+              const mods = (ev.shiftKey ? 1 : 0) | (ev.ctrlKey ? 2 : 0) | (ev.altKey ? 4 : 0) | (ev.metaKey ? 8 : 0);
+              emit(["event", kind, el.id || "", value, x, y, mods]);
             });
           },
           title: (title) => { document.title = title; },
@@ -465,12 +611,18 @@ export string documentSide() {
  * worker, which is why the glue is `wac bindgen --script`: a module worker made from a blob is refused
  * on a `file://` page, and a `data:` one would lose the page's origin and the storage that goes with it.
  */
-export string workerIndexFor(string title, string module, bool sys) {
+export string workerIndexFor(string title, string module, bool sys, bool spawn) {
   return head(title)
        + "<script type=\"text/plain\" id=\"wac-program\">\n" + module + "\n" + (sys ? systemSide() : "")
        + programSide(sys)
-       + "const receive = wacProgram((m, transfer) => postMessage(m, transfer ?? []));\n"
-       + "onmessage = (e) => receive(e.data);\n</script>\n"
+       + (spawn ? childSide() : "")
+       // The first message says who this worker is: the page's program, or a copy started by one.
+       + "let receive = null;\n"
+       + "onmessage = (e) => {\n"
+       + "  if (receive !== null) return receive(e.data);\n"
+       + "  receive = e.data[0] === \"init\" ? wacChild(e.data[1])\n"
+       + "    : wacProgram((m, transfer) => postMessage(m, transfer ?? []));\n"
+       + "};\n</script>\n"
        + "<script type=\"module\">\n" + documentSide()
        + """
          const source = document.getElementById("wac-program").textContent;
@@ -478,6 +630,7 @@ export string workerIndexFor(string title, string module, bool sys) {
          const apply = wacDocument(document.getElementById("app"), (m, transfer) => worker.postMessage(m, transfer ?? []));
          worker.onmessage = (e) => apply(e.data);
          worker.onerror = (e) => console.error(e.message);
+         worker.postMessage(["page"]);
          """
        + "</script>\n</body>\n</html>\n";
 }
@@ -504,7 +657,7 @@ string head(string title) {
 export i32 buildPage(Core core, Cli cli) {
   Asked a = askedOf(cli);
   if (a.entry == "" || a.out == "") {
-    cli.writeErr("usage: build.wac <entry.wac> <out-dir> [--in-page] [--grant read,write] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
+    cli.writeErr("usage: build.wac <entry.wac> <out-dir> [--in-page] [--grant read,write] [--spawn <export>] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
     return 2;
   }
   // **The wrapper is a module of this project**, so it is written inside it: from anywhere else its
@@ -519,7 +672,7 @@ export i32 buildPage(Core core, Cli cli) {
   bool pagePath = a.pageSpec.len() > 0 && (a.pageSpec.slice(0, 1) == "." || a.pageSpec.slice(0, 1) == "/");
   string pageSpec = pagePath ? relativeTo(a.out, a.pageSpec) : a.pageSpec;
   string entrySpec = relativeTo(a.out, a.entry);
-  cli.writeFile(wrapper, wrapperFor(entrySpec, pageSpec, a.grants).toBytes()).wait();
+  cli.writeFile(wrapper, wrapperFor(entrySpec, pageSpec, a.grants, a.spawn).toBytes()).wait();
   string js = a.out + "/page.js";
   Exec made = cli.exec(a.wac, ["bindgen", wrapper, js, "--script"], u8[]()).wait();
   if (!made.ok()) {
@@ -536,7 +689,7 @@ export i32 buildPage(Core core, Cli cli) {
   string index = a.out + "/index.html";
   bool sys = a.grants >= 0;
   string page = a.inPage ? inPageIndexFor(a.title, string.fromBytes(module.bytes), sys)
-                          : workerIndexFor(a.title, string.fromBytes(module.bytes), sys);
+                          : workerIndexFor(a.title, string.fromBytes(module.bytes), sys, a.spawn != "");
   cli.writeFile(index, page.toBytes()).wait();
   core.log("\{index}: \{module.bytes.len()} bytes of module");
   return 0;

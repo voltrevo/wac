@@ -1,21 +1,22 @@
 // Decompress Zstandard, a block at a time.
 //
-// This used to hold its whole input, with a note saying the limit was the package's rather than the
-// world's. `packages/zstd` has `unzstdStream` now (wac-mono 0088), so the applet is the same three lines
-// `gunzip` is: the host blocks in `readChunk`, the decoder keeps its ordinary loops, and neither the
-// compressed input nor the decoded output is held whole.
+// `unzstdStream` pulls its input through `fn<Read()>` from inside its decoder, and input in this world
+// is awaited, so the applet awaits all of it and hands the decoder a reader over what it has
+// (`readerOf`). The decoded output is still produced a block at a time and never held whole.
 
 import { Cli, Core } from "std";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";
+import { readerOf } from "../../../platform/src/stream.wac";
 import { unzstdStream } from "../../../zstd/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 unzstd(Core core, Cli cli, Fs fs, Args a) {
+export async i32 unzstd(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   Input in = openStream(core, cli, fs, a, 0, -1);
   if (!in.ok) { return 1; }
-  unzstdStream(cli.readChunk, cli.write);
+  u8[] all = await in.fed.rest();
+  unzstdStream(readerOf(all), cli.write);
   return 0;
 }

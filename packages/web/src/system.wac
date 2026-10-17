@@ -24,7 +24,8 @@
 import { CallResult, Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_NONE, FAULT_NOT_GRANTED,
          FAULT_UNSUPPORTED, FileResult, GRANT_READ, GRANT_WRITE, LoadedModule, Pending, Sched, Socket,
          Stat, Sys, faultWords } from "std";
-import { Map, Read } from "core";
+import { Map, Read, Ticket } from "core";
+import { Runner } from "./page.wac";
 
 /**
  * What the browser does for a program's system, supplied by the host.
@@ -63,6 +64,29 @@ export struct System {
   fn<void(u8[])> writeErr;
   /** End the program now, with this status. */
   fn<void(i32)> exit;
+  /** How many arguments the program was started with, and each one's bytes — none, for a page. */
+  fn<i32()> argCount;
+  fn<u8[](i32)> arg;
+  /** Where relative paths land: the file system's root, or what a parent said when it spawned this. */
+  fn<string()> cwd;
+  /** The next piece of standard input. Answers `flags` `READ_*` — with `bytes`, or with `text` for a failure. */
+  fn<void(i32)> readChunk;
+  /**
+   * This program again, in a worker of its own: the arguments, each followed by a NUL; the grants it
+   * may hold; its directory; and whether it reaches its files through this one. Answers `n` its
+   * handle, `m` its error stream's, and `flags` its file system channel's (-1 for none) — or a `fault`.
+   */
+  fn<void(i32, u8[], i32, string, bool)> spawnSelf;
+  /** The next piece of what a handle carries — a child's output, its errors, or its questions — as `readChunk` answers. */
+  fn<void(i32, i32)> recv;
+  /** Send bytes on a handle: to a child's input, or an answer on its file system channel. Answers `flags` 1 if sent. */
+  fn<void(i32, i32, u8[])> send;
+  /** End a child's input. */
+  fn<void(i32)> closeFeed;
+  /** Stop a child, and stop reading what it says. */
+  fn<void(i32)> closeSocket;
+  /** A child's exit status, when it has one. Answers `n`. */
+  fn<void(i32, i32)> exitCode;
 
   /**
    * A browser that does nothing: no request is ever answered, the clocks stand at zero, output is
@@ -74,10 +98,17 @@ export struct System {
       (i32 req, string p) => { }, (i32 req, string p, bool f) => { }, (i32 req, string p, bool f) => { },
       (i32 req, string a, string b) => { }, (i32 req, i32 ms) => { }, () => 0 as i64, () => 0 as i64,
       (i32 n) => u8[].filled(n, 0), (string l) => { }, (string l) => { }, (u8[] b) => { },
-      (u8[] b) => { }, (i32 code) => { }
+      (u8[] b) => { }, (i32 code) => { }, () => 0, (i32 i) => u8[](), () => "/", (i32 req) => { },
+      (i32 req, u8[] args, i32 grants, string cwd, bool serveFs) => { }, (i32 req, i32 h) => { },
+      (i32 req, i32 h, u8[] b) => { }, (i32 h) => { }, (i32 h) => { }, (i32 req, i32 h) => { }
     );
   }
 }
+
+/** `Answer.flags` for a read: what arrived. */
+export static i32 READ_DATA = 0;
+export static i32 READ_END = 1;
+export static i32 READ_FAILED = 2;
 
 /** `Answer.flags` for a `stat`: which of these the path is. */
 export static i32 STAT_EXISTS = 1;
@@ -170,6 +201,26 @@ Stat statOf(Answer a) {
                  false, false, a.fault);
 }
 
+/** A read's answer as the `Read` it is. */
+Read readOf(Answer a) {
+  if (a.flags == READ_DATA && a.bytes.len() > 0) { return Read.Data(a.bytes); }
+  if (a.flags == READ_FAILED) { return Read.Failed(a.text); }
+  return Read.End;
+}
+
+/** The bytes `spawnSelf` takes for its arguments: each one, then a NUL. */
+u8[] argBytesOf(u8[][] args) {
+  i32 n = 0;
+  for (u8[] a in args) { n = n + a.len() + 1; }
+  u8[] out = u8[].filled(n, 0);
+  i32 at = 0;
+  for (u8[] a in args) {
+    for (i32 i = 0; i < a.len(); i++) { out[at + i] = a[i]; }
+    at = at + a.len() + 1;
+  }
+  return out;
+}
+
 /** The names in a `readDir` answer — each followed by a NUL — or null when it failed. */
 string[]? namesOf(Answer a) {
   if (a.fault != FAULT_NONE()) { return null; }
@@ -255,8 +306,8 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
   bool read = (grants & GRANT_READ) != 0;
   bool write = (grants & GRANT_WRITE) != 0;
   return Cli.of(
-    () => ready(0),
-    (i32 i) => ready(u8[]()),
+    () => ready(system.argCount()),
+    (i32 i) => ready(system.arg(i)),
     (string name) => ready(null as u8[]?),
     () => ready(u8[]()),
     (u8[] bytes) => { system.write(bytes); return true; },
@@ -305,27 +356,48 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
     (string p, i32 mode) => write ? unsupported() : refusedChange(),
     // Standard input is the empty path and a page has none; a file as a stream is not here yet.
     (string p) => p == "" ? ready(Change.of(FAULT_NONE(), "")) : unsupported(),
-    () => Read.End,
+    () => {
+      i32 req = answers.ask();
+      system.readChunk(req);
+      return answers.pending<Read>(req, readOf);
+    },
     () => ready(""),
     (string p) => p == "" ? ready(Change.of(FAULT_NONE(), "")) : unsupported(),
     (string host, i32 port) => noSocket(),
     (string host, i32 port) => noSocket(),
     (i32 h) => noSocket(),
-    (i32 h) => ready(Read.End),
-    (i32 h, u8[] bytes) => ready(false),
-    (i32 h) => { },
+    (i32 h) => {
+      i32 req = answers.ask();
+      system.recv(req, h);
+      return answers.pending<Read>(req, readOf);
+    },
+    (i32 h, u8[] bytes) => {
+      i32 req = answers.ask();
+      system.send(req, h, bytes);
+      return answers.pending<bool>(req, (Answer a) => a.flags == 1);
+    },
+    system.closeSocket,
+    // Half-closing a child's input is `closeFeed`; a page has no sockets to half-close.
     (i32 h) => { },
     (string host, i32 port) => noSocket(),
     (i32 h) => ready(Datagram.of(u8[](), "", 0, "a page has no sockets")),
     (i32 h, string host, i32 port, u8[] bytes) => ready(false),
     (u8[] wasm, u8[][] args, i32 want, string cwd, i32 inherit, bool serveFs) =>
       ready(Child.of(0 - 2, 0 - 2, 0 - 2, "this page cannot start programs")),
-    (u8[][] args, i32 want, string cwd, bool inheritIn, bool serveFs) =>
-      ready(Child.of(0 - 2, 0 - 2, 0 - 2, "this page cannot start programs")),
-    (i32 h) => { },
-    (i32 h) => ready(0 - 1),
-    // The Origin Private File System's root, which is where every relative path in a page lands.
-    () => ready("/"),
+    // **No grant, and none kept**, as on a command line: what is started is this program again, so
+    // it reaches nothing new, and what it may do is what it is given — never more than this holds.
+    (u8[][] args, i32 want, string cwd, bool inheritIn, bool serveFs) => {
+      i32 req = answers.ask();
+      system.spawnSelf(req, argBytesOf(args), want & grants, cwd, serveFs);
+      return answers.pending<Child>(req, childOf);
+    },
+    system.closeFeed,
+    (i32 h) => {
+      i32 req = answers.ask();
+      system.exitCode(req, h);
+      return answers.pending<i32>(req, (Answer a) => a.n as! i32);
+    },
+    () => ready(system.cwd()),
     (string[] argv, u8[] stdin, string cwd, bool inheritIn) => ready(false),
     () => ready(Captured.of(u8[](), u8[](), false)),
     (string path, string[] args, u8[] stdin, string[] env, bool clearEnv, bool inherit, string cwd) =>
@@ -338,9 +410,58 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
   );
 }
 
+/** A spawn's answer as the `Child` it is — or one that says why it did not start. */
+Child childOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return Child.of(0 - 1, 0 - 1, 0 - 1, wordsFor(a)); }
+  return Child.of(a.n as! i32, a.m as! i32, a.flags, "");
+}
+
 Pending<Stat> statFor(System system, Answers answers, bool read, string p) {
   if (!read) { return ready(Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_NOT_GRANTED())); }
   i32 req = answers.ask();
   system.stat(req, p);
   return answers.pending<Stat>(req, statOf);
+}
+
+/**
+ * A copy of a page started by `spawnSelf`: no document, a `Sys`, and an exit status once its program
+ * is done — which is what the copy is, a process, run by the same means as a page.
+ */
+export struct Process {
+  Runner runner;
+  World world;
+  System system;
+  Ticket<i32>? done;
+  bool exited;
+
+  /** A process holding `grants`, made under its own runner so that is where its program resumes. */
+  Process create(System system, i32 grants) {
+    Runner r = Runner.create();
+    schedule r.take;
+    return Process(r, World.create(system, grants), system, null, false);
+  }
+
+  /** The program's ticket, once started: settling it is the process ending. */
+  void started(this, Ticket<i32> t) {
+    this.done = t;
+    this.runner.drain();
+    this.settle();
+  }
+
+  /** Say the status once the program is done, and only once. */
+  void settle(this) {
+    if (this.exited) { return; }
+    Ticket<i32>? d = this.done;
+    if (d is null || !d!.settled()) { return; }
+    this.exited = true;
+    this.system.exit(d!.value());
+  }
+}
+
+/** The browser answered request `req` of a process's system: settle it, run on, and end if that was the last of it. */
+export void processAnswered(Process p, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {
+  schedule p.runner.take;
+  p.world.answers.arrive(req, Answer(fault, text, bytes, n, m, flags));
+  p.runner.drain();
+  p.settle();
 }

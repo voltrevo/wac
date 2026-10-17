@@ -85,11 +85,11 @@ string body(string all) {
 }
 
 /** One shape, both ways. */
-bool oneCase(T t, Core core, Cli cli, string dir, string what, string a, string b) {
+async bool oneCase(T t, Core core, Cli cli, string dir, string what, string a, string b) {
   cli.writeFile("\{dir}/a", a.toBytes()).wait();
   cli.writeFile("\{dir}/b", b.toBytes()).wait();
 
-  Ran mine = runCase(core, cli, dir, "diff a b");
+  Ran mine = await runCase(core, cli, dir, "diff a b");
   Exec real = cli.exec("diff", ["-u", "\{dir}/a", "\{dir}/b"], u8[]()).wait();
   if (!real.ran()) {
     t.isTrue(false, "the real diff would not start: \{real.error}");
@@ -102,7 +102,7 @@ bool oneCase(T t, Core core, Cli cli, string dir, string what, string a, string 
   return true;
 }
 
-export string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli cli) {
+export async string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
@@ -110,26 +110,26 @@ export string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli c
   // **A floor first.** Every comparison below is `eqStr` against the real tool, and two empty strings
   // are equal — so a `diff` that printed nothing at all, or a `body` that filtered everything, would
   // pass fourteen times. This asks that the simplest case actually produced a hunk.
-  oneCase(t, core, cli, dir, "one change", seq(8), seqEdit(8, 3, "X"));
-  Ran floor = runCase(core, cli, dir, "diff a b");
+  await oneCase(t, core, cli, dir, "one change", seq(8), seqEdit(8, 3, "X"));
+  Ran floor = await runCase(core, cli, dir, "diff a b");
   t.isTrue(body(floor.out).indexOf("@@") >= 0,
            "the comparison has something in it — got: \{floor.out}");
-  oneCase(t, core, cli, dir, "two distant hunks", seq(30), twoDistant());
+  await oneCase(t, core, cli, dir, "two distant hunks", seq(30), twoDistant());
   // Closer than twice the context, so they must merge into one hunk rather than two.
-  oneCase(t, core, cli, dir, "two close changes merge", seq(30), twoClose());
-  oneCase(t, core, cli, dir, "a deletion", seq(30), seqEdit(30, 13, ""));
-  oneCase(t, core, cli, dir, "an insertion", seq(30), seqInsert(30, 13, "inserted"));
-  oneCase(t, core, cli, dir, "change on the first line", seq(30), seqEdit(30, 1, "one"));
-  oneCase(t, core, cli, dir, "change on the last line", seq(30), seqEdit(30, 30, "thirty"));
-  oneCase(t, core, cli, dir, "truncated", seq(30), seq(5));
-  oneCase(t, core, cli, dir, "appended", seq(30), seq(40));
-  oneCase(t, core, cli, dir, "fully reversed", seq(20), seqReversed(20));
+  await oneCase(t, core, cli, dir, "two close changes merge", seq(30), twoClose());
+  await oneCase(t, core, cli, dir, "a deletion", seq(30), seqEdit(30, 13, ""));
+  await oneCase(t, core, cli, dir, "an insertion", seq(30), seqInsert(30, 13, "inserted"));
+  await oneCase(t, core, cli, dir, "change on the first line", seq(30), seqEdit(30, 1, "one"));
+  await oneCase(t, core, cli, dir, "change on the last line", seq(30), seqEdit(30, 30, "thirty"));
+  await oneCase(t, core, cli, dir, "truncated", seq(30), seq(5));
+  await oneCase(t, core, cli, dir, "appended", seq(30), seq(40));
+  await oneCase(t, core, cli, dir, "fully reversed", seq(20), seqReversed(20));
   // The three empty cases: the hunk header's line numbers are the whole point, because a zero-length
   // side starts at line 0 rather than 1.
-  oneCase(t, core, cli, dir, "new file is empty", seq(30), "");
-  oneCase(t, core, cli, dir, "old file is empty", "", seq(30));
-  oneCase(t, core, cli, dir, "both empty", "", "");
-  oneCase(t, core, cli, dir, "identical", seq(30), seq(30));
+  await oneCase(t, core, cli, dir, "new file is empty", seq(30), "");
+  await oneCase(t, core, cli, dir, "old file is empty", "", seq(30));
+  await oneCase(t, core, cli, dir, "both empty", "", "");
+  await oneCase(t, core, cli, dir, "identical", seq(30), seq(30));
 
   cli.remove(dir, true).wait();
   return t.report();
@@ -143,7 +143,7 @@ export string test_diff_agrees_with_the_real_one_shape_by_shape(Core core, Cli c
  * trust it. Asked here rather than in the sweep above because the marker GNU prints for it,
  * `\ No newline at end of file`, is our own sentence to match rather than a hunk to compare.
  */
-export string test_a_missing_final_newline_is_a_difference(Core core, Cli cli) {
+export async string test_a_missing_final_newline_is_a_difference(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(layFixtures(cli, dir, Fixture[]()), "cannot make \{dir}");
@@ -151,7 +151,7 @@ export string test_a_missing_final_newline_is_a_difference(Core core, Cli cli) {
   cli.writeFile("\{dir}/withnl", "x\ny\n".toBytes()).wait();
   cli.writeFile("\{dir}/nonl", "x\ny".toBytes()).wait();
 
-  Ran near = runCase(core, cli, dir, "diff withnl nonl");
+  Ran near = await runCase(core, cli, dir, "diff withnl nonl");
   t.eqI32(near.status, 1, "files differing only in a final newline are different");
   t.isTrue(near.out.indexOf("No newline at end of file") >= 0, near.out);
 
@@ -160,7 +160,7 @@ export string test_a_missing_final_newline_is_a_difference(Core core, Cli cli) {
   t.isTrue(real.ran(), "the real diff ran");
   t.eqI32(real.status, 1, "and so does GNU diff");
 
-  t.eqI32(runCase(core, cli, dir, "diff withnl withnl").status, 0, "identical files are still identical");
+  t.eqI32((await runCase(core, cli, dir, "diff withnl withnl")).status, 0, "identical files are still identical");
 
   cli.remove(dir, true).wait();
   return t.report();

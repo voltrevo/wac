@@ -13,13 +13,13 @@ import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { decode, Scalar } from "../../../unicode/src/utf8.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 rev(Core core, Cli cli, Fs fs, Args a) {
+export async i32 rev(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
 
   Sink out = Sink.create(cli);
   Reader r = Reader.create(core, cli, fs, a, 0, out);
   while (true) {
-    Line l = r.next(core, cli, fs, a);
+    Line l = await r.next(core, cli, fs, a);
     if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }
     if (!emitTo(out, reversed(l.bytes), l.nl)) { return 0; }
   }

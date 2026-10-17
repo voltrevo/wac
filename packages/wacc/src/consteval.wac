@@ -2458,8 +2458,17 @@ export Value typerefMethod(Ev ev, string t, string m) {
     string gb = genericBase(t);
     string[] ga = genericArgs(t);
     if ((gb == "Generator" || gb == "AsyncGenerator") && ga.len() == 2) { return typeValue(ev, ga[0]); }
-    ev.raise("`element()` of " + t + ", which is neither an array nor a generator");
+    // A `Vec` is walked by `for … in` as an array is, so its element is the same question.
+    if (gb == "Vec" && ga.len() == 1) { return typeValue(ev, ga[0]); }
+    ev.raise("`element()` of " + t + ", which is not an array, a `Vec` or a generator");
     return noneValue();
+  }
+  // **The compiler's own question**, asked by the `for … in` an `async` body is lowered into: a type
+  // stepped through `__wacNext` rather than walked with `len()` and `get(i)`. Spelled as a name no
+  // program writes, so it is not a `typeref` operation the language has.
+  if (m == "__wacStepped") {
+    string sb = genericBase(t);
+    return boolValue(!nullable && (sb == "Generator" || sb == "AsyncGenerator"));
   }
   if (m == "pushNull") { return typeValue(ev, t + "?"); }
   if (m == "popNull") {

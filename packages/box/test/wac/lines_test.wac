@@ -48,7 +48,7 @@ u8[] manyLines() {
   return b.bytes();
 }
 
-export string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli cli) {
+export async string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -78,14 +78,14 @@ export string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli
       for (i32 k = 1; k < inv.len(); k++) { theirs[k - 1] = inv[k]; }
       theirs[inv.len() - 1] = path;
 
-      Ran got = runApplet(core, cli, dir, argv);
+      Ran got = await runApplet(core, cli, dir, argv);
       t.eqStr(got.out, realOut(cli, inv[0], theirs),
               inv[0] + (inv.len() > 1 ? " \{inv[1]}" : "") + (f == 0 ? "" : " unterminated"));
     }
   }
 
   // `tail -N` asking for more lines than exist.
-  t.eqStr(runApplet(core, cli, dir, ["tail", "-100000", many]).out,
+  t.eqStr((await runApplet(core, cli, dir, ["tail", "-100000", many])).out,
           realOut(cli, "tail", ["-100000", many]), "tail past the start");
 
   cli.remove(dir, true).wait();
@@ -99,7 +99,7 @@ export string test_line_oriented_applets_agree_with_the_real_ones(Core core, Cli
  * reversing its three bytes produces three invalid sequences, which is what ours used to do and what
  * the real one still does in a byte-oriented locale.
  */
-export string test_rev_reverses_characters_not_bytes(Core core, Cli cli) {
+export async string test_rev_reverses_characters_not_bytes(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -114,7 +114,7 @@ export string test_rev_reverses_characters_not_bytes(Core core, Cli cli) {
   want.pushAll("b".toBytes()); want.pushCodepoint(0x00FC); want.pushCodepoint(0x2014);
   want.pushAll("a\n".toBytes());
 
-  t.eqStr(runApplet(core, cli, dir, ["rev", path]).out, string.fromBytes(want.bytes()),
+  t.eqStr((await runApplet(core, cli, dir, ["rev", path])).out, string.fromBytes(want.bytes()),
           "rev moves whole scalars");
 
   cli.remove(dir, true).wait();
@@ -129,7 +129,7 @@ export string test_rev_reverses_characters_not_bytes(Core core, Cli cli) {
  * rather than a count of anything, so it is loose on purpose — quadratic here is minutes, and the
  * question is which side of that we are on rather than how fast the machine is today.
  */
-export string test_one_very_long_line_is_linear(Core core, Cli cli) {
+export async string test_one_very_long_line_is_linear(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -140,7 +140,7 @@ export string test_one_very_long_line_is_linear(Core core, Cli cli) {
   t.isTrue(cli.writeFile(path, line).wait().ok(), "wrote half a megabyte with no newline");
 
   i64 started = core.monotonicNanos().wait();
-  Ran got = runApplet(core, cli, dir, ["tail", "-1", path]);
+  Ran got = await runApplet(core, cli, dir, ["tail", "-1", path]);
   i64 elapsed = core.monotonicNanos().wait() - started;
 
   t.eqI32(got.out.len(), width, "one very long line comes back whole");

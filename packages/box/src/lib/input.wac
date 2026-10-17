@@ -222,8 +222,8 @@ export struct Chunk { bool ok; bool more; u8[] bytes; }
  * with nothing to say *which* file, which is the same fault as printing the host's errno and was hidden by
  * the same thing, since a read only fails on inputs nobody had tried.
  */
-export Chunk nextChunk(Core core, Cli cli, Feed fed, Args a, string label) {
-  u8[] bytes = fed.next();
+export async Chunk nextChunk(Core core, Cli cli, Feed fed, Args a, string label) {
+  u8[] bytes = await fed.next();
   if (bytes.len() > 0) { return Chunk(true, true, bytes); }
   // `Feed` answers an empty array for both "finished" and "failed" and keeps the reason, which is the
   // one place the three states collapse to two. Asking afterwards is how they come apart again.
@@ -289,7 +289,7 @@ export struct Span {
   bool failed;
 }
 
-export Span nextSpan(Core core, Cli cli, Fs fs, Args a, i32 at, bool opened, Feed fed) {
+export async Span nextSpan(Core core, Cli cli, Fs fs, Args a, i32 at, bool opened, Feed fed) {
   i32 files = operandCount(a, 0);
   Feed here = fed;
   bool failed = false;
@@ -305,19 +305,19 @@ export Span nextSpan(Core core, Cli cli, Fs fs, Args a, i32 at, bool opened, Fee
       at = at + 1;
     }
   }
-  Chunk got = nextChunk(core, cli, here, a, labelAt(a, at));
+  Chunk got = await nextChunk(core, cli, here, a, labelAt(a, at));
   // A read that fails is the same skip as an open that fails, once there is another operand: GNU's
   // `cat a somedir b` prints `a`, complains, and prints `b`. It used to end the run here, which lost `b`
   // for the same reason and with the same invisibility as the open case.
   if (!got.ok) {
     if (files <= at + 1) { return Span(false, false, u8[](), at, here, true); }
-    Span next = nextSpan(core, cli, fs, a, at + 1, false, here);
+    Span next = await nextSpan(core, cli, fs, a, at + 1, false, here);
     return Span(next.ok, next.more, next.bytes, next.at, next.fed, true);
   }
   if (got.more) { return Span(true, true, got.bytes, at, here, failed); }
   // This file is done. If another was named, roll on; the caller sees one stream.
   if (files > at + 1) {
-    Span next = nextSpan(core, cli, fs, a, at + 1, false, here);
+    Span next = await nextSpan(core, cli, fs, a, at + 1, false, here);
     return Span(next.ok, next.more, next.bytes, next.at, next.fed, next.failed || failed);
   }
   return Span(true, false, u8[](), at, here, failed);
@@ -408,8 +408,8 @@ export struct Reader {
    * `broken` is a different thing and stays: a read that fails *part way through* a file it had already
    * opened ends the sequence, because carrying on would silently drop the rest of that file.
    */
-  Line next(this, Core core, Cli cli, Fs fs, Args a) {
-    Line l = nextLine(this.s, this.fed);
+  async Line next(this, Core core, Cli cli, Fs fs, Args a) {
+    Line l = await nextLine(this.s, this.fed);
     if (l.ok) { return l; }
     // A read that failed part way is not an end of input, and `Line.ok` cannot say which happened.
     //
@@ -427,10 +427,10 @@ export struct Reader {
       if (operandCount(a, 0) <= this.at + 1) { return l; }
       this.at = this.at + 1;
       Input more = openStream(core, cli, fs, a, this.at, -1);
-      if (!more.ok) { this.failed = true; return this.next(core, cli, fs, a); }
+      if (!more.ok) { this.failed = true; return await this.next(core, cli, fs, a); }
       this.s = Lines.create();
       this.fed = more.fed;
-      return this.next(core, cli, fs, a);
+      return await this.next(core, cli, fs, a);
     }
     if (operandCount(a, 0) <= this.at + 1) { return l; }
     this.at = this.at + 1;
@@ -438,9 +438,9 @@ export struct Reader {
     this.out.flush();
     Input in = openStream(core, cli, fs, a, this.at, -1);
     // Reported already, by `openStream`. Remember that it happened, and read the next operand.
-    if (!in.ok) { this.failed = true; return this.next(core, cli, fs, a); }
+    if (!in.ok) { this.failed = true; return await this.next(core, cli, fs, a); }
     this.s = Lines.create();
     this.fed = in.fed;
-    return this.next(core, cli, fs, a);
+    return await this.next(core, cli, fs, a);
   }
 }

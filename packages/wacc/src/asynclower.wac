@@ -65,7 +65,7 @@ import {
   synthSource, synthTokens, synthTok, synthTextAt,
   synthTicket, synthValue, synthStep, synthWaiting, synthYielded, synthDone, synthCoroutine,
   synthTicketBase, synthNever, synthState, synthRes, synthMachine, synthStartName, synthOrReady,
-  synthTargetSet, synthTargetGet, synthHypothetical, synthLt, synthPlus, synthLen, synthIsArray, synthElement, synthNextName, synthCurrentName, synthStepCall, synthIsDoneName, synthYieldedName,
+  synthTargetSet, synthTargetGet, synthHypothetical, synthLt, synthPlus, synthLen, synthIsArray, synthElement, synthGet, synthStepped, synthNextName, synthCurrentName, synthStepCall, synthIsDoneName, synthYieldedName,
   synthAssign, synthI32, synthBool, synthVoid, synthStepFn,
   synthOk, synthErr, synthResult, synthTryV, synthTryE, synthGenerator, synthAsyncGenerator,
   synthSlot, synthAw, synthNum, synthZero, synthOne, synthArg,
@@ -240,6 +240,8 @@ i32 tPlus(Ctx c)       { return synthTok(c.first, synthPlus()); }
 i32 tLen(Ctx c)        { return synthTok(c.first, synthLen()); }
 i32 tIsArray(Ctx c)    { return synthTok(c.first, synthIsArray()); }
 i32 tElement(Ctx c)    { return synthTok(c.first, synthElement()); }
+i32 tGet(Ctx c)        { return synthTok(c.first, synthGet()); }
+i32 tStepped(Ctx c)    { return synthTok(c.first, synthStepped()); }
 i32 tCurrentName(Ctx c) { return synthTok(c.first, synthCurrentName()); }
 i32 tStepCall(Ctx c)   { return synthTok(c.first, synthStepCall()); }
 i32 tIsDoneName(Ctx c) { return synthTok(c.first, synthIsDoneName()); }
@@ -1006,8 +1008,18 @@ struct Bld {
   Ty ret;
 }
 
+/**
+ * A fresh state. **The table grows**: it is sized from an estimate, and a `for … in` is written three
+ * ways under `static_if`s, each branch with states of its own — so a function with two of them ran
+ * past the estimate, and handing back the last slot again made the first loop's set-up state jump to
+ * itself. A state is never shared.
+ */
 i32 lowAlloc(Bld b) {
-  if (b.n >= b.states.len()) { return b.n - 1; }
+  if (b.n >= b.states.len()) {
+    Stmt[][] more = Stmt[][].filled(b.states.len() * 2 + 8, Stmt[]());
+    for (i32 i = 0; i < b.n; i++) { more[i] = b.states[i]; }
+    b.states = more;
+  }
   b.n = b.n + 1;
   return b.n - 1;
 }
@@ -2670,7 +2682,27 @@ Stmt[] uniqueLocals(Rz z, Stmt[] body, Seen seen) {
         Arm[] out = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0] : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
         for (i32 j = 0; j < arms.len(); j++) {
           Arm a = arms[j];
-          out[j] = Arm(a.variantTok, a.elseTok, a.bindingToks, uniqueLocals(z, a.body, seen), a.value);
+          // **An arm's bindings are declarations too.** Every local of a machine is one cell for the
+          // whole body, so a binding and a local elsewhere of the same name — `Failed(why)` and a later
+          // `i32 why` — were one variable at two types, and the arm read the integer's cell as text.
+          // A binding whose name is taken is renamed through its arm, as a second local is.
+          i32[] toks = i32[].filled(a.bindingToks.len(), 0);
+          Stmt[] body = a.body;
+          Expr? av = a.value;
+          for (i32 k = 0; k < a.bindingToks.len(); k++) {
+            toks[k] = a.bindingToks[k];
+            string bn = rzText(z, a.bindingToks[k]);
+            if (bn == "_") { continue; }
+            if (seen.has(bn)) {
+              i32 fresh = freshTmp(z);
+              toks[k] = fresh;
+              body = renameIn(z, body, bn, fresh);
+              if (av is not null) { av = renameE(z, av!, bn, fresh); }
+            } else {
+              seen.add(bn);
+            }
+          }
+          out[j] = Arm(a.variantTok, a.elseTok, toks, uniqueLocals(z, body, seen), av);
         }
         cur[i] = Stmt(StmtKind.Match(subject, out), s.line, s.col);
       }
@@ -2876,7 +2908,10 @@ bool wantsTypeof(Rz z, Ty t) { return isAutoTyL(z, t) || placeholderInArgsL(z, t
  *       while (it.__wacNext()) { T x = it.__wacCurrent(); … }
  *     }
  *
- * and `auto x` is `type(typeref(typeof(it)).element())`, which is the same for both. A `for await`
+ * and `auto x` is `type(typeref(typeof(it)).element())`, which is the same for both. Anything else
+ * `for … in` walks — a `Vec`, or any type with `len()` and `get(i)` — is the third branch, an index
+ * through `get`, which is what the emitter does with one outside a machine; `__wacStepped()` is the
+ * compiler's own question of a `typeref`, whether it is a generator. A `for await`
  * walks an async generator: `while (true) { … s = await it.step(); if (s.__wacIsDone()) { break; }
  * T x = s.__wacYieldedOf(); … }`.
  */
@@ -2921,8 +2956,21 @@ Stmt[] splitForIn(Rz z, Stmt s, Ty? elemTy, i32 nameTok, Expr iterable, Stmt[] b
                     s.line, freshCol(c));
   Stmt overGen = Stmt(StmtKind.While(eMethod(c, eId(c, it), tNextName(c), Expr[]()),
                                      joinS(Stmt[].filled(1, bindG), splitBody(z, body))), s.line, s.col);
+  // Over anything with `len()` and `get(i)`: an index again, through `get`. Its locals are declared with
+  // every other branch's, whatever the iterable is, so its element type is `elem` — `element()` — which
+  // answers for an array, a `Vec` and a generator alike.
+  i32 jx = freshTmp(z);
+  Stmt initL = Stmt(StmtKind.Var(lowPrimTy(c, tI32(c)), jx, eInt(c, 0), false), s.line, freshCol(c));
+  Expr moreL = Expr(ExprKind.Binary(tLt(c), eId(c, jx), eMethod(c, eId(c, it), tLen(c), Expr[]())), s.line, s.col);
+  Stmt stepL = sSet(c, jx, Expr(ExprKind.Binary(tPlus(c), eId(c, jx), eInt(c, 1)), s.line, s.col));
+  Ty elemL = cloneTy(elem);
+  Expr[] atJ = Expr[].filled(1, eId(c, jx));
+  Stmt bindL = Stmt(StmtKind.Var(elemL, nameTok, eMethod(c, eId(c, it), tGet(c), atJ), false), s.line, freshCol(c));
+  Stmt overLen = Stmt(StmtKind.For(initL, moreL, stepL, joinS(Stmt[].filled(1, bindL), splitBody(z, body))), s.line, s.col);
   Expr isArr = eMethod(c, Expr(ExprKind.TypeRefOf(typeofTy(c, eId(c, it))), s.line, s.col), tIsArray(c), Expr[]());
-  return withPre(z, p, Stmt(StmtKind.StaticIf(isArr, Stmt[].filled(1, overArray), Stmt[].filled(1, overGen)), s.line, s.col));
+  Expr isGen = eMethod(c, Expr(ExprKind.TypeRefOf(typeofTy(c, eId(c, it))), s.line, s.col), tStepped(c), Expr[]());
+  Stmt notArray = Stmt(StmtKind.StaticIf(isGen, Stmt[].filled(1, overGen), Stmt[].filled(1, overLen)), s.line, s.col);
+  return withPre(z, p, Stmt(StmtKind.StaticIf(isArr, Stmt[].filled(1, overArray), Stmt[].filled(1, notArray)), s.line, s.col));
 }
 
 /**

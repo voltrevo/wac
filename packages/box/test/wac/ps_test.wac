@@ -9,9 +9,9 @@ import { Cli, Core } from "std";
 import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runSealed, show } from "./replay.wac";
 
-export string test_ps_shows_the_session_and_the_command_doing_the_looking(Core core, Cli cli) {
+export async string test_ps_shows_the_session_and_the_command_doing_the_looking(Core core, Cli cli) {
   T t = T.create();
-  Ran r = runSealed(core, cli, "ps");
+  Ran r = await runSealed(core, cli, "ps");
   t.eqI32(r.status, 0, r.err);
   t.eqStr(r.out,
           "  PID  PPID S CMD\n" +
@@ -28,9 +28,9 @@ export string test_ps_shows_the_session_and_the_command_doing_the_looking(Core c
  * above it. A table that recorded the session as everything's parent would print the same four rows with
  * the same pids and be wrong in the one column that matters.
  */
-export string test_a_shell_function_is_a_parent(Core core, Cli cli) {
+export async string test_a_shell_function_is_a_parent(Core core, Cli cli) {
   T t = T.create();
-  Ran r = runSealed(core, cli, "f() { ps; }; g() { f; }; g");
+  Ran r = await runSealed(core, cli, "f() { ps; }; g() { f; }; g");
   string[] rows = linesOf(r.out);
   t.isTrue(rows.len() >= 5, "too few rows: \{show(r.out)}");
   if (rows.len() < 5) { return t.report(); }
@@ -49,9 +49,9 @@ export string test_a_shell_function_is_a_parent(Core core, Cli cli) {
  * show both — its stages are concurrent — and the difference is real rather than a rendering choice:
  * nothing here runs two commands at once, and a row for the `echo` would be a lie about that.
  */
-export string test_a_finished_command_is_not_in_the_table(Core core, Cli cli) {
+export async string test_a_finished_command_is_not_in_the_table(Core core, Cli cli) {
   T t = T.create();
-  Ran r = runSealed(core, cli, "echo hi | ps");
+  Ran r = await runSealed(core, cli, "echo hi | ps");
   string[] rows = linesOf(r.out);
   // Rows after the session's own, which quotes the whole script and so contains the word `echo`. The
   // first version of this filter matched it and would have passed with `echo` still in the table.
@@ -66,23 +66,23 @@ export string test_a_finished_command_is_not_in_the_table(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_ps_refuses_what_it_has_not_got_rather_than_ignoring_it(Core core, Cli cli) {
+export async string test_ps_refuses_what_it_has_not_got_rather_than_ignoring_it(Core core, Cli cli) {
   T t = T.create();
-  Ran selecting = runSealed(core, cli, "ps 1");
+  Ran selecting = await runSealed(core, cli, "ps 1");
   t.eqI32(selecting.status, 1, "ps 1");
   t.isTrue(selecting.err.indexOf("not implemented") >= 0, selecting.err);
   // A short flag goes through `refuseFlags`, whose wording is GNU's rather than ours on purpose — this
   // asserts the repository's own refusal rather than a second spelling of it.
-  Ran flag = runSealed(core, cli, "ps -e");
+  Ran flag = await runSealed(core, cli, "ps -e");
   t.eqI32(flag.status, 1, "ps -e");
   t.isTrue(flag.err.indexOf("invalid option -- 'e'") >= 0, flag.err);
   // **Not `--help`, which is answered now.** It used to be the example here, and it was the wrong one
   // even then: box's own operand errors end "Try 'ps --help' for more information.", so the one long
   // option every applet promises was the one being asserted as refused. `--forest` is a real `ps` flag
   // box has not got, which is what this is about.
-  Ran long = runSealed(core, cli, "ps --forest");
+  Ran long = await runSealed(core, cli, "ps --forest");
   t.isTrue(long.err.indexOf("long option not implemented") >= 0, long.err);
-  Ran helped = runSealed(core, cli, "ps --help");
+  Ran helped = await runSealed(core, cli, "ps --help");
   t.eqI32(helped.status, 0, "--help is an answer, not a refusal");
   t.isTrue(helped.out.indexOf("usage: ps") >= 0, helped.out);
   return t.report();
@@ -95,9 +95,9 @@ export string test_ps_refuses_what_it_has_not_got_rather_than_ignoring_it(Core c
  * row `ps` printed was a command and the thing running them was not there — which reads as a system where
  * commands appear from nowhere, and left `$$` with no number to answer with.
  */
-export string test_the_shell_is_in_its_own_table(Core core, Cli cli) {
+export async string test_the_shell_is_in_its_own_table(Core core, Cli cli) {
   T t = T.create();
-  Ran listed = runSealed(core, cli, "ps");
+  Ran listed = await runSealed(core, cli, "ps");
   string[] rows = linesOf(listed.out);
   t.isTrue(rows.len() >= 2, "ps showed no shell: \{show(listed.out)}");
   if (rows.len() < 2) { return t.report(); }
@@ -110,7 +110,7 @@ export string test_the_shell_is_in_its_own_table(Core core, Cli cli) {
 
   // And `$$` is that pid — asked through `ps` rather than compared with a constant, so a change to how
   // pids are allocated moves both together or fails.
-  Ran dollars = runSealed(core, cli, "echo $$");
+  Ran dollars = await runSealed(core, cli, "echo $$");
   t.eqStr(dollars.out, "\{shell[0]}\n", "$$ is not the pid ps shows");
   return t.report();
 }

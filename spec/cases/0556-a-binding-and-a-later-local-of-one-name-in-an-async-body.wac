@@ -1,0 +1,21 @@
+// expect: f() = 66
+// why: a name an arm binds and a later local of another type are two variables in an `async` body as anywhere — hoisting the local into the machine's cell must not capture the arm's use of the binding
+import { Read, Ticket } from "core";
+
+async i32 run(Ticket<Read> t) {
+  string said = "";
+  match (await t) {
+    Data(bytes): { said = "data"; }
+    End: { }
+    Failed(why): { said = "bad: \{why}"; }
+  }
+  i32 why = said.len();
+  await;
+  return said.len() * 10 + why;
+}
+
+export i32 f() {
+  Ticket<Read> t;
+  t.resolve(Read.Failed("x"));
+  return run(t).wait()!;
+}

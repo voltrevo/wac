@@ -622,6 +622,27 @@ export i32 whichWon() {
 `[§wac-ticket-any-with-index-q2v7hcn]` `Ticket.anyWithIndex(t1, …)` is `Ticket.any` answering `(i32, union<A1, …>)`:
 the index of the first to settle, counting from 0, and what it answered.
 
+When the tickets to watch are only known at run time — what is still open of several streams, a different set
+each time round — `Ticket.first` takes them as an array of `TicketBase` and answers the index of the first to
+settle; the caller reads that ticket's answer itself:
+
+```wac
+// expect: firstOf() = 1
+import { Ticket, TicketBase } from "core";
+
+export i32 firstOf() {
+  Ticket<string> name;
+  Ticket<i32> size;
+  TicketBase[] open = [name, size];
+  Ticket<i32> won = Ticket.first(open);
+  size.resolve(3);
+  return won.wait()!;
+}
+```
+
+`[§wac-ticket-first-r4k8w2m]` `Ticket.first(parts)` settles with the index, counting from 0, of the first of `parts`
+to settle, by the rule `Ticket.any` keeps. An empty array never settles.
+
 ## `void` as a type argument
 
 ```wac

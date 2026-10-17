@@ -65,7 +65,7 @@ string realWc(Cli cli, string[] args) {
   return string.fromBytes(r.stdout);
 }
 
-export string test_wc_w_splits_words_where_the_real_wc_splits_them(Core core, Cli cli) {
+export async string test_wc_w_splits_words_where_the_real_wc_splits_them(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -88,7 +88,7 @@ export string test_wc_w_splits_words_where_the_real_wc_splits_them(Core core, Cl
       b.push(0x0a);
       t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote the case");
 
-      Ran got = runApplet(core, cli, dir, ["wc", "-w", path]);
+      Ran got = await runApplet(core, cli, dir, ["wc", "-w", path]);
       t.eqStr(got.out, realWc(cli, ["-w", path]),
               "wc -w on " + cps[i].name + (shape == 0 ? " between" : " alone"));
     }
@@ -109,7 +109,7 @@ export string test_wc_w_splits_words_where_the_real_wc_splits_them(Core core, Cl
  * All three columns, not just `-w`: a mishandled character can move the byte or the line count too,
  * and a comparison of one number cannot see it.
  */
-export string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli) {
+export async string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli) {
   T t = T.create();
   string dir = caseDir(cli);
   t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make \{dir}");
@@ -134,7 +134,7 @@ export string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli
       b.pushAll(" tail\n".toBytes());
       t.isTrue(cli.writeFile(path, b.bytes()).wait().ok(), "wrote the split case");
 
-      Ran got = runApplet(core, cli, dir, ["wc", path]);
+      Ran got = await runApplet(core, cli, dir, ["wc", path]);
       t.eqStr(got.out, realWc(cli, [path]),
               "\{wide[i].name} broken after \{split} byte(s) at the chunk boundary");
     }
@@ -151,7 +151,7 @@ export string test_a_character_broken_across_a_chunk_boundary(Core core, Cli cli
  * actually about — the table above says which code points are separators, and this says the answer
  * still holds over a file nobody chose for its code points.
  */
-export string test_wc_w_agrees_on_the_tour(Core core, Cli cli) {
+export async string test_wc_w_agrees_on_the_tour(Core core, Cli cli) {
   T t = T.create();
   string tour = "\{cli.cwd().wait()}/spec/tour.wac";
   if (!cli.stat(tour).wait().exists) {
@@ -161,7 +161,7 @@ export string test_wc_w_agrees_on_the_tour(Core core, Cli cli) {
     return t.report();
   }
 
-  Ran got = runApplet(core, cli, cli.cwd().wait(), ["wc", "-w", tour]);
+  Ran got = await runApplet(core, cli, cli.cwd().wait(), ["wc", "-w", tour]);
   t.eqStr(got.out, realWc(cli, ["-w", tour]), "wc -w on spec/tour.wac");
   return t.report();
 }

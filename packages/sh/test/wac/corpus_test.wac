@@ -29,12 +29,12 @@ struct Ran {
  * name, so the name is argv[0] and the shell starts at 1 — passing 0 makes it read `sh` as a script to
  * open and answer `sh: sh: No such file or directory`.
  */
-Ran runScript(Core core, Cli cli, string cwd, string script) {
+async Ran runScript(Core core, Cli cli, string cwd, string script) {
   Frame f = Frame.of(["sh", "-c", script], u8[](), cwd, false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.create(c, l);
-  i32 status = shellMain(c, l, sh, 1);
+  i32 status = await shellMain(c, l, sh, 1);
   return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
 }
 
@@ -48,7 +48,7 @@ Ran runScript(Core core, Cli cli, string cwd, string script) {
  */
 string caseDir(Cli cli, i32 i) { return "\{cli.cwd().wait()}/.cache/wac-shreplay/c\{i}"; }
 
-export string test_every_scripted_expectation_still_holds(Core core, Cli cli) {
+export async string test_every_scripted_expectation_still_holds(Core core, Cli cli) {
   T t = T.create();
   Vectors v = load(cli);
   t.isTrue(v.error == "", v.error);
@@ -65,7 +65,7 @@ export string test_every_scripted_expectation_still_holds(Core core, Cli cli) {
     string dir = caseDir(cli, i);
     string whyDir1 = madeDir(cli, dir);
     t.isTrue(whyDir1 == "", whyDir1);
-    Ran r = runScript(core, cli, dir, vec.script);
+    Ran r = await runScript(core, cli, dir, vec.script);
     cli.remove(dir, true).wait();
     ran = ran + 1;
     // Output and status, which is what the differential compared. Standard error is captured in the
@@ -94,7 +94,7 @@ export string test_every_scripted_expectation_still_holds(Core core, Cli cli) {
  * always — the point of freezing the other 635 was never that bash is untrustworthy, it was that asking
  * it 635 times a run buys nothing the first ten do not.
  */
-export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli) {
+export async string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli) {
   T t = T.create();
   // **No external programs here.** This package's shell carries none by design — `tr` and `wc` are
   // box's, and asking for them asserts that a program is missing rather than anything about the
@@ -127,7 +127,7 @@ export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli)
     string dir = "\{cli.cwd().wait()}/.cache/wac-shcanary/c\{i}";
     string whyDir2 = madeDir(cli, dir);
     t.isTrue(whyDir2 == "", whyDir2);
-    Ran ours = runScript(core, cli, dir, script);
+    Ran ours = await runScript(core, cli, dir, script);
     cli.remove(dir, true).wait();
     t.eqStr(ours.out, string.fromBytes(r.stdout), "live oracle disagrees: \{script}");
     t.eqI32(ours.status, r.status, "live oracle's status disagrees: \{script}");

@@ -54,14 +54,14 @@ import { madeDir } from "../../../wactest/src/host.wac";
 
 
 /** The same, on the real disk: `Shell.create` builds `Fs.onHost`, and the frame's cwd is where it lands. */
-Ran runHost(Core core, Cli cli, string cwd, string script) {
+async Ran runHost(Core core, Cli cli, string cwd, string script) {
   Frame f = Frame.of(["sh", "-c", script], u8[](), cwd, false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.create(c, l);
   sh.external = boxRun;
   sh.externalNames = boxNames;
-  i32 status = shellMain(c, l, sh, 1);
+  i32 status = await shellMain(c, l, sh, 1);
   return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
 }
 
@@ -88,7 +88,7 @@ bool seedImage(Core core, Cli cli, string path) {
 
 string workRoot(Cli cli) { return "\{cli.cwd().wait()}/.cache/wac-backings"; }
 
-export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mount(Core core, Cli cli) {
+export async string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mount(Core core, Cli cli) {
   T t = T.create();
   string[] scripts = corpus();
   string root = workRoot(cli);
@@ -111,13 +111,13 @@ export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mou
     string whyDir2 = madeDir(cli, work);
     t.isTrue(whyDir2 == "", whyDir2);
 
-    Ran memory = runOn(core, cli, memoryFs(core, "sealedsh"), script);
+    Ran memory = await runOn(core, cli, memoryFs(core, "sealedsh"), script);
     Fs image = imageFs(core, cli, seed);
-    Ran onImage = runOn(core, cli, image, script);
+    Ran onImage = await runOn(core, cli, image, script);
     // And written back, because a session that ran and could not be saved is a session lost: the write
     // half of the image backing is as much of it as the read half.
     if (!save(core, cli, "backings", scratch, image)) { unsaved = unsaved + 1; }
-    Ran onHost = runHost(core, cli, work, script);
+    Ran onHost = await runHost(core, cli, work, script);
 
     cli.remove(work, true).wait();
 
@@ -165,26 +165,26 @@ export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mou
  * it is a *shell language* corpus, and only 43 of its 946 scripts redirect anywhere — so this is what
  * stands behind the run above being about filesystems at all.
  */
-export string test_each_backing_is_alive_and_answers_about_its_own_filesystem(Core core, Cli cli) {
+export async string test_each_backing_is_alive_and_answers_about_its_own_filesystem(Core core, Cli cli) {
   T t = T.create();
   string script = "mkdir -p /tmp/d; echo hello > /tmp/d/f; cat /tmp/d/f; ls /tmp/d | wc -l";
   string root = workRoot(cli);
   string whyDir3 = madeDir(cli, root);
   t.isTrue(whyDir3 == "", whyDir3);
 
-  Ran memory = runOn(core, cli, memoryFs(core, "sealedsh"), script);
+  Ran memory = await runOn(core, cli, memoryFs(core, "sealedsh"), script);
   t.eqStr(memory.out, "hello\n1\n", "memory: \{shape(memory)}");
 
   string image = "\{root}/alive.wacimg";
   t.isTrue(seedImage(core, cli, image), "could not write the seed image");
-  Ran onImage = runOn(core, cli, imageFs(core, cli, image), script);
+  Ran onImage = await runOn(core, cli, imageFs(core, cli, image), script);
   cli.remove(image, false).wait();
   t.eqStr(onImage.out, "hello\n1\n", "image: \{shape(onImage)}");
 
   string work = "\{root}/alive";
   string whyDir4 = madeDir(cli, work);
   t.isTrue(whyDir4 == "", whyDir4);
-  Ran onHost = runHost(core, cli, work, script);
+  Ran onHost = await runHost(core, cli, work, script);
   cli.remove(work, true).wait();
   t.eqStr(onHost.out, "hello\n1\n", "host: \{shape(onHost)}");
   return t.report();
