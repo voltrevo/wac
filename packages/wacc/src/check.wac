@@ -902,10 +902,10 @@ void checkCoalesce(C c, Expr left, Expr right) {
 }
 
 /** Whether a variant of `world`'s enum carries a payload field of type `never`, after substitution. */
-bool variantUninhabited(C c, string world, string variant, i32 arity) {
+bool variantUninhabited(C c, string world, string owner, string variant, i32 arity) {
   string w = withoutNull(world) == "" ? world : withoutNull(world);
   for (i32 i = 0; i < arity; i++) {
-    string ft = c.fieldTypeAtIndex(variant, i);
+    string ft = c.variantFieldAt(owner, variant, i);
     if (ft == "never") { return true; }
     if (w != typeNone() && substituteType(c, w, ft) == "never") { return true; }
   }
@@ -2052,7 +2052,7 @@ void declarePatternNames(C c, Pattern pat, string subjectT) {
     if (pat.slotNames[i] < 0) { continue; }
     string bn = tokenText(c, pat.slotNames[i]);
     if (bn == "_") { continue; }
-    string ft = world == typeNone() ? typeNone() : substituteType(c, world, c.fieldTypeAtIndex(vname, i));
+    string ft = world == typeNone() ? typeNone() : substituteType(c, world, c.variantFieldAt(world, vname, i));
     c.declare(bn, ft);
   }
 }
@@ -4339,6 +4339,14 @@ export struct C {
    * bounded by the number of structs, so a cycle in the parent chain — which the reference rejects
    * separately — terminates here rather than hanging.
    */
+  /**
+   * The type of the `i`th payload slot of `owner`'s variant `name`, as written — `owner` may be an
+   * instance, whose template is the enum asked about.
+   */
+  string variantFieldAt(this, string owner, string name, i32 i) {
+    return this.fieldTypeAtIndex(this.canon(templateOf(owner)) + "." + name, i);
+  }
+
   /** The type of a struct's `i`th field, in declaration order — what a positional argument goes into. */
   string fieldTypeAtIndex(this, string owner, i32 i) {
     string at = templateOf(owner);
@@ -7877,7 +7885,7 @@ void checkExpr(C c, Expr e) {
         // `C.expectedUnknown`.
         bool slotted = false;
         if (payloadOwner != "") {
-          string slot = c.fieldTypeAtIndex(payloadOwner, i);
+          string slot = c.variantFieldAt(variantCalleeEnum(c, callee), payloadOwner, i);
           c.expected = ownerKnown ? substituteType(c, outerSlot, slot) : slot;
           slotted = true;
         } else if (builtinSlot != typeNone() && i == 0) {
@@ -10764,6 +10772,19 @@ bool isIntegerType(string t) {
  * Named by the variant rather than the enum because that is what the field table is keyed by: a
  * variant is a struct whose fields are its payload, which is how `W(b)` finds `b` a type.
  */
+/** The enum a variant construction names — `E` in `E.V(…)` — or "" when the callee is not one. */
+string variantCalleeEnum(C c, Expr callee) {
+  match (callee.kind) {
+    Member(obj, nameTok): {
+      match (obj.kind) {
+        Ident(tok): { return tokenText(c, tok); }
+        default: { return ""; }
+      }
+    }
+    default: { return ""; }
+  }
+}
+
 string variantCalleeOwner(C c, Expr callee) {
   match (callee.kind) {
     Member(obj, nameTok): {
@@ -10872,7 +10893,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     i32 voids = 0;
     if (wantArgs > 0 && inst != "") {
       for (i32 i = 0; i < wantArgs; i++) {
-        if (substituteType(c, inst, c.fieldTypeAtIndex(name, i)) == "void") { voids = voids + 1; }
+        if (substituteType(c, inst, c.variantFieldAt(recv, name, i)) == "void") { voids = voids + 1; }
       }
     }
     if (wantArgs >= 0 && args.len() != wantArgs && args.len() != wantArgs - voids) {
@@ -10892,7 +10913,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     if (payloadKnown) {
       string world = inst == "" ? recv : inst;
       for (i32 i = 0; i < args.len(); i++) {
-        string vwant = substituteType(c, world, c.fieldTypeAtIndex(name, i));
+        string vwant = substituteType(c, world, c.variantFieldAt(recv, name, i));
         // No value of `never` exists to carry, so the variant cannot be built at all
         // (`§wac-never-variant-not-constructible-u5dxnv8`).
         if (vwant == "never") {
@@ -13600,9 +13621,16 @@ export void declareModule(C c, Program prog, string[] only) {
           // name" while `E2` worked perfectly as a parameter type (`issues/lang/0161`).
           c.declareVariant(c.renamed(tokenText(c, nameTok)), vname, variants[vi].fields.len());
           c.markVariantBare(vname, bare);
+          // **And again under `Enum.Variant`**, which is where a payload's slots are looked up. The
+          // bare name is shared: core's `Result.Ok(T v)` and a file's own `Outcome.Ok(string, i32)`
+          // made one list of fields, and `Outcome.Ok("a", 1)` was checked against `T, string`
+          // (`spec/cases/0561`).
+          string qual = c.renamed(tokenText(c, nameTok)) + "." + vname;
           for (i32 fi = 0; fi < variants[vi].fields.len(); fi++) {
-            c.declareFieldConst(vname, tokenText(c, variants[vi].fields[fi].nameTok),
-                                typeOfTy(c, variants[vi].fields[fi].type), false);
+            string fname = tokenText(c, variants[vi].fields[fi].nameTok);
+            string fty = typeOfTy(c, variants[vi].fields[fi].type);
+            c.declareFieldConst(vname, fname, fty, false);
+            c.declareFieldConst(qual, fname, fty, false);
           }
         }
         // **An enum's methods, which were never declared at all.** `enum E { … i32 val(const this) }`
@@ -13930,7 +13958,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
     // **A variant with a `never` payload has no values**, so a `match` need not name it
     // (spec ch11 `§wac-never-payload-uninhabited-c4j35nq`) — `Step<never, i32, never>` is all
     // `Yielded`. Asked of the payload as this subject instantiates it.
-    if (variantUninhabited(c, t, c.variantNames[k], c.variantArities[k])) { continue; }
+    if (variantUninhabited(c, t, owner, c.variantNames[k], c.variantArities[k])) { continue; }
     total = total + 1;
     for (i32 i = 0; i < seenCount; i++) {
       if (seen[i] == c.variantNames[k]) { covered = covered + 1; }

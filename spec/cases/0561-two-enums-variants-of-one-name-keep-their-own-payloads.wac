@@ -1,0 +1,27 @@
+// expect: f() = 9
+// spec: §enum-construct-qualified-iuubvew
+// why: a variant's payload fields were recorded under the variant's bare name, so core's `Result.Ok(T v)` and this file's `Outcome.Ok(string, i32, u8[])` shared one list — the construction was checked against `T, string, i32` and a match bound `n` from the wrong slot
+import { Result } from "core";
+
+enum Outcome {
+  Ok(string name, i32 n, u8[] body),
+  Gone
+}
+
+i32 sizeOf(Outcome o) {
+  match (o) {
+    Ok(name, n, body): { return name.len() + n + body.len(); }
+    Gone: { return 0; }
+  }
+}
+
+export i32 f() {
+  Result<i32, string> r = Result.Ok(2);
+  Outcome o = Outcome.Ok("abc", 4, u8[].filled(2, 0));
+  i32 k = 0;
+  match (r) {
+    Ok(v): { k = v; }
+    Err(e): { k = 0; }
+  }
+  return sizeOf(o) + k - 2;
+}
