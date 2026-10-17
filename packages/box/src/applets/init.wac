@@ -53,7 +53,7 @@ import { Chan } from "../../../fs/src/remote.wac";
 import { serveOn } from "../../../fs/src/serve.wac";
 import { argvOf } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
-import { Vec, Read } from "core";
+import { Vec, Read, Ticket, TicketBase } from "core";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 
@@ -90,11 +90,11 @@ Vec<string> lines(u8[] bytes) {
   return out;
 }
 
-export i32 init(Core core, Cli cli, Fs fs, Args a) {
+export async i32 init(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   string path = a.rest.len() > 0 ? a.rest[0] : "/etc/init";
 
-  FileResult f = fs.readFile(fs.at(path));
+  FileResult f = await fs.readFile(fs.at(path));
   if (!f.ok) {
     // Absent is not a failure: a system with no services is a system. Said out loud, because a boot
     // that started nothing in silence is indistinguishable from one that started everything and lost
@@ -176,33 +176,32 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     // further down the list must not be stalled by the one being read.
     bool reading = true;
     bool complaining = eh >= 0;
-    Pending<Read> outT = cli.recv(h);
-    Pending<Read> errT = complaining ? cli.recv(eh) : outT;
+    Ticket<Read> outT = cli.recv(h).ticket();
+    Ticket<Read> errT = complaining ? cli.recv(eh).ticket() : outT;
     while (reading || complaining) {
       i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0);
       for (Chan? chan in chans) { if (!(chan is null)) { live++; } }
-      i32[] ids = i32[].filled(live, 0);
+      TicketBase[] parts = TicketBase[].filled(live, outT);
       i32[] what = i32[].filled(live, -1);
       i32 at = 0;
-      if (reading) { ids[at] = outT.id; what[at] = -2; at++; }
-      if (complaining) { ids[at] = errT.id; what[at] = -3; at++; }
+      if (reading) { parts[at] = outT; what[at] = -2; at++; }
+      if (complaining) { parts[at] = errT; what[at] = -3; at++; }
       for (i32 k = 0; k < chans.len(); k++) {
-        if (!(chans.get(k) is null)) { ids[at] = chans.get(k)!.waitId(); what[at] = k; at++; }
+        if (!(chans.get(k) is null)) { parts[at] = chans.get(k)!.waiting(); what[at] = k; at++; }
       }
-      i32 which = core.waitAny(ids, -1);
-      if (which < 0) { break; }
+      i32 which = await Ticket.first(parts);
       i32 kind = what[which];
       if (kind >= 0) {
-        if (!serveOn(chans.get(kind)!, fs)) { chans.set(kind, null); }
+        if (!(await serveOn(chans.get(kind)!, fs))) { chans.set(kind, null); }
       } else if (kind == -2) {
-        match (outT.wait()) {
-          Data(bytes): { cli.write(bytes); outT = cli.recv(h); }
+        match (outT.value()) {
+          Data(bytes): { cli.write(bytes); outT = cli.recv(h).ticket(); }
           End: { reading = false; }
           Failed(why): { reading = false; }
         }
       } else {
-        match (errT.wait()) {
-          Data(bytes): { cli.writeErr(bytes); errT = cli.recv(eh); }
+        match (errT.value()) {
+          Data(bytes): { cli.writeErr(bytes); errT = cli.recv(eh).ticket(); }
           End: { complaining = false; }
           Failed(why): { complaining = false; }
         }
@@ -210,7 +209,7 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     }
     // This service will ask nothing more; the others still might.
     chans.set(i, null);
-    i32 code = cli.exitCode(h).wait();
+    i32 code = await cli.exitCode(h).ticket();
     cli.closeSocket(h);
     if (eh >= 0) { cli.closeSocket(eh); }
     core.log("init: \{names.get(i)} exited \{code}");

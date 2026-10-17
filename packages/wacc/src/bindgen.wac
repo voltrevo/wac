@@ -122,13 +122,19 @@ string arrSuffix(string t) {
   return dollared(el);
 }
 
-/** Every run of non-identifier characters becomes one `$`, and a trailing run is dropped. */
+/**
+ * Every run of non-identifier characters becomes one `$`, and a trailing run is dropped — except `?`,
+ * which is `_null`, as `emit.wac`'s `bindNameOf` spells it.
+ */
 string dollared(string s) {
   string out = "";
   bool pending = false;
   for (i32 i = 0; i < s.len(); i++) {
     string ch = s.slice(i, i + 1);
-    if (isIdentChar(ch)) {
+    if (ch == "?") {
+      out = out + "_null";
+      pending = false;
+    } else if (isIdentChar(ch)) {
       if (pending) { out = out + "$"; pending = false; }
       out = out + ch;
     } else {

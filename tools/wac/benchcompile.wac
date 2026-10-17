@@ -96,8 +96,8 @@ struct Loaded {
   i32 kib;
 }
 
-Loaded load(Fs fs, Cli cli, string entry) {
-  Sources src = gather(fs, cli, entry, false);
+async Loaded load(Fs fs, Cli cli, string entry) {
+  Sources src = await gather(fs, cli, entry, false);
   if (src.why != "") {
     return Loaded(false, string[].filled(0, ""), string[].filled(0, ""), resOf(src), 0);
   }
@@ -147,7 +147,7 @@ i32 percent(i64 part, i64 whole) {
 }
 
 /** The default table: four programs, each phase twice after a warm-up. */
-i32 byPhase(Core core, Cli cli, Fs fs) {
+async i32 byPhase(Core core, Cli cli, Fs fs) {
   core.log("## Compile time by phase\n");
   string head = "| program | files | KiB";
   for (i32 p = 0; p < phaseCount(); p++) { head = head + " | " + phaseName(p); }
@@ -158,7 +158,7 @@ i32 byPhase(Core core, Cli cli, Fs fs) {
 
   string[] entries = samples();
   for (i32 i = 0; i < entries.len(); i++) {
-    Loaded l = load(fs, cli, entries[i]);
+    Loaded l = await load(fs, cli, entries[i]);
     if (!l.ok) {
       core.warn("could not gather " + entries[i] + " — skipped");
       continue;
@@ -182,7 +182,7 @@ i32 byPhase(Core core, Cli cli, Fs fs) {
 }
 
 /** Every program in the repository, cold, once each. */
-i32 overAll(Core core, Cli cli, Fs fs) {
+async i32 overAll(Core core, Cli cli, Fs fs) {
   Program[] list = findPrograms(cli);
   i64[] totals = i64[].filled(phaseCount(), 0);
   i32 done = 0;
@@ -190,7 +190,7 @@ i32 overAll(Core core, Cli cli, Fs fs) {
   i32 failed = 0;
   i32 kib = 0;
   for (i32 i = 0; i < list.len(); i++) {
-    Loaded l = load(fs, cli, list[i].path);
+    Loaded l = await load(fs, cli, list[i].path);
     if (!l.ok) { skipped = skipped + 1; continue; }
     kib = kib + l.kib;
     for (i32 p = 0; p < phaseCount(); p++) {
@@ -264,8 +264,8 @@ i32 byMemory(Core core, Cli cli) {
 }
 
 /** `--phase <name> <entry>`: this file re-invoked by `--mem`. Prints the peak and nothing else. */
-i32 onePhase(Core core, Cli cli, Fs fs, string name, string entry) {
-  Loaded l = load(fs, cli, entry);
+async i32 onePhase(Core core, Cli cli, Fs fs, string name, string entry) {
+  Loaded l = await load(fs, cli, entry);
   if (!l.ok) {
     core.warn("could not gather " + entry);
     return 1;
@@ -279,7 +279,7 @@ i32 onePhase(Core core, Cli cli, Fs fs, string name, string entry) {
   return 0;
 }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   bool all = false;
@@ -300,9 +300,9 @@ export i32 main(Sys sys) {
       core.warn("--phase needs a phase name and an entry");
       return 1;
     }
-    return onePhase(core, cli, fs, args[phaseAt + 1], args[phaseAt + 2]);
+    return await onePhase(core, cli, fs, args[phaseAt + 1], args[phaseAt + 2]);
   }
   if (mem) { return byMemory(core, cli); }
-  if (all) { return overAll(core, cli, fs); }
-  return byPhase(core, cli, fs);
+  if (all) { return await overAll(core, cli, fs); }
+  return await byPhase(core, cli, fs);
 }

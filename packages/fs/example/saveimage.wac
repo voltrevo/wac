@@ -16,7 +16,7 @@ import { Fs } from "../src/fs.wac";
 import { Sink } from "../../platform/src/stream.wac";
 import { dump, write, Written } from "../src/image.wac";
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
@@ -32,11 +32,11 @@ export i32 main(Sys sys) {
   Fs fs = Fs.onHost(cli, 1754500000000);
   fs.mountMemory("/home");
 
-  fs.writeFile("\{hostDir}/on-the-host", "this lives on a real disk\n".toBytes());
-  fs.mkdir("/home/claude", true);
-  fs.writeFile("/home/claude/notes", "this lives in memory\n".toBytes());
-  fs.chmod("/home/claude/notes", 384);   // 0600
-  fs.chown("/home/claude/notes", "claude");
+  await fs.writeFile("\{hostDir}/on-the-host", "this lives on a real disk\n".toBytes());
+  await fs.mkdir("/home/claude", true);
+  await fs.writeFile("/home/claude/notes", "this lives in memory\n".toBytes());
+  await fs.chmod("/home/claude/notes", 384);   // 0600
+  await fs.chown("/home/claude/notes", "claude");
 
   Written w = write(fs);
   Sink out = Sink.toOutput(cli);

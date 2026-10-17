@@ -1912,6 +1912,31 @@ export string test_rung3_a_local_does_not_refute_a_call_to_the_imported_name_it_
   return t.report();
 }
 
+export string test_rung3_two_types_this_file_only_imports_are_not_judged_unrelated() {
+  // A file checked alone knows an imported type by its name and nothing else — not its fields and not
+  // its parent. So `Ticket<Read>` into a `TicketBase` slot cannot be judged: it is right, and it was
+  // reported as a mismatch in three files the day `Ticket.first` took a `TicketBase[]`. Two names from
+  // a file nobody supplied are the same question.
+  T t = T.create();
+  string[] quiet = [
+    "import { Read, Ticket, TicketBase } from \"core\";\n" +
+    "export i32 f() { Ticket<Read> r; TicketBase[] all = TicketBase[].filled(1, r); TicketBase b = r; return all.len(); }",
+    "import { Shape, Rect, rect } from \"./shapes.wac\";\n" +
+    "export Shape f() { Rect r = rect(); Shape s = r; return r; }"
+  ];
+  i32[] missing = i32[].filled(1, 0);
+  for (i32 i = 0; i < quiet.len(); i++) {
+    string[] mine = oursBesidesMissingImports(quiet[i], missing);
+    t.eqI32(mine.len(), 0, "we invented " + itoa(mine.len()) + " diagnostic(s) at " +
+                           joinedWith(mine, ", ") + " in " + quiet[i]);
+  }
+  // And two types the file *declares* are still judged: the rule is about what it cannot see.
+  string[] loud = oursBesidesMissingImports(
+    "struct A { i32 x; }\nstruct B { i32 y; }\nexport i32 f() { A a = A(1); B b = a; return b.y; }", missing);
+  t.eqI32(loud.len(), 1, "an A into a B, both declared here, is reported once: " + joinedWith(loud, ", "));
+  return t.report();
+}
+
 export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
     Core core, Cli cli) {
   T t = T.create();

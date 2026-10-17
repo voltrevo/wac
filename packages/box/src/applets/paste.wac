@@ -10,7 +10,7 @@ import { slice } from "../../../bytes/src/slice.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
 
-export i32 paste(Core core, Cli cli, Fs fs, Args a) {
+export async i32 paste(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // **Any number of files, and none means standard input.** This took exactly two and answered anything
   // else with a `usage:` line of its own invention — so `paste` in a pipeline, which is how the real one
@@ -19,7 +19,7 @@ export i32 paste(Core core, Cli cli, Fs fs, Args a) {
   u8[][][] columns = u8[][][].filled(files, u8[][]());
   i32 rows = 0;
   for (i32 f = 0; f < files; f++) {
-    Input in = readInput(core, cli, fs, a, f);
+    Input in = await readInput(core, cli, fs, a, f);
     if (!in.ok) { return 1; }
     columns[f] = splitLines(in.bytes);
     if (columns[f].len() > rows) { rows = columns[f].len(); }

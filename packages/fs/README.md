@@ -4,11 +4,15 @@ A filesystem that belongs to the system rather than to the host.
 
 ```wac
 Fs fs = Fs.inMemory(now);          // nothing but what you put in it
-fs.mkdir("/home/user", true);
-fs.writeFile("/home/user/notes", "hello\n".toBytes());
+await fs.mkdir("/home/user", true);
+await fs.writeFile("/home/user/notes", "hello\n".toBytes());
 
 Fs disk = Fs.onHost(cli, now);     // the real one, by asking
 ```
+
+**Every call that reaches storage is awaited**, whatever the backing: a stage reaching its parent's
+filesystem asks over a channel, and in a page the storage is the browser's, and neither can answer
+while the caller waits ([design/system/0011](../../design/system/0011-programs-in-a-page-without-shared-memory.md)).
 
 A package of [wac](../../README.md) — see the root README for layout and how to run things. All
 commands run from the repo root.

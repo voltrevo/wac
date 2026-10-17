@@ -42,7 +42,7 @@ export async i32 shellMain(Core core, Cli cli, Shell sh, i32 first) {
     // that script went to the image. Two filesystems in one session is the thing design/0001 D1 exists
     // to prevent, and once `Fs` grew users (step 4) it was a permission check skipped as well.
     string name = string.fromBytes(cli.arg(first).wait());
-    FileResult f = sh.fs.readFile(sh.resolve(name));
+    FileResult f = await sh.fs.readFile(sh.resolve(name));
     if (!f.ok) {
       core.warn("sh: \{name}: \{readReason(f)}");
       return 127;

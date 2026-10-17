@@ -11,9 +11,9 @@ import { Input, readInput } from "../lib/input.wac";
 import { compress } from "../../../zstd/src/encode.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 zstd(Core core, Cli cli, Fs fs, Args a) {
+export async i32 zstd(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
-  Input in = readInput(core, cli, fs, a, 0);
+  Input in = await readInput(core, cli, fs, a, 0);
   if (!in.ok) { return 1; }
   cli.write(compress(in.bytes));
   return 0;

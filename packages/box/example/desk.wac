@@ -103,7 +103,7 @@ export async i32 page(Core core, Cli cli, Page page) {
   i32 nextId = 2;
 
   draw(page, wins);
-  paint(page, wins);
+  await paint(page, wins);
   // Delegated selectors rather than ids: `render` replaces the elements, and a handler asked for by
   // id would stop firing the moment a window opened. Which window an event is about comes from
   // `Event.id`, which carries the element's own — see `idOf`.
@@ -166,23 +166,23 @@ export async i32 page(Core core, Cli cli, Page page) {
       wins.push(Win(SHELL(), nextId, Session.startOn(core, cli, first.sh.fs, "sh"),
                     cascadeLeft(wins.len()), cascadeTop(wins.len())));
       nextId = nextId + 1;
-      redraw(page, wins);
+      await redraw(page, wins);
       continue;
     }
     if (e.kind == "click" && e.id == "newfiles") {
       wins.push(Win(FILES(), nextId, first, cascadeLeft(wins.len()), cascadeTop(wins.len())));
       nextId = nextId + 1;
-      redraw(page, wins);
+      await redraw(page, wins);
       continue;
     }
     if (e.kind == "mousedown" && startsWith(e.id, "bar")) {
       raise(wins, idOf(e.id, 3));
-      redraw(page, wins);
+      await redraw(page, wins);
       continue;
     }
     if (e.kind == "click" && startsWith(e.id, "cls")) {
       close(wins, idOf(e.id, 3));
-      redraw(page, wins);
+      await redraw(page, wins);
       continue;
     }
     if (e.kind != "keydown" || !startsWith(e.id, "cmd")) { continue; }
@@ -199,7 +199,7 @@ export async i32 page(Core core, Cli cli, Page page) {
     if (e.value == intr()) {
       w.sh.interrupt(page.getValue(field).wait());
       page.setValue(field, "").wait();
-      paint(page, wins);
+      await paint(page, wins);
       continue;
     }
     if (e.value != cr()) { continue; }
@@ -209,13 +209,13 @@ export async i32 page(Core core, Cli cli, Page page) {
     await w.sh.feedLine(line);
     // Every window, not just this one: a command in one terminal changes what the files windows list
     // and what the *other* terminals would see, because there is one filesystem underneath.
-    paint(page, wins);
+    await paint(page, wins);
     if (w.sh.over()) {
       // A shell that exits closes its window rather than the desktop — which is what `exit` means in
       // a terminal on a desktop, and the difference between a window manager and a program with
       // windows drawn on it.
       close(wins, w.id);
-      redraw(page, wins);
+      await redraw(page, wins);
     }
   }
   return 0;
@@ -330,14 +330,14 @@ string window(Win w, i32 at, bool front) {
  * before and restored after — without which clicking a title bar while typing would silently eat the
  * line, in whichever window was being typed in.
  */
-void redraw(Page page, Vec<Win> wins) {
+async void redraw(Page page, Vec<Win> wins) {
   Vec<string> typed = Vec.create();
   for (i32 i = 0; i < wins.len(); i++) {
     Win w = wins.get(i);
     typed.push(w.kind == SHELL() ? page.getValue("cmd\{w.id}").wait() : "");
   }
   draw(page, wins);
-  paint(page, wins);
+  await paint(page, wins);
   for (i32 i = 0; i < wins.len(); i++) {
     Win w = wins.get(i);
     // **Only what was actually read back.** Restoring an empty string to a field is at best a
@@ -358,21 +358,21 @@ void redraw(Page page, Vec<Win> wins) {
  * several windows on one system is that they see the same thing, and routing this through a terminal
  * would put its own output in that terminal's scrollback and prove nothing about sharing.
  */
-void paint(Page page, Vec<Win> wins) {
+async void paint(Page page, Vec<Win> wins) {
   for (Win w in wins) {
     string id = "\{w.id}";
     if (w.kind == SHELL()) {
       page.setText("scr\{id}", w.sh.screen).wait();
       page.setText("ps\{id}", w.sh.prompt()).wait();
     } else {
-      page.setText("files\{id}", listing(w.sh)).wait();
+      page.setText("files\{id}", await listing(w.sh)).wait();
     }
   }
 }
 
 /** The shell's working directory, as a files window shows it. */
-string listing(Session s) {
-  string[]? names = s.sh.fs.readDir(s.sh.cwd);
+async string listing(Session s) {
+  string[]? names = await s.sh.fs.readDir(s.sh.cwd);
   if (names is null) { return "\{s.sh.cwd}\n  (not a directory)\n"; }
   string[] have = names!;
   string out = "\{s.sh.cwd}\n";

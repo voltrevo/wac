@@ -14,7 +14,7 @@ import { Fs } from "../../../fs/src/fs.wac";
 
 export async i32 gunzip(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
-  Input in = openStream(core, cli, fs, a, 0, -1);
+  Input in = await openStream(core, cli, fs, a, 0, -1);
   if (!in.ok) { return 1; }
   u8[] all = await in.fed.rest();
   return gunzipStream(readerOf(all), cli.write);

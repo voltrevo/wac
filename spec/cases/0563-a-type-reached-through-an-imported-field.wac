@@ -1,0 +1,19 @@
+// expect: refused
+// spec: §wac-async-decl-h3vq81m
+// why: a type reached through an imported struct's field is a type with members in the importing file — `Shell`'s `fs` is an `Fs` that `main.wac` never imported, so `sh.fs.read()` was unknown, its missing `await` passed the checker, and the engine refused the module
+// ---- fs.wac ----
+export struct Fs {
+  i32 n;
+  async i32 read(this) { return this.n; }
+}
+// ---- shell.wac ----
+import { Fs } from "./fs.wac";
+export struct Shell { Fs fs; }
+export Shell shell() { return Shell(Fs(3)); }
+// ---- main.wac ----
+import { Shell, shell } from "./shell.wac";
+export i32 f() {
+  Shell sh = shell();
+  i32 n = sh.fs.read();
+  return n;
+}

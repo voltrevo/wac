@@ -51,8 +51,8 @@ string homeOf(Cli cli) {
 }
 
 /** Append `path`'s settings if it can be read, and say nothing if it cannot. */
-void addFile(Fs fs, Vec<Setting> into, string path) {
-  FileResult f = fs.readFile(path);
+async void addFile(Fs fs, Vec<Setting> into, string path) {
+  FileResult f = await fs.readFile(path);
   if (f.ok) { into.extend(parseConfig(f.bytes)); }
 }
 
@@ -65,19 +65,19 @@ void addFile(Fs fs, Vec<Setting> into, string path) {
  * `gitDir` may be `""` for a search with no repository, which is what a program does before it has opened
  * one — the three other levels are still worth reading.
  */
-export Vec<Setting> configChain(Cli cli, Fs fs, string gitDir) {
+export async Vec<Setting> configChain(Cli cli, Fs fs, string gitDir) {
   Vec<Setting> all = Vec.create();
-  addFile(fs, all, "/etc/gitconfig");
+  await addFile(fs, all, "/etc/gitconfig");
   string home = homeOf(cli);
   u8[]? xdg = cli.env("XDG_CONFIG_HOME").wait();
   if (!(xdg is null)) {
-    addFile(fs, all, "\{string.fromBytes(xdg!)}/git/config");
+    await addFile(fs, all, "\{string.fromBytes(xdg!)}/git/config");
   } else if (home != "") {
     // The fallback git uses when the variable is unset, which is not the same as reading no XDG file.
-    addFile(fs, all, "\{home}/.config/git/config");
+    await addFile(fs, all, "\{home}/.config/git/config");
   }
-  if (home != "") { addFile(fs, all, "\{home}/.gitconfig"); }
-  if (gitDir != "") { addFile(fs, all, "\{gitDir}/config"); }
+  if (home != "") { await addFile(fs, all, "\{home}/.gitconfig"); }
+  if (gitDir != "") { await addFile(fs, all, "\{gitDir}/config"); }
   return all;
 }
 

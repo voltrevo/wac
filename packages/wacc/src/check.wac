@@ -2871,6 +2871,10 @@ bool isIdentByte(i32 ch) {
 export bool assignable(C c, string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
+  // **A type this file only imports is one it cannot judge.** Checked alone, a file knows `TicketBase`
+  // and `Ticket<Read>` by name and nothing else — not that one is the other's parent — so calling them
+  // unrelated was a false alarm in every file that put a ticket in a `TicketBase[]`.
+  if (onlyImported(c, want) || onlyImported(c, got)) { return true; }
   // **A union of one alternative is that alternative** once inference is done (spec ch18): the
   // wrapper counts while a placeholder is collected or a widening is taken, and a value of either
   // spelling stands where the other is wanted — at any depth, so `Result<i32, string>` is a
@@ -2974,6 +2978,13 @@ export bool assignable(C c, string want, string got) {
   // a nullable top type fell between the two.
   if (withoutNull(want) == "anyref") { return got == "i31ref" || isReferenceType(c, got); }
   return false;
+}
+
+/** Whether `t` names a type this file imports and has no declaration of — `T`, `T?` or `T<…>`. */
+bool onlyImported(C c, string t) {
+  string bare = withoutNull(t) == "" ? t : withoutNull(t);
+  string base = genericBase(bare) == "" ? bare : genericBase(bare);
+  return c.isImportOnlyName(base) && !c.isStruct(base) && !c.isEnum(base);
 }
 
 /**

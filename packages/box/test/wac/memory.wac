@@ -27,9 +27,9 @@ export struct Ran {
  *
  * `argv` is what `/proc/self/cmdline` answers, so it is the program's own name rather than a test's.
  */
-export Fs memoryFs(Core core, string program) {
+export async Fs memoryFs(Core core, string program) {
   Fs fs = Fs.inMemory(0);
-  fs.mkdir("/tmp", true);
+  await fs.mkdir("/tmp", true);
   Vec<string> argv = Vec.fromArray([program]);
   mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
   return fs;

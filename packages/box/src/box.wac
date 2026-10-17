@@ -137,26 +137,26 @@ export async i32 dispatch(Core core, Cli cli, Fs fs, Args a, string applet) {
       if (all[i] == applet) { return appletHelp(core, applet); }
     }
   }
-  if (applet == "base32")    { return base32(core, cli, fs, a); }
-  if (applet == "base64")    { return base64(core, cli, fs, a); }
+  if (applet == "base32")    { return await base32(core, cli, fs, a); }
+  if (applet == "base64")    { return await base64(core, cli, fs, a); }
   if (applet == "basename")  { return basename(core, cli, fs, a); }
   if (applet == "whoami")    { return whoami(core, cli, fs, a); }
-  if (applet == "id")        { return id(core, cli, fs, a); }
+  if (applet == "id")        { return await id(core, cli, fs, a); }
   if (applet == "cat")       { return await cat(core, cli, fs, a); }
-  if (applet == "chmod")     { return chmod(core, cli, fs, a); }
+  if (applet == "chmod")     { return await chmod(core, cli, fs, a); }
   if (applet == "cp")        { return await cp(core, cli, fs, a); }
   if (applet == "crc32")     { return await crc32(core, cli, fs, a); }
   if (applet == "fsdump")    { return await fsdump(core, cli, fs, a); }
   if (applet == "cut")       { return await cut(core, cli, fs, a); }
   if (applet == "date")      { return date(core, cli, fs, a); }
-  if (applet == "diff")      { return diff(core, cli, fs, a); }
+  if (applet == "diff")      { return await diff(core, cli, fs, a); }
   if (applet == "dirname")   { return dirname(core, cli, fs, a); }
-  if (applet == "du")        { return du(core, cli, fs, a); }
+  if (applet == "du")        { return await du(core, cli, fs, a); }
   if (applet == "echo")      { return echo(core, cli, fs, a); }
-  if (applet == "find")      { return find(core, cli, fs, a); }
+  if (applet == "find")      { return await find(core, cli, fs, a); }
   if (applet == "fold")      { return await fold(core, cli, fs, a); }
   if (applet == "get")       { return get(core, cli, fs, a); }
-  if (applet == "gets")      { return gets(core, cli, fs, a); }
+  if (applet == "gets")      { return await gets(core, cli, fs, a); }
   if (applet == "grep")      { return await grep(core, cli, fs, a); }
   if (applet == "gunzip")    { return await gunzip(core, cli, fs, a); }
   if (applet == "gzip")      { return await gzip(core, cli, fs, a); }
@@ -167,44 +167,44 @@ export async i32 dispatch(Core core, Cli cli, Fs fs, Args a, string applet) {
   // success is a reasonable thing to write.
   if (applet == "help" || applet == "--help" || applet == "-h") { usage(core); return 0; }
   if (applet == "hex")       { return await hex(core, cli, fs, a); }
-  if (applet == "init")      { return init(core, cli, fs, a); }
-  if (applet == "httpd")     { return httpd(core, cli, fs, a); }
-  if (applet == "json")      { return json(core, cli, fs, a); }
-  if (applet == "ls")        { return ls(core, cli, fs, a); }
-  if (applet == "mkdir")     { return mkdir(core, cli, fs, a); }
-  if (applet == "mv")        { return mv(core, cli, fs, a); }
+  if (applet == "init")      { return await init(core, cli, fs, a); }
+  if (applet == "httpd")     { return await httpd(core, cli, fs, a); }
+  if (applet == "json")      { return await json(core, cli, fs, a); }
+  if (applet == "ls")        { return await ls(core, cli, fs, a); }
+  if (applet == "mkdir")     { return await mkdir(core, cli, fs, a); }
+  if (applet == "mv")        { return await mv(core, cli, fs, a); }
   if (applet == "nc")        { return nc(core, cli, fs, a); }
   if (applet == "nl")        { return await nl(core, cli, fs, a); }
-  if (applet == "paste")     { return paste(core, cli, fs, a); }
-  if (applet == "ps")        { return ps(core, cli, fs, a); }
+  if (applet == "paste")     { return await paste(core, cli, fs, a); }
+  if (applet == "ps")        { return await ps(core, cli, fs, a); }
   if (applet == "rev")       { return await rev(core, cli, fs, a); }
-  if (applet == "rm")        { return rm(core, cli, fs, a); }
-  if (applet == "rmdir")     { return rmdir(core, cli, fs, a); }
+  if (applet == "rm")        { return await rm(core, cli, fs, a); }
+  if (applet == "rmdir")     { return await rmdir(core, cli, fs, a); }
   if (applet == "seq")       { return seq(core, cli, fs, a); }
   if (applet == "serve")     { return serve(core, cli, fs, a); }
   if (applet == "sha256sum") { return await sha256sum(core, cli, fs, a); }
   if (applet == "sha512sum") { return await sha512sum(core, cli, fs, a); }
-  if (applet == "shuf")      { return shuf(core, cli, fs, a); }
-  if (applet == "sort")      { return sort(core, cli, fs, a); }
+  if (applet == "shuf")      { return await shuf(core, cli, fs, a); }
+  if (applet == "sort")      { return await sort(core, cli, fs, a); }
   if (applet == "split")     { return await split(core, cli, fs, a); }
   if (applet == "sponge")    { return await sponge(core, cli, fs, a); }
-  if (applet == "stat")      { return stat(core, cli, fs, a); }
+  if (applet == "stat")      { return await stat(core, cli, fs, a); }
   if (applet == "strings")   { return await strings(core, cli, fs, a); }
-  if (applet == "tac")       { return tac(core, cli, fs, a); }
+  if (applet == "tac")       { return await tac(core, cli, fs, a); }
   if (applet == "tail")      { return await tail(core, cli, fs, a); }
-  if (applet == "tar")       { return tar(core, cli, fs, a); }
-  if (applet == "tee")       { return tee(core, cli, fs, a); }
-  if (applet == "touch")     { return touch(core, cli, fs, a); }
+  if (applet == "tar")       { return await tar(core, cli, fs, a); }
+  if (applet == "tee")       { return await tee(core, cli, fs, a); }
+  if (applet == "touch")     { return await touch(core, cli, fs, a); }
   if (applet == "tr")        { return await tr(core, cli, fs, a); }
   if (applet == "uniq")      { return await uniq(core, cli, fs, a); }
   if (applet == "unzstd")    { return await unzstd(core, cli, fs, a); }
-  if (applet == "urldecode") { return urldecode(core, cli, fs, a); }
-  if (applet == "urlencode") { return urlencode(core, cli, fs, a); }
+  if (applet == "urldecode") { return await urldecode(core, cli, fs, a); }
+  if (applet == "urlencode") { return await urlencode(core, cli, fs, a); }
   if (applet == "uuid")      { return uuid(core, cli, fs, a); }
   if (applet == "wc")        { return await wc(core, cli, fs, a); }
-  if (applet == "wget")      { return wget(core, cli, fs, a); }
+  if (applet == "wget")      { return await wget(core, cli, fs, a); }
   if (applet == "yes")       { return yes(core, cli, fs, a); }
-  if (applet == "zstd")      { return zstd(core, cli, fs, a); }
+  if (applet == "zstd")      { return await zstd(core, cli, fs, a); }
 
   // `true` and `false` have no body: the dispatcher returning a constant *is* the whole
   // applet, and a file containing one `return` would be ceremony rather than clarity.

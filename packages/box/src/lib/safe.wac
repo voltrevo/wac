@@ -30,10 +30,10 @@ export async Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string pat
   // output to a file — the state is in the capability — and a memory image has no such thing. Writing
   // the bytes in one call is not a compromise there: an image is already in memory, and the
   // write-beside-and-rename that makes this atomic on a disk is not what makes it atomic in a value.
-  if (!fs.isHostPath(path)) {
+  if (!(await fs.isHostPath(path))) {
     u8[] all = await fed.rest();
     if (fed.why != "") { return Change.of(FAULT_OTHER(), fed.why); }
-    return fs.writeFile(path, all);
+    return await fs.writeFile(path, all);
   }
   string tmp = tempName(core, path);
   // The `Change` is returned as it came: it used to be flattened to `FAULT_OTHER` because `openOutput`
@@ -59,22 +59,22 @@ export async Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string pat
   }
   if (broke != "") {
     cli.openOutput("").wait();
-    fs.remove(tmp, false);
+    await fs.remove(tmp, false);
     return Change.of(FAULT_OTHER(), broke);
   }
   // Back to standard output, which closes the temporary file — a rename over a file still
   // open would move it half-written.
   cli.openOutput("").wait();
-  return finish(cli, fs, tmp, path);
+  return await finish(cli, fs, tmp, path);
 }
 
 /** The rename, and the cleanup if it fails. */
-Change finish(Cli cli, Fs fs, string tmp, string path) {
-  Change moved = fs.rename(tmp, path);
+async Change finish(Cli cli, Fs fs, string tmp, string path) {
+  Change moved = await fs.rename(tmp, path);
   if (moved.ok()) { return moved; }
   // The rename is the only step that can leave litter, so clean up after it and not
   // before: until it succeeds, the temporary file is the only copy of the new contents.
-  fs.remove(tmp, false);
+  await fs.remove(tmp, false);
   return moved;
 }
 

@@ -16,10 +16,10 @@ i32 MAX_DEPTH() { return 64; }
 /** A subtotal, and whether everything under it was actually counted. */
 struct Sum { i64 bytes; bool complete; }
 
-export i32 du(Core core, Cli cli, Fs fs, Args a) {
+export async i32 du(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   string root = a.rest.len() < 1 ? "." : a.rest[0];
-  Stat st = fs.stat(root);
+  Stat st = await fs.stat(root);
   // GNU's frame and GNU's words: `du: cannot access 'nosuch': No such file or directory`. This said
   // `du: nosuch: not found` — a phrase no real tool prints — and, worse, it said it for **every**
   // absence, including the ones that are not absences at all. `Stat` carries a category, so a path
@@ -33,18 +33,18 @@ export i32 du(Core core, Cli cli, Fs fs, Args a) {
     core.log("\{st.size}\t\{root}");
     return 0;
   }
-  Sum s = sizeOf(core, cli, fs, a.name, root, 0);
+  Sum s = await sizeOf(core, cli, fs, a.name, root, 0);
   core.log("\{s.bytes}\t\{root}");
   return s.complete ? 0 : 1;
 }
 
-Sum sizeOf(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
+async Sum sizeOf(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
   if (depth > MAX_DEPTH()) {
     core.warn("\{name}: \{dir}: deeper than \{MAX_DEPTH()}" +
       " levels, not counting further");
     return Sum(0, false);
   }
-  string[]? names = fs.readDir(dir);
+  string[]? names = await fs.readDir(dir);
   if (names is null) {
     core.warn("\{name}: \{dir}: cannot read directory");
     return Sum(0, false);
@@ -54,9 +54,9 @@ Sum sizeOf(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
   bool complete = true;
   for (i32 i = 0; i < found.len(); i++) {
     string path = "\{dir}/\{found[i]}";
-    Stat st = fs.stat(path);
+    Stat st = await fs.stat(path);
     if (st.isDir) {
-      Sum sub = sizeOf(core, cli, fs, name, path, depth + 1);
+      Sum sub = await sizeOf(core, cli, fs, name, path, depth + 1);
       total = total + sub.bytes;
       if (!sub.complete) { complete = false; }
     } else {

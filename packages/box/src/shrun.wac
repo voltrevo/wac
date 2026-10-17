@@ -139,7 +139,7 @@ export async i32 boxApplet(Core core, Cli cli) {
   // trip to a parent it does not have. `dispatch` would answer `UNKNOWN` a moment later either way;
   // the difference is that building the filesystem is the expensive half.
   if (!isApplet(name)) { return UNKNOWN; }
-  return await dispatch(core, cli, Fs.fromParentOrHost(cli, 0), parseList(args, 1, name), name);
+  return await dispatch(core, cli, (await Fs.fromParentOrHost(cli, 0)), parseList(args, 1, name), name);
 }
 
 /**

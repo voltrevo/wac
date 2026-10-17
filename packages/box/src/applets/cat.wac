@@ -56,7 +56,7 @@ export async i32 cat(Core core, Cli cli, Fs fs, Args a) {
     // block-buffered here — so without this, `a` arrives after the complaint about the file between it
     // and `b`. GNU's `error()` flushes standard output for exactly this reason.
     out.flush();
-    Input in = openStream(core, cli, fs, a, f, -1);
+    Input in = await openStream(core, cli, fs, a, f, -1);
     // **An operand that will not open does not end the run.** GNU reports it, carries on with the next
     // file and exits 1 at the end — `cat a missing b` prints both `a` and `b` — and stopping here meant
     // every file after the first bad one silently produced nothing. Found by moving `backingsprocess_test.wac`

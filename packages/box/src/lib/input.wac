@@ -125,7 +125,7 @@ string cannotOpen(string name, string path, string why) {
  * stops pulling. So the parameter is not an optimisation anywhere; it is the difference between an
  * answer and a refusal on one mount, and nothing at all on the others.
  */
-export Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap) {
+export async Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap) {
   string path = operandAt(a, n);
   string label = a.rest.len() <= n ? "" : a.rest[n];
   // **Standard input is standard input**, whatever the filesystem is: an operand of `-` or none at all
@@ -138,7 +138,7 @@ export Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap) {
   }
   // A file on the host streams, because it can and because a large one should not be held whole. A file
   // anywhere else is read whole and served from memory — which is where it already was.
-  if (fs.isHostPath(path)) {
+  if (await fs.isHostPath(path)) {
     Change opened = cli.openInput(path).wait();
     if (opened.ok()) { return Input(true, u8[](), label, Feed.fromStdin(cli)); }
     // The same translation the whole-file path does, which is the point of the `Change`: `cat missing`
@@ -146,7 +146,7 @@ export Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap) {
     core.warn(cannotOpen(a.name, path, reasonOf(opened)));
     return Input(false, u8[](), label, Feed.of(cli, u8[]()));
   }
-  FileResult f = cap < 0 ? fs.readFile(path) : fs.readSome(path, cap);
+  FileResult f = cap < 0 ? await fs.readFile(path) : await fs.readSome(path, cap);
   if (!f.ok) {
     core.warn(cannotOpen(a.name, path, readReason(f)));
     return Input(false, u8[](), label, Feed.of(cli, u8[]()));
@@ -165,13 +165,13 @@ export Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap) {
  * A file that will not open stops it, with the reason already reported — same rule as `Reader`, and the
  * same difference from GNU, which carries on and exits 1 at the end.
  */
-export Input readAll(Core core, Cli cli, Fs fs, Args a, i32 n) {
+export async Input readAll(Core core, Cli cli, Fs fs, Args a, i32 n) {
   i32 files = operandCount(a, n);
-  if (files <= 1) { return readInput(core, cli, fs, a, n); }
+  if (files <= 1) { return await readInput(core, cli, fs, a, n); }
   u8[][] parts = u8[][].filled(files, u8[]());
   i32 total = 0;
   for (i32 i = 0; i < files; i++) {
-    Input one = readInput(core, cli, fs, a, n + i);
+    Input one = await readInput(core, cli, fs, a, n + i);
     if (!one.ok) { return one; }
     parts[i] = one.bytes;
     total = total + one.bytes.len();
@@ -186,12 +186,12 @@ export Input readAll(Core core, Cli cli, Fs fs, Args a, i32 n) {
 }
 
 /** Positional argument `n` names a file; without one, standard input. */
-export Input readInput(Core core, Cli cli, Fs fs, Args a, i32 n) {
+export async Input readInput(Core core, Cli cli, Fs fs, Args a, i32 n) {
   string path = operandAt(a, n);
   // The label is what was written, so `-` stays `-` in the output; the path is what was resolved.
   string label = a.rest.len() <= n ? "" : a.rest[n];
   if (path == "") { return Input(true, cli.readStdin().wait(), label, Feed.fromStdin(cli)); }
-  FileResult f = fs.readFile(path);
+  FileResult f = await fs.readFile(path);
   if (!f.ok) {
     // GNU's words where the category has them, and the host's sentence where it does not: "No such file
     // or directory (os error 2): readfile '/tmp/x'" is one runtime's spelling of four words, and it
@@ -298,7 +298,7 @@ export async Span nextSpan(Core core, Cli cli, Fs fs, Args a, i32 at, bool opene
     // does, and the reason this is a loop rather than one attempt: `cat a bad worse b` complains twice
     // and still prints `b`.
     while (true) {
-      Input in = openStream(core, cli, fs, a, at, -1);
+      Input in = await openStream(core, cli, fs, a, at, -1);
       if (in.ok) { here = in.fed; break; }
       failed = true;
       if (files <= at + 1) { return Span(false, false, u8[](), at, fed, true); }
@@ -378,13 +378,13 @@ export struct Reader {
    * on it and then read stdin answered with the piped input reversed, which is a wrong answer where
    * there had been a refusal. When every operand fails the reader is empty and `failed` is set.
    */
-  Reader create(Core core, Cli cli, Fs fs, Args a, i32 first, Sink out) {
+  async Reader create(Core core, Cli cli, Fs fs, Args a, i32 first, Sink out) {
     if (operandCount(a, 0) <= first) {
       return Reader(true, false, false, first, Lines.create(), Feed.fromStdin(cli), out);
     }
     bool failed = false;
     for (i32 at = first; at < operandCount(a, 0); at++) {
-      Input in = openStream(core, cli, fs, a, at, -1);
+      Input in = await openStream(core, cli, fs, a, at, -1);
       // The feed the opener chose, not the process's: on anything but a host mount it is serving bytes
       // this filesystem handed over.
       if (in.ok) { return Reader(true, false, failed, at, Lines.create(), in.fed, out); }
@@ -426,7 +426,7 @@ export struct Reader {
       // one because a read only fails on inputs nobody had tried.
       if (operandCount(a, 0) <= this.at + 1) { return l; }
       this.at = this.at + 1;
-      Input more = openStream(core, cli, fs, a, this.at, -1);
+      Input more = await openStream(core, cli, fs, a, this.at, -1);
       if (!more.ok) { this.failed = true; return await this.next(core, cli, fs, a); }
       this.s = Lines.create();
       this.fed = more.fed;
@@ -436,7 +436,7 @@ export struct Reader {
     this.at = this.at + 1;
     // Everything written from the file just finished, before anything is said about the next one.
     this.out.flush();
-    Input in = openStream(core, cli, fs, a, this.at, -1);
+    Input in = await openStream(core, cli, fs, a, this.at, -1);
     // Reported already, by `openStream`. Remember that it happened, and read the next operand.
     if (!in.ok) { this.failed = true; return await this.next(core, cli, fs, a); }
     this.s = Lines.create();

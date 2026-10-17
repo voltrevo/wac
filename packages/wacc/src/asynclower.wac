@@ -411,8 +411,8 @@ Ty lowFnTy(Ctx c, Ty ret, Ty[] ps) { return Ty(TyKind.Funcref(ret, ps), c.line, 
  */
 Ty subTy(Ctx c, Ty t) {
   match (t.kind) {
-    TypeOf(e): { return Ty(TyKind.TypeOf(subExpr(c, e)), t.line, t.col); }
-    TypeofExpr(e): { return Ty(TyKind.TypeofExpr(subExpr(c, e)), t.line, t.col); }
+    TypeOf(e): { return Ty(TyKind.TypeOf(subExprInType(c, e)), t.line, t.col); }
+    TypeofExpr(e): { return Ty(TyKind.TypeofExpr(subExprInType(c, e)), t.line, t.col); }
     Prim(tok): { return Ty(TyKind.Prim(tok), t.line, t.col); }
     Named(tok, typeArgs): {
       Ty[] args = Ty[].filled(typeArgs.len(), t);
@@ -432,6 +432,22 @@ Ty subTy(Ctx c, Ty t) {
       return Ty(TyKind.TupleOf(ms), t.line, t.col);
     }
   }
+}
+
+/**
+ * An expression inside a type, copied with **nothing declared before it** — a type has no statement to
+ * put a declaration in front of. A `match` on a hoisted local reads its subject through a fresh local
+ * declared that way (`narrowedSubject`), and inside a `typeof` the local was never declared: the
+ * subject had no type, the arm's variant was looked up by name in the file, and a second file's
+ * `Opened` made the module decline (`spec/cases/0564`). A type is never run, so reading the cell
+ * directly loses nothing.
+ */
+Expr subExprInType(Ctx c, Expr e) {
+  bool was = c.copy.noPre;
+  c.copy.noPre = true;
+  Expr out = subExpr(c, e);
+  c.copy.noPre = was;
+  return out;
 }
 
 /** `T[] name = T[].defaulted(1);` */

@@ -26,7 +26,7 @@ import { slice } from "../../../bytes/src/slice.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
 
-export i32 gets(Core core, Cli cli, Fs fs, Args a) {
+export async i32 gets(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 3) {
     core.warn("usage: \{a.name} <host> <path> <root.der> [-<port>] [-i]");
@@ -36,7 +36,7 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
   string path = a.rest[1];
   i32 port = a.hasNum ? a.num : 443;
 
-  FileResult rootFile = fs.readFile(a.rest[2]);
+  FileResult rootFile = await fs.readFile(a.rest[2]);
   if (!rootFile.ok) { core.warn("\{a.name}: \{a.rest[2]}: \{readReason(rootFile)}"); return 1; }
   u8[] root = rootFile.bytes;
   // The store is DER certificates end to end, indexed by (start, end) pairs. One here.

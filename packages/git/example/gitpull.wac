@@ -62,7 +62,7 @@ u8[] advertisedTarget(u8[] advertisement, string ref) {
   }
 }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
@@ -78,13 +78,13 @@ export i32 main(Sys sys) {
 
   Fs fs = Fs.onHost(cli, 0);
   string gitDir = "\{root}/.git";
-  FileResult input = fs.readFile(path);
+  FileResult input = await fs.readFile(path);
   if (!input.ok) {
     core.warn("gitpull: cannot read \{path}");
     return 1;
   }
 
-  match (openRepo(fs, gitDir, root)) {
+  match ((await openRepo(fs, gitDir, root))) {
     NoRepo(why): {
       core.warn("gitpull: \{why}");
       return 1;
@@ -111,7 +111,7 @@ export i32 main(Sys sys) {
         // **Already there is not an error, and it is not a fetch either.** git says "Already up to
         // date" and asks for nothing; a request naming a want we already hold would make the server
         // answer with an empty pack, which `indexPack` would then have to treat as a failure.
-        u8[]? mine = headOf(repo);
+        u8[]? mine = await headOf(repo);
         if (!(mine is null) && hexOf(mine!) == hexOf(want)) {
           core.warn("gitpull: already up to date");
           return 3;
@@ -125,7 +125,7 @@ export i32 main(Sys sys) {
         // would make the server delta against it and produce a pack we cannot repair.
         Vec<u8[]> haves = Vec.create();
         if (!(mine is null)) {
-          match (readObject(repo, mine!)) {
+          match ((await readObject(repo, mine!))) {
             Absent(why): { }
             Found(kind, data): { haves.push(mine!); }
           }
@@ -161,7 +161,7 @@ export i32 main(Sys sys) {
         core.warn("gitpull: the advertisement does not name \{ref}");
         return 1;
       }
-      FileResult answer = fs.readFile(string.fromBytes(cli.arg(4).wait()));
+      FileResult answer = await fs.readFile(string.fromBytes(cli.arg(4).wait()));
       if (!answer.ok) {
         core.warn("gitpull: cannot read the reply");
         return 1;
@@ -190,7 +190,7 @@ export i32 main(Sys sys) {
         Built(idx): { }
         Thin(bases): {
           appended = bases.len();
-          match (completeThin(repo, pack)) {
+          match ((await completeThin(repo, pack))) {
             Missing(why): {
               core.warn("gitpull: the thin pack wants an object this repository does not have: \{why}");
               return 1;
@@ -221,12 +221,12 @@ export i32 main(Sys sys) {
           return 1;
         }
         Built(idx): {
-          Change wrotePack = fs.writeFile("\{stem}.pack", whole);
+          Change wrotePack = await fs.writeFile("\{stem}.pack", whole);
           if (!wrotePack.ok()) {
             core.warn("gitpull: cannot write the pack: \{wrotePack.message}");
             return 1;
           }
-          Change wroteIdx = fs.writeFile("\{stem}.idx", writeIdx(idx, checksum));
+          Change wroteIdx = await fs.writeFile("\{stem}.idx", writeIdx(idx, checksum));
           if (!wroteIdx.ok()) {
             core.warn("gitpull: cannot write the index: \{wroteIdx.message}");
             return 1;
@@ -246,7 +246,7 @@ export i32 main(Sys sys) {
           Buf line = Buf.create();
           line.pushAll(encode(tip));
           line.pushAll("\t\t\{ref}\n".toBytes());
-          Change wroteFetchHead = fs.writeFile("\{gitDir}/FETCH_HEAD", line.bytes());
+          Change wroteFetchHead = await fs.writeFile("\{gitDir}/FETCH_HEAD", line.bytes());
           if (!wroteFetchHead.ok()) {
             core.warn("gitpull: cannot write FETCH_HEAD: \{wroteFetchHead.message}");
             return 1;

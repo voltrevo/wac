@@ -8,7 +8,7 @@ import { joinLines, splitLines } from "../lib/lines.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 tac(Core core, Cli cli, Fs fs, Args a) {
+export async i32 tac(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // **Each file reversed, in the order they were named** — not the concatenation reversed. `tac a b`
   // prints `a` backwards and then `b` backwards, which is what the real one does and is not what
@@ -29,7 +29,7 @@ export i32 tac(Core core, Cli cli, Fs fs, Args a) {
   u8[][] held = u8[][].filled(count, u8[]());
   bool[] got = bool[].filled(count, false);
   for (i32 f = 0; f < count; f++) {
-    Input in = readInput(core, cli, fs, a, f);
+    Input in = await readInput(core, cli, fs, a, f);
     // Reported, skipped, and the status at the end — GNU's rule for every operand-taking filter here.
     if (!in.ok) { status = 1; continue; }
     held[f] = in.bytes;

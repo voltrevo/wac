@@ -54,7 +54,7 @@ Mode parseMode(string spec) {
   return Mode(true, false, v);
 }
 
-export i32 chmod(Core core, Cli cli, Fs fs, Args a) {
+export async i32 chmod(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
   // GNU: "chmod: missing operand after 'MODE'". The mode alone is not an invocation.
@@ -76,7 +76,7 @@ export i32 chmod(Core core, Cli cli, Fs fs, Args a) {
   }
   i32 code = 0;
   for (i32 i = 1; i < a.rest.len(); i++) {
-    Change c = fs.chmod(a.rest[i], m.bits);
+    Change c = await fs.chmod(a.rest[i], m.bits);
     if (c.ok()) { continue; }
     core.warn("\{a.name}: changing permissions of '\{a.rest[i]}': \{reasonOf(c)}");
     code = 1;

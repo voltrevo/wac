@@ -31,7 +31,7 @@ export async i32 split(Core core, Cli cli, Fs fs, Args a) {
   }
   string prefix = a.rest.len() > 1 ? a.rest[1] : "x";
 
-  Input in = openStream(core, cli, fs, a, 0, -1);
+  Input in = await openStream(core, cli, fs, a, 0, -1);
   if (!in.ok) { return 1; }
 
   Lines s = Lines.create();
@@ -43,7 +43,7 @@ export async i32 split(Core core, Cli cli, Fs fs, Args a) {
   // `writeFile`. It is the same split `lib/input.wac` makes for reading and `lib/safe.wac` for the
   // atomic write, and without it `split` in a sealed session refused every piece for want of a grant it
   // should never have needed (wac-mono 0109's write side).
-  bool streaming = fs.isHostPath(prefix + suffix(0));
+  bool streaming = await fs.isHostPath(prefix + suffix(0));
   i32 piece = 0;
   i32 written = 0;
   bool open = false;
@@ -71,7 +71,7 @@ export async i32 split(Core core, Cli cli, Fs fs, Args a) {
     written++;
     if (written == per) {
       if (!open || streaming) {} else {
-        Change wrote = fs.writeFile(name, held.take());
+        Change wrote = await fs.writeFile(name, held.take());
         if (!wrote.ok()) { core.warn("\{a.name}: \{name}: \{reasonOf(wrote)}"); return 1; }
       }
       piece++;
@@ -80,7 +80,7 @@ export async i32 split(Core core, Cli cli, Fs fs, Args a) {
   }
   // The last piece, which is short: the loop above only closes one that filled up.
   if (open && !streaming) {
-    Change wrote = fs.writeFile(name, held.take());
+    Change wrote = await fs.writeFile(name, held.take());
     if (!wrote.ok()) { core.warn("\{a.name}: \{name}: \{reasonOf(wrote)}"); return 1; }
   }
   // Back to standard output, which closes the last piece — a file left open is a file that

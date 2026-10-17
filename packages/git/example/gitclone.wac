@@ -47,7 +47,7 @@ import { Answer, Remote, parseRemote, request, systemStore } from "../src/transp
 /** Forty hex characters for twenty bytes. */
 string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
@@ -86,12 +86,12 @@ export i32 main(Sys sys) {
 
   Fs fs = Fs.onHost(cli, 0);
   string gitDir = "\{dir}/.git";
-  Change made = fs.mkdir("\{gitDir}/objects/pack", true);
+  Change made = await fs.mkdir("\{gitDir}/objects/pack", true);
   if (!made.ok()) {
     core.warn("gitclone: cannot make \{gitDir}/objects/pack: \{made.message}");
     return 1;
   }
-  Change madeRefs = fs.mkdir("\{gitDir}/refs/heads", true);
+  Change madeRefs = await fs.mkdir("\{gitDir}/refs/heads", true);
   if (!madeRefs.ok()) {
     core.warn("gitclone: cannot make \{gitDir}/refs/heads: \{madeRefs.message}");
     return 1;
@@ -179,12 +179,12 @@ export i32 main(Sys sys) {
       return 1;
     }
     Built(idx): {
-      Change wrotePack = fs.writeFile("\{stem}.pack", pack);
+      Change wrotePack = await fs.writeFile("\{stem}.pack", pack);
       if (!wrotePack.ok()) {
         core.warn("gitclone: cannot write the pack: \{wrotePack.message}");
         return 1;
       }
-      Change wroteIdx = fs.writeFile("\{stem}.idx", writeIdx(idx, checksum));
+      Change wroteIdx = await fs.writeFile("\{stem}.idx", writeIdx(idx, checksum));
       if (!wroteIdx.ok()) {
         core.warn("gitclone: cannot write the index: \{wroteIdx.message}");
         return 1;
@@ -194,12 +194,12 @@ export i32 main(Sys sys) {
   }
 
   // The refs. `HEAD` is symbolic, as it is in every repository git makes.
-  Change wroteRef = fs.writeFile("\{gitDir}/\{branch}", "\{hexOf(head)}\n".toBytes());
+  Change wroteRef = await fs.writeFile("\{gitDir}/\{branch}", "\{hexOf(head)}\n".toBytes());
   if (!wroteRef.ok()) {
     core.warn("gitclone: cannot write \{branch}: \{wroteRef.message}");
     return 1;
   }
-  Change wroteHead = fs.writeFile("\{gitDir}/HEAD", "ref: \{branch}\n".toBytes());
+  Change wroteHead = await fs.writeFile("\{gitDir}/HEAD", "ref: \{branch}\n".toBytes());
   if (!wroteHead.ok()) {
     core.warn("gitclone: cannot write HEAD: \{wroteHead.message}");
     return 1;
@@ -207,7 +207,7 @@ export i32 main(Sys sys) {
   if (cuts.len() > 0) {
     string lines = "";
     for (i32 i = 0; i < cuts.len(); i++) { lines = lines + "\{hexOf(cuts.get(i))}\n"; }
-    Change wroteShallow = fs.writeFile("\{gitDir}/shallow", lines.toBytes());
+    Change wroteShallow = await fs.writeFile("\{gitDir}/shallow", lines.toBytes());
     if (!wroteShallow.ok()) {
       core.warn("gitclone: cannot write shallow: \{wroteShallow.message}");
       return 1;
@@ -215,18 +215,18 @@ export i32 main(Sys sys) {
   }
 
   // The working tree, which is step 4's code doing step 4's job on somebody else's repository.
-  match (openRepo(fs, gitDir, dir)) {
+  match ((await openRepo(fs, gitDir, dir))) {
     NoRepo(why): {
       core.warn("gitclone: the repository we just wrote does not open: \{why}");
       return 1;
     }
     Opened(repo): {
-      u8[]? tree = treeOfCommit(repo, head);
+      u8[]? tree = await treeOfCommit(repo, head);
       if (tree is null) {
         core.warn("gitclone: HEAD is not a commit, or names no tree");
         return 1;
       }
-      match (checkout(repo, tree!, dir)) {
+      match ((await checkout(repo, tree!, dir))) {
         Stopped(why): {
           core.warn("gitclone: \{why}");
           return 1;

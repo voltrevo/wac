@@ -88,20 +88,20 @@ export async string test_a_path_into_bin_runs_the_program_however_it_is_spelled(
  * nothing. Asked of `packages/fs` directly rather than by building a second shell: the rule is the
  * filesystem's, and a shell with no applets is not a thing this package builds.
  */
-export string test_a_build_with_no_programs_has_no_bin_at_all(Core core, Cli cli) {
+export async string test_a_build_with_no_programs_has_no_bin_at_all(Core core, Cli cli) {
   T t = T.create();
   Fs empty = Fs.inMemory(0);
   // `randomBytes` is what `/dev` would need; `mountBin` takes it because the two are mounted by
   // one call in a session. Passing the real one keeps this about the program list and nothing else.
   empty.mountBin(Vec.create(), core.randomBytes);
-  t.eqStr(joined(empty.readDir("/")), "", "an empty /bin was mounted anyway");
+  t.eqStr(joined((await empty.readDir("/"))), "", "an empty /bin was mounted anyway");
 
   Fs one = Fs.inMemory(0);
   Vec<string> names = Vec.create();
   names.push("wc");
   one.mountBin(names, core.randomBytes);
-  t.eqStr(joined(one.readDir("/")), "bin", "a build with a program has a /bin");
-  t.eqStr(joined(one.readDir("/bin")), "wc", "/bin lists its one program");
+  t.eqStr(joined((await one.readDir("/"))), "bin", "a build with a program has a /bin");
+  t.eqStr(joined((await one.readDir("/bin"))), "wc", "/bin lists its one program");
   return t.report();
 }
 

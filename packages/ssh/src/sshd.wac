@@ -176,7 +176,7 @@ export async i32 main(Sys sys) {
  * disagree about which filesystem a client is talking to. That is the kind of difference nobody notices
  * until a `ssh host 'ls'` and an interactive `ls` answer differently.
  */
-Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal) {
+async Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal) {
   Shell sh = o.image == "" ? Shell.capturing(core, cli) : Shell.onFs(core, cli, fs);
   // A session's shell is a process in the session's own table, which is what `$$` answers and what
   // `kill` reaches. `shellMain` does this for every other entry point; a session does not go through
@@ -229,7 +229,7 @@ Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal) {
   // `/etc/passwd` the key was found through, so there is one table rather than a second idea of it.
   if (fs.user != "" && fs.user != "root") {
     sh.setVar("USER", fs.user);
-    FileResult passwd = fs.readFile("/etc/passwd");
+    FileResult passwd = await fs.readFile("/etc/passwd");
     if (passwd.ok) {
       User u = userNamed(parsePasswd(passwd.bytes), fs.user);
       if (u.home != "") {
@@ -269,7 +269,7 @@ async bool serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs
   // a login worked or failed depending on *who happened to connect before*: grace with a 0700 `.ssh`
   // could not log in after ada, and could before her.
   fs.setUser("root");
-  string who = authenticate(conn, cli, core, sessionId, o, fs);
+  string who = await authenticate(conn, cli, core, sessionId, o, fs);
   if (who == "") {
     if (conn.failed()) { core.warn("sshd: \{conn.error}"); }
     conn.sendPacket(disconnect(byApplication(), "no supported authentication methods".toBytes()));
@@ -393,7 +393,7 @@ u8[] hostPublicPoint(PrivateKey host) {
  * A name rather than a boolean because a session belongs to somebody — design/0001 step 4 — and the
  * server cannot ask again later: the key that proved it is gone by then.
  */
-string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options o, Fs fs) {
+async string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options o, Fs fs) {
   u8[] request = conn.readPacket();
   if (conn.failed()) { return ""; }
   if (request[0] != 5) { conn.fail("expected a service request"); return ""; }
@@ -407,7 +407,7 @@ string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options o, Fs
   // so two keys land in two homes without the server being told anything on its command line. Without an
   // image there is no table, and the single `-a` file is the whole policy — as it was.
   Vec<User> users = Vec.create();
-  FileResult passwd = fs.readFile("/etc/passwd");
+  FileResult passwd = await fs.readFile("/etc/passwd");
   if (passwd.ok) { users = parsePasswd(passwd.bytes); }
   FileResult keys = cli.readFile(o.authorizedKeys).wait();
   u8[] allowed = keys.ok ? keys.bytes : u8[]();
@@ -440,7 +440,7 @@ string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options o, Fs
     for (i32 u = 0; u < users.len() && !named; u++) {
       string path = authorizedKeysOf(users.get(u));
       if (path == "") { continue; }
-      FileResult theirs = fs.readFile(path);
+      FileResult theirs = await fs.readFile(path);
       if (!theirs.ok) { continue; }
       match (lookUp(theirs.bytes, "ssh-ed25519".toBytes(), a.publicBlob)) {
         Ok: { named = true; who = users.get(u).name; }
@@ -777,7 +777,7 @@ export struct Keystrokes {
 
 async Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs, bool pty,
                           Terminal terminal) {
-  Shell sh = sessionShell(core, cli, o, fs, terminal);
+  Shell sh = await sessionShell(core, cli, o, fs, terminal);
   Buf pending = Buf.create();
   Line tty = Line.create();
   // **The seam, installed only where there is a terminal.** Without a pty the client sends whole
@@ -946,7 +946,7 @@ struct Result {
  * size, which is the capability world working as intended rather than a gap.
  */
 async Result run(Cli cli, Core core, u8[] command, Options o, Fs fs, Terminal terminal) {
-  Shell sh = sessionShell(core, cli, o, fs, terminal);
+  Shell sh = await sessionShell(core, cli, o, fs, terminal);
   i32 status = await runScript(sh, string.fromBytes(command));
   return Result(sh.outBuf.take(), sh.errOut.take(), status);
 }

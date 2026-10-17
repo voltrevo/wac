@@ -15,19 +15,19 @@ import { refuseFlags } from "../lib/flags.wac";
 import { cmpBytes, mergeSortWith } from "../lib/lines.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 ls(Core core, Cli cli, Fs fs, Args a) {
+export async i32 ls(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.flags != "") {
     core.warn("\{a.name}: -\{a.flags}: not implemented — this ls takes no options");
     return 2;
   }
   string path = a.rest.len() < 1 ? "." : a.rest[0];
-  string[]? names = fs.readDir(path);
+  string[]? names = await fs.readDir(path);
   if (names is null) {
     // Not a directory, not there, or not permitted. The comment here used to say the application could not
     // tell "by design" — it can now: `Stat` carries a fault, so a path this host cannot name and a path
     // with nothing at it are different answers rather than the same `exists = false`. wac-mono 0065.
-    Stat st = fs.stat(path);
+    Stat st = await fs.stat(path);
     // **A directory that is there and could not be listed is a failure, not a name.** This said
     // `exists` and printed the path, which is right for a *file* — `ls f` prints `f` — and was wrong
     // for a directory whose listing was refused: `chmod 000 d; ls d` printed `d` and exited 0, where

@@ -27,7 +27,7 @@ import { Update, absentName, advertisedTargets, noRefsYet, oldFor, updateRequest
 import { Reachable, RepoAt, head, openRepo, reachableExcluding, readObject } from "../src/repo.wac";
 import { Got, writePack } from "../src/pack.wac";
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
@@ -40,7 +40,7 @@ export i32 main(Sys sys) {
   string ref = string.fromBytes(cli.arg(2).wait());
   Fs fs = Fs.onHost(cli, 0);
 
-  FileResult adv = fs.readFile(advPath);
+  FileResult adv = await fs.readFile(advPath);
   if (!adv.ok) {
     core.warn("gitpush: cannot read \{advPath}");
     return 1;
@@ -51,13 +51,13 @@ export i32 main(Sys sys) {
   // only thing standing between a stale client and a discarded commit.
   u8[] old = oldFor(adv.bytes, ref);
 
-  match (openRepo(fs, "\{root}/.git", root)) {
+  match ((await openRepo(fs, "\{root}/.git", root))) {
     NoRepo(why): {
       core.warn("gitpush: \{why}");
       return 1;
     }
     Opened(repo): {
-      u8[]? tip = head(repo);
+      u8[]? tip = await head(repo);
       if (tip is null) {
         core.warn("gitpush: HEAD does not resolve to a commit");
         return 1;
@@ -65,7 +65,7 @@ export i32 main(Sys sys) {
       // **What the far end already has, left out.** Everything reachable from an advertised ref is there by
       // definition, so the pack carries the difference — which for a fast-forward onto a long history is the
       // difference between a few objects and all of them.
-      Vec<Reachable> objects = reachableExcluding(repo, tip!, advertisedTargets(adv.bytes), 64);
+      Vec<Reachable> objects = await reachableExcluding(repo, tip!, advertisedTargets(adv.bytes), 64);
       if (objects.len() == 0) {
         core.warn("gitpush: nothing reachable from HEAD, or an object could not be read");
         return 1;
@@ -75,7 +75,7 @@ export i32 main(Sys sys) {
       Vec<u8[]> bodies = Vec.create();
       for (i32 i = 0; i < objects.len(); i++) {
         kinds[i] = objects.get(i).kind;
-        match (readObject(repo, objects.get(i).name)) {
+        match ((await readObject(repo, objects.get(i).name))) {
           Absent(why): {
             core.warn("gitpush: \{why}");
             return 1;

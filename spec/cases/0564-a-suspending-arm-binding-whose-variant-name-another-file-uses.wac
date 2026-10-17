@@ -1,0 +1,33 @@
+// expect: f() = 5
+// spec: §wac-async-decl-h3vq81m
+// why: a binding read after a suspension is typed `typeof(match (s) { V(x): x, … })`, and when `s` was a hoisted local the copy narrowed it through a fresh local declared before a statement — inside a type there is none, so the subject had no type, the arm's variant was looked up by name in the file, and with two files exporting an `Opened` the module was declined
+// ---- pack.wac ----
+export enum Opened {
+  Ready(i32 n),
+  Refused(string why)
+}
+export Opened openPack(i32 n) { return n > 0 ? Opened.Ready(n) : Opened.Refused("no"); }
+// ---- repo.wac ----
+export struct Repo { i32 n; }
+export enum RepoAt {
+  Opened(Repo repo),
+  NoRepo(string why)
+}
+export async RepoAt openRepo(i32 n) { return RepoAt.Opened(Repo(n)); }
+export async i32 use(Repo r) { return r.n; }
+// ---- main.wac ----
+import { RepoAt, openRepo, use } from "./repo.wac";
+import { openPack } from "./pack.wac";
+async i32 g() {
+  match (openPack(1)) { Ready(n): { } Refused(w): { return 9; } }
+  RepoAt r = await openRepo(5);
+  match (r) {
+    NoRepo(why): { return 0; }
+    Opened(repo): {
+      i32 k = await use(repo);
+      return k;
+    }
+  }
+  return 0;
+}
+export i32 f() { return g().wait()!; }

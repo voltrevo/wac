@@ -32,16 +32,16 @@ import { RepoAt, openRepo, statusOf } from "../src/repo.wac";
  * unreadable file all mean the same thing to the caller — no rules from this source — but they are not the
  * same event, so the unreadable one is worth a word on stderr rather than silence.
  */
-u8[] excludesFileOf(Core core, Cli cli, Fs fs, string gitDir) {
+async u8[] excludesFileOf(Core core, Cli cli, Fs fs, string gitDir) {
   // **The whole chain, not just `.git/config`.** A global ignore file is a preference about how one
   // person works rather than a fact about one repository, so it is nearly always set in `~/.gitconfig` —
   // reading only the local file would find it in the one place it is least likely to be.
   //
   // Lowercased, because that is how the parser stores every key — `excludesFile` in the file is
   // `core.excludesfile` here, and asking with the file's spelling would find nothing.
-  string path = expandTilde(cli, configOf(configChain(cli, fs, gitDir), "core.excludesfile"));
+  string path = expandTilde(cli, configOf((await configChain(cli, fs, gitDir)), "core.excludesfile"));
   if (path == "") { return u8[](); }
-  FileResult f = fs.readFile(path);
+  FileResult f = await fs.readFile(path);
   if (!f.ok) {
     core.warn("gitst: core.excludesFile names \{path}, which could not be read");
     return u8[]();
@@ -49,7 +49,7 @@ u8[] excludesFileOf(Core core, Cli cli, Fs fs, string gitDir) {
   return f.bytes;
 }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
@@ -59,13 +59,13 @@ export i32 main(Sys sys) {
   }
   string root = string.fromBytes(cli.arg(0).wait());
   Fs fs = Fs.onHost(cli, 0);
-  match (openRepo(fs, "\{root}/.git", root)) {
+  match ((await openRepo(fs, "\{root}/.git", root))) {
     NoRepo(why): {
       core.warn("gitst: \{why}");
       return 1;
     }
     Opened(repo): {
-      Vec<string> lines = statusOf(repo, excludesFileOf(core, cli, fs, "\{root}/.git"));
+      Vec<string> lines = (await statusOf(repo, (await excludesFileOf(core, cli, fs, "\{root}/.git"))));
       for (string line in lines) { core.log(line); }
       return 0;
     }

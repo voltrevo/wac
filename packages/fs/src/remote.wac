@@ -32,7 +32,7 @@
 //
 // **It is not concurrent.** A request occupies the child until its parent answers, so a child that
 // asks while its parent is not serving is parked, and a parent serving one child is not serving
-// another. `packages/sh` serves with `waitAny` for that reason, alongside the child's output.
+// another. `packages/sh` serves with `Ticket.first` for that reason, alongside the child's output.
 //
 // ## The wire
 //
@@ -46,7 +46,7 @@
 // every format this package writes.
 
 import { Buf } from "core";
-import { Read } from "core";
+import { Read, Ticket, TicketBase } from "core";
 import { Change, Cli, FAULT_OTHER, FileResult, Pending, Stat }
   from "std";
 import { Reader, putI64, putString } from "./wire.wac";
@@ -136,32 +136,35 @@ export struct Chan {
    * The read that is always outstanding on this handle.
    *
    * **One, and owned here**, because two reads on one handle is a bug that only appears under load:
-   * a shell serving a child *and* watching it with `waitAny` needs a ticket to wait on, and if it
+   * a shell serving a child *and* watching it with `Ticket.first` needs a ticket to wait on, and if it
    * issued that ticket itself there would be a second `recv` in flight whenever the channel read a
    * frame in more than one piece. So the channel holds the ticket and lends its id — `armed` is
    * what says whether the one in `pending` has been collected yet.
    *
-   * Armed from construction, so a caller can put `pending.id` into a `waitAny` before anything has
+   * Armed from construction, so a caller can put the ticket into a `Ticket.first` before anything has
    * been asked. That costs one call slot per channel, which is what a shell serving its children
    * spends and is bounded by how many children it has.
    */
-  Pending<Read> pending;
+  Ticket<Read> pending;
   bool armed;
 
   Chan of(Cli cli, i32 handle) {
-    return Chan(cli, handle, Buf.create(), 0, false, cli.recv(handle), true);
+    return Chan(cli, handle, Buf.create(), 0, false, cli.recv(handle).ticket(), true);
   }
 
-  /** The ticket a `waitAny` should watch to know this channel has something to say. */
-  i32 waitId(this) {
+  /**
+   * The read a caller should watch to know this channel has something to say — one ticket among
+   * several in a `Ticket.first`, beside a child's output.
+   */
+  TicketBase waiting(this) {
     this.rearm();
-    return this.pending.id;
+    return this.pending;
   }
 
   /** Put a read back in flight if the last one has been collected. */
   void rearm(this) {
     if (!this.armed && !this.broken) {
-      this.pending = this.cli.recv(this.handle);
+      this.pending = this.cli.recv(this.handle).ticket();
       this.armed = true;
     }
   }
@@ -174,21 +177,21 @@ export struct Chan {
  * has gone — every decoder below checks `bad` first and answers with a fault, so a broken channel
  * becomes a failed operation rather than a trap or a hang.
  */
-Reader ask(Chan c, Buf request) {
+async Reader ask(Chan c, Buf request) {
   if (c.broken) { return Reader(u8[](), 0, 0, true, "the filesystem channel is closed"); }
   u8[] body = request.bytes();
   Buf framed = Buf.create();
   framed.pushU32(body.len() as@ u32);
   framed.pushAll(body);
-  if (!c.cli.send(c.handle, framed.bytes()).wait()) {
+  if (!(await c.cli.send(c.handle, framed.bytes()).ticket())) {
     c.broken = true;
     return Reader(u8[](), 0, 0, true, "the filesystem channel would not take the request");
   }
-  return answer(c);
+  return await answer(c);
 }
 
 /** One whole frame from the channel, reading as many chunks as it takes. */
-export Reader answer(Chan c) {
+export async Reader answer(Chan c) {
   while (true) {
     // A frame is knowable as soon as its length and its body are both here. Checked before every
     // read as well as after, since the previous answer may have brought this one with it.
@@ -209,9 +212,9 @@ export Reader answer(Chan c) {
     }
     c.rearm();
     // Collected, so the next turn of this loop arms a fresh one. A read is in flight exactly when
-    // `armed` says it is, which is what lets a `waitAny` elsewhere hold this channel's ticket.
+    // `armed` says it is, which is what lets a `Ticket.first` elsewhere hold this channel's ticket.
     c.armed = false;
-    match (c.pending.wait()) {
+    match (await c.pending) {
       Data(bytes): { c.held.pushAll(bytes); }
       // The far end has gone. Not an error in itself — a parent that has finished with a child
       // closes the channel — but every question still outstanding is now unanswerable.
@@ -274,104 +277,104 @@ export Buf request(i32 op) {
   return b;
 }
 
-export FileResult remoteReadFile(Chan c, string path) {
+export async FileResult remoteReadFile(Chan c, string path) {
   Buf b = request(ASK_READ_FILE());
   putString(b, path);
-  return decodeFileResult(ask(c, b));
+  return decodeFileResult((await ask(c, b)));
 }
 
-export FileResult remoteReadSome(Chan c, string path, i32 n) {
+export async FileResult remoteReadSome(Chan c, string path, i32 n) {
   Buf b = request(ASK_READ_SOME());
   putString(b, path);
   b.pushU32(n as@ u32);
-  return decodeFileResult(ask(c, b));
+  return decodeFileResult((await ask(c, b)));
 }
 
 /** What the name is, rather than what it leads to — see `Fs.linkStat`. */
-export Stat remoteLinkStat(Chan c, string path) {
+export async Stat remoteLinkStat(Chan c, string path) {
   Buf b = request(ASK_LINK_STAT());
   putString(b, path);
-  return decodeStat(ask(c, b));
+  return decodeStat((await ask(c, b)));
 }
 
-export Stat remoteStat(Chan c, string path) {
+export async Stat remoteStat(Chan c, string path) {
   Buf b = request(ASK_STAT());
   putString(b, path);
-  return decodeStat(ask(c, b));
+  return decodeStat((await ask(c, b)));
 }
 
-export string[]? remoteReadDir(Chan c, string path) {
+export async string[]? remoteReadDir(Chan c, string path) {
   Buf b = request(ASK_READ_DIR());
   putString(b, path);
-  return decodeNames(ask(c, b));
+  return decodeNames((await ask(c, b)));
 }
 
-export Change remoteWriteFile(Chan c, string path, u8[] data) {
+export async Change remoteWriteFile(Chan c, string path, u8[] data) {
   Buf b = request(ASK_WRITE_FILE());
   putString(b, path);
   b.pushU32(data.len() as@ u32);
   b.pushAll(data);
-  return decodeChange(ask(c, b));
+  return decodeChange((await ask(c, b)));
 }
 
-export Change remoteMkdir(Chan c, string path, bool parents) {
+export async Change remoteMkdir(Chan c, string path, bool parents) {
   Buf b = request(ASK_MKDIR());
   putString(b, path);
   b.push(parents ? 1 : 0);
-  return decodeChange(ask(c, b));
+  return decodeChange((await ask(c, b)));
 }
 
-export Change remoteRemove(Chan c, string path, bool recursive) {
+export async Change remoteRemove(Chan c, string path, bool recursive) {
   Buf b = request(ASK_REMOVE());
   putString(b, path);
   b.push(recursive ? 1 : 0);
-  return decodeChange(ask(c, b));
+  return decodeChange((await ask(c, b)));
 }
 
-export Change remoteSetExecutable(Chan c, string path, bool on) {
+export async Change remoteSetExecutable(Chan c, string path, bool on) {
   Buf b = request(ASK_SET_EXECUTABLE());
   putString(b, path);
   b.push(on ? 1 : 0);
-  return decodeChange(ask(c, b));
+  return decodeChange((await ask(c, b)));
 }
 
-export Change remoteChmod(Chan c, string path, i32 mode) {
+export async Change remoteChmod(Chan c, string path, i32 mode) {
   Buf b = request(ASK_CHMOD());
   putString(b, path);
   b.pushU32(mode as@ u32);
-  return decodeChange(ask(c, b));
+  return decodeChange((await ask(c, b)));
 }
 
-export Change remoteChown(Chan c, string path, string owner) {
+export async Change remoteChown(Chan c, string path, string owner) {
   Buf b = request(ASK_CHOWN());
   putString(b, path);
   putString(b, owner);
-  return decodeChange(ask(c, b));
+  return decodeChange((await ask(c, b)));
 }
 
-export Change remoteRename(Chan c, string from, string to) {
+export async Change remoteRename(Chan c, string from, string to) {
   Buf b = request(ASK_RENAME());
   putString(b, from);
   putString(b, to);
-  return decodeChange(ask(c, b));
+  return decodeChange((await ask(c, b)));
 }
 
-export Change remoteOpenOut(Chan c, string path) {
+export async Change remoteOpenOut(Chan c, string path) {
   Buf b = request(ASK_OPEN_OUT());
   putString(b, path);
-  return decodeChange(ask(c, b));
+  return decodeChange((await ask(c, b)));
 }
 
-export bool remoteWriteOut(Chan c, u8[] bytes) {
+export async bool remoteWriteOut(Chan c, u8[] bytes) {
   Buf b = request(ASK_WRITE_OUT());
   b.pushU32(bytes.len() as@ u32);
   b.pushAll(bytes);
-  Reader r = ask(c, b);
+  Reader r = await ask(c, b);
   return !r.bad && r.byte() == 1;
 }
 
-export Change remoteCloseOut(Chan c) {
-  return decodeChange(ask(c, request(ASK_CLOSE_OUT())));
+export async Change remoteCloseOut(Chan c) {
+  return decodeChange((await ask(c, request(ASK_CLOSE_OUT()))));
 }
 
 /**
@@ -393,18 +396,18 @@ export Change remoteCloseOut(Chan c) {
  * The `Chan` is left usable, so the caller keeps the channel it just proved rather than paying for a
  * second one.
  */
-export string? parentUser(Chan c) {
-  Reader r = ask(c, request(ASK_USER()));
+export async string? parentUser(Chan c) {
+  Reader r = await ask(c, request(ASK_USER()));
   if (r.bad) { return null; }
   string who = r.string();
   if (r.bad) { return null; }
   return who;
 }
 
-export bool remoteIsHostPath(Chan c, string path) {
+export async bool remoteIsHostPath(Chan c, string path) {
   Buf b = request(ASK_IS_HOST_PATH());
   putString(b, path);
-  Reader r = ask(c, b);
+  Reader r = await ask(c, b);
   return !r.bad && r.byte() == 1;
 }
 

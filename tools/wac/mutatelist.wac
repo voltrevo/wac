@@ -45,7 +45,7 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
  * change hashing identically to prove equality is reachable at all, which is the assertion that stops
  * a count of zero being read as a comparison that never fires.
  */
-i32 report(Core core, Cli cli, string dir, string[] files, string[] names, i32 total,
+async i32 report(Core core, Cli cli, string dir, string[] files, string[] names, i32 total,
            GenStats stats) {
   Fs fs = Fs.onHost(cli, 0);
   i32 equivalent = 0;
@@ -60,7 +60,7 @@ i32 report(Core core, Cli cli, string dir, string[] files, string[] names, i32 t
 
   i32 emitted = 0;
   for (i32 fi = 0; fi < files.len(); fi++) {
-    Sources src = gather(fs, cli, files[fi], false);
+    Sources src = await gather(fs, cli, files[fi], false);
     if (src.why != "") {
       core.warn("  cannot gather " + files[fi] + ": " + src.why);
       continue;
@@ -109,7 +109,7 @@ i32 report(Core core, Cli cli, string dir, string[] files, string[] names, i32 t
  * three mutants where you expected three hundred is pointing at the wrong tree, and that is visible
  * without reading a line of the list.
  */
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 argc = cli.argCount().wait();
@@ -159,7 +159,7 @@ export i32 main(Sys sys) {
   string[] names = string[].filled(total, "");
   for (i32 i = 0; i < total; i++) { names[i] = chosen[i].name; }
 
-  if (f2.triage) { return report(core, cli, dir, files, names, total, stats); }
+  if (f2.triage) { return await report(core, cli, dir, files, names, total, stats); }
 
   core.log(itoa(total) + " mutant(s) over " + itoa(files.len()) + " file(s) under " + dir);
   // **What sampling left out, said rather than hidden.** The literal operator emits three per repeated

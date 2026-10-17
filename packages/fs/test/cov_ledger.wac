@@ -230,7 +230,7 @@ Rule[] rules() {
          "driven and driven by nothing. It has one now, canaried by making every rename " +
          "report success."),
     Rule("packages/fs/src/remote.wac", "struct Chan", "struct", false,
-         "`Chan`'s own methods — `of`, `waitId`, `rearm`, `compact`. Each is about a live " +
+         "`Chan`'s own methods — `of`, `waiting`, `rearm`, `compact`. Each is about a live " +
          "handle: the id a `waitAny` waits on, the outstanding read that has to be re-armed, " +
          "the backlog that has to be compacted. There is no handle without a `Cli` and no " +
          "answer without a peer, so these move with the channel itself and are exercised " +

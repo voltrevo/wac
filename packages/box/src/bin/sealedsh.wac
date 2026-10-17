@@ -46,7 +46,7 @@ export async i32 main(Sys sys) {
   if (asApplet != UNKNOWN) { return asApplet; }
 
   Fs fs = Fs.inMemory(0);
-  fs.mkdir("/tmp", true);
+  await fs.mkdir("/tmp", true);
   // `/dev` and `/proc`, generated on read: `/dev/null`, `/dev/zero`, `/dev/urandom` and
   // `/proc/self/cmdline`. A sealed session has a real CSPRNG this way without a grant for one.
   Vec<string> argv = Vec.create();

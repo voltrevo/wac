@@ -59,7 +59,7 @@ export async i32 wc(Core core, Cli cli, Fs fs, Args a) {
   for (i32 f = 0; f < files; f++) {
     string path = operandAt(a, f);
     if (path == "") { fromStdin = true; continue; }
-    Stat st = fs.stat(path);
+    Stat st = await fs.stat(path);
     // **Something with no size to take** — a directory, a device — puts the whole run on the fallback
     // width, exactly as standard input does: `wc -l f somedir` pads to seven where `wc -l f g` pads to
     // the digits of their total. Measured, not reasoned about; a missing operand is *not* one of these,
@@ -81,7 +81,7 @@ export async i32 wc(Core core, Cli cli, Fs fs, Args a) {
   // this it stopped the run, so `wc -l a missing b` printed nothing at all, not even `a`'s count.
   i32 status = 0;
   for (i32 f = 0; f < count; f++) {
-    Input in = openStream(core, cli, fs, a, f, -1);
+    Input in = await openStream(core, cli, fs, a, f, -1);
     if (!in.ok) { status = 1; continue; }
     Feed fed = in.fed;
     Counts one = Counts(0, 0, 0);

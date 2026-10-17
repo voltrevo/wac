@@ -7,12 +7,12 @@ import { refuseFlags } from "../lib/flags.wac";
 import { missingOperand } from "../lib/operands.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 rmdir(Core core, Cli cli, Fs fs, Args a) {
+export async i32 rmdir(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
   i32 code = 0;
   for (i32 i = 0; i < a.rest.len(); i++) {
-    Change c = fs.remove(a.rest[i], false);
+    Change c = await fs.remove(a.rest[i], false);
     if (c.ok()) { continue; }
     // Every category's words, not just this one's. The host's own words differ per platform —
     // "Directory not empty (os error 39)" under Deno, "The object can not be modified in this way." in

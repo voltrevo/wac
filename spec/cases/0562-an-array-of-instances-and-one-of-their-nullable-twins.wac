@@ -1,0 +1,12 @@
+// expect: f() = 3
+// spec: §wac-generic-instantiation-identity-6pnq4wj
+// why: every array a module holds gets `$bind$arr_` helpers named from its element, and the name dropped every character an identifier cannot hold — so `Vec<P>[]` and `Vec<P?>[]` were both `$bind$arr_Vec$P` and the engine refused the module for a duplicate export
+import { Vec } from "core";
+
+struct P { i32 x; }
+
+export i32 f() {
+  Vec<P>[] a = Vec<P>[].defaulted(1);
+  Vec<P?>[] b = Vec<P?>[].defaulted(2);
+  return a.len() + b.len();
+}

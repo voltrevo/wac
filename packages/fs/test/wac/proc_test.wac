@@ -151,8 +151,8 @@ Fs mounted() {
   return f;
 }
 
-string readIn(Fs f, string path) {
-  FileResult r = f.readFile(path);
+async string readIn(Fs f, string path) {
+  FileResult r = await f.readFile(path);
   return r.ok ? string.fromBytes(r.bytes) : "";
 }
 
@@ -176,7 +176,7 @@ string[] splitNul(string s) {
   return exact;
 }
 
-export string test_proc_cmdline_is_nul_separated_and_terminated(Core core, Cli cli) {
+export async string test_proc_cmdline_is_nul_separated_and_terminated(Core core, Cli cli) {
   T t = T.create();
   string theirs = host(cli, "/proc/self/cmdline");
   if (theirs == "") { return t.report(); }   // no Linux /proc, so no oracle
@@ -185,7 +185,7 @@ export string test_proc_cmdline_is_nul_separated_and_terminated(Core core, Cli c
   t.isTrue(endsWith(theirs, oneByte(0)), "the host terminates rather than separates");
 
   Fs f = mounted();
-  string ours = readIn(f, "/proc/1/cmdline");
+  string ours = await readIn(f, "/proc/1/cmdline");
   t.isTrue(endsWith(ours, oneByte(0)), "and so do we");
   string[] argv = splitNul(ours);
   t.eqI32(argv.len(), 3, "the argv comes back whole");
@@ -204,7 +204,7 @@ string oneByte(i32 c) {
   return string.fromBytes(one);
 }
 
-export string test_proc_comm_is_one_line_with_a_newline(Core core, Cli cli) {
+export async string test_proc_comm_is_one_line_with_a_newline(Core core, Cli cli) {
   T t = T.create();
   string theirs = host(cli, "/proc/self/comm");
   if (theirs == "") { return t.report(); }
@@ -212,11 +212,11 @@ export string test_proc_comm_is_one_line_with_a_newline(Core core, Cli cli) {
   t.isTrue(theirs.slice(0, theirs.len() - 1).indexOf("\n") < 0, "and is one line");
 
   Fs f = mounted();
-  t.eqStr(readIn(f, "/proc/1/comm"), "sh\n", "ours is the same shape");
+  t.eqStr(await readIn(f, "/proc/1/comm"), "sh\n", "ours is the same shape");
   return t.report();
 }
 
-export string test_proc_status_uses_the_hosts_shape_and_only_real_keys(Core core, Cli cli) {
+export async string test_proc_status_uses_the_hosts_shape_and_only_real_keys(Core core, Cli cli) {
   T t = T.create();
   string theirs = host(cli, "/proc/self/status");
   if (theirs == "") { return t.report(); }
@@ -228,7 +228,7 @@ export string test_proc_status_uses_the_hosts_shape_and_only_real_keys(Core core
   t.isTrue(firstLine(theirs).indexOf(":\t") >= 0, "the host writes Key:<tab>value");
 
   Fs f = mounted();
-  string ours = readIn(f, "/proc/1/status");
+  string ours = await readIn(f, "/proc/1/status");
   string[] ourKeys = keysOf(ours);
   t.eqI32(ourKeys.len(), 4, "we print four keys");
   if (ourKeys.len() == 4) {
@@ -267,11 +267,11 @@ string lineStartingWith(string s, string prefix) {
   return "";
 }
 
-export string test_proc_lists_a_pid_per_process_and_self() {
+export async string test_proc_lists_a_pid_per_process_and_self() {
   T t = T.create();
   Fs f = mounted();
   i32 pid = f.procs.start(1, words(["wc", "-l"]), 0);
-  string[]? listing = f.readDir("/proc");
+  string[]? listing = await f.readDir("/proc");
   t.isTrue(!(listing is null), "/proc lists");
   if (listing is null) { return t.report(); }
   t.eqI32(listing!.len(), 3, "one entry per process, plus self");
@@ -280,23 +280,23 @@ export string test_proc_lists_a_pid_per_process_and_self() {
     t.eqStr(listing![1], "\{pid}", "the one just started");
     t.eqStr(listing![2], "self", "and self");
   }
-  string[]? files = f.readDir("/proc/\{pid}");
+  string[]? files = await f.readDir("/proc/\{pid}");
   t.isTrue(!(files is null) && files!.len() == 3, "three files per pid");
 
   // Linux reports 0 for these and this deliberately does not — a size of zero on a file `cat` then
   // reads bytes from is the sort of detail that makes a reader distrust the rest.
-  FileResult body = f.readFile("/proc/\{pid}/cmdline");
+  FileResult body = await f.readFile("/proc/\{pid}/cmdline");
   t.isTrue(body.ok, "the cmdline reads");
-  t.eqI64(f.stat("/proc/\{pid}/cmdline").size, body.bytes.len() as i64,
+  t.eqI64((await f.stat("/proc/\{pid}/cmdline")).size, body.bytes.len() as i64,
           "and its size is the length of what it answers");
   t.eqStr(string.fromBytes(body.bytes), "wc\{oneByte(0)}-l\{oneByte(0)}", "the argv");
 
   // A pid that has gone is a missing file rather than an empty one.
   f.procs.exited(pid, 0);
   f.procs.reap(pid);
-  t.isFalse(f.readFile("/proc/\{pid}/status").ok, "a reaped pid has no status");
-  t.isFalse(f.stat("/proc/\{pid}").exists, "and no directory");
-  string[]? after = f.readDir("/proc");
+  t.isFalse((await f.readFile("/proc/\{pid}/status")).ok, "a reaped pid has no status");
+  t.isFalse((await f.stat("/proc/\{pid}")).exists, "and no directory");
+  string[]? after = await f.readDir("/proc");
   t.isTrue(!(after is null) && after!.len() == 2, "and is gone from the listing");
   return t.report();
 }

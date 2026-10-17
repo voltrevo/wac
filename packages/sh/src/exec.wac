@@ -16,7 +16,7 @@
 // nothing matches, which is bash's default; the last path component is the only one patterned, and the
 // README says so under what this does not do.
 
-import { Vec, Map, hashString, stringEq, Read, Ticket } from "core";
+import { Vec, Map, hashString, stringEq, Read, Ticket, TicketBase } from "core";
 import { Buf } from "core";
 import { Change, Child, Cli, Core, FAULT_NONE, FAULT_UNSUPPORTED, faultWords, FileResult,
   GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_IN, INHERIT_NONE, Pending, Stat, readReason, reasonOf }
@@ -78,37 +78,69 @@ struct Job {
 /**
  * Answer whatever any background job is asking, and no more.
  *
- * **Non-blocking, which is the whole of it.** `waitAny(ids, 0)` is "which of these is ready right
- * now", so a shell at a check point serves the questions that have already arrived and returns to
- * what it was doing. Blocking here would mean a shell that stops at its own prompt whenever a
+ * **Non-blocking, which is the whole of it.** Only a channel whose ticket has `settled` is served, so
+ * a shell at a check point answers the questions that have already arrived and returns to what it
+ * was doing. Blocking here would mean a shell that stops at its own prompt whenever a
  * background job is quiet.
  *
  * Called where the shell already asks whether it has been signalled, because those are exactly the
  * points at which it is between two things and can afford to look.
  */
-void serveJobs(Shell sh) {
+async void serveJobs(Shell sh) {
   while (true) {
-    i32 live = 0;
-    for (i32 i = 0; i < sh.jobs.len(); i++) {
-      if (!sh.jobs.get(i).done && !(sh.jobs.get(i).chan is null)) { live++; }
-    }
-    if (live == 0) { return; }
-    i32[] ids = i32[].filled(live, 0);
-    i32[] which = i32[].filled(live, 0);
-    i32 at = 0;
-    for (i32 i = 0; i < sh.jobs.len(); i++) {
+    i32 ready = -1;
+    for (i32 i = 0; i < sh.jobs.len() && ready < 0; i++) {
       Job j = sh.jobs.get(i);
-      if (!j.done && !(j.chan is null)) { ids[at] = j.chan!.waitId(); which[at] = i; at++; }
+      if (!j.done && !(j.chan is null) && j.chan!.waiting().settled()) { ready = i; }
     }
-    i32 ready = sh.core.waitAny(ids, 0);
     if (ready < 0) { return; }
-    Job j = sh.jobs.get(which[ready]);
+    Job j = sh.jobs.get(ready);
     i32 was = sh.fs.procs.current;
     sh.fs.procs.current = j.pid;
-    bool alive = serveOn(j.chan!, sh.fs);
+    bool alive = await serveOn(j.chan!, sh.fs);
     sh.fs.procs.current = was;
     if (!alive) { j.chan = null; }
   }
+}
+
+/**
+ * A timer for noticing a `^C` while a loop waits on streams: one running at a time, and cancelled when
+ * the loop is done, so a finished command leaves nothing behind for the scheduler.
+ */
+struct Tick {
+  Shell sh;
+  Pending<i64>? p;
+  Ticket<i64>? t;
+
+  /** The ticket to watch beside the streams, starting a timer when none is running. */
+  TicketBase now(this) {
+    Ticket<i64>? t = this.t;
+    if (t is null || t!.settled()) {
+      Pending<i64> p = this.sh.core.sleepMillis(INTERRUPT_POLL_MS());
+      this.p = p;
+      this.t = p.ticket();
+    }
+    return this.t!;
+  }
+
+  /** Done with it: a timer still running is withdrawn. */
+  void stop(this) {
+    Pending<i64>? p = this.p;
+    Ticket<i64>? t = this.t;
+    if (p is not null && t is not null && !t!.settled()) { this.sh.core.cancel(p!.id); }
+  }
+}
+
+/**
+ * Which of `parts` answers first — `Ticket.first` — or -1 when the interrupt timer did, so the caller
+ * looks for a `^C` and waits again. A shell nobody can interrupt has no timer to watch.
+ */
+async i32 firstOf(Shell sh, TicketBase[] parts, Tick tick) {
+  if (sh.askInterrupt is null) { return await Ticket.first(parts); }
+  TicketBase[] all = TicketBase[].filled(parts.len() + 1, tick.now());
+  for (i32 i = 0; i < parts.len(); i++) { all[i] = parts[i]; }
+  i32 k = await Ticket.first(all);
+  return k == parts.len() ? 0 - 1 : k;
 }
 
 export struct Shell {
@@ -434,11 +466,11 @@ export struct Shell {
    * The status is `128 + signal`, which is what every shell reports for a process a signal ended:
    * `kill -TERM $$` leaves 143 and `kill -INT $$` leaves 130, both compared against bash.
    */
-  bool takeSignal(this) {
+  async bool takeSignal(this) {
     // Background jobs get a turn wherever this shell asks whether it has been signalled: both are
     // "I am between two things", and a job with a question outstanding is not running until it is
     // answered. See `serveJobs`.
-    serveJobs(this);
+    await serveJobs(this);
     this.pollInterrupt();
     i32 sig = this.fs.procs.takeSignal(this.pid);
     if (sig == 0) { return false; }
@@ -733,12 +765,12 @@ export async i32 runScript(Shell sh, string src) {
   // choice is between losing a job's output and waiting for it, and waiting is the one that does not
   // silently discard something the user asked for. `reapJob` is idempotent, so a script that already
   // said `wait` pays nothing.
-  for (i32 i = 0; i < sh.jobs.len(); i++) { reapJob(sh, i); }
+  for (i32 i = 0; i < sh.jobs.len(); i++) { await reapJob(sh, i); }
   // **A signal from the *last* command still counts.** `unwinding` is asked before each command, so a
   // script whose final line is `kill -INT $$` set the row and then ran out of places to be asked:
   // it exited 0 where bash exits 130. One more ask, after the list, is where a shell finds out that
   // the thing it just did ended it.
-  sh.takeSignal();
+  await sh.takeSignal();
   // **The interrupt ends here, not at the session.** Cleared so the next line starts fresh, and the
   // status is the one every shell reports for a command a `^C` ended.
   if (sh.interrupted) {
@@ -801,8 +833,8 @@ bool caughtBreak(Shell sh) {
  * shell can be asked without the signal arriving mid-builtin. `while true; do :; done` is checked once
  * per turn, which is what `kill` from anywhere else in the script needs.
  */
-bool unwinding(Shell sh) {
-  sh.takeSignal();
+async bool unwinding(Shell sh) {
+  await sh.takeSignal();
   sh.pollInterrupt();
   return sh.exiting || sh.interrupted || sh.returning || sh.breaking > 0 || sh.continuing > 0;
 }
@@ -1059,14 +1091,14 @@ async void runBackground(Shell sh, AndOr list) {
     return;
   }
 
-  PathFault badBg = pathFault(sh, argv.get(0));
+  PathFault badBg = await pathFault(sh, argv.get(0));
   if (badBg.status != 0) {
     sh.err("sh: \{argv.get(0)}: \{badBg.why}\n".toBytes());
     sh.status = badBg.status;
     return;
   }
 
-  Child kid = spawnStage(sh, argv, false);
+  Child kid = await spawnStage(sh, argv, false);
   if (kid.unavailable()) {
     // Not the command's fault and not a refusal of `&` as an idea: this world has no `spawn`. A
     // sealed session is the case, and it is 0116 rather than anything here.
@@ -1156,7 +1188,7 @@ i32 jobIndex(Shell sh, string spec) {
  * alternative was to claim live output by draining at each check point, which would still not be live
  * and would reorder the shell's own writes around it.
  */
-void reapJob(Shell sh, i32 index) {
+async void reapJob(Shell sh, i32 index) {
   Job j = sh.jobs.get(index);
   if (j.done) { return; }
   // All three at once, for the reason `collectChild` gives: a job blocked on a question this shell
@@ -1166,36 +1198,35 @@ void reapJob(Shell sh, i32 index) {
   Buf err = Buf.create();
   bool reading = true;
   bool complaining = j.errHandle >= 0;
-  Pending<Read> outT = sh.cli.recv(j.handle);
-  Pending<Read> errT = complaining ? sh.cli.recv(j.errHandle) : outT;
+  Ticket<Read> outT = sh.cli.recv(j.handle).ticket();
+  Ticket<Read> errT = complaining ? sh.cli.recv(j.errHandle).ticket() : outT;
   bool asking = !(j.chan is null);
   while (reading || complaining || asking) {
     i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0) + (asking ? 1 : 0);
-    i32[] ids = i32[].filled(live, 0);
+    TicketBase[] parts = TicketBase[].filled(live, outT);
     i32[] what = i32[].filled(live, 0);
     i32 at = 0;
-    if (reading) { ids[at] = outT.id; what[at] = 0; at++; }
-    if (complaining) { ids[at] = errT.id; what[at] = 1; at++; }
-    if (asking) { ids[at] = j.chan!.waitId(); what[at] = 2; at++; }
-    i32 which = sh.core.waitAny(ids, -1);
-    if (which < 0) { break; }
+    if (reading) { parts[at] = outT; what[at] = 0; at++; }
+    if (complaining) { parts[at] = errT; what[at] = 1; at++; }
+    if (asking) { parts[at] = j.chan!.waiting(); what[at] = 2; at++; }
+    i32 which = await Ticket.first(parts);
     i32 kind = what[which];
     if (kind == 2) {
       // As the job, not as the shell — see the note in `streamPipeline`.
       i32 was = sh.fs.procs.current;
       sh.fs.procs.current = j.pid;
-      bool alive = serveOn(j.chan!, sh.fs);
+      bool alive = await serveOn(j.chan!, sh.fs);
       sh.fs.procs.current = was;
       if (!alive) { asking = false; }
     } else if (kind == 0) {
-      match (outT.wait()) {
-        Data(bytes): { out.pushAll(bytes); outT = sh.cli.recv(j.handle); }
+      match (outT.value()) {
+        Data(bytes): { out.pushAll(bytes); outT = sh.cli.recv(j.handle).ticket(); }
         End: { reading = false; }
         Failed(why): { reading = false; }
       }
     } else {
-      match (errT.wait()) {
-        Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(j.errHandle); }
+      match (errT.value()) {
+        Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(j.errHandle).ticket(); }
         End: { complaining = false; }
         Failed(why): { complaining = false; }
       }
@@ -1203,7 +1234,7 @@ void reapJob(Shell sh, i32 index) {
     if (!reading && !complaining) { asking = false; }
   }
   j.chan = null;
-  j.code = sh.cli.exitCode(j.handle).wait();
+  j.code = await sh.cli.exitCode(j.handle).ticket();
   sh.cli.closeSocket(j.handle);
   if (j.errHandle >= 0) { sh.cli.closeSocket(j.errHandle); }
   j.done = true;
@@ -1267,9 +1298,9 @@ Output jobsBuiltin(Shell sh, Vec<string> argv) {
  * when a job failed, while `wait $!` and `wait %1` answer the job's own status. A pid that is not a
  * child of this shell is 127 with a message, and so is a job number there is no job for.
  */
-Output waitBuiltin(Shell sh, Vec<string> argv) {
+async Output waitBuiltin(Shell sh, Vec<string> argv) {
   if (argv.len() == 1) {
-    for (i32 i = 0; i < sh.jobs.len(); i++) { reapJob(sh, i); }
+    for (i32 i = 0; i < sh.jobs.len(); i++) { await reapJob(sh, i); }
     dropFinished(sh);
     // Always 0. `false & wait; echo $?` is 0 in bash — the status of the *wait*, which succeeded.
     return Output.ok(u8[]());
@@ -1295,7 +1326,7 @@ Output waitBuiltin(Shell sh, Vec<string> argv) {
         return Output.fail("wait: pid \{spec} is not a child of this shell\n".toBytes(), 127);
       }
     }
-    reapJob(sh, index);
+    await reapJob(sh, index);
     status = sh.jobs.get(index).code;
     // Taken before it is forgotten: a waited-for job is gone, so a second `wait %1` is "no such job"
     // exactly as it is in bash.
@@ -1307,7 +1338,7 @@ Output waitBuiltin(Shell sh, Vec<string> argv) {
 /** A sequence of `&&`/`||` lists — a script, or the body of a compound command. */
 async void runList(Shell sh, Vec<AndOr> lists) {
   for (AndOr list in lists) {
-    if (unwinding(sh)) { return; }
+    if (await unwinding(sh)) { return; }
     await runAndOr(sh, list);
   }
 }
@@ -1315,7 +1346,7 @@ async void runList(Shell sh, Vec<AndOr> lists) {
 async void runAndOr(Shell sh, AndOr list) {
   if (list.background) { await runBackground(sh, list); return; }
   for (i32 i = 0; i < list.items.len(); i++) {
-    if (unwinding(sh)) { return; }
+    if (await unwinding(sh)) { return; }
     Item item = list.items.get(i);
     match (item.op) {
       First: {}
@@ -1466,7 +1497,7 @@ bool canStream(Shell sh, Pipeline pipeline) {
  * Run every stage at once, moving bytes between them as they arrive.
  *
  * The shape is `packages/box/src/applets/nc.wac`'s relay, widened: one `recv` in flight per open
- * stream, `waitAny` over all of them, and whichever answers is served and re-armed. Two streams per
+ * stream, `Ticket.first` over all of them, and whichever answers is served and re-armed. Two streams per
  * stage — its output and its error output are separate handles — so a complaint never lands in the
  * pipe. Standard error goes where the shell's own does, in the order it arrives.
  *
@@ -1514,7 +1545,7 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
     // reader — and when it does, the shell sends nothing, because the bytes are not the shell's to send.
     bool inheritIn = i == 0 && !sh.heldInput && sh.ownsStdin && !sh.triedStdin;
     if (i == 0) { inherited = inheritIn; }
-    Child kid = spawnStage(sh, argv, inheritIn);
+    Child kid = await spawnStage(sh, argv, inheritIn);
     if (kid.unavailable()) {
       // No `spawn` in this world. Nothing has been started — this is the first stage, since every
       // stage asks the same world — so the caller can run the pipeline sequentially instead. Reporting
@@ -1560,7 +1591,7 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
     // the sequential path wrote through `sh.fs`. They agreed only because the shells that reach this
     // route have the host as their filesystem anyway — see wac-mono 0116, which is what makes a
     // sealed session reach it.
-    Change opened = sh.fs.openOut(path);
+    Change opened = await sh.fs.openOut(path);
     if (!opened.ok()) {
       // `reasonOf`, so the words are the ones GNU uses for the category rather than the host's
       // sentence: "No such file or directory", not "No such file or directory (os error 2): open
@@ -1585,8 +1616,8 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
 
   // One read in flight per open stream. `alive` says which stages still have a handle worth reading;
   // a stage that is stopped or finished is dropped from the wait list rather than polled.
-  Vec<Pending<Read>> outT = Vec.create();
-  Vec<Pending<Read>> errT = Vec.create();
+  Vec<Ticket<Read>> outT = Vec.create();
+  Vec<Ticket<Read>> errT = Vec.create();
   bool[] outOpen = bool[].filled(n, true);
   bool[] errOpen = bool[].filled(n, true);
   // A stage stopped for want of a reader is *gone*: its handles are closed, so its exit code cannot
@@ -1600,17 +1631,18 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
   Vec<i32> fsPid = Vec.create();
   bool serving = serveFsFor(sh);
   for (i32 i = 0; i < n; i++) {
-    outT.push(sh.cli.recv(outH[i]));
-    errT.push(sh.cli.recv(errH[i]));
+    outT.push(sh.cli.recv(outH[i]).ticket());
+    errT.push(sh.cli.recv(errH[i]).ticket());
     if (serving && fsH[i] >= 0) { fsC.push(Chan.of(sh.cli, fsH[i])); fsPid.push(pids[i]); }
   }
   bool[] fsOpen = bool[].filled(fsC.len(), true);
   /** Whether this pipeline was ended by a signal or a `^C` rather than by its stages finishing. */
   bool ended = false;
+  Tick tick = Tick(sh, null, null);
 
   while (true) {
-    // The ids of every stream still open, and what each position in that list means. Rebuilt each
-    // time round because the set shrinks; `waitAny` takes ids and answers with a position.
+    // The read in flight on every stream still open, and what each position in that list means.
+    // Rebuilt each time round because the set shrinks; `Ticket.first` answers with a position.
     i32 live = 0;
     for (i32 i = 0; i < n; i++) {
       if (outOpen[i]) { live++; }
@@ -1623,34 +1655,27 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
     // dropping the channel then is what would leave it parked on its last question.
     for (i32 k = 0; k < fsC.len(); k++) { if (fsOpen[k]) { live++; } }
     if (live == 0) { break; }
-    i32[] ids = i32[].filled(live, 0);
+    TicketBase[] parts = TicketBase[].filled(live, outT.get(0));
     i32[] stage = i32[].filled(live, 0);
     bool[] isErr = bool[].filled(live, false);
     bool[] isFs = bool[].filled(live, false);
     i32 at = 0;
     for (i32 i = 0; i < n; i++) {
-      if (outOpen[i]) { ids[at] = outT.get(i).id; stage[at] = i; isErr[at] = false; at++; }
-      if (errOpen[i]) { ids[at] = errT.get(i).id; stage[at] = i; isErr[at] = true; at++; }
+      if (outOpen[i]) { parts[at] = outT.get(i); stage[at] = i; isErr[at] = false; at++; }
+      if (errOpen[i]) { parts[at] = errT.get(i); stage[at] = i; isErr[at] = true; at++; }
     }
     for (i32 k = 0; k < fsC.len(); k++) {
-      if (fsOpen[k]) { ids[at] = fsC.get(k).waitId(); stage[at] = k; isFs[at] = true; at++; }
+      if (fsOpen[k]) { parts[at] = fsC.get(k).waiting(); stage[at] = k; isFs[at] = true; at++; }
     }
 
-    // **Asked every turn, not only when the wait times out.** A stage that is producing output
-    // answers `waitAny` immediately every time, so a deadline would never fire and a `^C` sent while
-    // `yes` is running would never be looked at. The poll is cheap where a source is installed —
-    // `waitAny(ids, 0)` is answered in this worker's own memory — and free where one is not.
-    if (sh.takeSignal() || sh.takeInterrupt()) { ended = true; break; }
+    // **Asked every turn, not only when the timer fires.** A stage that is producing output answers
+    // first every time, so a timer alone would never be looked at while `yes` is running.
+    if ((await sh.takeSignal()) || sh.takeInterrupt()) { ended = true; break; }
 
-    // The deadline is what makes a *quiet* command interruptible: a stage that has produced nothing
-    // yet would otherwise park this loop for ever with a keystroke sitting in the socket.
-    i32 which = sh.core.waitAny(ids, sh.askInterrupt is null ? -1 : INTERRUPT_POLL_MS());
-    if (which < 0) {
-      // Nothing was ready. With no deadline that means there is nothing left to wait for; with one
-      // it usually means the time ran out, and the next turn asks again.
-      if (sh.askInterrupt is null) { break; }
-      continue;
-    }
+    // The timer is what makes a *quiet* command interruptible: a stage that has produced nothing yet
+    // would otherwise hold this loop for ever with a keystroke waiting to be read.
+    i32 which = await firstOf(sh, parts, tick);
+    if (which < 0) { continue; }
     i32 i = stage[which];
 
     if (isFs[which]) {
@@ -1664,44 +1689,44 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
       // and wrong the moment it runs several at once. bash prints `cat\0/proc/self/cmdline\0`.
       i32 asking = sh.fs.procs.current;
       sh.fs.procs.current = fsPid.get(i);
-      bool alive = serveOn(fsC.get(i), sh.fs);
+      bool alive = await serveOn(fsC.get(i), sh.fs);
       sh.fs.procs.current = asking;
       if (!alive) { fsOpen[i] = false; }
       continue;
     }
 
     if (isErr[which]) {
-      match (errT.get(i).wait()) {
-        Data(bytes): { sh.err(bytes); errT.set(i, sh.cli.recv(errH[i])); }
+      match (errT.get(i).value()) {
+        Data(bytes): { sh.err(bytes); errT.set(i, sh.cli.recv(errH[i]).ticket()); }
         End: { errOpen[i] = false; }
         Failed(why): { errOpen[i] = false; }
       }
       continue;
     }
 
-    match (outT.get(i).wait()) {
+    match (outT.get(i).value()) {
       Data(bytes): {
         if (i + 1 < n) {
           // Downstream may have finished while this arrived, and then there is nowhere for these
           // bytes to go: stop this stage rather than buffering for a reader that will never come.
-          if (!sh.cli.send(outH[i + 1], bytes).wait()) {
+          if (!(await sh.cli.send(outH[i + 1], bytes).ticket())) {
             stopStage(sh, outH, errH, outOpen, errOpen, stopped, i);
           } else {
-            outT.set(i, sh.cli.recv(outH[i]));
+            outT.set(i, sh.cli.recv(outH[i]).ticket());
           }
         } else if (sh.capture && !redirected) {
           sh.outBuf.pushAll(bytes);
-          outT.set(i, sh.cli.recv(outH[i]));
+          outT.set(i, sh.cli.recv(outH[i]).ticket());
         } else if (redirected) {
           // Into the file, through the *filesystem*, as it arrives — which is the whole point: a
           // long pipeline writes its first line before its last stage has seen the rest, and it
           // writes it where this session's `>` means rather than where the machine's does.
-          sh.fs.writeOut(bytes);
-          outT.set(i, sh.cli.recv(outH[i]));
+          await sh.fs.writeOut(bytes);
+          outT.set(i, sh.cli.recv(outH[i]).ticket());
         } else {
           // Straight out as it arrives, for the same reason.
           sh.cli.write(bytes);
-          outT.set(i, sh.cli.recv(outH[i]));
+          outT.set(i, sh.cli.recv(outH[i]).ticket());
         }
       }
       End: {
@@ -1718,6 +1743,8 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
     }
   }
 
+  tick.stop();
+
   // **A pipeline the user interrupted is stopped**, not waited for. Its stages are real children
   // with handles, so this is the same `closeSocket` that `kill %1` delivers with — and it has to
   // happen before the status collection below, which would otherwise block on `exitCode` for a
@@ -1725,7 +1752,7 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
   if (ended) {
     i32 why = sh.exiting ? sh.exitCode : 128 + SIGINT();
     stopAll(sh, outH, errH, n);
-    if (redirected) { sh.fs.closeOut(); }
+    if (redirected) { await sh.fs.closeOut(); }
     for (i32 i = 0; i < n; i++) {
       if (pids[i] >= 0) { sh.fs.procs.exited(pids[i], why); sh.fs.procs.reap(pids[i]); }
     }
@@ -1736,7 +1763,7 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
   // Closed before anything else, so the file is complete by the time the next command runs: a script
   // that writes `f` and then reads it must not see a half-written one. Opening `""` is how a program
   // says it has finished writing — see `openOutput` in `platform.wac`.
-  if (redirected) { sh.fs.closeOut(); }
+  if (redirected) { await sh.fs.closeOut(); }
 
   // The last stage's status is the pipeline's, as in bash. A stage that was *stopped* has no status
   // worth asking for — its handle is gone, and asking is an error rather than an answer — so only the
@@ -1749,7 +1776,7 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
       if (pids[i] >= 0) { sh.fs.procs.exited(pids[i], 0); sh.fs.procs.reap(pids[i]); }
       continue;
     }
-    i32 code = sh.cli.exitCode(outH[i]).wait();
+    i32 code = await sh.cli.exitCode(outH[i]).ticket();
     if (i == n - 1) { status = code < 0 ? 126 : code; }
     if (pids[i] >= 0) { sh.fs.procs.exited(pids[i], code < 0 ? 126 : code); sh.fs.procs.reap(pids[i]); }
     sh.cli.closeSocket(outH[i]);
@@ -1818,7 +1845,7 @@ i32 stageGrants(Shell sh) {
     : GRANT_NET | GRANT_ENV;
 }
 
-Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
+async Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
   bool serveFs = serveFsFor(sh);
   i32 grants = stageGrants(sh);
   // **`/bin/wc` is this build's `wc` here too.** `dispatched` rewrites it before looking at any bytes;
@@ -1833,9 +1860,9 @@ Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
     argv = renamed;
   }
   string name = argv.get(0);
-  string where = containsSlash(name) ? name : searchWacPath(sh, name);
+  string where = containsSlash(name) ? name : (await searchWacPath(sh, name));
   if (where != "") {
-    FileResult prog = sh.fs.readFile(sh.resolve(where));
+    FileResult prog = await sh.fs.readFile(sh.resolve(where));
     if (prog.ok) {
       // Without argv[0]: a spawned bundle is one program, and its `arg(0)` is its first argument.
       // `spawnSelf` below keeps argv[0], because that is what tells this bundle which applet to be.
@@ -1990,7 +2017,7 @@ async u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) 
         // in the redirection nobody looked at because the two are separate code.
         string given = await joinWord(sh, r.target);
         string path = sh.resolve(given);
-        FileResult f = sh.fs.readFile(path);
+        FileResult f = await sh.fs.readFile(path);
         if (!f.ok) {
           sh.err("sh: \{given}: \{readReason(f)}\n".toBytes());
           sh.status = 1;
@@ -2070,7 +2097,7 @@ async u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) 
       // a failure as 1, and this said 0. So the zero is only for the empty case.
       if (items.len() == 0) { sh.status = 0; }
       for (i32 i = 0; i < items.len() && !sh.exiting && !sh.returning; i++) {
-        sh.takeSignal();
+        await sh.takeSignal();
         if (sh.exiting) { break; }
         sh.setVar(cmd.varName, items.get(i));
         await runList(sh, cmd.clauses.get(0).body);
@@ -2141,15 +2168,15 @@ async u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) 
   Plan plan = await planRedirs(sh, cmd.redirs);
   if (!plan.ok) { return u8[](); }
   if (sameFile(plan.one, plan.two)) {
-    emitTo(sh, plan.one, complaints, produced);
+    await emitTo(sh, plan.one, complaints, produced);
     return u8[]();
   }
   Buf onward = Buf.create();
   if (sameAsStart(plan.one, 1)) { onward.pushAll(produced); }
   if (sameAsStart(plan.two, 1)) { onward.pushAll(complaints); }
   if (sameAsStart(plan.two, 2)) { sh.err(complaints); }
-  if (toFile(plan.two)) { emitTo(sh, plan.two, complaints, u8[]()); }
-  if (toFile(plan.one)) { emitTo(sh, plan.one, produced, u8[]()); }
+  if (toFile(plan.two)) { await emitTo(sh, plan.two, complaints, u8[]()); }
+  if (toFile(plan.one)) { await emitTo(sh, plan.one, produced, u8[]()); }
   if (sameAsStart(plan.one, 2)) { sh.err(produced); }
   u8[] going = onward.take();
   if (last) {
@@ -2197,7 +2224,7 @@ async void runLoop(Shell sh, Clause c, bool untilForm) {
   for (i32 i = 0; limit < 0 || i < limit; i++) {
     // Explicit, because the two conditions below are read directly rather than through `unwinding`:
     // this loop deliberately does *not* stop for a `break` or `continue` it has not caught yet.
-    sh.takeSignal();
+    await sh.takeSignal();
     // **An interrupt stops the loop itself**, and not only the command inside it. Without this the
     // body unwound, the condition unwound, and the `for` here spun to its bound in no time at all —
     // so `^C` on `while true; do :; done` reported "loop ran 100000 times and was stopped" with
@@ -2289,7 +2316,7 @@ async u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
         // in the redirection nobody looked at because the two are separate code.
         string given = await joinWord(sh, r.target);
         string path = sh.resolve(given);
-        FileResult f = sh.fs.readFile(path);
+        FileResult f = await sh.fs.readFile(path);
         if (!f.ok) {
           sh.err("sh: \{given}: \{readReason(f)}\n".toBytes());
           sh.status = 1;
@@ -2394,7 +2421,7 @@ async u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   u8[] err = result.err;
   // Two descriptors on one file share a position, so one write carries both — output first.
   if (sameFile(plan.one, plan.two)) {
-    emitTo(sh, plan.one, err, out);
+    await emitTo(sh, plan.one, err, out);
     return u8[]();
   }
   // **What goes to `Stream(1)` is what this command was going to write anyway** — down the pipe if
@@ -2405,8 +2432,8 @@ async u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   if (sameAsStart(plan.one, 1)) { onward.pushAll(out); }
   if (sameAsStart(plan.two, 1)) { onward.pushAll(err); }
   if (sameAsStart(plan.two, 2)) { sh.err(err); }
-  if (toFile(plan.two)) { emitTo(sh, plan.two, err, u8[]()); }
-  if (toFile(plan.one)) { emitTo(sh, plan.one, out, u8[]()); }
+  if (toFile(plan.two)) { await emitTo(sh, plan.two, err, u8[]()); }
+  if (toFile(plan.one)) { await emitTo(sh, plan.one, out, u8[]()); }
   // `1>&2`: what would have been output goes to the error stream, and nothing goes down the pipe.
   if (sameAsStart(plan.one, 2)) { sh.err(out); }
   u8[] going = onward.take();
@@ -2530,7 +2557,7 @@ bool toFile(Where w) {
  * the rule it can keep, which is that standard output precedes standard error. bash interleaves them as
  * they happen; a command that writes to both and cares about the order between them will differ.
  */
-bool emitTo(Shell sh, Where w, u8[] data, u8[] alsoHere) {
+async bool emitTo(Shell sh, Where w, u8[] data, u8[] alsoHere) {
   match (w) {
     Closed: { return true; }
     Stream(fd): {
@@ -2540,12 +2567,12 @@ bool emitTo(Shell sh, Where w, u8[] data, u8[] alsoHere) {
     File(given, path, append): {
       Buf both = Buf.create();
       if (append) {
-        FileResult existing = sh.fs.readFile(path);
+        FileResult existing = await sh.fs.readFile(path);
         if (existing.ok) { both.pushAll(existing.bytes); }
       }
       both.pushAll(alsoHere);
       both.pushAll(data);
-      Change wrote = sh.fs.writeFile(path, both.take());
+      Change wrote = await sh.fs.writeFile(path, both.take());
       if (!wrote.ok()) {
         // The category's words and the word the user wrote. This was `path` and `wrote.message`, so
         // `echo y > f/g` answered `sh: /abs/path/f/g: Not a directory (os error 20)` — an errno, and the
@@ -2592,7 +2619,7 @@ async void redirsAlone(Shell sh, Simple cmd) {
         // rule the `In` case below keeps for the same reason: a sealed session's host path is not the
         // caller's business.
         string given = await joinWord(sh, r.target);
-        FileResult f = sh.fs.readFile(sh.resolve(given));
+        FileResult f = await sh.fs.readFile(sh.resolve(given));
         if (!f.ok) {
           sh.err("sh: \{given}: \{readReason(f)}\n".toBytes());
           sh.status = 1;
@@ -2605,10 +2632,10 @@ async void redirsAlone(Shell sh, Simple cmd) {
   Plan p = await planRedirs(sh, cmd.redirs);
   if (!p.ok) { return; }
   u8[] none = u8[]();
-  emitTo(sh, p.one, none, none);
+  await emitTo(sh, p.one, none, none);
   // Both naming one file would otherwise truncate it twice, which is only invisible because there is
   // nothing to write — `sameFile` is the same guard the placing path uses.
-  if (!sameFile(p.one, p.two)) { emitTo(sh, p.two, none, none); }
+  if (!sameFile(p.one, p.two)) { await emitTo(sh, p.two, none, none); }
 }
 
 /** Whether two plan entries name the same file, which is when one write has to carry both streams. */
@@ -2915,7 +2942,7 @@ Output returnFrom(Shell sh, Vec<string> argv) {
   return Output(u8[](), u8[](), code, true, false);
 }
 
-Output cd(Shell sh, Vec<string> argv) {
+async Output cd(Shell sh, Vec<string> argv) {
   // An argument that is present but empty is not the same as no argument: bash's `cd ""` stays where
   // it is and succeeds, rather than going home.
   bool given = argv.len() > 1;
@@ -2940,7 +2967,7 @@ Output cd(Shell sh, Vec<string> argv) {
   // and the mode is only knowable on a memory backing, which would make `cd` answer differently
   // depending on where the filesystem is. Consistent and incomplete beats inconsistent, which is the
   // same argument `README.md` makes about `wc`'s widths.
-  Stat st = sh.fs.stat(target);
+  Stat st = await sh.fs.stat(target);
   // Two absences, and they were one: `cd f/g` where `f` is a file said "No such file or directory"
   // because that was the only sentence this line had. bash says `not a directory: f/g`, and the fault
   // now carries which it was, so `Stat.words` answers for both — including the ones `cd` could never
@@ -2976,7 +3003,7 @@ Output cd(Shell sh, Vec<string> argv) {
  * One function for both because they differ only in how the first operand is read, and GNU words their
  * failures the same way.
  */
-Output ownership(Shell sh, Vec<string> argv) {
+async Output ownership(Shell sh, Vec<string> argv) {
   string name = argv.get(0);
   if (argv.len() < 3) {
     return Output.fail("\{name}: missing operand\nTry '\{name} --help' for more information.\n".toBytes(), 1);
@@ -2991,8 +3018,8 @@ Output ownership(Shell sh, Vec<string> argv) {
   i32 status = 0;
   for (i32 i = 2; i < argv.len(); i++) {
     string given = argv.get(i);
-    Change done = name == "chmod" ? sh.fs.chmod(sh.resolve(given), mode)
-                                  : sh.fs.chown(sh.resolve(given), spec);
+    Change done = name == "chmod" ? await sh.fs.chmod(sh.resolve(given), mode)
+                                  : await sh.fs.chown(sh.resolve(given), spec);
     if (!done.ok()) {
       // **"cannot access" is about the path, and this failure may not be.** An unsupported operation
       // is a fact about *us*: framing it as reaching the file says the wrong thing twice over, once in
@@ -3027,7 +3054,7 @@ i32 octalMode(string spec) {
   return v;
 }
 
-Output mkdir(Shell sh, Vec<string> argv) {
+async Output mkdir(Shell sh, Vec<string> argv) {
   bool parents = false;
   Vec<string> paths = Vec.create();
   for (i32 i = 1; i < argv.len(); i++) {
@@ -3040,7 +3067,7 @@ Output mkdir(Shell sh, Vec<string> argv) {
   i32 status = 0;
   for (i32 i = 0; i < paths.len(); i++) {
     string given = paths.get(i);
-    Change made = sh.fs.mkdir(sh.resolve(given), parents);
+    Change made = await sh.fs.mkdir(sh.resolve(given), parents);
     if (!made.ok()) {
       err.pushAll("mkdir: cannot create directory '\{given}': \{reasonOf(made)}\n"
         .toBytes());
@@ -3057,7 +3084,7 @@ Output mkdir(Shell sh, Vec<string> argv) {
  * exactly the `NotFound` fault that `remove` now reports, and nothing wider. A directory without
  * `-r` is still checked here, because the platform's `remove` will happily take an empty one.
  */
-Output rm(Shell sh, Vec<string> argv) {
+async Output rm(Shell sh, Vec<string> argv) {
   bool recursive = false;
   bool force = false;
   Vec<string> paths = Vec.create();
@@ -3077,7 +3104,7 @@ Output rm(Shell sh, Vec<string> argv) {
     // A real `rm` refuses a directory without `-r`, and the platform's `remove` does not: it takes
     // a recursive flag, and without it still removes an *empty* directory. So the check is here.
     // Differential testing found this: `mkdir one; rm one` succeeded where bash exits 1.
-    if (!recursive && sh.fs.stat(path).isDir) {
+    if (!recursive && (await sh.fs.stat(path)).isDir) {
       if (!force) {
         err.pushAll("rm: cannot remove '\{given}': Is a directory\n".toBytes());
         status = 1;
@@ -3087,7 +3114,7 @@ Output rm(Shell sh, Vec<string> argv) {
     // `-f` is about what is already gone, which is one fault category and not the others: a file
     // that exists and will not be removed is reported whatever the flags say. Asked in the answer
     // rather than by a `stat` first, so there is no window for the file to vanish in between.
-    Change gone = sh.fs.remove(path, recursive);
+    Change gone = await sh.fs.remove(path, recursive);
     if (!gone.ok() && !(force && gone.absent())) {
       err.pushAll("rm: cannot remove '\{given}': \{reasonOf(gone)}\n".toBytes());
       status = 1;
@@ -3104,7 +3131,7 @@ Output rm(Shell sh, Vec<string> argv) {
  * the platform's `readDir` does not report a leading dot as special and hiding them would mean
  * inventing a rule.
  */
-Output ls(Shell sh, Vec<string> argv) {
+async Output ls(Shell sh, Vec<string> argv) {
   Vec<string> paths = Vec.create();
   bool all = false;
   bool optionsOver = false;
@@ -3137,11 +3164,11 @@ Output ls(Shell sh, Vec<string> argv) {
   for (i32 i = 0; i < paths.len(); i++) {
     string given = paths.get(i);
     string path = sh.resolve(given);
-    string[]? names = sh.fs.readDir(path);
+    string[]? names = await sh.fs.readDir(path);
     if (names is null) {
       // Not a directory, or unreadable. A plain file is listed as itself, which is what `ls` does
       // and is why this is not simply an error.
-      Stat st = sh.fs.stat(path);
+      Stat st = await sh.fs.stat(path);
       // **A directory that is there and could not be listed is a failure, not a name.** `chmod 000 d;
       // ls d` printed `d` and exited 0, where GNU says "cannot open directory 'd': Permission denied"
       // and exits 2 — a wrong answer reported as success, from the most ordinary permission a person
@@ -3332,12 +3359,12 @@ async Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
     for (i32 i = 1; i < argv.len(); i++) { sh.vars.remove(argv.get(i)); }
     return Output.ok(u8[]());
   }
-  if (name == "cd") { return cd(sh, argv); }
+  if (name == "cd") { return await cd(sh, argv); }
   if (name == "pwd") { return Output.ok("\{sh.cwd}\n".toBytes()); }
-  if (name == "ls") { return ls(sh, argv); }
-  if (name == "mkdir") { return mkdir(sh, argv); }
-  if (name == "chmod" || name == "chown") { return ownership(sh, argv); }
-  if (name == "rm") { return rm(sh, argv); }
+  if (name == "ls") { return await ls(sh, argv); }
+  if (name == "mkdir") { return await mkdir(sh, argv); }
+  if (name == "chmod" || name == "chown") { return await ownership(sh, argv); }
+  if (name == "rm") { return await rm(sh, argv); }
   if (name == "read") { return readLine(sh, argv); }
   if (name == "shift") {
     // bash: shifting more than there is fails and changes nothing, rather than clearing them.
@@ -3350,9 +3377,9 @@ async Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   }
   if (name == "kill") { return killBuiltin(sh, argv); }
   if (name == "jobs") { return jobsBuiltin(sh, argv); }
-  if (name == "wait") { return waitBuiltin(sh, argv); }
+  if (name == "wait") { return await waitBuiltin(sh, argv); }
   if (name == "set") { return setBuiltin(sh, argv); }
-  if (name == "test" || name == "[") { return test(sh, argv); }
+  if (name == "test" || name == "[") { return await test(sh, argv); }
   if (name == "help") { return help(sh); }
   if (name == "printf") {
     // Collected rather than streamed — `Sink.toBuffer` and `taken()` — because a builtin answers
@@ -3382,12 +3409,12 @@ async Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   // A real program if `$WACPATH` has one. There is no wac implementation behind this any more:
   // `program.wac` held twelve because nothing could start a process, and wac-mono 0103 deleted them
   // once `packages/box`'s applets were held to this package's own corpus against bash.
-  Output spawned = trySpawn(sh, argv, mayInherit);
+  Output spawned = await trySpawn(sh, argv, mayInherit);
   if (spawned.found) { return spawned; }
   // Then this program's own applets as *children*, where that is possible: `packages/box` decides
   // which applet it is from its first argument, so running one is running this bundle again. That is
   // a real boundary — its own instance, its own grants — where calling it is not.
-  Output asChild = trySelf(sh, argv, mayInherit);
+  Output asChild = await trySelf(sh, argv, mayInherit);
   if (asChild.found) { return asChild; }
   // Then the same applets *called*, which is what happens in a world that cannot spawn — a page
   // could not until issue 0030, and something has to answer there.
@@ -3453,9 +3480,9 @@ async Output noExternal(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv,
  */
 struct PathFault { i32 status; string why; }
 
-PathFault pathFault(Shell sh, string name) {
+async PathFault pathFault(Shell sh, string name) {
   if (name == "" || !containsSlash(name)) { return PathFault(0, ""); }
-  Stat st = sh.fs.stat(sh.resolve(name));
+  Stat st = await sh.fs.stat(sh.resolve(name));
   // A `stat` that could not be *reached* says so in its own words rather than being read as absence:
   // a session with no read grant would otherwise report every path as missing.
   if (st.fault != FAULT_NONE()) { return PathFault(126, statReason(st)); }
@@ -3482,19 +3509,19 @@ PathFault pathFault(Shell sh, string name) {
  *
  * `found` false means "no such program", and the caller falls back to the wac implementations.
  */
-Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
+async Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   string name = argv.get(0);
   if (name == "") { return Output.missing(); }
   // The path cases, before anything tries to run it — see `pathFault`.
-  PathFault bad = pathFault(sh, name);
+  PathFault bad = await pathFault(sh, name);
   if (bad.status != 0) {
     return Output.fail("sh: \{name}: \{bad.why}\n".toBytes(), bad.status);
   }
   // A name with a slash is a path already, as in bash — `./prog` is not searched for.
-  string where = containsSlash(name) ? name : searchWacPath(sh, name);
+  string where = containsSlash(name) ? name : (await searchWacPath(sh, name));
   if (where == "") { return Output.missing(); }
 
-  FileResult prog = sh.fs.readFile(sh.resolve(where));
+  FileResult prog = await sh.fs.readFile(sh.resolve(where));
   if (!prog.ok) { return Output.missing(); }
 
   // Bytes, which is what an argument is: the child receives exactly what the shell parsed, with nothing
@@ -3531,7 +3558,7 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
     return Output.fail("sh: \{name}: \{child.error}\n".toBytes(), 126);
   }
 
-  return collectChild(sh, name, child, mayInherit);
+  return await collectChild(sh, name, child, mayInherit);
 }
 
 /**
@@ -3544,7 +3571,7 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
  * **This is where a pipeline stops streaming.** Everything the child writes is gathered before the
  * next stage begins, so `seq 1 200000 | head -1` waits for all 200,000 lines: `Output` is bytes in
  * and bytes out. Now that stages *can* be concurrent — separate workers, watchable together by
- * `waitAny` — what would fix it is a pipeline that starts every stage first and shuttles between
+ * `Ticket.first` — what would fix it is a pipeline that starts every stage first and shuttles between
  * them. Issue 0038.
  */
 /**
@@ -3558,7 +3585,7 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
  */
 i32 HELD_CAP() { return 8 * 1024 * 1024; }
 
-Output collectChild(Shell sh, string name, Child child, bool inherited) {
+async Output collectChild(Shell sh, string name, Child child, bool inherited) {
   // A child given the real descriptor feeds itself; sending it anything would be sending it bytes the
   // shell does not have. Otherwise: the input in one go, then the *end* — `closeFeed`, not
   // `closeSocket`. A program that reads to the end before it answers, which is `wc` and `sort` and
@@ -3566,7 +3593,7 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   // instead means it never speaks.
   if (!inherited) {
     u8[] stdin = sh.restOfStdin();
-    if (stdin.len() > 0) { sh.cli.send(child.handle, stdin).wait(); }
+    if (stdin.len() > 0) { await sh.cli.send(child.handle, stdin).ticket(); }
     sh.cli.closeFeed(child.handle);
   }
 
@@ -3583,45 +3610,43 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   // while both were queues the host had already filled. It stopped being fine when a child could
   // *ask this shell a question*: a stage blocked on `readFile` writes nothing, so a parent waiting
   // for output would be waiting for a child that is waiting for the parent. Neither would move
-  // again. `waitAny` over all three is what makes the two directions independent.
+  // again. `Ticket.first` over all three is what makes the two directions independent.
   //
   // The error stream is still gathered separately from the output rather than interleaved into it,
   // which is the property that keeps `cat nosuch | wc -c` from counting the complaint.
   bool reading = true;
   bool complaining = child.errHandle >= 0;
-  Pending<Read> outT = sh.cli.recv(child.handle);
-  Pending<Read> errT = complaining ? sh.cli.recv(child.errHandle) : outT;
+  Ticket<Read> outT = sh.cli.recv(child.handle).ticket();
+  Ticket<Read> errT = complaining ? sh.cli.recv(child.errHandle).ticket() : outT;
   // Built only where this shell serves, because building one starts a read: a shell on a plain host
   // mount would otherwise spend a host call per command on a channel it is never going to answer.
   Chan? fsC = serveFsFor(sh) && child.fsHandle >= 0 ? Chan.of(sh.cli, child.fsHandle) : null;
   bool asking = !(fsC is null);
+  Tick tick = Tick(sh, null, null);
   while (reading || complaining || asking) {
     i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0) + (asking ? 1 : 0);
-    i32[] ids = i32[].filled(live, 0);
+    TicketBase[] parts = TicketBase[].filled(live, outT);
     i32[] what = i32[].filled(live, 0);
     i32 at = 0;
-    if (reading) { ids[at] = outT.id; what[at] = 0; at++; }
-    if (complaining) { ids[at] = errT.id; what[at] = 1; at++; }
-    if (asking) { ids[at] = fsC!.waitId(); what[at] = 2; at++; }
+    if (reading) { parts[at] = outT; what[at] = 0; at++; }
+    if (complaining) { parts[at] = errT; what[at] = 1; at++; }
+    if (asking) { parts[at] = fsC!.waiting(); what[at] = 2; at++; }
 
     // The same two things the pipeline relay does, and for the same reasons: ask every turn because
     // a talkative child never lets the wait expire, and put a deadline on the wait because a quiet
     // one would otherwise park this loop with a keystroke sitting in the socket. This is the loop a
     // single command runs in, which is where design/0001 step 5's own example — a running `yes` —
     // actually lives.
-    if (sh.takeSignal() || sh.takeInterrupt()) { stopped = true; break; }
+    if ((await sh.takeSignal()) || sh.takeInterrupt()) { stopped = true; break; }
 
-    i32 which = sh.core.waitAny(ids, sh.askInterrupt is null ? -1 : INTERRUPT_POLL_MS());
-    if (which < 0) {
-      if (sh.askInterrupt is null) { break; }
-      continue;
-    }
+    i32 which = await firstOf(sh, parts, tick);
+    if (which < 0) { continue; }
     i32 kind = what[which];
 
     if (kind == 2) {
-      if (!serveOn(fsC!, sh.fs)) { asking = false; }
+      if (!(await serveOn(fsC!, sh.fs))) { asking = false; }
     } else if (kind == 0) {
-      match (outT.wait()) {
+      match (outT.value()) {
         Data(bytes): {
           // **The cap, and it is the same one the other two routes have.** A pipeline this shell
           // could not stream runs its stages one at a time, so a stage's whole output lands here in
@@ -3639,7 +3664,7 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
             reading = false;
           } else {
             out.pushAll(bytes);
-            outT = sh.cli.recv(child.handle);
+            outT = sh.cli.recv(child.handle).ticket();
           }
         }
         End: { reading = false; }
@@ -3648,8 +3673,8 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
         Failed(why): { reading = false; broke = why; }
       }
     } else {
-      match (errT.wait()) {
-        Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(child.errHandle); }
+      match (errT.value()) {
+        Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(child.errHandle).ticket(); }
         End: { complaining = false; }
         Failed(why): { complaining = false; }
       }
@@ -3658,6 +3683,7 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
     // channel to end as well would wait for the host to notice the worker had gone.
     if (!reading && !complaining) { asking = false; }
   }
+  tick.stop();
 
   // **A child the user interrupted is stopped rather than waited for.** `exitCode` blocks until the
   // child finishes, and the whole point of the interrupt is that it was not going to: `yes` writes
@@ -3668,7 +3694,7 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
     return Output(out.bytes(), err.bytes(), sh.exiting ? sh.exitCode : 128 + SIGINT(), true, false);
   }
 
-  i32 code = sh.cli.exitCode(child.handle).wait();
+  i32 code = await sh.cli.exitCode(child.handle).ticket();
   sh.cli.closeSocket(child.handle);
   if (child.errHandle >= 0) { sh.cli.closeSocket(child.errHandle); }
   // **More than this shell can hold is a command that did not run, not a short answer** — the same
@@ -3704,7 +3730,7 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
  * process. A world that cannot spawn answers the same way, so the shell degrades to what it did
  * before rather than reporting a program broken.
  */
-Output trySelf(Shell sh, Vec<string> argv, bool mayInherit) {
+async Output trySelf(Shell sh, Vec<string> argv, bool mayInherit) {
   if (!sh.externalSpawnable) { return Output.missing(); }
   string name = argv.get(0);
   if (name == "" || containsSlash(name)) { return Output.missing(); }
@@ -3727,7 +3753,7 @@ Output trySelf(Shell sh, Vec<string> argv, bool mayInherit) {
   if (child.handle < 0) {
     return Output.fail("sh: \{name}: \{child.error}\n".toBytes(), 126);
   }
-  return collectChild(sh, name, child, mayInherit);
+  return await collectChild(sh, name, child, mayInherit);
 }
 
 /**
@@ -3749,7 +3775,7 @@ string statReason(Stat st) {
 // the host's absolute path through the other. Nothing here changed but the file it lives in.
 
 /** The first `dir/name` on `$WACPATH` that exists, or "" when none does. */
-string searchWacPath(Shell sh, string name) {
+async string searchWacPath(Shell sh, string name) {
   string path = sh.lookUp("WACPATH");
   if (path == "") { return ""; }
   u8[] b = path.toBytes();
@@ -3760,7 +3786,7 @@ string searchWacPath(Shell sh, string name) {
       // rather than turned into a bare `/name`.
       if (i > start) {
         string candidate = string.fromBytes(sliceBytes(b, start, i)) + "/" + name;
-        if (sh.fs.stat(sh.resolve(candidate)).exists) { return candidate; }
+        if ((await sh.fs.stat(sh.resolve(candidate))).exists) { return candidate; }
       }
       start = i + 1;
     }
@@ -3865,7 +3891,7 @@ Output echo(Vec<string> argv) {
  * Its exit status *is* its answer: 0 for true. That inversion relative to a boolean is what makes
  * `test -z "$x" && echo empty` read correctly, and is the thing to keep straight.
  */
-Output test(Shell sh, Vec<string> argv) {
+async Output test(Shell sh, Vec<string> argv) {
   // **The name in a diagnostic is the one it was called by.** `[ x y ]` says `[: …` and `test x y` says
   // `test: …`, and this said `test:` for both — a small thing that makes every message from `[`, which
   // is how a script actually writes it, name a command the caller did not type. Found by a generative
@@ -3889,17 +3915,17 @@ Output test(Shell sh, Vec<string> argv) {
   // with a diagnostic, which is the part a script can act on; imitating the wording would mean
   // imitating an error recovery rather than a rule.
   if (a.len() > 3 || (a.len() == 3 && a.get(0) == "(")) {
-    return testExpr(sh, me, a, 0, a.len());
+    return await testExpr(sh, me, a, 0, a.len());
   }
   bool result = false;
   if (a.len() == 0) { result = false; }
   else if (a.len() == 1) { result = a.get(0) != ""; }
-  else if (a.len() == 2) { return unaryTest(sh, me, a.get(0), a.get(1)); }
+  else if (a.len() == 2) { return await unaryTest(sh, me, a.get(0), a.get(1)); }
   else if (a.len() == 3 && a.get(0) == "!") {
     // `! -f x` and `! -z "$x"`: the negation of a unary test, which is how a script asks whether a
     // file is *missing*. Without this the `!` was read as the left operand of a binary operator and
     // `-f` as the operator, so the most ordinary use of `test` reported "unknown operator".
-    Output inner = unaryTest(sh, me, a.get(1), a.get(2));
+    Output inner = await unaryTest(sh, me, a.get(1), a.get(2));
     if (!inner.found || inner.status == 2) { return inner; }
     return testResult(inner.status != 0);
   } else if (a.len() == 3) {
@@ -3916,8 +3942,8 @@ Output test(Shell sh, Vec<string> argv) {
     // Modification times, which `Stat` has had all along — this said "not implemented" because nothing
     // had looked. A file that cannot be stat'd is *older* than everything, which is bash's answer and
     // not an error: `[ new -nt missing ]` is true.
-    else if (op == "-nt") { result = mtimeOf(sh, l) > mtimeOf(sh, r); }
-    else if (op == "-ot") { result = mtimeOf(sh, l) < mtimeOf(sh, r); }
+    else if (op == "-nt") { result = (await mtimeOf(sh, l)) > (await mtimeOf(sh, r)); }
+    else if (op == "-ot") { result = (await mtimeOf(sh, l)) < (await mtimeOf(sh, r)); }
     else if (op == "-eq") { result = atoiOr(l, 0) == atoiOr(r, 0); }
     else if (op == "-ne") { result = atoiOr(l, 0) != atoiOr(r, 0); }
     else if (op == "-lt") { result = atoiOr(l, 0) < atoiOr(r, 0); }
@@ -3947,39 +3973,39 @@ Output test(Shell sh, Vec<string> argv) {
  * The arity ladder in `test` stays as it is and handles what this hands it, so the two-word and
  * three-word forms have exactly one implementation.
  */
-Output testExpr(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
-  return testOr(sh, me, a, from, to);
+async Output testExpr(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
+  return await testOr(sh, me, a, from, to);
 }
 
-Output testOr(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
+async Output testOr(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
   i32 at = topLevel(a, from, to, "-o");
-  if (at < 0) { return testAnd(sh, me, a, from, to); }
-  Output left = testOr(sh, me, a, from, at);
+  if (at < 0) { return await testAnd(sh, me, a, from, to); }
+  Output left = await testOr(sh, me, a, from, at);
   if (left.status == 2) { return left; }
   if (left.status == 0) { return testResult(true); }
-  return testOr(sh, me, a, at + 1, to);
+  return await testOr(sh, me, a, at + 1, to);
 }
 
-Output testAnd(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
+async Output testAnd(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
   i32 at = topLevel(a, from, to, "-a");
-  if (at < 0) { return testPrimary(sh, me, a, from, to); }
-  Output left = testAnd(sh, me, a, from, at);
+  if (at < 0) { return await testPrimary(sh, me, a, from, to); }
+  Output left = await testAnd(sh, me, a, from, at);
   if (left.status == 2) { return left; }
   if (left.status != 0) { return testResult(false); }
-  return testAnd(sh, me, a, at + 1, to);
+  return await testAnd(sh, me, a, at + 1, to);
 }
 
-Output testPrimary(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
+async Output testPrimary(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
   i32 n = to - from;
   if (n <= 0) { return Output.fail("\{me}: expected an expression\n".toBytes(), 2); }
   if (a.get(from) == "!" && n > 1) {
-    Output inner = testPrimary(sh, me, a, from + 1, to);
+    Output inner = await testPrimary(sh, me, a, from + 1, to);
     if (inner.status == 2) { return inner; }
     return testResult(inner.status != 0);
   }
   if (a.get(from) == "(") {
     if (a.get(to - 1) != ")") { return Output.fail("\{me}: missing `)'\n".toBytes(), 2); }
-    return testExpr(sh, me, a, from + 1, to - 1);
+    return await testExpr(sh, me, a, from + 1, to - 1);
   }
   // **Four or more words that are not an expression are `test`'s own error**, and handing them back to
   // `test` would be handing them straight back here: it sends anything longer than three words to the
@@ -3993,7 +4019,7 @@ Output testPrimary(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
   // `me` rather than "test": the diagnostics below it name the command the caller wrote.
   one.push(me);
   for (i32 i = from; i < to; i++) { one.push(a.get(i)); }
-  return test(sh, one);
+  return await test(sh, one);
 }
 
 /**
@@ -4024,8 +4050,8 @@ bool before(string l, string r) {
 }
 
 /** A file's modification time, or -1 for one that is not there — which is older than anything. */
-i64 mtimeOf(Shell sh, string path) {
-  Stat st = sh.fs.stat(sh.resolve(path));
+async i64 mtimeOf(Shell sh, string path) {
+  Stat st = await sh.fs.stat(sh.resolve(path));
   return st.exists ? st.modifiedMillis : (0 - 1) as i64;
 }
 
@@ -4043,17 +4069,17 @@ Output testResult(bool v) { return Output(u8[](), u8[](), v ? 0 : 1, true, false
  * `-r`, `-w` and `-x` are *not* here and still refuse: `Stat` carries no mode bits, and a shell that
  * answered "yes, readable" from the mere existence of a file would be wrong exactly when it matters.
  */
-Output unaryTest(Shell sh, string me, string op, string operand) {
+async Output unaryTest(Shell sh, string me, string op, string operand) {
   if (op == "-z") { return testResult(operand == ""); }
   if (op == "-n") { return testResult(operand != ""); }
   if (op == "!") { return testResult(operand == ""); }
 
   if (op == "-h" || op == "-L") {
     // The link itself, not what it leads to — `stat` follows, which is why there are two.
-    return testResult(sh.fs.linkStat(sh.resolve(operand)).isSymlink);
+    return testResult((await sh.fs.linkStat(sh.resolve(operand))).isSymlink);
   }
   if (op == "-e" || op == "-f" || op == "-d" || op == "-s") {
-    Stat st = sh.fs.stat(sh.resolve(operand));
+    Stat st = await sh.fs.stat(sh.resolve(operand));
     // A `stat` that could not be taken is not the same as a "no", and `test` has exactly one way to say
     // so: status 2 with a diagnostic, which is what it already does for an operator it has not
     // implemented. Answering `false` for a file that is there — because its name cannot be expressed on
@@ -4226,7 +4252,7 @@ async void expandInto(Shell sh, Word word, Vec<string> argv) {
             // trailing case needs nothing — after the last delimiter `started` is false, so the flush
             // below emits nothing.
             if (started || hadNonSpace) {
-              emitField(sh, field, mask, argv);
+              await emitField(sh, field, mask, argv);
               field = Buf.create();
               mask = Buf.create();
               started = false;
@@ -4237,7 +4263,7 @@ async void expandInto(Shell sh, Word word, Vec<string> argv) {
       }
     }
   }
-  if (started) { emitField(sh, field, mask, argv); }
+  if (started) { await emitField(sh, field, mask, argv); }
 }
 
 /**
@@ -4278,7 +4304,7 @@ void appendMasked(Buf field, Buf mask, string text, i32 quoted) {
  * A pattern that matches nothing is passed through unchanged, which is bash's default — so the
  * difference between globbing and not only shows when something would have matched.
  */
-void emitField(Shell sh, Buf field, Buf mask, Vec<string> argv) {
+async void emitField(Shell sh, Buf field, Buf mask, Vec<string> argv) {
   u8[] bytes = field.bytes();
   u8[] quoted = mask.bytes();
   if (!hasUnquotedMeta(bytes, quoted)) {
@@ -4286,7 +4312,7 @@ void emitField(Shell sh, Buf field, Buf mask, Vec<string> argv) {
     return;
   }
   i32 before = argv.len();
-  globInto(sh, bytes, quoted, argv);
+  await globInto(sh, bytes, quoted, argv);
   if (argv.len() == before) { argv.push(string.fromBytes(bytes)); }
 }
 
@@ -4352,7 +4378,7 @@ bool inBracket(u8[] pat, i32 at, i32 close, i32 c) {
  *
  * Matches are sorted, because a shell's glob is ordered and `readDir` makes no promise.
  */
-void globInto(Shell sh, u8[] pattern, u8[] quoted, Vec<string> argv) {
+async void globInto(Shell sh, u8[] pattern, u8[] quoted, Vec<string> argv) {
   i32 slash = -1;
   for (i32 i = 0; i < pattern.len(); i++) {
     if (pattern[i] == 0x2f) { slash = i; }                      // '/'
@@ -4363,7 +4389,7 @@ void globInto(Shell sh, u8[] pattern, u8[] quoted, Vec<string> argv) {
   u8[] tail = sliceBytes(pattern, slash + 1, pattern.len());
   u8[] tailMask = sliceBytes(quoted, slash + 1, quoted.len());
 
-  string[]? names = sh.fs.readDir(sh.resolve(dir));
+  string[]? names = await sh.fs.readDir(sh.resolve(dir));
   if (names is null) { return; }
 
   Vec<string> hits = Vec.create();

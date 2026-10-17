@@ -225,7 +225,7 @@ export async Ran runAppletIn(Core core, Cli cli, string dir, string[] argv, u8[]
  */
 export async Ran runSealed(Core core, Cli cli, string script) {
   Fs fs = Fs.inMemory(0);
-  fs.mkdir("/tmp", true);
+  await fs.mkdir("/tmp", true);
   // **The whole command line, as `bin/sealedsh.wac` builds it**: its own name and then its arguments.
   // `/proc/self/cmdline` and `ps`'s CMD column both read this, so a session that recorded only its name
   // would answer `sealedsh` where the built program answers `sealedsh -c ps`.

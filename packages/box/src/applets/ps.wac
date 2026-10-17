@@ -63,7 +63,7 @@ bool allDigits(string s) {
   return true;
 }
 
-export i32 ps(Core core, Cli cli, Fs fs, Args a) {
+export async i32 ps(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() > 0) {
     // Real `ps` takes a pid list and a great many option syntaxes. None is implemented, and saying so
@@ -72,7 +72,7 @@ export i32 ps(Core core, Cli cli, Fs fs, Args a) {
     core.warn("\{a.name}: selecting processes is not implemented; ps lists all of them");
     return 1;
   }
-  string[]? listing = fs.readDir("/proc");
+  string[]? listing = await fs.readDir("/proc");
   if (listing is null) {
     core.warn("\{a.name}: /proc: no such file or directory");
     return 1;
@@ -82,12 +82,12 @@ export i32 ps(Core core, Cli cli, Fs fs, Args a) {
   for (i32 i = 0; i < names.len(); i++) {
     // `self` is a name for a pid already in this listing, so following it would print one row twice.
     if (!allDigits(names[i])) { continue; }
-    FileResult f = fs.readFile("/proc/\{names[i]}/status");
+    FileResult f = await fs.readFile("/proc/\{names[i]}/status");
     // A process that exited between the listing and the read is gone rather than an error — the same
     // race real `ps` has, and the same answer it gives.
     if (!f.ok) { continue; }
     string body = string.fromBytes(f.bytes);
-    FileResult c = fs.readFile("/proc/\{names[i]}/cmdline");
+    FileResult c = await fs.readFile("/proc/\{names[i]}/cmdline");
     string cmd = field(body, "Name");
     if (c.ok) {
       // `cmdline` is NUL-separated with a trailing NUL; the words joined by spaces is what `ps` shows,

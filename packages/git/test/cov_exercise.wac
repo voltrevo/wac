@@ -108,7 +108,7 @@ import {
   test_a_tag_object_that_is_not_one_says_which_part_is_missing as tag__a_tag_object_that_is_not_one_says_which_part_is_missing,
 } from "./wac/tag_test.wac";
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 bad = 0;
@@ -308,7 +308,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED packwrite_test test_a_thin_pack_says_what_it_needs_and_the_completed_one_is_what_git_accepts");
     bad = bad + 1;
   }
-  if (pack2__a_thin_pack_completed_from_a_repositorys_own_objects_is_one_git_accepts(core, cli).len() > 0) {
+  if ((await pack2__a_thin_pack_completed_from_a_repositorys_own_objects_is_one_git_accepts(core, cli)).len() > 0) {
     core.warn("error: FAILED packwrite_test test_a_thin_pack_completed_from_a_repositorys_own_objects_is_one_git_accepts");
     bad = bad + 1;
   }

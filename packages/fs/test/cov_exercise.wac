@@ -27,28 +27,28 @@ import { memoryOps, synthOps, imageOps, imageBadOps, renameOps, rootlessOps, mou
          pathOps, procOps, streamOps, wireOps, permissionOps } from "./wac/cov_probe.wac";
 
 /** Every transcript, in the order the TypeScript called them, with what each one is for. */
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   string[] said = [
-    memoryOps(),
-    synthOps(),
-    imageOps(),
-    pathOps(),
-    renameOps(),
-    rootlessOps(),
-    mountOps(),
-    edgeOps(),
-    imageBadOps(),
+    (await memoryOps()),
+    (await synthOps()),
+    (await imageOps()),
+    (await pathOps()),
+    (await renameOps()),
+    (await rootlessOps()),
+    (await mountOps()),
+    (await edgeOps()),
+    (await imageBadOps()),
     // The process table, which nothing had asked for — 24.5% of `proc.wac` and none of it needing a
     // capability, a mount or a host. `issues/system/0134`.
     procOps(),
     // The streaming write and the session state — `openOut`/`writeOut`/`closeOut`, `setUser`, `setCwd`.
-    streamOps(),
+    (await streamOps()),
     // The child/parent wire, round-tripped: the half of `remote.wac` that needs no peer to answer.
     wireOps(),
     // Being refused: `may(node, 2)` answering no on every operation that changes what a directory
     // holds, which was the largest unaccounted group and the one a wrong answer matters most in.
-    permissionOps()
+    (await permissionOps())
   ];
 
   string[] names = [

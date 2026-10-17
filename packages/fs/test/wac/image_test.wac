@@ -51,8 +51,8 @@ string oneByte(i32 c) {
 }
 
 /** Every path in a filesystem, depth first, so two filesystems can be compared without trusting either. */
-void walk(Fs fs, string at, string[] out, i32[] n) {
-  string[]? names = fs.readDir(at == "" ? "/" : at);
+async void walk(Fs fs, string at, string[] out, i32[] n) {
+  string[]? names = await fs.readDir(at == "" ? "/" : at);
   if (names is null) { return; }
   string[] found = names!;
   for (i32 i = 0; i < found.len(); i++) {
@@ -60,7 +60,7 @@ void walk(Fs fs, string at, string[] out, i32[] n) {
     if (n[0] >= out.len()) { return; }
     out[n[0]] = path;
     n[0] = n[0] + 1;
-    walk(fs, path, out, n);
+    await walk(fs, path, out, n);
   }
 }
 
@@ -70,18 +70,18 @@ void walk(Fs fs, string at, string[] out, i32[] n) {
  * Compared as one string rather than field by field so that a field the image *stops* recording shows
  * up as a difference. A comparison that names the fields it checks cannot notice one going missing.
  */
-string describe(Fs fs, string[] mounts) {
+async string describe(Fs fs, string[] mounts) {
   string out = "";
   for (i32 m = 0; m < mounts.len(); m++) {
     out = out + "mount \{mounts[m]}\n";
     string[] paths = string[].filled(4096, "");
     i32[] n = i32[].filled(1, 0);
-    walk(fs, mounts[m] == "/" ? "" : mounts[m], paths, n);
+    await walk(fs, mounts[m] == "/" ? "" : mounts[m], paths, n);
     for (i32 i = 0; i < n[0]; i++) {
-      Stat st = fs.stat(paths[i]);
+      Stat st = await fs.stat(paths[i]);
       string body = "";
       if (!st.isDir) {
-        FileResult r = fs.readFile(paths[i]);
+        FileResult r = await fs.readFile(paths[i]);
         for (i32 k = 0; k < r.bytes.len(); k++) {
           body = body + (k == 0 ? " " : ",") + "\{r.bytes[k] as i32}";
         }
@@ -124,7 +124,7 @@ struct Built {
 }
 
 /** A filesystem built from a seed: names, depths, contents, modes and owners all vary with it. */
-Built build(i32 seed) {
+async Built build(i32 seed) {
   Rng rng = Rng(seed * 2654435761 + 12345);
   Fs fs = Fs.inMemory(NOW);
   string[] mounts = seed % 3 == 0 ? ["/", "/mnt"] : ["/"];
@@ -144,7 +144,7 @@ Built build(i32 seed) {
     string parent = dirs[rng.upto(dirCount)];
     string path = "\{parent}/\{ns[rng.upto(ns.len())]}\{i}";
     if (rng.upto(3) == 0) {
-      if (fs.mkdir(path, false).fault == 0 && dirCount < dirs.len()) {
+      if ((await fs.mkdir(path, false)).fault == 0 && dirCount < dirs.len()) {
         dirs[dirCount] = path;
         dirCount = dirCount + 1;
       }
@@ -152,33 +152,33 @@ Built build(i32 seed) {
       i32 len = rng.upto(200);
       u8[] data = u8[].filled(len, 0);
       for (i32 j = 0; j < len; j++) { data[j] = rng.upto(256) as@ u8; }
-      fs.writeFile(path, data);
+      await fs.writeFile(path, data);
       // Modes and owners are the whole argument for a format of ours rather than tar, so vary them.
-      if (rng.upto(2) == 0) { fs.chmod(path, rng.upto(512)); }
+      if (rng.upto(2) == 0) { await fs.chmod(path, rng.upto(512)); }
       if (rng.upto(3) == 0) {
         string[] owners = ["root", "claude", "nobody"];
-        fs.chown(path, owners[rng.upto(owners.len())]);
+        await fs.chown(path, owners[rng.upto(owners.len())]);
       }
     }
   }
   // An empty file and an empty directory: the two zero-length cases a length-prefixed format gets
   // wrong.
-  fs.writeFile("/empty", u8[]());
-  fs.mkdir("/emptydir", false);
+  await fs.writeFile("/empty", u8[]());
+  await fs.mkdir("/emptydir", false);
   return Built(fs, mounts);
 }
 
-export string test_any_filesystem_survives_being_written_and_read_back() {
+export async string test_any_filesystem_survives_being_written_and_read_back() {
   T t = T.create();
   for (i32 seed = 0; seed < 40; seed++) {
-    Built b = build(seed);
-    string before = describe(b.fs, b.mounts);
+    Built b = await build(seed);
+    string before = await describe(b.fs, b.mounts);
     Written written = write(b.fs);
     t.eqI32(written.skipped.len(), 0, "seed \{seed}: nothing should have been skipped");
     Loaded loaded = read(written.bytes, NOW);
     t.isTrue(loaded.ok, "seed \{seed}: \{loaded.error}");
     if (!loaded.ok) { return t.report(); }
-    t.eqStr(describe(loaded.fs, b.mounts), before, "seed \{seed}: the filesystem changed");
+    t.eqStr(await describe(loaded.fs, b.mounts), before, "seed \{seed}: the filesystem changed");
   }
   return t.report();
 }
@@ -189,10 +189,10 @@ export string test_any_filesystem_survives_being_written_and_read_back() {
  * Without this, the round trip above would pass for a `read` that quietly dropped a field `write`
  * recorded — both sides would agree, because both sides would have lost it.
  */
-export string test_writing_what_was_read_gives_the_same_bytes() {
+export async string test_writing_what_was_read_gives_the_same_bytes() {
   T t = T.create();
   for (i32 seed = 0; seed < 40; seed++) {
-    Built b = build(seed);
+    Built b = await build(seed);
     u8[] first = write(b.fs).bytes;
     Loaded loaded = read(first, NOW);
     t.isTrue(loaded.ok, "seed \{seed}: \{loaded.error}");
@@ -202,7 +202,7 @@ export string test_writing_what_was_read_gives_the_same_bytes() {
   return t.report();
 }
 
-export string test_a_name_that_is_not_text_survives_an_image() {
+export async string test_a_name_that_is_not_text_survives_an_image() {
   T t = T.create();
   Fs fs = Fs.inMemory(NOW);
   string[] awkward = [
@@ -212,14 +212,14 @@ export string test_a_name_that_is_not_text_survives_an_image() {
     "/\{oneByte(0xED)}\{oneByte(0xA0)}\{oneByte(0x80)}"   // a surrogate, which UTF-8 forbids
   ];
   for (i32 i = 0; i < awkward.len(); i++) {
-    t.eqI32(fs.writeFile(awkward[i], [i as@ u8]).fault, 0, "a byte name writes");
+    t.eqI32((await fs.writeFile(awkward[i], [i as@ u8])).fault, 0, "a byte name writes");
   }
   Written w = write(fs);
   Loaded loaded = read(w.bytes, NOW);
   t.isTrue(loaded.ok, "the image loads: \{loaded.error}");
   if (!loaded.ok) { return t.report(); }
   for (i32 i = 0; i < awkward.len(); i++) {
-    FileResult r = loaded.fs.readFile(awkward[i]);
+    FileResult r = await loaded.fs.readFile(awkward[i]);
     t.isTrue(r.ok, "name \{i} came back: \{r.error}");
     if (r.ok) { t.eqI32(r.bytes.len() == 1 ? r.bytes[0] as i32 : -1, i, "with its own contents"); }
   }
@@ -239,7 +239,7 @@ export string test_a_name_that_is_not_text_survives_an_image() {
  * The weaker version of this test — an all-memory filesystem skips nothing — was written first and is
  * not here, because it passes for a `skipped` that is always empty.
  */
-export string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) {
+export async string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) {
   T t = T.create();
   Stat bin = cli.stat(binary(cli)).wait();
   t.isTrue(bin.exists, "the binary that builds saveimage is where the seed task writes it");
@@ -276,8 +276,8 @@ export string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) 
   if (!loaded.ok) { return t.report(); }
   // And the file that lives on the host really is absent from the image, rather than merely
   // unmentioned in a list a caller might not read.
-  t.isFalse(loaded.fs.readFile("/on-the-host").ok, "a host file was written into the image");
-  t.isTrue(loaded.fs.readFile("/home/claude/notes").ok, "the memory mount was not written");
+  t.isFalse((await loaded.fs.readFile("/on-the-host")).ok, "a host file was written into the image");
+  t.isTrue((await loaded.fs.readFile("/home/claude/notes")).ok, "the memory mount was not written");
   string text = dump(image.bytes);
   t.isTrue(text.indexOf("mount /home") >= 0, "one mount, at /home:\n\{text}");
   t.eqI32(countOf(text, "mount "), 1, "more than one mount in the image:\n\{text}");
@@ -290,16 +290,16 @@ export string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) 
   string[] outside = ["/elsewhere", "/etc/passwd", "/on-the-host"];
   for (i32 i = 0; i < outside.len(); i++) {
     string p = outside[i];
-    FileResult r = loaded.fs.readFile(p);
+    FileResult r = await loaded.fs.readFile(p);
     t.isFalse(r.ok, "\{p} answered from a filesystem that does not hold it");
     t.isTrue(r.error.indexOf("no such file") >= 0, "\{p}: \{r.error}");
-    t.isFalse(loaded.fs.stat(p).exists, "\{p} claims to exist");
-    t.isTrue(loaded.fs.readDir(p) is null, "\{p} listed as a directory");
-    t.neI32(loaded.fs.writeFile(p, u8[].filled(1, 0)).fault, 0, "\{p} accepted a write");
-    t.neI32(loaded.fs.mkdir(p, false).fault, 0, "\{p} accepted a mkdir");
-    t.neI32(loaded.fs.remove(p, false).fault, 0, "\{p} accepted a remove");
-    t.neI32(loaded.fs.chmod(p, 448).fault, 0, "\{p} accepted a chmod");
-    t.neI32(loaded.fs.chown(p, "someone").fault, 0, "\{p} accepted a chown");
+    t.isFalse((await loaded.fs.stat(p)).exists, "\{p} claims to exist");
+    t.isTrue((await loaded.fs.readDir(p)) is null, "\{p} listed as a directory");
+    t.neI32((await loaded.fs.writeFile(p, u8[].filled(1, 0))).fault, 0, "\{p} accepted a write");
+    t.neI32((await loaded.fs.mkdir(p, false)).fault, 0, "\{p} accepted a mkdir");
+    t.neI32((await loaded.fs.remove(p, false)).fault, 0, "\{p} accepted a remove");
+    t.neI32((await loaded.fs.chmod(p, 448)).fault, 0, "\{p} accepted a chmod");
+    t.neI32((await loaded.fs.chown(p, "someone")).fault, 0, "\{p} accepted a chown");
   }
   cli.remove(work, true).wait();
   return t.report();
@@ -333,9 +333,9 @@ i32 countOf(string s, string needle) {
   return n;
 }
 
-export string test_a_damaged_image_says_what_is_wrong() {
+export async string test_a_damaged_image_says_what_is_wrong() {
   T t = T.create();
-  u8[] good = write(build(7).fs).bytes;
+  u8[] good = write((await build(7)).fs).bytes;
   string[] names = [
                             "empty", "not an image", "a future version", "truncated",
                             "one byte flipped in the middle"
@@ -377,9 +377,9 @@ u8[] prefixOf(u8[] b, i32 n) {
  * The checksum's whole job. A length-prefixed format catches truncation on its own — this is about
  * the damage it cannot catch on its own, which is a byte changed in place.
  */
-export string test_a_flipped_byte_is_caught_wherever_it_is() {
+export async string test_a_flipped_byte_is_caught_wherever_it_is() {
   T t = T.create();
-  u8[] good = write(build(3).fs).bytes;
+  u8[] good = write((await build(3)).fs).bytes;
   i32 missed = 0;
   i32 tried = 0;
   for (i32 i = 0; i < good.len(); i = i + 7) {
@@ -400,26 +400,26 @@ export string test_a_flipped_byte_is_caught_wherever_it_is() {
  * This is the only way a long-lived session gets that space back today, and `fs.wac` says so — so it
  * is worth a test rather than a comment.
  */
-export string test_removed_nodes_are_not_written() {
+export async string test_removed_nodes_are_not_written() {
   T t = T.create();
   Fs fs = Fs.inMemory(NOW);
   u8[] big = u8[].filled(4000, 0x41);
-  for (i32 i = 0; i < 20; i++) { fs.writeFile("/f\{i}", big); }
+  for (i32 i = 0; i < 20; i++) { await fs.writeFile("/f\{i}", big); }
   i32 full = write(fs).bytes.len();
-  for (i32 i = 0; i < 20; i++) { fs.remove("/f\{i}", false); }
+  for (i32 i = 0; i < 20; i++) { await fs.remove("/f\{i}", false); }
   i32 empty = write(fs).bytes.len();
   t.isTrue(empty < full / 10,
            "removing everything left an image of \{empty} against \{full}");
   return t.report();
 }
 
-export string test_dump_shows_the_metadata_that_is_the_reason_for_our_own_format() {
+export async string test_dump_shows_the_metadata_that_is_the_reason_for_our_own_format() {
   T t = T.create();
   Fs fs = Fs.inMemory(NOW);
-  fs.mkdir("/home", false);
-  fs.writeFile("/home/notes", "hello".toBytes());
-  fs.chmod("/home/notes", 384);    // 0600
-  fs.chown("/home/notes", "claude");
+  await fs.mkdir("/home", false);
+  await fs.writeFile("/home/notes", "hello".toBytes());
+  await fs.chmod("/home/notes", 384);    // 0600
+  await fs.chown("/home/notes", "claude");
   string text = dump(write(fs).bytes);
   string[] wanted = ["mount /", "0600", "claude", "notes", "5 bytes", "d 0755"];
   for (i32 i = 0; i < wanted.len(); i++) {
@@ -442,7 +442,7 @@ export string test_dump_shows_the_metadata_that_is_the_reason_for_our_own_format
  * deliberate — in which case the version byte goes up and this fixture is joined by a new one, not
  * replaced — or it was not, which is what this is for.
  */
-export string test_the_fixture_image_still_loads(Core core, Cli cli) {
+export async string test_the_fixture_image_still_loads(Core core, Cli cli) {
   T t = T.create();
   FileResult f = cli.readFile(FIXTURE).wait();
   t.isTrue(f.ok, "the fixture reads: \{f.error}");
@@ -458,12 +458,12 @@ export string test_the_fixture_image_still_loads(Core core, Cli cli) {
     "a second memory mount, so the format carries more than one\n"
   ];
   for (i32 i = 0; i < paths.len(); i++) {
-    FileResult r = got.fs.readFile(paths[i]);
+    FileResult r = await got.fs.readFile(paths[i]);
     t.isTrue(r.ok, "\{paths[i]}: \{r.error}");
     if (r.ok) { t.eqStr(string.fromBytes(r.bytes), texts[i], paths[i]); }
   }
   // The metadata, which is the part a format of our own was chosen for.
-  t.eqI64(got.fs.stat("/home/claude/notes").modifiedMillis, 1754500000000, "the mtime survived");
+  t.eqI64((await got.fs.stat("/home/claude/notes")).modifiedMillis, 1754500000000, "the mtime survived");
   t.isTrue(dump(f.bytes).indexOf("0600 claude") >= 0,
            "the fixture's mode and owner did not survive:\n\{dump(f.bytes)}");
   return t.report();
@@ -485,9 +485,9 @@ export string test_the_fixture_image_still_loads(Core core, Cli cli) {
  * whole array rather than by the body, so a malformed image could read its own **checksum as
  * payload**; four bytes that happened to complete a structure would have been accepted as part of it.
  */
-export string test_an_image_whose_checksum_is_right_and_body_is_wrong() {
+export async string test_an_image_whose_checksum_is_right_and_body_is_wrong() {
   T t = T.create();
-  string[] lines = splitLines(trimmed(imageBadOps()));
+  string[] lines = splitLines(trimmed((await imageBadOps())));
   string[] what = [
     "no mount name", "no node", "bad kind", "node cut short", "length past the end",
     "negative length", "entry cut short",

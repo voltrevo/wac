@@ -1155,7 +1155,7 @@ export async i32 main(Sys sys) {
       dir = string.fromBytes(cli.arg(1).wait());
     } else {
       string here = normalisePath(ucli.cwd().wait());
-      string found = projectRootAbs(Fs.onHost(ucli, 0), here, ".");
+      string found = await projectRootAbs(Fs.onHost(ucli, 0), here, ".");
       // Empty means no manifest anywhere above, and then `.` is the right thing to report on: the
       // message names what the user is in rather than a root that was never found.
       if (found != "") { dir = found; }
@@ -1248,7 +1248,7 @@ export async i32 main(Sys sys) {
   if (cmd == "check") {
     string[] given = string[].filled(pos.len(), "");
     for (i32 i = 0; i < pos.len(); i++) { given[i] = normalisePath(pos[i]); }
-    return checkCommand(core, cli, fs, given);
+    return await checkCommand(core, cli, fs, given);
   }
 
   // **A directory becomes one generated entry, before anything is compiled.** `wac test <dir>` walks
@@ -1275,7 +1275,7 @@ export async i32 main(Sys sys) {
   // caller building a target list and an ignore list from one source must get the same answer for a
   // file as for the directory holding it; the alternative is an exclusion that works or not depending
   // on how the caller happened to spell the target.
-  bool severalOrDir = cmd == "test" && (pos.len() > 1 || fs.stat(entry).isDir);
+  bool severalOrDir = cmd == "test" && (pos.len() > 1 || (await fs.stat(entry)).isDir);
   if (cmd == "test" && !severalOrDir
       && withoutIgnored([entry], flagValue(cli, argc, "--ignore")).len() == 0) {
     // The walk's own spelling for a run that excluded everything, in the one-file shape: `0 ok`
@@ -1287,7 +1287,7 @@ export async i32 main(Sys sys) {
   if (severalOrDir) {
     string[] asked = string[].filled(pos.len(), "");
     for (i32 i = 0; i < pos.len(); i++) { asked[i] = normalisePath(pos[i]); }
-    string[] found = testTargets(fs, asked);
+    string[] found = await testTargets(fs, asked);
     walked = withoutIgnored(found, flagValue(cli, argc, "--ignore"));
     ignoredCount = found.len() - walked.len();
     if (walked.len() == 0) {
@@ -1341,8 +1341,8 @@ export async i32 main(Sys sys) {
     if (imports.len() > 0 && walked.len() > 0) {
       Fs tfs = Fs.onHost(cli, 0);
       string here = normalisePath(cli.cwd().wait());
-      string theirs = projectRootAbs(tfs, here, walked[0]);
-      if (theirs != projectRootAbs(tfs, here, ".")) { imports = string[](); }
+      string theirs = await projectRootAbs(tfs, here, walked[0]);
+      if (theirs != await projectRootAbs(tfs, here, ".")) { imports = string[](); }
     }
     if (imports.len() == 0) {
       // **`beside` needs one directory, and several paths do not name one.** One target *is* the
@@ -1379,7 +1379,7 @@ export async i32 main(Sys sys) {
     generated = aggregate;
   }
 
-  Sources src = gather(fs, cli, entry, cmd != "check" && cmd != "audit");
+  Sources src = await gather(fs, cli, entry, cmd != "check" && cmd != "audit");
   // **The aggregate is scratch, and this is the only place that has to know it.** `gather` has its
   // bytes now and every later use of `entry` is as a *name* — a cache key, a diagnostic, a report
   // heading — so nothing below reads the file again and it can go here, once, instead of at the
@@ -1442,7 +1442,7 @@ export async i32 main(Sys sys) {
                    ? ""
                    : buildCachePath(cli, argc, cmd, entry, paths, texts, outStem(cli, argc), target);
   if (cachePath != "") {
-    FileResult hit = fs.readFile(cachePath);
+    FileResult hit = await fs.readFile(cachePath);
     // **A cached `run` is spawned, not written.** Like `test`'s hit and for the same reason: the module
     // carries its own manifest, so there is nothing to reconstruct and no file the caller asked for.
     // The grants passed to `spawn` are read from the command line rather than from the module, because
@@ -1503,7 +1503,7 @@ export async i32 main(Sys sys) {
     }
     if (hit.ok && hit.bytes.len() > 8 && cmd != "test" && cmd != "app") {
       string stemHit = outStem(cli, argc);
-      Change wroteHit = fs.writeFile("\{stemHit}.wasm", hit.bytes);
+      Change wroteHit = await fs.writeFile("\{stemHit}.wasm", hit.bytes);
       if (!wroteHit.ok()) {
         core.warn("wacc: cannot write \{stemHit}.wasm — \{wroteHit.message}");
         return 1;
@@ -1694,7 +1694,7 @@ export async i32 main(Sys sys) {
       core.warn("warning: \{rest.slice(0, tab)} is exported but generic, so it is not in \{out}"
                 + "\n  = help: export an instantiation by name: export { \{rest.slice(tab + 1, rest.len())} };");
     }
-    Change wroteGlue = fs.writeFile(out, glue.toBytes());
+    Change wroteGlue = await fs.writeFile(out, glue.toBytes());
     if (!wroteGlue.ok()) {
       core.warn("wacc: cannot write \{out} — \{wroteGlue.message}");
       return 1;
@@ -1924,7 +1924,7 @@ export async i32 main(Sys sys) {
                 "the entry that produced it.");
       return 1;
     }
-    Change wroteWasm = fs.writeFile("\{stem}.wasm", whole);
+    Change wroteWasm = await fs.writeFile("\{stem}.wasm", whole);
     if (!wroteWasm.ok()) {
       core.warn("wacc: cannot write \{stem}.wasm — \{wroteWasm.message}");
       return 1;
@@ -1950,7 +1950,7 @@ export async i32 main(Sys sys) {
     // `index\tline\tcol\tkind\tfile` per counter, in counter order — what turns a count into a
     // position. Beside the module because whoever runs it is who needs it.
     if (covered) {
-      Change wroteCov = fs.writeFile("\{stem}.cov", covTableFilesIn(paths, texts, res, entry).toBytes());
+      Change wroteCov = await fs.writeFile("\{stem}.cov", covTableFilesIn(paths, texts, res, entry).toBytes());
       if (!wroteCov.ok()) {
         core.warn("wacc: cannot write \{stem}.cov — \{wroteCov.message}");
         return 1;
@@ -1959,7 +1959,7 @@ export async i32 main(Sys sys) {
     // The same table for a traced build, under its own suffix. Both or neither, for the reason above:
     // a table without the module it describes names positions in a program that was not built.
     if (traced) {
-      Change wroteTrace = fs.writeFile("\{stem}.trace",
+      Change wroteTrace = await fs.writeFile("\{stem}.trace",
                                        traceTableFiles(paths, texts, entry).toBytes());
       if (!wroteTrace.ok()) {
         core.warn("wacc: cannot write \{stem}.trace — \{wroteTrace.message}");
@@ -1976,7 +1976,7 @@ export async i32 main(Sys sys) {
   }
 
   string out = pos.len() > 1 ? pos[1] : wasmBeside(entry);
-  Change wrote = fs.writeFile(out, wasm);
+  Change wrote = await fs.writeFile(out, wasm);
   if (!wrote.ok()) {
     core.warn("wacc: cannot write \{out} — \{wrote.message}");
     return 1;
@@ -2408,7 +2408,7 @@ string diagnosticCount(string wire) {
  * `§wac-check-exclude-2ixx2cu`). One graph, merged from every root, checked once — and, like every
  * command, it ends by saying how much it read.
  */
-i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
+async i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
   // **It always says what it read** (spec ch45 `§wac-cli-check-4mkq8wp`) — after errors and
   // warnings as much as after nothing, since the count is the part that cannot otherwise be seen.
   string[] roots = given;
@@ -2418,7 +2418,7 @@ i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
     string dir = ".";
     bool found = false;
     for (i32 up = 0; up < 32 && !found; up++) {
-      if (fs.stat("\{dir}/\{MANIFEST_NAME()}").exists) { found = true; } else { dir = dir == "." ? ".." : "\{dir}/.."; }
+      if ((await fs.stat("\{dir}/\{MANIFEST_NAME()}")).exists) { found = true; } else { dir = dir == "." ? ".." : "\{dir}/.."; }
     }
     // **No manifest anywhere above: the working directory is the project.** The README's own example
     // runs `wac check` over a lone file with no `wac.json5`, and expects it checked; refusing for want
@@ -2443,9 +2443,9 @@ i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
   // **One graph from every root**, each file once: two roots that share an import share its check.
   Vec<string> ps = Vec.create();
   Vec<string> ts = Vec.create();
-  Sources first = gather(fs, cli, normalisePath(roots[0]), false);
+  Sources first = await gather(fs, cli, normalisePath(roots[0]), false);
   for (i32 r = 0; r < roots.len(); r++) {
-    Sources s = r == 0 ? first : gather(fs, cli, normalisePath(roots[r]), false);
+    Sources s = r == 0 ? first : (await gather(fs, cli, normalisePath(roots[r]), false));
     if (s.missing != "" || s.why != "") {
       core.warn(s.why != "" ? "wacc: \{s.why}" : "wacc: cannot read \{s.missing}");
       return 1;

@@ -282,13 +282,13 @@ bool startsWithPath(string path, string prefix) {
  * Sorted at each level, so a run is the same twice. `.`-prefixed directories, `node_modules` and
  * `target` are skipped: nothing anybody wants compiled, and `target` in particular is enormous.
  */
-export string[] testFilesIn(Fs fs, string dir) {
+export async string[] testFilesIn(Fs fs, string dir) {
   // **No cap**, because a cap here is a silent truncation and this is a *test* runner: running fewer
   // files and reporting that they passed is the worst answer available. `maxFiles()` bounds a
   // program's import graph and `issues/lang/0158` is the day it was applied by skipping rather than
   // reporting; a growing vector has nothing to skip.
   Vec<string> out = Vec.create();
-  walkTests(fs, dir, out);
+  await walkTests(fs, dir, out);
   return out.toArray();
 }
 
@@ -307,12 +307,12 @@ export string[] testFilesIn(Fs fs, string dir) {
  * **Deduplicated, because a caller may name a directory and a file inside it.** The same file twice
  * in the aggregate is a duplicate import of the same module and every test in it runs twice.
  */
-export string[] testTargets(Fs fs, string[] paths) {
+export async string[] testTargets(Fs fs, string[] paths) {
   Vec<string> out = Vec.create();
   for (i32 p = 0; p < paths.len(); p++) {
     string one = paths[p];
-    if (fs.stat(one).isDir) {
-      string[] under = testFilesIn(fs, one);
+    if ((await fs.stat(one)).isDir) {
+      string[] under = await testFilesIn(fs, one);
       for (i32 i = 0; i < under.len(); i++) { pushOnce(out, under[i]); }
     } else {
       pushOnce(out, one);
@@ -352,8 +352,8 @@ void pushOnce(Vec<string> out, string path) {
 }
 
 /** One level of the walk, appending into `out`. */
-void walkTests(Fs fs, string dir, Vec<string> out) {
-  string[]? listed = fs.readDir(dir);
+async void walkTests(Fs fs, string dir, Vec<string> out) {
+  string[]? listed = await fs.readDir(dir);
   if (listed is null) { return; }
   string[] names = sortedNames(listed!);
   for (i32 i = 0; i < names.len(); i++) {
@@ -363,8 +363,8 @@ void walkTests(Fs fs, string dir, Vec<string> out) {
     // `wac test .` arrives here as "", the current directory normalised, and "" + "/" + name is a file
     // at the root of the filesystem: *cannot read /a_test.wac*.
     string path = dir == "" ? name : dir + (dir.slice(dir.len() - 1, dir.len()) == "/" ? "" : "/") + name;
-    if (fs.stat(path).isDir) {
-      walkTests(fs, path, out);
+    if ((await fs.stat(path)).isDir) {
+      await walkTests(fs, path, out);
       continue;
     }
     if (name.len() > 9 && name.slice(name.len() - 9, name.len()) == "_test.wac") {

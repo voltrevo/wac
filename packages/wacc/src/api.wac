@@ -1386,30 +1386,38 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
 
 
 /**
- * What `core` must declare for a file that imports `only` from this one: each name the reached
- * signatures mention that this file imports from core under that name — plus `Ticket`, when a reached
- * function or method is `async`, since its callers are handed one though no signature spells it.
+ * What other files must declare for a file that imports `only` from this one: each name the reached
+ * signatures mention that this file imports, as `file<TAB>name` under the name the other file gave it
+ * — plus core's `Ticket`, when a reached function or method is `async`, since its callers are handed
+ * one though no signature spells it.
  *
  * **A type reached through someone else's signature is still a type with members.** `many()` answering
  * core's `Vec<i32>`, or an imported `async` function answering a `Ticket<Ran>`, left the importer with a
  * type it had never declared — unknown, so `many().nope()` and `run().out` passed silently, and the
- * emitter found them instead.
+ * emitter found them instead. Not only core's: a `Shell` whose `fs` field is an `Fs` left
+ * `sh.fs.readFile(p)` unknown in a file that imported `Shell` and not `Fs`, so a missing `await` there
+ * reached the engine as a module it refused (`spec/cases/0563`).
  */
-string[] coreNamesReached(u8[] src, Lexed lx, Program prog, string[] reach) {
-  // What this file imports from core, by the name it gave and the name core gave.
+string[] namesReachedThroughImports(u8[] src, Lexed lx, Program prog, string[] reach, const Res res,
+                                    string[] paths, string fromPath) {
+  // What this file imports, by the name it gave, the name the other file gave, and which file.
   string[] local = string[].filled(256, "");
   string[] orig = string[].filled(256, "");
+  string[] from = string[].filled(256, "");
   i32 ln = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       Import(pathTok, prefixTok, items): {
         string q = pathTok < 0 ? "" : tokenTextOf(src, lx, pathTok);
-        if (pathTok >= 0 && q != "\"core\"") { continue; }
+        string target = pathTok < 0 || q == "\"core\""
+          ? corePath()
+          : keyOf(resolveVia(res, paths, fromPath, q.slice(1, q.len() - 1)));
         for (i32 j = 0; j < items.len() && ln < local.len(); j++) {
           if (items[j].nameTok < 0) { continue; }
           string o = tokenTextOf(src, lx, items[j].nameTok);
           orig[ln] = o;
           local[ln] = items[j].aliasTok < 0 ? o : tokenTextOf(src, lx, items[j].aliasTok);
+          from[ln] = target;
           ln = ln + 1;
         }
       }
@@ -1443,14 +1451,16 @@ string[] coreNamesReached(u8[] src, Lexed lx, Program prog, string[] reach) {
   i32 n = 0;
   for (i32 i = 0; i < seen[0]; i++) {
     for (i32 k = 0; k < ln; k++) {
-      if (local[k] == found[i] && !listHas(out, n, orig[k])) {
-        out[n] = orig[k];
+      string entry = from[k] + "\t" + orig[k];
+      if (local[k] == found[i] && !listHas(out, n, entry)) {
+        out[n] = entry;
         n = n + 1;
       }
     }
   }
-  if (anyAsync && !listHas(out, n, "Ticket")) {
-    out[n] = "Ticket";
+  string ticket = corePath() + "\tTicket";
+  if (anyAsync && !listHas(out, n, ticket)) {
+    out[n] = ticket;
     n = n + 1;
   }
   string[] exact = string[].filled(n, "");
@@ -1581,11 +1591,11 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   // `decode` and so does `codec/src/hex.wac`, and a closure holding both let the wrong one answer —
   // the entry asked `rlp.wac` for it. So each import is resolved to the path it names, and a file
   // contributes only what that file was asked for.
-  string[] wantFrom = string[].defaulted(512);
-  string[] wantName = string[].defaulted(512);
+  string[] wantFrom = string[].defaulted(4096);
+  string[] wantName = string[].defaulted(4096);
   // What this file calls it, which is the name it must be declared under — `Dup as DupB` brings in a
   // `DupB`, and two modules' `Dup` are two types rather than one that overwrote the other.
-  string[] wantAlias = string[].defaulted(512);
+  string[] wantAlias = string[].defaulted(4096);
   // Where the *import* is written, taken here because the loop below retargets `c` at each imported
   // file in turn: a diagnostic about `main.wac`'s import must not carry `b.wac`'s line numbers.
   i32[] wantLine = i32[].filled(512, 0);
@@ -1703,35 +1713,79 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
     }
   }
 
-  // **What the imported signatures hand over from core**, wanted from core as well — declared, so their
-  // members are checked, and not nameable, since the entry never asked for them. See `coreNamesReached`.
+  // **What the imported signatures hand over from other files**, wanted from those files as well —
+  // declared, so their members are checked, and not nameable, since the entry never asked for them.
+  // See `namesReachedThroughImports`. To a fixpoint, because a reached type reaches more: `Shell`'s
+  // `fs` is an `Fs`, whose methods answer `Ticket`s. A file is looked at again only when it has been
+  // asked for more since the last time.
   i32 nExplicit = n;
-  for (i32 i = 0; i < paths.len(); i++) {
-    if (paths[i] == entry || paths[i] == corePath() || isBuiltinSpec(paths[i])) { continue; }
-    i32 asked = 0;
-    for (i32 k = 0; k < nExplicit; k++) {
-      if (wantFrom[k] == paths[i]) { asked = asked + 1; }
-    }
-    if (asked == 0) { continue; }
-    string[] wanted = string[].defaulted(asked);
-    i32 wat = 0;
-    for (i32 k = 0; k < nExplicit; k++) {
-      if (wantFrom[k] == paths[i]) { wanted[wat] = wantName[k]; wat = wat + 1; }
-    }
-    u8[] rsrc = sources[i].toBytes();
-    Lexed rlx = i < lexes.len() && (lexes[i] is not null) ? lexes[i]! : lex(rsrc);
-    Program rpg = i < progs.len() && (progs[i] is not null) ? progs[i]! : parseProgram(P.create(rsrc, rlx));
-    string[] fromCore = coreNamesReached(rsrc, rlx, rpg, closeOverSignatures(rsrc, rlx, rpg, wanted));
-    for (i32 j = 0; j < fromCore.len(); j++) {
-      bool have = false;
-      for (i32 k = 0; k < n; k++) {
-        if (wantFrom[k] == corePath() && wantName[k] == fromCore[j]) { have = true; }
+  i32[] askedBefore = i32[].filled(paths.len(), 0);
+  // The names the entry declares itself, which a reached name must not shadow.
+  string[] own = string[].filled(eprog.decls.len(), "");
+  i32 on = 0;
+  for (i32 d = 0; d < eprog.decls.len(); d++) {
+    match (eprog.decls[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        own[on] = tokenTextOf(esrc, elexed, nameTok);
+        on = on + 1;
       }
-      if (have || n >= wantFrom.len()) { continue; }
-      wantFrom[n] = corePath();
-      wantName[n] = fromCore[j];
-      wantAlias[n] = fromCore[j];
-      n = n + 1;
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        own[on] = tokenTextOf(esrc, elexed, nameTok);
+        on = on + 1;
+      }
+      default: { }
+    }
+  }
+  bool more = true;
+  for (i32 round = 0; round < 32 && more; round++) {
+    more = false;
+    for (i32 i = 0; i < paths.len(); i++) {
+      if (paths[i] == entry || paths[i] == corePath() || isBuiltinSpec(paths[i])) { continue; }
+      i32 asked = 0;
+      for (i32 k = 0; k < n; k++) {
+        if (wantFrom[k] == paths[i]) { asked = asked + 1; }
+      }
+      if (asked == 0 || asked == askedBefore[i]) { continue; }
+      askedBefore[i] = asked;
+      string[] wanted = string[].defaulted(asked);
+      i32 wat = 0;
+      for (i32 k = 0; k < n; k++) {
+        if (wantFrom[k] == paths[i]) { wanted[wat] = wantName[k]; wat = wat + 1; }
+      }
+      u8[] rsrc = sources[i].toBytes();
+      Lexed rlx = i < lexes.len() && (lexes[i] is not null) ? lexes[i]! : lex(rsrc);
+      Program rpg = i < progs.len() && (progs[i] is not null) ? progs[i]! : parseProgram(P.create(rsrc, rlx));
+      string[] reached = namesReachedThroughImports(rsrc, rlx, rpg, closeOverSignatures(rsrc, rlx, rpg, wanted),
+                                                    res, paths, paths[i]);
+      for (i32 j = 0; j < reached.len(); j++) {
+        string[] parts = splitTabs(reached[j]);
+        string rfrom = parts[0];
+        string rname = parts[1];
+        if (rfrom != corePath()) {
+          string[] got = followExport(paths, sources, lexes, progs, res, rfrom, rname);
+          rfrom = got[0];
+          rname = got[1];
+          if (indexOfPath(paths, rfrom) < 0) { continue; }
+        }
+        bool have = false;
+        // **Two types of one spelling are left unknown rather than made one.** A reached name the
+        // entry declares, or wants from somewhere else, would collide with it — and a false alarm is
+        // the direction a checker may not be wrong in. Core's names are core's alone.
+        bool clash = false;
+        for (i32 k = 0; k < n; k++) {
+          if (wantFrom[k] == rfrom && wantName[k] == rname) { have = true; }
+          if (rfrom != corePath() && wantFrom[k] != rfrom && (wantName[k] == rname || wantAlias[k] == rname)) {
+            clash = true;
+          }
+        }
+        if (rfrom != corePath() && listHas(own, on, rname)) { clash = true; }
+        if (have || clash || n >= wantFrom.len()) { continue; }
+        wantFrom[n] = rfrom;
+        wantName[n] = rname;
+        wantAlias[n] = rname;
+        n = n + 1;
+        more = true;
+      }
     }
   }
 
@@ -1760,7 +1814,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
     // **A file's exports are its own to state.** Asked for a name it does not export, the import is
     // the error — whether the name is declared without `export` or merely imported from somewhere
     // else, which does not pass it on (`§wac-no-reexport-f7kn4wq`).
-    for (i32 k = 0; k < n; k++) {
+    for (i32 k = 0; k < nExplicit; k++) {
       if (wantFrom[k] != paths[i]) { continue; }
       if (!wantForwarded[k] && !exportsName(isrc, ilexed, iprog, wantName[k])) {
         // **A built-in gets its own code**, because for those two trees "that file does not export

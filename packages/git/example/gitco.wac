@@ -16,7 +16,7 @@ import { Cli, Core, FAULT_NONE, Sys } from "std";
 import { Fs } from "../../fs/src/fs.wac";
 import { RepoAt, Written, checkout, head, openRepo, treeOfCommit } from "../src/repo.wac";
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
@@ -27,23 +27,23 @@ export i32 main(Sys sys) {
   string root = string.fromBytes(cli.arg(0).wait());
   Fs fs = Fs.onHost(cli, 0);
 
-  match (openRepo(fs, "\{root}/.git", root)) {
+  match ((await openRepo(fs, "\{root}/.git", root))) {
     NoRepo(why): {
       core.warn("gitco: \{why}");
       return 1;
     }
     Opened(repo): {
-      u8[]? at = head(repo);
+      u8[]? at = await head(repo);
       if (at is null) {
         core.warn("gitco: HEAD does not resolve to a commit");
         return 1;
       }
-      u8[]? tree = treeOfCommit(repo, at!);
+      u8[]? tree = await treeOfCommit(repo, at!);
       if (tree is null) {
         core.warn("gitco: HEAD is not a commit, or names no tree");
         return 1;
       }
-      match (checkout(repo, tree!, root)) {
+      match ((await checkout(repo, tree!, root))) {
         Stopped(why): {
           core.warn("gitco: \{why}");
           return 1;

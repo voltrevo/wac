@@ -11,7 +11,7 @@ import { refuseFlags } from "../lib/flags.wac";
 import { fetch } from "../lib/fetch.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 wget(Core core, Cli cli, Fs fs, Args a) {
+export async i32 wget(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 3) {
     core.warn("usage: \{a.name} <host> <path> <outfile> [-<port>]");
@@ -22,7 +22,7 @@ export i32 wget(Core core, Cli cli, Fs fs, Args a) {
   // output into a file, which is a capability the host has and a memory image does not — so anywhere
   // else the body is collected and written with one call. Same split as `split`, `lib/safe.wac` and
   // `lib/input.wac`'s reading side (wac-mono 0109).
-  bool streaming = fs.isHostPath(out);
+  bool streaming = await fs.isHostPath(out);
   // Collected through the same substitute capability the shell uses to run an applet in process:
   // `fetch` writes with `cli.write` and neither knows nor needs to know where that goes. Built either
   // way and used only on the collected route — a `Frame` nobody writes to is two empty buffers.
@@ -50,7 +50,7 @@ export i32 wget(Core core, Cli cli, Fs fs, Args a) {
       return 1;
     }
     if (code == 0) {
-      Change wrote = fs.writeFile(out, got.out);
+      Change wrote = await fs.writeFile(out, got.out);
       if (!wrote.ok()) { core.warn("\{a.name}: \{out}: \{reasonOf(wrote)}"); return 1; }
     }
   }

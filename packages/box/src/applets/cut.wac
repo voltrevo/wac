@@ -37,7 +37,7 @@ export async i32 cut(Core core, Cli cli, Fs fs, Args a) {
   }
 
   Sink out = Sink.create(cli);
-  Reader r = Reader.create(core, cli, fs, a, 0, out);
+  Reader r = await Reader.create(core, cli, fs, a, 0, out);
   while (true) {
     Line l = await r.next(core, cli, fs, a);
     if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }

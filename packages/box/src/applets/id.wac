@@ -21,7 +21,7 @@ import { Fs } from "../../../fs/src/fs.wac";
 import { User, parsePasswd, userNamed } from "../../../fs/src/passwd.wac";
 import { Vec } from "core";
 
-export i32 id(Core core, Cli cli, Fs fs, Args a) {
+export async i32 id(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // GNU takes USER operands — `id root` — which needs no more than the table this already reads, but
   // is a different question from "who am I" and is not implemented rather than half-done.
@@ -71,7 +71,7 @@ export i32 id(Core core, Cli cli, Fs fs, Args a) {
     return 0;
   }
 
-  FileResult passwd = fs.readFile("/etc/passwd");
+  FileResult passwd = await fs.readFile("/etc/passwd");
   if (!passwd.ok) {
     core.warn("\{a.name}: /etc/passwd: \{passwd.error}");
     return 1;

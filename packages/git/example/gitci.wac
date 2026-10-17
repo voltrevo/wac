@@ -23,7 +23,7 @@ import { commitTree, headRef, openRepo, writeWorkTree } from "../src/repo.wac";
 import { IndexEntry } from "../src/index.wac";
 import { Vec } from "core";
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
@@ -35,20 +35,20 @@ export i32 main(Sys sys) {
   string message = string.fromBytes(cli.arg(1).wait());
   Fs fs = Fs.onHost(cli, 0);
 
-  match (openRepo(fs, "\{root}/.git", root)) {
+  match ((await openRepo(fs, "\{root}/.git", root))) {
     NoRepo(why): {
       core.warn("gitci: \{why}");
       return 1;
     }
     Opened(repo): {
-      string branch = headRef(repo);
+      string branch = await headRef(repo);
       if (branch == "") {
         // A detached HEAD has no branch to move, and moving `HEAD` itself is a different operation.
         core.warn("gitci: HEAD is detached; nothing to move");
         return 1;
       }
       Vec<IndexEntry> index = Vec.create();
-      match (writeWorkTree(repo, root, "", index)) {
+      match ((await writeWorkTree(repo, root, "", index))) {
         NotStored(why): {
           core.warn("gitci: \{why}");
           return 1;
@@ -70,7 +70,7 @@ export i32 main(Sys sys) {
           // `.git/config` made this refuse to commit for very nearly everyone who has one configured.
           // `configChain` returns them lowest-precedence first and `configOf` takes the last, which is
           // git's answer per key — the local file over the dotfile over the XDG file over the system one.
-          Vec<Setting> settings = configChain(cli, fs, "\{root}/.git");
+          Vec<Setting> settings = await configChain(cli, fs, "\{root}/.git");
           string who = configOf(settings, "user.name");
           string mail = configOf(settings, "user.email");
           if (who == "" || mail == "") {
@@ -100,7 +100,7 @@ export i32 main(Sys sys) {
             if (ok) { when = parsed; }
           }
           Who me = Who("\{who} <\{mail}>", when, zone);
-          match (commitTree(repo, tree, branch, me, message, index)) {
+          match ((await commitTree(repo, tree, branch, me, message, index))) {
             NotStored(why): {
               core.warn("gitci: \{why}");
               return 1;

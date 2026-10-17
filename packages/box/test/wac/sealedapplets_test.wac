@@ -30,13 +30,13 @@ import { Ran, memoryFs, runOn } from "./memory.wac";
 string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
 
 /** The fixtures, on a filesystem with nothing else in it. */
-bool layOn(Fs fs, Fixture[] fs_) {
+async bool layOn(Fs fs, Fixture[] fs_) {
   for (i32 i = 0; i < fs_.len(); i++) {
     if (fs_[i].isDir) {
-      if (!fs.mkdir("/\{fs_[i].name}", true).ok()) { return false; }
+      if (!(await fs.mkdir("/\{fs_[i].name}", true)).ok()) { return false; }
       continue;
     }
-    if (!fs.writeFile("/\{fs_[i].name}", fs_[i].bytes).ok()) { return false; }
+    if (!(await fs.writeFile("/\{fs_[i].name}", fs_[i].bytes)).ok()) { return false; }
   }
   return true;
 }
@@ -56,8 +56,8 @@ export async string test_the_applets_answer_the_same_over_memory_as_the_real_too
     // Checked against the recorded case, not just the recorded answer — `behaviour_test.wac`'s reason.
     if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
     // A world per case, because a case that writes a file must not be visible to the next one.
-    Fs fs = memoryFs(core, "sealedsh");
-    if (!layOn(fs, fixtures())) {
+    Fs fs = await memoryFs(core, "sealedsh");
+    if (!(await layOn(fs, fixtures()))) {
       t.isTrue(false, "cannot lay the fixtures on a memory filesystem");
       return t.report();
     }
@@ -94,7 +94,7 @@ export async string test_the_applets_answer_the_same_over_memory_as_the_real_too
  */
 export async string test_nothing_of_the_host_is_reachable_over_memory(Core core, Cli cli) {
   T t = T.create();
-  Fs fs = memoryFs(core, "sealedsh");
+  Fs fs = await memoryFs(core, "sealedsh");
 
   Ran passwd = await runOn(core, cli, fs, "cat /etc/passwd; echo rc=$?");
   t.eqStr(passwd.out, "rc=1\n", "the host's /etc/passwd was readable: \{show(passwd.out)}");

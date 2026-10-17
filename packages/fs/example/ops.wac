@@ -16,7 +16,7 @@ import { Fs } from "../src/fs.wac";
 import { Sink } from "../../platform/src/stream.wac";
 import { Vec } from "core";
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 n = cli.argCount().wait();
@@ -45,7 +45,7 @@ export i32 main(Sys sys) {
   for (i32 i = 0; i < lines.len(); i++) {
     string line = lines.get(i);
     if (line == "") { continue; }
-    out.line(answer(fs, prefix, line));
+    out.line(await answer(fs, prefix, line));
   }
   out.flush();
   return 0;
@@ -58,7 +58,7 @@ export i32 main(Sys sys) {
  * host's own words and the category is the thing both sides must agree on — the same reason the
  * differential tests for `mkdir` and `rm` compare GNU's reason rather than a runtime's errno text.
  */
-string answer(Fs fs, string prefix, string line) {
+async string answer(Fs fs, string prefix, string line) {
   Vec<string> words = splitSpaces(line);
   string op = words.get(0);
   string a = words.len() > 1 ? prefix + words.get(1) : "";
@@ -67,27 +67,27 @@ string answer(Fs fs, string prefix, string line) {
   if (op == "write") {
     // The rest of the line is the content, so a file can hold a space.
     string body = words.len() > 2 ? rest(line, words.get(0).len() + 1 + words.get(1).len() + 1) : "";
-    return "write \{fs.writeFile(a, body.toBytes()).fault}";
+    return "write \{(await fs.writeFile(a, body.toBytes())).fault}";
   }
   if (op == "read") {
-    if (!fs.readFile(a).ok) { return "read fault \{fs.readFile(a).fault}"; }
-    return "read [\{string.fromBytes(fs.readFile(a).bytes)}]";
+    if (!(await fs.readFile(a)).ok) { return "read fault \{(await fs.readFile(a)).fault}"; }
+    return "read [\{string.fromBytes((await fs.readFile(a)).bytes)}]";
   }
-  if (op == "mkdir") { return "mkdir \{fs.mkdir(a, false).fault}"; }
-  if (op == "mkdirp") { return "mkdirp \{fs.mkdir(a, true).fault}"; }
-  if (op == "rm") { return "rm \{fs.remove(a, false).fault}"; }
-  if (op == "rmr") { return "rmr \{fs.remove(a, true).fault}"; }
-  if (op == "mv") { return "mv \{fs.rename(a, b).fault}"; }
+  if (op == "mkdir") { return "mkdir \{(await fs.mkdir(a, false)).fault}"; }
+  if (op == "mkdirp") { return "mkdirp \{(await fs.mkdir(a, true)).fault}"; }
+  if (op == "rm") { return "rm \{(await fs.remove(a, false)).fault}"; }
+  if (op == "rmr") { return "rmr \{(await fs.remove(a, true)).fault}"; }
+  if (op == "mv") { return "mv \{(await fs.rename(a, b)).fault}"; }
   if (op == "stat") {
-    if (!fs.stat(a).exists) { return "stat absent"; }
+    if (!(await fs.stat(a)).exists) { return "stat absent"; }
     // A *file's* size is a fact; a directory's is the host's block size — 4096 on the ext4 under this
     // container, and something else elsewhere. Imitating that number would be cargo-culting a detail no
     // program should read, so it is left out of the transcript rather than matched.
-    if (fs.stat(a).isDir) { return "stat dir"; }
-    return "stat file \{fs.stat(a).size as~ i32}";
+    if ((await fs.stat(a)).isDir) { return "stat dir"; }
+    return "stat file \{(await fs.stat(a)).size as~ i32}";
   }
   if (op == "ls") {
-    string[]? names = fs.readDir(a);
+    string[]? names = await fs.readDir(a);
     if (names is null) { return "ls absent"; }
     string joined = "";
     for (i32 i = 0; i < names!.len(); i++) {

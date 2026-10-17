@@ -195,11 +195,11 @@ export string[] locationsOf(string file, string source, Mutant m) {
  * `""` when any test file's graph cannot be gathered, which turns the cache off rather than keying on
  * a partial answer. `treeKeyOf` sorts internally, so the order these arrive in does not matter.
  */
-string keyFor(Fs fs, Cli cli, string[] testFiles) {
+async string keyFor(Fs fs, Cli cli, string[] testFiles) {
   Vec<string> paths = Vec.create();
   Vec<string> texts = Vec.create();
   for (i32 i = 0; i < testFiles.len(); i++) {
-    Sources src = gather(fs, cli, testFiles[i], false);
+    Sources src = await gather(fs, cli, testFiles[i], false);
     if (src.why != "") { return ""; }
     for (i32 j = 0; j < src.paths.len(); j++) {
       bool have = false;
@@ -259,7 +259,7 @@ export i32 exitFor(i32 survivors, bool refused) {
  * already red. Those are different from "the suite has a hole", and a caller that treats them the
  * same learns nothing from either.
  */
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 argc = cli.argCount().wait();
@@ -306,7 +306,7 @@ export i32 main(Sys sys) {
   Profiled prof = buildProfile(core, cli, binary, stage, testFiles,
                                root + "/.cache/mutate/profiles",
                                root + "/" + WAC_CACHE_DIR(),
-                               keyFor(Fs.onHost(cli, 0), cli, testFiles));
+                               await keyFor(Fs.onHost(cli, 0), cli, testFiles));
   if (!prof.ok) {
     core.warn("not narrowing: " + prof.why);
     core.warn("Every mutant will run the whole of " + testDir + " — slower, and never wrong.");
@@ -384,7 +384,7 @@ export i32 main(Sys sys) {
     // not happen — so asking makes the run faster as well as making three of `scoreOf`'s six inputs
     // real numbers rather than the constant zero. `mutatelist --triage` is the same composition
     // without the running.
-    Sources gathered = gather(fs, cli, files[fi], false);
+    Sources gathered = await gather(fs, cli, files[fi], false);
     bool blind = gathered.why != "";
     if (blind) { core.warn("  cannot gather " + files[fi] + ": " + gathered.why + " — running its"
                            + " mutants untriaged rather than discarding them"); }

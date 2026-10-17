@@ -21,10 +21,10 @@ import { Fs } from "../../../fs/src/fs.wac";
  */
 i32 MAX_DEPTH() { return 64; }
 
-export i32 find(Core core, Cli cli, Fs fs, Args a) {
+export async i32 find(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   string root = a.rest.len() < 1 ? "." : a.rest[0];
-  Stat st = fs.stat(root);
+  Stat st = await fs.stat(root);
   // GNU quotes the path and gives no frame: `find: 'nosuch': No such file or directory`. Same story
   // as `du` next door — an invented phrase for every absence, so a path with no read grant and a path
   // that is genuinely missing were one answer.
@@ -33,17 +33,17 @@ export i32 find(Core core, Cli cli, Fs fs, Args a) {
     return 1;
   }
   core.log(root);
-  return walk(core, cli, fs, a.name, root, 0) ? 0 : 1;
+  return await walk(core, cli, fs, a.name, root, 0) ? 0 : 1;
 }
 
 /** False if any part of this subtree could not be listed. */
-bool walk(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
+async bool walk(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
   if (depth > MAX_DEPTH()) {
     core.warn("\{name}: \{dir}: deeper than \{MAX_DEPTH()}" +
       " levels, not descending (a symlink loop, or a genuinely deep tree)");
     return false;
   }
-  string[]? names = fs.readDir(dir);
+  string[]? names = await fs.readDir(dir);
   if (names is null) {
     core.warn("\{name}: \{dir}: cannot read directory");
     return false;
@@ -53,8 +53,8 @@ bool walk(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
   for (i32 i = 0; i < found.len(); i++) {
     string path = "\{dir}/\{found[i]}";
     core.log(path);
-    if (fs.stat(path).isDir) {
-      if (!walk(core, cli, fs, name, path, depth + 1)) { complete = false; }
+    if ((await fs.stat(path)).isDir) {
+      if (!(await walk(core, cli, fs, name, path, depth + 1))) { complete = false; }
     }
   }
   return complete;

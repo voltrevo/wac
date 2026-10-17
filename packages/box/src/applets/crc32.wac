@@ -21,7 +21,7 @@ export async i32 crc32(Core core, Cli cli, Fs fs, Args a) {
   u32[] table = crcTable8();
   i32 status = 0;
   for (i32 f = 0; f < count; f++) {
-  Input in = openStream(core, cli, fs, a, f, -1);
+  Input in = await openStream(core, cli, fs, a, f, -1);
   // Reported, skipped, and the status at the end — the same rule as `sha256sum` beside it.
   if (!in.ok) { status = 1; continue; }
   Feed fed = in.fed;

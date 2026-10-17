@@ -45,7 +45,7 @@ export async i32 head(Core core, Cli cli, Fs fs, Args a) {
     // **The one applet with a bound to declare.** `head -c 8` reads eight bytes and no more, which is
     // what lets it answer for `/dev/urandom` at all — an endless file has no whole for `readFile` to
     // return. `-c -8` is "all but the last eight", which needs the whole thing, so it declares nothing.
-    Input in = openStream(core, cli, fs, a, f, bytes && !allButLast ? want : -1);
+    Input in = await openStream(core, cli, fs, a, f, bytes && !allButLast ? want : -1);
     // Reported, skipped, and the status at the end. GNU prints the banner of every file it *can* open,
     // so a missing one in the middle costs a complaint and nothing else.
     if (!in.ok) { status = 1; continue; }

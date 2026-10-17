@@ -17,12 +17,12 @@ import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 tar(Core core, Cli cli, Fs fs, Args a) {
+export async i32 tar(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { core.warn("usage: \{a.name} <path>..."); return 2; }
   i32 code = 0;
   for (i32 i = 0; i < a.rest.len(); i++) {
-    if (!add(core, cli, fs, a.rest[i], a.name)) { code = 1; }
+    if (!(await add(core, cli, fs, a.rest[i], a.name))) { code = 1; }
   }
   // Two zero blocks end the archive. Without them GNU tar reads the stream fine and then
   // says "unexpected EOF", which is the sort of thing a round trip with itself misses.
@@ -41,11 +41,11 @@ export i32 tar(Core core, Cli cli, Fs fs, Args a) {
 i32 MAX_DEPTH() { return 64; }
 
 /** One path, and everything under it if it is a directory. */
-bool add(Core core, Cli cli, Fs fs, string path, string name) {
-  return addAt(core, cli, fs, path, name, 0);
+async bool add(Core core, Cli cli, Fs fs, string path, string name) {
+  return await addAt(core, cli, fs, path, name, 0);
 }
 
-bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
+async bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
   // **The link, before what it points at.** `stat` follows, so a link to a directory looked exactly
   // like the directory: this walked into it, stored its contents under the link's name, and a cycle
   // grew the path until something trapped. The header of this file has always said links are
@@ -56,13 +56,13 @@ bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
   // the image: the same file was archived or refused depending on whether this computer happened to
   // have a symlink at that path. `Fs.linkStat` dispatches now, so the question goes to whichever
   // filesystem the path is actually on.
-  Stat link = fs.linkStat(path);
+  Stat link = await fs.linkStat(path);
   if (link.exists && link.isSymlink) {
     core.warn("\{name}: \{path}: symbolic link, which a ustar header cannot describe");
     return false;
   }
 
-  Stat st = fs.stat(path);
+  Stat st = await fs.stat(path);
   // GNU's: `tar: nosuch: Cannot stat: No such file or directory`. The doubled reason is tar's own
   // shape and is copied rather than tidied, because the point of these lines is to be the real tool's.
   if (!st.exists) {
@@ -90,17 +90,17 @@ bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
   if (st.isDir) {
     // The directory's own entry first, so an empty one survives the round trip.
     cli.write(header("\{path}/", 0, st.modifiedMillis, '5'));
-    string[]? names = fs.readDir(path);
+    string[]? names = await fs.readDir(path);
     if (names is null) { core.warn("\{name}: \{path}: cannot list"); return false; }
     string[] found = names!;
     bool ok = true;
     for (i32 i = 0; i < found.len(); i++) {
-      if (!addAt(core, cli, fs, "\{path}/\{found[i]}", name, depth + 1)) { ok = false; }
+      if (!(await addAt(core, cli, fs, "\{path}/\{found[i]}", name, depth + 1))) { ok = false; }
     }
     return ok;
   }
 
-  FileResult f = fs.readFile(path);
+  FileResult f = await fs.readFile(path);
   if (!f.ok) { core.warn("\{name}: \{path}: \{readReason(f)}"); return false; }
   cli.write(header(path, f.bytes.len(), st.modifiedMillis, '0'));
   cli.write(f.bytes);

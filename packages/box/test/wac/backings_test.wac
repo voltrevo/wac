@@ -111,7 +111,7 @@ export async string test_the_corpus_answers_the_same_on_memory_an_image_and_a_ho
     string whyDir2 = madeDir(cli, work);
     t.isTrue(whyDir2 == "", whyDir2);
 
-    Ran memory = await runOn(core, cli, memoryFs(core, "sealedsh"), script);
+    Ran memory = await runOn(core, cli, (await memoryFs(core, "sealedsh")), script);
     Fs image = imageFs(core, cli, seed);
     Ran onImage = await runOn(core, cli, image, script);
     // And written back, because a session that ran and could not be saved is a session lost: the write
@@ -172,7 +172,7 @@ export async string test_each_backing_is_alive_and_answers_about_its_own_filesys
   string whyDir3 = madeDir(cli, root);
   t.isTrue(whyDir3 == "", whyDir3);
 
-  Ran memory = await runOn(core, cli, memoryFs(core, "sealedsh"), script);
+  Ran memory = await runOn(core, cli, (await memoryFs(core, "sealedsh")), script);
   t.eqStr(memory.out, "hello\n1\n", "memory: \{shape(memory)}");
 
   string image = "\{root}/alive.wacimg";

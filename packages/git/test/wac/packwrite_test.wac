@@ -401,27 +401,27 @@ export string test_a_thin_pack_says_what_it_needs_and_the_completed_one_is_what_
  * a `HEAD` and an `objects/` for `writeObject` to put things in. No refs, no index; nothing here
  * resolves a ref or reads a working tree.
  */
-Completion completeAgainst(u8[] pack, i32 baseKind, u8[] baseContent) {
+async Completion completeAgainst(u8[] pack, i32 baseKind, u8[] baseContent) {
   Fs fs = Fs.inMemory(0);
-  fs.mkdir("/git/objects", true);
-  fs.writeFile("/git/HEAD", "ref: refs/heads/main\n".toBytes());
-  match (openRepo(fs, "/git", "/work")) {
+  await fs.mkdir("/git/objects", true);
+  await fs.writeFile("/git/HEAD", "ref: refs/heads/main\n".toBytes());
+  match ((await openRepo(fs, "/git", "/work"))) {
     NoRepo(why): { return Completion.Unusable("no repo: \{why}"); }
     Opened(repo): {
       // `baseKind` of zero means do not plant the base, which is how a caller reaches `Missing` on
       // purpose.
       if (baseKind != 0) {
-        match (writeObject(repo, kindOfNumber(baseKind), baseContent)) {
+        match ((await writeObject(repo, kindOfNumber(baseKind), baseContent))) {
           NotStored(why): { return Completion.Unusable("not stored: \{why}"); }
           Named(name): { }
         }
       }
-      return completeThin(repo, pack);
+      return await completeThin(repo, pack);
     }
   }
 }
 
-export string test_a_thin_pack_completed_from_a_repositorys_own_objects_is_one_git_accepts(
+export async string test_a_thin_pack_completed_from_a_repositorys_own_objects_is_one_git_accepts(
     Core core, Cli cli) {
   T t = T.create();
   ThinFixture th = thinPack(t, cli, "thinrepo");
@@ -443,7 +443,7 @@ export string test_a_thin_pack_completed_from_a_repositorys_own_objects_is_one_g
 
   // **`Missing` before `Complete`**, so the arm that reports a base we do not have is exercised too —
   // a completion that silently produced a pack without the base would otherwise look identical here.
-  match (completeAgainst(th.pack, 0, u8[]())) {
+  match ((await completeAgainst(th.pack, 0, u8[]()))) {
     Missing(why): {
       t.isTrue(contains(why, baseName),
                "an empty repository says which object it needs: \{why}");
@@ -455,7 +455,7 @@ export string test_a_thin_pack_completed_from_a_repositorys_own_objects_is_one_g
   // And with the base planted, the completion happens in the store: `readObject` out of it,
   // `completePack` on top.
   u8[] whole = u8[]();
-  match (completeAgainst(th.pack, kindNumber(baseKind), baseBody)) {
+  match ((await completeAgainst(th.pack, kindNumber(baseKind), baseBody))) {
     Complete(pack): { whole = pack; }
     Missing(why): { t.isTrue(false, "the base was planted and it still said missing: \{why}"); }
     Unusable(why): { t.isTrue(false, "unusable: \{why}"); }
