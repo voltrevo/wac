@@ -68,37 +68,34 @@ static string PREFIX = "packages/fs/src/";
 /** Points that cannot be reached from a probe, each named on its own line. */
 Pin[] pins() {
   return [
+        Pin("packages/fs/src/fs.wac", 154, "export struct Fs {", false,
+        "Not a line of code: every `async` method of `Fs` has its state machine attributed to the " +
+        "struct's line, so this is the union of all their states, and a state any of them leaves " +
+        "untaken — a host mount's, a remote channel's — is uncovered here. `issues/lang/0379a`; " +
+        "this goes when the machines land on their own methods' lines."),
+    Pin("packages/fs/src/remote.wac", 1, "// A filesystem that lives in another process: the child's end, and the parent's.", false,
+        "Not a line of code: the entry of every lowered `async` function's coroutine is attributed " +
+        "to 1:1, and the ones here are the channel's, which need a live handle — see `struct Chan` " +
+        "below. `issues/lang/0379a`; this goes when the entries land on their declarations."),
         Pin("packages/fs/src/fs.wac", 212, "Fs onHost(Cli cli, i64 now) {", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 542, "Host(cli): { return cli.readFile(path).wait(); }", false,
+    Pin("packages/fs/src/fs.wac", 542, "Host(cli): { return await cli.readFile(path).ticket(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 602, "Host(cli): { return cli.stat(path).wait(); }", false,
+    Pin("packages/fs/src/fs.wac", 602, "Host(cli): { return await cli.stat(path).ticket(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 666, "Host(cli): { own = cli.readDir(path).wait(); }", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 702, "Host(cli): {}", false,
-        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
-        "is driven by `test/host.test.ts` and " +
-        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
-        "is a better oracle than this probe could be — so this is where the measurement " +
-        "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 709, "Host(cli): { return cli.writeFile(path, data).wait(); }", false,
+    Pin("packages/fs/src/fs.wac", 666, "Host(cli): { own = await cli.readDir(path).ticket(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
@@ -110,19 +107,31 @@ Pin[] pins() {
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 778, "Host(cli): { return cli.mkdir(path, parents).wait(); }", false,
+    Pin("packages/fs/src/fs.wac", 709, "Host(cli): { return await cli.writeFile(path, data).ticket(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 833, "Host(cli): { return cli.remove(path, recursive).wait(); }", false,
+    Pin("packages/fs/src/fs.wac", 702, "Host(cli): {}", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 888, "Host(cli): { return cli.chmod(path, mode).wait(); }", false,
+    Pin("packages/fs/src/fs.wac", 778, "Host(cli): { return await cli.mkdir(path, parents).ticket(); }", false,
+        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
+        "is driven by `test/host.test.ts` and " +
+        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
+        "stops, not where the testing does."),
+    Pin("packages/fs/src/fs.wac", 833, "Host(cli): { return await cli.remove(path, recursive).ticket(); }", false,
+        "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
+        "is driven by `test/host.test.ts` and " +
+        "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
+        "is a better oracle than this probe could be — so this is where the measurement " +
+        "stops, not where the testing does."),
+    Pin("packages/fs/src/fs.wac", 888, "Host(cli): { return await cli.chmod(path, mode).ticket(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
@@ -141,7 +150,7 @@ Pin[] pins() {
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/fs.wac", 991, "Host(cli2): { return cli.rename(from, to).wait(); }", false,
+    Pin("packages/fs/src/fs.wac", 991, "Host(cli2): { return await cli.rename(from, to).ticket(); }", false,
         "A host mount, which takes a `Cli` that only a built program has. Every one of these " +
         "is driven by `test/host.test.ts` and " +
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
