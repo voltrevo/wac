@@ -15,8 +15,10 @@ Two layers, the lower one complete without the upper:
    under it, and to hear their events — nothing above it or beside it. `main` is handed one, the root. A
    child made through a handle comes back as a handle. Passing an `Elem` to a widget is a grant, as passing
    `Sys` is.
-2. **`View`, diffing over one `Elem`.** `v.render(view(state))` turns the difference from the last render into
-   `Elem` calls. It is an ordinary library: anything it does, an application could do by hand.
+2. **`View`, diffing over one `Elem`.** `page.mount((Ui ui) => …)` renders components — functions of `Ui`,
+   which keep state through it — and turns the difference from the last render into `Elem` calls, rendering
+   again only the components whose state or attributes changed. It is an ordinary library: anything it
+   does, an application could do by hand.
 
 What it is **not**: a mirror of the browser's DOM. There is no `querySelector`, no `parentNode`, no
 `innerHTML`, no way to name an element by a string the whole page shares, and no read that does not say it
@@ -271,13 +273,13 @@ with the change. Nothing tracks reads:
 A throwaway prototype, 2026-10-19, put both layers in wac over a fake document: a mirror of the tree,
 the keyed diff, the turn, and a clock a test moves on. The patterns below were each written as an
 application would write it and checked, and the checks that matter mutated to make sure they can fail.
-The first eleven rows were written with struct components and full re-rendering, and carry over: each is
-about callbacks and the diff, not about where state lives. The rest are hooks, in `.cache/explore/ui4.wac`
-and `hooks_test.wac` (14 tests):
+The first ten rows were written with struct components and full re-rendering, and carry over: each is
+about callbacks and the diff, not about where state lives — though a flag or a counter they kept in a
+plain local is a `ui.state` cell now, since only a `set` renders anything. The rest are hooks, in
+`.cache/explore/ui4.wac` and `hooks_test.wac` (14 tests):
 
 | pattern | how it reads |
 |---|---|
-| a counter | a local and a closure; closures capture by reference, so `n += 1` in a handler is `main`'s `n` |
 | a list | typing into state, Enter adds, each row's button captures its own item; removing a middle row creates nothing and keeps the rows either side |
 | async work | `async void load(...)` called from a handler; the view shows "loading…" and then the result, and a busy flag stops a second load |
 | a confirm dialog | `if (await d.confirm("Delete?")) {...}` inside a handler; the dialog is state plus a `Ticket<bool>` its buttons settle; Escape bubbles to it |
@@ -294,6 +296,7 @@ and `hooks_test.wac` (14 tests):
 | memo | a filtered list kept by `memo`: an unrelated change renders the root only, and the filter does not run; without `memo` the child renders every time |
 | debounce, as a helper | `debounced(ui, value, 300)`: three keystrokes 100 ms apart show nothing at 299 ms after the last and the last at 300; the earlier timers were cancelled by the effect's cleanup |
 | a timer and unmount | a clock ticking from `ui.every` shows 3 after 3 s; hidden, no timer can fire and nothing renders |
+| a counter | `auto n = ui.state(0)` in the root and `n.set(n.get() + 1)` in a handler |
 | an awaiting handler | a slow `+1` that awaits, and two quick ones meanwhile: 3, because `update` applies to the current value |
 | a cell as an attribute | by identity the child shows 0 after two clicks; by version, 2 |
 | per keystroke, 2000 rows | 0.42 ms (0.19 ms with read tracking): the prototype finds dirty components by walking the whole tree each turn; a list of them would not |
