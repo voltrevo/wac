@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0385a](open/0385a-an-identity-test-as-a-ternary-condition-in-a-lambda-emits-invalid-wasm.md) | `q is b ? 0 : 1` inside a lambda, `b` captured, emits a module V8 refuses — *not enough arguments on the stack for if*; in a function, or with the test in a `bool` first, it works | bug | invalid wasm |
 | [0384a](open/0384a-a-virtual-method-returning-void-does-not-parse.md) | `virtual void a(this) {}` does not parse — "a keyword cannot be used as a name"; `virtual i32` and plain `void` methods both do | bug | compile error |
 | [0383a](open/0383a-a-lambda-as-a-markup-attribute-is-not-emitted.md) | A lambda written as a markup attribute — `<Row onremove={() => …}/>` — is not emitted; bound to a local first it works. Same positional lambda walk as 0382a | bug | compile error |
 | [0382a](open/0382a-a-lambda-assigned-to-an-array-element-is-not-emitted.md) | `fs[1] = () => 7` is not emitted — the positional lambda walk does not type an index assignment's slot; as an initializer, argument or field the same lambda works; a variant constructor's argument is declined too | bug | compile error |
@@ -111,7 +112,7 @@ has been fixed and why.
 
 ## Closed
 
-298 issues, 235 closed.
+299 issues, 235 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

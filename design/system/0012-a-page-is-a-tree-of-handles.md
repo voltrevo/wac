@@ -123,6 +123,8 @@ Handlers are callbacks (operator, 2026-10-19). An element in a view carries clos
 change the application's state directly:
 
 ```wac
+observed struct Todos { string draft; List<Todo> items; … }
+
 export async i32 main(Page page) {
   Todos s = Todos.empty();
   page.mount(() =>
@@ -136,10 +138,10 @@ export async i32 main(Page page) {
 }
 ```
 
-- **The host renders at the end of every call into the program.** An event, a timer, a frame, an
-  answer from `Sys`: after each, the host runs what is ready and then calls the view function and diffs.
-  So a handler that changes state after an `await` is shown when it resumes, without any rule about
-  handlers, and a task started by a handler is no different from one started anywhere else.
+- **The host renders at the end of every call into the program** — an event, a timer, a frame, an answer
+  from `Sys`: it runs what is ready, then renders again **only the components whose output may have
+  changed** (below). So a handler that changes state after an `await` is shown when it resumes, without
+  any rule about handlers, and a task started by a handler is no different from one started anywhere else.
 - **Handlers may be `async` and run concurrently**, as JavaScript's do. A handler that must not run twice
   says so with state — a `busy` flag, a disabled button — which the view shows anyway.
 - **Closures are rebound on every render and that sends nothing.** The listeners are on the view's root,
@@ -204,11 +206,45 @@ struct Row : Component {
   structs back for a different reason: not to type the attributes, which functions already do, but to give
   an element an identity across renders.
 
+### Rendering only what changed
+
+Re-rendering the whole view every turn is not an optimisation to add later (operator, 2026-10-19): a
+2000-row list cost a full view build and diff per keystroke, and the cost grows with the page rather than
+with the change. So the view knows what each component read, and renders a component again only when it
+has to.
+
+- **State the view shows is observed.** A struct declared `observed` has a read barrier and a write
+  barrier on its fields, emitted by the compiler: a read while a component renders records that component
+  against that field of that object; a write marks every component recorded there as dirty. `Component`
+  is observed, so a component's own state is. `List<T>` and `Map<K, V>` are observed collections, written
+  in wac as observed structs over `Vec` and `Map`.
+- **A local that a closure assigns is observed too.** Such a local is already a heap cell, because closures
+  capture by reference; its reads and writes get the same barriers. So `i32 n = 0;` in `main`, shown in the
+  view and changed by `onclick={() => { n += 1; }}`, renders what reads it — the counter that worked under
+  full re-rendering still works.
+- **"Who is reading" is a dynamically scoped slot, like the schedule target.** The language has no mutable
+  module state, and the reader cannot be passed down: a read may be in any function the render calls. The
+  schedule target is the precedent — one slot, in force for a block, seen through calls — and the view is
+  the one user of the new one, setting it around each component's render.
+- **A component renders again when something it read was written, or when its attributes changed** —
+  by identity for a reference and by value otherwise. A parent rendering again does not render a child
+  whose attributes are unchanged.
+- **Handlers are not compared.** A closure is new every render, so comparing them would render every child
+  every time. A child whose only changed attributes are handlers is marked *stale* instead, and renders
+  before an event is dispatched through it — so a handler that captured something that has since changed,
+  an index say, is never the one that runs.
+- **Dirty components render outermost first**, once per turn; one that its parent already rendered this
+  turn is not rendered again.
+- **What is not observed is not shown when it changes**: a plain struct's field, or a `Vec`, written in a
+  handler. That is the mistake this design invites, so a development build checks for it: after each turn
+  it renders everything as well and reports any element where the two disagree, naming the component.
+
 ### What the prototype showed
 
 A throwaway prototype, 2026-10-19, put both layers in wac over a fake document: a mirror of the tree,
-the keyed diff, the turn, and a `Clock` a test moves on. Fourteen patterns, each written as an application
-would write it and checked, and the five checks that matter mutated to make sure they can fail:
+the keyed diff, the turn, and a `Clock` a test moves on. Seventeen patterns, each written as an application
+would write it and checked, and the eight checks that matter mutated to make sure they can fail. The tracking was written by hand —
+each barrier a method call, the reader passed to each object — as the compiler would emit it:
 
 | pattern | how it reads |
 |---|---|
@@ -225,16 +261,20 @@ would write it and checked, and the five checks that matter mutated to make sure
 | a late click | a click on a row whose neighbour was removed meanwhile removes the row the user saw; on a row that was itself removed, nothing |
 | a row with its own state | a row put into editing and half-typed keeps its instance, its mode and its draft when a row is inserted above it; Enter saves it |
 | a component that runs something | a ticking component starts its loop in `mounted` and its loop ends after `unmounted`; shown again, it starts from 0 |
+| what renders, 2000 rows | three keystrokes render the field three times and nothing else; ticking a row renders that row and the count; adding renders the field, the list, the new row and the count — no existing row |
+| a stale handler | each row's remove handler captures its *position*; after row 0 goes, clicking "item 1" removes item 1, because its stale row renders before the click is dispatched |
+| per keystroke, 2000 rows | 0.19 ms with tracking; 11 ms rendering everything (the prototype's diff is quadratic in a list's length; a linear one would be nearer 3 ms) |
 | cost | building a 2000-row view — 8000 nodes, 4000 closures — takes 1.5 ms; the diff about as much again |
 
 ### What it found missing
 
-- **Five compiler bugs**, each filed with a reproduction:
+- **Six compiler bugs**, each filed with a reproduction:
   - an `async` lambda inside an `async` function (lang 0380a) — blocks async handlers written inline in `main`;
   - a closure capturing a `for … in` variable (0381a) — the shape of every row's handler; `map` avoids it;
   - a lambda in a slot the positional walk does not type (0382a): an index assignment, a variant
     constructor's argument, and a markup attribute (0383a) — the last is where every handler is written;
-  - `virtual void` does not parse (0384a) — the lifecycle hooks are `virtual void`.
+  - `virtual void` does not parse (0384a) — the lifecycle hooks are `virtual void`;
+  - `q is b ? 0 : 1` in a lambda emits invalid wasm (0385a) — the generated `adopt` compares attributes so.
 - **`Vec.map`** — `fold` is there; `map<U>` is the same method with a different body, and a list in a view
   is a `map`.
 - **Cancellation.** A ticket cannot be cancelled, so debounce and "the user navigated away" are generation
@@ -243,9 +283,6 @@ would write it and checked, and the five checks that matter mutated to make sure
   went wrong" and carry on. Worth deciding rather than discovering.
 - **Page-level events.** A key pressed with nothing focused, a resize, the tab hidden: none reaches the
   view's root. They belong on `Page`.
-- **Skipping unchanged subtrees.** At 10 000 rows a full view per keystroke is ~15 ms. If the diff
-  skips a subtree whose `Node` is the same value as last time, a component can cache its own and big
-  views stay cheap.
 
 ## What the language needs
 
@@ -254,20 +291,22 @@ would write it and checked, and the five checks that matter mutated to make sure
   ignores them. `key` and `ref` are attributes the view reads and never sends.
 - **`Component` tags**: a tag naming a `Component` subtype lowers to `make` and `adopt` as above, and
   `Node` gains a variant carrying them.
+- **Observation**: `observed struct`, its barriers, the barriers on a local a closure assigns, and the
+  dynamically scoped reader slot. `List<T>` and `Map<K, V>` over them, in core.
 - **`data-*` and `aria-*` on the named tags.** Quoted tags already take any attribute; the named ones take 39.
 - **`{rows}` for a `Node[]` child**: a `toNode` for `Node[]`, answering a `Fragment`. `{s}` for a `string`
   already works.
-- The five bugs above, and `Vec.map`.
+- The six bugs above, and `Vec.map`.
 
 ## The order of work
 
 1. **Close the injection in today's `render`**, with the CSP in the build. Independent of the rest, and true
    of what ships now. (A failing case first: the four constructions above.)
 2. **`Elem`**: the operations, the mirror, events per handle, batching, `Listen`. Port `counter` and `notes`.
-3. **The language changes** above: handlers on `Node`, `Component` tags, `data-*` and `aria-*`, `{rows}`,
-   the five bugs, `Vec.map`.
-4. **`View`**: the diff, the turn, `key`, `ref`, `afterRender`, components. `main(Page)` with `page.sys`.
-   Port `templates/webapp`.
+3. **The language changes** above: handlers on `Node`, `Component` tags, observation, `data-*` and
+   `aria-*`, `{rows}`, the six bugs, `Vec.map`.
+4. **`View`**: the diff, the turn, `key`, `ref`, `afterRender`, components, rendering only what changed and
+   the development build's check of it. `main(Page)` with `page.sys`. Port `templates/webapp`.
 5. **The desktop**, with windows as tasks owning `Elem`s; then the terminal, then every other page.
 6. **Delete** `render`-as-`innerHTML`, `setText`, `setValue`, `setStyle`, `renderInto`, `getValue` and
    `page.on`. `htmlOf` stays, for a page written out as a file.
