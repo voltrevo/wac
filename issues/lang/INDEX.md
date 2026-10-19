@@ -5,6 +5,11 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0384a](open/0384a-a-virtual-method-returning-void-does-not-parse.md) | `virtual void a(this) {}` does not parse — "a keyword cannot be used as a name"; `virtual i32` and plain `void` methods both do | bug | compile error |
+| [0383a](open/0383a-a-lambda-as-a-markup-attribute-is-not-emitted.md) | A lambda written as a markup attribute — `<Row onremove={() => …}/>` — is not emitted; bound to a local first it works. Same positional lambda walk as 0382a | bug | compile error |
+| [0382a](open/0382a-a-lambda-assigned-to-an-array-element-is-not-emitted.md) | `fs[1] = () => 7` is not emitted — the positional lambda walk does not type an index assignment's slot; as an initializer, argument or field the same lambda works; a variant constructor's argument is declined too | bug | compile error |
+| [0381a](open/0381a-a-closure-cannot-capture-a-for-in-loop-variable.md) | A closure cannot capture a `for … in` loop variable — "neither a local nor a module constant"; the indexed loop with a local works and captures per iteration | bug | compile error |
+| [0380a](open/0380a-an-async-lambda-inside-an-async-function-is-not-emitted.md) | An `async` lambda inside an `async` function is not emitted — "a lambda whose type this emitter could not work out"; in a plain function it works (case 0314) | bug | compile error |
 | [0379a](open/0379a-an-async-machine-is-attributed-to-its-struct-line-and-its-coroutine-to-line-one.md) | An `async` method's state machine is attributed to its struct's line and every coroutine's entry to line 1, so coverage keys all of a type's machines to one line | diagnostic | wrong answer |
 | [0378a](open/0378a-a-union-with-void-as-a-member-emits-invalid-wasm.md) | A union with `void` as a member — `Ticket.any` over a `Ticket<void>` — emits a module the engine refuses; the spec does not say what `union<A, void>` is, and the three answers differ | bug | invalid wasm |
 | [0377a](open/0377a-a-leaving-match-arm-in-a-function-whose-error-type-is-gathered-emits-invalid-wasm.md) | In a function answering `Result<T>` (error type gathered), `Err(e): return Result.Err(…)` as a match-expression arm checks clean and emits a module the engine refuses — *a null in a never slot* for a `main`. Written `Result<T, string>` it works (case 0527), so the arm's `Err` seems not to reach what the union gathers | bug | invalid wasm |
@@ -106,7 +111,7 @@ has been fixed and why.
 
 ## Closed
 
-293 issues, 235 closed.
+298 issues, 235 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

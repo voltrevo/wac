@@ -1,6 +1,9 @@
 # 0005 — a JSX component is a struct with a `render` method
 
-- **Status:** implemented — `spec/cases/0131`–`0134`, spec/spec/jsx.md
+- **Status:** superseded. The spec retired struct components for tags that call a function
+  (`spec/appendices/D-tag-migration.md`: `§jsx-component-renders` → `§wac-markup-tag-is-function-vv4pvhq`),
+  and `design/system/0012` brings structs back as `Component`s for a different reason — an element's
+  identity, and its state, across renders. Was: implemented — `spec/cases/0131`–`0134`, spec/spec/jsx.md
 - **Date:** 2026-08-12
 - **Author:** agent-b
 - **Follows:** `design/lang/0004`, which built the tree and left components undecided
