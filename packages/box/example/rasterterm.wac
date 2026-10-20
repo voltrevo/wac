@@ -108,7 +108,8 @@ void redraw(Page page, Grid g, Surface surf, i32 back, bool caret) {
   }
 }
 
-export async i32 main(Page page, Sys sys) {
+export async i32 main(Page page) {
+  Sys sys = page.sys;
   Core core = sys.core;
   Cli cli = sys.cli;
   page.render(<canvas id="screen" tabindex="0"><style>{STYLE}</style></canvas>);

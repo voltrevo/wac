@@ -96,11 +96,11 @@ the handle layer's policy holds here too: an `on…` attribute, a `javascript:` 
 
 ## Files, and the rest of `Sys`
 
-A page built with `--grant read,write` is handed a `Sys` beside its `Page` —
-`export async i32 main(Page page, Sys sys)` — the same `Sys` a program on a command line gets, with
-the browser's Origin Private File System as its disk. `await sys.readFile(path)` and
-`await sys.writeFile(path, bytes)` work as they do anywhere; what the page was not granted, its `Cli`
-refuses too, so `sys.cli` is no way around the grants. [`packages/platform/example/notes.wac`](../platform/example/notes.wac)
+`main` is always `main(Page page)`, and what the build granted is `page.sys` — the same `Sys` a program
+on a command line gets, with the browser's Origin Private File System as its disk. `await
+page.sys.readFile(path)` and `await page.sys.writeFile(path, bytes)` work as they do anywhere once the
+page is built with `--grant read,write`; without one they are refused, saying which grant was missing,
+and so is `sys.cli`, which is no way around the grants. The clock, randomness and output need none. [`packages/platform/example/notes.wac`](../platform/example/notes.wac)
 keeps a note that survives a reload.
 
 A page built with `--spawn <export>` can start copies of itself: `sys.cli.spawnSelf(args, …)` runs

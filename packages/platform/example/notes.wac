@@ -13,7 +13,8 @@ import { Sys } from "std";
 
 static string FILE = "notes.txt";
 
-export async i32 main(Page page, Sys sys) {
+export async i32 main(Page page) {
+  Sys sys = page.sys;
   page.title("notes");
   page.render(
     <div>

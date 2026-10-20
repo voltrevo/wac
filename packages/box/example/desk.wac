@@ -82,7 +82,8 @@ string titleOf(Win w) { return w.kind == SHELL() ? "shell \{w.id}" : "files"; }
 /** Whether `e` is `^C`. */
 bool isIntr(Event e) { return (e.mods & MOD_CTRL) != 0 && (e.value == "c" || e.value == "C"); }
 
-export async i32 main(Page page, Sys sys) {
+export async i32 main(Page page) {
+  Sys sys = page.sys;
   Core core = sys.core;
   Cli cli = sys.cli;
   page.title("wac desktop");

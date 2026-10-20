@@ -39,8 +39,8 @@ Reading `main`'s parameter tells you the application may read the clock, print, 
 filesystem — `sys.core` and `sys.cli`. Nothing else is reachable, because there is nowhere else to
 reach.
 
-A browser page is built with `packages/web`: it exports `main(Page page)`, and `main(Page page, Sys sys)`
-when it is granted files.
+A browser page is built with `packages/web`: it exports `main(Page page)`, and what it was granted —
+files, with `--grant read,write` — is `page.sys`.
 
 `Core` is what every host provides — clock, monotonic clock, secure random, output. `Cli`
 is arguments, the standard streams and the filesystem, which a browser has none of; that
@@ -866,7 +866,7 @@ it can report instead of one protocol that works by accident. `box get`, `box ge
 
 **A page is built with [`packages/web`](../web/README.md)**: `export async i32 main(Page page)`, run in a
 worker (or with `--in-page` on the page's own thread) and waiting with `await`, with no
-`SharedArrayBuffer` and no headers to serve — and `main(Page page, Sys sys)` with `--grant read,write`,
+`SharedArrayBuffer` and no headers to serve — with `page.sys` holding what `--grant read,write` grants,
 whose files are the browser's own storage. `example/{life,pixels,ripple,notes,procs}.wac` are those, and
 so are the shell and the desktop in `packages/box/example/`.
 

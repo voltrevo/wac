@@ -33,7 +33,8 @@ export async i32 upper(Sys sys) {
   return n;
 }
 
-export async i32 main(Page page, Sys sys) {
+export async i32 main(Page page) {
+  Sys sys = page.sys;
   page.title("procs");
   page.render(
     <div>

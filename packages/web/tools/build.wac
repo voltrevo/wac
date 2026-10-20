@@ -34,10 +34,7 @@ struct Asked {
   string title;
   /** Run the program on the page's own thread rather than in a worker. */
   bool inPage;
-  /**
-   * What the program's `Sys` holds, as `GRANT_*` bits — or -1 for a page whose `main` takes no `Sys`.
-   * `--grant read,write` asks for one, holding those.
-   */
+  /** What `page.sys` holds, as `GRANT_*` bits: none unless `--grant read,write` asks. */
   i32 grants;
   /**
    * The export a copy of this page started by `spawnSelf` runs — `async i32 <name>(Sys sys)` — or "" for
@@ -48,7 +45,7 @@ struct Asked {
 
 /** The arguments, or a usage line in `title` and empty `entry` when they do not make sense. */
 Asked askedOf(Cli cli) {
-  Asked a = Asked("", "", "wac", "web", "wac", false, 0 - 1, "");
+  Asked a = Asked("", "", "wac", "web", "wac", false, 0, "");
   i32 argc = cli.argCount().wait();
   string[] args = string[].filled(argc, "");
   for (i32 k = 0; k < argc; k++) { args[k] = string.fromBytes(cli.arg(k).wait()); }
@@ -64,7 +61,6 @@ Asked askedOf(Cli cli) {
     }
     if (w == "--spawn" && i + 1 < argc) {
       a.spawn = args[i + 1];
-      if (a.grants < 0) { a.grants = 0; }
       i += 2;
       continue;
     }
@@ -76,7 +72,6 @@ Asked askedOf(Cli cli) {
     // `--grant read,write` rather than `--allow-read`: after the entry, `wac run` takes `--allow-…` as
     // a grant spelled in the wrong place and refuses it, which is right — those are the builder's own.
     if (w == "--grant" && i + 1 < argc) {
-      if (a.grants < 0) { a.grants = 0; }
       string[] names = partsOfList(args[i + 1]);
       for (string g in names) {
         if (g == "read") { a.grants = a.grants | 1; }
@@ -160,34 +155,31 @@ export string relativeTo(string from, string to) {
  * 24 classes and 71 KB of glue for a counter.
  */
 export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string spawn) {
-  bool sys = grants >= 0;
   string w = "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
            + "import { main" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
-           + "import { Dom, Page, deliver, elementEvent, fileArrived, timerFired, valueArrived"
-           + (sys ? ", System, World, answered" : "") + (spawn != "" ? ", Process, processAnswered" : "")
+           + "import { Dom, Page, System, World, answered, deliver, elementEvent, fileArrived, timerFired, valueArrived"
+           + (spawn != "" ? ", Process, processAnswered" : "")
            + " } from \"\{pageSpec}\";\n\n"
            + "export struct PageHost {\n"
            + "  private Page page;\n";
-  if (sys) {
-    // **A page with a `Sys` holds its world beside the page**, made inside the page's schedule so the
-    // scheduler it builds does not become the program's default target: everything that resumes the
-    // program comes through the host, and the host resumes it under the page.
-    w = w + "  private World world;\n\n"
-          + "  PageHost create(Dom dom, System system) {\n"
-          + "    Page page = Page.create(dom);\n"
-          + "    schedule page.take;\n"
-          + "    return PageHost(page, World.create(system, \{grants}));\n"
-          + "  }\n\n"
-          + "  void answer(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
-          + "    answered(this.page, this.world, req, fault, text, bytes, n, m, flags);\n"
-          + "  }\n";
-  } else {
-    w = w + "\n  PageHost create(Dom dom) { return PageHost(Page.create(dom)); }\n";
-  }
+  // **The page's world is made inside the page's schedule**, so the scheduler it builds does not become
+  // the program's default target: everything that resumes the program comes through the host, and the
+  // host resumes it under the page. Its `Sys` is `page.sys`, holding what the build granted.
+  w = w + "  private World world;\n\n"
+        + "  PageHost create(Dom dom, System system) {\n"
+        + "    Page page = Page.create(dom);\n"
+        + "    schedule page.take;\n"
+        + "    World world = World.create(system, \{grants});\n"
+        + "    page.sys = world.sys;\n"
+        + "    return PageHost(page, world);\n"
+        + "  }\n\n"
+        + "  void answer(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
+        + "    answered(this.page, this.world, req, fault, text, bytes, n, m, flags);\n"
+        + "  }\n";
   w = w + "\n  /** Run the program, with the page as its schedule target, until it first waits. */\n"
         + "  void start(this) {\n"
         + "    schedule this.page.take;\n"
-        + (sys ? "    main(this.page, this.world.sys);\n" : "    main(this.page);\n")
+        + "    main(this.page);\n"
         + "    this.page.drain();\n"
         + "    this.page.turn();\n"
         + "  }\n";
@@ -235,12 +227,10 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
  * `wacProgram(post)` starts the program and answers `receive`. A buffer is handed over rather than
  * copied when it is the whole of its own memory, which is what `wac bindgen` gives a `u8[]`.
  */
-export string programSide(bool sys) {
-  // The one line that differs: a page with grants hands its `PageHost` a `System` as well.
-  string make = sys
-    ? "const makeHost = (dom) => PageHost.create(dom, wacSystem((...a) => host.answer(...a), "
-      + "{ child: false, args: [], cwd: \"/\", post: null }));\n"
-    : "const makeHost = (dom) => PageHost.create(dom);\n";
+export string programSide() {
+  // Every page has a system: what it was not granted, its `Cli` refuses (`page.sys`).
+  string make = "const makeHost = (dom) => PageHost.create(dom, wacSystem((...a) => host.answer(...a), "
+              + "{ child: false, args: [], cwd: \"/\", post: null }));\n";
   return """
       const wacProgram = (post) => {
         let host = null;
@@ -305,7 +295,7 @@ export string programSide(bool sys) {
 }
 
 /**
- * The system's half, for a page built with grants: `System`'s calls on the Origin Private File System,
+ * The system's half: `System`'s calls on the Origin Private File System,
  * each answered later through `answer(req, fault, text, bytes, n, m, flags)` — `system.wac` says what
  * each call's answer holds. It runs where the program does: a worker has the file system too.
  *
@@ -740,10 +730,10 @@ export string documentSide() {
  * worker, which is why the glue is `wac bindgen --script`: a module worker made from a blob is refused
  * on a `file://` page, and a `data:` one would lose the page's origin and the storage that goes with it.
  */
-export string workerIndexFor(string title, string module, bool sys, bool spawn) {
+export string workerIndexFor(string title, string module, bool spawn) {
   return head(title)
-       + "<script type=\"text/plain\" id=\"wac-program\">\n" + module + "\n" + (sys ? systemSide() : "")
-       + programSide(sys)
+       + "<script type=\"text/plain\" id=\"wac-program\">\n" + module + "\n" + systemSide()
+       + programSide()
        + (spawn ? childSide() : "")
        // The first message says who this worker is: the page's program, or a copy started by one.
        + "let receive = null;\n"
@@ -765,9 +755,9 @@ export string workerIndexFor(string title, string module, bool sys, bool spawn) 
 }
 
 /** The page, with the program on the page's own thread: the two halves joined directly. */
-export string inPageIndexFor(string title, string module, bool sys) {
+export string inPageIndexFor(string title, string module) {
   return head(title)
-       + documentScript(module + "\n" + (sys ? systemSide() : "") + programSide(sys) + documentSide()
+       + documentScript(module + "\n" + systemSide() + programSide() + documentSide()
        + """
          let receive = null;
          const apply = wacDocument(document.getElementById("app"), (m) => receive(m));
@@ -855,9 +845,8 @@ export i32 buildPage(Core core, Cli cli) {
     return 1;
   }
   string index = a.out + "/index.html";
-  bool sys = a.grants >= 0;
-  string page = a.inPage ? inPageIndexFor(a.title, string.fromBytes(module.bytes), sys)
-                          : workerIndexFor(a.title, string.fromBytes(module.bytes), sys, a.spawn != "");
+  string page = a.inPage ? inPageIndexFor(a.title, string.fromBytes(module.bytes))
+                          : workerIndexFor(a.title, string.fromBytes(module.bytes), a.spawn != "");
   cli.writeFile(index, page.toBytes()).wait();
   core.log("\{index}: \{module.bytes.len()} bytes of module");
   return 0;

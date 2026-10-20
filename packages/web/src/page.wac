@@ -26,7 +26,8 @@
 // is still outstanding queues a second waiter rather than replacing the first.
 
 import { Continuation, Queue, Ticket, TicketBase, Vec } from "core";
-import { Answer, World } from "./system.wac";
+import { Sys } from "std";
+import { Answer, System, World } from "./system.wac";
 import { Node, htmlOf } from "./html.wac";
 import { Element, ElementOps, Elements } from "./element.wac";
 import { Ui, View } from "./view.wac";
@@ -39,8 +40,7 @@ export { Element, ElementEvent, ElementOps, Listen } from "./element.wac";
 export { Mounted, State, Ui, View } from "./view.wac";
 export { TestDoc, TestNode } from "./testdoc.wac";
 
-// A page's system — `main(Page page, Sys sys)` — is `system.wac`, exported from here because a package
-// is one module.
+// A page's system — `page.sys` — is `system.wac`, exported from here because a package is one module.
 export { Answer, Answers, Process, READ_DATA, READ_END, READ_FAILED, STAT_DIR, STAT_EXISTS, STAT_FILE, System, World,
          processAnswered } from "./system.wac";
 
@@ -158,6 +158,13 @@ export struct Page {
   Elements es;
   /** The views mounted, rendered at the end of every call into the program. */
   Vec<View> views;
+  /**
+   * **What the build granted** (`design/system/0012`): the files, clock, randomness and output a page's
+   * program has, as a `Sys` like the one a command-line program is handed. `main` is always
+   * `main(Page page)`; what this `Sys`'s `Cli` was not granted it refuses, naming the `--grant` that
+   * would allow it. A page made in a test holds one that answers nothing, until the test sets its own.
+   */
+  Sys sys;
 
   Page create(Dom dom) {
     Queue<Event> arrived;
@@ -166,7 +173,7 @@ export struct Page {
     Queue<Ticket<Picked>> wantsFile;
     Vec<View> views = Vec.create();
     return Page(dom, arrived, waiting, files, wantsFile, Slots<f64>(Ticket<f64>?[]()), Slots<string>(Ticket<string>?[]()),
-                Runner.create(), Elements.create(dom.elements), views);
+                Runner.create(), Elements.create(dom.elements), views, World.create(System.inert(), 0).sys);
   }
 
   /**

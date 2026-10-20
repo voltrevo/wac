@@ -1,9 +1,10 @@
-// A program's system, in a page: `export async i32 main(Page page, Sys sys)`.
+// A program's system, in a page: `page.sys`.
 //
 // **The same `Sys` a program on a command line is handed**, built here from what a browser offers: the
 // Origin Private File System for files, the clock, randomness, and the console for output. A page asks
-// for it by being built with grants — `--allow-read`, `--allow-write` — exactly as `wac run` is asked,
-// and what it was not granted its `Cli` refuses, so `sys.cli` is no way around `sys`'s own checks.
+// for it by being built with grants — `--grant read,write` — as `wac run` is asked with `--allow-…`, and
+// what it was not granted its `Cli` refuses, saying which grant would allow it, so `sys.cli` is no way
+// around `sys`'s own checks.
 //
 // **Nothing here waits.** A browser answers a file read later, and neither a worker without shared
 // memory nor the page's own thread may block until it does. So every call that reaches the browser
@@ -256,10 +257,13 @@ u8[] bytesBetween(u8[] b, i32 from, i32 to) {
 
 static string NOT_HERE = "a page cannot do this";
 
+/** What a refusal says: the fault's own words, and the grant the page was built without. */
+string notGranted(string grant) { return faultWords(FAULT_NOT_GRANTED()) + ": the page was built without `--grant " + grant + "`"; }
+
 Pending<FileResult> refusedRead(string p) {
-  return ready(FileResult.of(false, u8[](), faultWords(FAULT_NOT_GRANTED()), FAULT_NOT_GRANTED()));
+  return ready(FileResult.of(false, u8[](), notGranted("read"), FAULT_NOT_GRANTED()));
 }
-Pending<Change> refusedChange() { return ready(Change.of(FAULT_NOT_GRANTED(), faultWords(FAULT_NOT_GRANTED()))); }
+Pending<Change> refusedChange(string grant) { return ready(Change.of(FAULT_NOT_GRANTED(), notGranted(grant))); }
 /**
  * What the browser's storage cannot do at all — saying what, because `FAULT_UNSUPPORTED` has no words
  * of its own on purpose: `cat: f: ` with nothing after it was this, for a file opened as a stream.
@@ -330,7 +334,7 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
       return answers.pending<FileResult>(req, fileOf);
     },
     (string p, u8[] bytes) => {
-      if (!write) { return refusedChange(); }
+      if (!write) { return refusedChange("write"); }
       i32 req = answers.ask();
       system.writeFile(req, p, bytes);
       return answers.pending<Change>(req, changeOf);
@@ -345,29 +349,29 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
       return answers.pending<string[]?>(req, namesOf);
     },
     (string p, bool parents) => {
-      if (!write) { return refusedChange(); }
+      if (!write) { return refusedChange("write"); }
       i32 req = answers.ask();
       system.mkdir(req, p, parents);
       return answers.pending<Change>(req, changeOf);
     },
     (string p, bool recursive) => {
-      if (!write) { return refusedChange(); }
+      if (!write) { return refusedChange("write"); }
       i32 req = answers.ask();
       system.remove(req, p, recursive);
       return answers.pending<Change>(req, changeOf);
     },
     (string from, string to) => {
-      if (!write) { return refusedChange(); }
+      if (!write) { return refusedChange("write"); }
       i32 req = answers.ask();
       system.rename(req, from, to);
       return answers.pending<Change>(req, changeOf);
     },
     // No mode bits in the Origin Private File System: the backing refuses, which is not a missing grant.
-    (string p, bool on) => write ? unsupported("the browser's storage has no executable bit") : refusedChange(),
-    (string p, i32 mode) => write ? unsupported("the browser's storage has no mode bits") : refusedChange(),
+    (string p, bool on) => write ? unsupported("the browser's storage has no executable bit") : refusedChange("write"),
+    (string p, i32 mode) => write ? unsupported("the browser's storage has no mode bits") : refusedChange("write"),
     // A file as a stream: read, then served a chunk at a time. Standard input is the empty path.
     (string p) => {
-      if (p != "" && !read) { return refusedChange(); }
+      if (p != "" && !read) { return refusedChange("read"); }
       i32 req = answers.ask();
       system.openInput(req, p);
       return answers.pending<Change>(req, changeOf);
