@@ -16,6 +16,8 @@ import { contains } from "../../packages/wactest/src/strings.wac";
 import { cachePath } from "../../packages/wacpkg/src/cache.wac";
 import { LockEntry, writeLock } from "../../packages/wacpkg/src/lock.wac";
 import { Core, Cli, Exec, FileResult } from "std";
+import { sha256 } from "../../packages/crypto/src/sha256.wac";
+import { encode, ALPHABET_STANDARD } from "../../packages/codec/src/base64.wac";
 
 static string GIT = "https://github.com/voltrevo/wac";
 /** A commit no fetch made: the cache entry is the test's own, so it cannot collide with a real one. */
@@ -59,12 +61,29 @@ export string test_the_template_builds_and_tests_outside_the_repository(Core cor
   FileResult page = cli.readFile(project + "/dist/index.html").wait();
   t.isTrue(page.ok, "dist/index.html exists");
   string html = page.ok ? string.fromBytes(page.bytes) : "";
-  t.isTrue(contains(html, "<script type=\"module\">"), "a module script");
   t.isTrue(contains(html, "host.start()"), "that starts the program");
+  // **The one script the page runs as written is the one its policy allows.** The build states the
+  // loader's hash rather than computing it — it is a project of its own and has no SHA-256 to import
+  // (`documentScript` in `packages/web/tools/build.wac`) — so a loader edited without its hash is a
+  // page that runs nothing, and only a browser would say so. This says so without one.
+  string loader = between(html, "<script>", "</script>");
+  string allowed = between(html, "script-src 'sha256-", "'");
+  string hash = string.fromBytes(encode(sha256(loader.toBytes()), ALPHABET_STANDARD(), true));
+  t.isTrue(loader != "" && allowed != "", "a policy and a loader in the page");
+  t.eqStr(allowed, hash, "the policy allows the loader the page runs — loaderHash() in build.wac should be the right-hand value");
 
   // And its test task.
   Exec tested = wacIn(cli, project, home, "test test");
   t.eqI32(tested.status, 0, "the template's tests pass — " + said(tested));
   t.isTrue(contains(said(tested), "2 passed"), "both of them — " + said(tested));
   return t.report();
+}
+
+/** The text between the first `open` and the `close` after it, or "". */
+string between(string s, string open, string close) {
+  i32 at = s.indexOf(open);
+  if (at < 0) { return ""; }
+  string rest = s.slice(at + open.len(), s.len());
+  i32 end = rest.indexOf(close);
+  return end < 0 ? "" : rest.slice(0, end);
 }

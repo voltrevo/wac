@@ -40,3 +40,28 @@ export async function buildPage(entry: string, outDir: string, extra: string[] =
   await Deno.copyFile(`${ROOT}/${built}/index.html`, `${outDir}/index.html`);
   return `${outDir}/index.html`;
 }
+
+/**
+ * `page.waitForFunction(expr, arg, options)` for a page this builder made.
+ *
+ * **Playwright evaluates a string predicate with `eval` inside the page**, and the page's Content
+ * Security Policy refuses that — it allows its own loader and nothing else (`policy` in
+ * `packages/web/tools/build.wac`). `page.evaluate` goes through DevTools rather than the page's own
+ * script, so this asks with that until `expr` is truthy. The signature is Playwright's, `arg` unused, so
+ * a call converts by its name alone — including the calls that passed their options second.
+ */
+export async function waitInPage(
+  page: { evaluate(expr: string): Promise<unknown> },
+  expr: string,
+  arg?: unknown,
+  options?: { timeout?: number },
+): Promise<void> {
+  const opts = options ??
+    (arg !== null && typeof arg === "object" && "timeout" in arg ? arg as { timeout?: number } : {});
+  const timeout = opts.timeout ?? 30_000;
+  const end = Date.now() + timeout;
+  while (!(await page.evaluate(expr))) {
+    if (Date.now() > end) throw new Error(`waitInPage: timed out after ${timeout}ms waiting for ${expr}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}

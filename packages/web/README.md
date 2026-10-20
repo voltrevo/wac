@@ -90,7 +90,9 @@ while (true) {
 
 **Everything is escaped.** `render` takes a `Node`, which JSX builds, and serialises it with every
 string as text — there is no call that hands the browser a string as markup. A `<style>`'s text is
-CSS rather than HTML and goes out as written, with `<` escaped so nothing can close the element.
+CSS rather than HTML and goes out as written, with `<` escaped so nothing can close the element. And
+the handle layer's policy holds here too: an `on…` attribute, a `javascript:` URL, a name outside
+`[a-z][a-z0-9-]*` or an element that runs on its own traps, naming `htmlOf`.
 
 ## Files, and the rest of `Sys`
 
@@ -135,6 +137,12 @@ files and values. By default the program's half runs in a worker started from th
 `--in-page` joins the two halves directly on the page's thread. Neither half makes a decision;
 everything a page does is in `src/page.wac`. Because the page is private, none of its interior
 crosses into JavaScript: the glue is two classes, `PageHost` and `Dom`.
+
+**The page carries a Content Security Policy.** The one script it runs as written is a fixed loader,
+allowed by its hash, which starts the rest from `blob:` URLs; nothing is loaded from anywhere else — no
+outside image, style sheet or font — and an inline handler or a script element written into the
+document by any route does not run. A test driving a built page waits with `waitInPage` from
+`harness/buildPage.ts`, since Playwright's `waitForFunction("…")` is an `eval` the policy refuses.
 
 The output directory has to be inside the directory the build runs in, since the wrapper is written
 there and imports the program.

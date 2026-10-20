@@ -181,7 +181,7 @@ export struct Element {
   Element insert(this, string tag, Element? before) {
     this.alive("insert");
     if (this.tag == "" && this.id != 0) { trap "Element.insert: a text node has no children"; }
-    refuseTag(tag);
+    refuseTag("Element.append", tag);
     i32 at = this.positionOf(before, "insert");
     Element e = Element.made(this.es, this.es.mint(), tag, this);
     this.es.byId.set(e.id, e);
@@ -238,7 +238,7 @@ export struct Element {
   /** Set attribute `name`, or remove it with `null`. */
   void attr(this, string name, string? value) {
     this.alive("attr");
-    refuseAttr(name, value);
+    refuseAttr("Element.attr", name, value);
     this.es.ops.attr(this.id, name, value ?? "", value is not null);
   }
 
@@ -357,9 +357,10 @@ export bool runsOnItsOwn(string tag) {
       || tag == "portal";
 }
 
-void refuseTag(string tag) {
-  if (!lowerName(tag, false)) { trap "Element.append: " + tag + " is not an element name — [a-z][a-z0-9-]*"; }
-  if (runsOnItsOwn(tag)) { trap "Element.append: a page cannot make a " + tag + " element"; }
+/** Trap, naming `who` — the call refusing — unless `tag` is an element a page may make. */
+export void refuseTag(string who, string tag) {
+  if (!lowerName(tag, false)) { trap who + ": " + tag + " is not an element name — [a-z][a-z0-9-]*"; }
+  if (runsOnItsOwn(tag)) { trap who + ": a page cannot make a " + tag + " element"; }
 }
 
 /** The attributes whose value is a URL a browser follows. */
@@ -388,9 +389,10 @@ export bool scriptUrl(string v) {
   return k == w.len();
 }
 
-void refuseAttr(string name, string? value) {
-  if (!lowerName(name, true)) { trap "Element.attr: " + name + " is not an attribute name — [a-z][a-z0-9-]*"; }
-  if (name.len() >= 2 && name.slice(0, 2) == "on") { trap "Element.attr: " + name + " — a handler is listened for, not written"; }
-  if (name == "srcdoc") { trap "Element.attr: srcdoc writes a document"; }
-  if (value is not null && urlAttr(name) && scriptUrl(value!)) { trap "Element.attr: " + name + " is a javascript: URL"; }
+/** Trap, naming `who`, unless `name` set to `value` is an attribute a page may write. */
+export void refuseAttr(string who, string name, string? value) {
+  if (!lowerName(name, true)) { trap who + ": " + name + " is not an attribute name — [a-z][a-z0-9-]*"; }
+  if (name.len() >= 2 && name.slice(0, 2) == "on") { trap who + ": " + name + " — a handler is listened for, not written"; }
+  if (name == "srcdoc") { trap who + ": srcdoc writes a document"; }
+  if (value is not null && urlAttr(name) && scriptUrl(value!)) { trap who + ": " + name + " is a javascript: URL"; }
 }

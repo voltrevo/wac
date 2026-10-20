@@ -1,0 +1,27 @@
+// What `webpolicy_test.wac` runs: one way a page might write script into its document, named by the
+// argument, done — each should trap with a message naming the call and what it refused.
+
+import { Sys } from "std";
+import { Attr, Node, On, Page, TestDoc, htmlOf } from "../../packages/web";
+
+Node el(string tag, string name, string value) {
+  return Node.Element(tag, [Attr(name, value)], On[](), Node[]());
+}
+
+export i32 main(Sys sys) {
+  string[] a = sys.args();
+  string which = a.len() > 0 ? a[a.len() - 1] : "";
+  TestDoc doc = TestDoc.create();
+  Page page = Page.create(doc.dom());
+  if (which == "html-handler") { htmlOf(el("img", "onerror", "alert(1)")); }
+  if (which == "html-name") { htmlOf(el("img src=x onerror=alert(1) x", "alt", "")); }
+  if (which == "html-url") { htmlOf(el("a", "href", " JavaScript:alert(1)")); }
+  if (which == "html-script") { htmlOf(el("script", "type", "module")); }
+  if (which == "html-attr-name") { htmlOf(el("img", "src=x onerror", "alert(1)")); }
+  if (which == "element-handler") { page.root().append("img").attr("onerror", "alert(1)"); }
+  if (which == "element-name") { page.root().append("img src=x"); }
+  if (which == "element-url") { page.root().append("a").attr("href", "javascript:alert(1)"); }
+  if (which == "element-script") { page.root().append("script"); }
+  if (which == "ok") { htmlOf(el("a", "href", "/fine")); page.root().append("a").attr("href", "/fine"); return 0; }
+  return 3;
+}

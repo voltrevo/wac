@@ -752,7 +752,7 @@ export string workerIndexFor(string title, string module, bool sys, bool spawn) 
        + "  receive = e.data[0] === \"init\" ? wacChild(e.data[1])\n"
        + "    : wacProgram((m, transfer) => postMessage(m, transfer ?? []));\n"
        + "};\n</script>\n"
-       + "<script type=\"module\">\n" + documentSide()
+       + documentScript(documentSide()
        + """
          const source = document.getElementById("wac-program").textContent;
          const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
@@ -760,25 +760,64 @@ export string workerIndexFor(string title, string module, bool sys, bool spawn) 
          worker.onmessage = (e) => apply(e.data);
          worker.onerror = (e) => console.error(e.message);
          worker.postMessage(["page"]);
-         """
-       + "</script>\n</body>\n</html>\n";
+         """)
+       + "</body>\n</html>\n";
 }
 
 /** The page, with the program on the page's own thread: the two halves joined directly. */
 export string inPageIndexFor(string title, string module, bool sys) {
-  return head(title) + "<script type=\"module\">\n" + module + "\n" + (sys ? systemSide() : "")
-       + programSide(sys) + documentSide()
+  return head(title)
+       + documentScript(module + "\n" + (sys ? systemSide() : "") + programSide(sys) + documentSide()
        + """
          let receive = null;
          const apply = wacDocument(document.getElementById("app"), (m) => receive(m));
          receive = wacProgram((m) => apply(m));
-         """
-       + "</script>\n</body>\n</html>\n";
+         """)
+       + "</body>\n</html>\n";
+}
+
+/**
+ * The document's script, held as text, and the one script the page runs as written: `loaderScript`,
+ * which runs it from a `blob:` URL.
+ *
+ * **So that the Content Security Policy can name what runs** (`design/system/0012`, "Policy is in wac;
+ * the browser enforces it again"). A policy allows inline script by hash, and the document's script
+ * holds the program in the in-page build — a different hash for every program, and a SHA-256 this
+ * program would have to carry a copy of. The loader is the same few lines for every page, so its hash
+ * is a constant (`loaderHash`, checked by `tools/wac/webpolicy_test.wac`), and the policy allows that
+ * and `blob:`, which only a script already running can make.
+ */
+string documentScript(string body) {
+  return "<script type=\"text/plain\" id=\"wac-document\">\n\"use strict\";\n" + body + "</script>\n"
+       + "<script>" + loaderScript() + "</script>\n";
+}
+
+/** The script that runs `#wac-document`. Change it and `loaderHash` changes with it. */
+export string loaderScript() {
+  return "const s = document.createElement(\"script\"); "
+       + "s.src = URL.createObjectURL(new Blob([document.getElementById(\"wac-document\").textContent], { type: \"text/javascript\" })); "
+       + "document.body.appendChild(s);";
+}
+
+/** `loaderScript`'s SHA-256, base64 — what the policy allows it by. */
+export string loaderHash() { return "xLE7i4agIkrLt+lCU03oQkaXG/ugC3kfxyQdZETBPVM="; }
+
+/**
+ * The page's Content Security Policy: its loader, scripts it made itself, its own wasm, and nothing
+ * fetched from anywhere — not an image, not a style sheet, not a frame. A program has no network grant,
+ * so a document it draws cannot be one either: `<img src="https://elsewhere/?secret">` is refused here
+ * as well as by the handle layer's policy, and an injected `<script>` or `onerror` does not run.
+ */
+export string policy() {
+  return "default-src 'none'; script-src 'sha256-" + loaderHash() + "' blob: 'wasm-unsafe-eval'; "
+       + "worker-src blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; "
+       + "media-src data: blob:; base-uri 'none'; form-action 'none'";
 }
 
 /** Everything before the script: the document the program draws into. */
 string head(string title) {
   return "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+       + "<meta http-equiv=\"Content-Security-Policy\" content=\"" + policy() + "\">\n"
        + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
        + "<title>" + title + "</title>\n</head>\n<body>\n<div id=\"app\"></div>\n";
 }

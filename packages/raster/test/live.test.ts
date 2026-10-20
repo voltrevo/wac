@@ -13,7 +13,7 @@
 // **Skipped loudly** when there is no browser, in the same words `browser_live.test.ts` uses — a
 // skip that reads like a pass is how a differential comes to compare nothing.
 
-import { buildPage } from "../../../harness/buildPage.ts";
+import { buildPage, waitInPage } from "../../../harness/buildPage.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -103,7 +103,7 @@ Deno.test({
       // **Page code as strings, not closures**, as `browser_live.test.ts` does: `document` is not
       // in Deno's type environment, and a closure would have to be type-checked against types the
       // page has and this process does not.
-      await page.waitForFunction(
+      await waitInPage(page, 
         "(() => { const c = document.getElementById('screen');" +
           " return c !== null && c.width === 320 && c.height === 200; })()",
         undefined,
@@ -187,7 +187,7 @@ errors: ${failures.join(" | ")}`);
 
       // Wait for the pixel rather than for a duration: the program redraws when it gets the event,
       // and how long that takes is the machine's business.
-      await page.waitForFunction(
+      await waitInPage(page, 
         "(() => { const d = document.getElementById('screen').getContext('2d')" +
           ".getImageData(60, 110, 1, 1).data;" +
           " return (((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0) === 0x46D9C0FF; })()",

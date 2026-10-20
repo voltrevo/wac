@@ -4,10 +4,11 @@
 // nearly everything about rendering is checked. What it cannot check is the host: that the operations
 // arrive in one batch per turn and in order, that the document's handles name the elements the program
 // meant, that a real `input` event carries what was typed and a real click reaches the listener of the
-// element under it — in a worker and on the page's own thread.
+// element under it — in a worker and on the page's own thread — and that the page's Content Security
+// Policy lets it do all that and refuses script written past the handle layer.
 //
 // **Skipped loudly** when there is no browser, in the words `packages/raster/test/live.test.ts` uses.
-import { buildPage } from "../../../harness/buildPage.ts";
+import { buildPage, waitInPage } from "../../../harness/buildPage.ts";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   const a = JSON.stringify(got), b = JSON.stringify(want);
@@ -74,7 +75,7 @@ for (const mode of [[], ["--in-page"]]) {
 
         const text = async (id: string): Promise<string> =>
           await page.evaluate(`(() => { const e = document.getElementById(${JSON.stringify(id)}); return e ? e.textContent : null; })()`) as string;
-        await page.waitForFunction("document.getElementById('count') !== null", undefined, { timeout: 30_000 })
+        await waitInPage(page, "document.getElementById('count') !== null", null, { timeout: 30_000 })
           .catch(async (e: Error) => {
             const body = await page.evaluate("document.body.innerHTML") as string;
             throw new Error(`${e.message}\nthe page holds: ${JSON.stringify(body.slice(0, 400))}\nerrors: ${failures.join(" | ")}`);
@@ -83,13 +84,13 @@ for (const mode of [[], ["--in-page"]]) {
 
         await page.fill("#what", "milk");
         await page.click("#add");
-        await page.waitForFunction("document.getElementById('count').textContent === '1 to do'", undefined, { timeout: 10_000 });
+        await waitInPage(page, "document.getElementById('count').textContent === '1 to do'", null, { timeout: 10_000 });
         assertEquals(await text("items"), "milk", "the list after a click");
         assertEquals(await page.inputValue("#what"), "", "the field is cleared");
 
         await page.fill("#what", "eggs");
         await page.press("#what", "Enter");
-        await page.waitForFunction("document.getElementById('count').textContent === '2 to do'", undefined, { timeout: 10_000 });
+        await waitInPage(page, "document.getElementById('count').textContent === '2 to do'", null, { timeout: 10_000 });
         assertEquals(await text("items"), "milkeggs", "the list after Enter");
 
         // The rows are the elements the view made, kept: the first is the same node after the second
@@ -98,7 +99,28 @@ for (const mode of [[], ["--in-page"]]) {
           "(() => { const ul = document.getElementById('items'); return ul.children.length; })()",
         ) as number;
         assertEquals(kept, 2, "two rows");
+        // Everything above ran under the page's own Content Security Policy, so a page that broke it —
+        // a style attribute, its own worker, its wasm — would have logged a violation here.
         assertEquals(failures, [], "the page reported an error");
+
+        // **And the policy refuses what the handle layer would.** Written past it, straight into the
+        // document — the way a hole in that layer would — an inline handler, a script element and an
+        // image from elsewhere are each refused by the browser, and nothing they carry runs.
+        const refused = await page.evaluate(`new Promise((done) => {
+          const seen = [];
+          document.addEventListener("securitypolicyviolation", (e) => seen.push(e.effectiveDirective));
+          const app = document.getElementById("app");
+          app.insertAdjacentHTML("beforeend", '<img src="data:," onerror="window.pwned = 1">');
+          const s = document.createElement("script");
+          s.textContent = "window.pwned = 2";
+          app.appendChild(s);
+          const img = document.createElement("img");
+          img.src = "https://example.com/?leak";
+          app.appendChild(img);
+          setTimeout(() => done({ pwned: window.pwned ?? 0, seen: seen.sort() }), 500);
+        })`) as { pwned: number; seen: string[] };
+        assertEquals(refused.pwned, 0, "injected script ran");
+        assertEquals(refused.seen, ["img-src", "script-src-attr", "script-src-elem"], "what the policy refused");
       } finally {
         await browser?.close();
         await http?.stop();

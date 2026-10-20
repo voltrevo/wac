@@ -10,7 +10,7 @@
 // "web"` brings in one and `<div>` calls it.
 
 import { Buf, markup } from "core";
-import { ElementEvent } from "./element.wac";
+import { ElementEvent, refuseAttr, refuseTag } from "./element.wac";
 import { Ui } from "./view.wac";
 
 export struct Attr {
@@ -54,7 +54,10 @@ export enum Node {
 // ── As HTML ───────────────────────────────────────────────────────────────────
 //
 // **Everything is escaped**: text and attribute values are data, never markup, so a string that happens
-// to hold `<script>` arrives as those characters.
+// to hold `<script>` arrives as those characters. **And the handle layer's policy holds here too**
+// (`element.wac`): a tag or attribute name outside `[a-z][a-z0-9-]*`, an `on*` attribute, a
+// `javascript:` URL and an element that runs on its own all trap. Escaping alone left
+// `Attr("onerror", "…")` and a tag spelled `"img src=x onerror=… x"` writing script through `Page.render`.
 //
 // **A `<style>` is the one exception, because its text is not HTML**: the browser reads it as CSS up to
 // the first `</style`, and escaping `>` would break every child combinator in it. So its text goes out as
@@ -81,11 +84,13 @@ void writeNode(Buf out, Node n, bool css) {
       writeNode(out, draw(Ui.made(null, name, key, draw, snaps, same)), css);
     }
     Element(tag, attrs, on, kids): {
+      refuseTag("htmlOf", tag);
       out.pushStr("<");
       out.pushStr(tag);
       for (Attr a in attrs) {
         // `key` names a node among its siblings for the view, and is not an attribute of the element.
         if (a.name == "key") { continue; }
+        refuseAttr("htmlOf", a.name, a.value);
         out.pushStr(" ");
         out.pushStr(a.name);
         out.pushStr("=\"");

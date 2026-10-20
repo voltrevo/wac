@@ -27,7 +27,7 @@
 // landed, an interactive application driven by real clicks and real typing.
 
 import { buildApp } from "../build.ts";
-import { buildPage } from "../../../harness/buildPage.ts";
+import { buildPage, waitInPage } from "../../../harness/buildPage.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
@@ -168,7 +168,7 @@ Deno.test({
         // Page code as strings, not closures: `document` and `crossOriginIsolated` are not in
         // Deno's type environment, and a closure that only compiles because it was cast is a
         // worse lie than a string that plainly runs somewhere else.
-        await page.waitForFunction(
+        await waitInPage(page, 
           "document.body.innerText.includes('[exit')",
           null,
           { timeout: 30_000 },
@@ -242,13 +242,13 @@ Deno.test({
         await page.click("#up");
         await page.click("#up");
         await page.click("#down");
-        await page.waitForFunction("document.getElementById('n').textContent === '2'", null, { timeout: 30_000 })
+        await waitInPage(page, "document.getElementById('n').textContent === '2'", null, { timeout: 30_000 })
           .catch(() => {});
         assertEquals(await page.textContent("#n"), "2", `${where}: three up and one down`);
 
         // Typing, which arrives as `input` events carrying the value.
         await page.fill("#echo", "typed");
-        await page.waitForFunction("document.getElementById('said').textContent === 'you typed: typed'", null,
+        await waitInPage(page, "document.getElementById('said').textContent === 'you typed: typed'", null,
           { timeout: 30_000 }).catch(() => {});
         assertEquals(await page.textContent("#said"), "you typed: typed", where);
       }
@@ -261,7 +261,7 @@ Deno.test({
       // failed as a timeout when the picture was made bigger, and `width > 0` passed instantly
       // because an undrawn canvas is already 300x150 by default — so the pixel checks below ran
       // on a blank one and reported zero opaque pixels out of 45,000.
-      await page.waitForFunction(
+      await waitInPage(page, 
         `(() => {
           const c = document.getElementById("c");
           if (c === null) return false;
@@ -299,7 +299,7 @@ Deno.test({
       // of the buffer it drew. Pinning a literal (it was `x=119`) tested the window size.
       const box = (await page.locator("#c").boundingBox())!;
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-      await page.waitForFunction(
+      await waitInPage(page, 
         "document.getElementById('pos').textContent.startsWith('x=')",
         null,
         { timeout: 30_000 },
@@ -321,16 +321,16 @@ Deno.test({
       // only in the textarea, would fail it.
       await buildPage("packages/platform/example/notes.wac", `${dir}/notes`, ["--grant", "read,write"]);
       await page.goto(`http://127.0.0.1:${port}/notes/index.html`, { waitUntil: "load" });
-      await page.waitForFunction("(document.getElementById('said')?.textContent ?? '') !== ''", null,
+      await waitInPage(page, "(document.getElementById('said')?.textContent ?? '') !== ''", null,
         { timeout: 30_000 });
       assertEquals(page.workers().length, 1, "notes: the program runs in a worker");
       const note = `written at ${Date.now()}\nand a second line`;
       await page.fill("#text", note);
       await page.click("#save");
-      await page.waitForFunction("document.getElementById('said').textContent.startsWith('saved')", null,
+      await waitInPage(page, "document.getElementById('said').textContent.startsWith('saved')", null,
         { timeout: 30_000 });
       await page.reload({ waitUntil: "load" });
-      await page.waitForFunction("(document.getElementById('said')?.textContent ?? '').startsWith('read')", null,
+      await waitInPage(page, "(document.getElementById('said')?.textContent ?? '').startsWith('read')", null,
         { timeout: 30_000 });
       assertEquals(await page.inputValue("#text"), note, "the note survived the reload");
 
@@ -350,7 +350,7 @@ Deno.test({
       )].map((b) => b.toString(16).padStart(2, "0")).join("");
 
       await page.setInputFiles("#f", given);
-      await page.waitForFunction(
+      await waitInPage(page, 
         "document.getElementById('note').textContent.startsWith('from ')",
         null,
         { timeout: 30_000 },
@@ -391,7 +391,7 @@ Deno.test({
       // embeds shows real output rather than an empty prompt. Wait for the last of it: without this
       // the first `command` below races the startup and reads its output instead. Waiting for the
       // hash also checks the opening session in a real browser, which is where it is displayed.
-      await page.waitForFunction(
+      await waitInPage(page, 
         `document.getElementById('scr').textContent.includes(` +
           `'5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03')`,
         null,
@@ -404,7 +404,7 @@ Deno.test({
         const before = (await page.textContent("#scr")) ?? "";
         await page.fill("#cmd", line);
         await page.press("#cmd", "Enter");
-        await page.waitForFunction(
+        await waitInPage(page, 
           `(() => { const t = document.getElementById('scr').textContent; ` +
             `return t.length > ${before.length} && t.trimEnd().endsWith(${JSON.stringify(ends)}); })()`,
           null,
@@ -468,7 +468,7 @@ Deno.test({
       await page.press("#cmd", "Control+c");
       // `inputValue` rather than a `waitForFunction` over the DOM: this file has no DOM lib, which
       // is deliberate — it drives a browser from outside rather than describing one.
-      await page.waitForFunction("document.getElementById('cmd').value === ''", { timeout: 10_000 });
+      await waitInPage(page, "document.getElementById('cmd').value === ''", { timeout: 10_000 });
       const afterIntr = await page.textContent("#scr");
       if (!afterIntr?.includes("rm -rf /^C")) {
         throw new Error(`\`^C\` did not abandon the line: ${JSON.stringify(afterIntr?.slice(-120))}`);
@@ -486,7 +486,7 @@ Deno.test({
       await page.press("#cmd", "Enter");
       await new Promise((r) => setTimeout(r, 400));
       await page.press("#cmd", "Control+c");
-      await page.waitForFunction(
+      await waitInPage(page, 
         "document.getElementById('scr').textContent.includes('[exit 130]')",
         { timeout: 20_000 },
       );
@@ -625,7 +625,7 @@ Deno.test({
         `http://127.0.0.1:${port}/runner.html?a=wc.worker.js&a=${encodeURIComponent("one two three")}`,
         { waitUntil: "load" },
       );
-      await page.waitForFunction(
+      await waitInPage(page, 
         "document.body.innerText.includes('[exit')",
         null,
         { timeout: 30_000 },
@@ -681,7 +681,7 @@ Deno.test({
       await page2.waitForSelector("#cmd0", { timeout: 30_000 });
       // The desktop opens on a session that has already made something, so the files window has
       // something to show — wait for it rather than for a timer.
-      await page2.waitForFunction(
+      await waitInPage(page2, 
         `document.getElementById('files1').textContent.includes('home')`,
         null,
         { timeout: 60_000 },
@@ -696,7 +696,7 @@ Deno.test({
         await page2.fill(`#cmd${win}`, line);
         await page2.press(`#cmd${win}`, "Enter");
         try {
-          await page2.waitForFunction(
+          await waitInPage(page2, 
             `document.getElementById('scr${win}').textContent.includes(${JSON.stringify(expect)})`,
             null,
             { timeout: 30_000 },
@@ -719,7 +719,7 @@ Deno.test({
       // **One system, two windows.** `cd` in the terminal moves the files window, because there is
       // one filesystem and the files pane reads it directly.
       await desk(0, "cd /home/wac", "$ cd /home/wac");
-      await page2.waitForFunction(
+      await waitInPage(page2, 
         `document.getElementById('files1').textContent.includes('five')`,
         null,
         { timeout: 30_000 },
@@ -729,7 +729,7 @@ Deno.test({
 
       // …and a file made in the terminal appears in the other window without anything being told.
       await desk(0, "echo hi > note", "$ echo hi > note");
-      await page2.waitForFunction(
+      await waitInPage(page2, 
         `document.getElementById('files1').textContent.includes('note')`,
         null,
         { timeout: 30_000 },
@@ -789,7 +789,7 @@ Deno.test({
       // gap between the two — and reading the field there gives the empty string that the restore is
       // about to fill in. That is a race in the test rather than in the desktop, and waiting for the
       // value both removes it and states the claim.
-      await page2.waitForFunction(
+      await waitInPage(page2, 
         `document.querySelectorAll('.win')[2].querySelector('.bar').id === 'bar1' &&` +
           ` document.getElementById('cmd0').value === 'half typed'`,
         null,
@@ -812,7 +812,7 @@ Deno.test({
         await page2.mouse.move(bar0.x + 40 + dx, bar0.y + 8 + dx / 2);
       }
       await page2.mouse.up();
-      await page2.waitForFunction(
+      await waitInPage(page2, 
         `(() => {
            const w = document.getElementById('win0');
            if (w === null) return false;
@@ -830,7 +830,7 @@ Deno.test({
 
       // Closing takes a window away and leaves the others working.
       await page2.click("#cls1");
-      await page2.waitForFunction(`document.querySelectorAll('.win').length === 2`, null, { timeout: 30_000 });
+      await waitInPage(page2, `document.querySelectorAll('.win').length === 2`, null, { timeout: 30_000 });
       await page2.fill("#cmd0", "");
       await desk(0, "echo still here", "still here");
       assertEquals(

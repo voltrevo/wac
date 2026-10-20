@@ -10,7 +10,7 @@
 // it is checked elsewhere against my own code. A browser typing `echo hi` and the letters appearing
 // in the right cell is the only assertion that spans all of them at once.
 
-import { buildPage } from "../../../harness/buildPage.ts";
+import { buildPage, waitInPage } from "../../../harness/buildPage.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -89,7 +89,7 @@ Deno.test({
       await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
 
       // 80 columns of 8 pixels and 24 rows of 16.
-      await page.waitForFunction(
+      await waitInPage(page, 
         "(() => { const c = document.getElementById('screen');" +
           " return c !== null && c.width === 640 && c.height === 384; })()",
         undefined,
@@ -125,7 +125,7 @@ Deno.test({
 
       // `echo hi` puts `hi` on the line below the command, so cell (0, 1) is `h`. Waiting for the
       // pixel rather than for a duration: the program redraws when it gets the event.
-      await page.waitForFunction(
+      await waitInPage(page, 
         `(() => { const d = document.getElementById('screen').getContext('2d')` +
           `.getImageData(0, 16, 8, 16).data;` +
           ` for (let i = 0; i < d.length; i += 4)` +
@@ -181,7 +181,7 @@ Deno.test({
       const failures: string[] = [];
       page.on("pageerror", (e: Error) => failures.push(String(e)));
       await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
-      await page.waitForFunction(
+      await waitInPage(page, 
         "(() => { const c = document.getElementById('screen');" +
           " return c !== null && c.width === 640 && c.height === 384; })()",
         undefined,
@@ -205,7 +205,7 @@ Deno.test({
         await page.keyboard.type(`echo line${i}`);
         await page.keyboard.press("Enter");
       }
-      await page.waitForFunction(
+      await waitInPage(page, 
         `(() => { const d = document.getElementById('screen').getContext('2d')` +
           `.getImageData(0, ${23 * 16}, 8, 16).data;` +
           ` for (let i = 0; i < d.length; i += 4)` +
@@ -325,7 +325,7 @@ Deno.test({
       const failures: string[] = [];
       page.on("pageerror", (e: Error) => failures.push(String(e)));
       await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
-      await page.waitForFunction(
+      await waitInPage(page, 
         "(() => { const c = document.getElementById('screen');" +
           " return c !== null && c.width === 640 && c.height === 384; })()",
         undefined,
@@ -346,7 +346,7 @@ Deno.test({
       await page.click("#screen");
       await page.keyboard.type("echo hello");
       await page.keyboard.press("Enter");
-      await page.waitForFunction(
+      await waitInPage(page, 
         `(() => { const d = document.getElementById('screen').getContext('2d')` +
           `.getImageData(0, 16, 8, 16).data;` +
           ` for (let i = 0; i < d.length; i += 4)` +
@@ -389,7 +389,7 @@ Deno.test({
         `(() => { const d = document.getElementById('screen').getContext('2d')` +
         `.getImageData(${col * 8}, ${row * 16}, 1, 1).data;` +
         ` return (((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0) === ${want}; })()`;
-      await page.waitForFunction(
+      await waitInPage(page, 
         `(${cellIs(1, 1, FG)} && ${cellIs(3, 1, FG)})`,
         undefined,
         { timeout: 15_000 },
@@ -409,7 +409,7 @@ Deno.test({
       // **Typing clears it.** Text that stays highlighted while you type reads as though it is about
       // to be replaced, which is a text field's behaviour and not a terminal's.
       await page.keyboard.type("z");
-      await page.waitForFunction(
+      await waitInPage(page, 
         `(() => { const d = document.getElementById('screen').getContext('2d')` +
           `.getImageData(8, 16, 1, 1).data;` +
           ` return (((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0) === ${BG}; })()`,
@@ -464,7 +464,7 @@ Deno.test({
       const failures: string[] = [];
       page.on("pageerror", (e: Error) => failures.push(String(e)));
       await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
-      await page.waitForFunction(
+      await waitInPage(page, 
         "(() => { const c = document.getElementById('screen');" +
           " return c !== null && c.width === 640 && c.height === 384; })()",
         undefined,
