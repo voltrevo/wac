@@ -2,7 +2,7 @@
 //
 // The interesting assertions are about *pixels*, and a pixel is a number — so each function here
 // draws one fixed scene and answers numbers, and the test does the comparing. Nothing here draws to
-// a screen: a surface is a buffer, and whether it reaches one is `Page.drawPixels`'s business
+// a screen: a surface is a buffer, and whether it reaches one is `Element.pixels`'s business
 // (`design/system/0004` step 1).
 //
 // This was `raster_probe.wac`, a bindgen surface for a host-side test — hence the flat `i32[]`
@@ -143,7 +143,7 @@ export i32 glyphOffscreen() {
   return n;
 }
 
-/** The damaged pixels after one fill, and their length — `drawPixelsIn`'s payload. */
+/** The damaged pixels after one fill, and their length — `pixelsIn`'s payload. */
 export i32[] damagedShape(i32 x, i32 y, i32 w, i32 h) {
   Surface s = Surface.create(64, 32);
   s.fill(x, y, w, h, 0x11223344);

@@ -118,7 +118,7 @@ export i32 main(Sys sys) {
   i32[] oy = [0, -1, 0, 8, 3];
   for (i32 i = 0; i < ox.len(); i++) { seen = seen + atOutside(ox[i], oy[i]); }
 
-  // The damage payload — `drawPixelsIn`'s arguments — including the clipped case and the empty one.
+  // The damage payload — `pixelsIn`'s arguments — including the clipped case and the empty one.
   seen = seen + damagedShape(10, 5, 3, 2).len() + damagedShape(-4, -4, 8, 8).len();
   seen = seen + regionFirst(4, 4) + regionFirst(0, 0) + regionFirst(-8, -8) + regionFirst(100, 100);
   seen = seen + cleanHasNoPixels();

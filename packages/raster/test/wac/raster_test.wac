@@ -378,7 +378,7 @@ export string test_the_degenerate_cases_answer_rather_than_trap() {
 
 export string test_the_damaged_pixels_are_the_payload_a_partial_blit_takes() {
   T t = T.create();
-  // `Page.drawPixelsIn(id, x, y, w, h, rgba)` wants the origin, the size and exactly that many
+  // `Element.pixelsIn(x, y, w, h, rgba)` wants the origin, the size and exactly that many
   // pixels. A surface reports its damage *inclusive* at the right and bottom, so the width is
   // `dx1 - dx0 + 1` — the off-by-one that `damagedPixels` exists to keep out of every caller.
   t.eqI32Array(damagedShape(10, 5, 3, 2), [10, 5, 3, 2, 3 * 2 * 4] as i32[],
@@ -649,7 +649,7 @@ export string test_a_drawn_desk_damages_what_it_drew_and_its_frames_are_on_the_f
   T t = T.create();
   i32[] got = deskDrawn(200, 150);
   // The background fill covers the surface, so the damage is the whole thing — and the payload is
-  // four bytes for each pixel of it, which is what `drawPixelsIn` takes.
+  // four bytes for each pixel of it, which is what `pixelsIn` takes.
   t.eqI32Array([got[0], got[1], got[2], got[3]], [0, 0, 199, 149] as i32[],
                "the damage is not the whole surface");
   t.eqI32(got[5], 200 * 150 * 4, "the damaged payload is not four bytes a pixel");

@@ -10,7 +10,7 @@ Surface s = Surface.create(96, 48);
 s.fill(0, 0, 96, 48, 0x101416FF);        // the desktop
 s.rect(4, 4, 88, 40, 0x46D9C0FF);        // a window frame
 s.text([0x77, 0x61, 0x63] as i32[], 8, 6, 0xDCE8E7FF);   // "wac"
-// s.pixels is R G B A, row-major — the layout `Page.drawPixels` takes
+// s.pixels is R G B A, row-major — the layout a canvas handle's `pixels` takes
 ```
 
 `design/system/0004` is why this exists: the window manager and the terminal are built on a DOM, and

@@ -36,10 +36,10 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
     src: `${BLOB}/packages/box/example/desk.wac`,
     what:
       "design/0001's eighth and last step: a window manager written in wac, over the same system the " +
-      "shell above runs on. A window is markup rather than pixels — a terminal drawn with drawPixels " +
+      "shell above runs on. A window is markup rather than pixels — a terminal drawn on a canvas " +
       "would mean reimplementing text layout, selection and the caret to get something worse than the " +
-      "browser already has. The manager re-renders the frame and lets content through per-window, " +
-      "which is why typing does not flicker. Type `cd /home/wac` in the terminal and the files window " +
+      "browser already has. Each window and each terminal is a component, so typing renders one " +
+      "terminal and dragging moves one frame. Type `cd /home/wac` in the terminal and the files window " +
       "follows it.",
   },
   {

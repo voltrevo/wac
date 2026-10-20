@@ -990,9 +990,9 @@ have a seam rather than a mode, but the seam is in rather than retrofitted.
   `connect` is refused rather than approximated — but no `fetch` capability either, which is
   merely unwritten. It would be request/response rather than a stream, so it revives none of
   `http`, `tls`, `tor` or `ssh` in a page; the browser does that layer itself.
-- **`Event` carries no modifiers and no pointer button.** Enough for clicks, typing and
-  `pointermove`, so a canvas application can draw; not enough to tell a left-drag from a
-  right-click, or to read Shift. The first thing anyone building on `drawPixels` will want.
+- **An element's event carries no pointer button.** Its modifiers are there, so Shift and `^C` can be
+  read, but a left-drag and a right-click look alike. The first thing anyone drawing on a canvas with
+  `pixels` will want next.
 - **An OS process.** Deliberately not here, and not planned — see issues/system 0015,
   closed `wontfix`. Running arbitrary host programs is a non-goal: it makes every grant
   transitive, and the interesting artefact turned out to be the other one, where a child is

@@ -290,7 +290,7 @@ export struct Element {
     Ticket<string> t;
     i32 req = this.es.asked.len();
     this.es.asked.push(t);
-    this.es.ops.value(0 - req - 1, this.id);   // negative: `getValue` numbers its own from 0
+    this.es.ops.value(req, this.id);
     return t;
   }
 

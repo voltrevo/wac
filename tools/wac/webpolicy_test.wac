@@ -1,6 +1,6 @@
 // `packages/web`'s policy, from outside: each way a page could write script into its document traps,
 // with a message saying which call refused what — through the handle layer and through `htmlOf`, which
-// is what `Page.render` writes with `innerHTML` (`design/system/0012`, "Policy is in wac").
+// writes a tree out as HTML (`design/system/0012`, "Policy is in wac").
 //
 // Here rather than in the package because a trap ends the program that hit it, so each case is a run
 // of its own, and the package's own tests cannot assume a `wac` binary to run one with.

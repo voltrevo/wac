@@ -98,7 +98,7 @@ Deno.test({
       page.on("pageerror", (e: Error) => failures.push(String(e)));
       await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
 
-      // Wait for the canvas to have been sized by `drawPixels`
+      // Wait for the canvas to have been sized by `pixels`
       // rather than for a fixed time — the same lesson as the TLS fixture earlier today.
       // **Page code as strings, not closures**, as `browser_live.test.ts` does: `document` is not
       // in Deno's type environment, and a closure would have to be type-checked against types the
@@ -125,12 +125,12 @@ errors: ${failures.join(" | ")}`);
             ` return ((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0; })()`,
         ) as number;
 
-      // **`drawPixels` sized the canvas**, which is the whole reason it and `drawPixelsIn` are two
+      // **`pixels` sized the canvas**, which is the whole reason it and `pixelsIn` are two
       // calls: the markup has a `<canvas>` with no dimensions.
       const size = await page.evaluate(
         "(() => { const c = document.getElementById('screen'); return [c.width, c.height]; })()",
       ) as number[];
-      assertEquals(size, [320, 200], "the canvas was not sized by drawPixels");
+      assertEquals(size, [320, 200], "the canvas was not sized by pixels");
 
       // The desktop behind everything, at a corner no window covers.
       assertEquals(await at(2, 2), 0x101416FF, "the desktop colour is not at the origin");
@@ -144,7 +144,7 @@ errors: ${failures.join(" | ")}`);
       // Inside the first window's title bar, which is `barHeight()` tall from its top edge.
       assertEquals(await at(60, 22), 0x2A3438FF, "the first window's title bar is not where it should be");
 
-      // **And the partial blit.** A 16x16 magenta square at (200, 24), put there by `drawPixelsIn`
+      // **And the partial blit.** A 16x16 magenta square at (200, 24), put there by `pixelsIn`
       // and by nothing else — so its corners say whether that capability's origin agrees with the
       // model's. Both edges, because a square one pixel off still has a middle.
       assertEquals(await at(200, 24), 0xFF00FFFF, "the patch's top-left is not at (200, 24)");
@@ -152,7 +152,7 @@ errors: ${failures.join(" | ")}`);
       assertEquals(await at(199, 24), 0x101416FF, "the patch started one pixel early");
       assertEquals(await at(216, 39), 0x101416FF, "the patch ran one pixel long");
 
-      // The partial blit must not have resized or cleared the canvas, which is what `drawPixels`
+      // The partial blit must not have resized or cleared the canvas, which is what `pixels`
       // does and what would throw away everything outside the rectangle.
       assertEquals(await at(20, 20), 0x46D9C0FF, "the partial blit cleared the canvas");
 

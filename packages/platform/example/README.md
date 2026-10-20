@@ -53,9 +53,9 @@ halve the view; the escape count under the pointer is displayed as you move.
 
 No grants — it reads nothing and opens nothing. Three capabilities carry the whole application:
 
-- `drawPixels` blits a buffer wac filled. A drawing API would have made this the slow way to do
-  it; one call with 38400 finished pixels is the fast way.
-- `Event.x` / `Event.y` say where in *that buffer* the pointer is, scaled from the element by the
+- a canvas handle's `pixels` blits a buffer wac filled. A drawing API would have made this the slow
+  way to do it; one call with 38400 finished pixels is the fast way.
+- an event's `x` / `y` say where in *that buffer* the pointer is, scaled from the element by the
   document's side. Without them the only zoom possible is the middle of the picture, which is the least
   interesting part of any fractal — and the escape count on screen is what proves the scaling,
   since an off-by-a-scroll shows up there at once.

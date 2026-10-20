@@ -122,7 +122,7 @@ export struct Desk {
    * Draw the whole desktop, back to front.
    *
    * The surface's damage rectangle ends up covering everything drawn, which is what a caller hands
-   * to `Page.drawPixelsIn` — so a frame is `draw`, send `damagedPixels()`, `undamage()`.
+   * to `Element.pixelsIn` — so a frame is `draw`, send `damagedPixels()`, `undamage()`.
    */
   void draw(this, Surface s, i32 desktop, i32 frame, i32 bar, i32 fg, i32 bg) {
     s.fill(0, 0, s.width, s.height, desktop);

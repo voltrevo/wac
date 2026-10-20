@@ -35,6 +35,7 @@ depends on this package by git and builds with nothing but `wac`.
 | `auto s = ui.state(init)` | a `State<T>`: `get()`, `set(v)`, and `update(f)`, which applies `f` to the value as it is now |
 | `ui.memo(dep, f)`, `ui.effect(dep, run)` | a value computed again when `dep` changes; work run after the render when it does, its answer the cleanup |
 | `ui.after(ms, f)`, `ui.every(ms, f)` | timers that end with the component, each answering its cancel |
+| `Ref r = ui.ref()`, `ref={r}` | a name for an element the component draws: `r.element()` is its handle once the render that made it is applied — in an effect, or a handler |
 | `key={…}` | which instance or element a node is, among its siblings |
 | `onclick={(ElementEvent e) => …}` and the other `on…` attributes | handlers; `prevent="Tab ArrowUp"` beside one says which defaults the document prevents |
 
@@ -55,44 +56,40 @@ to reach it. `append(tag)`, `appendText(s)`, `text(s)`, `attr(name, value)`, `pr
 of the page — `page.mountIn(element, draw)` puts a view in one. `attr` refuses `on…` names and
 `javascript:` URLs, and `append` refuses the elements that run or load something on their own.
 
-## The older page calls
-
-The calls below drive the page by element id and `innerHTML`. They remain while the pages written against
-them are ported (`design/system/0012`'s order of work), and go after.
-
-### What they are
+## What belongs to the page
 
 | | |
 |---|---|
-| `render(node)`, `renderInto(id, node)` | replace the page, or one element's contents, with JSX — escaped, always |
-| `setText`, `setValue`, `setStyle`, `title`, `log` | the targeted changes that would otherwise mean re-rendering |
-| `await getValue(id)` | an input's value — waited for, because a program in a worker cannot read the document |
-| `drawPixels(id, w, h, rgba)`, `drawPixelsIn(id, x, y, w, h, rgba)` | fill a `<canvas>` from a buffer, or part of one |
-| `download(name, bytes)` | offer bytes to the user as a file |
+| `title(t)`, `log(line)` | the document's title, and a line for the console |
 | `now()` | milliseconds, from a clock that only goes forward |
-| `on(selector, kind)` | deliver `kind` events on elements matching `selector`, delegated so they survive `render` |
-| `await nextEvent()` | the next event: `kind`, `id`, `value` (an input's value, or the key), `x`, `y` (in the element's own pixels), `mods` (`MOD_SHIFT`, `MOD_CTRL`, `MOD_ALT`, `MOD_META`) |
-| `await nextFile()` | the next file the user picks with an `<input type="file">` or drops on the page |
 | `await sleep(ms)`, `await nextFrame()`, `await painted()` | time: answering `now()` when they settle |
+| `await nextFile()` | the next file the user picks with an `<input type="file">` or drops on the page |
+| `download(name, bytes)` | offer bytes to the user as a file |
+| `sys` | what the build granted — see below |
 
-**Several things at once is `Ticket.any`.** An animation waits for whichever comes first and then
-asks each ticket whether it settled:
+A component starts work that outlives a render from an effect: a timer with `ui.every`, a loop awaiting
+`page.nextFrame()` or `page.nextFile()` that sets state as things arrive. A canvas is named with a ref
+and drawn from an effect with `pixels(w, h, rgba)` or `pixelsIn(x, y, w, h, rgba)`, and a handler's event
+carries `x` and `y` in the pixels of the element that listened — a canvas's backing store's.
+
+**Several things at once is `Ticket.any`**, for a task that owns an element rather than a view — a
+terminal reading keys while a command runs:
 
 ```wac
-Ticket<Event> ev = page.nextEvent();
+Ticket<ElementEvent> key = screen.next();
 Ticket<f64> frame = page.nextFrame();
 while (true) {
-  await Ticket.any(ev, frame);
-  if (frame.settled()) { step(); draw(page); frame = page.nextFrame(); }
-  if (ev.settled()) { handle(ev.value()); ev = page.nextEvent(); }
+  await Ticket.any(key, frame);
+  if (frame.settled()) { step(); frame = page.nextFrame(); }
+  if (key.settled()) { handle(key.value()); key = screen.next(); }
 }
 ```
 
-**Everything is escaped.** `render` takes a `Node`, which JSX builds, and serialises it with every
-string as text — there is no call that hands the browser a string as markup. A `<style>`'s text is
-CSS rather than HTML and goes out as written, with `<` escaped so nothing can close the element. And
-the handle layer's policy holds here too: an `on…` attribute, a `javascript:` URL, a name outside
-`[a-z][a-z0-9-]*` or an element that runs on its own traps, naming `htmlOf`.
+**Everything is text.** A string reaches the page as a text node, and `htmlOf`, which writes a tree out
+as HTML, escapes every one — there is no call that hands the browser a string as markup. A `<style>`'s
+text is CSS rather than HTML and goes out as written, with `<` escaped so nothing can close the element.
+And the handle layer's policy holds in `htmlOf` too: an `on…` attribute, a `javascript:` URL, a name
+outside `[a-z][a-z0-9-]*` or an element that runs on its own traps, naming `htmlOf`.
 
 ## Files, and the rest of `Sys`
 

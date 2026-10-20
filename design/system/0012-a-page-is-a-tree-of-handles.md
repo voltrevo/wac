@@ -1,6 +1,6 @@
 # 0012 — a page is a tree of handles, and diffing is a library over it
 
-- **Status:** in progress — see "State of play"
+- **Status:** done but the development build's check — see "State of play"
 - **Raised by:** agent-a, 2026-10-18, on the operator's direction: "there should be an underlying api that
   simply captures what we can do, and then we make diff-based rendering on top of that … I can see a need to
   be able to create a handle through which only one element (incl its events) is visible"
@@ -383,5 +383,5 @@ so a library it builds on has to be inside it too.
 | 2 | done — `packages/web`'s `element.wac`: handles, the mirror, the policy, events per handle, one batch per turn in the host. `counter` and `notes` are components, checked in Chromium by `packages/platform/test/browser_live.test.ts` |
 | 3 | done — 0017 landed whole; 0386a and 0387a (a `Vec` of nullable functions is invalid wasm) remain open |
 | 4 | most of it — `view.wac`: `Ui` with `state`, `memo`, `effect`, `after`, `every`; keyed patching with moves; only dirty components render, shallowest first; the stale rule. `testdoc.wac` draws into records for tests. `templates/webapp` and `example/todo.wac` are ported, the second checked in Chromium by `test/view_live.test.ts`. `main(Page page)` always, with what the build granted as `page.sys`, whose refusals name the missing `--grant`. `ui.ref()` names an element (`<canvas ref={at}/>`), and an effect draws in it with `Element.pixels`; `example/pixels.wac` is that. Not yet: the development build's check |
-| 5 | not started |
-| 6 | not started |
+| 5 | done — every page is ported: the desktop's windows, terminals and files panes are components; `term`, `rasterterm` and `rasterdesk` are tasks owning elements laid out once with refs; `life`, `ripple`, `pixels`, `hash`, `procs`, `gitpage` and `waccpage` are components, and `browser_live.test.ts` drives each |
+| 6 | done — `render`, `renderInto`, `setText`, `setValue`, `setStyle`, `getValue`, `on`, `nextEvent`, `Event`, `drawPixels` and `drawPixelsIn` are gone, with their host operations. `htmlOf` stays, for a page written out as a file |

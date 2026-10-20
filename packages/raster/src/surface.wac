@@ -2,7 +2,7 @@
 //
 // `design/system/0004` step 2. The window manager and the terminal are built on a DOM today, and the
 // stack `design/system/0001` is aiming at has no DOM in it — so the same shapes have to be drawable
-// into a buffer that a framebuffer, a canvas or `drawPixels` can take.
+// into a buffer that a framebuffer, a canvas or `Element.pixels` can take.
 //
 // **A fixed-cell grid with a bitmap font is the whole of the first cut**, deliberately: a terminal is
 // a grid and a window manager needs labels, and that is a lookup and a blit rather than a font
@@ -12,7 +12,7 @@
 // ## The layout, and why it is bytes rather than a struct per pixel
 //
 // `pixels` is `u8[]`, four bytes a pixel, R G B A, row-major with no padding — the layout
-// `Page.drawPixels` already takes, so a surface reaches a screen without a conversion. A `Pixel`
+// `Element.pixels` already takes, so a surface reaches a screen without a conversion. A `Pixel`
 // struct would be one heap object per pixel: a 640x480 surface is 307,200 of them, which is the
 // wrong shape for a language whose arrays are the fast path.
 //
@@ -171,7 +171,7 @@ export struct Surface {
   /**
    * The pixels of a rectangle, copied out, in the same R G B A layout.
    *
-   * **This is what makes the damage rectangle useful.** `Page.drawPixelsIn` takes a buffer the size
+   * **This is what makes the damage rectangle useful.** `Element.pixelsIn` takes a buffer the size
    * of the region it is blitting, and a surface holds the whole screen — so a caller that has
    * damaged one window sends `region(dx0, dy0, …)` rather than `pixels`. Without it the damage
    * rectangle is a number nobody can act on, which is the shape of a value nothing reads.
@@ -205,7 +205,7 @@ export struct Surface {
   /**
    * The damaged rectangle's pixels, or an empty array when nothing has been drawn.
    *
-   * The pair a host wants: this and `dx0`/`dy0` are exactly `drawPixelsIn`'s arguments, so a frame
+   * The pair a host wants: this and `dx0`/`dy0` are exactly `pixelsIn`'s arguments, so a frame
    * is "draw, send the damage, `undamage()`" with no arithmetic in the caller — which is where the
    * off-by-one would otherwise live, because the reported rectangle is *inclusive* at the right and
    * bottom and a blit's width is not.

@@ -11,34 +11,30 @@ A page written entirely in wac: `src/app.wac` is the application, and `wac task 
 ## How a page works
 
 ```wac
-import { Event, Page, html.b, html.button, html.p } from "web";
+import { ElementEvent, Node, Page, Ui, html.b, html.button, html.p } from "web";
+
+Node Counter(Ui ui) {
+  auto n = ui.state(0);
+  return <p>Clicks: <b>{n.get()}</b> <button onclick={(ElementEvent e) => { n.update((i32 x) => x + 1); }}>+1</button></p>;
+}
 
 export async i32 main(Page page) {
-  page.render(<p>Clicks: <b id="n">0</b> <button id="up">+1</button></p>);
-  page.on("button", "click");
-  i32 n = 0;
-  while (true) {
-    Event e = await page.nextEvent();
-    if (e.id == "up") { n += 1; page.setText("n", "\{n}"); }
-  }
+  page.mount((Ui ui) => Counter(ui));
+  return 0;
 }
 ```
 
-- **`main` takes the page and nothing else.** It has no filesystem, no network and no clock but the
-  page's: what a page program can do is what `Page` offers.
-- **It changes the document with plain calls** — `render(node)`, `renderInto(id, node)`,
-  `setText`, `setValue`, `setStyle`, `title` — which happen at once. Markup is built with JSX and
-  everything is escaped: there is no way to hand the browser a string as HTML.
-- **It waits with `await`** — for the next event, `await page.nextEvent()`; for a file the user
-  picks or drops, `await page.nextFile()`; for time, `await page.sleep(ms)` or `await page.nextFrame()`.
-  Each wait hands control back to the browser, so state is ordinary locals and the program reads top
-  to bottom. To wait for whichever of several comes first, `await Ticket.any(a, b)` and then ask each
-  `a.settled()`.
-- **`page.on(selector, kind)`** says which events to deliver: `click`, `input`, `change`, `keydown`
-  (with the key as the value), `submit`, and the pointer events, whose `x` and `y` are in the
-  element's own pixels.
-- **A canvas is a buffer**: `drawPixels(id, w, h, rgba)` fills one, and `download(name, bytes)`
-  hands bytes back to the user as a file.
+- **A page is components.** A component is a function whose first parameter is `Ui`: `ui.state` keeps a
+  value from one render to the next, and setting it renders again the component that owns it — only
+  that one, and the children it passes new attributes to. Handlers are closures that set state.
+- **`main` takes the page and nothing else.** Files, if the build granted them, are `page.sys`; the page
+  itself offers its title, the clock, timers, frames, files the user hands over, and a download.
+- **Markup is built with JSX and every string is text**: there is no way to hand the browser a string as
+  HTML, and the built page runs under a Content Security Policy that refuses script written into it.
+- **Work that outlives a render starts in an effect** — `ui.every(ms, f)` for a timer, or an `async`
+  function awaiting `page.nextFrame()` or `page.nextFile()` that sets state as things arrive. A canvas
+  is named with `ref={r}` (`Ref r = ui.ref()`) and drawn from an effect with `r.element()!.pixels(w, h,
+  rgba)`.
 
 The whole of `Page` is in the `web` package's
 [README](https://github.com/voltrevo/wac/blob/master/packages/web/README.md).

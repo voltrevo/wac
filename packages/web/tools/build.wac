@@ -3,8 +3,8 @@
 //     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac src/app.wac dist
 //
 // **Three steps, all of them visible in the output directory.** A wrapper module, `page.wac`, gives the
-// host the calls it makes — make a page, start the program, deliver an event, a timer, a file or a
-// value — and imports the program's `main`. `wac bindgen --script` turns the wrapper into `page.js`,
+// host the calls it makes — make a page, start the program, deliver an element's event, a timer, a file
+// or a value — and imports the program's `main`. `wac bindgen --script` turns the wrapper into `page.js`,
 // the glue with the program inside it. `index.html` is that module and the host — the browser's side,
 // written below — so the page is a single file any static server, or none, can serve.
 //
@@ -150,14 +150,14 @@ export string relativeTo(string from, string to) {
  * exist — "Host is not defined" on load.
  *
  * **`PageHost` is opaque on purpose.** Its page is a private field, so the glue `wac bindgen` writes for
- * it has no members to bind but these five methods — and none of the page's queues, tickets and
+ * it has no members to bind but its methods — and none of the page's queues, tickets and
  * vectors cross into JavaScript, where nothing could use them. Handing over the `Page` itself did:
  * 24 classes and 71 KB of glue for a counter.
  */
 export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string spawn) {
   string w = "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
            + "import { main" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
-           + "import { Dom, Page, System, World, answered, deliver, elementEvent, fileArrived, timerFired, valueArrived"
+           + "import { Dom, Page, System, World, answered, elementEvent, fileArrived, timerFired, valueArrived"
            + (spawn != "" ? ", Process, processAnswered" : "")
            + " } from \"\{pageSpec}\";\n\n"
            + "export struct PageHost {\n"
@@ -197,10 +197,6 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
     + "  }\n"
     + "}\n";
   return w + """
-
-           void event(this, string kind, string id, string value, i32 x, i32 y, i32 mods) {
-             deliver(this.page, kind, id, value, x, y, mods);
-           }
 
            void element(this, i32 seq, string kind, i32 target, i32 listener, string value, i32 x, i32 y,
                         i32 mods) {
@@ -265,27 +261,17 @@ export string programSide() {
         );
         const dom = Dom.of(
           elements,
-          (html) => send(["render", html]),
-          (id, html) => send(["renderInto", id, html]),
-          (id, text) => send(["setText", id, text]),
-          (id, value) => send(["setValue", id, value]),
-          (id, style) => send(["setStyle", id, style]),
-          (req, id) => send(["getValue", req, id]),
-          (selector, kind) => send(["listen", selector, kind]),
           (title) => send(["title", title]),
           (line) => { console.log(line); },
           () => performance.now(),
           (id, ms) => { setTimeout(() => host.timer(id), ms); },
           (id) => send(["frame", id]),
-          (id, w, h, rgba) => send(["drawPixels", id, w, h, rgba], own(rgba)),
-          (id, x, y, w, h, rgba) => send(["drawPixelsIn", id, x, y, w, h, rgba], own(rgba)),
           (name, bytes) => send(["download", name, bytes], own(bytes)),
         );
         host = makeHost(dom);
         host.start();
         return (m) => {
           switch (m[0]) {
-            case "event": host.event(m[1], m[2], m[3], m[4], m[5], m[6]); break;
             case "timer": host.timer(m[1]); break;
             case "file": host.file(m[1], m[2], m[3], m[4]); break;
             case "value": host.value(m[1], m[2]); break;
@@ -561,13 +547,11 @@ export string childSide() {
  * `src/page.wac`, where it is tested without a browser.
  *
  * **Every answer is sent later, never during the call that asked.** On the page the two halves are
- * joined directly, so an answer sent at once would run the program inside its own `getValue` call.
+ * joined directly, so an answer sent at once would run the program inside the call that asked.
  */
 export string documentSide() {
   return """
       const wacDocument = (root, emit) => {
-        const listening = new Set();
-        const byId = (id) => document.getElementById(id);
         // **The handles**: each number the program chose, and the node it named. 0 is the root.
         const nodes = new Map([[0, root]]);
         const handleOf = new WeakMap([[root, 0]]);
@@ -583,12 +567,6 @@ export string documentSide() {
         const forget = (n) => {
           if (handleOf.has(n)) nodes.delete(handleOf.get(n));
           for (const k of n.childNodes ?? []) forget(k);
-        };
-        const canvas = (id, what) => {
-          const el = byId(id);
-          const ctx = el && el.getContext ? el.getContext("2d") : null;
-          if (!ctx) throw new Error(what + ": no canvas with id " + JSON.stringify(id));
-          return [el, ctx];
         };
         const blit = (ctx, w, h, rgba, x, y) => {
           const img = ctx.createImageData(w, h);
@@ -677,40 +655,8 @@ export string documentSide() {
             const value = n && "value" in n ? String(n.value) : "";
             queueMicrotask(() => emit(["value", req, value]));
           },
-          render: (html) => { root.innerHTML = html; },
-          renderInto: (id, html) => { const el = byId(id); if (el) el.innerHTML = html; },
-          setText: (id, text) => { const el = byId(id); if (el) el.textContent = text; },
-          setValue: (id, value) => { const el = byId(id); if (el) el.value = value; },
-          setStyle: (id, style) => { const el = byId(id); if (el) el.setAttribute("style", style); },
-          getValue: (req, id) => {
-            const el = byId(id);
-            const value = el && "value" in el ? String(el.value) : "";
-            queueMicrotask(() => emit(["value", req, value]));
-          },
-          listen: (selector, kind) => {
-            const key = selector + " " + kind;
-            if (listening.has(key)) return;
-            listening.add(key);
-            root.addEventListener(kind, (ev) => {
-              const el = ev.target instanceof Element ? ev.target.closest(selector) : null;
-              if (!el || !root.contains(el)) return;
-              if (kind === "submit") ev.preventDefault();
-              const value = kind === "keydown" ? ev.key : ("value" in el ? String(el.value) : "");
-              const [x, y] = within(el, ev);
-              const mods = (ev.shiftKey ? 1 : 0) | (ev.ctrlKey ? 2 : 0) | (ev.altKey ? 4 : 0) | (ev.metaKey ? 8 : 0);
-              emit(["event", kind, el.id || "", value, x, y, mods]);
-            });
-          },
           title: (title) => { document.title = title; },
           frame: (id) => { requestAnimationFrame(() => emit(["timer", id])); },
-          drawPixels: (id, w, h, rgba) => {
-            const [el, ctx] = canvas(id, "drawPixels");
-            // Resizing clears a canvas, so only when the size changes.
-            if (el.width !== w) el.width = w;
-            if (el.height !== h) el.height = h;
-            blit(ctx, w, h, rgba, 0, 0);
-          },
-          drawPixelsIn: (id, x, y, w, h, rgba) => { blit(canvas(id, "drawPixelsIn")[1], w, h, rgba, x, y); },
           download: (name, bytes) => {
             const a = document.createElement("a");
             a.href = URL.createObjectURL(new Blob([bytes]));

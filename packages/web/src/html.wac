@@ -60,7 +60,7 @@ export enum Node {
 // to hold `<script>` arrives as those characters. **And the handle layer's policy holds here too**
 // (`element.wac`): a tag or attribute name outside `[a-z][a-z0-9-]*`, an `on*` attribute, a
 // `javascript:` URL and an element that runs on its own all trap. Escaping alone left
-// `Attr("onerror", "…")` and a tag spelled `"img src=x onerror=… x"` writing script through `Page.render`.
+// `Attr("onerror", "…")` and a tag spelled `"img src=x onerror=… x"` writing script into any page made of it.
 //
 // **A `<style>` is the one exception, because its text is not HTML**: the browser reads it as CSS up to
 // the first `</style`, and escaping `>` would break every child combinator in it. So its text goes out as

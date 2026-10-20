@@ -1,12 +1,11 @@
 // A page driven with no browser: a `Dom` made of lambdas that record what the program did, and the
-// host's two calls made by hand. What a browser adds is the document, and `host/page.js` is the whole
-// of that — so everything a program can do to a page, and every order in which things can arrive, is
-// tested here.
+// host's calls made by hand. What a browser adds is the document, and `tools/build.wac`'s host is the
+// whole of that — so what a program can ask of a page, and every order in which things can arrive, is
+// tested here. The view over the elements is `view_test.wac`'s.
 
 import { Check } from "./check.wac";
 import { Ticket } from "core";
-import { html.p, html.b } from "../../src/page.wac";
-import { Dom, ElementOps, Event, Page, deliver, timerFired, valueArrived } from "../../src/page.wac";
+import { Dom, Element, ElementEvent, ElementOps, Listen, Page, elementEvent, timerFired, valueArrived } from "../../src/page.wac";
 
 /** What the fake document saw, as one line per call. */
 struct Seen {
@@ -15,80 +14,80 @@ struct Seen {
 }
 
 Dom fakeDom(Seen seen) {
-  return Dom(
-    ElementOps.inert(),
-    (string html) => { seen.log = seen.log + "render " + html + "\n"; },
-    (string id, string html) => { seen.log = seen.log + "into " + id + "=" + html + "\n"; },
-    (string id, string text) => { seen.log = seen.log + "text " + id + "=" + text + "\n"; },
-    (string id, string value) => { seen.log = seen.log + "value " + id + "=" + value + "\n"; },
-    (string id, string style) => { seen.log = seen.log + "style " + id + "=" + style + "\n"; },
-    (i32 req, string id) => { seen.log = seen.log + "ask \{req} " + id + "\n"; },
-    (string selector, string kind) => { seen.log = seen.log + "listen " + selector + " " + kind + "\n"; },
-    (string t) => { seen.log = seen.log + "title " + t + "\n"; },
-    (string line) => { seen.log = seen.log + "log " + line + "\n"; },
-    () => 1000.0,
-    (i32 id, i32 ms) => { seen.timers = seen.timers + 1; seen.log = seen.log + "timer \{id} \{ms}\n"; },
-    (i32 id) => { seen.timers = seen.timers + 1; seen.log = seen.log + "frame \{id}\n"; },
-    (string id, i32 w, i32 h, u8[] rgba) => { seen.log = seen.log + "pixels \{id} \{w}x\{h}\n"; },
-    (string id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => { seen.log = seen.log + "pixelsIn \{id} \{x},\{y} \{w}x\{h}\n"; },
-    (string name, u8[] bytes) => { seen.log = seen.log + "download \{name} \{bytes.len()}\n"; }
-  );
+  ElementOps ops = ElementOps.inert();
+  ops.make = (i32 id, i32 parent, string tag, i32 before) => { seen.log = seen.log + "make \{id} " + tag + "\n"; };
+  ops.text = (i32 id, string text) => { seen.log = seen.log + "text \{id} " + text + "\n"; };
+  ops.listen = (i32 id, string kind, string prevent) => { seen.log = seen.log + "listen \{id} " + kind + "\n"; };
+  ops.value = (i32 req, i32 id) => { seen.log = seen.log + "ask \{req} \{id}\n"; };
+  Dom d = Dom.inert();
+  d.elements = ops;
+  d.title = (string t) => { seen.log = seen.log + "title " + t + "\n"; };
+  d.log = (string line) => { seen.log = seen.log + "log " + line + "\n"; };
+  d.now = () => 1000.0;
+  d.timer = (i32 id, i32 ms) => { seen.timers = seen.timers + 1; seen.log = seen.log + "timer \{id} \{ms}\n"; };
+  d.frame = (i32 id) => { seen.timers = seen.timers + 1; seen.log = seen.log + "frame \{id}\n"; };
+  return d;
 }
 
-async i32 counter(Page page) {
-  page.title("counter");
-  page.render(<p>Clicks: <b id="n">0</b></p>);
-  page.on("button", "click");
+/** The handle numbers this file's programs make, in the order they make them. */
+i32 UP() { return 1; }
+i32 QUIT() { return 2; }
+i32 SHOWN() { return 3; }
+
+async i32 clicks(Page page) {
+  Element up = page.root().append("button");
+  Element quit = page.root().append("button");
+  Element shown = page.root().append("b");
+  page.root().listen("click", Listen.none());
   i32 n = 0;
   while (true) {
-    Event e = await page.nextEvent();
-    if (e.id == "up") {
+    ElementEvent e = await page.root().next();
+    if (e.target.id == UP()) {
       n += 1;
-      page.setText("n", "\{n}");
+      shown.text("\{n}");
     }
-    if (e.id == "quit") { return n; }
+    if (e.target.id == QUIT()) { return n; }
   }
 }
 
-/** What the build's wrapper does: the program run with the page as its schedule target. */
-Ticket<i32> start(Page page) {
+Ticket<i32> startClicks(Page page) {
   schedule page.take;
-  return counter(page);
+  return clicks(page);
 }
 
 export string test_the_program_runs_until_it_waits_and_each_event_runs_it_on() {
   Check t = Check.create();
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
-  Ticket<i32> done = start(page);
-  t.eqStr(seen.log, "title counter\nrender <p>Clicks: <b id=\"n\">0</b></p>\nlisten button click\n",
-          "it ran to its first wait");
+  Ticket<i32> done = startClicks(page);
+  t.eqStr(seen.log, "make 1 button\nmake 2 button\nmake 3 b\nlisten 0 click\n", "it ran to its first wait");
   t.isFalse(done.settled(), "and is waiting");
   seen.log = "";
-  deliver(page, "click", "up", "", 0, 0, 0);
-  deliver(page, "click", "noise", "", 0, 0, 0);
-  deliver(page, "click", "up", "", 0, 0, 0);
-  t.eqStr(seen.log, "text n=1\ntext n=2\n", "each click ran it on, there and then");
-  deliver(page, "click", "quit", "", 0, 0, 0);
+  elementEvent(page, 1, "click", UP(), 0, "", 0, 0, 0);
+  elementEvent(page, 2, "click", SHOWN(), 0, "", 0, 0, 0);
+  elementEvent(page, 3, "click", UP(), 0, "", 0, 0, 0);
+  t.eqStr(seen.log, "text 3 1\ntext 3 2\n", "each click ran it on, there and then");
+  elementEvent(page, 4, "click", QUIT(), 0, "", 0, 0, 0);
   t.isTrue(done.settled(), "quit finished it");
   t.eqI32(done.value(), 2, "with the count");
   return t.report();
 }
 
-async i32 early(Page page) {
+async i32 early(Element listened) {
   // Events delivered before anything waits are kept, in order.
-  Event a = await page.nextEvent();
-  Event b = await page.nextEvent();
-  return a.id.len() * 10 + b.id.len();
+  ElementEvent a = await listened.next();
+  ElementEvent b = await listened.next();
+  return a.value.len() * 10 + b.value.len();
 }
 
 export string test_events_that_arrive_before_a_wait_are_kept_in_order() {
   Check t = Check.create();
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
-  deliver(page, "click", "abc", "", 0, 0, 0);
-  deliver(page, "click", "de", "", 0, 0, 0);
-  Ticket<i32> done = early(page);
+  page.root().listen("input", Listen.none());
+  elementEvent(page, 1, "input", 0, 0, "abc", 0, 0, 0);
+  elementEvent(page, 2, "input", 0, 0, "de", 0, 0, 0);
+  Ticket<i32> done = early(page.root());
   // Nothing was scheduled for these: both tickets were already settled.
   page.drain();
   t.isTrue(done.wait().isOk(), "it finished");
@@ -129,21 +128,22 @@ export string test_a_sleep_waits_for_its_timer() {
   return t.report();
 }
 
-async i32 helper(Page page) {
-  Event e = await page.nextEvent();
+async i32 helper(Element listened) {
+  ElementEvent e = await listened.next();
   return e.value.len();
 }
 
-async i32 nested(Page page) {
+async i32 nested(Element listened) {
   // A machine waiting on another machine waiting on an event: settling the event runs both.
-  i32 a = await helper(page);
-  i32 b = await helper(page);
+  i32 a = await helper(listened);
+  i32 b = await helper(listened);
   return a * 10 + b;
 }
 
 Ticket<i32> startNested(Page page) {
   schedule page.take;
-  return nested(page);
+  page.root().listen("input", Listen.none());
+  return nested(page.root());
 }
 
 export string test_a_wait_on_a_wait_runs_on_through_both() {
@@ -151,9 +151,9 @@ export string test_a_wait_on_a_wait_runs_on_through_both() {
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
   Ticket<i32> done = startNested(page);
-  deliver(page, "input", "name", "abcd", 0, 0, 0);
+  elementEvent(page, 1, "input", 0, 0, "abcd", 0, 0, 0);
   t.isFalse(done.settled(), "one event in, one to go");
-  deliver(page, "input", "name", "xy", 0, 0, 0);
+  elementEvent(page, 2, "input", 0, 0, "xy", 0, 0, 0);
   t.isTrue(done.settled(), "the second finished both");
   t.eqI32(done.value(), 42, "4 then 2");
   return t.report();
@@ -161,8 +161,10 @@ export string test_a_wait_on_a_wait_runs_on_through_both() {
 
 async i32 eventOrTick(Page page) {
   // The shape of an animation: whichever comes first, an event or the next frame.
+  Element quit = page.root().append("button");
+  page.root().listen("click", Listen.none());
   i32 ticks = 0;
-  Ticket<Event> ev = page.nextEvent();
+  Ticket<ElementEvent> ev = page.root().next();
   Ticket<f64> tick = page.sleep(30);
   while (true) {
     await Ticket.any(ev, tick);
@@ -171,9 +173,9 @@ async i32 eventOrTick(Page page) {
       tick = page.sleep(30);
     }
     if (ev.settled()) {
-      Event e = ev.value();
-      if (e.id == "quit") { return ticks; }
-      ev = page.nextEvent();
+      ElementEvent e = ev.value();
+      if (e.target.id == quit.id) { return ticks; }
+      ev = page.root().next();
     }
   }
 }
@@ -191,23 +193,24 @@ export string test_waiting_on_whichever_comes_first() {
   t.eqI32(seen.timers, 1, "one frame asked for");
   timerFired(page, 0);
   t.eqI32(seen.timers, 2, "the frame ran it on, and it asked for the next");
-  deliver(page, "click", "noise", "", 0, 0, 0);
+  elementEvent(page, 1, "click", 0, 0, "", 0, 0, 0);
   t.eqI32(seen.timers, 2, "an event ran it on without a frame");
   timerFired(page, 0);
-  deliver(page, "click", "quit", "", 0, 0, 0);
+  elementEvent(page, 2, "click", 1, 0, "", 0, 0, 0);
   t.isTrue(done.settled(), "quit finished it");
   t.eqI32(done.value(), 2, "after two frames");
   return t.report();
 }
 
-async i32 bothArrived(Page page) {
-  (Event, Event) both = await Ticket.all(page.nextEvent(), page.nextEvent());
-  return both.0.id.len() * 10 + both.1.id.len();
+async i32 bothArrived(Element listened) {
+  (ElementEvent, ElementEvent) both = await Ticket.all(listened.next(), listened.next());
+  return both.0.value.len() * 10 + both.1.value.len();
 }
 
 Ticket<i32> startBoth(Page page) {
   schedule page.take;
-  return bothArrived(page);
+  page.root().listen("input", Listen.none());
+  return bothArrived(page.root());
 }
 
 export string test_waiting_on_all_of_several() {
@@ -215,17 +218,19 @@ export string test_waiting_on_all_of_several() {
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
   Ticket<i32> done = startBoth(page);
-  deliver(page, "click", "abc", "", 0, 0, 0);
+  elementEvent(page, 1, "input", 0, 0, "abc", 0, 0, 0);
   t.isFalse(done.settled(), "one of two");
-  deliver(page, "click", "de", "", 0, 0, 0);
+  elementEvent(page, 2, "input", 0, 0, "de", 0, 0, 0);
   t.isTrue(done.settled(), "both");
   t.eqI32(done.value(), 32, "in order");
   return t.report();
 }
 
 async i32 asks(Page page) {
-  string a = await page.getValue("what");
-  string b = await page.getValue("who");
+  Element what = page.root().append("input");
+  Element who = page.root().append("input");
+  string a = await what.value();
+  string b = await who.value();
   return a.len() * 10 + b.len();
 }
 
@@ -234,17 +239,18 @@ Ticket<i32> startAsks(Page page) {
   return asks(page);
 }
 
-export string test_an_inputs_value_is_waited_for() {
+export string test_an_elements_value_is_waited_for() {
   Check t = Check.create();
   Seen seen = Seen("", 0);
   Page page = Page.create(fakeDom(seen));
   Ticket<i32> done = startAsks(page);
-  t.eqStr(seen.log, "ask 0 what\n", "it asked, and waits for the answer");
+  t.eqStr(seen.log, "make 1 input\nmake 2 input\nask 0 1\n", "it asked, and waits for the answer");
   valueArrived(page, 0, "hello");
-  t.eqStr(seen.log, "ask 0 what\nask 0 who\n", "the answer ran it on, and the slot was free again");
+  t.eqStr(seen.log, "make 1 input\nmake 2 input\nask 0 1\nask 1 2\n", "the answer ran it on");
   valueArrived(page, 7, "stray");
-  t.isFalse(done.settled(), "an answer nobody asked for is dropped");
-  valueArrived(page, 0, "ab");
+  valueArrived(page, 0, "late");
+  t.isFalse(done.settled(), "an answer nobody is waiting for is dropped");
+  valueArrived(page, 1, "ab");
   t.isTrue(done.settled(), "both answered");
   t.eqI32(done.value(), 52, "in order");
   return t.report();
