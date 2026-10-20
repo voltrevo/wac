@@ -6,7 +6,6 @@ has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0387a](open/0387a-a-vec-of-nullable-functions-is-invalid-wasm.md) | `Vec<fn<i32()>?>` emits an `at` the engine refuses — the signature answers the nested nullable's box, the body the bare function; `Vec<P?>` for a struct is fine | bug | invalid wasm |
-| [0386a](open/0386a-a-closure-in-a-loop-of-an-async-function-shares-one-cell.md) | A closure made in a loop of an `async` function — `for (x in xs) { y = await …; hs.push(H(() => x + y)); }` — sees the last iteration's locals: a local living across a suspension is one cell for the whole machine. Outside `async`, each iteration has its own | bug | wrong answer |
 | [0379a](open/0379a-an-async-machine-is-attributed-to-its-struct-line-and-its-coroutine-to-line-one.md) | An `async` method's state machine is attributed to its struct's line and every coroutine's entry to line 1, so coverage keys all of a type's machines to one line | diagnostic | wrong answer |
 | [0378a](open/0378a-a-union-with-void-as-a-member-emits-invalid-wasm.md) | A union with `void` as a member — `Ticket.any` over a `Ticket<void>` — emits a module the engine refuses; the spec does not say what `union<A, void>` is, and the three answers differ | bug | invalid wasm |
 | [0377a](open/0377a-a-leaving-match-arm-in-a-function-whose-error-type-is-gathered-emits-invalid-wasm.md) | In a function answering `Result<T>` (error type gathered), `Err(e): return Result.Err(…)` as a match-expression arm checks clean and emits a module the engine refuses — *a null in a never slot* for a `main`. Written `Result<T, string>` it works (case 0527), so the arm's `Err` seems not to reach what the union gathers | bug | invalid wasm |
@@ -108,7 +107,7 @@ has been fixed and why.
 
 ## Closed
 
-301 issues, 241 closed.
+301 issues, 242 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

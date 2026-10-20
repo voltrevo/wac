@@ -1,6 +1,7 @@
 # 0386a — a closure made in a loop of an `async` function sees the last iteration's local
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** (the commit closing it)
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-20
@@ -39,3 +40,21 @@ A fix makes the declaration allocate a fresh cell instead of writing into the sh
 simple: a closure captures the machine's *variable* holding the cell, and a variable that is assigned after
 being captured is itself promoted to a cell by the emitter, which would share it again. Found while fixing
 0381a.
+
+## Resolution
+
+Inside a lambda the machine makes, a hoisted name is read through a local declared just before the
+statement — `typeof(x) k = x;` — holding the cell as it is when the lambda is made; and every declaration
+of a name some lambda captured makes a new cell, `x = T[].filled(1, v);`, rather than writing into the old
+one (`CopyMode.lamDepth` and `freshCellsForCaptures` in `asynclower.wac`). Names no lambda captures keep
+writing into their one cell, so a machine with no closures is unchanged. Case 0594.
+
+The worry in the notes did not arise: the machine's variable *is* promoted, since the step assigns it,
+but no lambda reads that variable any more — they read the local.
+
+Writing the probes found a second fault, now fixed with it: a lambda handed to a method of a kept local —
+`hs.push(() => 3)`, which the machine spells `hs[0].push(…)` — had no target, because the emitter's
+pre-pass typed a receiver through a name, a field or an unwrap and not an index. Case 0595.
+
+What remains: a lambda in a place no declaration can go before — a loop's condition — still reads the
+shared variable, as every closure did before this.

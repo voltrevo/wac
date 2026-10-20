@@ -1,0 +1,16 @@
+// expect: f() = 6
+// why: a local declared in a loop of an `async` function is a new local each time round, as it is in
+//      any other function — a closure made in the loop keeps that iteration's, across a suspension
+// from: issues/lang/0386a
+import { Ticket, Vec } from "core";
+struct H { fn<i32()> f; }
+Ticket<i32> ready(i32 v) { Ticket<i32> t; t.resolve(v); return t; }
+async i32 run(i32[] xs) {
+  Vec<H> hs = Vec.create();
+  for (i32 x in xs) {
+    i32 y = await ready(x);
+    hs.push(H(() => x + y));
+  }
+  return hs.get(0).f() + hs.get(1).f();
+}
+export i32 f() { return run([1, 2]).wait()!; }

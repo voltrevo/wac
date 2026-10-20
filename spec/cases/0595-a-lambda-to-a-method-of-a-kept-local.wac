@@ -1,0 +1,13 @@
+// expect: f() = 7
+// why: a lambda handed to a method of a local that an `async` function keeps across a suspension is
+//      typed by that method's parameter, as it is anywhere else
+// from: issues/lang/0386a
+import { Ticket, Vec } from "core";
+Ticket<i32> ready(i32 v) { Ticket<i32> t; t.resolve(v); return t; }
+async i32 run() {
+  Vec<fn<i32()>> hs = Vec.create();
+  i32 y = await ready(4);
+  hs.push(() => 3);
+  return hs.get(0)() + y;
+}
+export i32 f() { return run().wait()!; }

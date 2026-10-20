@@ -14068,6 +14068,13 @@ string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
         default: { return ""; }
       }
     }
+    // **An element**, which is how an `async` function reads every local it keeps across a suspension:
+    // `hs.push(() => 3)` is `hs[0].push(…)` in the machine, and with no rule here the lambda had no
+    // target and the module declined.
+    Index(arr, ix): {
+      string at = walkCalleeSig(env, src, lexed, arr);
+      return at.len() > 2 && at.slice(at.len() - 2, at.len()) == "[]" ? at.slice(0, at.len() - 2) : "";
+    }
     Member(cobj, cnameTok): {
       string ot = walkCalleeSig(env, src, lexed, cobj);
       if (ot != "") { return env.fieldType(ot, tokenTextOf(src, lexed, cnameTok)); }
