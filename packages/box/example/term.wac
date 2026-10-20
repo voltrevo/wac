@@ -46,7 +46,7 @@
 // make those three our problem. A decision rather than an oversight, written down here.
 
 import { Core, Cli, Sys } from "std";
-import { Event, MOD_CTRL, Page, html.a, html.div, html.input, html.label, html.pre, html.span, html.style } from "../../web";
+import { Element, ElementEvent, Listen, MOD_CTRL, Node, Page, Ref, Ui, html.a, html.div, html.input, html.label, html.pre, html.span, html.style } from "../../web";
 import { Ticket, TicketBase, Vec } from "core";
 import { boxApplet } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";
@@ -136,30 +136,43 @@ static string STYLE =
 export async i32 applet(Sys sys) { return await boxApplet(sys.core, sys.cli); }
 
 /** Whether `e` is `^C`. */
-bool isIntr(Event e) { return (e.mods & MOD_CTRL) != 0 && (e.value == "c" || e.value == "C"); }
+bool isIntr(ElementEvent e) { return (e.mods & MOD_CTRL) != 0 && (e.value == "c" || e.value == "C"); }
+
+/** The three elements the shell's loop works through: the prompt, the line typed, and the scrollback. */
+struct Parts { Ref ps1; Ref cmd; Ref scr; }
+
+/**
+ * The page, laid out once: a component with no state, so it never renders again and the loop below owns
+ * what is inside the three elements it names. The root is a `<label for="cmd">`, which is the whole of
+ * click-anywhere-to-type: a label focuses its control natively, and dragging still selects, so copying
+ * output out of here works.
+ */
+Node Layout(Ui ui, Parts p) {
+  return <label id="term" for="cmd">
+    <style>{STYLE}</style>
+    <div id="wrap">
+      <div id="pad"></div>
+      <div id="bar">
+        <span ref={p.ps1} id="ps1">$</span>
+        <input ref={p.cmd} id="cmd" autofocus="" autocomplete="off" spellcheck="false"></input>
+      </div>
+      <pre ref={p.scr} id="scr"></pre>
+    </div>
+    <a id="src" href={SOURCE}>source and how to build it</a>
+  </label>;
+}
 
 export async i32 main(Page page) {
   Sys sys = page.sys;
   Core core = sys.core;
   Cli cli = sys.cli;
   page.title("wac sh");
-  // The root is a `<label for="cmd">`, which is the whole of click-anywhere-to-type: a label focuses its
-  // control natively, and dragging still selects, so copying output out of here works.
-  page.render(
-    <label id="term" for="cmd">
-      <style>{STYLE}</style>
-      <div id="wrap">
-        <div id="pad"></div>
-        <div id="bar">
-          <span id="ps1">$</span>
-          <input id="cmd" autofocus="" autocomplete="off" spellcheck="false"></input>
-        </div>
-        <pre id="scr"></pre>
-      </div>
-      <a id="src" href={SOURCE}>source and how to build it</a>
-    </label>
-  );
-  page.on("#cmd", "keydown");
+  Parts p = Parts(Ref {}, Ref {}, Ref {});
+  page.mount((Ui ui) => Layout(ui, p));
+  Element ps1 = p.ps1.element()!;
+  Element cmd = p.cmd.element()!;
+  Element scr = p.scr.element()!;
+  cmd.listen("keydown", Listen.none());
 
   // One shell for the whole session, so variables and functions persist between commands exactly as
   // they would in a terminal — `Session`, which is the shell, the scrollback and the history with no
@@ -175,15 +188,15 @@ export async i32 main(Page page) {
     "echo 'a whole new stack' | gzip -c | wc -c",
     "echo hello | sha256sum"
   ];
-  page.setText("ps1", s.prompt());
+  ps1.text(s.prompt());
   for (i32 i = 0; i < opening.len(); i++) {
     await s.feedLine(opening[i]);
-    page.setText("scr", s.screen);
+    scr.text(s.screen);
   }
   s.say("\n");
-  page.setText("scr", s.screen);
+  scr.text(s.screen);
 
-  Ticket<Event> next = page.nextEvent();
+  Ticket<ElementEvent> next = cmd.next();
   Ticket<void>? running = null;
   // **Lines entered while a command runs**, run in order once it ends — type-ahead, as a terminal keeps
   // it. Dropping them was a line the user saw accepted and the shell never ran.
@@ -197,21 +210,21 @@ export async i32 main(Page page) {
       i32 k = await Ticket.first(parts);
       if (k == 0) {
         running = null;
-        page.setText("ps1", s.prompt());
-        page.setText("scr", s.screen);
+        ps1.text(s.prompt());
+        scr.text(s.screen);
         if (s.over()) {
-          page.setText("scr", "\{s.screen}\n[the shell exited \{s.code()}]\n");
+          scr.text("\{s.screen}\n[the shell exited \{s.code()}]\n");
           return s.code();
         }
         if (typedAhead.len() > 0) {
           string ahead = typedAhead.get(0);
           typedAhead.remove(0);
           running = s.feedLine(ahead);
-          page.setText("scr", s.showing());
+          scr.text(s.showing());
         }
       } else if (k == 1) {
-        Event e = await next;
-        next = page.nextEvent();
+        ElementEvent e = await next;
+        next = cmd.next();
         // `^C` ends what is running, through the shell's own interrupt — `$?` is 130 and the next
         // prompt appears, and what was typed ahead goes with it, as in a terminal. A line entered meanwhile
         // waits its turn.
@@ -219,36 +232,36 @@ export async i32 main(Page page) {
           s.stop();
           while (typedAhead.len() > 0) { typedAhead.pop(); }
         } else if (e.kind == "keydown" && e.value == "Enter") {
-          typedAhead.push(await page.getValue("cmd"));
-          page.setValue("cmd", "");
+          typedAhead.push(await cmd.value());
+          cmd.prop("value", "");
         }
       } else {
-        page.setText("scr", s.showing());
+        scr.text(s.showing());
       }
       continue;
     }
 
-    Event e = await next;
-    next = page.nextEvent();
+    ElementEvent e = await next;
+    next = cmd.next();
     if (e.kind != "keydown") { continue; }
     if (e.value == "ArrowUp" || e.value == "ArrowDown") {
-      page.setValue("cmd", s.recall(e.value == "ArrowUp"));
+      cmd.prop("value", s.recall(e.value == "ArrowUp"));
       continue;
     }
     // **`^C` at a prompt throws away what has been typed and starts a fresh line**, which is what it
     // does at an ssh prompt.
     if (isIntr(e)) {
-      s.interrupt(await page.getValue("cmd"));
-      page.setValue("cmd", "");
-      page.setText("scr", s.screen);
+      s.interrupt(await cmd.value());
+      cmd.prop("value", "");
+      scr.text(s.screen);
       continue;
     }
     if (e.value != "Enter") { continue; }
 
-    string line = await page.getValue("cmd");
-    page.setValue("cmd", "");
+    string line = await cmd.value();
+    cmd.prop("value", "");
     running = s.feedLine(line);
-    page.setText("scr", s.showing());
+    scr.text(s.showing());
   }
   return 0;
 }
