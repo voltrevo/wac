@@ -175,6 +175,26 @@ string[] exportsOf(string text) {
   return out;
 }
 
+/** The names `export symbol …;` declares, in order — a verbatim name as its text (spec ch01). */
+string[] symbolsOf(string text) {
+  string[] ls = splitKeepingEmpty(text);
+  string[] found = string[].filled(ls.len(), "");
+  i32 n = 0;
+  for (i32 i = 0; i < ls.len(); i++) {
+    string l = ls[i];
+    if (l.len() < 15 || l.slice(0, 14) != "export symbol ") { continue; }
+    i32 end = l.indexOf(";");
+    if (end < 0) { continue; }
+    string name = l.slice(14, end);
+    if (name.len() > 3 && name.slice(0, 2) == "@\"") { name = name.slice(2, name.len() - 1); }
+    found[n] = name;
+    n = n + 1;
+  }
+  string[] out = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  return out;
+}
+
 /**
  * Read every input, collapsing each file's trailing newlines to exactly one.
  *
@@ -378,6 +398,14 @@ string waccFile(Tree tree) {
     " */",
     "export string[] coreExports() {",
     "  return [" + quotedList(exportsOf(core)) + "] as string[];",
+    "}",
+    "",
+    "/**",
+    " * The exports of `core` that are symbols — `toString`, `markup.text` — so a check of one file can",
+    " * know a member named `[markup.text]` is named by one, with no files in hand to read it from.",
+    " */",
+    "export string[] coreSymbols() {",
+    "  return [" + quotedList(symbolsOf(core)) + "] as string[];",
     "}",
     "",
     "/**",

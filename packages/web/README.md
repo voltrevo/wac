@@ -1,29 +1,66 @@
 # web — a page, as a wac program sees it
 
-`export async i32 main(Page page)` is a web page. It is an `async` function: it changes the document
-with plain calls, and waits for what happens later with `await`. It runs in a worker, so a program
-that computes for a while never freezes the tab — or, built with `--in-page`, on the page's own
-thread. There is no shared memory and nothing the server has to send, so a built page is one
-`index.html` that works from a `file://` URL or any static server.
+`export async i32 main(Page page)` is a web page. It runs in a worker, so a program that computes for a
+while never freezes the tab — or, built with `--in-page`, on the page's own thread. There is no shared
+memory and nothing the server has to send, so a built page is one `index.html` that works from a
+`file://` URL or any static server.
+
+**A page is a view of components** (`design/system/0012`). A component is a function whose first
+parameter is `Ui`; `ui.state` gives it state that lasts between renders, setting that state renders again
+the component that owns it, and handlers are closures:
 
 ```wac
-import { Event, Page, html.b, html.button, html.p } from "web";
+import { ElementEvent, Node, Page, Ui, html.b, html.button, html.p } from "web";
+
+Node Counter(Ui ui, string label) {
+  auto n = ui.state(0);
+  return <p>{label}: <b>{"\{n.get()}"}</b> <button onclick={(ElementEvent e) => { n.set(n.get() + 1); }}>+1</button></p>;
+}
 
 export async i32 main(Page page) {
-  page.render(<p>Clicks: <b id="n">0</b> <button id="up">+1</button></p>);
-  page.on("button", "click");
-  i32 n = 0;
-  while (true) {
-    Event e = await page.nextEvent();
-    if (e.id == "up") { n += 1; page.setText("n", "\{n}"); }
-  }
+  page.mount((Ui ui) => <Counter label="Clicks"/>);
+  return 0;
 }
 ```
 
 A project outside this repository starts from [`templates/webapp/`](../../templates/webapp/), which
 depends on this package by git and builds with nothing but `wac`.
 
-## What a page can do
+## Components and hooks — `view.wac`
+
+| | |
+|---|---|
+| `page.mount((Ui ui) => …)` | render a root into the page, and keep it rendered |
+| `Node F(Ui ui, …)` | a component: its tag `<F a={…}/>` is matched against last render's instance in that place, not called |
+| `auto s = ui.state(init)` | a `State<T>`: `get()`, `set(v)`, and `update(f)`, which applies `f` to the value as it is now |
+| `ui.memo(dep, f)`, `ui.effect(dep, run)` | a value computed again when `dep` changes; work run after the render when it does, its answer the cleanup |
+| `ui.after(ms, f)`, `ui.every(ms, f)` | timers that end with the component, each answering its cancel |
+| `key={…}` | which instance or element a node is, among its siblings |
+| `onclick={(ElementEvent e) => …}` and the other `on…` attributes | handlers; `prevent="Tab ArrowUp"` beside one says which defaults the document prevents |
+
+**Only what changed renders.** A `set` marks the component that made the cell; a child whose attributes
+are unchanged — compared by the snapshots the compiler gives each component tag (`design/lang/0017`) —
+is skipped, and renders again before an event reaches it, so a handler never runs with a stale capture.
+Hooks are found by the order of the calls, which nothing checks: call them unconditionally.
+
+`TestDoc` is a document of records for tests: hand a page `doc.dom()`, `doc.attach(page)`, and fire events
+at what the view drew. `test/wac/view_test.wac` and `templates/webapp/test` use it.
+
+## The handle layer — `element.wac`
+
+`page.root()` is an `Element`: the authority over that element and everything under it, and the only way
+to reach it. `append(tag)`, `appendText(s)`, `text(s)`, `attr(name, value)`, `prop(name, value)`,
+`move(before)`, `remove()`, `focus()`, `on(kind, Listen, handler)` or `listen(kind, Listen)` and
+`await next()`, and `await value()`. The view is built on it; a program may use it directly for a corner
+of the page — `page.mountIn(element, draw)` puts a view in one. `attr` refuses `on…` names and
+`javascript:` URLs, and `append` refuses the elements that run or load something on their own.
+
+## The older page calls
+
+The calls below drive the page by element id and `innerHTML`. They remain while the pages written against
+them are ported (`design/system/0012`'s order of work), and go after.
+
+### What they are
 
 | | |
 |---|---|

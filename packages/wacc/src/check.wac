@@ -39,7 +39,7 @@ import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFin
 import { P, parseProgram } from "./parse.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
-import { coreExports, isBuiltinSpec, stdSource } from "./coretext.wac";
+import { coreExports, coreSymbols, isBuiltinSpec, stdSource } from "./coretext.wac";
 import { endsWith, startsWith } from "./path.wac";
 import { flattenUnion, isUnionName, spellUnion, unionMembers } from "./unions.wac";
 import { genericArgs, genericBase, isTupleName, tupleMembers, tupleName } from "./tuples.wac";
@@ -2704,6 +2704,19 @@ string substituteType(C c, string owner, string written) {
       }
       return suffixed(out + ") -> " + substituteType(c, owner, fret), suffix);
     }
+  }
+  // **And inside a tuple**, which holds its members as an instantiation holds its arguments: a generic
+  // method answering `(T, i32)` answered it unsubstituted, so `c.pair().0` on a `Cell<i32>` was a `T`
+  // (case 0593).
+  if (isTupleName(core)) {
+    string[] ms = tupleMembers(core);
+    string tout = "(";
+    for (i32 i = 0; i < ms.len(); i++) {
+      if (i > 0) { tout = tout + ", "; }
+      tout = tout + substituteType(c, owner, ms[i]);
+    }
+    if (ms.len() == 1) { tout = tout + ","; }
+    return tout + ")" + suffix;
   }
   // **And inside an instantiation.** `Map<K, V>.get` returns `Option<V>`, whose core is not a
   // parameter — it is a type *holding* one. Answering `Option<V>` for a `Map<string, i32>` made
@@ -6749,15 +6762,46 @@ void checkJsxCall(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
     if (!nameExists(c, fname) || c.isStruct(fname) || c.isEnum(fname)) {
       c.reportTok(errJsxNotComponent(), tagTok, "no function " + fname + " in scope — a tag calls one");
     }
-    for (i32 i = 0; i < attrs.len(); i++) { checkExpr(c, attrs[i].value); }
+    // Each attribute fills a slot this checker cannot see, so a lambda there has a type it cannot
+    // know, which is silence rather than "nothing here wants a function".
+    for (i32 i = 0; i < attrs.len(); i++) {
+      c.expectedUnknown = true;
+      checkExpr(c, attrs[i].value);
+    }
     return;
   }
   i32 at = c.funcParamAt[fi];
   i32 count = c.funcParamCount[fi];
+  // **A component tag** (`design/lang/0017`): the function's first parameter is the view's to supply,
+  // so no attribute fills it and none is missing; `key` names the instance and is no parameter.
+  bool component = count > 0 && componentType(c, fi) != "";
+  // **Or perhaps one**: a first parameter of a type this checker cannot see into — imported from a file
+  // it was not handed — may be the view's, so neither it nor `key` is said to be missing or extra.
+  if (count > 0 && !component) {
+    string t0 = c.funcParamTypes[at];
+    string p0 = templateOf(t0);
+    if (p0 != "" && p0 != typeNone() && !isNullableName(t0) && !c.isStruct(p0) && !c.isEnum(p0)
+        && !isPrimitiveName(p0) && !isArrayName(t0) && !startsWithFn(t0) && !isTupleName(t0)) { component = true; }
+  }
+  if (component) {
+    string ct = componentType(c, fi);
+    i32 cm = c.methodAt(templateOf(ct), "[markup.component]");
+    if (cm >= 0 && c.methodReturns[cm] != c.funcReturns[fi]) {
+      c.reportWith(errMarkupUnbuilt(), c.toks[tagTok * tokenStride() + 3], c.toks[tagTok * tokenStride() + 4],
+                   fname + " answers " + c.funcReturns[fi] + ", and " + ct + ".[markup.component] builds "
+                   + c.methodReturns[cm] + " — a component answers what its tag builds");
+    }
+  }
   for (i32 i = 0; i < attrs.len(); i++) {
     string an = tokenText(c, attrs[i].nameTok);
+    if (component && an == "key") {
+      c.expected = "string";
+      checkExpr(c, attrs[i].value);
+      checkJsxAttrValue(c, attrs[i], "string");
+      continue;
+    }
     i32 pi = -1;
-    for (i32 k = 0; k < count; k++) {
+    for (i32 k = component ? 1 : 0; k < count; k++) {
       if (at + k < c.funcParamNames.len() && c.funcParamNames[at + k] == an) { pi = k; }
     }
     if (pi < 0 || an == "kids") {
@@ -6771,7 +6815,7 @@ void checkJsxCall(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
     checkJsxAttrValue(c, attrs[i], want);
   }
   bool takesKids = false;
-  for (i32 k = 0; k < count; k++) {
+  for (i32 k = component ? 1 : 0; k < count; k++) {
     string pn = at + k < c.funcParamNames.len() ? c.funcParamNames[at + k] : "";
     string pt = c.funcParamTypes[at + k];
     if (pn == "kids") {
@@ -6790,6 +6834,17 @@ void checkJsxCall(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
   if (!takesKids && kids.len() > 0) {
     c.reportTok(errJsxNotComponent(), tagTok, fname + " takes no children: it has no kids parameter");
   }
+}
+
+/**
+ * The type `P` that makes function `fi` a component — its first parameter's, when that type has a
+ * static method named by core's `markup.component` — or "" for an ordinary tag (`design/lang/0017`).
+ */
+string componentType(C c, i32 fi) {
+  if (c.funcParamCount[fi] == 0) { return ""; }
+  string p = c.funcParamTypes[c.funcParamAt[fi]];
+  if (p == typeNone() || p == "") { return ""; }
+  return markupCan(c, p, "component") ? p : "";
 }
 
 /** The element type of an array type's name, or "" for anything else. */
@@ -10038,9 +10093,13 @@ string armBindingType(C c, Expr subject, Arm arm, i32 b) {
   // in one file — `spec/cases/0073` — so this fires when the other declarer is imported, where the
   // payload fields under that bare name are the *local* enum's and belong to neither.
   if (owner != subjOwner) { return typeNone(); }
+  // **Under `Enum.Variant`**, where every enum's payload is declared: the bare name is a type the file
+  // may also have from an import — a struct `Element` beside `Node.Element` — and its fields are not
+  // this payload.
+  string qual = owner + "." + variant;
   i32 n = 0;
   for (i32 i = 0; i < c.fieldCount; i++) {
-    if (c.fieldOwners[i] != variant) { continue; }
+    if (c.fieldOwners[i] != qual) { continue; }
     if (n == b) {
       // **A generic enum's payload is written as its parameter, and the subject says what that is.**
       // `Opt<T> { Some(T v) }` records the field as `T`, which names nothing on its own — so the
@@ -13342,6 +13401,21 @@ void restoreNarrowing(C c, Expr subject, string was) {
  * Reported at the second mention, which is the one that could have been written differently: the
  * spec's own remedy is `import { foo as bar }`, and it is the later import that takes the rename.
  */
+/** Whether one of the file's own enums has a variant called `name`. */
+bool declaresVariant(C c, Program prog, string name) {
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        for (i32 v = 0; v < variants.len(); v++) {
+          if (tokenText(c, variants[v].nameTok) == name) { return true; }
+        }
+      }
+      default: { }
+    }
+  }
+  return false;
+}
+
 void checkImportCollisions(C c, Program prog) {
   string[] seen = string[].defaulted(256);
   i32 n = 0;
@@ -13369,6 +13443,9 @@ void checkImportCollisions(C c, Program prog) {
               if (declaredNameOf(c, prog.decls[e]) == alias) { clash = true; }
             }
           }
+          // **A variant of the file's own enum is a name at file scope too** (spec ch13), so an import
+          // of that name collides with it as with any declaration: `x is Element` could mean either.
+          if (!clash) { clash = declaresVariant(c, prog, alias); }
           if (clash) {
             c.reportTok(errDuplicateImport(), items[i].aliasTok, "");
           } else if (n < seen.len()) {
@@ -13655,6 +13732,22 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         string q = tokenText(c, pathTok);
         string bare = q.len() >= 2 ? q.slice(1, q.len() - 1) : "";
         if (bare != "" && !isBuiltinSpec(bare) && !isBuiltinSubpath(bare)) { c.addUnresolved(bare); }
+        // **What it imports from `core` that is a symbol is a symbol here too**, though no module of
+        // `core` is in hand to declare it: `string [toString](const this)` and `[markup.text]` named a
+        // symbol nothing declared, and a file checked alone was refused for writing a conversion.
+        // A namespace — `{ markup }` — brings each of its members.
+        if (bare == "core") {
+          string[] syms = coreSymbols();
+          for (i32 i = 0; i < items.len(); i++) {
+            if (items[i].nameTok < 0) { continue; }
+            string name = tokenText(c, items[i].nameTok);
+            string alias = items[i].aliasTok < 0 ? name : tokenText(c, items[i].aliasTok);
+            for (i32 k = 0; k < syms.len(); k++) {
+              if (syms[k] == name) { c.declareSymbol(alias); }
+              if (syms[k].len() > name.len() && syms[k].slice(0, name.len() + 1) == name + ".") { c.declareSymbol(syms[k]); }
+            }
+          }
+        }
       }
       default: { }
     }
@@ -14307,6 +14400,15 @@ void checkMethodBodies(C c, string owner, string parent, Method[] methods) {
 }
 
 void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
+  // **`this` in a generic type is the type applied to its own parameters** — `Cell<T>`, which the
+  // owner's active letters spell — so it goes wherever a `Cell<T>` is wanted. Declared as the bare
+  // template it matched nothing: `return (this, this.n)` against `(Cell<T>, i32)` was refused (case 0593).
+  string selfType = owner;
+  if (c.activeParamCount > 0) {
+    string args = "";
+    for (i32 i = 0; i < c.activeParamCount; i++) { args = args + (i > 0 ? ", " : "") + c.activeParams[i]; }
+    selfType = owner + "<" + args + ">";
+  }
   for (i32 mi = 0; mi < methods.len(); mi++) {
     // The method's own letters, added to the owner's for as long as this method is being checked —
     // see `addActiveParams`. This is the pass that has `scopeTypes` on, so it is the one that reports
@@ -14342,7 +14444,7 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
     // A method without `this` is static, and `this` means nothing in it. A `const this` method may not
     // write through the receiver, which is the same rule as a `const P p` parameter and reuses it.
     if (methods[mi].hasThis) {
-      c.declareConst("this", owner, methods[mi].thisConst);
+      c.declareConst("this", selfType, methods[mi].thisConst);
     }
     checkParams(c, methods[mi].params);
     for (i32 i = 0; i < methods[mi].params.len(); i++) {

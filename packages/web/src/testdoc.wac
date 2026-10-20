@@ -1,0 +1,222 @@
+// A document for tests: what `ElementOps` would do to a browser's, done to a tree of records here.
+//
+// Every operation the program sends lands in `nodes`, and an event is fired the way a browser fires one —
+// at a target, heard by every listener from the target up, nearest first. `ops` counts the operations,
+// which is what says how much a render sent.
+//
+// **Part of the package, for an application's tests** — as `Dom.inert()` is for a page's: hand a page
+// `doc.dom()`, attach it, and fire events at what the view drew. `templates/webapp/test` does.
+
+import { Vec } from "core";
+import { ElementOps, Elements } from "./element.wac";
+import { Dom, Page, elementEvent } from "./page.wac";
+
+/** One node of the document: an element or, with an empty `tag`, a text node. */
+export struct TestNode {
+  i32 id;
+  string tag;
+  string text;
+  Vec<string> names;
+  Vec<string> values;
+  Vec<i32> kids;
+  i32 parent;
+  Vec<string> listens;
+  Vec<string> prevents;
+  /** The number of the last event typed into it; a `prop("value")` the program sent before seeing it is dropped. */
+  i32 typed;
+}
+
+export struct TestDoc {
+  Vec<TestNode?> nodes;
+  i32 ops;
+  i32 seq;
+  /** The handles' owner, once the elements exist — events go to it. */
+  Elements? es;
+  /** The page they belong to, when there is one: an event then goes through it, and its views render. */
+  Page? page;
+
+  TestDoc create() {
+    Vec<TestNode?> nodes = Vec.create();
+    TestDoc d = TestDoc(nodes, 0, 0, null, null);
+    d.put(0, "div", 0 - 1);
+    return d;
+  }
+
+  void put(this, i32 id, string tag, i32 parent) {
+    while (this.nodes.len() <= id) { this.nodes.push(null); }
+    Vec<string> names = Vec.create();
+    Vec<string> values = Vec.create();
+    Vec<i32> kids = Vec.create();
+    Vec<string> listens = Vec.create();
+    Vec<string> prevents = Vec.create();
+    this.nodes.set(id, TestNode(id, tag, "", names, values, kids, parent, listens, prevents, 0));
+  }
+
+  TestNode at(this, i32 id) { return this.nodes.get(id)!; }
+
+  void place(this, i32 id, i32 parent, i32 before) {
+    TestNode p = this.at(parent);
+    if (before < 0) { p.kids.push(id); return; }
+    for (i32 i = 0; i < p.kids.len(); i++) {
+      if (p.kids.get(i) == before) { p.kids.insert(i, id); return; }
+    }
+    p.kids.push(id);
+  }
+
+  void unplace(this, i32 id) {
+    TestNode n = this.at(id);
+    if (n.parent < 0) { return; }
+    TestNode p = this.at(n.parent);
+    for (i32 i = 0; i < p.kids.len(); i++) {
+      if (p.kids.get(i) == id) { p.kids.remove(i); return; }
+    }
+  }
+
+  void forget(this, i32 id) {
+    TestNode n = this.at(id);
+    for (i32 i = 0; i < n.kids.len(); i++) { this.forget(n.kids.get(i)); }
+    this.nodes.set(id, null);
+  }
+
+  /** A page's document: `Dom.inert()` with these operations. Attach the page once it exists. */
+  Dom dom(this) {
+    Dom d = Dom.inert();
+    d.elements = this.elementOps();
+    return d;
+  }
+
+  /** Events from here on go to `page`, which renders its views after each. */
+  void attach(this, Page page) {
+    this.page = page;
+    this.es = page.es;
+  }
+
+  /** The operations, as a host would supply them. */
+  ElementOps elementOps(this) {
+    TestDoc d = this;
+    return ElementOps(
+      (i32 id, i32 parent, string tag, i32 before) => { d.ops++; d.put(id, tag, parent); d.place(id, parent, before); },
+      (i32 id, i32 parent, string text, i32 before) => {
+        d.ops++;
+        d.put(id, "", parent);
+        TestNode made = d.at(id);
+        made.text = text;
+        d.place(id, parent, before);
+      },
+      (i32 id, string text) => {
+        d.ops++;
+        TestNode n = d.at(id);
+        if (n.tag == "") { n.text = text; return; }
+        for (i32 i = 0; i < n.kids.len(); i++) { d.forget(n.kids.get(i)); }
+        n.kids.clear();
+        n.text = text;
+      },
+      (i32 id, string name, string value, bool present) => {
+        d.ops++;
+        d.setAttr(d.at(id), name, value, present);
+      },
+      (i32 id, string name, string value, i32 seen) => {
+        d.ops++;
+        TestNode n = d.at(id);
+        if (name == "value" && n.typed > seen) { return; }
+        d.setAttr(n, "." + name, value, true);
+      },
+      (i32 id, i32 before) => {
+        d.ops++;
+        TestNode n = d.at(id);
+        d.unplace(id);
+        d.place(id, n.parent, before);
+      },
+      (i32 id) => {
+        d.ops++;
+        d.unplace(id);
+        d.forget(id);
+      },
+      (i32 id, string kind, string prevent) => {
+        d.ops++;
+        d.at(id).listens.push(kind);
+        d.at(id).prevents.push(prevent);
+      },
+      (i32 id) => { d.ops++; },
+      (i32 req, i32 id) => { d.ops++; }
+    );
+  }
+
+  void setAttr(this, TestNode n, string name, string value, bool present) {
+    for (i32 i = 0; i < n.names.len(); i++) {
+      if (n.names.get(i) == name) {
+        if (present) { n.values.set(i, value); } else { n.names.remove(i); n.values.remove(i); }
+        return;
+      }
+    }
+    if (present) { n.names.push(name); n.values.push(value); }
+  }
+
+  string? attr(this, i32 id, string name) {
+    TestNode n = this.at(id);
+    for (i32 i = 0; i < n.names.len(); i++) { if (n.names.get(i) == name) { return n.values.get(i); } }
+    return null;
+  }
+
+  /** The first live node, in document order, whose attribute `name` is `value`, or -1. */
+  i32 find(this, string name, string value) { return this.findFrom(0, name, value); }
+
+  i32 findFrom(this, i32 id, string name, string value) {
+    string? v = this.attr(id, name);
+    if (v is not null && v! == value) { return id; }
+    TestNode n = this.at(id);
+    for (i32 i = 0; i < n.kids.len(); i++) {
+      i32 f = this.findFrom(n.kids.get(i), name, value);
+      if (f >= 0) { return f; }
+    }
+    return 0 - 1;
+  }
+
+  /** The first element called `tag`, or -1. */
+  i32 findTag(this, string tag) { return this.findTagFrom(0, tag); }
+
+  i32 findTagFrom(this, i32 id, string tag) {
+    TestNode n = this.at(id);
+    if (n.tag == tag && id != 0) { return id; }
+    for (i32 i = 0; i < n.kids.len(); i++) {
+      i32 f = this.findTagFrom(n.kids.get(i), tag);
+      if (f >= 0) { return f; }
+    }
+    return 0 - 1;
+  }
+
+  /** The text under a node, all of it, in order. */
+  string shown(this, i32 id) {
+    TestNode n = this.at(id);
+    if (n.tag == "") { return n.text; }
+    string s = n.kids.len() == 0 ? n.text : "";
+    for (i32 i = 0; i < n.kids.len(); i++) { s = s + this.shown(n.kids.get(i)); }
+    return s;
+  }
+
+  /** How many children a node has in the document. */
+  i32 kidCount(this, i32 id) { return this.at(id).kids.len(); }
+
+  /**
+   * `kind` happens at `target`, carrying `value`: every listener from the target up hears it, nearest
+   * first, as in a browser. An `input` marks the target as typed into, with this event's number.
+   */
+  void fire(this, i32 target, string kind, string value) {
+    this.seq = this.seq + 1;
+    if (kind == "input") {
+      TestNode typedInto = this.at(target);
+      typedInto.typed = this.seq;
+    }
+    i32 at = target;
+    while (at >= 0) {
+      TestNode n = this.at(at);
+      for (i32 i = 0; i < n.listens.len(); i++) {
+        if (n.listens.get(i) != kind) { continue; }
+        if (this.page is not null) { elementEvent(this.page!, this.seq, kind, target, at, value, 0, 0, 0); }
+        else { this.es!.deliver(this.seq, kind, target, at, value, 0, 0, 0); }
+      }
+      if (this.nodes.get(at) is null) { return; }
+      at = n.parent;
+    }
+  }
+}

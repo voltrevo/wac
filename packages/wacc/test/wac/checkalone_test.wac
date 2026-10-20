@@ -115,3 +115,26 @@ export string test_the_unsupplied_import_is_itself_reported() {
                 "test in this file is vacuous");
   return t.report();
 }
+
+/**
+ * A member named by one of `core`'s symbols, in a file checked alone. No module of `core` is in hand to
+ * declare the symbol, and `[toString]`, `[operators.add]` and `[markup.text]` were each refused as a symbol
+ * nothing declared — so `wac test`'s walk of the repository reported `packages/web/src/view.wac`, which
+ * builds clean, the day its `Ui` implemented `[markup.component]`.
+ */
+export string test_a_member_named_by_a_core_symbol_is_not_an_undefined_name() {
+  T t = T.create();
+  string[] files = [
+    "import { toString } from \"core\";\nstruct P { i32 x; string [toString](const this) { return \"p\"; } }\n",
+    "import { toString as text } from \"core\";\nstruct P { i32 x; string [text](const this) { return \"p\"; } }\n",
+    "import { operators } from \"core\";\nstruct P { i32 x; P [operators.add](P o) { return P(1); } }\n",
+    "import { markup } from \"core\";\nstruct P { i32 x; P [markup.text](string s) { return P(1); } }\n"
+  ];
+  for (i32 i = 0; i < files.len(); i++) {
+    t.eqI32(dumpTypeErrors(files[i].toBytes()).len() / 3, 0, "file \{i} — " + files[i]);
+  }
+  // And a symbol the file did not import is still nothing: the rule is the import, not the spelling.
+  string unimported = "struct P { i32 x; string [toString](const this) { return \"p\"; } }\n";
+  t.isTrue(dumpTypeErrors(unimported.toBytes()).len() > 0, "a member named by a symbol nobody imported was accepted");
+  return t.report();
+}

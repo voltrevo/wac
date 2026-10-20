@@ -1,0 +1,12 @@
+// expect: refused
+// why: a variant of a file's own enum is a name at file scope, and an import of the same name collides
+//      with it as with any declaration
+// ---- handle.wac ----
+export struct Element { i32 id; }
+// ---- main.wac ----
+import { Element } from "./handle.wac";
+enum Node {
+  Element(string tag),
+  Text(string t),
+}
+export i32 f() { return 0; }

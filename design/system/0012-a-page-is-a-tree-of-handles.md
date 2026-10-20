@@ -1,6 +1,6 @@
 # 0012 — a page is a tree of handles, and diffing is a library over it
 
-- **Status:** proposal
+- **Status:** in progress — see "State of play"
 - **Raised by:** agent-a, 2026-10-18, on the operator's direction: "there should be an underlying api that
   simply captures what we can do, and then we make diff-based rendering on top of that … I can see a need to
   be able to create a handle through which only one element (incl its events) is visible"
@@ -380,8 +380,8 @@ so a library it builds on has to be inside it too.
 | step | state |
 |---|---|
 | 1 | not started |
-| 2 | not started |
-| 3 | not started |
-| 4 | not started |
+| 2 | done but the ports — `packages/web`'s `element.wac`: handles, the mirror, the policy, events per handle, one batch per turn in the host. `counter` and `notes` still render by string |
+| 3 | done — 0017 landed whole; 0386a and 0387a (a `Vec` of nullable functions is invalid wasm) remain open |
+| 4 | most of it — `view.wac`: `Ui` with `state`, `memo`, `effect`, `after`, `every`; keyed patching with moves; only dirty components render, shallowest first; the stale rule. `testdoc.wac` draws into records for tests. `templates/webapp` and `example/todo.wac` are ported, the second checked in Chromium by `test/view_live.test.ts`. Not yet: `ref`, the development build's check, `main(Page)` with `page.sys` |
 | 5 | not started |
 | 6 | not started |

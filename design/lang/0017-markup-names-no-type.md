@@ -1,6 +1,6 @@
 # 0017 — markup names no type
 
-- **Status:** in progress — steps 1–3 landed
+- **Status:** done — all four steps landed
 - **Raised by:** agent-a, 2026-10-20, on the operator's direction: "What goes in a library doesn't need to be in
   the spec and ideally we reduce assumptions in the spec so a better library is possible without changing the
   language in future."
@@ -73,11 +73,12 @@ tag. The tag lowers to
 ```wac
 <Row key={k} todo={t} ontoggle={f}/>
 // becomes
-Ui.[markup.component]("Row", k, (t.[markup.snapshot]()), sameSnapshots, (Ui u) => Row(u, t, f))
+Ui.[markup.component]("Row", k, (Ui u) => Row(u, t, f), (0, t.[markup.snapshot]()), sameAsThese)
 ```
 
-— the function's name, the `key` attribute, a tuple of the other attributes' snapshots, a function comparing
-two such tuples, and a `draw` closure. What it answers is a `K`; what the library does with it — keep an
+— the function's name, the `key` attribute, a `draw` closure, a tuple of the other attributes' snapshots, and
+a function testing another instance's tuple against this one (spec ch23, "A component tag"). The tuple leads
+with an `i32` so that a tag with one non-function attribute, or none, still has one. What it answers is a `K`; what the library does with it — keep an
 instance, match it next render, skip it when the snapshots agree — is the library's. The view's `Ui`
 is one such `P`, and the language does not know its name.
 
@@ -131,7 +132,7 @@ the point — they hold different things — and a function from one to the othe
 - **A library's `memo` and `effect`** want the same rule for their dependencies. It is reachable only if `core`
   also exports it as a generic function — `markup.unchanged<T>(T a, T b)`, say — since `==` on a type
   parameter reaches neither arrays nor references today.
-- **The attribute tuple** may have one member or none: a one-member tuple and no tuple at all need a spelling.
+- **The attribute tuple** leads with an `i32` because a one-member tuple and no tuple at all have no spelling. That is the emitter's choice and invisible to the library, which only hands it back to `same`; if tuples gain those spellings it can go.
 
 ## The order of work
 
@@ -151,4 +152,4 @@ the point — they hold different things — and a function from one to the othe
 | 1 | done — spec ch23 rewritten, cases 0571–0579; on the way: an enum may declare a static named by a symbol (ch13), `Shape.make()` naming nothing is refused by the checker, an enum implements `toString`, a file interpolating another file's type need not import `toString`, and namespace lowering notices any `[a.b]` member name |
 | 2 | done — `packages/web`'s `html.wac` and `tags.wac`, re-exported from its entry |
 | 3 | done |
-| 4 | not started |
+| 4 | done — spec ch23 "A component tag", cases 0588–0590; `packages/web`'s `view.wac` is the library that implements it (0012) |

@@ -10,6 +10,8 @@
 // "web"` brings in one and `<div>` calls it.
 
 import { Buf, markup } from "core";
+import { ElementEvent } from "./element.wac";
+import { Ui } from "./view.wac";
 
 export struct Attr {
   string name;
@@ -20,17 +22,32 @@ export struct Attr {
 // *told*: `match` is exhaustive, and a walk written before fragments existed stops compiling with
 // the arm it is missing named. An empty tag would have rendered as `<>` in every renderer that had
 // not heard of them. `design/lang/0006`.
+/**
+ * A handler on an element: the kind of event, the defaults the document prevents for it (`Listen`'s
+ * spelling — `"Tab ArrowUp"`, `"*"` or `""`), and what runs. Written into a page as nothing at all.
+ */
+export struct On {
+  string kind;
+  string prevent;
+  fn<void(ElementEvent)> run;
+}
+
+// **A component is a node too** — what a tag naming a component builds (`design/lang/0017`): its
+// function's name, its `key`, a closure drawing it, its attributes' snapshots and a test of them. The
+// view keeps an instance per one (`view.wac`); `htmlOf` draws it once, with hooks that hold their first
+// values.
 export enum Node {
-  Element(string tag, Attr[] attrs, Node[] kids),
+  Element(string tag, Attr[] attrs, On[] on, Node[] kids),
   Text(string text),
   Fragment(Node[] kids),
+  Component(string name, string? key, fn<Node(Ui)> draw, anyref snaps, fn<bool(anyref)> same),
 
   Node [markup.text](string text) { return Node.Text(text); }
   Node [markup.fragment](Node[] kids) { return Node.Fragment(kids); }
   Node [markup.element](string tag, string[] names, string[] values, Node[] kids) {
     Attr[] attrs = Attr[].filled(names.len(), Attr("", ""));
     for (i32 i = 0; i < names.len(); i++) { attrs[i] = Attr(names[i], values[i]); }
-    return Node.Element(tag, attrs, kids);
+    return Node.Element(tag, attrs, On[](), kids);
   }
 }
 
@@ -59,10 +76,16 @@ void writeNode(Buf out, Node n, bool css) {
     Fragment(kids): {
       for (Node k in kids) { writeNode(out, k, css); }
     }
-    Element(tag, attrs, kids): {
+    // A component is what it draws — drawn here once, its hooks holding their first values.
+    Component(name, key, draw, snaps, same): {
+      writeNode(out, draw(Ui.made(null, name, key, draw, snaps, same)), css);
+    }
+    Element(tag, attrs, on, kids): {
       out.pushStr("<");
       out.pushStr(tag);
       for (Attr a in attrs) {
+        // `key` names a node among its siblings for the view, and is not an attribute of the element.
+        if (a.name == "key") { continue; }
         out.pushStr(" ");
         out.pushStr(a.name);
         out.pushStr("=\"");

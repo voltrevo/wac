@@ -163,7 +163,7 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
   bool sys = grants >= 0;
   string w = "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
            + "import { main" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
-           + "import { Dom, Page, deliver, fileArrived, timerFired, valueArrived"
+           + "import { Dom, Page, deliver, elementEvent, fileArrived, timerFired, valueArrived"
            + (sys ? ", System, World, answered" : "") + (spawn != "" ? ", Process, processAnswered" : "")
            + " } from \"\{pageSpec}\";\n\n"
            + "export struct PageHost {\n"
@@ -189,6 +189,7 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
         + "    schedule this.page.take;\n"
         + (sys ? "    main(this.page, this.world.sys);\n" : "    main(this.page);\n")
         + "    this.page.drain();\n"
+        + "    this.page.turn();\n"
         + "  }\n";
   // **A copy of the page started by `spawnSelf` is a process, not a page**: no document, a `Sys` holding
   // what its parent gave it, and `spawn`'s export as its program. Opaque for the reason `PageHost` is.
@@ -207,6 +208,11 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
 
            void event(this, string kind, string id, string value, i32 x, i32 y, i32 mods) {
              deliver(this.page, kind, id, value, x, y, mods);
+           }
+
+           void element(this, i32 seq, string kind, i32 target, i32 listener, string value, i32 x, i32 y,
+                        i32 mods) {
+             elementEvent(this.page, seq, kind, target, listener, value, x, y, mods);
            }
 
            void timer(this, i32 id) { timerFired(this.page, id); }
@@ -241,22 +247,47 @@ export string programSide(bool sys) {
       """ + make + """
       
         const own = (bytes) => bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? [bytes.buffer] : [];
+        // **One message a turn.** The program runs until it waits; what it asked of the document meanwhile
+        // goes as one batch, in order, when it does — so a diff that makes five hundred changes costs one
+        // message, and an element made in a turn exists before a later call in that turn draws into it.
+        let batch = null, moving = [];
+        const send = (m, transfer) => {
+          if (batch === null) {
+            batch = [];
+            queueMicrotask(() => { const b = batch, t = moving; batch = null; moving = []; post(["ops", b], t); });
+          }
+          batch.push(m);
+          if (transfer) moving.push(...transfer);
+        };
+        const elements = ElementOps.of(
+          (id, parent, tag, before) => send(["make", id, parent, tag, before]),
+          (id, parent, text, before) => send(["makeText", id, parent, text, before]),
+          (id, text) => send(["text", id, text]),
+          (id, name, value, present) => send(["attr", id, name, value, present]),
+          (id, name, value, seen) => send(["prop", id, name, value, seen]),
+          (id, before) => send(["move", id, before]),
+          (id) => send(["remove", id]),
+          (id, kind, prevent) => send(["listenOn", id, kind, prevent]),
+          (id) => send(["focus", id]),
+          (req, id) => send(["valueOf", req, id]),
+        );
         const dom = Dom.of(
-          (html) => post(["render", html]),
-          (id, html) => post(["renderInto", id, html]),
-          (id, text) => post(["setText", id, text]),
-          (id, value) => post(["setValue", id, value]),
-          (id, style) => post(["setStyle", id, style]),
-          (req, id) => post(["getValue", req, id]),
-          (selector, kind) => post(["listen", selector, kind]),
-          (title) => post(["title", title]),
+          elements,
+          (html) => send(["render", html]),
+          (id, html) => send(["renderInto", id, html]),
+          (id, text) => send(["setText", id, text]),
+          (id, value) => send(["setValue", id, value]),
+          (id, style) => send(["setStyle", id, style]),
+          (req, id) => send(["getValue", req, id]),
+          (selector, kind) => send(["listen", selector, kind]),
+          (title) => send(["title", title]),
           (line) => { console.log(line); },
           () => performance.now(),
           (id, ms) => { setTimeout(() => host.timer(id), ms); },
-          (id) => post(["frame", id]),
-          (id, w, h, rgba) => post(["drawPixels", id, w, h, rgba], own(rgba)),
-          (id, x, y, w, h, rgba) => post(["drawPixelsIn", id, x, y, w, h, rgba], own(rgba)),
-          (name, bytes) => post(["download", name, bytes], own(bytes)),
+          (id) => send(["frame", id]),
+          (id, w, h, rgba) => send(["drawPixels", id, w, h, rgba], own(rgba)),
+          (id, x, y, w, h, rgba) => send(["drawPixelsIn", id, x, y, w, h, rgba], own(rgba)),
+          (name, bytes) => send(["download", name, bytes], own(bytes)),
         );
         host = makeHost(dom);
         host.start();
@@ -266,6 +297,7 @@ export string programSide(bool sys) {
             case "timer": host.timer(m[1]); break;
             case "file": host.file(m[1], m[2], m[3], m[4]); break;
             case "value": host.value(m[1], m[2]); break;
+            case "el": host.element(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]); break;
           }
         };
       };
@@ -544,6 +576,22 @@ export string documentSide() {
       const wacDocument = (root, emit) => {
         const listening = new Set();
         const byId = (id) => document.getElementById(id);
+        // **The handles**: each number the program chose, and the node it named. 0 is the root.
+        const nodes = new Map([[0, root]]);
+        const handleOf = new WeakMap([[root, 0]]);
+        // Events are numbered, and an input remembers the number of the last one typed into it — a value
+        // the program sends without having seen that event is older than what the user typed, and dropped.
+        let seq = 0;
+        const numbered = (ev) => (ev.__wacSeq ??= ++seq);
+        root.addEventListener("input", (ev) => { ev.target.__wacTyped = numbered(ev); }, true);
+        const place = (parent, n, before) => {
+          const p = nodes.get(parent);
+          if (p) p.insertBefore(n, before < 0 ? null : (nodes.get(before) ?? null));
+        };
+        const forget = (n) => {
+          if (handleOf.has(n)) nodes.delete(handleOf.get(n));
+          for (const k of n.childNodes ?? []) forget(k);
+        };
         const canvas = (id, what) => {
           const el = byId(id);
           const ctx = el && el.getContext ? el.getContext("2d") : null;
@@ -565,6 +613,66 @@ export string documentSide() {
           return [Math.round((ev.clientX - r.left) * sx), Math.round((ev.clientY - r.top) * sy)];
         };
         const ops = {
+          make: (id, parent, tag, before) => {
+            const el = document.createElement(tag);
+            nodes.set(id, el); handleOf.set(el, id); place(parent, el, before);
+          },
+          makeText: (id, parent, text, before) => {
+            const t = document.createTextNode(text);
+            nodes.set(id, t); handleOf.set(t, id); place(parent, t, before);
+          },
+          text: (id, text) => {
+            const n = nodes.get(id);
+            if (!n) return;
+            if (n.nodeType === 3) { n.data = text; return; }
+            for (const k of n.childNodes) forget(k);
+            n.textContent = text;
+          },
+          attr: (id, name, value, present) => {
+            const n = nodes.get(id);
+            if (n) { if (present) n.setAttribute(name, value); else n.removeAttribute(name); }
+          },
+          prop: (id, name, value, seen) => {
+            const n = nodes.get(id);
+            if (!n) return;
+            if (name === "value") {
+              if ((n.__wacTyped ?? 0) > seen) return;
+              if (n.value !== value) n.value = value;
+            } else n[name] = value === "true";
+          },
+          move: (id, before) => {
+            const n = nodes.get(id);
+            if (n && n.parentNode) n.parentNode.insertBefore(n, before < 0 ? null : (nodes.get(before) ?? null));
+          },
+          remove: (id) => {
+            const n = nodes.get(id);
+            if (!n) return;
+            forget(n);
+            n.remove();
+          },
+          listenOn: (id, kind, prevent) => {
+            const n = nodes.get(id);
+            if (!n) return;
+            const keys = prevent === "" || prevent === "*" ? [] : prevent.split(" ");
+            n.addEventListener(kind, (ev) => {
+              let t = ev.target;
+              while (t && t !== n && !handleOf.has(t)) t = t.parentNode;
+              if (!t || !handleOf.has(t)) return;
+              const keyed = kind === "keydown" || kind === "keyup";
+              if (prevent === "*" || kind === "submit" || (keyed && keys.includes(ev.key))) ev.preventDefault();
+              const el = ev.target;
+              const value = keyed ? ev.key : (el && "value" in el ? String(el.value) : "");
+              const [x, y] = within(t.nodeType === 1 ? t : n, ev);
+              const mods = (ev.shiftKey ? 1 : 0) | (ev.ctrlKey ? 2 : 0) | (ev.altKey ? 4 : 0) | (ev.metaKey ? 8 : 0);
+              emit(["el", numbered(ev), kind, handleOf.get(t), id, value, x, y, mods]);
+            });
+          },
+          focus: (id) => { const n = nodes.get(id); if (n && n.focus) n.focus(); },
+          valueOf: (req, id) => {
+            const n = nodes.get(id);
+            const value = n && "value" in n ? String(n.value) : "";
+            queueMicrotask(() => emit(["value", req, value]));
+          },
           render: (html) => { root.innerHTML = html; },
           renderInto: (id, html) => { const el = byId(id); if (el) el.innerHTML = html; },
           setText: (id, text) => { const el = byId(id); if (el) el.textContent = text; },
@@ -619,7 +727,8 @@ export string documentSide() {
         // Without preventing dragover a dropped file replaces the page.
         document.addEventListener("dragover", (ev) => ev.preventDefault());
         document.addEventListener("drop", (ev) => { ev.preventDefault(); take(ev.dataTransfer?.files); });
-        return (m) => ops[m[0]](...m.slice(1));
+        const apply = (m) => ops[m[0]](...m.slice(1));
+        return (m) => { if (m[0] === "ops") { for (const x of m[1]) apply(x); } else apply(m); };
       };
       """;
 }

@@ -1,0 +1,47 @@
+// expect: f() = Row|k1|x11|true false
+// why: a tag naming a function whose first parameter's type has a static `[markup.component]` is not
+//      called: it is that method of the function's name, its `key`, a closure drawing it with these
+//      attributes, their snapshots, and a test of another instance's snapshots against them
+// from: design/lang/0017
+// spec:  §wac-markup-component-tag-e96qed2 §wac-markup-snapshot-same-fgyw5xf
+import { markup } from "core";
+
+struct Ui {
+  i32 n;
+  Node [markup.component](string name, string? key, fn<Node(Ui)> draw, anyref snaps, fn<bool(anyref)> same) {
+    return Node.Comp(name, key ?? "", draw, snaps, same);
+  }
+}
+
+enum Node {
+  Text(string t),
+  Comp(string name, string key, fn<Node(Ui)> draw, anyref snaps, fn<bool(anyref)> same),
+
+  string text(const this) {
+    match (this) {
+      Text(t): { return t; }
+      Comp(name, key, draw, snaps, same): { return name; }
+    }
+  }
+}
+
+Node Row(Ui ui, string label, i32 n) { return Node.Text(label + "\{n + ui.n}"); }
+
+anyref snapsOf(Node x) {
+  match (x) {
+    Comp(name, key, draw, snaps, same): { return snaps; }
+    Text(t): { trap; }
+  }
+}
+
+export string f() {
+  Node a = <Row key="k1" label="x" n={1}/>;
+  Node b = <Row label="x" n={1}/>;
+  Node c = <Row label="y" n={1}/>;
+  match (a) {
+    Comp(name, key, draw, snaps, same): {
+      return name + "|" + key + "|" + draw(Ui(10)).text() + "|" + "\{same(snapsOf(b))} \{same(snapsOf(c))}";
+    }
+    Text(t): { return t; }
+  }
+}

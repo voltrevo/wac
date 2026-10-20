@@ -1974,7 +1974,15 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
           if (!listHas(reach, reach.len(), tokenTextOf(isrc, ilexed, nameTok))) { continue; }
           for (i32 v = 0; v < variants.len(); v++) {
             string vn = tokenTextOf(isrc, ilexed, variants[v].nameTok);
-            if (listHas(own, on, vn) && c.renamed(vn) == vn) { c.addRename(vn, vn + "@" + paths[i]); }
+            // **Or that the entry imports from somewhere else** — a page importing `Element`, the
+            // handle, and `Node`, whose variant is `Element` too: the variant reached through `Node`
+            // is constructed qualified and matched through its subject (spec ch13), so the bare name
+            // is the import's, and the two were one struct with both field lists.
+            bool importedElsewhere = false;
+            for (i32 k = 0; k < nExplicit; k++) {
+              if (wantAlias[k] == vn && wantFrom[k] != paths[i]) { importedElsewhere = true; }
+            }
+            if ((listHas(own, on, vn) || importedElsewhere) && c.renamed(vn) == vn) { c.addRename(vn, vn + "@" + paths[i]); }
           }
         }
         default: { }

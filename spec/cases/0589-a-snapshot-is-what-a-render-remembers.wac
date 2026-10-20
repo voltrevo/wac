@@ -1,0 +1,39 @@
+// expect: f() = true false true
+// why: an attribute's snapshot is its type's `[markup.snapshot]` where it declares one — a cell is the
+//      cell and how often it has been set, so the same cell after a set is a changed attribute — and a
+//      function attribute is not compared at all
+// from: design/lang/0017
+// spec:  §wac-markup-snapshot-6fb88vq §wac-markup-snapshot-same-fgyw5xf
+import { markup } from "core";
+
+struct Cell {
+  i32 v;
+  i32 version;
+  void set(this, i32 x) { this.v = x; this.version = this.version + 1; }
+  (Cell, i32) [markup.snapshot](const this) { return (this, this.version); }
+}
+
+struct Ui {
+  i32 n;
+  Node [markup.component](string name, string? key, fn<Node(Ui)> draw, anyref snaps, fn<bool(anyref)> same) {
+    return Node(snaps, same);
+  }
+}
+
+struct Node { anyref snaps; fn<bool(anyref)> same; }
+
+Node Show(Ui ui, Cell c, fn<void()> onclick) { return Node(c, (anyref o) => false); }
+
+export string f() {
+  Cell c = Cell(0, 0);
+  fn<void()> one = () => { };
+  fn<void()> two = () => { c.set(1); };
+  Node a = <Show c={c} onclick={one}/>;
+  Node b = <Show c={c} onclick={two}/>;
+  bool handlersOnly = a.same(b.snaps);
+  c.set(5);
+  Node d = <Show c={c} onclick={one}/>;
+  bool afterSet = a.same(d.snaps);
+  Node e = <Show c={c} onclick={two}/>;
+  return "\{handlersOnly} \{afterSet} \{d.same(e.snaps)}";
+}

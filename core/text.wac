@@ -23,6 +23,12 @@ export symbol toString;
 export symbol @"markup.text";
 export symbol @"markup.element";
 export symbol @"markup.fragment";
+// A component tag — one naming a function whose first parameter's type `P` has a static
+// `[markup.component]` — is not called: it is `P.[markup.component](name, key, draw, snaps, same)`, with
+// `draw` the function applied to these attributes and `snaps` their `[markup.snapshot]`s, which `same`
+// compares with another instance's. A value is its own snapshot unless its type says otherwise.
+export symbol @"markup.component";
+export symbol @"markup.snapshot";
 
 /** Decimal text of an `i32`, a minus sign if negative — the minimum included. */
 string coreTextI32(i32 v) { return coreTextI64(v as i64); }

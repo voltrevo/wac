@@ -902,6 +902,12 @@ export string coreSource() {
     "export symbol @\"markup.text\";\n",
     "export symbol @\"markup.element\";\n",
     "export symbol @\"markup.fragment\";\n",
+    "// A component tag — one naming a function whose first parameter's type `P` has a static\n",
+    "// `[markup.component]` — is not called: it is `P.[markup.component](name, key, draw, snaps, same)`, with\n",
+    "// `draw` the function applied to these attributes and `snaps` their `[markup.snapshot]`s, which `same`\n",
+    "// compares with another instance's. A value is its own snapshot unless its type says otherwise.\n",
+    "export symbol @\"markup.component\";\n",
+    "export symbol @\"markup.snapshot\";\n",
     "\n",
     "/** Decimal text of an `i32`, a minus sign if negative — the minimum included. */\n",
     "string coreTextI32(i32 v) { return coreTextI64(v as i64); }\n",
@@ -4660,7 +4666,7 @@ export string[] coreFileNames() {
  * module can be reported as the file and line a reader has open.
  */
 export i32[] coreFileStarts() {
-  return [1, 23, 75, 160, 379, 583, 871, 1220, 1283, 1826, 1973] as i32[];
+  return [1, 23, 75, 160, 379, 583, 871, 1226, 1289, 1832, 1979] as i32[];
 }
 
 /**
@@ -4668,7 +4674,15 @@ export i32[] coreFileStarts() {
  * say *no such export* about a name `core` does not have.
  */
 export string[] coreExports() {
-  return ["Read", "Result", "hashBytes", "bytesEq", "hashString", "stringEq", "hashI32", "i32Eq", "hashI64", "i64Eq", "Map", "Vec", "Buf", "toString", "markup.text", "markup.element", "markup.fragment", "operators.add", "operators.subtract", "operators.multiply", "operators.divide", "operators.remainder", "operators.negate", "operators.equal", "operators.notEqual", "operators.lessThan", "operators.lessThanOrEqual", "operators.greaterThan", "operators.greaterThanOrEqual", "operators.not", "operators.bitwiseNot", "operators.bitwiseAnd", "operators.bitwiseOr", "operators.bitwiseXor", "operators.shiftLeft", "operators.shiftRight", "operators.unsignedShiftRight", "operators.addAssign", "operators.subtractAssign", "operators.multiplyAssign", "operators.divideAssign", "operators.remainderAssign", "operators.bitwiseAndAssign", "operators.bitwiseOrAssign", "operators.bitwiseXorAssign", "operators.shiftLeftAssign", "operators.shiftRightAssign", "operators.unsignedShiftRightAssign", "operators.preIncrement", "operators.postIncrement", "operators.preDecrement", "operators.postDecrement", "operators.addFromLeft", "operators.subtractFromLeft", "operators.multiplyFromLeft", "operators.divideFromLeft", "operators.remainderFromLeft", "operators.equalFromLeft", "operators.notEqualFromLeft", "operators.lessThanFromLeft", "operators.lessThanOrEqualFromLeft", "operators.greaterThanFromLeft", "operators.greaterThanOrEqualFromLeft", "operators.bitwiseAndFromLeft", "operators.bitwiseOrFromLeft", "operators.bitwiseXorFromLeft", "operators.shiftLeftFromLeft", "operators.shiftRightFromLeft", "operators.unsignedShiftRightFromLeft", "Continuation", "TicketBase", "Ticket", "Values", "AnyValue", "Queue", "Step", "Coroutine", "Generator", "AsyncGenerator", "__wacOrReady", "__wacMachine", "__wacScheduleTarget", "__wacSetScheduleTarget", "NumberLiteral", "fromNumber", "numberLiteralToF64", "numberLiteralToF32", "numberLiteralToI64", "numberLiteralToI32", "literalValue", "hypothetical"] as string[];
+  return ["Read", "Result", "hashBytes", "bytesEq", "hashString", "stringEq", "hashI32", "i32Eq", "hashI64", "i64Eq", "Map", "Vec", "Buf", "toString", "markup.text", "markup.element", "markup.fragment", "markup.component", "markup.snapshot", "operators.add", "operators.subtract", "operators.multiply", "operators.divide", "operators.remainder", "operators.negate", "operators.equal", "operators.notEqual", "operators.lessThan", "operators.lessThanOrEqual", "operators.greaterThan", "operators.greaterThanOrEqual", "operators.not", "operators.bitwiseNot", "operators.bitwiseAnd", "operators.bitwiseOr", "operators.bitwiseXor", "operators.shiftLeft", "operators.shiftRight", "operators.unsignedShiftRight", "operators.addAssign", "operators.subtractAssign", "operators.multiplyAssign", "operators.divideAssign", "operators.remainderAssign", "operators.bitwiseAndAssign", "operators.bitwiseOrAssign", "operators.bitwiseXorAssign", "operators.shiftLeftAssign", "operators.shiftRightAssign", "operators.unsignedShiftRightAssign", "operators.preIncrement", "operators.postIncrement", "operators.preDecrement", "operators.postDecrement", "operators.addFromLeft", "operators.subtractFromLeft", "operators.multiplyFromLeft", "operators.divideFromLeft", "operators.remainderFromLeft", "operators.equalFromLeft", "operators.notEqualFromLeft", "operators.lessThanFromLeft", "operators.lessThanOrEqualFromLeft", "operators.greaterThanFromLeft", "operators.greaterThanOrEqualFromLeft", "operators.bitwiseAndFromLeft", "operators.bitwiseOrFromLeft", "operators.bitwiseXorFromLeft", "operators.shiftLeftFromLeft", "operators.shiftRightFromLeft", "operators.unsignedShiftRightFromLeft", "Continuation", "TicketBase", "Ticket", "Values", "AnyValue", "Queue", "Step", "Coroutine", "Generator", "AsyncGenerator", "__wacOrReady", "__wacMachine", "__wacScheduleTarget", "__wacSetScheduleTarget", "NumberLiteral", "fromNumber", "numberLiteralToF64", "numberLiteralToF32", "numberLiteralToI64", "numberLiteralToI32", "literalValue", "hypothetical"] as string[];
+}
+
+/**
+ * The exports of `core` that are symbols — `toString`, `markup.text` — so a check of one file can
+ * know a member named `[markup.text]` is named by one, with no files in hand to read it from.
+ */
+export string[] coreSymbols() {
+  return ["toString", "markup.text", "markup.element", "markup.fragment", "markup.component", "markup.snapshot", "operators.add", "operators.subtract", "operators.multiply", "operators.divide", "operators.remainder", "operators.negate", "operators.equal", "operators.notEqual", "operators.lessThan", "operators.lessThanOrEqual", "operators.greaterThan", "operators.greaterThanOrEqual", "operators.not", "operators.bitwiseNot", "operators.bitwiseAnd", "operators.bitwiseOr", "operators.bitwiseXor", "operators.shiftLeft", "operators.shiftRight", "operators.unsignedShiftRight", "operators.addAssign", "operators.subtractAssign", "operators.multiplyAssign", "operators.divideAssign", "operators.remainderAssign", "operators.bitwiseAndAssign", "operators.bitwiseOrAssign", "operators.bitwiseXorAssign", "operators.shiftLeftAssign", "operators.shiftRightAssign", "operators.unsignedShiftRightAssign", "operators.preIncrement", "operators.postIncrement", "operators.preDecrement", "operators.postDecrement", "operators.addFromLeft", "operators.subtractFromLeft", "operators.multiplyFromLeft", "operators.divideFromLeft", "operators.remainderFromLeft", "operators.equalFromLeft", "operators.notEqualFromLeft", "operators.lessThanFromLeft", "operators.lessThanOrEqualFromLeft", "operators.greaterThanFromLeft", "operators.greaterThanOrEqualFromLeft", "operators.bitwiseAndFromLeft", "operators.bitwiseOrFromLeft", "operators.bitwiseXorFromLeft", "operators.shiftLeftFromLeft", "operators.shiftRightFromLeft", "operators.unsignedShiftRightFromLeft", "fromNumber"] as string[];
 }
 
 /**

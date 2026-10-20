@@ -1,0 +1,604 @@
+// Components, hooks and the diff: what turns a function of state into changes to the page.
+//
+// **A component is a function whose first parameter is `Ui`** (`design/system/0012`). Its tag is not
+// called: markup builds a component node through `Ui.[markup.component]` below (`design/lang/0017`), and
+// the view matches it against what it rendered in that place last time. The same place, the same function
+// and the same `key` is the same instance, and its `Ui` — its hooks — carries over.
+//
+// **Hooks are found again by the order of the calls, and nothing checks the order.** A component that
+// calls `ui.state` under an `if` gets another hook's slot and traps on the cast. `auto n = ui.state(0)`
+// answers a `State<T>`; `set` marks the component that made it dirty, and only dirty components render
+// again — outermost first, at the end of the host's call into the program.
+//
+// **A child whose attributes have not changed is skipped**: the compiler gives each tag its attributes'
+// snapshots and a test of them, and a function attribute is not among them. A skipped child is marked
+// *stale*, and renders again before an event is dispatched through it — so a handler that captured
+// something since changed is never the one that runs.
+//
+// **The view owns its element's children.** Nothing else writes there.
+
+import { Map, Vec, hashString, markup, stringEq } from "core";
+import { Element, ElementEvent, Listen } from "./element.wac";
+import { Attr, Node, On } from "./html.wac";
+
+// ── Hooks ────────────────────────────────────────────────────────────────────
+
+/** One hook's storage. A component's hooks are its `Ui`'s slots, in call order. */
+export struct Slot { i32 unused = 0; }
+
+/** A value a component shows. `set` marks the component that made it; `version` counts the sets. */
+export struct State<T> : Slot {
+  T v;
+  Ui owner;
+  i32 version = 0;
+
+  T get(this) { return this.v; }
+  void set(this, T x) {
+    this.v = x;
+    this.version = this.version + 1;
+    this.owner.changed();
+  }
+  /** `f` of the value as it is now: two handlers that each await and then update lose nothing. */
+  void update(this, fn<T(T)> f) { this.set(f(this.v)); }
+
+  /**
+   * What a render remembers of a cell handed to a child: the cell, and how many times it had been set
+   * — so the same cell after a `set` is a changed attribute, and the child renders again.
+   */
+  (State<T>, i32) [markup.snapshot](this) { return (this, this.version); }
+}
+
+struct Memo<T> : Slot { string dep; T v; }
+
+/** An effect: `run` after the render when its dependency changed; `cleanup` before the next run, and at the end. */
+struct Effect : Slot { string dep; fn<fn<void()>()> run; fn<void()> cleanup; bool pending; }
+
+void noop() {}
+
+// ── A component ──────────────────────────────────────────────────────────────
+
+/** A component as its function sees it: the handle to its hooks, and to the view it is part of. */
+export struct Ui {
+  View? view;
+  string name;
+  string? key;
+  fn<Node(Ui)> draw;
+  anyref snaps;
+  fn<bool(anyref)> same;
+  Vec<Slot> slots;
+  i32 next = 0;
+  Vec<Effect> effects;
+  /** Where it rendered: the nodes in its place. */
+  Mounted? at = null;
+  Ui? parent = null;
+  /** How many components it sits inside: the root is 0. Dirty components render shallowest first. */
+  i32 depth = 0;
+  bool dirty = false;
+  bool stale = false;
+  bool live = true;
+
+  /**
+   * What markup builds for a tag naming a component (`design/lang/0017`): the function's name, the
+   * `key` attribute, a closure drawing it with these attributes, their snapshots, and a test of whether
+   * another instance's snapshots are these.
+   */
+  Node [markup.component](string name, string? key, fn<Node(Ui)> draw, anyref snaps, fn<bool(anyref)> same) {
+    return Node.Component(name, key, draw, snaps, same);
+  }
+
+  Ui made(View? view, string name, string? key, fn<Node(Ui)> draw, anyref snaps, fn<bool(anyref)> same) {
+    Vec<Slot> slots = Vec.create();
+    Vec<Effect> effects = Vec.create();
+    return Ui { view: view, name: name, key: key, draw: draw, snaps: snaps, same: same, slots: slots, effects: effects };
+  }
+
+  State<T> state<T>(this, T init) {
+    if (this.next == this.slots.len()) {
+      State<T> s = State<T> { v: init, owner: this };
+      this.slots.push(s);
+    }
+    Slot got = this.slots.get(this.next);
+    this.next = this.next + 1;
+    return got as! State<T>;
+  }
+
+  /** `f()`, computed again only when `dep` differs from last render's. */
+  T memo<T>(this, string dep, fn<T()> f) {
+    if (this.next == this.slots.len()) {
+      Memo<T> fresh = Memo<T> { dep: dep, v: f() };
+      this.slots.push(fresh);
+      this.next = this.next + 1;
+      return fresh.v;
+    }
+    Slot got = this.slots.get(this.next);
+    this.next = this.next + 1;
+    Memo<T> m = got as! Memo<T>;
+    if (m.dep != dep) {
+      m.dep = dep;
+      m.v = f();
+    }
+    return m.v;
+  }
+
+  /** Run `run` after this render if `dep` changed; what it answers runs before the next run, or at the end. */
+  void effect(this, string dep, fn<fn<void()>()> run) {
+    if (this.next == this.slots.len()) {
+      Effect fresh = Effect { dep: dep, run: run, cleanup: noop, pending: true };
+      this.slots.push(fresh);
+      this.effects.push(fresh);
+      this.next = this.next + 1;
+      return;
+    }
+    Slot got = this.slots.get(this.next);
+    this.next = this.next + 1;
+    Effect e = got as! Effect;
+    if (e.dep != dep) {
+      e.dep = dep;
+      e.run = run;
+      e.pending = true;
+    }
+  }
+
+  /** Run `f` once after `ms` milliseconds, unless this component has gone. Answers its cancel. */
+  fn<void()> after(this, i32 ms, fn<void()> f) { return this.timer(ms, false, f); }
+
+  /** Run `f` every `ms` milliseconds while this component lives. Answers its cancel. */
+  fn<void()> every(this, i32 ms, fn<void()> f) { return this.timer(ms, true, f); }
+
+  fn<void()> timer(this, i32 ms, bool repeat, fn<void()> f) {
+    if (this.view is null) { return noop; }
+    Timer t = Timer(this, repeat, ms, f, false);
+    this.view!.arm(t);
+    return () => { t.off = true; };
+  }
+
+  void changed(this) {
+    if (!this.live || this.dirty) { return; }
+    this.dirty = true;
+    if (this.view is not null) { this.view!.dirty.push(this); }
+  }
+
+  void unmount(this) {
+    this.live = false;
+    for (i32 i = 0; i < this.effects.len(); i++) { this.effects.get(i).cleanup(); }
+  }
+}
+
+// ── What is on the page ──────────────────────────────────────────────────────
+
+/** A rendered node in its place: what it was rendered as, its handle, and what it sits in. */
+export struct Mounted {
+  /** 0 an element, 1 a text node, 2 a component. */
+  i32 kind;
+  /** The element's tag, or the component's name. */
+  string tag;
+  string? key;
+  /** The handle of an element or a text node. */
+  Element? el;
+  /** A component's instance. */
+  Ui? comp;
+  /** An element's children, or the nodes a component rendered — in document order. */
+  Vec<Mounted> kids;
+  /** An element's attributes as last set, and a text node's text. */
+  Attr[] attrs;
+  string text;
+  /** What the element's listeners dispatch to: replaced every render, without touching the document. */
+  On[] handlers;
+  Vec<string> listening;
+  /** The component whose render made this node. */
+  Ui owner;
+  /** The element or component this node sits in, and the element whose children its handles are. */
+  Mounted? up;
+  Element parentEl;
+
+  Mounted fresh(i32 kind, string tag, string? key, Ui owner, Mounted? up, Element parentEl) {
+    Vec<Mounted> kids = Vec.create();
+    Vec<string> listening = Vec.create();
+    return Mounted(kind, tag, key, null, null, kids, Attr[](), "", On[](), listening, owner, up, parentEl);
+  }
+
+  /** The first handle in this node's range, or null for a component that rendered nothing. */
+  Element? first(this) {
+    if (this.kind != 2) { return this.el; }
+    for (i32 i = 0; i < this.kids.len(); i++) {
+      Element? h = this.kids.get(i).first();
+      if (h is not null) { return h; }
+    }
+    return null;
+  }
+
+  /** Every handle in this node's range, in document order. */
+  void handles(this, Vec<Element> into) {
+    if (this.kind != 2) { into.push(this.el!); return; }
+    for (i32 i = 0; i < this.kids.len(); i++) { this.kids.get(i).handles(into); }
+  }
+}
+
+// ── The view ─────────────────────────────────────────────────────────────────
+
+struct Timer { Ui owner; bool repeat; i32 ms; fn<void()> run; bool off; }
+
+/** A view over one element: the components rendered into it, kept rendered. */
+export struct View {
+  Element host;
+  /** The host's timer: calls the function after so many milliseconds, from the host's turn. */
+  fn<void(i32, fn<void()>)> later;
+  Mounted? top;
+  /** The components set dirty since they last rendered — some may have rendered since, or gone. */
+  Vec<Ui> dirty;
+  /** Components rendered this turn, whose effects are run at its end. */
+  Vec<Ui> ran;
+  /** The names of the components rendered, in order — what a test reads. */
+  Vec<string> rendered;
+
+  View create(Element host, fn<void(i32, fn<void()>)> later) {
+    Vec<Ui> dirty = Vec.create();
+    Vec<Ui> ran = Vec.create();
+    Vec<string> rendered = Vec.create();
+    return View(host, later, null, dirty, ran, rendered);
+  }
+
+  /** Render `draw` into the host, and keep it rendered: a root component of no attributes. */
+  void mount(this, fn<Node(Ui)> draw) {
+    Ui r = Ui.made(this, "root", null, draw, NoSnaps {}, (anyref other) => false);
+    Mounted m = Mounted.fresh(2, "root", null, r, null, this.host);
+    m.comp = r;
+    r.at = m;
+    this.top = m;
+    Node[] nodes = this.renderOf(r);
+    for (i32 i = 0; i < nodes.len(); i++) { m.kids.push(this.build(nodes[i], this.host, null, r, m)); }
+    this.turn();
+  }
+
+  // ── The turn ───────────────────────────────────────────────────────────────
+
+  /**
+   * The end of every call into the program: render each dirty component, outermost first, then run the
+   * effects of what rendered. An effect may set state, so this goes round until nothing is dirty.
+   */
+  void turn(this) {
+    if (this.top is null) { return; }
+    while (true) {
+      while (true) {
+        Ui? d = this.shallowestDirty();
+        if (d is null) { break; }
+        this.rerender(d!);
+      }
+      if (this.ran.len() == 0) { break; }
+      Ui[] ran = this.ran.toArray();
+      this.ran.clear();
+      for (i32 i = 0; i < ran.len(); i++) {
+        if (!ran[i].live) { continue; }
+        for (i32 j = 0; j < ran[i].effects.len(); j++) {
+          Effect e = ran[i].effects.get(j);
+          if (!e.pending) { continue; }
+          e.pending = false;
+          e.cleanup();
+          e.cleanup = e.run();
+        }
+      }
+    }
+  }
+
+  /** The dirty live component nearest the root, dropping the entries that have rendered or gone. */
+  Ui? shallowestDirty(this) {
+    Ui? best = null;
+    Vec<Ui> keep = Vec.create();
+    for (i32 i = 0; i < this.dirty.len(); i++) {
+      Ui u = this.dirty.get(i);
+      if (!u.dirty || !u.live) { continue; }
+      keep.push(u);
+      if (best is null || u.depth < best!.depth) { best = u; }
+    }
+    this.dirty = keep;
+    return best;
+  }
+
+  void arm(this, Timer t) {
+    View v = this;
+    this.later(t.ms, () => {
+      if (t.off || !t.owner.live) { return; }
+      t.run();
+      if (t.repeat && !t.off && t.owner.live) { v.arm(t); }
+      v.turn();
+    });
+  }
+
+  // ── Rendering ──────────────────────────────────────────────────────────────
+
+  Node[] renderOf(this, Ui u) {
+    u.dirty = false;
+    u.stale = false;
+    u.next = 0;
+    Node n = u.draw(u);
+    this.rendered.push(u.name);
+    this.ran.push(u);
+    Vec<Node> out = Vec.create();
+    flatten(n, out);
+    return out.toArray();
+  }
+
+  void rerender(this, Ui u) {
+    if (u.at is null || !u.live) { return; }
+    Mounted m = u.at!;
+    Node[] nodes = this.renderOf(u);
+    this.patch(m, nodes, m.parentEl, anchorAfter(m), u);
+  }
+
+  /** `n` made in `parent` before `before`, as a node of `owner`'s render sitting in `up`. */
+  Mounted build(this, Node n, Element parent, Element? before, Ui owner, Mounted up) {
+    match (n) {
+      Text(t): {
+        Mounted m = Mounted.fresh(1, "", null, owner, up, parent);
+        m.el = parent.insertText(t, before);
+        m.text = t;
+        return m;
+      }
+      Element(tag, attrs, on, kids): {
+        Mounted m = Mounted.fresh(0, tag, keyOfAttrs(attrs), owner, up, parent);
+        Element el = parent.insert(tag, before);
+        m.el = el;
+        this.setAttrs(m, attrs);
+        this.setHandlers(m, on);
+        Vec<Node> flat = Vec.create();
+        for (i32 i = 0; i < kids.len(); i++) { flatten(kids[i], flat); }
+        for (i32 i = 0; i < flat.len(); i++) { m.kids.push(this.build(flat.get(i), el, null, owner, m)); }
+        return m;
+      }
+      Fragment(kids): { trap "View: a fragment reached build unflattened"; }
+      Component(name, key, draw, snaps, same): {
+        Mounted m = Mounted.fresh(2, name, key, owner, up, parent);
+        Ui u = Ui.made(this, name, key, draw, snaps, same);
+        u.parent = owner;
+        u.depth = owner.depth + 1;
+        u.at = m;
+        m.comp = u;
+        Node[] nodes = this.renderOf(u);
+        for (i32 i = 0; i < nodes.len(); i++) { m.kids.push(this.build(nodes[i], parent, before, u, m)); }
+        return m;
+      }
+    }
+  }
+
+  /**
+   * `container`'s nodes made to be `want`, in `pe` before `end`. Matched by `key` where a node has one
+   * and by kind and position where it has none; what is left over is removed, what is new is made, and
+   * what moved is moved — the fewest moves that keep the matched nodes' order, found from the longest
+   * run of them already in order. Then each matched node is brought up to date, once the list is whole,
+   * so a component that renders again finds its neighbours where they now are.
+   */
+  void patch(this, Mounted container, Node[] want, Element pe, Element? end, Ui owner) {
+    Mounted[] old = container.kids.toArray();
+    bool[] used = bool[].filled(old.len(), false);
+    i32[] found = i32[].filled(want.len(), -1);
+    Map<string, i32> keyed = Map.create(hashString, stringEq);
+    for (i32 j = 0; j < old.len(); j++) {
+      if (old[j].key is not null) { keyed.set(old[j].key!, j); }
+    }
+    i32 cursor = 0;
+    for (i32 i = 0; i < want.len(); i++) {
+      string? k = keyOfNode(want[i]);
+      if (k is not null) {
+        i32? j = keyed.get(k!);
+        if (j is not null && !used[j!] && sameKind(old[j!], want[i])) {
+          used[j!] = true;
+          found[i] = j!;
+        }
+        continue;
+      }
+      while (cursor < old.len() && (used[cursor] || old[cursor].key is not null)) { cursor = cursor + 1; }
+      if (cursor < old.len() && sameKind(old[cursor], want[i])) {
+        used[cursor] = true;
+        found[i] = cursor;
+        cursor = cursor + 1;
+      }
+    }
+    for (i32 j = 0; j < old.len(); j++) {
+      if (!used[j]) { this.remove(old[j]); }
+    }
+    // Which matched nodes stay: those in increasing order of where they were, the rest move.
+    bool[] moves = bool[].filled(want.len(), false);
+    i32 last = -1;
+    for (i32 i = 0; i < want.len(); i++) {
+      if (found[i] < 0) { continue; }
+      if (found[i] < last) { moves[i] = true; } else { last = found[i]; }
+    }
+    Mounted[] now = Mounted[].filled(want.len(), container);
+    Element? anchor = end;
+    for (i32 i = want.len() - 1; i >= 0; i--) {
+      Mounted m = container;
+      if (found[i] >= 0) {
+        m = old[found[i]];
+        if (moves[i]) { moveBefore(m, anchor); }
+      } else {
+        m = this.build(want[i], pe, anchor, owner, container);
+      }
+      now[i] = m;
+      Element? h = m.first();
+      if (h is not null) { anchor = h; }
+    }
+    container.kids.clear();
+    for (i32 i = 0; i < now.len(); i++) { container.kids.push(now[i]); }
+    for (i32 i = 0; i < want.len(); i++) {
+      if (found[i] >= 0) { this.update(now[i], want[i], owner); }
+    }
+  }
+
+  /** A matched node brought up to date with what was rendered for it. */
+  void update(this, Mounted m, Node n, Ui owner) {
+    m.owner = owner;
+    match (n) {
+      Text(t): {
+        if (m.text != t) {
+          m.el!.text(t);
+          m.text = t;
+        }
+      }
+      Element(tag, attrs, on, kids): {
+        this.setAttrs(m, attrs);
+        this.setHandlers(m, on);
+        Vec<Node> flat = Vec.create();
+        for (i32 i = 0; i < kids.len(); i++) { flatten(kids[i], flat); }
+        this.patch(m, flat.toArray(), m.el!, null, owner);
+      }
+      Fragment(kids): { }
+      Component(name, key, draw, snaps, same): {
+        Ui u = m.comp!;
+        bool changed = !same(u.snaps);
+        u.draw = draw;
+        u.snaps = snaps;
+        u.same = same;
+        u.parent = owner;
+        if (changed || u.dirty) { this.rerender(u); } else { u.stale = true; }
+      }
+    }
+  }
+
+  /** Remove a node and everything in it; every component in it ends, its effects cleaned up. */
+  void remove(this, Mounted m) {
+    unmountAll(m);
+    if (m.kind != 2) {
+      m.el!.remove();
+      return;
+    }
+    for (i32 i = 0; i < m.kids.len(); i++) { this.remove(m.kids.get(i)); }
+  }
+
+  /** An element's attributes made to be `want`: only what changed is sent. */
+  void setAttrs(this, Mounted m, Attr[] want) {
+    Element el = m.el!;
+    for (i32 i = 0; i < want.len(); i++) {
+      Attr a = want[i];
+      if (a.name == "key") { continue; }
+      string? had = attrIn(m.attrs, a.name);
+      if (had is not null && had! == a.value) { continue; }
+      if (a.name == "value" || a.name == "checked" || a.name == "selected") {
+        el.prop(a.name, a.name == "value" ? a.value : (a.value == "false" ? "false" : "true"));
+      } else {
+        el.attr(a.name, a.value);
+      }
+    }
+    for (i32 i = 0; i < m.attrs.len(); i++) {
+      string name = m.attrs[i].name;
+      if (name == "key" || attrIn(want, name) is not null) { continue; }
+      if (name == "value") { el.prop("value", ""); }
+      else if (name == "checked" || name == "selected") { el.prop(name, "false"); }
+      else { el.attr(name, null); }
+    }
+    m.attrs = want;
+  }
+
+  /** What an element's listeners run, replaced; a kind not listened for yet is listened for. */
+  void setHandlers(this, Mounted m, On[] on) {
+    m.handlers = on;
+    for (i32 i = 0; i < on.len(); i++) {
+      string kind = on[i].kind;
+      bool have = false;
+      for (i32 j = 0; j < m.listening.len(); j++) { if (m.listening.get(j) == kind) { have = true; } }
+      if (have) { continue; }
+      m.listening.push(kind);
+      View v = this;
+      Mounted target = m;
+      m.el!.on(kind, Listen(on[i].prevent), (ElementEvent e) => { v.dispatch(target, kind, e); });
+    }
+  }
+
+  /**
+   * An event on an element: every stale component on the way down to it renders first, outermost first,
+   * so the handler that runs is one from a render with the attributes of now — then the handler, then
+   * the turn.
+   */
+  void dispatch(this, Mounted m, string kind, ElementEvent e) {
+    Vec<Ui> chain = Vec.create();
+    Ui? u = m.owner;
+    while (u is not null) {
+      chain.push(u!);
+      u = u!.parent;
+    }
+    for (i32 i = chain.len() - 1; i >= 0; i--) {
+      Ui c = chain.get(i);
+      if (c.stale && c.live) { this.rerender(c); }
+    }
+    if (m.el is null || !m.el!.isLive()) {
+      this.turn();
+      return;
+    }
+    for (i32 i = 0; i < m.handlers.len(); i++) {
+      if (m.handlers[i].kind == kind) {
+        m.handlers[i].run(e);
+        break;
+      }
+    }
+    this.turn();
+  }
+}
+
+// ── The tree's pieces ────────────────────────────────────────────────────────
+
+/** `n` with its fragments opened, into `out`. */
+void flatten(Node n, Vec<Node> out) {
+  match (n) {
+    Fragment(kids): { for (i32 i = 0; i < kids.len(); i++) { flatten(kids[i], out); } }
+    Text(t): { out.push(n); }
+    Element(tag, attrs, on, kids): { out.push(n); }
+    Component(name, key, draw, snaps, same): { out.push(n); }
+  }
+}
+
+string? attrIn(Attr[] attrs, string name) {
+  for (i32 i = 0; i < attrs.len(); i++) { if (attrs[i].name == name) { return attrs[i].value; } }
+  return null;
+}
+
+string? keyOfAttrs(Attr[] attrs) { return attrIn(attrs, "key"); }
+
+string? keyOfNode(Node n) {
+  match (n) {
+    Element(tag, attrs, on, kids): { return keyOfAttrs(attrs); }
+    Component(name, key, draw, snaps, same): { return key; }
+    Text(t): { return null; }
+    Fragment(kids): { return null; }
+  }
+}
+
+/** Whether a mounted node can become `n`: the same kind, and the same tag or component. */
+bool sameKind(Mounted m, Node n) {
+  match (n) {
+    Text(t): { return m.kind == 1; }
+    Element(tag, attrs, on, kids): { return m.kind == 0 && m.tag == tag; }
+    Component(name, key, draw, snaps, same): { return m.kind == 2 && m.tag == name; }
+    Fragment(kids): { return false; }
+  }
+}
+
+/** The handle that follows `m`'s range in its element, or null at the end. */
+Element? anchorAfter(Mounted m) {
+  Mounted c = m;
+  while (c.up is not null) {
+    Mounted up = c.up!;
+    i32 at = -1;
+    for (i32 i = 0; i < up.kids.len(); i++) { if (up.kids.get(i) is c) { at = i; } }
+    for (i32 j = at + 1; j < up.kids.len(); j++) {
+      Element? h = up.kids.get(j).first();
+      if (h is not null) { return h; }
+    }
+    if (up.kind == 0) { return null; }
+    c = up;
+  }
+  return null;
+}
+
+/** Every handle of `m` moved, in order, before `anchor`. */
+void moveBefore(Mounted m, Element? anchor) {
+  Vec<Element> hs = Vec.create();
+  m.handles(hs);
+  for (i32 i = 0; i < hs.len(); i++) { hs.get(i).move(anchor); }
+}
+
+void unmountAll(Mounted m) {
+  if (m.comp is not null) { m.comp!.unmount(); }
+  for (i32 i = 0; i < m.kids.len(); i++) { unmountAll(m.kids.get(i)); }
+}
+
+/** What the root component's attributes are: there are none. */
+struct NoSnaps { i32 unused = 0; }

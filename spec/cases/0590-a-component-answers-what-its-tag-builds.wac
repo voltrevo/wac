@@ -1,0 +1,17 @@
+// expect: refused
+// why: a component tag is the value `[markup.component]` builds, so the function must answer that type
+// from: design/lang/0017
+// spec:  §wac-markup-component-tag-e96qed2
+import { markup } from "core";
+struct Ui {
+  i32 n;
+  Node [markup.component](string name, string? key, fn<Node(Ui)> draw, anyref snaps, fn<bool(anyref)> same) {
+    return Node(name);
+  }
+}
+struct Node { string name; }
+string Row(Ui ui, string label) { return label; }
+export i32 f() {
+  string s = <Row label="x"/>;
+  return 0;
+}

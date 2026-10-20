@@ -414,6 +414,50 @@ export i32 pairSize() { return pair("x", "y").texts.len(); }
 `[§wac-markup-fragment-built-p8j3zrk]` `<>…</>` is `K.[markup.fragment]` of its children. It takes no attributes, and closes
 with `</>`.
 
+### A component tag
+
+A tag whose function takes a **first parameter whose type `P` has a static `[markup.component]` method** is a
+component: the tag does not call the function. It is that method, given the function's name, the `key`
+attribute, a closure drawing the component with the tag's other attributes, their snapshots, and a test of
+another instance's snapshots against these. What the library does with them — keep an instance, match it by
+`key` next render, skip it when nothing changed — is the library's, and the language knows no `P` by name.
+
+```wac
+// expect: f() = Row x1 true false
+import { markup } from "core";
+
+struct Ui {
+  i32 n;
+  Shown [markup.component](string name, string? key, fn<Shown(Ui)> draw, anyref snaps, fn<bool(anyref)> same) {
+    return Shown(name + " " + draw(Ui(1)).text, snaps, same);
+  }
+}
+
+struct Shown { string text; anyref snaps; fn<bool(anyref)> same; }
+
+Shown Row(Ui ui, string label) { return Shown(label + "\{ui.n}", ui, (anyref o) => false); }
+
+export string f() {
+  Shown a = <Row label="x"/>;
+  Shown b = <Row label="x"/>;
+  Shown c = <Row label="y"/>;
+  return "\{a.text} \{a.same(b.snaps)} \{a.same(c.snaps)}";
+}
+```
+
+`[§wac-markup-component-tag-e96qed2]` `<F a={x} …/>`, where `F`'s first parameter has type `P` and `P` declares a static
+`[markup.component]`, is `P.[markup.component](name, key, draw, snaps, same)`: `name` is `"F"`, `key` the `key`
+attribute's value or `null`, and `draw` a `fn<K(P)>` calling `F` with its argument and the other attributes. The
+first parameter is not an attribute, and `F` must answer the method's `K`.
+
+`[§wac-markup-snapshot-6fb88vq]` An attribute's snapshot is its value's `[markup.snapshot]()` when its type declares
+one, and otherwise the value itself. A function-typed attribute has none: a closure is new every render, so
+recording one would render every component with a handler every time.
+
+`[§wac-markup-snapshot-same-fgyw5xf]` `same(other)` is true when `other` holds the snapshots of the same attributes
+and each agrees with this instance's: numbers, `bool` and `string` by value, a tuple member by member, and
+any other reference by identity.
+
 ## Imports preserve the designated identity
 
 ```wac

@@ -25,13 +25,19 @@
 // has settled. Each ticket is the program's until it settles, so asking for the next event while one
 // is still outstanding queues a second waiter rather than replacing the first.
 
-import { Continuation, Queue, Ticket, TicketBase } from "core";
+import { Continuation, Queue, Ticket, TicketBase, Vec } from "core";
 import { Answer, World } from "./system.wac";
 import { Node, htmlOf } from "./html.wac";
+import { Element, ElementOps, Elements } from "./element.wac";
+import { Ui, View } from "./view.wac";
 
-// The static tree and its tags are this package's too, so a page imports everything from `"web"`.
-export { Attr, Node, htmlOf, isVoidElement } from "./html.wac";
+// The tree, its tags, the handles and the view are this package's too, so a page imports everything from
+// `"web"` (`design/system/0012`).
+export { Attr, Node, On, htmlOf, isVoidElement } from "./html.wac";
 export * as html from "./tags.wac";
+export { Element, ElementEvent, ElementOps, Listen } from "./element.wac";
+export { Mounted, State, Ui, View } from "./view.wac";
+export { TestDoc, TestNode } from "./testdoc.wac";
 
 // A page's system — `main(Page page, Sys sys)` — is `system.wac`, exported from here because a package
 // is one module.
@@ -79,6 +85,8 @@ export struct Picked {
  * once; nothing here waits.
  */
 export struct Dom {
+  /** The handles' operations: make, change and remove elements, and listen to them (`element.wac`). */
+  ElementOps elements;
   /** Replace the application's markup with this HTML. Only `Page.render` calls it, with escaped text. */
   fn<void(string)> render;
   /** Replace one element's content with this HTML, by id. Only `Page.renderInto` calls it. */
@@ -120,6 +128,7 @@ export struct Dom {
    */
   Dom inert() {
     return Dom(
+      ElementOps.inert(),
       (string html) => { }, (string id, string html) => { }, (string id, string text) => { },
       (string id, string value) => { }, (string id, string style) => { }, (i32 req, string id) => { },
       (string selector, string kind) => { }, (string t) => { }, (string line) => { }, () => 0.0,
@@ -145,14 +154,45 @@ export struct Page {
   Slots<string> asked;
   /** Where the program's suspended machines wait, and how they are run on. */
   Runner runner;
+  /** Every handle the program holds, the root among them. */
+  Elements es;
+  /** The views mounted, rendered at the end of every call into the program. */
+  Vec<View> views;
 
   Page create(Dom dom) {
     Queue<Event> arrived;
     Queue<Ticket<Event>> waiting;
     Queue<Picked> files;
     Queue<Ticket<Picked>> wantsFile;
+    Vec<View> views = Vec.create();
     return Page(dom, arrived, waiting, files, wantsFile, Slots<f64>(Ticket<f64>?[]()), Slots<string>(Ticket<string>?[]()),
-                Runner.create());
+                Runner.create(), Elements.create(dom.elements), views);
+  }
+
+  /**
+   * The page's root element: the authority over everything the program shows. Children made through it
+   * come back as handles, and holding one is the right to change that element and hear its events.
+   */
+  Element root(this) { return this.es.root(); }
+
+  /**
+   * Render `draw` into the root and keep it rendered: a component of no attributes, whose state and whose
+   * children's state the view watches (`view.wac`). The view owns the root's children from here on.
+   */
+  View mount(this, fn<Node(Ui)> draw) { return this.mountIn(this.root(), draw); }
+
+  /** The same, into one element the program holds — a widget's own corner of the page. */
+  View mountIn(this, Element host, fn<Node(Ui)> draw) {
+    Page page = this;
+    View v = View.create(host, (i32 ms, fn<void()> f) => { page.sleep(ms).whenSettled(f); });
+    this.views.push(v);
+    v.mount(draw);
+    return v;
+  }
+
+  /** The end of a call into the program: every view renders what changed. */
+  void turn(this) {
+    for (i32 i = 0; i < this.views.len(); i++) { this.views.get(i).turn(); }
   }
 
   /** Replace what the page shows with `n`, escaped. */
@@ -304,6 +344,7 @@ export void deliver(Page page, string kind, string id, string value, i32 x, i32 
   if (w is not null) {
     w!.resolve(e);
     page.drain();
+    page.turn();
     return;
   }
   // **A `pointermove` is a position, not an occurrence.** Kept while nothing is waiting, a drag would
@@ -321,13 +362,32 @@ export void deliver(Page page, string kind, string id, string value, i32 x, i32 
   page.arrived.push(e);
 }
 
-/** The answer to `getValue` request `req`. One nobody is waiting for is dropped. */
+/**
+ * An event on an element the program holds: `kind` on handle `target`, heard by the listener on handle
+ * `listener`, numbered `seq` (`element.wac`). Then the program runs on, and every view renders.
+ */
+export void elementEvent(Page page, i32 seq, string kind, i32 target, i32 listener, string value, i32 x, i32 y,
+                         i32 mods) {
+  schedule page.take;
+  page.es.deliver(seq, kind, target, listener, value, x, y, mods);
+  page.drain();
+  page.turn();
+}
+
+/** The answer to `getValue` request `req`, or to an element's `value()`. One nobody is waiting for is dropped. */
 export void valueArrived(Page page, i32 req, string value) {
   schedule page.take;
+  if (req < 0) {
+    page.es.answered(0 - req - 1, value);
+    page.drain();
+    page.turn();
+    return;
+  }
   Ticket<string>? t = page.asked.take(req);
   if (t is null) { return; }
   t!.resolve(value);
   page.drain();
+  page.turn();
 }
 
 /**
@@ -339,6 +399,7 @@ export void answered(Page page, World world, i32 req, i32 fault, string text, u8
   schedule page.take;
   world.answers.arrive(req, Answer(fault, text, bytes, n, m, flags));
   page.drain();
+  page.turn();
 }
 
 /** Timer `id` is due — a `sleep` or a `nextFrame`. */
@@ -348,6 +409,7 @@ export void timerFired(Page page, i32 id) {
   if (t is null) { return; }
   t!.resolve(page.now());
   page.drain();
+  page.turn();
 }
 
 /** The user handed over a file: settle the oldest ticket waiting for one, or keep it. */
@@ -361,6 +423,7 @@ export void fileArrived(Page page, bool ok, string name, u8[] bytes, string erro
   }
   w!.resolve(f);
   page.drain();
+  page.turn();
 }
 
 /**

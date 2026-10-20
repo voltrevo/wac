@@ -1,0 +1,27 @@
+// expect: f() = div:div:x
+// why: a struct and another module's enum variant may share a name in a file that imports both — the
+//      variant is constructed through its enum and matched through its subject, so the bare name is
+//      the struct's
+// from: design/system/0012, whose handle is `Element` and whose tree's variant is `Node.Element`
+// ---- handle.wac ----
+export struct Element { i32 id; string name; }
+// ---- tree.wac ----
+export enum Node {
+  Element(string tag, Node[] kids),
+  Text(string t),
+}
+export string tagOf(Node n) {
+  match (n) {
+    Element(tag, kids): { return tag; }
+    Text(t): { return t; }
+  }
+}
+// ---- main.wac ----
+import { Element } from "./handle.wac";
+import { Node, tagOf } from "./tree.wac";
+export string f() {
+  Element e = Element(1, "x");
+  Node n = Node.Element("div", Node[]());
+  string viaMatch = match (n) { Element(tag, kids): tag, Text(t): t };
+  return tagOf(n) + ":" + viaMatch + ":" + e.name;
+}

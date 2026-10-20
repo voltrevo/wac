@@ -130,8 +130,8 @@ export string resolveFromAt(string fromPath, string spec, string root, string ba
  * is one that named no mapping. The harness has no manifests at all, which is the same answer for a
  * different reason.
  *
- * A leading `/` is absolute and not this: it is left to the joining below, which is what
- * `resolveFromIn` has always done with one and what an absolute entry path needs.
+ * A leading `/` is absolute and not this: `resolveFromIn` answers it as itself. Joining it to the
+ * importing file's directory, as it did until 2026-10-20, spliced `src//abs/x.wac` into `src/abs/x.wac`.
  */
 export bool isBareSpecifier(string spec) {
   if (spec.len() == 0) { return false; }
@@ -154,6 +154,7 @@ export string resolveFromIn(string fromPath, string spec, string root) {
     return normalisePath(root + "/" + spec.slice(2, spec.len()));
   }
   if (isBareSpecifier(spec)) { return ""; }
+  if (spec.slice(0, 1) == "/") { return normalisePath(spec); }
   i32 cut = -1;
   for (i32 i = 0; i < fromPath.len(); i++) {
     if (fromPath.slice(i, i + 1) == "/") { cut = i; }

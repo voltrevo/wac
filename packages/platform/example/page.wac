@@ -11,7 +11,7 @@
 // wacc only, as JSX is: `design/lang/0004` and compiler/README.md's omissions table.
 
 import { Cli, Core, Sys } from "std";
-import { Attr, Node, html.li } from "../../web";
+import { Attr, Node, On, html.li } from "../../web";
 
 /**
  * A tag function: its parameters are its attributes, and it answers a tree.
@@ -29,7 +29,7 @@ Node listOf(string[] items) {
   for (i32 i = 0; i < items.len(); i++) {
     kids[i] = <item at={i} of="args">{items[i]}</item>;
   }
-  return Node.Element("ul", [Attr("class", "args")], kids);
+  return Node.Element("ul", [Attr("class", "args")], On[](), kids);
 }
 
 /** The tree as HTML. Nothing here knows JSX exists. */
@@ -41,7 +41,9 @@ string render(Node n) {
       for (i32 i = 0; i < kids.len(); i++) { out = out + render(kids[i]); }
       return out;
     }
-    Element(tag, attrs, kids): {
+    // A component is what it draws; this page has none, and says so rather than guessing.
+    Component(name, key, draw, snaps, same): { return ""; }
+    Element(tag, attrs, on, kids): {
       string out = "<" + tag;
       for (i32 i = 0; i < attrs.len(); i++) {
         out = out + " " + attrs[i].name + "=\"" + attrs[i].value + "\"";

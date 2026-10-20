@@ -6,7 +6,7 @@
 // one — `count(1 as i32, "a")` answered 1. Nothing failed but a spec example, two batches later.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { lowerSources } from "../../src/api.wac";
+import { emitFilesIn, lowerSources } from "../../src/api.wac";
 import { Res } from "../../src/path.wac";
 
 /** `text` lowered once and twice, as one file — the two must be the same. */
@@ -28,5 +28,25 @@ export string test_each_lowering_leaves_a_lowered_text_alone() {
            "a default is written once, and its placeholder gathered once");
   t.isTrue(idempotent("auto seven() { return 7 as i32; }\nexport i32 f() { return seven(); }\n"),
            "an auto result is written once");
+  return t.report();
+}
+
+/**
+ * A namespace re-exported by a mapped package, imported by a file keyed relative to the working
+ * directory. The member's own file is keyed absolutely, under the package's checkout — so the import the
+ * lowering writes for it crosses the two key spaces, and `../` arithmetic between them named
+ * `..//abs/lib/inner.wac`, which is no file. The template's `import { html.button } from "web"` did this.
+ */
+export string test_a_namespace_member_in_a_mapped_package_is_reachable() {
+  T t = T.create();
+  string[] paths = ["src/main.wac", "/abs/lib/index.wac", "/abs/lib/inner.wac"];
+  string[] sources = [
+    "import { ns.seven } from \"lib\";\nexport i32 f() { return seven(); }\n",
+    "export * as ns from \"./inner.wac\";\n",
+    "export i32 seven() { return 7; }\n"];
+  Res res = Res(string[](), ["src/main.wac"], ["lib"], ["/abs/lib/index.wac"], "/work");
+  string[] lowered = lowerSources(paths, sources, res);
+  t.isTrue(lowered[0].indexOf("..//") < 0, "no spliced specifier: \{lowered[0]}");
+  t.isTrue(emitFilesIn(paths, sources, res, "src/main.wac").len() > 8, "the program builds");
   return t.report();
 }

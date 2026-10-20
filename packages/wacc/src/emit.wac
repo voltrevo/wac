@@ -504,7 +504,7 @@ void registerNamed(Env env, string t) {
     // free. Without it, `i32?[] xs = i32?[].defaulted(3);` was "a type this emitter names only while emitting".
     registerNamed(env, t.slice(0, t.len() - 2));
   }
-  if (isFuncrefType(t)) { env.sigType(t); }
+  if (isFuncrefType(t)) { env.valueSig(t); }
   // A nullable primitive's box, for the same reason an array's type is registered here: the type
   // section is written before the bodies, so a type first named while emitting is too late.
   if (isBoxedName(t)) {
@@ -2169,11 +2169,23 @@ export struct Env {
    */
   void pairEverySignature(this) {
     for (i32 i = 0; i < this.sigCount; i++) {
-      if (i < this.sigNoPair.len() && this.sigNoPair[i]) { continue; }
+      // **An env shape that is also a value's type still needs its pair.** `fn[bool(anyref)]` is
+      // `fn[bool()]`'s env shape and a component's `same`; skipped as the first, its pair was first named
+      // while a body was being emitted. What was registered as a value says so (`valueSig`).
+      bool isValue = i < this.sigValue.len() && this.sigValue[i];
+      if (i < this.sigNoPair.len() && this.sigNoPair[i] && !isValue) { continue; }
       string t = this.sigTypes[i];
       if (!isFuncrefType(t)) { continue; }
       this.pairType(t);
     }
+  }
+
+  /** A signature registered as the type of a value — a `fn[…]` local, field, parameter or lambda — which the sweep pairs. */
+  i32 valueSig(this, string t) {
+    i32 at = this.sigType(t);
+    i32 si = at - this.arrayCount - this.structCount;
+    if (si >= 0 && si < this.sigValue.len()) { this.sigValue[si] = true; }
+    return at;
   }
 
   i32 structType(this, string name) {
@@ -2541,6 +2553,8 @@ export struct Env {
    * cannot tell the two apart.
    */
   bool[] sigNoPair;
+  /** Which signature entries are a value's type, which the sweep pairs even when one is also an env shape. */
+  bool[] sigValue;
   B wrapFuncs;
   B wrapCode;
   i32 wrapCount;
@@ -3031,6 +3045,48 @@ export struct Env {
   bool discovering;
   /** What the next lambda the array-type walk enters returns, from the parameter it is passed to. */
   string lambdaReturn;
+  /**
+   * Every component tag the walk found (`design/lang/0017`), keyed by position as a lambda is — two
+   * hoisted functions apiece, the `draw` and the `same` its closures run. Last fields, as `Env` is built
+   * positionally.
+   */
+  i32[] markupLine;
+  i32[] markupCol;
+  i32[] markupFile;
+  string[] markupInst;
+  i32[] markupFunc;
+  i32 markupCount;
+  /** Where the component thunks start among the hoisted functions, and the wasm index of the first. */
+  i32 markupFirst;
+  i32 markupBase;
+  /**
+   * Each thunk's signature with its receiver, the same without, its receiver, and its body — filled
+   * where its tag is emitted, `""` for one never reached, which is emitted as a stub to keep the count.
+   */
+  string[] thunkSigs;
+  string[] thunkBoundSigs;
+  string[] thunkRecvs;
+  B[] thunkBodies;
+
+  /** The component tag recorded at this position, in this file and instance, or -1. */
+  i32 markupSiteAt(const this, i32 line, i32 col) {
+    for (i32 i = 0; i < this.markupCount; i++) {
+      if (this.markupLine[i] == line && this.markupCol[i] == col && this.markupFile[i] == this.curFile
+          && this.markupInst[i] == this.curInst) { return i; }
+    }
+    return -1;
+  }
+
+  void noteMarkupSite(this, i32 line, i32 col, i32 fi) {
+    if (this.markupSiteAt(line, col) >= 0) { return; }
+    if (this.markupCount >= this.markupLine.len()) { this.ranOut("component tags"); return; }
+    this.markupFunc[this.markupCount] = fi;
+    this.markupLine[this.markupCount] = line;
+    this.markupCol[this.markupCount] = col;
+    this.markupFile[this.markupCount] = this.curFile;
+    this.markupInst[this.markupCount] = this.curInst;
+    this.markupCount = this.markupCount + 1;
+  }
 
   void noteVirtualMethod(this, string key) {
     string[] more = string[].defaulted(this.virtualMethods.len() + 1);
@@ -3336,7 +3392,7 @@ export struct Env {
                string[].defaulted(256), 0, Ty?[].defaulted(16384), string[].defaulted(1024), string[].defaulted(16384), "", false,
                false, 0, "", string[].defaulted(256), 0,
                string[].defaulted(256), string[].defaulted(256), 0, "", false, 0, -1,
-               bool[].filled(16384, false), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
+               bool[].filled(16384, false), bool[].filled(16384, false), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
                Param[][].filled(1024, Param[]()), Stmt[][].filled(1024, Stmt[]()),
                string[].filled(1024, ""), i32[].filled(1024, 0), i32[].filled(1024, 0), string[].filled(1024, ""),
                i32[].filled(1024, 0), 0, 0,
@@ -3350,7 +3406,11 @@ export struct Env {
                i32[].filled(16384, 0), i32[].filled(4096, 0), u8[][].filled(0, u8[]()), Lexed?[](),
                Decl[](), i32[](), null, null, 0 - 1, 0 - 1, 0 - 1, i32[](), 0,
                Expr?[](), u8[][](), Lexed?[](), string[](), string[](), 0 - 1, "", 0, "", 0, 0 - 1, "", 0 - 1, "", "", "", ";", 0, "", "", 0,
-               null, 0 - 1, 0, "", false, "");
+               null, 0 - 1, 0, "", false, "",
+               i32[].filled(1024, 0), i32[].filled(1024, 0), i32[].filled(1024, 0), string[].filled(1024, ""),
+               i32[].filled(1024, 0), 0,
+               0, 0, string[].filled(2048, ""), string[].filled(2048, ""), string[].filled(2048, ""),
+               B[].filled(2048, B.create()));
   }
 
   
@@ -6489,7 +6549,12 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // after the declared functions, so its ordinal is `lambdaFirst + i`. `design/lang/0002` tier two.
   env.lambdaFirst = count;
   count = count + env.lambdaCount;
+  // **A component tag's two thunks are hoisted functions too**, after the lambdas, so they get a
+  // wrapper and a bound wrapper the same way — the bound one is what a tag's closures name.
+  env.markupFirst = count;
+  count = count + 2 * env.markupCount;
   i32 stringHelpers = needsStrings ? 13 : 0;
+  env.markupBase = env.cbSigCount + env.markupFirst + stringHelpers;
   i32 memHelperAt = env.cbSigCount + count + stringHelpers;
   i32 arrayHelpersAt = memHelperAt + 1;
   i32 structHelpersAt = arrayHelpersAt + arrHelpers;
@@ -6789,7 +6854,26 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // guard below reports as "a type this emitter names only while emitting". The fmod helpers below
   // are registered after it precisely because they are the opposite case.
   for (i32 li = 0; li < env.lambdaCount; li++) {
-    if (env.lambdaSigs[li] != "") { env.sigType(env.lambdaSigs[li]); }
+    if (env.lambdaSigs[li] != "") { env.valueSig(env.lambdaSigs[li]); }
+  }
+  // **A component tag's types, here for the same reason**: its two tuples, its thunks' signatures and
+  // their wrappers', and the two `fn[…]` values its closures are — before the sweep, so each gets its pair.
+  for (i32 mi = 0; mi < env.markupCount; mi++) {
+    string[] shape = componentShape(env, env.markupFunc[mi]);
+    registerTupleDeep(env, shape[2]);
+    registerTupleDeep(env, shape[3]);
+    string dsig = "fn[" + shape[1] + "(" + shape[2] + "," + shape[0] + ")]";
+    string ssig = "fn[bool(" + shape[3] + ",anyref)]";
+    env.sigType(dsig);
+    env.sigType(envSig(dsig));
+    env.valueSig("fn[" + shape[1] + "(" + shape[0] + ")]");
+    env.sigType(ssig);
+    env.sigType(envSig(ssig));
+    env.valueSig("fn[bool(anyref)]");
+  }
+  if (env.markupCount > 0) {
+    env.sigType("fn[void()]");
+    env.sigType(envSig("fn[void()]"));
   }
   env.pairEverySignature();
   // **`__fmod` and `__fmodf`'s signatures, on this side of the snapshot too** — `issues/lang/0135`.
@@ -7177,6 +7261,10 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     index = index + 1;
   }
   env.curFile = lcf0; src = lsrc0; lexed = llex0;
+  for (i32 ti = 0; ti < 2 * env.markupCount; ti++) {
+    emitMarkupThunk(funcs, code, env, ti, env.markupBase + ti);
+    index = index + 1;
+  }
 
   emitMemEnsure(funcs, code, env);
   // In `arrayTypes` order, which is the order the exports below name them in — a helper's index is
@@ -8479,6 +8567,270 @@ i32 markupMethod(Env env, string k, string sym) {
   return m;
 }
 
+/**
+ * The type that makes function `fi` a component (`design/lang/0017`): its first parameter's, when that
+ * type has a static method named by core's `markup.component`; "" for an ordinary tag.
+ */
+string componentTypeE(Env env, i32 fi) {
+  if (fi < 0 || env.funcParamCount[fi] == 0) { return ""; }
+  string p = env.paramTypeAt(fi, 0);
+  if (p == "") { return ""; }
+  i32 m = env.methodAt(p, "[markup.component]");
+  return m >= 0 ? p : "";
+}
+
+/**
+ * `<Row key={k} todo={t} ontoggle={f}/>`, with `Row`'s first parameter a `P` that builds components:
+ * not a call of `Row` but `P.[markup.component]("Row", k, draw, snaps, same)` (`design/lang/0017`).
+ *
+ * `draw` is a closure applying `Row` to the view's `P` and these attributes: the attributes are a tuple,
+ * its env, and the hoisted function it runs takes the tuple as its receiver. `snaps` is a tuple of each
+ * attribute's `[markup.snapshot]` — the value itself where its type declares none, and nothing for a
+ * function, which a render does not compare — and `same` a closure over it, asking whether another
+ * instance's snapshots are these. Every attribute is evaluated once, into a local, and read by both.
+ * Each tuple leads with an `i32`, so one is never empty.
+ */
+void emitComponentTag(B fb, u8[] src, Lexed lexed, Env env, i32 fi, i32 tagTok, JsxAttr[] attrs, Expr[] kids,
+                      i32 line, i32 col) {
+  string p = componentTypeE(env, fi);
+  i32 cm = env.methodAt(p, "[markup.component]");
+  i32 site = env.markupSiteAt(line, col);
+  if (cm < 0 || env.funcIndex[cm] < 0 || site < 0 || env.funcIndex[fi] < 0) {
+    env.declineFor("the component tag `" + tokenTextOf(src, lexed, tagTok) + "`, whose pieces this emitter could not find");
+    return;
+  }
+  string k = env.funcReturns[fi];
+  i32 n = env.funcParamCount[fi];
+  string tag = "markup " + numText(line) + ":" + numText(col);
+  string[] amembers = string[].filled(n, "i32");
+  i32[] slots = i32[].filled(n, 0);
+  for (i32 i = 1; i < n; i++) {
+    string pn = env.paramNameAt(fi, i);
+    string pt = env.paramTypeAt(fi, i);
+    amembers[i] = pt;
+    i32 given = -1;
+    for (i32 a = 0; a < attrs.len(); a++) {
+      if (tokenTextOf(src, lexed, attrs[a].nameTok) == pn) { given = a; }
+    }
+    if (given >= 0) { emitExprAt(fb, src, lexed, env, attrs[given].value, pt); }
+    else if (pn == "kids") { emitJsxKids(fb, src, lexed, env, kids, jsxKidsType(env, fi)); }
+    else { emitNull(fb, env, pt); }
+    slots[i] = env.scratchNamed(tag + " " + pn, pt);
+    fb.byte(33); fb.u32leb(slots[i]);                       // local.set
+  }
+  string[] shape = componentShape(env, fi);
+  string atn = shape[2];
+  string stn = shape[3];
+
+  // The snapshots: an attribute that is not a function, as its type's `[markup.snapshot]` sees it.
+  i32 sn = tupleMembers(stn).len();
+  i32[] sfrom = i32[].filled(sn, 0);
+  i32[] smethod = i32[].filled(sn, -1);
+  i32 at = 1;
+  for (i32 i = 1; i < n; i++) {
+    if (isFuncrefType(amembers[i])) { continue; }
+    sfrom[at] = slots[i];
+    smethod[at] = env.methodAt(amembers[i], "[markup.snapshot]");
+    at = at + 1;
+  }
+
+  // P.[markup.component](name, key, draw, snaps, same)
+  emitRawString(fb, env, tokenTextOf(src, lexed, tagTok));
+  string keyT = env.paramTypeAt(cm, 1);
+  i32 keyAt = -1;
+  for (i32 a = 0; a < attrs.len(); a++) {
+    if (tokenTextOf(src, lexed, attrs[a].nameTok) == "key") { keyAt = a; }
+  }
+  if (keyAt >= 0) { emitExprAt(fb, src, lexed, env, attrs[keyAt].value, keyT); } else { emitNull(fb, env, keyT); }
+
+  fb.byte(210); fb.u32leb(env.boundAt + env.markupFirst + 2 * site);   // ref.func — draw's bound wrapper
+  fb.byte(65); fb.i32leb(0);
+  for (i32 i = 1; i < n; i++) { fb.byte(32); fb.u32leb(slots[i]); }
+  fb.byte(251); fb.u32leb(0); fb.u32leb(env.tupleType(atn));          // struct.new — the attributes
+  fb.byte(251); fb.u32leb(0); fb.u32leb(env.pairType("fn[" + k + "(" + p + ")]"));
+
+  fb.byte(65); fb.i32leb(0);
+  for (i32 j = 1; j < sn; j++) {
+    fb.byte(32); fb.u32leb(sfrom[j]);
+    if (smethod[j] >= 0) { fb.byte(16); fb.u32leb(env.funcIndex[smethod[j]]); }
+  }
+  fb.byte(251); fb.u32leb(0); fb.u32leb(env.tupleType(stn));          // struct.new — the snapshots
+  i32 held = env.scratchNamed(tag + " snaps", stn);
+  fb.byte(34); fb.u32leb(held);                                        // local.tee — `snaps`, and `same`'s env
+  fb.byte(210); fb.u32leb(env.boundAt + env.markupFirst + 2 * site + 1);
+  fb.byte(32); fb.u32leb(held);
+  fb.byte(251); fb.u32leb(0); fb.u32leb(env.pairType("fn[bool(anyref)]"));
+  fb.byte(16); fb.u32leb(env.funcIndex[cm]);                           // call P.[markup.component]
+
+  // The two thunks, emitted after the lambdas.
+  i32 ft = env.tupleType(atn);
+  B db = B.create();
+  db.u32leb(0);                                                        // no locals
+  db.byte(32); db.u32leb(1);                                           // the view's P
+  for (i32 i = 1; i < n; i++) {
+    db.byte(32); db.u32leb(0);
+    db.byte(251); db.u32leb(2); db.u32leb(ft); db.u32leb(i);           // struct.get — attribute i
+  }
+  db.byte(16); db.u32leb(env.funcIndex[fi]);                           // call Row
+  db.byte(11);
+  env.thunkSigs[2 * site] = "fn[" + k + "(" + atn + "," + p + ")]";
+  env.thunkBoundSigs[2 * site] = "fn[" + k + "(" + p + ")]";
+  env.thunkRecvs[2 * site] = atn;
+  env.thunkBodies[2 * site] = db;
+
+  i32 st = env.tupleType(stn);
+  B sb = B.create();
+  sb.u32leb(1); sb.u32leb(1); writeValType(sb, env, stn);             // one local: the other snapshots
+  sb.byte(32); sb.u32leb(1);
+  sb.byte(251); sb.u32leb(20); sb.i32leb(st);                          // ref.test — snapshots of this tag?
+  sb.byte(4); sb.byte(127);                                            // if (result i32)
+  sb.byte(32); sb.u32leb(1);
+  sb.byte(251); sb.u32leb(22); sb.i32leb(st);                          // ref.cast
+  sb.byte(33); sb.u32leb(2);
+  i32[] ct = i32[].filled(8, 0);
+  i32[] ci = i32[].filled(8, 0);
+  emitSnapshotsSame(sb, env, stn, ct, ci, 0, true);
+  sb.byte(5);                                                          // else
+  sb.byte(65); sb.i32leb(0);
+  sb.byte(11);
+  sb.byte(11);
+  env.thunkSigs[2 * site + 1] = "fn[bool(" + stn + ",anyref)]";
+  env.thunkBoundSigs[2 * site + 1] = "fn[bool(anyref)]";
+  env.thunkRecvs[2 * site + 1] = stn;
+  env.thunkBodies[2 * site + 1] = sb;
+}
+
+/**
+ * A component tag's types, in the order the walk and the emission both read them: the view's type
+ * `P`, what the tag builds, the attributes' tuple and the snapshots' tuple (`emitComponentTag`).
+ */
+string[] componentShape(Env env, i32 fi) {
+  string p = componentTypeE(env, fi);
+  string k = env.funcReturns[fi];
+  i32 n = env.funcParamCount[fi];
+  string[] am = string[].filled(n, "i32");
+  for (i32 i = 1; i < n; i++) { am[i] = env.paramTypeAt(fi, i); }
+  i32 sn = 1;
+  for (i32 i = 1; i < n; i++) { if (!isFuncrefType(am[i])) { sn = sn + 1; } }
+  string[] sm = string[].filled(sn, "i32");
+  i32 at = 1;
+  for (i32 i = 1; i < n; i++) {
+    if (isFuncrefType(am[i])) { continue; }
+    i32 m = env.methodAt(am[i], "[markup.snapshot]");
+    sm[at] = m >= 0 ? env.funcReturns[m] : am[i];
+    at = at + 1;
+  }
+  string[] shape = string[].filled(4, "");
+  shape[0] = p;
+  shape[1] = k;
+  shape[2] = tupleOf(am);
+  shape[3] = tupleOf(sm);
+  return shape;
+}
+
+/** A tuple type, and every tuple among its members, registered. */
+void registerTupleDeep(Env env, string t) {
+  env.tupleType(t);
+  string[] ms = tupleMembers(t);
+  for (i32 i = 0; i < ms.len(); i++) { if (isTupleName(ms[i])) { registerTupleDeep(env, ms[i]); } }
+}
+
+/** A tuple type's name from its members, `(A,)` for one. */
+string tupleOf(string[] members) {
+  if (members.len() == 1) { return "(" + members[0] + ",)"; }
+  return tupleName(members);
+}
+
+/**
+ * Whether the snapshot tuple in local 0 equals the one in local 2, member by member, reached through the
+ * chain of `struct.get`s in `ct`/`ci` (`depth` long): a number by value, a string by its bytes, a tuple
+ * member by member, any other reference by identity. A member this cannot compare — an `anyref` — counts
+ * as changed, which renders a component more often and never wrongly. Member 0 of the top tuple is the
+ * placeholder every one leads with, and is skipped.
+ */
+void emitSnapshotsSame(B b, Env env, string tt, i32[] ct, i32[] ci, i32 depth, bool top) {
+  string[] ms = tupleMembers(tt);
+  i32 ti = env.tupleType(tt);
+  b.byte(65); b.i32leb(1);
+  for (i32 i = top ? 1 : 0; i < ms.len(); i++) {
+    string mt = ms[i];
+    if (depth >= ct.len()) { b.byte(65); b.i32leb(0); b.byte(113); continue; }
+    ct[depth] = ti;
+    ci[depth] = i;
+    if (isTupleName(mt)) {
+      emitSnapshotsSame(b, env, mt, ct, ci, depth + 1, false);
+      b.byte(113);                                                     // i32.and
+      continue;
+    }
+    bool num = isWritableValType(mt) && valType(mt) != 127 && mt != "anyref" && mt != "i31ref";
+    bool small = isWritableValType(mt) && valType(mt) == 127 && !isRefType(env, mt);
+    i32 eq = mt == "string" ? env.funcAt(" str_eq") : -1;
+    bool str = eq >= 0 && env.funcIndex[eq] >= 0;
+    bool ref = isRefType(env, mt) && mt != "anyref" && mt != "i31ref" && !isUnionName(mt) && mt != "string";
+    if (!num && !small && !str && !ref) { b.byte(65); b.i32leb(0); b.byte(113); continue; }
+    emitChain(b, 0, ct, ci, depth + 1);
+    emitChain(b, 2, ct, ci, depth + 1);
+    if (str) { b.byte(16); b.u32leb(env.funcIndex[eq]); }
+    else if (ref) { b.byte(211); }                                    // ref.eq
+    else if (small) { b.byte(70); }                                   // i32.eq
+    else if (valType(mt) == 126) { b.byte(81); }                      // i64.eq
+    else if (valType(mt) == 125) { b.byte(91); }                      // f32.eq
+    else { b.byte(97); }                                              // f64.eq
+    b.byte(113);                                                       // i32.and
+  }
+}
+
+/** `local.get` of `local`, then a `struct.get` per step of the chain. */
+void emitChain(B b, i32 local, i32[] ct, i32[] ci, i32 n) {
+  b.byte(32); b.u32leb(local);
+  for (i32 j = 0; j < n; j++) { b.byte(251); b.u32leb(2); b.u32leb(ct[j]); b.u32leb(ci[j]); }
+}
+
+/**
+ * Component thunk `ti` as the hoisted function at wasm index `at`, with the unbound and the bound
+ * wrapper every hoisted function has — the bound one casts its env to the receiver, which is how the
+ * tag's closure reaches it. A thunk whose tag was never emitted is a stub, so the count still holds.
+ */
+void emitMarkupThunk(B funcs, B code, Env env, i32 ti, i32 at) {
+  string sig = env.thunkSigs[ti];
+  string bsig = env.thunkBoundSigs[ti];
+  B body = env.thunkBodies[ti];
+  if (sig == "") {
+    sig = "fn[void()]";
+    bsig = "fn[void()]";
+    body = B.create();
+    body.u32leb(0);
+    body.byte(0);                                                      // unreachable
+    body.byte(11);
+  }
+  funcs.u32leb(env.sigType(sig));
+  code.u32leb(body.len);
+  code.bytes(body);
+
+  env.wrapFuncs.u32leb(env.sigType(envSig(sig)));
+  B wb = B.create();
+  wb.u32leb(0);
+  for (i32 wi = 0; wi < sigParamCount(sig); wi++) { wb.byte(32); wb.u32leb(wi + 1); }
+  wb.byte(16); wb.u32leb(at);
+  wb.byte(11);
+  env.wrapCode.u32leb(wb.len);
+  env.wrapCode.bytes(wb);
+  env.wrapCount = env.wrapCount + 1;
+
+  env.boundFuncs.u32leb(env.sigType(envSig(bsig)));
+  B bb = B.create();
+  bb.u32leb(0);
+  if (env.thunkSigs[ti] != "") {
+    bb.byte(32); bb.u32leb(0);
+    bb.byte(251); bb.u32leb(23); bb.i32leb(env.tupleType(env.thunkRecvs[ti]));   // ref.cast (ref null $Receiver)
+    for (i32 bi = 0; bi < sigParamCount(bsig); bi++) { bb.byte(32); bb.u32leb(bi + 1); }
+  }
+  bb.byte(16); bb.u32leb(at);
+  bb.byte(11);
+  env.boundCode.u32leb(bb.len);
+  env.boundCode.bytes(bb);
+}
+
 /** The element type of a tag function's `kids` parameter: what its children are built as. */
 string jsxKidsType(Env env, i32 fi) {
   for (i32 k = 0; k < env.funcParamCount[fi]; k++) {
@@ -8496,8 +8848,14 @@ string jsxKidsType(Env env, i32 fi) {
  * names, values, kids)` and a fragment `want.[markup.fragment](kids)`: they build the slot's type with
  * that type's own methods, so nothing here names a tree.
  */
-void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, Expr[] kids, string want) {
+void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, Expr[] kids, string want,
+             i32 line, i32 col) {
   if (tagTok >= 0 && lexed.tokens[tagTok * tokenStride()] != kString()) {
+    i32 cfi = env.funcAt(nameKeyOf(env, src, lexed, tagTok));
+    if (cfi >= 0 && componentTypeE(env, cfi) != "") {
+      emitComponentTag(fb, src, lexed, env, cfi, tagTok, attrs, kids, line, col);
+      return;
+    }
     emitJsxCall(fb, src, lexed, env, tagTok, attrs, kids);
     return;
   }
@@ -10551,7 +10909,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.i32leb(value ? 1 : 0);
     }
     Jsx(tagTok, closeTok, attrs, kids): {
-      emitJsx(fb, src, lexed, env, tagTok, attrs, kids, want);
+      emitJsx(fb, src, lexed, env, tagTok, attrs, kids, want, e.line, e.col);
       return;
     }
     JsxText(startOff, endOff): {
@@ -13828,9 +14186,15 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
         env.ranOut("lambdas in one module");
         return;
       }
+      // **A nullable slot of a function type is that type for a lambda**, which is never null: a tag
+      // function's handler is `fn<void(ElementEvent)>? onclick`, left out when not given.
+      string lw = want;
+      if (lw.len() > 1 && lw.slice(lw.len() - 1, lw.len()) == "?" && isFuncrefType(lw.slice(0, lw.len() - 1))) {
+        lw = lw.slice(0, lw.len() - 1);
+      }
       env.lambdaParams[env.lambdaCount] = params;
       env.lambdaBodies[env.lambdaCount] = lbody;
-      env.lambdaSigs[env.lambdaCount] = isFuncrefType(want) ? want : "";
+      env.lambdaSigs[env.lambdaCount] = isFuncrefType(lw) ? lw : "";
       env.lambdaLine[env.lambdaCount] = e.line;
       env.lambdaCol[env.lambdaCount] = e.col;
       env.lambdaInst[env.lambdaCount] = env.curInst;
@@ -13855,7 +14219,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
         env.walkMarkStack[depth] = lmark;
         env.walkLambdaDepth = depth + 1;
       }
-      findLambdas(env, src, lexed, lbody, isFuncrefType(want) ? sigReturn(want) : "");
+      findLambdas(env, src, lexed, lbody, isFuncrefType(lw) ? sigReturn(lw) : "");
       env.walkLambdaDepth = depth;
       env.walkCount = lmark;
     }
@@ -13875,6 +14239,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     Jsx(tagTok, closeTok, attrs, kids): {
       bool called = tagTok >= 0 && lexed.tokens[tagTok * tokenStride()] != kString();
       i32 jfi = called ? env.funcAt(nameKeyOf(env, src, lexed, tagTok)) : -1;
+      if (jfi >= 0 && componentTypeE(env, jfi) != "") { env.noteMarkupSite(e.line, e.col, jfi); }
       string kidWant = called ? (jfi >= 0 ? jsxKidsType(env, jfi) : "") : want;
       for (i32 i = 0; i < attrs.len(); i++) {
         string aw = called ? "" : "string";

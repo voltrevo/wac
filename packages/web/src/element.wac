@@ -1,0 +1,396 @@
+// A handle to one element of the page, and the authority over everything under it.
+//
+// **Holding an `Element` is the right to change that element and its subtree, and to hear their events
+// — nothing above it or beside it** (`design/system/0012`). `page.root()` hands a program the root; a
+// child made through a handle comes back as a handle; passing one to a widget is a grant, as passing
+// `Sys` is. There is no `querySelector`, no `parentNode`, no `innerHTML`, and no page-wide string that
+// names an element.
+//
+// **The program mints the handles.** A handle is a number this side chooses, and the document records
+// the element it made under it — so making and changing elements never waits. Calls go out as they are
+// made; the host batches them into one message per turn. Only reads wait, and each is a ticket.
+//
+// **A handle lives as long as its element is in the tree.** `remove` ends it and every handle under it,
+// and a call on an ended handle traps saying which. The program keeps a mirror — parents and children,
+// no attributes — which is what makes ending a subtree possible, and what tells the document when a
+// handle can be forgotten.
+//
+// **Policy is here, and the browser enforces it again.** `attr` refuses an `on…` name, a name outside
+// `[a-z][a-z0-9-]*`, and `javascript:` in a URL attribute; `append` refuses the elements that run or
+// load something on their own. The build writes a Content Security Policy as well, so a page with no
+// network grant cannot send anything anywhere even if this were wrong.
+
+import { Queue, Ticket, Vec } from "core";
+
+/** What the document does with an event of a kind, decided before any event happens. */
+export struct Listen {
+  /**
+   * The keys whose default the document prevents, for a key event — `"Tab ArrowUp ArrowDown"` — or
+   * `"*"` for every event of the kind, or `""` for none. A worker learns of an event after the browser
+   * has acted on it, so this cannot be decided per event.
+   */
+  string prevent;
+
+  Listen none() { return Listen(""); }
+  Listen all() { return Listen("*"); }
+  Listen keys(string names) { return Listen(names); }
+}
+
+/** Something that happened on an element. */
+export struct ElementEvent {
+  /** What was listened for: `"click"`, `"input"`, `"keydown"`… */
+  string kind;
+  /** The handle it happened on: the listener or something under it. */
+  Element target;
+  /** An input's value for `input` and `change`; the key for a key event, as the browser names it. */
+  string value;
+  /** Where in the target, in its own pixels, for a pointer; 0 otherwise. */
+  i32 x;
+  i32 y;
+  /** The modifier keys held, as `MOD_*` bits from `page.wac`. */
+  i32 mods;
+}
+
+/**
+ * The document's side of the handles: one function per operation, each sent at once and answering
+ * nothing. Supplied by the host, or by a test that records what it was asked.
+ */
+export struct ElementOps {
+  /** Make an element `tag` as handle `id`, a child of `parent`, before `before` — or last when -1. */
+  fn<void(i32, i32, string, i32)> make;
+  /** Make a text node as handle `id`, a child of `parent`, before `before` — or last when -1. */
+  fn<void(i32, i32, string, i32)> makeText;
+  /** Replace everything under `id` with text, or set a text node's text. */
+  fn<void(i32, string)> text;
+  /** Set attribute `name` to `value`, or remove it when `present` is false. */
+  fn<void(i32, string, string, bool)> attr;
+  /**
+   * Set a property — `value`, `checked`, `selected` — unless the user has typed into it since the last
+   * event the program had seen, which `seen` numbers: a render that lags behind typing cannot undo a
+   * keystroke.
+   */
+  fn<void(i32, string, string, i32)> prop;
+  /** Move `id` before `before` within its parent, or last when -1. */
+  fn<void(i32, i32)> move;
+  /** Remove `id` and everything under it, forgetting every handle there. */
+  fn<void(i32)> remove;
+  /** Deliver `kind` events from `id` and everything under it, preventing the defaults `prevent` names. */
+  fn<void(i32, string, string)> listen;
+  /** Focus `id`. */
+  fn<void(i32)> focus;
+  /** Ask for `id`'s value; the answer comes back as `valueArrived(req, value)`. */
+  fn<void(i32, i32)> value;
+
+  /** A document that records nothing — for a test, which replaces the functions it watches. */
+  ElementOps inert() {
+    return ElementOps(
+      (i32 id, i32 parent, string tag, i32 before) => { }, (i32 id, i32 parent, string text, i32 before) => { },
+      (i32 id, string text) => { }, (i32 id, string name, string value, bool present) => { },
+      (i32 id, string name, string value, i32 seen) => { }, (i32 id, i32 before) => { }, (i32 id) => { },
+      (i32 id, string kind, string prevent) => { }, (i32 id) => { }, (i32 req, i32 id) => { }
+    );
+  }
+}
+
+/** Every live handle, by id, and what the program has seen. */
+export struct Elements {
+  ElementOps ops;
+  /** Each handle by its number; ended ones are null. Index 0 is the root. */
+  Vec<Element?> byId;
+  /** The number of the last event delivered to the program — what `prop` measures typing against. */
+  i32 seen;
+  /** Each pending `value()` read, by request. */
+  Vec<Ticket<string>?> asked;
+
+  Elements create(ElementOps ops) {
+    Vec<Element?> byId = Vec.create();
+    Vec<Ticket<string>?> asked = Vec.create();
+    Elements es = Elements(ops, byId, 0, asked);
+    Element root = Element.made(es, 0, "", null);
+    byId.push(root);
+    return es;
+  }
+
+  Element root(this) { return this.byId.get(0)!; }
+
+  i32 mint(this) {
+    this.byId.push(null);
+    return this.byId.len() - 1;
+  }
+
+  /**
+   * An event from the document: `kind` on `targetId`, heard by the listener on `listenerId`, numbered
+   * `seq`. One on a handle the program has already ended is dropped — a late click cannot reach a row
+   * that is gone.
+   */
+  void deliver(this, i32 seq, string kind, i32 targetId, i32 listenerId, string value, i32 x, i32 y, i32 mods) {
+    if (seq > this.seen) { this.seen = seq; }
+    if (listenerId < 0 || listenerId >= this.byId.len() || targetId < 0 || targetId >= this.byId.len()) { return; }
+    Element? l = this.byId.get(listenerId);
+    Element? t = this.byId.get(targetId);
+    if (l is null || t is null) { return; }
+    l!.heard(ElementEvent(kind, t!, value, x, y, mods));
+  }
+
+  /** The answer to a `value()` read. */
+  void answered(this, i32 req, string value) {
+    if (req < 0 || req >= this.asked.len()) { return; }
+    Ticket<string>? t = this.asked.get(req);
+    this.asked.set(req, null);
+    if (t is not null) { t!.resolve(value); }
+  }
+}
+
+/** One element, as far as this handle reaches. */
+export struct Element {
+  Elements es;
+  i32 id;
+  /** The element's tag, or `""` for a text node. */
+  string tag;
+  Element? parent;
+  /** The children made through handles, in document order: the mirror. */
+  Vec<Element> kids;
+  bool live;
+  /** The kinds listened for, and how. */
+  Vec<string> kinds;
+  /** A handler per kind, beside `kinds` — for one listened for with `listen`, the queue `next()` reads. */
+  Vec<fn<void(ElementEvent)>> handlers;
+  /** Events that arrived while nothing waited, and the tickets `next()` handed out. */
+  Queue<ElementEvent> arrived;
+  Queue<Ticket<ElementEvent>> waiting;
+
+  Element made(Elements es, i32 id, string tag, Element? parent) {
+    Vec<Element> kids = Vec.create();
+    Vec<string> kinds = Vec.create();
+    Vec<fn<void(ElementEvent)>> handlers = Vec.create();
+    Queue<ElementEvent> arrived;
+    Queue<Ticket<ElementEvent>> waiting;
+    return Element(es, id, tag, parent, kids, true, kinds, handlers, arrived, waiting);
+  }
+
+  void alive(this, string what) {
+    if (!this.live) { trap "Element." + what + ": handle " + "\{this.id}" + " was removed"; }
+  }
+
+  // ── Children ───────────────────────────────────────────────────────────────
+
+  /** A child element, last. */
+  Element append(this, string tag) { return this.insert(tag, null); }
+
+  /** A child element before `before`, which must be a child of this one; last when null. */
+  Element insert(this, string tag, Element? before) {
+    this.alive("insert");
+    if (this.tag == "" && this.id != 0) { trap "Element.insert: a text node has no children"; }
+    refuseTag(tag);
+    i32 at = this.positionOf(before, "insert");
+    Element e = Element.made(this.es, this.es.mint(), tag, this);
+    this.es.byId.set(e.id, e);
+    this.place(e, at);
+    this.es.ops.make(e.id, this.id, tag, before is null ? -1 : before!.id);
+    return e;
+  }
+
+  /** A text child the program can change later, last, or before `before`. */
+  Element appendText(this, string text) { return this.insertText(text, null); }
+
+  Element insertText(this, string text, Element? before) {
+    this.alive("insertText");
+    i32 at = this.positionOf(before, "insertText");
+    Element e = Element.made(this.es, this.es.mint(), "", this);
+    this.es.byId.set(e.id, e);
+    this.place(e, at);
+    this.es.ops.makeText(e.id, this.id, text, before is null ? -1 : before!.id);
+    return e;
+  }
+
+  /** Replace everything under this element with text — ending every handle under it — or set a text node's. */
+  void text(this, string s) {
+    this.alive("text");
+    for (i32 i = 0; i < this.kids.len(); i++) { this.kids.get(i).end(); }
+    this.kids.clear();
+    this.es.ops.text(this.id, s);
+  }
+
+  /** Move this element before `before` within its parent, or last when null. */
+  void move(this, Element? before) {
+    this.alive("move");
+    if (this.parent is null) { trap "Element.move: the root has no parent"; }
+    Element p = this.parent!;
+    i32 from = p.indexOfKid(this);
+    p.kids.remove(from);
+    i32 at = p.positionOf(before, "move");
+    p.place(this, at);
+    this.es.ops.move(this.id, before is null ? -1 : before!.id);
+  }
+
+  /** Remove this element and everything under it; every handle there ends. */
+  void remove(this) {
+    this.alive("remove");
+    if (this.parent is null) { trap "Element.remove: the root cannot be removed"; }
+    Element p = this.parent!;
+    p.kids.remove(p.indexOfKid(this));
+    this.end();
+    this.es.ops.remove(this.id);
+  }
+
+  // ── What it is ─────────────────────────────────────────────────────────────
+
+  /** Set attribute `name`, or remove it with `null`. */
+  void attr(this, string name, string? value) {
+    this.alive("attr");
+    refuseAttr(name, value);
+    this.es.ops.attr(this.id, name, value ?? "", value is not null);
+  }
+
+  /** Set a property: `value`, `checked` (`"true"`/`"false"`) or `selected`. */
+  void prop(this, string name, string value) {
+    this.alive("prop");
+    if (name != "value" && name != "checked" && name != "selected") {
+      trap "Element.prop: " + name + " is not a property this sets — value, checked or selected";
+    }
+    this.es.ops.prop(this.id, name, value, this.es.seen);
+  }
+
+  void focus(this) {
+    this.alive("focus");
+    this.es.ops.focus(this.id);
+  }
+
+  /** The element's value as the document has it now — a round trip, so a ticket. */
+  Ticket<string> value(this) {
+    this.alive("value");
+    Ticket<string> t;
+    i32 req = this.es.asked.len();
+    this.es.asked.push(t);
+    this.es.ops.value(0 - req - 1, this.id);   // negative: `getValue` numbers its own from 0
+    return t;
+  }
+
+  // ── Events ─────────────────────────────────────────────────────────────────
+
+  /** Deliver `kind` events from this element and everything under it, to be taken with `next()`. */
+  void listen(this, string kind, Listen how) {
+    Element me = this;
+    this.on(kind, how, (ElementEvent e) => { me.queue(e); });
+  }
+
+  /** Deliver `kind` events from this element and everything under it to `handler`. */
+  void on(this, string kind, Listen how, fn<void(ElementEvent)> handler) {
+    this.alive("listen");
+    for (i32 i = 0; i < this.kinds.len(); i++) {
+      if (this.kinds.get(i) == kind) { this.handlers.set(i, handler); return; }
+    }
+    this.kinds.push(kind);
+    this.handlers.push(handler);
+    this.es.ops.listen(this.id, kind, how.prevent);
+  }
+
+  /** The next event listened for with `listen`, as a ticket. */
+  Ticket<ElementEvent> next(this) {
+    Ticket<ElementEvent> t;
+    if (this.arrived.len() > 0) { t.resolve(this.arrived.pop()!); } else { this.waiting.push(t); }
+    return t;
+  }
+
+  void heard(this, ElementEvent e) {
+    for (i32 i = 0; i < this.kinds.len(); i++) {
+      if (this.kinds.get(i) == e.kind) {
+        this.handlers.get(i)(e);
+        return;
+      }
+    }
+  }
+
+  /** An event for `next()`: the oldest waiter takes it, or it waits for one. */
+  void queue(this, ElementEvent e) {
+    if (this.waiting.len() > 0) { this.waiting.pop()!.resolve(e); } else { this.arrived.push(e); }
+  }
+
+  // ── The mirror ─────────────────────────────────────────────────────────────
+
+  bool isLive(const this) { return this.live; }
+  Element? parentOf(this) { return this.parent; }
+  i32 kidCount(this) { return this.kids.len(); }
+  Element kidAt(this, i32 i) { return this.kids.get(i); }
+
+  i32 indexOfKid(this, Element k) {
+    for (i32 i = 0; i < this.kids.len(); i++) { if (this.kids.get(i) is k) { return i; } }
+    trap "Element: a child the mirror does not hold";
+  }
+
+  i32 positionOf(this, Element? before, string what) {
+    if (before is null) { return this.kids.len(); }
+    if (before!.parent is null || before!.parent! is not this) {
+      trap "Element." + what + ": the element to go before is not a child of this one";
+    }
+    return this.indexOfKid(before!);
+  }
+
+  void place(this, Element e, i32 at) {
+    if (at >= this.kids.len()) { this.kids.push(e); } else { this.kids.insert(at, e); }
+  }
+
+  void end(this) {
+    this.live = false;
+    this.es.byId.set(this.id, null);
+    for (i32 i = 0; i < this.kids.len(); i++) { this.kids.get(i).end(); }
+  }
+}
+
+// ── Policy ───────────────────────────────────────────────────────────────────
+
+bool lowerName(string s, bool colon) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0 || b[0] < 'a' || b[0] > 'z') { return false; }
+  for (i32 i = 1; i < b.len(); i++) {
+    u8 c = b[i];
+    bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || (colon && c == ':');
+    if (!ok) { return false; }
+  }
+  return true;
+}
+
+/** The elements that run or load something on their own, which a page makes through no handle. */
+export bool runsOnItsOwn(string tag) {
+  return tag == "script" || tag == "iframe" || tag == "object" || tag == "embed" || tag == "base"
+      || tag == "meta" || tag == "link" || tag == "frame" || tag == "frameset" || tag == "applet"
+      || tag == "portal";
+}
+
+void refuseTag(string tag) {
+  if (!lowerName(tag, false)) { trap "Element.append: " + tag + " is not an element name — [a-z][a-z0-9-]*"; }
+  if (runsOnItsOwn(tag)) { trap "Element.append: a page cannot make a " + tag + " element"; }
+}
+
+/** The attributes whose value is a URL a browser follows. */
+export bool urlAttr(string name) {
+  return name == "href" || name == "src" || name == "action" || name == "formaction" || name == "xlink:href"
+      || name == "poster" || name == "data" || name == "cite" || name == "background";
+}
+
+/** Whether a URL runs script when followed: `javascript:`, in any case, after any leading spaces and controls. */
+export bool scriptUrl(string v) {
+  u8[] b = v.toBytes();
+  i32 i = 0;
+  while (i < b.len() && b[i] <= ' ') { i++; }
+  string want = "javascript:";
+  u8[] w = want.toBytes();
+  i32 k = 0;
+  while (i < b.len() && k < w.len()) {
+    u8 c = b[i];
+    // Tabs and newlines inside the scheme are stripped by a URL parser, so they do not hide it.
+    if (c == '\t' || c == '\n' || c == '\r') { i++; continue; }
+    u8 lc = c >= 'A' && c <= 'Z' ? c + 32 : c;
+    if (lc != w[k]) { return false; }
+    i++;
+    k++;
+  }
+  return k == w.len();
+}
+
+void refuseAttr(string name, string? value) {
+  if (!lowerName(name, true)) { trap "Element.attr: " + name + " is not an attribute name — [a-z][a-z0-9-]*"; }
+  if (name.len() >= 2 && name.slice(0, 2) == "on") { trap "Element.attr: " + name + " — a handler is listened for, not written"; }
+  if (name == "srcdoc") { trap "Element.attr: srcdoc writes a document"; }
+  if (value is not null && urlAttr(name) && scriptUrl(value!)) { trap "Element.attr: " + name + " is a javascript: URL"; }
+}

@@ -1,41 +1,52 @@
-// The application: `main` is handed the page, draws it, and answers what happens on it.
+// The application: `main` mounts a view, and the view keeps the page showing what the state says.
 //
-// It is an ordinary `async` function. `await page.nextEvent()` hands control back to the browser until
-// something happens, so the state is ordinary locals and the program reads top to bottom.
+// A component is a function of `Ui` (`packages/web`'s `view.wac`): `ui.state` gives it state that lasts
+// from one render to the next, and setting that state renders again the component that owns it — only
+// that one, and what it passes new attributes to. Handlers are closures; they change state, and the page
+// follows.
 
-import { Event, Page, html.button, html.div, html.h1, html.input, html.li, html.p, html.ul, Node } from "web";
+import { ElementEvent, Node, Page, Ui, html.button, html.div, html.h1, html.input, html.li, html.p, html.ul } from "web";
 
-/** The list, drawn from what has been added. */
-Node listOf(string[] items, i32 n) {
-  Node[] rows = Node[].filled(n, Node.Text(""));
-  for (i32 i = 0; i < n; i++) { rows[i] = <li>{Node.Text(items[i])}</li>; }
-  return <ul id="items">{Node.Fragment(rows)}</ul>;
+/** The list with one more item: a new array, since state is replaced rather than changed in place. */
+string[] plus(string[] items, string what) {
+  string[] out = string[].filled(items.len() + 1, "");
+  for (i32 i = 0; i < items.len(); i++) { out[i] = items[i]; }
+  out[items.len()] = what;
+  return out;
+}
+
+/** The field and its button. What is typed is the field's own, so typing renders nothing else. */
+Node Adder(Ui ui, fn<void(string)> onadd) {
+  auto draft = ui.state("");
+  fn<void()> add = () => {
+    if (draft.get() == "") { return; }
+    onadd(draft.get());
+    draft.set("");
+  };
+  return <p>
+    <input id="what" placeholder="something to do" value={draft.get()}
+           oninput={(ElementEvent e) => { draft.set(e.value); }}
+           onkeydown={(ElementEvent e) => { if (e.value == "Enter") { add(); } }}/>
+    <button id="add" onclick={(ElementEvent e) => { add(); }}>add</button>
+  </p>;
+}
+
+/** The page: the list, and how many are on it. */
+Node app(Ui ui) {
+  auto items = ui.state(string[]());
+  string[] all = items.get();
+  Node[] rows = Node[].filled(all.len(), Node.Text(""));
+  for (i32 i = 0; i < all.len(); i++) { rows[i] = <li key={"\{i}"}>{all[i]}</li>; }
+  return <div>
+    <h1>To do</h1>
+    <Adder onadd={(string what) => { items.update((string[] xs) => plus(xs, what)); }}/>
+    <ul id="items">{rows}</ul>
+    <p id="count">{all.len() == 0 ? "nothing yet" : "\{all.len()} to do"}</p>
+  </div>;
 }
 
 export async i32 main(Page page) {
   page.title("wac app");
-  page.render(
-    <div>
-      <h1>To do</h1>
-      <p><input id="what" placeholder="something to do"/> <button id="add">add</button></p>
-      <div id="list"></div>
-      <p id="count">nothing yet</p>
-    </div>
-  );
-  page.on("button", "click");
-  page.on("#what", "keydown");
-  string[] items = string[].defaulted(64);
-  i32 n = 0;
-  while (true) {
-    Event e = await page.nextEvent();
-    bool adding = e.id == "add" || (e.kind == "keydown" && e.value == "Enter");
-    if (!adding) { continue; }
-    string what = await page.getValue("what");
-    if (what == "" || n == items.len()) { continue; }
-    items[n] = what;
-    n += 1;
-    page.setValue("what", "");
-    page.renderInto("list", listOf(items, n));
-    page.setText("count", "\{n} to do");
-  }
+  page.mount((Ui ui) => app(ui));
+  return 0;
 }

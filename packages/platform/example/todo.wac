@@ -1,0 +1,49 @@
+// A to-do list as a page: components of `Ui`, state that renders only what it changes, handlers that
+// are closures. The same program as `templates/webapp`, importing `packages/web` by path — what
+// `packages/web/test/view_live.test.ts` builds and drives in a browser.
+
+import { ElementEvent, Node, Page, Ui, html.button, html.div, html.h1, html.input, html.li, html.p, html.ul } from "../../web";
+
+/** The list with one more item: a new array, since state is replaced rather than changed in place. */
+string[] plus(string[] items, string what) {
+  string[] out = string[].filled(items.len() + 1, "");
+  for (i32 i = 0; i < items.len(); i++) { out[i] = items[i]; }
+  out[items.len()] = what;
+  return out;
+}
+
+/** The field and its button. What is typed is the field's own, so typing renders nothing else. */
+Node Adder(Ui ui, fn<void(string)> onadd) {
+  auto draft = ui.state("");
+  fn<void()> add = () => {
+    if (draft.get() == "") { return; }
+    onadd(draft.get());
+    draft.set("");
+  };
+  return <p>
+    <input id="what" placeholder="something to do" value={draft.get()}
+           oninput={(ElementEvent e) => { draft.set(e.value); }}
+           onkeydown={(ElementEvent e) => { if (e.value == "Enter") { add(); } }}/>
+    <button id="add" onclick={(ElementEvent e) => { add(); }}>add</button>
+  </p>;
+}
+
+/** The page: the list, and how many are on it. */
+Node app(Ui ui) {
+  auto items = ui.state(string[]());
+  string[] all = items.get();
+  Node[] rows = Node[].filled(all.len(), Node.Text(""));
+  for (i32 i = 0; i < all.len(); i++) { rows[i] = <li key={"\{i}"}>{all[i]}</li>; }
+  return <div>
+    <h1>To do</h1>
+    <Adder onadd={(string what) => { items.update((string[] xs) => plus(xs, what)); }}/>
+    <ul id="items">{rows}</ul>
+    <p id="count">{all.len() == 0 ? "nothing yet" : "\{all.len()} to do"}</p>
+  </div>;
+}
+
+export async i32 main(Page page) {
+  page.title("wac app");
+  page.mount((Ui ui) => app(ui));
+  return 0;
+}

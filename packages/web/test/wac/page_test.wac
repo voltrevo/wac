@@ -6,7 +6,7 @@
 import { Check } from "./check.wac";
 import { Ticket } from "core";
 import { html.p, html.b } from "../../src/page.wac";
-import { Dom, Event, Page, deliver, timerFired, valueArrived } from "../../src/page.wac";
+import { Dom, ElementOps, Event, Page, deliver, timerFired, valueArrived } from "../../src/page.wac";
 
 /** What the fake document saw, as one line per call. */
 struct Seen {
@@ -16,6 +16,7 @@ struct Seen {
 
 Dom fakeDom(Seen seen) {
   return Dom(
+    ElementOps.inert(),
     (string html) => { seen.log = seen.log + "render " + html + "\n"; },
     (string id, string html) => { seen.log = seen.log + "into " + id + "=" + html + "\n"; },
     (string id, string text) => { seen.log = seen.log + "text " + id + "=" + text + "\n"; },

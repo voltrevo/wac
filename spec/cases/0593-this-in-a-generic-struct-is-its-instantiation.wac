@@ -1,0 +1,13 @@
+// expect: f() = 5
+// why: in a generic struct's method, `this` is the struct applied to its own parameters — `Cell<T>` —
+//      so it goes wherever a `Cell<T>` does, a tuple's member among them
+struct Cell<T> {
+  T v;
+  i32 n;
+  (Cell<T>, i32) pair(this) { return (this, this.n); }
+  Cell<T> self(this) { return this; }
+}
+export i32 f() {
+  Cell<i32> c = Cell(5, 2);
+  return c.pair().0.self().v;
+}

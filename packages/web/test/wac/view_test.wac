@@ -1,0 +1,395 @@
+// The view, driven with no browser: components written as an application writes them, rendered into a
+// document of records (`testdoc.wac`), and events fired at it as a browser fires them.
+//
+// What these hold is `design/system/0012`'s claim that rendering is granular from the start: typing renders
+// the field and nothing else, ticking one row of two thousand renders that row and the count, and a handler
+// that captured something since changed is never the one that runs. `View.rendered` names every component
+// rendered, in order, which is what the checks read.
+
+import { Check } from "./check.wac";
+import { Ticket, Vec } from "core";
+import { ElementEvent, Elements } from "../../src/element.wac";
+import { Node, html.b, html.button, html.div, html.input, html.li, html.main, html.p, html.ul } from "../../src/page.wac";
+import { Runner } from "../../src/page.wac";
+import { State, Ui, View } from "../../src/view.wac";
+import { TestDoc, TestNode } from "../../src/testdoc.wac";
+
+// ── A clock a test moves ─────────────────────────────────────────────────────
+
+struct Due { i32 at; fn<void()> run; }
+
+struct Clock {
+  i32 now;
+  Vec<Due> due;
+
+  Clock create() {
+    Vec<Due> due = Vec.create();
+    return Clock(0, due);
+  }
+
+  void later(this, i32 ms, fn<void()> f) { this.due.push(Due(this.now + ms, f)); }
+
+  /** Move on by `ms`, running each timer that falls due, earliest first. */
+  void advance(this, i32 ms) {
+    i32 until = this.now + ms;
+    while (true) {
+      i32 best = -1;
+      for (i32 i = 0; i < this.due.len(); i++) {
+        if (this.due.get(i).at <= until && (best < 0 || this.due.get(i).at < this.due.get(best).at)) { best = i; }
+      }
+      if (best < 0) { break; }
+      Due d = this.due.remove(best);
+      this.now = d.at;
+      d.run();
+    }
+    this.now = until;
+  }
+}
+
+/** A document, its handles, a clock and a view over the root — what a page gives a program. */
+struct Rig {
+  TestDoc doc;
+  Elements es;
+  Clock clock;
+  View view;
+
+  Rig create() {
+    TestDoc doc = TestDoc.create();
+    Elements es = Elements.create(doc.elementOps());
+    doc.es = es;
+    Clock clock = Clock.create();
+    View view = View.create(es.root(), (i32 ms, fn<void()> f) => { clock.later(ms, f); });
+    return Rig(doc, es, clock, view);
+  }
+
+  i32 from(this) { return this.view.rendered.len(); }
+
+  /** The components rendered since `from`, space-separated. */
+  string since(this, i32 from) {
+    string s = "";
+    for (i32 i = from; i < this.view.rendered.len(); i++) { s = s + (s == "" ? "" : " ") + this.view.rendered.get(i); }
+    return s;
+  }
+
+  void fire(this, string name, string value, string kind, string with) {
+    i32 at = this.doc.find(name, value);
+    if (at < 0) { trap "no element whose " + name + " is " + value; }
+    this.doc.fire(at, kind, with);
+  }
+}
+
+// ── A list, as an application writes it ──────────────────────────────────────
+
+struct Todo { i32 id; string text; bool done; }
+
+/** The application's data: an immutable value, replaced whole. */
+struct App { (const Todo)[] items; i32 nextId; }
+
+const App fresh(i32 n) {
+  Vec<const Todo> v = Vec.create();
+  for (i32 i = 0; i < n; i++) { v.push(Todo(i, "item \{i}", false)); }
+  return App { items: v.toArray(), nextId: n };
+}
+
+const App added(const App s, string text) {
+  Vec<const Todo> v = Vec.create();
+  for (i32 i = 0; i < s.items.len(); i++) { v.push(s.items[i]); }
+  v.push(Todo(s.nextId, text, false));
+  return App { items: v.toArray(), nextId: s.nextId + 1 };
+}
+
+const App toggled(const App s, i32 id) {
+  Vec<const Todo> v = Vec.create();
+  for (i32 i = 0; i < s.items.len(); i++) {
+    auto t = s.items[i];
+    if (t.id == id) { v.push(Todo { id: t.id, text: t.text, done: !t.done }); } else { v.push(t); }
+  }
+  return App { items: v.toArray(), nextId: s.nextId };
+}
+
+const App renamed(const App s, i32 id, string text) {
+  Vec<const Todo> v = Vec.create();
+  for (i32 i = 0; i < s.items.len(); i++) {
+    auto t = s.items[i];
+    if (t.id == id) { v.push(Todo { id: t.id, text: text, done: t.done }); } else { v.push(t); }
+  }
+  return App { items: v.toArray(), nextId: s.nextId };
+}
+
+const App removedAt(const App s, i32 at) {
+  Vec<const Todo> v = Vec.create();
+  for (i32 i = 0; i < s.items.len(); i++) { if (i != at) { v.push(s.items[i]); } }
+  return App { items: v.toArray(), nextId: s.nextId };
+}
+
+i32 open((const Todo)[] items) {
+  i32 n = 0;
+  for (i32 i = 0; i < items.len(); i++) { if (!items[i].done) { n++; } }
+  return n;
+}
+
+/** The draft is the field's own, so typing renders the field and nothing else. */
+Node NewTodo(Ui ui, fn<void(string)> onadd) {
+  auto draft = ui.state("");
+  return <input id="draft" value={draft.get()}
+                oninput={(ElementEvent e) => { draft.set(e.value); }}
+                onkeydown={(ElementEvent e) => { if (e.value == "Enter" && draft.get() != "") { onadd(draft.get()); draft.set(""); } }}/>;
+}
+
+/** A row with state of its own: whether it is being edited, and the text being typed. */
+Node Row(Ui ui, const Todo todo, fn<void()> ontoggle, fn<void()> onremove, fn<void(string)> onrename) {
+  auto editing = ui.state(false);
+  auto draft = ui.state("");
+  string rid = "row\{todo.id}";
+  if (editing.get()) {
+    return <li id={rid} class="editing">
+      <input id={"edit\{todo.id}"} value={draft.get()}
+             oninput={(ElementEvent e) => { draft.set(e.value); }}
+             onkeydown={(ElementEvent e) => { if (e.value == "Enter") { onrename(draft.get()); editing.set(false); } }}/>
+    </li>;
+  }
+  return <li id={rid} class={todo.done ? "done" : "open"} ondblclick={(ElementEvent e) => { draft.set(todo.text); editing.set(true); }}>
+    <input id={"check\{todo.id}"} onchange={(ElementEvent e) => { ontoggle(); }}/>{todo.text}<button id={"remove\{todo.id}"} onclick={(ElementEvent e) => { onremove(); }}>x</button>
+  </li>;
+}
+
+Node TodoList(Ui ui, (const Todo)[] items, fn<void(i32)> ontoggle, fn<void(i32)> onremove, fn<void(i32, string)> onrename) {
+  Node[] rows = Node[].filled(items.len(), Node.Text(""));
+  for (i32 i = 0; i < items.len(); i++) {
+    i32 at = i;      // by position, on purpose: the stale rule is what keeps it right
+    auto t = items[i];
+    rows[i] = <Row key={"\{t.id}"} todo={t} ontoggle={() => { ontoggle(t.id); }} onremove={() => { onremove(at); }}
+                   onrename={(string s) => { onrename(t.id, s); }}/>;
+  }
+  return <ul>{rows}</ul>;
+}
+
+Node Footer(Ui ui, (const Todo)[] items) {
+  return <p id="left">{"\{open(items)} left"}</p>;
+}
+
+Node todos(Ui ui, i32 n) {
+  auto app = ui.state(fresh(n));
+  auto items = app.get().items;
+  return <main>
+    <NewTodo onadd={(string text) => { app.update((const App s) => added(s, text)); }}/>
+    <TodoList items={items} ontoggle={(i32 id) => { app.update((const App s) => toggled(s, id)); }}
+              onremove={(i32 at) => { app.update((const App s) => removedAt(s, at)); }}
+              onrename={(i32 id, string text) => { app.update((const App s) => renamed(s, id, text)); }}/>
+    <Footer items={items}/>
+  </main>;
+}
+
+Rig mounted(i32 n) {
+  Rig r = Rig.create();
+  r.view.mount((Ui ui) => todos(ui, n));
+  return r;
+}
+
+// ── What renders, for each thing a user does ─────────────────────────────────
+
+export string test_mounting_shows_every_row_and_the_count() {
+  Check t = Check.create();
+  Rig r = mounted(3);
+  t.eqStr(r.doc.shown(r.doc.findTag("ul")), "item 0xitem 1xitem 2x", "the rows");
+  t.eqStr(r.doc.shown(r.doc.find("id", "left")), "3 left", "the count");
+  return t.report();
+}
+
+export string test_typing_renders_the_field_and_nothing_else() {
+  Check t = Check.create();
+  Rig r = mounted(2000);
+  i32 from = r.from();
+  i32 before = r.doc.ops;
+  r.fire("id", "draft", "input", "w");
+  r.fire("id", "draft", "input", "wa");
+  r.fire("id", "draft", "input", "wac");
+  t.eqStr(r.since(from), "NewTodo NewTodo NewTodo", "what rendered");
+  t.isTrue(r.doc.ops - before <= 3, "operations sent: \{r.doc.ops - before}");
+  return t.report();
+}
+
+export string test_toggling_renders_the_row_and_the_count() {
+  Check t = Check.create();
+  Rig r = mounted(2000);
+  i32 from = r.from();
+  r.fire("id", "check5", "change", "");
+  t.eqStr(r.since(from), "root TodoList Row Footer", "what rendered");
+  t.eqStr(r.doc.attr(r.doc.find("id", "row5"), "class") ?? "", "done", "row 5 is done");
+  t.eqStr(r.doc.shown(r.doc.find("id", "left")), "1999 left", "the count");
+  return t.report();
+}
+
+export string test_adding_renders_the_list_the_new_row_and_the_count() {
+  Check t = Check.create();
+  Rig r = mounted(2000);
+  r.fire("id", "draft", "input", "tea");
+  i32 from = r.from();
+  r.fire("id", "draft", "keydown", "Enter");
+  t.eqStr(r.since(from), "root NewTodo TodoList Row Footer", "what rendered");
+  t.eqStr(r.doc.shown(r.doc.find("id", "row2000")), "teax", "the new row");
+  t.eqStr(r.doc.attr(r.doc.find("id", "draft"), ".value") ?? "?", "", "the field is cleared");
+  return t.report();
+}
+
+export string test_a_rows_own_state_renders_only_that_row() {
+  Check t = Check.create();
+  Rig r = mounted(2000);
+  i32 from = r.from();
+  r.fire("id", "row7", "dblclick", "");
+  r.fire("id", "edit7", "input", "item 7!");
+  t.eqStr(r.since(from), "Row Row", "what rendered");
+  r.fire("id", "edit7", "keydown", "Enter");
+  t.eqStr(r.doc.shown(r.doc.find("id", "row7")), "item 7!x", "row 7 renamed");
+  return t.report();
+}
+
+export string test_a_late_closure_removes_the_row_clicked() {
+  Check t = Check.create();
+  Rig r = mounted(3);
+  r.fire("id", "remove0", "click", "");
+  // "item 1" is at position 0 now, but its row did not render, so its handler still says position 1 —
+  // until the click arrives, when its stale row renders first.
+  r.fire("id", "remove1", "click", "");
+  t.eqStr(r.doc.shown(r.doc.findTag("ul")), "item 2x", "what is left");
+  return t.report();
+}
+
+export string test_removing_a_middle_row_makes_nothing_and_keeps_its_neighbours() {
+  Check t = Check.create();
+  Rig r = mounted(3);
+  i32 first = r.doc.find("id", "row0");
+  i32 last = r.doc.find("id", "row2");
+  i32 from = r.from();
+  r.fire("id", "remove1", "click", "");
+  t.isTrue(r.since(from).indexOf("Row") < 0, "a row rendered: \{r.since(from)}");
+  t.eqI32(r.doc.find("id", "row0"), first, "row 0 is the same element");
+  t.eqI32(r.doc.find("id", "row2"), last, "row 2 is the same element");
+  return t.report();
+}
+
+// ── Timers, effects and a helper that holds state ────────────────────────────
+
+/** Debounce, written once: a helper that calls hooks is an ordinary function that takes `ui`. */
+string debounced(Ui ui, string value, i32 ms) {
+  auto out = ui.state(value);
+  ui.effect(value, () => ui.after(ms, () => { out.set(value); }));
+  return out.get();
+}
+
+Node search(Ui ui) {
+  auto q = ui.state("");
+  string slow = debounced(ui, q.get(), 300);
+  return <div><input id="q" oninput={(ElementEvent e) => { q.set(e.value); }}/><p id="slow">{slow}</p></div>;
+}
+
+export string test_a_helper_with_state_debounces() {
+  Check t = Check.create();
+  Rig r = Rig.create();
+  r.view.mount((Ui ui) => search(ui));
+  r.fire("id", "q", "input", "w");
+  r.clock.advance(100);
+  r.fire("id", "q", "input", "wa");
+  r.clock.advance(100);
+  r.fire("id", "q", "input", "wac");
+  r.clock.advance(299);
+  t.eqStr(r.doc.shown(r.doc.find("id", "slow")), "", "before it settled");
+  r.clock.advance(1);
+  t.eqStr(r.doc.shown(r.doc.find("id", "slow")), "wac", "after");
+  t.eqI32(r.clock.due.len(), 0, "no timer left");
+  return t.report();
+}
+
+Node Ticker(Ui ui) {
+  auto n = ui.state(0);
+  ui.effect("once", () => ui.every(1000, () => { n.update((i32 x) => x + 1); }));
+  return <p id="tick">{"\{n.get()}"}</p>;
+}
+
+Node clockPage(Ui ui) {
+  auto show = ui.state(true);
+  Node shown = show.get() ? <Ticker/> : <p>hidden</p>;
+  return <div><button id="toggle" onclick={(ElementEvent e) => { show.set(!show.get()); }}>toggle</button>{shown}</div>;
+}
+
+export string test_a_timer_stops_when_its_component_goes() {
+  Check t = Check.create();
+  Rig r = Rig.create();
+  r.view.mount((Ui ui) => clockPage(ui));
+  r.clock.advance(3000);
+  t.eqStr(r.doc.shown(r.doc.find("id", "tick")), "3", "after three seconds");
+  r.fire("id", "toggle", "click", "");
+  i32 from = r.from();
+  r.clock.advance(5000);
+  t.eqStr(r.since(from), "", "rendered after it went");
+  t.eqI32(r.doc.find("id", "tick"), 0 - 1, "the clock is gone");
+  return t.report();
+}
+
+// ── Async ────────────────────────────────────────────────────────────────────
+
+async void slowIncrement(State<i32> n, Ticket<i32> go) {
+  await go;
+  n.update((i32 x) => x + 1);
+}
+
+export string test_an_awaiting_handler_loses_no_other_update() {
+  Check t = Check.create();
+  Rig r = Rig.create();
+  Runner runner = Runner.create();
+  schedule runner.take;
+  Ticket<i32> go;
+  r.view.mount((Ui ui) => {
+    auto n = ui.state(0);
+    return <div>
+      <b>{"\{n.get()}"}</b>
+      <button id="slow" onclick={(ElementEvent e) => { slowIncrement(n, go); }}>slow</button>
+      <button id="now" onclick={(ElementEvent e) => { n.set(n.get() + 1); }}>+1</button>
+    </div>;
+  });
+  r.fire("id", "slow", "click", "");
+  r.fire("id", "now", "click", "");
+  r.fire("id", "now", "click", "");
+  go.resolve(0);
+  runner.drain();
+  r.view.turn();
+  t.eqStr(r.doc.shown(r.doc.findTag("b")), "3", "both kinds of update");
+  return t.report();
+}
+
+// ── A cell handed to a child ─────────────────────────────────────────────────
+
+Node Show(Ui ui, State<i32> n) { return <b>{"\{n.get()}"}</b>; }
+
+export string test_a_cell_handed_to_a_child_is_compared_by_its_version() {
+  Check t = Check.create();
+  Rig r = Rig.create();
+  r.view.mount((Ui ui) => {
+    auto n = ui.state(0);
+    return <div><Show n={n}/><button id="plus" onclick={(ElementEvent e) => { n.set(n.get() + 1); }}>+1</button></div>;
+  });
+  r.fire("id", "plus", "click", "");
+  r.fire("id", "plus", "click", "");
+  t.eqStr(r.doc.shown(r.doc.findTag("b")), "2", "the child shows the cell as it is");
+  return t.report();
+}
+
+// ── The document keeps what the user typed ───────────────────────────────────
+
+export string test_a_value_the_program_had_not_seen_typed_is_not_written_over() {
+  Check t = Check.create();
+  Rig r = Rig.create();
+  r.view.mount((Ui ui) => {
+    auto v = ui.state("");
+    return <input id="f" value={v.get()} oninput={(ElementEvent e) => { v.set(e.value.slice(0, 1)); }}/>;
+  });
+  i32 f = r.doc.find("id", "f");
+  // The user types twice; the program has seen the first event when it renders for it, and not the
+  // second, which the document records as newer — so the program's value for the first is dropped.
+  r.doc.seq = r.doc.seq + 1;
+  TestNode field = r.doc.at(f);
+  field.typed = r.doc.seq + 1;
+  r.es.deliver(r.doc.seq, "input", f, f, "ab", 0, 0, 0);
+  t.eqStr(r.doc.attr(f, ".value") ?? "unset", "", "a value older than the typing is dropped, and the first render's stays");
+  return t.report();
+}

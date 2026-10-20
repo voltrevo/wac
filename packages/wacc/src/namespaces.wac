@@ -730,8 +730,14 @@ struct NsBindings {
   }
 }
 
-/** The relative specifier from file `from` to file `to` — both keys in one coordinate system. */
+/**
+ * The specifier from file `from` to file `to`: relative when both keys are, and `to` itself when only
+ * it is absolute — a file under a mapped package's checkout, reached through a namespace the package
+ * re-exports. No `../` climbs from a key relative to the working directory into an absolute one.
+ */
 string relativeSpec(string from, string to) {
+  bool fromAbsolute = from.len() > 0 && from.slice(0, 1) == "/";
+  if (!fromAbsolute && to.len() > 0 && to.slice(0, 1) == "/") { return to; }
   string[] a = splitSlash(from);
   string[] b = splitSlash(to);
   i32 common = 0;
