@@ -796,7 +796,7 @@ i32 lineOfKey(string where) {
  *
  * ## Declaration-only files are not a gap, and the first version said they were
  *
- * `core/read.wac` is one `enum` and `core/jsx.wac` is two `struct`s. Neither holds a line that can
+ * `core/read.wac` is one `enum` and core's markup tree was two `struct`s. Neither holds a line that can
  * execute, so neither contributes a point *however thoroughly it is used* — and the first version of
  * this named both, under a `core` ledger reading 100%, as though something were missing.
  *

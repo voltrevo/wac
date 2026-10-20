@@ -17,11 +17,12 @@
 // That is the whole of what this file adds, and it is the case `issues/system/0205` was filed about —
 // "a package that lost half its coverage was reported as passing".
 //
-// ## Two of the seven files are not in the table, and that is right
+// ## A file not in the table, and that is right
 //
-// `core/jsx.wac` and `core/read.wac` do not appear. They declare types and nothing else — `Read` is an
-// enum of three variants, `Node` and `Attr` are the tree JSX builds — so they hold no branch points at
-// all, and a file with no executable code contributes nothing to cover.
+// `core/read.wac` does not appear. It declares a type and nothing else — `Read` is an enum of three
+// variants — so it holds no branch points at all, and a file with no executable code contributes nothing
+// to cover. (Core's markup tree was the other such file, until `design/lang/0017` moved it to
+// `packages/web`.)
 //
 // Worth writing down because it looks exactly like the failure this issue has now found twice:
 // `packages/http`'s `proxy.wac` was absent from its report with eighty-six branch points in it, and

@@ -31,7 +31,7 @@ capabilities. D4's own list names neither.
 `platform.wac` uses lambdas. The reference compiler has none, so it does not carry this tree —
 compiler/README.md holds that row, the ninth of its omissions. wacc carries the tree in full.
 
-This is the same mechanism as `core/jsx.wac`, which the reference also does not get: which compiler
+This is the same mechanism core's markup tree used, which the reference also did not get: which compiler
 gets which file is expressed by which list it is in, in `tools/wac/gencore.wac`, and the embedding
 is generated from this directory. Do not edit it by hand:
 

@@ -14,7 +14,7 @@ Markup is syntax that lowers to calls, and **the spec names no tree type**. What
 `{child}`, a quoted tag or a fragment becomes is decided by the library the tag came from, through symbols
 `core` designates, as `"\{x}"` is decided by `toString`. So:
 
-- **`core` holds symbols and no markup types.** `core/jsx.wac` (`Node`, `Attr`) and `core/html.wac` (the tag
+- **`core` holds symbols and no markup types.** Its `jsx.wac` (`Node`, `Attr`) and `html.wac` (the tag
   functions) leave it, and so does `toNode`.
 - **The trees are libraries.** `packages/web` carries a static tree — `Node`, `Attr`, the tags as the
   namespace `html`, `htmlOf` — and the view (0012) a tree with handlers and components; a module gets
@@ -140,7 +140,7 @@ the point — they hold different things — and a function from one to the othe
    against a tree that is not `core`'s.
 2. **The static tree in `packages/web`**: `Node`, `Attr`, the tag functions and `htmlOf`, implementing the
    symbols. Port the importers.
-3. **Delete** `core/jsx.wac`, `core/html.wac`, `toNode`, ch43, and their rows in `tools/wac/gencore.wac`.
+3. **Delete** core's `jsx.wac` and `html.wac`, `toNode`, ch43, and their rows in `tools/wac/gencore.wac`.
 4. **`markup.component` and `markup.snapshot`**, with the cases from 0012's prototype: a skipped row, a stale
    handler, a cell attribute by version. This is the step 0012's view waits on.
 

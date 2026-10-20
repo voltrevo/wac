@@ -41,7 +41,7 @@ Measured or read, 2026-10-18, at 5133ae836:
   layer would.
 - **The DOM is an ambient network capability.** `<img src="https://elsewhere/?secret">`, a CSS `url()` or a
   link sends data off the page. A page program has no `Sys` network grant and can still do this.
-- **The named tags' attribute set is closed** — 39 names in `core/html.wac`, so `<div aria-label="…">` is
+- **The named tags' attribute set is closed** — 39 names in core's tag functions (now `packages/web/src/tags.wac`), so `<div aria-label="…">` is
   refused. A quoted tag, `<"div" aria-label="…">`, takes any attribute, which is the same gap from the other
   side: nothing between "39 names" and "anything, `onerror` included".
 
