@@ -7005,18 +7005,24 @@ void checkJsx(C c, Expr e, string want, i32 tagTok, i32 closeTok, JsxAttr[] attr
     }
   }
   for (i32 i = 0; i < kids.len(); i++) {
-    // A nested quoted tag or fragment builds the child type; a `{e}` is whatever it is, and is then
-    // the child type, an array of it, or text — so nothing is expected of it.
-    bool nested = false;
-    match (kids[i].kind) {
-      Jsx(nt, nc, na, nk): { nested = true; }
-      default: { }
-    }
-    c.expected = nested ? k : typeNone();
+    // A nested quoted tag or fragment builds the child type, and so does one that is an arm of a
+    // conditional there — `{open ? <b>x</b> : <></>}` — as it would assigned to a variable of that type.
+    // Any other `{e}` is whatever it is, and is then the child type, an array of it, or text — so
+    // nothing is expected of it.
+    c.expected = markupHeaded(kids[i]) ? k : typeNone();
     checkExpr(c, kids[i]);
     checkJsxChild(c, kids[i], k);
   }
   c.expected = typeNone();
+}
+
+/** Whether `e` is markup, or a conditional with markup for an arm — a child that builds its tag's child type. */
+bool markupHeaded(Expr e) {
+  match (e.kind) {
+    Jsx(nt, nc, na, nk): { return true; }
+    Ternary(cond, then, els): { return markupHeaded(then) || markupHeaded(els); }
+    default: { return false; }
+  }
 }
 
 /** The type a quoted tag or a fragment was checked to build, found by the node it is. */

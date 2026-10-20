@@ -164,7 +164,7 @@ export string relativeTo(string from, string to) {
 export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string spawn, bool dev) {
   string w = "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
            + "import { main" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
-           + "import { Dom, Page, System, World, answered, elementEvent, fileArrived, timerFired, valueArrived"
+           + "import { Dom, Page, System, World, answered, elementEvent, fileArrived, located, timerFired, valueArrived"
            + (spawn != "" ? ", Process, processAnswered" : "")
            + " } from \"\{pageSpec}\";\n\n"
            + "export struct PageHost {\n"
@@ -218,6 +218,8 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
            }
 
            void value(this, i32 req, string value) { valueArrived(this.page, req, value); }
+
+           void located(this, string hash) { located(this.page, hash); }
          }
          """ + spawned;
 }
@@ -228,7 +230,7 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
  * program does — in a worker, or on the page — and touches nothing of the document itself. Timers
  * and the clock are here because a worker has both; a frame is the document's to give.
  *
- * `wacProgram(post)` starts the program and answers `receive`. A buffer is handed over rather than
+ * `wacProgram(post, hash)` starts the program at location `hash` and answers `receive`. A buffer is handed over rather than
  * copied when it is the whole of its own memory, which is what `wac bindgen` gives a `u8[]`.
  */
 export string programSide() {
@@ -236,7 +238,7 @@ export string programSide() {
   string make = "const makeHost = (dom) => PageHost.create(dom, wacSystem((...a) => host.answer(...a), "
               + "{ child: false, args: [], cwd: \"/\", post: null }));\n";
   return """
-      const wacProgram = (post) => {
+      const wacProgram = (post, where) => {
         let host = null;
       """ + make + """
       
@@ -266,6 +268,7 @@ export string programSide() {
           (req, id) => send(["valueOf", req, id]),
           (id, w, h, rgba) => send(["pixels", id, w, h, rgba], own(rgba)),
           (id, x, y, w, h, rgba) => send(["pixelsIn", id, x, y, w, h, rgba], own(rgba)),
+          (id, named) => send(["scroll", id, named]),
         );
         const dom = Dom.of(
           elements,
@@ -277,6 +280,7 @@ export string programSide() {
           (name, bytes) => send(["download", name, bytes], own(bytes)),
         );
         host = makeHost(dom);
+        host.located(where);
         host.start();
         return (m) => {
           switch (m[0]) {
@@ -284,6 +288,7 @@ export string programSide() {
             case "file": host.file(m[1], m[2], m[3], m[4]); break;
             case "value": host.value(m[1], m[2]); break;
             case "el": host.element(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]); break;
+            case "where": host.located(m[1]); break;
           }
         };
       };
@@ -658,6 +663,12 @@ export string documentSide() {
             blit(el.getContext("2d"), w, h, rgba, 0, 0);
           },
           pixelsIn: (id, x, y, w, h, rgba) => { const el = nodes.get(id); if (el) blit(el.getContext("2d"), w, h, rgba, x, y); },
+          // Under the handle's own element only: a name reaches no further than the handle does.
+          scroll: (id, named) => {
+            const n = nodes.get(id);
+            const el = !n || named === "" ? n : [...n.querySelectorAll("[id]")].find((e) => e.id === named);
+            if (el && el.scrollIntoView) el.scrollIntoView({ block: "start" });
+          },
           valueOf: (req, id) => {
             const n = nodes.get(id);
             const value = n && "value" in n ? String(n.value) : "";
@@ -682,6 +693,8 @@ export string documentSide() {
           }
         };
         root.addEventListener("change", (ev) => { if (ev.target?.files) take(ev.target.files); });
+        // A link to `#/somewhere`, and the browser's back and forward, move the location; the program follows.
+        addEventListener("hashchange", () => emit(["where", location.hash]));
         // Without preventing dragover a dropped file replaces the page.
         document.addEventListener("dragover", (ev) => ev.preventDefault());
         document.addEventListener("drop", (ev) => { ev.preventDefault(); take(ev.dataTransfer?.files); });
@@ -708,7 +721,7 @@ export string workerIndexFor(string title, string module, bool spawn) {
        + "onmessage = (e) => {\n"
        + "  if (receive !== null) return receive(e.data);\n"
        + "  receive = e.data[0] === \"init\" ? wacChild(e.data[1])\n"
-       + "    : wacProgram((m, transfer) => postMessage(m, transfer ?? []));\n"
+       + "    : wacProgram((m, transfer) => postMessage(m, transfer ?? []), e.data[1]);\n"
        + "};\n</script>\n"
        + documentScript(documentSide()
        + """
@@ -717,7 +730,7 @@ export string workerIndexFor(string title, string module, bool spawn) {
          const apply = wacDocument(document.getElementById("app"), (m, transfer) => worker.postMessage(m, transfer ?? []));
          worker.onmessage = (e) => apply(e.data);
          worker.onerror = (e) => console.error(e.message);
-         worker.postMessage(["page"]);
+         worker.postMessage(["page", location.hash]);
          """)
        + "</body>\n</html>\n";
 }
@@ -729,7 +742,7 @@ export string inPageIndexFor(string title, string module) {
        + """
          let receive = null;
          const apply = wacDocument(document.getElementById("app"), (m) => receive(m));
-         receive = wacProgram((m) => apply(m));
+         receive = wacProgram((m) => apply(m), location.hash);
          """)
        + "</body>\n</html>\n";
 }

@@ -100,8 +100,11 @@ export const isWacTest = (file: string): boolean => file.endsWith("_test.wac");
  * guard that checks nothing is registered outside the lane, still said `packages` — so the guard
  * failed on a file the lane *did* run. That is the same shape as this module's note about
  * `jobsSweep.sh`: a consumer that assembles the list rather than asking for it.
+ *
+ * **`site/wac` since 2026-10-20**: the website is a wac program with tests of its own — that directory
+ * rather than `site/`, whose `node_modules` would be thousands of files walked for none.
  */
-export const LANE_ROOTS = ["packages", "core"];
+export const LANE_ROOTS = ["packages", "core", "site/wac"];
 
 /** Every directory of wac tests the lane walks, across every root. */
 export async function wacLaneDirs(): Promise<string[]> {

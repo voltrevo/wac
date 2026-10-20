@@ -1,0 +1,394 @@
+// The pieces every page of the site is built from, and the one stylesheet they share.
+//
+// Deliberately few. A site that is arguing from evidence wants a small number of shapes used
+// consistently — a section, a table of facts, a code frame, a caveat — because the reader learns
+// what each one means once and then reads the content instead of the furniture.
+//
+// **Each piece is a plain function, not a component**: a page is a function of nothing but the
+// figures it quotes, so there is no state to keep and nothing for the view to match but elements.
+// Their look is classes in `CSS` below rather than a style per element, so a colour or a step in the
+// type scale is decided once — what `site/src/next/tokens.ts` was for the React site.
+
+import { Vec } from "core";
+import { Attr, Node, html.a, html.code, html.div, html.em, html.footer, html.h2, html.h3, html.li, html.main,
+         html.p, html.section, html.span, html.strong, html.style, html.table, html.tbody, html.td, html.th,
+         html.thead, html.tr, html.ul } from "../../packages/web";
+import { highlighted } from "./highlight.wac";
+
+export static string GITHUB = "https://github.com/voltrevo/wac";
+/** A directory in the repository, and a file in it. */
+export static string TREE = "https://github.com/voltrevo/wac/tree/master";
+export static string BLOB = "https://github.com/voltrevo/wac/blob/master";
+/**
+ * The playground, which is still the React site's: an editor is a project of its own. This page is
+ * served beside that site's `index.html`, so `./` is it.
+ */
+export static string PLAYGROUND = "./#/playground";
+
+/** One entry of the navigation: the route it shows, and what it is called. */
+export struct Link {
+  string route;
+  string label;
+}
+
+/**
+ * The pages, in the order the navigation lists them. **`start` first**, because it is the one page a
+ * reader acts on: everything else here answers "is this real", and it answers "what do I type".
+ */
+export Link[] pages() {
+  return [Link("start", "use it"), Link("language", "the language"), Link("spec", "the spec"),
+          Link("run", "run it here"), Link("stack", "the stack"), Link("bootstrap", "the bootstrap"),
+          Link("checked", "how it is checked"), Link("roadmap", "where this is going")];
+}
+
+// ── Text ─────────────────────────────────────────────────────────────────────
+
+/** Inline code. */
+export Node m(Node[] kids) { return <code class="m">{kids}</code>; }
+
+/** A value the reader is meant to weigh: a count, a rate, a size. */
+export Node n(Node[] kids) { return <span class="n">{kids}</span>; }
+
+/** A link; `external` opens it in a new tab. */
+export Node A(Node[] kids, string href, bool? external) {
+  if (external ?? false) { return <a class="link" href={href} target="_blank" rel="noopener">{kids}</a>; }
+  return <a class="link" href={href}>{kids}</a>;
+}
+
+/** A paragraph of prose, at the measure prose is read at — or the whole column, `wide`. */
+export Node P(Node[] kids, bool? wide) {
+  return <p class={(wide ?? false) ? "prose wide" : "prose"}>{kids}</p>;
+}
+
+/** A phrase the page would be worse without. Used sparingly, or it stops meaning anything. */
+export Node Lead(Node[] kids) { return <strong class="lead">{kids}</strong>; }
+
+/** A run of monospace that is not code — a name, a tool. */
+export Node mono(Node[] kids) { return <span class="mono">{kids}</span>; }
+
+// ── Structure ────────────────────────────────────────────────────────────────
+
+/** A section of a page: a heading the contents and links can name, and a small label above it. */
+export Node Section(Node[] kids, string id, string? title, string? kicker) {
+  return <section class="section">
+    {kicker is null ? <></> : <div class="kicker">{kicker!}</div>}
+    {title is null ? <></> : <h2 id={id}>{title!}</h2>}
+    {kids}
+  </section>;
+}
+
+export Node Sub(Node[] kids, string id, string title) {
+  return <div class="sub">
+    <h3 id={id}>{title}</h3>
+    {kids}
+  </div>;
+}
+
+/** A labelled code frame. The label says where the code is from, which is the point. */
+export Node Code(string code, string? label, string? lang) {
+  return <div class="block">
+    {label is null ? <></> : <div class="label">{label!}</div>}
+    {highlighted(code, lang ?? "wac")}
+  </div>;
+}
+
+/** Two code frames side by side, stacking on a narrow screen. */
+export Node Pair(string left, string right, string leftLabel, string rightLabel, string? leftLang, string? rightLang) {
+  return <div class="pair">
+    <Code label={leftLabel} code={left} lang={leftLang ?? "wac"}/>
+    <Code label={rightLabel} code={right} lang={rightLang ?? "wac"}/>
+  </div>;
+}
+
+/** A label and the value beside it, for `Facts`. */
+export struct Fact {
+  string label;
+  string value;
+}
+
+/** A row of facts. Monospace values, because they are meant to be compared rather than read. */
+export Node Facts(Fact[] rows) {
+  Node[] cells = Node[].filled(rows.len(), <></>);
+  for (i32 i = 0; i < rows.len(); i++) {
+    cells[i] = <div class="fact"><div class="value">{rows[i].value}</div><div class="what">{rows[i].label}</div></div>;
+  }
+  return <div class="facts">{cells}</div>;
+}
+
+/**
+ * A table. `head` is optional; a two-column table of claim and evidence usually needs none. `align` is
+ * one letter a column, `l` or `r` — `"lrr"` — and a column it does not reach is left-aligned.
+ */
+export Node Table(Node[][] rows, string[]? head, string? align) {
+  string al = align ?? "";
+  Node[] body = Node[].filled(rows.len(), <></>);
+  for (i32 i = 0; i < rows.len(); i++) {
+    Node[] cells = Node[].filled(rows[i].len(), <></>);
+    for (i32 j = 0; j < rows[i].len(); j++) {
+      string cls = (j == 0 ? "first" : "") + (j < al.len() && al[j] == "r" ? " r" : "");
+      cells[j] = <td class={cls}>{rows[i][j]}</td>;
+    }
+    body[i] = <tr>{cells}</tr>;
+  }
+  Node top = <></>;
+  if (head is not null) {
+    string[] h = head!;
+    Node[] ths = Node[].filled(h.len(), <></>);
+    for (i32 j = 0; j < h.len(); j++) {
+      ths[j] = <th class={j < al.len() && al[j] == "r" ? "r" : ""}>{h[j]}</th>;
+    }
+    top = <thead><tr>{ths}</tr></thead>;
+  }
+  return <div class="table"><table>{top}<tbody>{body}</tbody></table></div>;
+}
+
+/** A cell of plain text, for a row of `Table` that mixes text with markup. */
+export Node t(string s) { return Node.Text(s); }
+
+/** Something the reader must not miss, and which limits a claim made near it. */
+export Node Caveat(Node[] kids, string title) {
+  return <div class="caveat">
+    <div class="title">{title}</div>
+    <div class="body">{kids}</div>
+  </div>;
+}
+
+/**
+ * A program the reader can run — on the React site, where it was an editor that compiled and ran it in
+ * the page. Here it is the program and a way to the playground, until this site has an editor of its own.
+ */
+export Node Runnable(string code, string? label) {
+  return <div class="block">
+    {label is null ? <></> : <div class="label">{label!}</div>}
+    {highlighted(code, "wac")}
+    <div class="runs"><a class="link" href={PLAYGROUND}>run it in the playground →</a></div>
+  </div>;
+}
+
+/** A page the React site still holds: that it is not here yet, and the link to it there. */
+export Node NotYet(string route) {
+  return <Frame current={route}>
+    <Section id="top" kicker="not ported yet" title={"#/" + route}>
+      <P>
+        This page has not been written in wac yet. The React site still has it:{" "}
+        <A href={"./#/" + route}>read it there</A>.
+      </P>
+    </Section>
+  </Frame>;
+}
+
+/** A bulleted list of prose. */
+export Node Bullets(Node[] kids) { return <ul class="bullets">{kids}</ul>; }
+
+// ── Chrome ───────────────────────────────────────────────────────────────────
+
+export Node Wordmark(string? size) {
+  return <span class="wordmark" style={"font-size: " + (size ?? "22") + "px"}>wac<span class="cursor">_</span></span>;
+}
+
+/**
+ * Three parts, and only the middle one is allowed to wrap: the links are their own wrapping group and
+ * take the slack, so the wordmark and the playground link stay on the first line at any width and the
+ * labels flow underneath.
+ */
+Node Nav(string current) {
+  Link[] ps = pages();
+  Node[] links = Node[].filled(ps.len(), <></>);
+  for (i32 i = 0; i < ps.len(); i++) {
+    links[i] = ps[i].route == current
+      ? <"a" href={"#/" + ps[i].route} class="here" aria-current="page">{ps[i].label}</"a">
+      : <a href={"#/" + ps[i].route}>{ps[i].label}</a>;
+  }
+  return <"nav" class="top" aria-label="Pages">
+    <div class="row">
+      <a href="#/" class="home"><Wordmark size="19"/></a>
+      <div class="links">{links}</div>
+      <a href={PLAYGROUND} class="play">playground →</a>
+    </div>
+  </"nav">;
+}
+
+/** A heading of the page: its `id`, its text, and whether it is a subsection. */
+struct Heading {
+  string id;
+  string label;
+  bool sub;
+}
+
+/**
+ * **The page's own headings, read out of what it draws rather than written beside it**: a hand-kept
+ * list of sections type-checks, renders, and silently stops matching the first time somebody adds one.
+ * The React site read them back out of the document after rendering; here they are in the tree before
+ * it is rendered at all.
+ */
+Node Contents(string route, Node[] kids) {
+  Vec<Heading> found = Vec.create();
+  for (Node k in kids) { headingsIn(k, found); }
+  if (found.len() < 5) { return <></>; }
+  Node[] items = Node[].filled(found.len(), <></>);
+  for (i32 i = 0; i < found.len(); i++) {
+    Heading h = found.get(i);
+    items[i] = <li><a class={h.sub ? "sub" : ""} href={"#/" + route + "/" + h.id}>{h.label}</a></li>;
+  }
+  return <"nav" class="contents" aria-label="Contents">
+    <div class="what">On this page</div>
+    <ul>{items}</ul>
+  </"nav">;
+}
+
+void headingsIn(Node n, Vec<Heading> into) {
+  match (n) {
+    Element(tag, attrs, on, kids, ref): {
+      if (tag == "h2" || tag == "h3") {
+        string? id = attrOf(attrs, "id");
+        if (id is not null) { into.push(Heading(id!, trimmed(textOf(n)), tag == "h3")); }
+        return;
+      }
+      for (Node k in kids) { headingsIn(k, into); }
+    }
+    Fragment(kids): { for (Node k in kids) { headingsIn(k, into); } }
+    Text(s): { }
+    Component(name, key, draw, snaps, same): { }
+  }
+}
+
+string? attrOf(Attr[] attrs, string name) {
+  for (Attr a in attrs) { if (a.name == name) { return a.value; } }
+  return null;
+}
+
+/** All the text under `n`, in order. */
+export string textOf(Node n) {
+  match (n) {
+    Text(s): { return s; }
+    Element(tag, attrs, on, kids, ref): { return textOfAll(kids); }
+    Fragment(kids): { return textOfAll(kids); }
+    Component(name, key, draw, snaps, same): { return ""; }
+  }
+}
+
+/** `s` without the spaces and line breaks at either end. */
+string trimmed(string s) {
+  u8[] b = s.toBytes();
+  i32 from = 0;
+  i32 to = b.len();
+  while (from < to && (b[from] == ' ' || b[from] == '\n')) { from++; }
+  while (to > from && (b[to - 1] == ' ' || b[to - 1] == '\n')) { to--; }
+  return s.slice(from, to);
+}
+
+string textOfAll(Node[] kids) {
+  string s = "";
+  for (Node k in kids) { s = s + textOf(k); }
+  return s;
+}
+
+Node Footer() {
+  return <footer class="foot">
+    <a href={PLAYGROUND}>playground</a>
+    <a href="#/spec">spec</a>
+    <a href={GITHUB} target="_blank" rel="noopener">source</a>
+    <a href={TREE + "/packages"} target="_blank" rel="noopener">packages</a>
+    <span class="note">Every snippet is real source from those repositories, abridged only by removing lines.</span>
+  </footer>;
+}
+
+/**
+ * A whole page: the navigation, its contents when it has enough headings, the page, and the footer.
+ * `css` is a stylesheet of the page's own, for a shape no other page draws.
+ */
+export Node Frame(Node[] kids, string current, bool? contents, string? css) {
+  return <div class="site">
+    <style>{CSS}</style>
+    {css is null ? <></> : <style>{css!}</style>}
+    <Nav current={current}/>
+    <div class="column">
+      <main>
+        {(contents ?? true) ? Contents(current, kids) : <></>}
+        {kids}
+      </main>
+      <Footer/>
+    </div>
+  </div>;
+}
+
+// ── The look ─────────────────────────────────────────────────────────────────
+//
+// Near-black, hairlines rather than panels, one accent, monospace for anything that is a fact, and
+// enough space that a claim has room to be read. **One column**, 820px: prose, tables and code all the
+// same width, because a 68ch measure inside a wider page left every paragraph ending short of every
+// table beside it, which reads as a layout bug rather than as a considered measure.
+
+static string CSS = """
+  :root {
+    --bg: #0a0b0e; --panel: #101319; --panel-hi: #151922; --line: #1f242e; --line-bright: #2b3240;
+    --text: #e8eaed; --body: #b8c0cc; --dim: #8b95a5; --faint: #5e6878;
+    --accent: #5eead4; --warm: #f5b544; --cool: #7aa2f7;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  }
+  body { margin: 0; background: var(--bg); }
+  .site { background: var(--bg); min-height: 100vh; color: var(--text); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+  .column { max-width: 820px; margin: 0 auto; padding: 0 24px; }
+  a { color: var(--accent); }
+  .m { font-family: var(--mono); font-size: 0.92em; color: var(--text); background: var(--panel-hi); padding: 1px 5px; border-radius: 3px; }
+  .n { font-family: var(--mono); color: var(--accent); font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--mono); }
+  .link { color: var(--accent); text-decoration: none; border-bottom: 1px solid #5eead444; }
+  .prose { color: var(--body); font-size: 17px; line-height: 1.68; margin: 0 0 28px; max-width: 72ch; }
+  .prose.wide { max-width: none; }
+  .lead { color: var(--text); font-weight: 600; }
+  .section { margin-bottom: 72px; }
+  .kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin-bottom: 10px; }
+  .section h2 { font-family: var(--mono); font-size: 27px; font-weight: 600; color: var(--text); letter-spacing: -0.02em; margin: 0 0 28px; line-height: 1.25; scroll-margin-top: 72px; }
+  .sub { margin-bottom: 48px; }
+  .sub h3 { font-family: var(--mono); font-size: 19px; font-weight: 600; color: var(--text); margin: 0 0 14px; scroll-margin-top: 72px; }
+  .block { margin-bottom: 28px; min-width: 0; }
+  .label { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 6px; }
+  .code { border: 1px solid var(--line); border-radius: 6px; background: #181825; margin: 0; padding: 12px 14px; overflow-x: auto;
+          font-family: var(--mono); font-size: 13px; line-height: 1.5; color: #e2e8f0; white-space: pre; }
+  .code .k { color: #c084fc; } .code .ty { color: #22d3ee; } .code .s { color: #4ade80; } .code .nu { color: #f0abfc; }
+  .code .f { color: #60a5fa; } .code .c { color: #6b7280; font-style: italic; } .code .b { color: #fbbf24; }
+  .code .p { color: #9ca3af; } .code .o { color: #fb923c; }
+  .pair { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-bottom: 28px; }
+  .pair .block { margin-bottom: 0; }
+  .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line);
+           border-radius: 6px; overflow: hidden; margin-bottom: 28px; }
+  .fact { background: var(--panel); padding: 13px 15px; }
+  .fact .value { font-family: var(--mono); font-size: 26px; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1.1; margin-bottom: 5px; }
+  .fact .what { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+  .table { border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; margin-bottom: 28px; }
+  .table table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  .table th { text-align: left; padding: 9px 14px; background: var(--panel); border-bottom: 1px solid var(--line); color: var(--faint);
+              font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+  .table td { padding: 9px 14px; border-bottom: 1px solid var(--line); color: var(--body); text-align: left; vertical-align: top; line-height: 1.5; }
+  .table td.first { color: var(--text); }
+  .table .r { text-align: right; }
+  .caveat { border-left: 2px solid var(--warm); background: #f5b5440d; padding: 14px 18px; border-radius: 0 4px 4px 0; margin-bottom: 28px; }
+  .caveat .title { font-family: var(--mono); font-size: 13px; color: var(--warm); margin-bottom: 6px; }
+  .caveat .body { color: var(--body); font-size: 15px; line-height: 1.6; }
+  .bullets { color: var(--body); font-size: 17px; line-height: 1.68; margin: 0 0 28px; max-width: 72ch; padding-left: 22px; }
+  .bullets li { margin-bottom: 8px; }
+  .wordmark { font-family: var(--mono); font-weight: 700; color: var(--text); letter-spacing: -0.03em; }
+  .wordmark .cursor { color: var(--accent); }
+  nav.top { position: sticky; top: 0; z-index: 10; background: #0a0b0ef2; backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); margin-bottom: 56px; }
+  nav.top .row { max-width: 820px; margin: 0 auto; padding: 13px clamp(14px, 2.4vw, 24px); display: flex; gap: clamp(11px, 2.1vw, 22px);
+                 align-items: baseline; font-size: clamp(12.5px, 1.6vw, 14px); font-family: var(--mono); }
+  nav.top .home { text-decoration: none; flex-shrink: 0; }
+  nav.top .links { display: flex; flex-wrap: wrap; gap: clamp(11px, 2.1vw, 22px); align-items: baseline; flex: 1 1 auto; min-width: 0; }
+  nav.top .links a { color: var(--dim); text-decoration: none; border-bottom: 1px solid transparent; padding-bottom: 3px; }
+  nav.top .links a.here { color: var(--text); border-bottom-color: var(--accent); }
+  nav.top .play { color: var(--accent); text-decoration: none; flex-shrink: 0; }
+  nav.contents { border: 1px solid var(--line); border-radius: 6px; padding: 14px 18px; margin-bottom: 72px; }
+  nav.contents .what { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-bottom: 9px; }
+  nav.contents ul { list-style: none; margin: 0; padding: 0; columns: 2 230px; column-gap: 30px; }
+  nav.contents li { break-inside: avoid; margin-bottom: 3px; }
+  nav.contents a { color: var(--text); font-size: 14px; text-decoration: none; line-height: 1.65; font-family: var(--mono); }
+  nav.contents a.sub { color: var(--dim); font-size: 13px; padding-left: 15px; font-family: var(--sans); }
+  footer.foot { border-top: 1px solid var(--line); margin-top: 72px; padding: 26px 0 60px; display: flex; gap: 22px; flex-wrap: wrap;
+                font-size: 13px; color: var(--faint); font-family: var(--mono); }
+  footer.foot a { color: var(--dim); text-decoration: none; }
+  footer.foot .note { margin-left: auto; max-width: 48ch; line-height: 1.6; }
+  em { font-style: italic; }
+  .runs { font-family: var(--mono); font-size: 13px; margin-top: 8px; }
+""";

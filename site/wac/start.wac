@@ -1,0 +1,6 @@
+// Not ported yet: the React site's `site/src/next/Start.tsx`.
+
+import { Node } from "../../packages/web";
+import { NotYet } from "./ui.wac";
+
+export Node Start() { return <NotYet route="start"/>; }

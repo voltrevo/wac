@@ -1,0 +1,125 @@
+// Code, coloured: a frame of source as spans whose classes `ui.wac`'s stylesheet colours.
+//
+// **A scanner, not a parser**, and deliberately the same one for wac and TypeScript: the site shows
+// short excerpts that are read, never edited, and what makes them readable is that comments, strings,
+// keywords, types and calls look different. Both languages are C-family, so one set of rules covers
+// them; each keeps its own keyword list. `text` is program output and is not coloured at all.
+
+import { Vec } from "core";
+import { Node, html.code, html.pre, html.span } from "../../packages/web";
+
+/** `src` as a code frame, coloured as `lang` — `"wac"`, `"ts"` or `"text"`. */
+export Node highlighted(string src, string lang) {
+  if (lang == "text") { return <pre class="code"><code>{src}</code></pre>; }
+  return <pre class="code"><code>{spans(src, lang == "ts")}</code></pre>;
+}
+
+/** The runs of `src`: a span for each coloured token, and plain text between them. */
+export Node[] spans(string src, bool ts) {
+  u8[] b = src.toBytes();
+  Vec<Node> out = Vec.create();
+  i32 plain = 0;
+  i32 i = 0;
+  while (i < b.len()) {
+    u8 c = b[i];
+    i32 end = i;
+    string cls = "";
+    if (c == '/' && i + 1 < b.len() && b[i + 1] == '/') {
+      end = i;
+      while (end < b.len() && b[end] != '\n') { end++; }
+      cls = "c";
+    } else if (c == '/' && i + 1 < b.len() && b[i + 1] == '*') {
+      end = i + 2;
+      while (end + 1 < b.len() && !(b[end] == '*' && b[end + 1] == '/')) { end++; }
+      end = end + 1 < b.len() ? end + 2 : b.len();
+      cls = "c";
+    } else if (c == '"' || c == '\'' || (ts && c == '`')) {
+      end = quoted(b, i);
+      cls = "s";
+    } else if (isDigit(c)) {
+      end = i;
+      while (end < b.len() && (isWord(b[end]) || b[end] == '.')) { end++; }
+      cls = "nu";
+    } else if (isWordStart(c)) {
+      end = i;
+      while (end < b.len() && isWord(b[end])) { end++; }
+      string w = src.slice(i, end);
+      i32 after = end;
+      while (after < b.len() && b[after] == ' ') { after++; }
+      if (isKeyword(w, ts)) { cls = "k"; }
+      else if (w == "true" || w == "false" || w == "null" || w == "undefined") { cls = "b"; }
+      else if (isTypeName(w)) { cls = "ty"; }
+      else if (after < b.len() && b[after] == '(') { cls = "f"; }
+    } else if (isOperator(c)) {
+      end = i;
+      while (end < b.len() && isOperator(b[end]) && !(b[end] == '/' && end + 1 < b.len() && (b[end + 1] == '/' || b[end + 1] == '*'))) {
+        end++;
+      }
+      cls = "o";
+    } else if (c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']' || c == ';' || c == ',' || c == '.') {
+      end = i + 1;
+      cls = "p";
+    } else {
+      end = i + 1;
+    }
+    if (cls != "") {
+      if (plain < i) { out.push(Node.Text(src.slice(plain, i))); }
+      out.push(<span class={cls}>{src.slice(i, end)}</span>);
+      plain = end;
+    }
+    i = end;
+  }
+  if (plain < b.len()) { out.push(Node.Text(src.slice(plain, b.len()))); }
+  Node[] all = Node[].filled(out.len(), Node.Text(""));
+  for (i32 k = 0; k < out.len(); k++) { all[k] = out.get(k); }
+  return all;
+}
+
+/** Where the literal opening at `i` ends: past its closing quote, or at the end of the line. */
+i32 quoted(u8[] b, i32 i) {
+  u8 q = b[i];
+  // A block string, `"""…"""`.
+  if (q == '"' && i + 2 < b.len() && b[i + 1] == '"' && b[i + 2] == '"') {
+    i32 j = i + 3;
+    while (j + 2 < b.len() && !(b[j] == '"' && b[j + 1] == '"' && b[j + 2] == '"')) { j++; }
+    return j + 2 < b.len() ? j + 3 : b.len();
+  }
+  i32 j = i + 1;
+  while (j < b.len() && b[j] != q && (q == '`' || b[j] != '\n')) {
+    if (b[j] == '\\') { j++; }
+    j++;
+  }
+  return j < b.len() && b[j] == q ? j + 1 : j;
+}
+
+bool isDigit(u8 c) { return c >= '0' && c <= '9'; }
+bool isWordStart(u8 c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || c == '@'; }
+bool isWord(u8 c) { return isWordStart(c) || isDigit(c); }
+bool isOperator(u8 c) {
+  return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '=' || c == '<' || c == '>' || c == '!'
+      || c == '&' || c == '|' || c == '^' || c == '?' || c == ':' || c == '~';
+}
+
+/** A type: a built-in one, or a name that starts with a capital. */
+bool isTypeName(string w) {
+  if (w == "i8" || w == "i16" || w == "i32" || w == "i64" || w == "u8" || w == "u16" || w == "u32" || w == "u64"
+      || w == "f32" || w == "f64" || w == "bool" || w == "string" || w == "void" || w == "anyref" || w == "fn"
+      || w == "number" || w == "boolean") {
+    return true;
+  }
+  u8 c = w.toBytes()[0];
+  return c >= 'A' && c <= 'Z';
+}
+
+bool isKeyword(string w, bool ts) {
+  if (w == "if" || w == "else" || w == "for" || w == "while" || w == "return" || w == "break" || w == "continue"
+      || w == "import" || w == "export" || w == "from" || w == "const" || w == "new" || w == "in" || w == "as"
+      || w == "async" || w == "await" || w == "match" || w == "struct" || w == "enum" || w == "static"
+      || w == "this" || w == "is" || w == "not" || w == "trap" || w == "auto" || w == "private" || w == "symbol"
+      || w == "schedule" || w == "switch" || w == "case" || w == "default" || w == "do" || w == "matches") {
+    return true;
+  }
+  return ts && (w == "function" || w == "let" || w == "var" || w == "type" || w == "interface" || w == "class"
+      || w == "extends" || w == "implements" || w == "typeof" || w == "of" || w == "throw" || w == "try"
+      || w == "catch" || w == "finally" || w == "yield" || w == "readonly" || w == "keyof" || w == "declare");
+}

@@ -1,0 +1,121 @@
+// The site, without a browser: every route renders, the locations a link can hold are taken apart the
+// way the React site took them apart, and every link from one page of the site to another lands on a
+// page that exists and a heading that page draws.
+//
+// **A link to a heading that is not there is the failure this exists for.** The browser follows it
+// without complaint — the page opens at its top — and nothing about the page that wrote it looks wrong.
+// The React site's `site/tools/site.test.ts` checked the same of its own pages.
+
+import { Vec } from "core";
+import { T } from "../../../packages/wactest/src/assert.wac";
+import { Attr, Node, Page, TestDoc, Ui, located } from "../../../packages/web";
+import { App, Where, pageOf, parse, routes } from "../main.wac";
+
+export string test_a_location_is_a_page_a_chapter_and_a_heading() {
+  T t = T.create();
+  Where w = parse("/checked/oracles");
+  t.eqStr(w.route + "|" + w.chapter + "|" + w.anchor, "checked||oracles", "a page and a heading");
+  w = parse("/spec/strings/indexing");
+  t.eqStr(w.route + "|" + w.chapter + "|" + w.anchor, "spec|strings|indexing", "the spec has a chapter between them");
+  w = parse("");
+  t.eqStr(w.route + "|" + w.anchor, "|", "no hash is the front page");
+  w = parse("/built");
+  t.eqStr(w.route, "stack", "a route that moved goes where it moved to");
+  w = parse("/nowhere/at-all");
+  t.eqStr(w.route + "|" + w.anchor, "|", "an unknown page is the front page, with no heading");
+  return t.report();
+}
+
+/** Every `href` under `n` that is a location on this site — `#/…`. */
+void linksIn(Node n, Vec<string> into) {
+  match (n) {
+    Element(tag, attrs, on, kids, ref): {
+      for (Attr a in attrs) {
+        if (a.name == "href" && a.value.indexOf("#/") == 0) { into.push(a.value.slice(1, a.value.len())); }
+      }
+      for (Node k in kids) { linksIn(k, into); }
+    }
+    Fragment(kids): { for (Node k in kids) { linksIn(k, into); } }
+    Text(s): { }
+    Component(name, key, draw, snaps, same): { }
+  }
+}
+
+/** Every `id` under `n`. */
+void idsIn(Node n, Vec<string> into) {
+  match (n) {
+    Element(tag, attrs, on, kids, ref): {
+      for (Attr a in attrs) { if (a.name == "id") { into.push(a.value); } }
+      for (Node k in kids) { idsIn(k, into); }
+    }
+    Fragment(kids): { for (Node k in kids) { idsIn(k, into); } }
+    Text(s): { }
+    Component(name, key, draw, snaps, same): { }
+  }
+}
+
+bool has(Vec<string> v, string s) {
+  for (i32 i = 0; i < v.len(); i++) { if (v.get(i) == s) { return true; } }
+  return false;
+}
+
+export string test_every_link_between_pages_lands_on_a_page_and_a_heading_it_draws() {
+  T t = T.create();
+  string[] all = routes();
+  i32 checked = 0;
+  for (string r in all) {
+    Vec<string> links = Vec.create();
+    linksIn(pageOf(parse("/" + r)), links);
+    for (i32 i = 0; i < links.len(); i++) {
+      string link = links.get(i);
+      Where w = parse(link);
+      // An unknown page parses as the front page; a link that names one is the mistake.
+      if (w.route == "" && link != "/" && link != "") {
+        t.isTrue(false, "#/" + r + " links to " + link + ", which is no page");
+        continue;
+      }
+      if (w.anchor == "" || w.route == "spec") { continue; }
+      Vec<string> ids = Vec.create();
+      idsIn(pageOf(w), ids);
+      t.isTrue(has(ids, w.anchor), "#/" + r + " links to " + link + ", and #/" + w.route + " draws no heading " + w.anchor);
+      checked++;
+    }
+  }
+  t.isTrue(checked > 0, "some link names a heading, or this checked nothing");
+  return t.report();
+}
+
+export string test_no_page_draws_one_id_twice() {
+  T t = T.create();
+  string[] all = routes();
+  for (string r in all) {
+    Vec<string> ids = Vec.create();
+    idsIn(pageOf(parse("/" + r)), ids);
+    for (i32 i = 0; i < ids.len(); i++) {
+      for (i32 j = 0; j < i; j++) {
+        t.isTrue(ids.get(i) != ids.get(j), "#/" + r + " draws the id " + ids.get(i) + " twice");
+      }
+    }
+  }
+  return t.report();
+}
+
+export string test_the_site_follows_the_location_and_draws_each_page() {
+  T t = T.create();
+  TestDoc doc = TestDoc.create();
+  Page page = Page.create(doc.dom());
+  doc.attach(page);
+  located(page, "#/checked/mutation");
+  schedule page.take;
+  page.mount((Ui ui) => <App page={page}/>);
+  page.turn();
+  t.isTrue(doc.find("id", "mutation") >= 0, "a link to a heading opens the page that draws it");
+  t.eqStr(doc.scrolled, "0 mutation", "scrolled to that heading");
+  string[] all = routes();
+  for (string r in all) {
+    located(page, "#/" + r);
+    t.isTrue(doc.findTag("main") >= 0, "#/" + r + " drew a page");
+    t.eqStr(doc.scrolled, "0 ", "#/" + r + " opened at its top");
+  }
+  return t.report();
+}

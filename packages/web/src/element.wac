@@ -87,6 +87,8 @@ export struct ElementOps {
   fn<void(i32, i32, i32, u8[])> pixels;
   /** Draw `rgba`, `w` by `h`, into canvas `id` with its corner at `x`, `y`. */
   fn<void(i32, i32, i32, i32, i32, u8[])> pixelsIn;
+  /** Scroll `id` into view — or, when `named` is not empty, the element under it whose `id` attribute that is. */
+  fn<void(i32, string)> scroll;
 
   /** A document that records nothing — for a test, which replaces the functions it watches. */
   ElementOps inert() {
@@ -95,7 +97,8 @@ export struct ElementOps {
       (i32 id, string text) => { }, (i32 id, string name, string value, bool present) => { },
       (i32 id, string name, string value, i32 seen) => { }, (i32 id, i32 before) => { }, (i32 id) => { },
       (i32 id, string kind, string prevent) => { }, (i32 id) => { }, (i32 req, i32 id) => { },
-      (i32 id, i32 w, i32 h, u8[] rgba) => { }, (i32 id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => { }
+      (i32 id, i32 w, i32 h, u8[] rgba) => { }, (i32 id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => { },
+      (i32 id, string named) => { }
     );
   }
 }
@@ -262,6 +265,23 @@ export struct Element {
   void focus(this) {
     this.alive("focus");
     this.es.ops.focus(this.id);
+  }
+
+  /** Scroll the page until this element's top is at the top of the window, as far as it will go. */
+  void scrollIntoView(this) {
+    this.alive("scrollIntoView");
+    this.es.ops.scroll(this.id, "");
+  }
+
+  /**
+   * Scroll to the element under this one whose `id` attribute is `named` — a heading a link named, which
+   * the program drew but holds no handle to. Nothing happens when there is none. Only this element's
+   * subtree is searched, so this names nothing a handle to the element did not already reach.
+   */
+  void scrollToId(this, string named) {
+    this.alive("scrollToId");
+    if (named == "") { trap "Element.scrollToId: an empty name names nothing — scrollIntoView scrolls to the element itself"; }
+    this.es.ops.scroll(this.id, named);
   }
 
   /** Draw `rgba` — `w` by `h`, four bytes a pixel, row by row — as all of this canvas, sized to match. */

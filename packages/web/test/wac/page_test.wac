@@ -5,7 +5,8 @@
 
 import { Check } from "./check.wac";
 import { Ticket, Vec } from "core";
-import { Dom, Element, ElementEvent, ElementOps, Listen, Node, Page, Ui, elementEvent, timerFired, valueArrived } from "../../src/page.wac";
+import { Dom, Element, ElementEvent, ElementOps, Listen, Node, Page, TestDoc, Ui, elementEvent, located, timerFired,
+         valueArrived } from "../../src/page.wac";
 import { html.button, html.p } from "../../src/page.wac";
 
 /** What the fake document saw, as one line per call. */
@@ -276,5 +277,48 @@ export string test_a_checking_page_logs_what_its_view_does_not_show() {
   elementEvent(page, 1, "click", 3, 3, "", 0, 0, 0);
   t.isTrue(seen.log.indexOf("log view check: Tally renders the text \"1\" where the page shows \"0\"") >= 0,
            "the page logged the component whose state changed without a set: " + seen.log);
+  return t.report();
+}
+
+/** The route a page shows, as a component follows it: the location when it mounted, then each change. */
+Node Route(Ui ui, Page page) {
+  auto at = ui.state(page.location());
+  ui.effect("", () => page.onLocation((string where) => { at.set(where); }));
+  return <p>{at.get()}</p>;
+}
+
+export string test_the_location_is_the_hash_the_host_said_and_each_change_reaches_who_watches() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.create();
+  Page page = Page.create(doc.dom());
+  doc.attach(page);
+  located(page, "#/stack/oracles");
+  t.eqStr(page.location(), "/stack/oracles", "without its #");
+  schedule page.take;
+  page.mount((Ui ui) => <Route page={page}/>);
+  page.turn();
+  t.eqStr(doc.shown(0), "/stack/oracles", "a component starts from it");
+  string heard = "";
+  fn<void()> stop = page.onLocation((string where) => { heard = heard + where + ";"; });
+  located(page, "#/spec");
+  t.eqStr(doc.shown(0), "/spec", "and renders again when it changes");
+  stop();
+  located(page, "");
+  t.eqStr(heard, "/spec;", "a watcher stopped hears nothing more");
+  t.eqStr(page.location(), "", "an empty hash is the empty location");
+  t.eqStr(doc.shown(0), "", "the component heard that too");
+  return t.report();
+}
+
+export string test_an_element_scrolls_itself_or_a_named_element_under_it_into_view() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.create();
+  Page page = Page.create(doc.dom());
+  doc.attach(page);
+  Element box = page.root().append("div");
+  page.root().scrollToId("oracles");
+  t.eqStr(doc.scrolled, "0 oracles", "the element under the root with that id");
+  box.scrollIntoView();
+  t.eqStr(doc.scrolled, "1 ", "the element itself");
   return t.report();
 }

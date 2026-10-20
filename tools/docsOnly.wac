@@ -32,7 +32,7 @@
 //
 // **`vision/` is documentary whatever the extension is.** It holds `.wac` files describing a
 // language this compiler does not implement — nothing builds them, no walker reaches them
-// (`laneRoots` is `packages` and `core`; the Deno walks root at `packages`, `harness` and `tools`),
+// (`laneRoots` is `packages`, `core` and `site/wac`; the Deno walks root at `packages`, `harness` and `tools`),
 // and `vision/README.md` says outright that nothing here is checked by anything. Judging them by
 // extension would make every vision push non-documentary for code that cannot compile.
 //

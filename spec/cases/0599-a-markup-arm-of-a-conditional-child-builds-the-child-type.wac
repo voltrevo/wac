@@ -1,0 +1,28 @@
+// expect: f() = 3
+// why: a `{e}` child's markup builds the tag's child type; markup that is an arm of a conditional there
+//      builds it too, as it does when the conditional is assigned to a variable of that type
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { markup } from "core";
+enum Tree {
+  Leaf(string text),
+  Many(Tree[] kids),
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.fragment](Tree[] kids) { return Tree.Many(kids); }
+  i32 size(const this) {
+    match (this) {
+      Leaf(t): { return 1; }
+      Many(kids): {
+        i32 n = 0;
+        for (Tree k in kids) { n += k.size(); }
+        return n;
+      }
+    }
+  }
+}
+Tree list(Tree[] kids) { return Tree.Many(kids); }
+Tree b(Tree[] kids) { return Tree.Many(kids); }
+export i32 f() {
+  bool yes = true;
+  Tree t = <list>{yes ? <b>x</b> : <></>}{!yes ? <b>y</b> : <>z</>}<b>w</b></list>;
+  return t.size();
+}

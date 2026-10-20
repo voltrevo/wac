@@ -85,7 +85,7 @@ import { guardCodeCache, freeCaches, sweepStaleTemp, reapStaleDaemons, dropUnrea
 import { quoted } from "../packages/wactest/src/childenv.wac";
 
 /** The roots the lane walks — `harness/testLane.ts`'s `LANE_ROOTS`, and one list for its reason. */
-string[] laneRoots() { return ["packages", "core"]; }
+string[] laneRoots() { return ["packages", "core", "site/wac"]; }
 
 /**
  * Files per chunk, and the number is the TypeScript's.

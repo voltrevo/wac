@@ -34,10 +34,12 @@ export struct TestDoc {
   Elements? es;
   /** The page they belong to, when there is one: an event then goes through it, and its views render. */
   Page? page;
+  /** The last scroll asked for, as `"<handle> <name>"` — the name empty when it was the element itself. */
+  string scrolled;
 
   TestDoc create() {
     Vec<TestNode?> nodes = Vec.create();
-    TestDoc d = TestDoc(nodes, 0, 0, null, null);
+    TestDoc d = TestDoc(nodes, 0, 0, null, null, "");
     d.put(0, "div", 0 - 1);
     return d;
   }
@@ -149,6 +151,10 @@ export struct TestDoc {
         d.ops++;
         TestNode n = d.at(id);
         n.text = "pixelsIn \{x},\{y} \{w}x\{h} \{rgba.len() > 0 ? rgba[0] as i32 : 0 - 1}";
+      },
+      (i32 id, string named) => {
+        d.ops++;
+        d.scrolled = "\{id} " + named;
       }
     );
   }

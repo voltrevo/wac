@@ -92,6 +92,15 @@ const DEMOS: Demo[] = [
       "the self-hosted compiler, in the tab: wacc — written in wac, compiled to wasm — compiling " +
       "whatever wac you paste, where the playground elsewhere on this site runs the TypeScript one",
   },
+  {
+    // **This site, written in wac** (`site/wac/`), beside the React one while its pages move over. Not a
+    // demo, but built the way one is, and served from the same root so that its links to a page it has
+    // not ported yet — `./#/stack` — reach the React site's.
+    file: "wac.html",
+    entry: "site/wac/main.wac",
+    extra: [],
+    what: "this website, written in wac: the pages ported so far, routed by the location hash",
+  },
 ];
 
 const sizes: { file: string; size: string }[] = [];
