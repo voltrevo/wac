@@ -315,6 +315,41 @@ Deno.test({
       // And the centre of the default view is inside the set, so it never escapes.
       assertEquals(pos.includes("never (inside)"), true, pos);
 
+      // A component that runs on its own: a timer steps the grid and an effect paints the canvas it
+      // names with a `ref`; pausing stops the timer's work, and a file picked becomes the seed.
+      await buildPage("packages/platform/example/life.wac", `${dir}/life`);
+      await page.goto(`http://127.0.0.1:${port}/life/index.html`, { waitUntil: "load" });
+      await waitInPage(page, "Number(document.getElementById('gen')?.textContent ?? '0') >= 3", null, { timeout: 30_000 });
+      const lifeSize = await page.evaluate(
+        "({ w: document.getElementById('c').width, h: document.getElementById('c').height })",
+      ) as { w: number; h: number };
+      assertEquals(`${lifeSize.w}x${lifeSize.h}`, "512x384", "life: the canvas is the grid's size");
+      await page.click("#go");
+      await waitInPage(page, "document.getElementById('go').textContent === 'run'", null, { timeout: 10_000 });
+      const paused = await page.textContent("#gen");
+      await new Promise((r) => setTimeout(r, 400));
+      assertEquals(await page.textContent("#gen"), paused, "life: paused, it stops stepping");
+      const seedFile = `${dir}/seed.bin`;
+      await Deno.writeFile(seedFile, new Uint8Array(2000).map((_, i) => (i * 37) & 255));
+      await page.setInputFiles("#f", seedFile);
+      await waitInPage(page, "document.getElementById('note').textContent.startsWith('seed.bin')", null, { timeout: 10_000 });
+      assertEquals(await page.textContent("#note"), "seed.bin — 2000 bytes of seed", "life: the file is the seed");
+      assertEquals(await page.textContent("#gen"), "0", "life: and the count starts again");
+
+      // The same on the browser's frames rather than a timer: an `async` loop awaiting `nextFrame`.
+      await buildPage("packages/platform/example/ripple.wac", `${dir}/ripple`);
+      await page.goto(`http://127.0.0.1:${port}/ripple/index.html`, { waitUntil: "load" });
+      await waitInPage(page, "Number(document.getElementById('fr')?.textContent ?? '0') >= 3", null, { timeout: 30_000 });
+      const tank = await page.evaluate(
+        "document.getElementById('c').width + 'x' + document.getElementById('c').height",
+      ) as string;
+      assertEquals(tank, "600x450", "ripple: the canvas is the tank's size");
+      await page.click("#go");
+      await waitInPage(page, "document.getElementById('go').textContent === 'run'", null, { timeout: 10_000 });
+      const still = await page.textContent("#fr");
+      await new Promise((r) => setTimeout(r, 300));
+      assertEquals(await page.textContent("#fr"), still, "ripple: paused, it stops stepping");
+
       // A page with a `Sys`: built with `--grant read,write`, its `main` reads and writes the Origin
       // Private File System through the same `sys.readFile` a command-line program calls. The claim
       // is persistence, so the check is a reload — and a page that only kept the text in memory, or

@@ -17,12 +17,14 @@
 // can only read about is less convincing than one you can play with, and a demonstration that is
 // honestly a toy is better than one dressed up as evidence.
 //
-// The one real claim it makes is incidental: the loop below runs a cellular automaton over 128×96
-// cells at whatever rate the tab allows, in WebAssembly compiled from wac, and the millisecond
-// counter is not decoration.
+// The one real claim it makes is incidental: the timer below runs a cellular automaton over 128×96
+// cells every 60 ms, in WebAssembly compiled from wac, and the millisecond counter is not decoration.
+//
+// It is a component (`packages/web`'s `view.wac`): the grid is kept across renders, a timer and a file
+// watcher start once from an effect, and another effect paints the canvas, named by a `ref`, after each
+// render that changed it.
 
-import { Event, Page, Picked, html.a, html.b, html.button, html.canvas, html.code, html.div, html.footer, html.h1, html.input, html.p, html.span, html.style } from "../../web";
-import { Ticket } from "core";
+import { ElementEvent, Node, Page, Picked, Ref, State, Ui, html.a, html.b, html.button, html.canvas, html.code, html.div, html.footer, html.h1, html.input, html.p, html.span, html.style } from "../../web";
 
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/life.wac";
@@ -85,7 +87,7 @@ void step(u8[] cells, u8[] next) {
 }
 
 /** The grid, as pixels: living cells in the accent, dead in the background. */
-void paint(Page page, u8[] cells, u8[] rgba) {
+void paint(u8[] cells, u8[] rgba) {
   for (i32 y = 0; y < H; y++) {
     for (i32 x = 0; x < W; x++) {
       bool on = cells[y * W + x] == 1;
@@ -100,7 +102,6 @@ void paint(Page page, u8[] cells, u8[] rgba) {
       }
     }
   }
-  page.drawPixels("c", W * SCALE, H * SCALE, rgba);
 }
 
 /**
@@ -117,94 +118,91 @@ void sow(u8[] cells, u8[] seed) {
   }
 }
 
-export async i32 main(Page page) {
-  page.title("wac: life, from a file you drop");
-  page.render(
-    <div id="tool">
-      <style>{STYLE}</style>
-      <h1>life, from a file you drop</h1>
-      <p class="sub">Conway’s rule over 128×96 cells, in wac. Drop any file and its bytes become the
-        seed, one bit per cell — a photograph and a <code>.zip</code> behave completely differently,
-        because a compressed file is the closest thing on your disk to random soup. This one proves
-        nothing; it is here to be played with.</p>
-      <canvas id="c"></canvas>
-      <div id="row">
-        <button id="go">pause</button>
-        <button id="again">re-seed</button>
-        <input type="file" id="f"/>
-        <span id="note" class="dim">or drop one anywhere on this page</span>
-      </div>
-      <p class="dim">generation <b id="gen">0</b>, <b id="live">0</b> alive,
-        <span id="ms">0</span> ms a step</p>
-      <footer>The rule, the rendering and this page are wac. <a href={SOURCE}>source</a>.</footer>
-    </div>
-  );
-  page.on("#go", "click");
-  page.on("#again", "click");
+/**
+ * The simulation, kept from one render to the next: the grid, its scratch copy and its pixels are
+ * buffers rewritten in place, not state — a render shows them, and `shown` says when they changed.
+ */
+struct Grid { u8[] cells; u8[] next; u8[] rgba; u8[] seed; i32 gen; i32 live; i32 ms; }
 
-  u8[] cells = u8[].filled(W * H, 0);
-  u8[] next = u8[].filled(W * H, 0);
-  u8[] rgba = u8[].filled(W * SCALE * H * SCALE * 4, 0);
+Grid fresh() {
   // Something to watch before anything is dropped: this page's own title, which is as arbitrary a
   // seed as any and makes the first frame non-empty.
-  u8[] seed = "wac: life, seeded from whatever you give it".toBytes();
-  sow(cells, seed);
-  paint(page, cells, rgba);
+  Grid g = Grid(u8[].filled(W * H, 0), u8[].filled(W * H, 0), u8[].filled(W * SCALE * H * SCALE * 4, 0),
+                "wac: life, seeded from whatever you give it".toBytes(), 0, 0, 0);
+  sow(g.cells, g.seed);
+  return g;
+}
 
-  i32 gen = 0;
-  bool running = true;
-
-  Ticket<Event> ev = page.nextEvent();
-  Ticket<Picked> file = page.nextFile();
-  Ticket<f64> tick = page.sleep(60);
-
+/** Each file dropped or picked, for as long as the page lives: its bytes become the seed. */
+async void seeds(Page page, Grid g, State<string> note, State<i32> shown) {
   while (true) {
-    // Three things to wait on and one `await` for whichever comes first. A frame timer is a ticket
-    // like any other, which is the argument for events being tickets rather than callbacks.
-    await Ticket.any(ev, file, tick);
-
-    if (tick.settled()) {
-      tick = page.sleep(60);
-      if (running) {
-        f64 began = page.now();
-        step(cells, next);
-        for (i32 i = 0; i < W * H; i++) { cells[i] = next[i]; }
-        f64 took = page.now() - began;
-        gen = gen + 1;
-        i32 live = 0;
-        for (i32 i = 0; i < W * H; i++) { live = live + cells[i] as i32; }
-        paint(page, cells, rgba);
-        page.setText("gen", "\{gen}");
-        page.setText("live", "\{live}");
-        page.setText("ms", "\{took as~ i32}");
-      }
+    Picked f = await page.nextFile();
+    if (!f.ok) {
+      note.set("could not read it: \{f.error}");
+      continue;
     }
-
-    if (file.settled()) {
-      Picked f = file.value();
-      file = page.nextFile();
-      if (!f.ok) {
-        page.setText("note", "could not read it: \{f.error}");
-      } else {
-        seed = f.bytes;
-        sow(cells, seed);
-        gen = 0;
-        paint(page, cells, rgba);
-        page.setText("note", "\{f.name} — \{f.bytes.len()} bytes of seed");
-      }
-    }
-
-    if (ev.settled()) {
-      Event e = ev.value();
-      ev = page.nextEvent();
-      if (e.kind == "click" && e.id == "go") {
-        running = !running;
-        page.setText("go", running ? "pause" : "run");
-      } else if (e.kind == "click" && e.id == "again") {
-        sow(cells, seed);
-        gen = 0;
-        paint(page, cells, rgba);
-      }
-    }
+    g.seed = f.bytes;
+    sow(g.cells, g.seed);
+    g.gen = 0;
+    note.set("\{f.name} — \{f.bytes.len()} bytes of seed");
+    shown.update((i32 n) => n + 1);
   }
+}
+
+Node Life(Ui ui, Page page) {
+  auto running = ui.state(true);
+  auto note = ui.state("or drop one anywhere on this page");
+  auto shown = ui.state(0);
+  Grid g = ui.memo<Grid>("", () => fresh());
+  Ref c = ui.ref();
+  // Once: a generation every 60 ms while running, and a new seed whenever a file arrives.
+  ui.effect("", () => {
+    seeds(page, g, note, shown);
+    return ui.every(60, () => {
+      if (!running.get()) { return; }
+      f64 began = page.now();
+      step(g.cells, g.next);
+      for (i32 i = 0; i < W * H; i++) { g.cells[i] = g.next[i]; }
+      g.ms = (page.now() - began) as~ i32;
+      g.gen = g.gen + 1;
+      i32 live = 0;
+      for (i32 i = 0; i < W * H; i++) { live = live + g.cells[i] as i32; }
+      g.live = live;
+      shown.update((i32 n) => n + 1);
+    });
+  });
+  // After every render that changed the grid, the canvas shows it.
+  ui.effect("\{shown.get()}", () => {
+    paint(g.cells, g.rgba);
+    c.element()!.pixels(W * SCALE, H * SCALE, g.rgba);
+    return () => { };
+  });
+  return <div id="tool">
+    <style>{STYLE}</style>
+    <h1>life, from a file you drop</h1>
+    <p class="sub">Conway’s rule over 128×96 cells, in wac. Drop any file and its bytes become the
+      seed, one bit per cell — a photograph and a <code>.zip</code> behave completely differently,
+      because a compressed file is the closest thing on your disk to random soup. This one proves
+      nothing; it is here to be played with.</p>
+    <canvas ref={c} id="c"></canvas>
+    <div id="row">
+      <button id="go" onclick={(ElementEvent e) => { running.update((bool r) => !r); }}>{running.get() ? "pause" : "run"}</button>
+      <button id="again" onclick={(ElementEvent e) => {
+        sow(g.cells, g.seed);
+        g.gen = 0;
+        shown.update((i32 n) => n + 1);
+      }}>re-seed</button>
+      <input type="file" id="f"/>
+      <span id="note" class="dim">{note.get()}</span>
+    </div>
+    <p class="dim">generation <b id="gen">{g.gen}</b>, <b id="live">{g.live}</b> alive,
+      <span id="ms">{g.ms}</span> ms a step</p>
+    <footer>The rule, the rendering and this page are wac. <a href={SOURCE}>source</a>.</footer>
+  </div>;
+}
+
+export async i32 main(Page page) {
+  page.title("wac: life, from a file you drop");
+  page.mount((Ui ui) => Life(ui, page));
+  return 0;
 }

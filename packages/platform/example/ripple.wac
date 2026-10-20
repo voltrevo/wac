@@ -28,8 +28,7 @@
 // disagree; this is here to be played with. The millisecond counter is the only real claim, and it
 // is about how fast wac compiled to WebAssembly runs a stencil over 30,000 cells.
 
-import { Event, Page, html.a, html.b, html.button, html.canvas, html.div, html.footer, html.h1, html.p, html.span, html.style } from "../../web";
-import { Ticket } from "core";
+import { ElementEvent, Node, Page, Ref, State, Ui, html.a, html.b, html.button, html.canvas, html.div, html.footer, html.h1, html.p, html.span, html.style } from "../../web";
 
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/ripple.wac";
@@ -86,7 +85,7 @@ void step(i32[] before, i32[] now, i32[] next) {
 }
 
 /** Height as colour: negative troughs dark, positive crests toward the accent. */
-void paint(Page page, i32[] now, u8[] rgba) {
+void paint(i32[] now, u8[] rgba) {
   for (i32 y = 0; y < H; y++) {
     for (i32 x = 0; x < W; x++) {
       i32 h = now[y * W + x] >> SHIFT;
@@ -106,7 +105,6 @@ void paint(Page page, i32[] now, u8[] rgba) {
       }
     }
   }
-  page.drawPixels("c", W * SCALE, H * SCALE, rgba);
 }
 
 /** Push the surface down at `(cx, cy)`, softened over a few cells so it is a stone and not a spike. */
@@ -123,100 +121,92 @@ void splash(i32[] now, i32 cx, i32 cy) {
   }
 }
 
+/**
+ * The water, kept from one render to the next. Three surfaces: the step needs the two previous ones, and
+ * rotating three arrays avoids copying 30,000 integers a frame just to shuffle them along.
+ */
+struct Tank { i32[] before; i32[] now; i32[] next; u8[] rgba; i32 frame; i32 ms; i32 seed; }
+
+Tank still() {
+  Tank t = Tank(i32[].filled(W * H, 0), i32[].filled(W * H, 0), i32[].filled(W * H, 0),
+                u8[].filled(W * SCALE * H * SCALE * 4, 0), 0, 0, 12345);
+  splash(t.now, W / 2, H / 2);
+  return t;
+}
+
+/** A step every frame the browser draws, for as long as the page lives. */
+async void frames(Page page, Tank t, State<bool> running, State<bool> raining, State<i32> shown) {
+  while (true) {
+    await page.nextFrame();
+    if (!running.get()) { continue; }
+    if (raining.get()) {
+      // A cheap linear congruential step: this wants unpredictability, not randomness, and asking the
+      // host for entropy every frame would be a capability this page does not need.
+      t.seed = (t.seed * 1103515245 + 12345) & 2147483647;
+      splash(t.now, 2 + (t.seed >> 7) % (W - 4), 2 + (t.seed >> 17) % (H - 4));
+    }
+    f64 began = page.now();
+    step(t.before, t.now, t.next);
+    t.ms = (page.now() - began) as~ i32;
+    // Rotate: what was `now` becomes the past, and `next` becomes the present.
+    i32[] past = t.before;
+    t.before = t.now;
+    t.now = t.next;
+    t.next = past;
+    t.frame = t.frame + 1;
+    shown.update((i32 n) => n + 1);
+  }
+}
+
+Node Ripple(Ui ui, Page page) {
+  auto running = ui.state(true);
+  auto raining = ui.state(false);
+  auto shown = ui.state(0);
+  Tank t = ui.memo<Tank>("", () => still());
+  Ref c = ui.ref();
+  ui.effect("", () => {
+    frames(page, t, running, raining, shown);
+    return () => { };
+  });
+  ui.effect("\{shown.get()}", () => {
+    paint(t.now, t.rgba);
+    c.element()!.pixels(W * SCALE, H * SCALE, t.rgba);
+    return () => { };
+  });
+  // An event's `x` and `y` are the canvas's own coordinates, and the canvas is drawn at SCALE times the
+  // grid — so the divide is what turns a click into a cell.
+  fn<void(ElementEvent)> stone = (ElementEvent e) => {
+    splash(t.now, e.x / SCALE, e.y / SCALE);
+    shown.update((i32 n) => n + 1);
+  };
+  return <div id="tool">
+    <style>{STYLE}</style>
+    <h1>a ripple tank</h1>
+    <p class="sub">Click the water. The wave equation over 200×150 cells, in fixed-point integers so
+      every machine gets the same frame — waves reflect off the walls with their phase inverted and
+      interfere with each other, because that is what the equation does rather than something drawn
+      to look like it. Drag to trail your finger through it.</p>
+    <canvas ref={c} id="c" onclick={stone} onpointermove={stone}></canvas>
+    <div id="row">
+      <button id="go" onclick={(ElementEvent e) => { running.update((bool r) => !r); }}>{running.get() ? "pause" : "run"}</button>
+      <button id="calm" onclick={(ElementEvent e) => {
+        for (i32 i = 0; i < W * H; i++) {
+          t.before[i] = 0;
+          t.now[i] = 0;
+          t.next[i] = 0;
+        }
+        shown.update((i32 n) => n + 1);
+      }}>still the water</button>
+      <button id="rain" onclick={(ElementEvent e) => { raining.update((bool r) => !r); }}>{raining.get() ? "stop the rain" : "rain"}</button>
+    </div>
+    <p class="dim">frame <b id="fr">{t.frame}</b>, <span id="ms">{t.ms}</span> ms a step over {"\{W * H}"} cells</p>
+    <footer>The solver, the colouring and this page are wac. <a href={SOURCE}>source</a>. It proves
+      nothing and is here to be played with.</footer>
+  </div>;
+}
+
 export async i32 main(Page page) {
   page.title("wac: a ripple tank");
-  page.render(
-    <div id="tool">
-      <style>{STYLE}</style>
-      <h1>a ripple tank</h1>
-      <p class="sub">Click the water. The wave equation over 200×150 cells, in fixed-point integers so
-        every machine gets the same frame — waves reflect off the walls with their phase inverted and
-        interfere with each other, because that is what the equation does rather than something drawn
-        to look like it. Drag to trail your finger through it.</p>
-      <canvas id="c"></canvas>
-      <div id="row">
-        <button id="go">pause</button>
-        <button id="calm">still the water</button>
-        <button id="rain">rain</button>
-      </div>
-      <p class="dim">frame <b id="fr">0</b>, <span id="ms">0</span> ms a step over {"\{W * H}"} cells</p>
-      <footer>The solver, the colouring and this page are wac. <a href={SOURCE}>source</a>. It proves
-        nothing and is here to be played with.</footer>
-    </div>
-  );
-  page.on("#go", "click");
-  page.on("#calm", "click");
-  page.on("#rain", "click");
-  page.on("#c", "click");
-  page.on("#c", "pointermove");
-
-  // Three surfaces: the step needs the two previous ones, and rotating three arrays avoids copying
-  // 30,000 integers a frame just to shuffle them along.
-  i32[] before = i32[].filled(W * H, 0);
-  i32[] now = i32[].filled(W * H, 0);
-  i32[] next = i32[].filled(W * H, 0);
-  u8[] rgba = u8[].filled(W * SCALE * H * SCALE * 4, 0);
-
-  splash(now, W / 2, H / 2);
-  paint(page, now, rgba);
-
-  i32 frame = 0;
-  bool running = true;
-  bool raining = false;
-  i32 seed = 12345;
-
-  Ticket<Event> ev = page.nextEvent();
-  Ticket<f64> tick = page.nextFrame();
-
-  while (true) {
-    // A frame or an event, whichever comes first — one `await` for both.
-    await Ticket.any(ev, tick);
-
-    if (tick.settled()) {
-      tick = page.nextFrame();
-      if (running) {
-        if (raining) {
-          // A cheap linear congruential step: this wants unpredictability, not randomness, and
-          // asking the host for entropy every frame would be a capability this page does not need.
-          seed = (seed * 1103515245 + 12345) & 2147483647;
-          splash(now, 2 + (seed >> 7) % (W - 4), 2 + (seed >> 17) % (H - 4));
-        }
-        f64 began = page.now();
-        step(before, now, next);
-        f64 took = page.now() - began;
-        // Rotate: what was `now` becomes the past, and `next` becomes the present.
-        for (i32 i = 0; i < W * H; i++) {
-          before[i] = now[i];
-          now[i] = next[i];
-        }
-        frame = frame + 1;
-        paint(page, now, rgba);
-        page.setText("fr", "\{frame}");
-        page.setText("ms", "\{took as~ i32}");
-      }
-    }
-
-    if (ev.settled()) {
-      Event e = ev.value();
-      ev = page.nextEvent();
-      if (e.id == "c" && (e.kind == "click" || e.kind == "pointermove")) {
-        // `Event.x` and `Event.y` are the canvas's own coordinates, and the canvas is drawn at SCALE
-        // times the grid — so the divide is what turns a click into a cell.
-        splash(now, e.x / SCALE, e.y / SCALE);
-      } else if (e.kind == "click" && e.id == "go") {
-        running = !running;
-        page.setText("go", running ? "pause" : "run");
-      } else if (e.kind == "click" && e.id == "calm") {
-        for (i32 i = 0; i < W * H; i++) {
-          before[i] = 0;
-          now[i] = 0;
-          next[i] = 0;
-        }
-        paint(page, now, rgba);
-      } else if (e.kind == "click" && e.id == "rain") {
-        raining = !raining;
-        page.setText("rain", raining ? "stop the rain" : "rain");
-      }
-    }
-  }
+  page.mount((Ui ui) => Ripple(ui, page));
+  return 0;
 }
