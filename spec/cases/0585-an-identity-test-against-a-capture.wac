@@ -1,0 +1,12 @@
+// expect: f() = 1
+// why: `q is b` in a lambda, with `b` captured, tests identity like any other `is` between two values,
+//      including as a ternary's condition
+// from: issues/lang/0385a
+struct P { i32 x; }
+export i32 f() {
+  P a = P(1);
+  P b = a;
+  P c = P(1);
+  fn<i32(P)> same = (P q) => q is b ? 1 : 0;
+  return same(a) * 1 + same(c) * 10;
+}

@@ -1,0 +1,15 @@
+// expect: f() = 2
+// why: an `async` lambda is typed by its slot inside an `async` function as outside one
+// from: issues/lang/0380a
+import { Ticket } from "core";
+async i32 run() {
+  Ticket<i32> inp;
+  fn<Ticket<i32>(Ticket<i32>)> g = async (Ticket<i32> t) => { i32 v = await t; return v + 1; };
+  Ticket<i32> r = g(inp);
+  inp.resolve(1);
+  return await r;
+}
+export i32 f() {
+  Ticket<i32> t = run();
+  return t.wait()!;
+}

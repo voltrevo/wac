@@ -1,0 +1,11 @@
+// expect: f() = 1030
+// why: a closure made in a `for … in` body captures that iteration's element, as one made in an
+//      indexed loop captures a local declared in its body
+// from: issues/lang/0381a
+import { Vec } from "core";
+struct H { fn<i32()> f; }
+export i32 f() {
+  Vec<H> hs = Vec.create();
+  for (i32 x in [10, 20, 30]) { hs.push(H(() => x)); }
+  return hs.get(0).f() * 100 + hs.get(2).f();
+}

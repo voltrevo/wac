@@ -1,0 +1,10 @@
+// expect: f() = 7
+// why: an element of an array of functions is a slot like a local or a field, and types the lambda
+//      written into it
+// from: issues/lang/0382a
+export i32 f() {
+  fn<i32()> z = () => 0;
+  fn<i32()>[] fs = fn<i32()>[].filled(2, z);
+  fs[1] = () => 7;
+  return fs[1]();
+}

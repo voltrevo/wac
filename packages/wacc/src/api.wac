@@ -32,7 +32,7 @@ import { importSpecs, importSpecsOf } from "./files.wac";
 import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia, startsWith } from "./path.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { Pruned, pruneFor } from "./reach.wac";
-import { lowerNamespaces } from "./namespaces.wac";
+import { lowerNamespaces, lowerNamespacesForDeclarations } from "./namespaces.wac";
 import { trimSpaces } from "./unions.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
@@ -73,11 +73,11 @@ export i32[] dumpParseErrors(u8[] src) {
 }
 
 /**
- * A lone source with its namespaces lowered — what a build parses (spec ch03). A file naming
+ * A lone source with its namespaces lowered — what a check of one file parses (spec ch03). A file naming
  * `html.li` or `[operators.add]` does not parse until this has made them verbatim names.
  */
 u8[] loweredOne(u8[] src) {
-  return loweredSources(onePath(), oneSource(src))[0].toBytes();
+  return lowerSourcesForChecking(onePath(), oneSource(src), Res.empty())[0].toBytes();
 }
 
 export i32[] dumpErrors(u8[] raw) {
@@ -2052,7 +2052,21 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
  * (ch03), then `auto` results written in (ch34). Both are idempotent.
  */
 export string[] lowerSources(string[] paths, string[] sources, const Res res) {
-  string[] s1 = lowerPrimFromNumber(lowerTypeDefaults(lowerVariadics(lowerStaticLocals(lowerNamespaces(paths, sources, res)))));
+  return lowerSourcesIn(paths, lowerNamespaces(paths, sources, res), res);
+}
+
+/**
+ * The same for a reader that checks and never builds — one file on its own, with no module to resolve
+ * an import against: an item `X.m` from a file that is not here is spelled `@"X.m" as m`, so the rest
+ * of the file still parses (`lowerNamespacesForDeclarations`). Left as written, `import { html.p }
+ * from "../web"` did not parse there, and every name declared after it was undefined.
+ */
+export string[] lowerSourcesForChecking(string[] paths, string[] sources, const Res res) {
+  return lowerSourcesIn(paths, lowerNamespacesForDeclarations(paths, sources, res), res);
+}
+
+string[] lowerSourcesIn(string[] paths, string[] namespaced, const Res res) {
+  string[] s1 = lowerPrimFromNumber(lowerTypeDefaults(lowerVariadics(lowerStaticLocals(namespaced))));
   string[] s2 = lowerAutoReturns(paths, lowerResultPlaceholders(paths, lowerExportInstances(s1), res), res);
   return lowerFromNumberLiterals(paths, s2, res);
 }

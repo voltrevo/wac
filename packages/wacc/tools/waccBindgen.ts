@@ -562,6 +562,9 @@ function classFor(t: BindType): string[] {
   for (const m of t.methods) {
     // A private method is not bound (`§wac-bind-private-7kpcy8t`).
     if (memberHas(t, m.name, "private")) continue;
+    // Nor one a symbol names — `[toString]`, `[markup.text]` — which is the language's to call, and whose
+    // name is no JavaScript identifier: as a computed key, `[markup.text]` read a global and threw.
+    if (m.name.startsWith("[")) continue;
     const args = m.params.map((p, i) => `a${i}${ann(p)}`).join(", ");
     const conv = m.params.map((p, i) => toWasm(p, `a${i}`)).join(", ");
     const helper = m.hasThis ? `$bind$m_${t.bind}_${m.name}` : `$bind$sm_${t.bind}_${m.name}`;

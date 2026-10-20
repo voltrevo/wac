@@ -3231,7 +3231,10 @@ Decl parseStructDecl(P p, bool exported) {
     // `private` comes first: it is about who may name the member, before anything about what it is.
     bool memberPrivate = p.eat(kPrivate());
     // `virtual` grants a subtype the override (spec ch12). Reserved, and told by its spelling.
-    bool memberVirtual = p.at1(kIdent()) && p.textAt(0) == "virtual" && p.kindAt(1) == kIdent();
+    // A type follows it: a name, or `void`, or `fn<…>` — `virtual void unmounted(this)` was read as a
+    // field named `virtual` (`issues/lang/0384a`).
+    bool memberVirtual = p.at1(kIdent()) && p.textAt(0) == "virtual"
+                         && (p.kindAt(1) == kIdent() || p.kindAt(1) == kVoid() || p.kindAt(1) == kFn());
     if (memberVirtual) { p.advance(); }
     i32 overrideTok = p.at;
     bool isOverride = p.eat(kOverride());

@@ -1221,6 +1221,10 @@ void classFor(Out o, G g, i32 t) {
     string mn = field(g.mLines[m], 2);
     // A private method is not bound (`§wac-bind-private-7kpcy8t`).
     if (memberHas(g, bind, mn, "private")) { continue; }
+    // **Nor one a symbol names** — `[toString]`, `[markup.text]` — which is the language's to call, at
+    // its syntax, and whose name is no JavaScript identifier: written as one it was a computed key, and
+    // `$exports.$bind$sm_Node_[markup.text]` read a global called `markup` and threw.
+    if (mn.len() > 0 && mn.slice(0, 1) == "[") { continue; }
     bool hasThis = field(g.mLines[m], 3) == "this";
     string ret = orVoid(field(g.mLines[m], 4));
     string[] ps = paramsOf(field(g.mLines[m], 5));

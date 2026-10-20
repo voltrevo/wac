@@ -1,0 +1,17 @@
+// expect: f() = 3
+// why: `virtual` precedes any return type, `void` and a function type among them
+// from: issues/lang/0384a
+struct B {
+  i32 n;
+  virtual void bump(this) { this.n = this.n + 1; }
+}
+struct C : B {
+  override void bump(this) { this.n = this.n + 2; }
+}
+export i32 f() {
+  B x = C(0);
+  x.bump();
+  B y = B(0);
+  y.bump();
+  return x.n + y.n;
+}

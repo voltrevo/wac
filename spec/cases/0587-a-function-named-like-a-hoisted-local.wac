@@ -1,0 +1,17 @@
+// expect: f() = 6
+// why: inside an `async` function, a call to a function stays a call to it when a local of the same
+//      name, in another branch, lives across a suspension — only a local that holds a function is
+//      called through
+// from: issues/lang/0380a, whose fix first rewrote every construction naming a hoisted local
+import { Ticket } from "core";
+Ticket<i32> ready(i32 v) { Ticket<i32> t; t.resolve(v); return t; }
+i32 count(i32 x) { return x * 2; }
+async i32 run(bool b) {
+  if (b) {
+    i32 count = 1;
+    i32 v = await ready(count);
+    return v + count;
+  }
+  return count(3);
+}
+export i32 f() { return run(false).wait()!; }

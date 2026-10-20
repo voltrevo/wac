@@ -1,14 +1,13 @@
-// A tree built by JSX in wac, rendered by a renderer written in JavaScript.
+// A tree built by markup in wac, rendered by a renderer written in JavaScript.
 //
-// This is the claim `design/lang/0004` rests on, and the reason `Node` is in `core` rather than in a
-// package: **neither side declared the type.** The wac program never names it beyond
-// `import { Attr, Node } from "core";` — the compiler emits the constructors — and the JavaScript here
-// never declares it at all, because the generated glue builds the class from the module's own
-// metadata. Two pieces of code that share nothing but the compiler agree on a value.
+// **Neither side shares a declaration with the other.** The tree is the program's own — markup names no
+// type (`design/lang/0017`): the program's enum builds its text, quoted tags and fragments with methods
+// named by core's `markup` symbols — and the JavaScript here never declares it at all, because the
+// generated glue builds the class from the module's own metadata. Two pieces of code that share nothing
+// but the compiler agree on a value.
 //
-// If the tree came from a package, this test would be the thing that could not be written: a
-// renderer built against one copy of a package's `Node` cannot accept trees made against another,
-// and nothing either author writes bridges it.
+// `design/lang/0004` put `Node` in `core` so that this would be possible. It is possible without that,
+// which is what this test now says.
 
 import { waccArtifacts } from "../../../harness/waccBuild.ts";
 
@@ -22,9 +21,22 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const PROGRAM = [
-  'import { Attr, Node, html.div, html.h1, html.br } from "core";',
+  'import { markup } from "core";',
+  "export struct Attr { string name; string value; }",
+  "export enum Node {",
+  "  Element(string tag, Attr[] attrs, Node[] kids),",
+  "  Text(string text),",
+  "  Fragment(Node[] kids),",
+  "  Node [markup.text](string text) { return Node.Text(text); }",
+  "  Node [markup.fragment](Node[] kids) { return Node.Fragment(kids); }",
+  "  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) {",
+  '    Attr[] attrs = Attr[].filled(names.len(), Attr("", ""));',
+  "    for (i32 i = 0; i < names.len(); i++) { attrs[i] = Attr(names[i], values[i]); }",
+  "    return Node.Element(tag, attrs, kids);",
+  "  }",
+  "}",
   "export Node page(string who) {",
-  '  return <div class="page" id={"top"}><h1>hello {who}</h1><br/></div>;',
+  '  return <"div" class="page" id={"top"}><"h1">hello {who}</"h1"><"br"/></"div">;',
   "}",
   // A tag function and a fragment, which is the pair that has no counterpart on the JavaScript side:
   // the host never sees `pairOf`, only the `Node` it returned (spec ch23).

@@ -586,7 +586,7 @@ export default function Stack() {
           own specification documents, the reference compiler&rsquo;s own test suite, a
           generated sweep over the cross product of type against context —{" "}
           <Lead>10,013 programs, 0 false alarms, 0 contradictions</Lead> — and, most recently, the
-          repository&rsquo;s own 1,122 wac files, with no false alarm among them. While the reference
+          repository&rsquo;s own 1,247 wac files, with no false alarm among them. While the reference
           compiler still existed it reported a subset of that compiler&rsquo;s diagnostics at its
           exact positions and never invented one; the specification is what holds it to that now.
         </P>

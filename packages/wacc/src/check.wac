@@ -6828,6 +6828,9 @@ bool markupCan(C c, string k, string sym) {
 /** Refuse markup the child type `k` cannot build, naming the method it would need. */
 void needMarkup(C c, string k, string sym, i32 line, i32 col, string what) {
   if (k == typeNone() || k == "" || markupCan(c, k, sym)) { return; }
+  // A type this checker cannot see into — imported from a file it was not handed — says nothing, as
+  // an unknown says nothing everywhere here.
+  if (!c.isStruct(templateOf(k)) && !c.isEnum(templateOf(k))) { return; }
   c.reportWith(errMarkupUnbuilt(), line, col, what + " needs " + k + ".[markup." + sym + "], which it does not have");
 }
 
@@ -6869,6 +6872,7 @@ void checkJsxChild(C c, Expr kid, string k) {
     needMarkup(c, k, "text", kid.line, kid.col, "a child converted to text");
     return;
   }
+  if (!c.isStruct(templateOf(k)) && !c.isEnum(templateOf(k))) { return; }
   c.reportWith(errMarkupUnbuilt(), kid.line, kid.col, got + " is not a " + k + ", a " + k + "[], or text");
 }
 

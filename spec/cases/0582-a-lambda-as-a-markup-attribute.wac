@@ -1,0 +1,13 @@
+// expect: f() = 2
+// why: a markup attribute is an argument to the tag's function, and its parameter types the lambda
+//      written there — every event handler is one
+// from: issues/lang/0383a
+struct N { fn<i32()> run; }
+N row(string name, fn<i32()> onremove) { return N(onremove); }
+N list(N[] kids) { return kids[0]; }
+export i32 f() {
+  i32 removed = 0;
+  N n = <list><row name="milk" onremove={() => { removed = removed + 1; return removed; }}/></list>;
+  n.run();
+  return n.run();
+}

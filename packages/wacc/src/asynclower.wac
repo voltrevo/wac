@@ -110,6 +110,12 @@ struct Ctx {
   Ty?[] stepWyr;
   /** How `subExpr` copies beyond the machine's own substitutions — the split copies too. */
   CopyMode copy;
+  /**
+   * The hoisted names whose locals hold a function, as `|name|`: a construction naming one of these is
+   * a call through it (`subExpr`'s `Construct` arm). A name alone is not enough — a function called
+   * `read` and an unrelated local called `read` in another branch share a spelling.
+   */
+  string fnHoisted;
 }
 
 /**
@@ -646,6 +652,20 @@ Expr subExpr(Ctx c, Expr e) {
     }
     Unwrap(operand): { return Expr(ExprKind.Unwrap(subExpr(c, operand)), e.line, e.col); }
     Construct(ctype, args, named): {
+      // **`g(x)` with `g` a local is a call, which the parser could not know**: it reads a name and
+      // parentheses as a construction until something says the name is a value. A local that is now a
+      // cell is not a name the step function has, so the construction is written as the call it is,
+      // through the cell (`issues/lang/0380a`, where `g` held an `async` lambda).
+      match (ctype.kind) {
+        Named(ctok, cargs): {
+          if (cargs.len() == 0 && named.len() == 0 && isHoisted(c, ctok)
+              && c.fnHoisted.indexOf("|" + synthTextAt(c.src, c.lexed, ctok) + "|") >= 0) {
+            Expr callee = subExpr(c, Expr(ExprKind.Ident(ctok), e.line, e.col));
+            return Expr(ExprKind.Call(callee, subExprs(c, args), Ty[]()), e.line, e.col);
+          }
+        }
+        default: { }
+      }
       NamedArg[] ns = NamedArg[].filled(named.len(), named.len() > 0 ? named[0]
                                                                  : NamedArg(0 - 1, eNull(c)));
       for (i32 i = 0; i < named.len(); i++) {
@@ -3432,7 +3452,7 @@ struct Site {
  */
 Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
   Ctx c0 = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
-               i32[].filled(1, at.colBase), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next));
+               i32[].filled(1, at.colBase), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next), "");
   Rz z = Rz(c0, at.params, body, w.prog, at.selfTok, w.next, string[].filled(1, ""), w.sigs,
            localsOf(c0, at.params, body));
   Stmt[] split = uniqueLocals(z, splitBody(z, body), Seen.create());
@@ -3443,8 +3463,15 @@ Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
   string[] names = string[].filled(plan.hoist.len() + extra.len(), "");
   for (i32 i = 0; i < plan.hoist.len(); i++) { names[i] = synthTextAt(w.src, w.lexed, plan.hoist[i]); }
   for (i32 i = 0; i < extra.len(); i++) { names[plan.hoist.len() + i] = extra[i]; }
+  string fns = "";
+  for (i32 i = 0; i < plan.hoist.len(); i++) {
+    match (plan.hoistTy[i].kind) {
+      Funcref(fret, fparams): { fns = fns + "|" + names[i] + "|"; }
+      default: { }
+    }
+  }
   Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, names, w.src, w.lexed, c0.col2, c0.inLam,
-              c0.finState, c0.stepWyr, c0.copy);
+              c0.finState, c0.stepWyr, c0.copy, fns);
   Ty[] gp = genParts(w.src, w.lexed, ret);
   if (gp.len() == 2) { return machineBody(c, split, plan, gp[1], gp[0], at.isAsync, at.raw); }
   return machineBody(c, split, plan, ret, null, true, at.raw);
@@ -3478,7 +3505,7 @@ Stmt[] lowerLambdasIn(Lw w, Stmt[] body, i32 selfTok) {
             Stmt[]? mach = machineOf(w, at, lbody, tick!, pnames);
             if (mach is null) { continue; }
             Ctx c = Ctx(w.first, w.ups, w.args, init!.line, init!.col, pnames, w.src, w.lexed,
-                        i32[].filled(1, init!.col + 9000), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next));
+                        i32[].filled(1, init!.col + 9000), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next), "");
 
             Param[] ps2 = Param[].filled(lps.len(), lps.len() > 0 ? lps[0]
                                                                : Param(0 - 1, type, false));
@@ -3534,7 +3561,7 @@ Method[] loweredMethods(Lw w, Decl at) {
   for (i32 m = 0; m < ms.len(); m++) {
     Method me = ms[m];
     Ctx c = Ctx(w.first, w.ups, w.args, at.line, at.col, string[](), w.src, w.lexed,
-                i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next));
+                i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next), "");
     Stmt[] body2 = coRewrite(c, lowerLambdasIn(w, me.body, self));
     if (!isMachineDecl(w.src, w.lexed, me.returnType, me.isAsync)) {
       out[n] = Method(me.nameTok, me.returnType, me.params, body2, me.isOverride, me.overrideTok,
@@ -3625,7 +3652,7 @@ Lowered lowerSized(Program prog, u8[] src, Lexed lexed, string sigs, i32 ups, i3
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         Ctx c = Ctx(first, ups, args, prog.decls[d].line, prog.decls[d].col, string[](), src2, lexed2,
-                    i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next));
+                    i32[].filled(1, 0), bool[].filled(1, false), i32[].filled(1, 0), Ty?[].defaulted(3), CopyMode.create(w.next), "");
         // **Lambdas first.** An `async` function's own machine substitutes its hoisted names into
         // everything its body contains, lambdas included — so a lambda lowered beforehand is
         // ordinary code by the time that walk reaches it.

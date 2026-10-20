@@ -10151,6 +10151,8 @@ void emitForIn(B fb, u8[] src, Lexed lexed, Env env, Ty? elemTy, i32 nameTok, Ex
     fb.byte(33); fb.u32leb(gen);
     env.addLocal(tokenTextOf(src, lexed, nameTok), et);
     i32 gx = env.localCount - 1;
+    bool gcell = et != "void" && env.isPromoted(line, col);
+    if (gcell && gx < env.localCell.len()) { env.localCell[gx] = true; }
     i32 savedGB = env.breakAt;
     i32 savedGC = env.continueAt;
     fb.byte(2); fb.byte(64);                    // block — what `break` leaves
@@ -10164,6 +10166,7 @@ void emitForIn(B fb, u8[] src, Lexed lexed, Env env, Ty? elemTy, i32 nameTok, Ex
     fb.byte(13); fb.u32leb(1);                  // br_if out
     fb.byte(32); fb.u32leb(gen);
     fb.byte(16); fb.u32leb(env.funcIndex[curFn]);    // call __wacCurrent
+    if (gcell) { fb.byte(251); fb.u32leb(0); fb.u32leb(env.structType(cellStructName(et))); }   // struct.new $cell$T
     if (et == "void") { } else { fb.byte(33); fb.u32leb(gx); }
     fb.byte(2); fb.byte(64);                    // the body's block — where `continue` goes
     env.depth = env.depth + 1;
@@ -10199,6 +10202,10 @@ void emitForIn(B fb, u8[] src, Lexed lexed, Env env, Ty? elemTy, i32 nameTok, Ex
   fb.byte(33); fb.u32leb(at);                   // the index starts at 0
   env.addLocal(tokenTextOf(src, lexed, nameTok), et);
   i32 x = env.localCount - 1;
+  // **A captured loop variable is a fresh cell each time round**, so each lambda keeps the element of
+  // its own iteration — the same per-declaration cell a captured `var` in the body gets.
+  bool xcell = env.isPromoted(line, col);
+  if (xcell && x < env.localCell.len()) { env.localCell[x] = true; }
 
   i32 savedB = env.breakAt;
   i32 savedC = env.continueAt;
@@ -10218,6 +10225,7 @@ void emitForIn(B fb, u8[] src, Lexed lexed, Env env, Ty? elemTy, i32 nameTok, Ex
   } else {
     fb.byte(16); fb.u32leb(env.funcIndex[getFn]);   // call get
   }
+  if (xcell) { fb.byte(251); fb.u32leb(0); fb.u32leb(env.structType(cellStructName(et))); }   // struct.new $cell$T
   fb.byte(33); fb.u32leb(x);                    // x = xs[at]
   fb.byte(2); fb.byte(64);                      // the body's block — where `continue` goes
   env.depth = env.depth + 1;
@@ -11533,6 +11541,25 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           if (negated) { fb.byte(69); }
           return;
         }
+        // **Any other value of that name** — a lambda's capture, read from its capture struct rather
+        // than a local. This returned having emitted nothing, so `q is b ? 0 : 1` in a lambda left
+        // the `if` without its condition and the engine refused the module (`issues/lang/0385a`).
+        match (target!.kind) {
+          Named(vtok, vargs): {
+            Expr asValue = Expr(ExprKind.Ident(vtok), e.line, e.col);
+            string vt = vargs.len() == 0 ? typeOfE(src, lexed, env, asValue) : "";
+            if (vt != "" && isRefType(env, env.canonType(vt))
+                && isRefType(env, env.canonType(typeOfE(src, lexed, env, left)))) {
+              emitExpr(fb, src, lexed, env, left);
+              emitExpr(fb, src, lexed, env, asValue);
+              fb.byte(211);  // ref.eq
+              if (negated) { fb.byte(69); }
+              return;
+            }
+          }
+          default: { }
+        }
+        env.declineFor("an identity test against a name that is no value this emitter can read");
         return;
       }
       string en = env.variantOwners[vi];
@@ -13509,26 +13536,7 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
     // the lambda got no signature and the module declined.
     Assign(target, op, rhs): {
       findLambdasLv(env, src, lexed, target, ret);
-      string tw = "";
-      match (target.kind) {
-LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
-        // **A field target types the lambda too.** `h.f = (i32 x) => …` left `tw` empty, so the
-        // walk had no expected type for the lambda and declined the whole module — *a lambda … in
-        // a position the walk does not type yet*. The same lambda as a constructor argument was
-        // fine, which is what says the shape is supported and only this position was missed.
-        // `issues/lang/0303c`.
-        LField(base, fieldTok): {
-          match (base.kind) {
-            LIdent(btok): {
-              string ot = env.walkTypeOf(tokenTextOf(src, lexed, btok));
-              if (ot != "") { tw = env.fieldType(ot, tokenTextOf(src, lexed, fieldTok)); }
-            }
-            default: { }
-          }
-        }
-        default: { }
-      }
-      findLambdasExpr(env, src, lexed, rhs, tw);
+      findLambdasExpr(env, src, lexed, rhs, walkLvType(env, src, lexed, target));
     }
     IncrStmt(target, op): { findLambdasLv(env, src, lexed, target, ret); }
     Destructure(whole, pattern, init): {
@@ -13555,11 +13563,19 @@ LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
       if (!(update is null)) { findLambdasStmt(env, src, lexed, update!, ret); }
       findLambdas(env, src, lexed, fbody, ret);
     }
+    // **The loop variable is a declaration a lambda can capture**, recorded at the loop's position
+    // so the emitter can give each iteration a cell of its own. Only `addLocal` was here, which the
+    // capture walk does not read: `for (i32 x in xs) { hs.push(H(() => x)); }` named an `x` the
+    // emitter could not find (`issues/lang/0381a`).
     ForIn(elemTy, nameTok, iterable, fibody): {
       findLambdasExpr(env, src, lexed, iterable, "");
       i32 savedFl = env.localCount;
-      env.addLocal(tokenTextOf(src, lexed, nameTok), forInElemType(src, lexed, env, elemTy, iterable));
+      i32 savedWalk = env.walkCount;
+      string fet = forInElemType(src, lexed, env, elemTy, iterable);
+      env.addLocal(tokenTextOf(src, lexed, nameTok), fet);
+      env.walkDeclareAt(tokenTextOf(src, lexed, nameTok), fet, s.line, s.col);
       findLambdas(env, src, lexed, fibody, ret);
+      env.walkCount = savedWalk;
       env.localCount = savedFl;
     }
     DoWhile(dbody, cond): {
@@ -13594,6 +13610,30 @@ LIdent(tok): { tw = env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
 }
 
 /** An assignment target, which can hold an expression inside an index. */
+/**
+ * An assignment target's type, as far as the walk can tell, or `""` — what a lambda on the right is
+ * typed as. A name, a field of any target (`h.f = (i32 x) => …`, `issues/lang/0303c`), an element of
+ * any target (`fs[1] = () => 7`, `issues/lang/0382a`), and any of those unwrapped.
+ */
+string walkLvType(Env env, u8[] src, Lexed lexed, Lvalue lv) {
+  match (lv.kind) {
+    LIdent(tok): { return env.walkTypeOf(tokenTextOf(src, lexed, tok)); }
+    LField(base, fieldTok): {
+      string ot = walkLvType(env, src, lexed, base);
+      if (ot.len() > 1 && ot.slice(ot.len() - 1, ot.len()) == "?") { ot = ot.slice(0, ot.len() - 1); }
+      return ot == "" ? "" : env.fieldType(ot, tokenTextOf(src, lexed, fieldTok));
+    }
+    LIndex(base, index): {
+      string at = walkLvType(env, src, lexed, base);
+      return at.len() > 2 && at.slice(at.len() - 2, at.len()) == "[]" ? at.slice(0, at.len() - 2) : "";
+    }
+    LUnwrap(base): {
+      string ut = walkLvType(env, src, lexed, base);
+      return ut.len() > 1 && ut.slice(ut.len() - 1, ut.len()) == "?" ? ut.slice(0, ut.len() - 1) : "";
+    }
+  }
+}
+
 void findLambdasLv(Env env, u8[] src, Lexed lexed, Lvalue lv, string ret) {
   match (lv.kind) {
     // Assigning to a captured name captures it as surely as reading it does — more so, since
@@ -13829,9 +13869,31 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     IntLit(tok): { }
     FloatLit(tok): { }
     StrLit(tok): { }
+    // **An attribute is an argument to the tag's function**, so its parameter types a lambda written
+    // there — every event handler is one (`issues/lang/0383a`). A child is the child type, which a
+    // nested quoted tag or fragment builds; a quoted tag's attributes are strings.
     Jsx(tagTok, closeTok, attrs, kids): {
-      for (i32 i = 0; i < attrs.len(); i++) { findLambdasExpr(env, src, lexed, attrs[i].value, ""); }
-      for (i32 i = 0; i < kids.len(); i++) { findLambdasExpr(env, src, lexed, kids[i], ""); }
+      bool called = tagTok >= 0 && lexed.tokens[tagTok * tokenStride()] != kString();
+      i32 jfi = called ? env.funcAt(nameKeyOf(env, src, lexed, tagTok)) : -1;
+      string kidWant = called ? (jfi >= 0 ? jsxKidsType(env, jfi) : "") : want;
+      for (i32 i = 0; i < attrs.len(); i++) {
+        string aw = called ? "" : "string";
+        if (jfi >= 0) {
+          string an = tokenTextOf(src, lexed, attrs[i].nameTok);
+          for (i32 k = 0; k < env.funcParamCount[jfi]; k++) {
+            if (env.paramNameAt(jfi, k) == an) { aw = env.paramTypeAt(jfi, k); }
+          }
+        }
+        findLambdasExpr(env, src, lexed, attrs[i].value, aw);
+      }
+      for (i32 i = 0; i < kids.len(); i++) {
+        bool nested = false;
+        match (kids[i].kind) {
+          Jsx(nt, nc, na, nk): { nested = true; }
+          default: { }
+        }
+        findLambdasExpr(env, src, lexed, kids[i], nested ? kidWant : "");
+      }
     }
     JsxText(startOff, endOff): { }
     BoolLit(value): { }
@@ -13853,6 +13915,16 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     Is(left, target, other, negated): {
       findLambdasExpr(env, src, lexed, left, "");
       if (!(other is null)) { findLambdasExpr(env, src, lexed, other!, ""); }
+      // **A value the parser put in the type slot** — `q is b` with `b` a local — is a read of `b`, and
+      // a lambda making it captures `b`. Noting nothing left the lambda without it, and the emitter had
+      // no value of that name to compare against (`issues/lang/0385a`). A name that is not on the walk's
+      // stack — a type — notes nothing.
+      if (target is not null) {
+        match (target!.kind) {
+          Named(itok, iargs): { if (iargs.len() == 0) { env.noteRead(tokenTextOf(src, lexed, itok)); } }
+          default: { }
+        }
+      }
     }
     Matches(pat, subject): { findLambdasExpr(env, src, lexed, subject, ""); }
     // Both arms stand where the whole ternary stands, which is what makes `p ? () => 1 : () => 2`
@@ -13925,6 +13997,19 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
           if (fat < 0 && recv != "") {
             fat = methodSlotForArgs(env, src, lexed, recv, tokenTextOf(src, lexed, mnameTok),
                                     callTargs, args);
+          }
+          // **A variant's construction is a call too**, and its payload's fields are its parameters:
+          // `V.Comp(() => …, key)` gave the lambda no target (`issues/lang/0382a`).
+          if (fat < 0 && recv != "" && env.isEnumName(recv)) {
+            i32 vci = env.variantAt(env.variantKeyIn(recv, tokenTextOf(src, lexed, mnameTok)));
+            if (vci >= 0) {
+              string ven = env.variantOwners[vci];
+              for (i32 i = 0; i < args.len(); i++) {
+                string vw = i < env.variantArity[vci] ? env.fieldTypeAt(ven, env.variantSlot[vci] + i) : "";
+                findLambdasExpr(env, src, lexed, args[i], vw);
+              }
+              return;
+            }
           }
         }
         default: { }

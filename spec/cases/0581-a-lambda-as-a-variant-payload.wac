@@ -1,0 +1,14 @@
+// expect: f() = 12
+// why: a variant's construction is a call, and its payload's field types the lambda passed for it
+// from: issues/lang/0382a
+enum Op {
+  Unary(fn<i32(i32)> run),
+  Nothing,
+}
+export i32 f() {
+  Op o = Op.Unary((i32 x) => x * 2);
+  return match (o) {
+    Unary(run): run(6),
+    Nothing: 0,
+  };
+}
