@@ -4,7 +4,7 @@
 //       packages/raster/example/rasterdesk.wac .cache/rasterdesk --page ./packages/web
 //
 // `design/system/0004` steps 1 to 4, wired: `Desk` holds the windows and their terminals, `Surface`
-// is the pixels, `drawPixels` establishes the canvas and `drawPixelsIn` updates part of it.
+// is the pixels, a canvas handle's `pixels` establishes the canvas and `pixelsIn` updates part of it.
 //
 // **This is the coordinate test.** Everything under it was checked without a screen — a surface read
 // back as numbers, a hit answered as an index — and all of that can be self-consistently wrong about
@@ -13,7 +13,7 @@
 // model's idea of a rectangle and the page's shows up as a colour in the wrong place.
 //
 
-import { Event, Page, html.canvas, html.div, html.style } from "../../web";
+import { Element, ElementEvent, Listen, Node, Page, Ref, Ui, html.canvas, html.div, html.style } from "../../web";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
 import { Desk, barHeight } from "../src/desk.wac";
 import { Surface, cellHeight, cellWidth } from "../src/surface.wac";
@@ -55,35 +55,40 @@ i32[] cps(string s) {
   return out;
 }
 
+/** The page, laid out once: one canvas, which the loop in `main` owns. */
+Node Layout(Ui ui, Ref screen) {
+  return <div>
+    <style>{"body { margin: 0; background: #0b0e0f; } canvas { display: block; image-rendering: pixelated; }"}</style>
+    <canvas ref={screen} id="screen"></canvas>
+  </div>;
+}
+
 export async i32 main(Page page) {
   Desk d = Desk.create();
   d.open(20, 20, 12, 4, cps("one"));
   d.open(120, 70, 12, 4, cps("two"));
   d.toFocused(cps("hello"));
 
-  // **The markup is rendered at run time**, not exported. A page program owns its document, and a
-  // `<canvas>` that nothing rendered is a canvas that does not exist — which is exactly how this
-  // failed the first time, with the live test waiting thirty seconds for an element nobody had made.
-  page.render(
-    <div>
-      <style>{"body { margin: 0; background: #0b0e0f; } canvas { display: block; image-rendering: pixelated; }"}</style>
-      <canvas id="screen"></canvas>
-    </div>
-  );
+  // **The markup is made at run time**, not exported. A page program owns its document, and a
+  // `<canvas>` that nothing made is a canvas that does not exist — which is exactly how this failed the
+  // first time, with the live test waiting thirty seconds for an element nobody had made.
+  Ref at = Ref {};
+  page.mount((Ui ui) => Layout(ui, at));
+  Element screen = at.element()!;
 
   Surface s = Surface.create(W(), H());
   d.draw(s, DESKTOP(), FRAME(), BAR(), FG(), BG());
 
-  // **The whole canvas first**, because `drawPixels` is what sizes it — the markup above has a
-  // `<canvas>` with no dimensions, so until this runs the backing store is the browser's default.
-  page.drawPixels("screen", W(), H(), s.pixels);
+  // **The whole canvas first**, because `pixels` is what sizes it — the markup above has a `<canvas>`
+  // with no dimensions, so until this runs the backing store is the browser's default.
+  screen.pixels(W(), H(), s.pixels);
 
   // **Then a partial blit**, which is the thing with an origin that can be wrong. A 16x16 square at
-  // (200, 24): if `drawPixelsIn` put it at the wrong place, or the surface's rows ran the other way,
+  // (200, 24): if `pixelsIn` put it at the wrong place, or the surface's rows ran the other way,
   // the test that reads this pixel finds the desktop colour.
   Surface patch = Surface.create(16, 16);
   patch.fill(0, 0, 16, 16, PATCH());
-  page.drawPixelsIn("screen", 200, 24, 16, 16, patch.pixels);
+  screen.pixelsIn(200, 24, 16, 16, patch.pixels);
 
   page.log("rasterdesk: \{W()}x\{H()}, \{d.wins.len()} windows");
 
@@ -92,12 +97,12 @@ export async i32 main(Page page) {
   // mean the same thing this model's do. They arrive relative to the element the listener is on —
   // the canvas — which is exactly what a `Surface` is indexed by, so no conversion should be needed
   // and this is where that claim gets tested.
-  page.on("#screen", "pointerdown");
-  page.on("#screen", "pointermove");
-  page.on("#screen", "pointerup");
+  screen.listen("pointerdown", Listen.none());
+  screen.listen("pointermove", Listen.none());
+  screen.listen("pointerup", Listen.none());
 
   while (true) {
-    Event e = await page.nextEvent();
+    ElementEvent e = await screen.next();
     if (e.kind == "pointerdown") { d.pointerDown(e.x, e.y); }
     else if (e.kind == "pointermove") { d.pointerMove(e.x, e.y); }
     else if (e.kind == "pointerup") { d.pointerUp(); }
@@ -108,7 +113,7 @@ export async i32 main(Page page) {
     s.undamage();
     d.draw(s, DESKTOP(), FRAME(), BAR(), FG(), BG());
     if (s.damaged()) {
-      page.drawPixelsIn("screen", s.dx0, s.dy0, s.dx1 - s.dx0 + 1, s.dy1 - s.dy0 + 1, s.damagedPixels());
+      screen.pixelsIn(s.dx0, s.dy0, s.dx1 - s.dx0 + 1, s.dy1 - s.dy0 + 1, s.damagedPixels());
     }
   }
 }
