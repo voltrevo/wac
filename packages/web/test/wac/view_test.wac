@@ -422,3 +422,41 @@ export string test_a_ref_names_the_element_and_an_effect_draws_in_it() {
   t.eqI32(r.doc.find("id", "c"), c, "into the same canvas");
   return t.report();
 }
+
+// ── The development build's check ────────────────────────────────────────────
+
+/** A list kept in a cell and changed in place, without `set` — what the page shows does not follow. */
+Node Forgetful(Ui ui) {
+  auto items = ui.state(Vec<string>.create());
+  Node[] rows = Node[].filled(items.get().len(), Node.Text(""));
+  for (i32 i = 0; i < rows.len(); i++) { rows[i] = <li>{items.get().get(i)}</li>; }
+  return <div>
+    <ul id="list">{rows}</ul>
+    <button id="add" onclick={(ElementEvent e) => { items.get().push("milk"); }}>add</button>
+  </div>;
+}
+
+/** The same with `set`, which the check has nothing to say about. */
+Node Careful(Ui ui) {
+  auto n = ui.state(0);
+  return <p><b id="n">{n.get()}</b><button id="up" onclick={(ElementEvent e) => { n.update((i32 v) => v + 1); }}>+</button></p>;
+}
+
+export string test_the_check_names_a_component_whose_page_did_not_follow_its_state() {
+  Check t = Check.create();
+  Rig r = Rig.create();
+  r.view.mount((Ui ui) => <Forgetful/>);
+  t.eqI32(r.view.check().len(), 0, "nothing to say before anything changed");
+  r.fire("id", "add", "click", "");
+  string[] said = r.view.check();
+  t.eqI32(said.len(), 1, "one disagreement");
+  t.isTrue(said.len() == 1 && said[0].indexOf("Forgetful") >= 0, "naming the component: " + (said.len() > 0 ? said[0] : ""));
+  t.eqStr(r.doc.shown(r.doc.find("id", "list")), "", "and the check changed nothing on the page");
+
+  Rig ok = Rig.create();
+  ok.view.mount((Ui ui) => <Careful/>);
+  ok.fire("id", "up", "click", "");
+  ok.fire("id", "up", "click", "");
+  t.eqI32(ok.view.check().len(), 0, "state that was set is shown, and the check says nothing");
+  return t.report();
+}

@@ -5984,6 +5984,24 @@ export string typeOfExpr(C c, Expr e) {
                 if (bs != "") { return bs; }
               }
             }
+            // **A static on a written instantiation says which instance it builds**, where one on the
+            // bare template does not (below): `Vec<string>.create()` is the template's `create` with
+            // `T` as `string`, so it answers `Vec<string>`. It answered nothing, so a method's own
+            // letter could not be inferred from such an argument — `ui.state(Vec<string>.create())`
+            // asked for `state<…>` to be written — and `string s = Vec<string>.create()` was not refused.
+            TypeName(qual): {
+              match (qual.kind) {
+                Named(qtok, qargs): {
+                  string inst = typeOfTy(c, qual);
+                  i32 smi = c.methodAt(tokenText(c, qtok), tokenText(c, nameTok));
+                  if (qargs.len() > 0 && smi >= 0 && inst != typeNone() && inst != "") {
+                    return bindMethodLettersAuto(c, smi, inst, callTargs, args,
+                                                 substituteType(c, inst, c.methodReturns[smi]));
+                  }
+                }
+                default: { }
+              }
+            }
             default: { }
           }
           string recvT = receiverType(c, obj);

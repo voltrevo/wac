@@ -1,0 +1,9 @@
+// expect: refused
+// why: a static method called on a written instantiation answers its declared type with the
+//      instantiation's arguments put in, so `Vec<string>.create()` is a `Vec<string>` and not a string
+// from: design/system/0012
+import { Vec } from "core";
+export i32 f() {
+  string s = Vec<string>.create();
+  return 0;
+}

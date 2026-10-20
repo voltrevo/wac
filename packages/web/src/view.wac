@@ -524,6 +524,39 @@ export struct View {
     m.attrs = want;
   }
 
+  // ── The development build's check ──────────────────────────────────────────
+
+  /**
+   * What a development build asks after every turn (`design/system/0012`): each live component rendered
+   * again, its nodes compared with what the page shows for it, and a sentence for each place the two
+   * differ, naming the component. They differ only when a render read something that changed without a
+   * `set` — a `Vec` in a cell pushed to in place — so the page kept showing what it was. Nothing on the
+   * page changes, and an effect a fresh render would have scheduled is left as it was.
+   */
+  string[] check(this) {
+    Vec<string> said = Vec.create();
+    if (this.top is not null) { this.checkIn(this.top!, said); }
+    return said.toArray();
+  }
+
+  void checkIn(this, Mounted m, Vec<string> said) {
+    if (m.kind == 2 && m.comp is not null && m.comp!.live) {
+      Ui u = m.comp!;
+      bool[] pending = bool[].filled(u.effects.len(), false);
+      for (i32 i = 0; i < pending.len(); i++) { pending[i] = u.effects.get(i).pending; }
+      u.next = 0;
+      Node n = u.draw(u);
+      for (i32 i = 0; i < pending.len(); i++) {
+        Effect e = u.effects.get(i);
+        e.pending = pending[i];
+      }
+      Vec<Node> fresh = Vec.create();
+      flatten(n, fresh);
+      compareNodes(u.name, fresh.toArray(), m.kids, said);
+    }
+    for (i32 i = 0; i < m.kids.len(); i++) { this.checkIn(m.kids.get(i), said); }
+  }
+
   /** What an element's listeners run, replaced; a kind not listened for yet is listened for. */
   void setHandlers(this, Mounted m, On[] on) {
     m.handlers = on;
@@ -629,6 +662,48 @@ void moveBefore(Mounted m, Element? anchor) {
   Vec<Element> hs = Vec.create();
   m.handles(hs);
   for (i32 i = 0; i < hs.len(); i++) { hs.get(i).move(anchor); }
+}
+
+/**
+ * Where `want` — a fresh render's nodes — differs from `have`, what the page shows for them, each said
+ * once and naming `who`. A child component's own nodes are its own render's to compare, so here it is
+ * only matched by name.
+ */
+void compareNodes(string who, Node[] want, Vec<Mounted> have, Vec<string> said) {
+  if (want.len() != have.len()) {
+    said.push(who + " renders \{want.len()} nodes where the page shows \{have.len()}: it changed something without a `set`");
+    return;
+  }
+  for (i32 i = 0; i < want.len(); i++) {
+    Mounted h = have.get(i);
+    match (want[i]) {
+      Text(t): {
+        if (h.kind != 1 || h.text != t) {
+          said.push(who + " renders the text \"" + t + "\" where the page shows \"" + h.text + "\"");
+        }
+      }
+      Element(tag, attrs, on, kids, ref): {
+        if (h.kind != 0 || h.tag != tag) {
+          said.push(who + " renders a <" + tag + "> where the page shows " + (h.kind == 0 ? "a <" + h.tag + ">" : "something else"));
+          continue;
+        }
+        for (i32 j = 0; j < attrs.len(); j++) {
+          if (attrs[j].name == "key") { continue; }
+          string? had = attrIn(h.attrs, attrs[j].name);
+          if (had is null || had! != attrs[j].value) {
+            said.push(who + " renders " + tag + "'s " + attrs[j].name + " as \"" + attrs[j].value + "\" where the page has \"" + (had ?? "") + "\"");
+          }
+        }
+        Vec<Node> flat = Vec.create();
+        for (i32 j = 0; j < kids.len(); j++) { flatten(kids[j], flat); }
+        compareNodes(who, flat.toArray(), h.kids, said);
+      }
+      Fragment(kids): { }
+      Component(name, key, draw, snaps, same): {
+        if (h.kind != 2 || h.tag != name) { said.push(who + " renders a " + name + " where the page shows something else"); }
+      }
+    }
+  }
 }
 
 void unmountAll(Mounted m) {

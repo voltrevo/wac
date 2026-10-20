@@ -123,7 +123,7 @@ does that for every order in which things can arrive.
 ## Building one
 
     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
-        <entry.wac> <out-dir> [--in-page] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
+        <entry.wac> <out-dir> [--in-page] [--dev] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
 
 `packages/web/tools/build.wac` writes three files: `page.wac`, a wrapper exporting `PageHost` — the one thing the
 browser's side holds, with the page in a private field and a method for each call the host makes;
@@ -134,6 +134,10 @@ files and values. By default the program's half runs in a worker started from th
 `--in-page` joins the two halves directly on the page's thread. Neither half makes a decision;
 everything a page does is in `src/page.wac`. Because the page is private, none of its interior
 crosses into JavaScript: the glue is two classes, `PageHost` and `Dom`.
+
+**`--dev` is a development build**: after every turn each view renders everything again and logs, to the
+console, each place the page does not show what a component renders — which happens only when a render
+read something changed without a `set`, a `Vec` in a cell pushed to in place.
 
 **The page carries a Content Security Policy.** The one script it runs as written is a fixed loader,
 allowed by its hash, which starts the rest from `blob:` URLs; nothing is loaded from anywhere else — no

@@ -114,13 +114,18 @@ export struct Page {
    * would allow it. A page made in a test holds one that answers nothing, until the test sets its own.
    */
   Sys sys;
+  /**
+   * **A development build's check** (`--dev`): after every turn each view renders everything again and
+   * logs each place the page does not show what its components render (`View.check`).
+   */
+  bool checking;
 
   Page create(Dom dom) {
     Queue<Picked> files;
     Queue<Ticket<Picked>> wantsFile;
     Vec<View> views = Vec.create();
     return Page(dom, files, wantsFile, Slots<f64>(Ticket<f64>?[]()), Runner.create(), Elements.create(dom.elements),
-                views, World.create(System.inert(), 0).sys);
+                views, World.create(System.inert(), 0).sys, false);
   }
 
   /**
@@ -147,6 +152,11 @@ export struct Page {
   /** The end of a call into the program: every view renders what changed. */
   void turn(this) {
     for (i32 i = 0; i < this.views.len(); i++) { this.views.get(i).turn(); }
+    if (!this.checking) { return; }
+    for (i32 i = 0; i < this.views.len(); i++) {
+      string[] said = this.views.get(i).check();
+      for (i32 j = 0; j < said.len(); j++) { this.dom.log("view check: " + said[j]); }
+    }
   }
 
   void title(this, string t) { this.dom.title(t); }

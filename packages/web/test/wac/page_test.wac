@@ -4,8 +4,9 @@
 // tested here. The view over the elements is `view_test.wac`'s.
 
 import { Check } from "./check.wac";
-import { Ticket } from "core";
-import { Dom, Element, ElementEvent, ElementOps, Listen, Page, elementEvent, timerFired, valueArrived } from "../../src/page.wac";
+import { Ticket, Vec } from "core";
+import { Dom, Element, ElementEvent, ElementOps, Listen, Node, Page, Ui, elementEvent, timerFired, valueArrived } from "../../src/page.wac";
+import { html.button, html.p } from "../../src/page.wac";
 
 /** What the fake document saw, as one line per call. */
 struct Seen {
@@ -253,5 +254,27 @@ export string test_an_elements_value_is_waited_for() {
   valueArrived(page, 1, "ab");
   t.isTrue(done.settled(), "both answered");
   t.eqI32(done.value(), 52, "in order");
+  return t.report();
+}
+
+/** A count kept in a `Vec` and pushed to in place: the page does not follow, and a checking page says so. */
+Node Tally(Ui ui) {
+  auto seen = ui.state(Vec<i32>.create());
+  return <p>{seen.get().len()}<button onclick={(ElementEvent e) => { seen.get().push(1); }}>+</button></p>;
+}
+
+export string test_a_checking_page_logs_what_its_view_does_not_show() {
+  Check t = Check.create();
+  Seen seen = Seen("", 0);
+  Page page = Page.create(fakeDom(seen));
+  page.checking = true;
+  schedule page.take;
+  page.mount((Ui ui) => <Tally/>);
+  page.turn();
+  t.isTrue(seen.log.indexOf("view check") < 0, "nothing to say at first: " + seen.log);
+  // The button is the fourth handle: the root's `p`, its text, then the button.
+  elementEvent(page, 1, "click", 3, 3, "", 0, 0, 0);
+  t.isTrue(seen.log.indexOf("log view check: Tally renders the text \"1\" where the page shows \"0\"") >= 0,
+           "the page logged the component whose state changed without a set: " + seen.log);
   return t.report();
 }

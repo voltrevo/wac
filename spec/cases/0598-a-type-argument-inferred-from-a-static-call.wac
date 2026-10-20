@@ -1,0 +1,15 @@
+// expect: f() = 1
+// why: a method's own type parameter is inferred from its argument, and an argument that is a static
+//      call on a written instantiation has that instantiation's type
+// from: design/system/0012
+import { Vec } from "core";
+struct Box {
+  i32 n;
+  T keep<T>(this, T v) { return v; }
+}
+export i32 f() {
+  Box b = Box(0);
+  auto v = b.keep(Vec<string>.create());
+  v.push("x");
+  return v.len();
+}

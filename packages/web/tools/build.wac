@@ -41,11 +41,13 @@ struct Asked {
    * a page that starts nothing. A copy has no document, so it cannot run `main(Page …)`.
    */
   string spawn;
+  /** A development build: the page checks its views after every turn (`Page.checking`). */
+  bool dev;
 }
 
 /** The arguments, or a usage line in `title` and empty `entry` when they do not make sense. */
 Asked askedOf(Cli cli) {
-  Asked a = Asked("", "", "wac", "web", "wac", false, 0, "");
+  Asked a = Asked("", "", "wac", "web", "wac", false, 0, "", false);
   i32 argc = cli.argCount().wait();
   string[] args = string[].filled(argc, "");
   for (i32 k = 0; k < argc; k++) { args[k] = string.fromBytes(cli.arg(k).wait()); }
@@ -66,6 +68,11 @@ Asked askedOf(Cli cli) {
     }
     if (w == "--in-page") {
       a.inPage = true;
+      i++;
+      continue;
+    }
+    if (w == "--dev") {
+      a.dev = true;
       i++;
       continue;
     }
@@ -154,7 +161,7 @@ export string relativeTo(string from, string to) {
  * vectors cross into JavaScript, where nothing could use them. Handing over the `Page` itself did:
  * 24 classes and 71 KB of glue for a counter.
  */
-export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string spawn) {
+export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string spawn, bool dev) {
   string w = "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
            + "import { main" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
            + "import { Dom, Page, System, World, answered, elementEvent, fileArrived, timerFired, valueArrived"
@@ -171,6 +178,7 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
         + "    schedule page.take;\n"
         + "    World world = World.create(system, \{grants});\n"
         + "    page.sys = world.sys;\n"
+        + (dev ? "    page.checking = true;\n" : "")
         + "    return PageHost(page, world);\n"
         + "  }\n\n"
         + "  void answer(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
@@ -775,7 +783,7 @@ string head(string title) {
 export i32 buildPage(Core core, Cli cli) {
   Asked a = askedOf(cli);
   if (a.entry == "" || a.out == "") {
-    cli.writeErr("usage: build.wac <entry.wac> <out-dir> [--in-page] [--grant read,write] [--spawn <export>] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
+    cli.writeErr("usage: build.wac <entry.wac> <out-dir> [--in-page] [--dev] [--grant read,write] [--spawn <export>] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
     return 2;
   }
   // **The wrapper is a module of this project**, so it is written inside it: from anywhere else its
@@ -790,7 +798,7 @@ export i32 buildPage(Core core, Cli cli) {
   bool pagePath = a.pageSpec.len() > 0 && (a.pageSpec.slice(0, 1) == "." || a.pageSpec.slice(0, 1) == "/");
   string pageSpec = pagePath ? relativeTo(a.out, a.pageSpec) : a.pageSpec;
   string entrySpec = relativeTo(a.out, a.entry);
-  cli.writeFile(wrapper, wrapperFor(entrySpec, pageSpec, a.grants, a.spawn).toBytes()).wait();
+  cli.writeFile(wrapper, wrapperFor(entrySpec, pageSpec, a.grants, a.spawn, a.dev).toBytes()).wait();
   string js = a.out + "/page.js";
   Exec made = cli.exec(a.wac, ["bindgen", wrapper, js, "--script"], u8[]()).wait();
   if (!made.ok()) {
