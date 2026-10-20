@@ -1465,7 +1465,11 @@ bool isFuncrefType(string t) {
   // signature, so the module declared `$bind$fnref_j` as `fn[fn[void(i32)][](i32)]` and built a pair
   // struct in its body. wasm rejects that as a return-type mismatch, which made every module that
   // stores continuations in an array invalid — a handler table being exactly that.
-  return t.len() > 3 && t.slice(0, 3) == "fn[" && !isArrayType(t);
+  //
+  // **And a nested nullable of one is a box.** `fn[i32()]??` — `T?` at `T = fn<i32()>?`, which is
+  // `Vec<fn<…>?>.at` — starts with `fn[` too, and `writeValType` asks this before it asks about boxes,
+  // so the box was written as a pair while the body built a box (`issues/lang/0387a`).
+  return t.len() > 3 && t.slice(0, 3) == "fn[" && !isArrayType(t) && !endsWith(t, "??");
 }
 
 /**

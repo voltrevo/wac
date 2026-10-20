@@ -1,6 +1,7 @@
 # 0387a — `Vec<fn<…>?>` emits an `at` the engine refuses
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** (the commit closing it)
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-20
@@ -38,3 +39,11 @@ the instance is emitted, so the refusal does not depend on calling `at`.
 
 Found building `packages/web`'s `element.wac`, whose handlers were a `Vec<fn<void(ElementEvent)>?>`; it
 holds an inert function for "none" instead.
+
+## Resolution
+
+The box was spelled right — `fn[i32()]??` — and written wrong: `isFuncrefType` answered yes to any
+spelling starting `fn[`, and `writeValType` asks it before it asks whether a type is a box, so the
+signature declared a pair where the body built a box. A struct's `P??` never reaches that question,
+which is why only functions failed. `isFuncrefType` now says no to a nested nullable. Case 0596, which
+also checks that `at` tells a present `null` from an index past the end.
