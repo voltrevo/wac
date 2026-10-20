@@ -11,12 +11,12 @@
 
 Two layers, the lower one complete without the upper:
 
-1. **`Elem`, a handle to one element.** Holding it is the authority to change that element and everything
+1. **`Element`, a handle to one element.** Holding it is the authority to change that element and everything
    under it, and to hear their events — nothing above it or beside it. `main` is handed one, the root. A
-   child made through a handle comes back as a handle. Passing an `Elem` to a widget is a grant, as passing
+   child made through a handle comes back as a handle. Passing an `Element` to a widget is a grant, as passing
    `Sys` is.
-2. **`View`, diffing over one `Elem`.** `page.mount((Ui ui) => …)` renders components — functions of `Ui`,
-   which keep state through it — and turns the difference from the last render into `Elem` calls, rendering
+2. **`View`, diffing over one `Element`.** `page.mount((Ui ui) => …)` renders components — functions of `Ui`,
+   which keep state through it — and turns the difference from the last render into `Element` calls, rendering
    again only the components whose state or attributes changed. It is an ordinary library: anything it
    does, an application could do by hand.
 
@@ -45,14 +45,14 @@ Measured or read, 2026-10-18, at 5133ae836:
   refused. A quoted tag, `<"div" aria-label="…">`, takes any attribute, which is the same gap from the other
   side: nothing between "39 names" and "anything, `onerror` included".
 
-## The lower layer: `Elem`
+## The lower layer: `Element`
 
 ```wac
 export async i32 main(Page page) {
-  Elem root = page.root();
-  Elem up = root.append("button");
+  Element root = page.root();
+  Element up = root.append("button");
   up.text("+1");
-  Elem n = root.append("b");
+  Element n = root.append("b");
   n.text("0");
   up.listen("click");
   i32 count = 0;
@@ -156,11 +156,11 @@ Node NewTodo(Ui ui, fn<void(string)> onadd) {
   says so with state — a `busy` flag, a disabled button — which the view shows anyway.
 - **Closures are rebound on every render and that sends nothing.** The listeners are on the view's root,
   once per event kind, so a new closure replaces an old one in the program's own table.
-- **The view owns its `Elem`'s children.** Nobody else writes there. `ref` names an element, and
+- **The view owns its `Element`'s children.** Nobody else writes there. `ref` names an element, and
   `afterRender` runs once the render that made it has been applied — to focus it, or to draw in a canvas
   the diff then leaves alone.
 - **Lists match by `key` when one is given, and by position otherwise.**
-- **One that runs on its own, a terminal, can instead be a task that owns an `Elem`.**
+- **One that runs on its own, a terminal, can instead be a task that owns an `Element`.**
 - **What the browser does with an event is still declared, not decided.** A view says it per element —
   `prevent="Tab ArrowUp"` beside an `onkeydown` — and the view passes it to `listen`; a form's `submit` is
   always prevented, as now.
@@ -356,12 +356,12 @@ plain local is a `ui.state` cell now, since only a `set` renders anything. The r
 
 1. **Close the injection in today's `render`**, with the CSP in the build. Independent of the rest, and true
    of what ships now. (A failing case first: the four constructions above.)
-2. **`Elem`**: the operations, the mirror, events per handle, batching, `Listen`. Port `counter` and `notes`.
+2. **`Element`**: the operations, the mirror, events per handle, batching, `Listen`. Port `counter` and `notes`.
 3. **The language changes** above: handlers on `Node`, component tags, `data-*` and `aria-*`, `{rows}`,
    the bugs.
 4. **`View`**: the diff, the turn, `key`, `ref`, `afterRender`, `Ui` and its hooks, rendering only what changed
    and the development build's check of it. `main(Page)` with `page.sys`. Port `templates/webapp`.
-5. **The desktop**, with windows as tasks owning `Elem`s; then the terminal, then every other page.
+5. **The desktop**, with windows as tasks owning `Element`s; then the terminal, then every other page.
 6. **Delete** `render`-as-`innerHTML`, `setText`, `setValue`, `setStyle`, `renderInto`, `getValue` and
    `page.on`. `htmlOf` stays, for a page written out as a file.
 
