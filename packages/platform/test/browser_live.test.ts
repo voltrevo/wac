@@ -361,6 +361,41 @@ Deno.test({
       assertEquals(await page.textContent("#out"), "A CHILD SAID THIS", "procs: the copy's output");
       assertEquals(await page.textContent("#status"), "17", "procs: its status");
 
+      // A packfile, made here by real git and handed to the page: it rebuilds the index, counts the
+      // kinds as git does, and shows the newest commit and then the one before it.
+      const repo = `${dir}/repo`;
+      const git = async (...args: string[]): Promise<string> => {
+        const out = await new Deno.Command("git", { args, cwd: repo, stdout: "piped", stderr: "piped" }).output();
+        if (!out.success) throw new Error(`git ${args.join(" ")}: ${new TextDecoder().decode(out.stderr)}`);
+        return new TextDecoder().decode(out.stdout);
+      };
+      await Deno.mkdir(repo);
+      await git("init", "-q");
+      for (const [n, text] of [["1", "first"], ["2", "second"]]) {
+        await Deno.writeTextFile(`${repo}/f.txt`, text);
+        await git("add", "f.txt");
+        await git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", `commit ${n}`);
+      }
+      const objects = await git("rev-list", "--objects", "HEAD");
+      const made = new Deno.Command("git", { args: ["pack-objects", "--stdout"], cwd: repo, stdin: "piped", stdout: "piped" }).spawn();
+      const w = made.stdin.getWriter();
+      await w.write(new TextEncoder().encode(objects));
+      await w.close();
+      await Deno.writeFile(`${dir}/test.pack`, (await made.output()).stdout);
+      await buildPage("packages/git/example/gitpage.wac", `${dir}/gitpage`);
+      await page.goto(`http://127.0.0.1:${port}/gitpage/index.html`, { waitUntil: "load" });
+      await page.waitForSelector("#f", { timeout: 30_000 });
+      await page.setInputFiles("#f", `${dir}/test.pack`);
+      await waitInPage(page, "document.getElementById('count').textContent === '6'", null, { timeout: 30_000 });
+      assertEquals(await page.textContent("#kinds"), "— 2 commits, 2 trees, 2 blobs, 0 tags", "gitpage: the kinds");
+      assertEquals(await page.textContent("#where"), "commit 1 of 2", "gitpage: where it is");
+      const newest = (await page.textContent("#detail")) ?? "";
+      await page.click("#prev");
+      await waitInPage(page, "document.getElementById('where').textContent === 'commit 2 of 2'", null, { timeout: 10_000 });
+      const older = (await page.textContent("#detail")) ?? "";
+      assertEquals([newest, older].filter((d) => d.includes("\ncommit 2\n")).length, 1, `gitpage: one of them is the second commit:\n${newest}\n${older}`);
+      assertEquals([newest, older].filter((d) => d.includes("\ncommit 1\n")).length, 1, "gitpage: and one the first");
+
       // A page with a `Sys`: built with `--grant read,write`, its `main` reads and writes the Origin
       // Private File System through the same `sys.readFile` a command-line program calls. The claim
       // is persistence, so the check is a reload — and a page that only kept the text in memory, or

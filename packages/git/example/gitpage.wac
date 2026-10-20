@@ -23,8 +23,8 @@
 // we shipped. `git verify-pack -v` on the same file, on your machine, prints the same object count
 // and the same names — which is a check anyone can run and nobody has to trust us for.
 
-import { Event, Page, Picked, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.footer, html.h1, html.input, html.p, html.pre, html.span, html.style } from "../../web";
-import { Ticket, Vec } from "core";
+import { ElementEvent, Node, Page, Picked, State, Ui, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.footer, html.h1, html.input, html.p, html.pre, html.span, html.style } from "../../web";
+import { Vec } from "core";
 import { encode } from "../../codec/src/hex.wac";
 import { PackIndex } from "../src/idx.wac";
 import { Got, Indexed, Pack, indexPack, objectNamed, openIndexed } from "../src/pack.wac";
@@ -79,193 +79,181 @@ static i32 SHOWN = 200;
 /** Twenty raw bytes as forty hex characters. */
 string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
 
-// **Nothing here escapes anything, because nothing has to.** `page.setText` is `textContent`, so a
-// commit message containing `<script>` lands as those characters, and `render` escapes every string
-// in the tree it is handed (`packages/web`) — the markup below could hold a commit and still be safe.
+// **Nothing here escapes anything, because nothing has to.** Every string reaches the page as a text
+// node (`packages/web`), so a commit message containing `<script>` lands as those characters.
 
-export async i32 main(Page page) {
-  page.title("wac: a packfile, opened in a tab");
-  page.render(
-    <div id="tool">
-      <style>{STYLE}</style>
-      <h1>a packfile, opened in a tab</h1>
-      <p class="sub">Drop <code>.git/objects/pack/pack-*.pack</code> from any repository on your machine.
-        There is no network here — a page cannot open a socket, and this does not need one. The pack
-        arrives with its index thrown away, and <code>packages/git</code> rebuilds it: every object
-        header, every zlib stream, and every delta resolved against what came before it. Check the
-        answer with <code>git verify-pack -v</code> on the same file.</p>
-      <div class="row">
-        <input type="file" id="f" accept=".pack"/>
-        <span id="note" class="dim">or drop one anywhere on this page</span>
-      </div>
-      <dl>
-        <dt>pack</dt><dd><span id="packname" class="dim">nothing yet</span></dd>
-        <dt>objects</dt><dd><b id="count">0</b> <span id="kinds" class="dim"></span></dd>
-        <dt>took</dt><dd class="dim"><span id="ms">0</span> ms to rebuild the index — delta depth
-          costs far more than size does</dd>
-      </dl>
-      <div class="row">
-        <button id="prev">‹ older</button>
-        <button id="next">newer ›</button>
-        <span id="where" class="dim">no commits loaded</span>
-      </div>
-      <pre id="detail">Drop a pack to begin.</pre>
-      <footer>The object database, the delta resolver and this page are wac. <a href={SOURCE}>source</a>.</footer>
-    </div>
-  );
-  page.on("#prev", "click");
-  page.on("#next", "click");
+/** A pack read and indexed: what the page shows about it, and the commits it offers. */
+struct Opened {
+  PackIndex idx;
+  u8[] bytes;
+  /** Newest-first as the pack happened to hold them, at most `SHOWN`. */
+  Vec<string> commits;
+  string name;
+  string kinds;
+  i32 ms;
+}
 
-  // Held across iterations, because a change event has to reach the same pack the file event built.
-  // There is no `Pack?` worth carrying — an empty index reads as "nothing loaded" on its own.
-  PackIndex idx = PackIndex(0, u8[](), i64[](), u32[]());
-  u8[] packBytes = u8[]();
-  // The commits, newest-first as the pack happened to hold them, and where in that list the page is
-  // showing. Held here because the buttons below move a cursor rather than re-reading the pack.
-  Vec<string> commits = Vec.create();
-  i32 at = 0;
+/** What the page says while nothing has been read. */
+Opened none() { return Opened(PackIndex(0, u8[](), i64[](), u32[]()), u8[](), Vec.create(), "", "", 0); }
 
-  Ticket<Event> ev = page.nextEvent();
-  Ticket<Picked> file = page.nextFile();
-
+/** Each pack dropped or picked, for as long as the page lives. */
+async void packs(Page page, State<Opened> opened, State<i32> at, State<string> note, State<string?> blank) {
   while (true) {
-    await Ticket.any(ev, file);
-
-    if (file.settled()) {
-      Picked f = file.value();
-      file = page.nextFile();
-      if (!f.ok) {
-        page.setText("note", "could not read it: \{f.error}");
-        continue;
-      }
-      if (f.bytes.len() > LIMIT) {
-        page.setText("note", "\{f.name} is \{f.bytes.len()}"
-          + " bytes; this page stops at \{LIMIT} so it never looks hung");
-        continue;
-      }
-
-      // Said before the work, and shown: rebuilding an index means inflating every object and
-      // walking every delta chain, which took twelve seconds for one megabyte of this repository's
-      // own history. Built `--in-page`, the work runs on the page's own thread, so the note is only on
-      // screen if the browser paints before it starts — which is what waiting for `painted` is.
-      page.setText("note", "reading \{f.name}…");
-      await page.painted();
-      f64 began = page.now();
-      match (indexPack(f.bytes)) {
-        Unindexable(why): {
-          // Said, not swallowed. A file that is not a pack is the commonest thing to drop here, and
-          // "nothing happened" would leave the reader with no idea which of us was wrong.
-          page.setText("note", "not a packfile this can read: \{why}");
-          page.setText("detail", "");
-          continue;
-        }
-        Thin(bases): {
-          // A thin pack is a real thing to be handed — it is what a server sends an incremental
-          // fetch — and it cannot be read alone, because its deltas point at objects that are not
-          // in it. Naming that is more useful than refusing.
-          page.setText("note", "\{f.name} is a *thin* pack: \{bases.len()}"
-            + " of its deltas name a base that is not inside it, so it needs the repository it came"
-            + " from. `git index-pack --fix-thin` completes one.");
-          page.setText("detail", "");
-          continue;
-        }
-        Built(built): {
-          idx = built;
-          packBytes = f.bytes;
-          f64 took = page.now() - began;
-          page.setText("note", "");
-          page.setText("packname", "\{f.name} — \{f.bytes.len()} bytes");
-          page.setText("count", "\{idx.count}");
-          page.setText("ms", "\{took as~ i32}");
-          commits = commitsIn(page, packBytes, idx);
-          at = 0;
-          showAt(page, packBytes, idx, commits, at);
-        }
-      }
+    Picked f = await page.nextFile();
+    if (!f.ok) {
+      note.set("could not read it: \{f.error}");
+      continue;
     }
-
-    if (!ev.settled()) { continue; }
-    Event e = ev.value();
-    ev = page.nextEvent();
-    if (e.kind == "click" && commits.len() > 0) {
-      if (e.id == "prev" && at + 1 < commits.len()) { at = at + 1; }
-      else if (e.id == "next" && at > 0) { at = at - 1; }
-      showAt(page, packBytes, idx, commits, at);
+    if (f.bytes.len() > LIMIT) {
+      note.set("\{f.name} is \{f.bytes.len()} bytes; this page stops at \{LIMIT} so it never looks hung");
+      continue;
+    }
+    // Said before the work, and shown: rebuilding an index means inflating every object and walking
+    // every delta chain, which took twelve seconds for one megabyte of this repository's own history.
+    // Built `--in-page`, the work runs on the page's own thread, so the note is only on screen if the
+    // browser paints before it starts — which is what waiting for `painted` is.
+    note.set("reading \{f.name}…");
+    await page.painted();
+    f64 began = page.now();
+    match (indexPack(f.bytes)) {
+      Unindexable(why): {
+        // Said, not swallowed. A file that is not a pack is the commonest thing to drop here, and
+        // "nothing happened" would leave the reader with no idea which of us was wrong.
+        note.set("not a packfile this can read: \{why}");
+        blank.set("");
+      }
+      Thin(bases): {
+        // A thin pack is a real thing to be handed — it is what a server sends an incremental fetch —
+        // and it cannot be read alone, because its deltas point at objects that are not in it.
+        // Naming that is more useful than refusing.
+        note.set("\{f.name} is a *thin* pack: \{bases.len()}"
+          + " of its deltas name a base that is not inside it, so it needs the repository it came"
+          + " from. `git index-pack --fix-thin` completes one.");
+        blank.set("");
+      }
+      Built(built): {
+        Opened o = Opened(built, f.bytes, Vec.create(), "\{f.name} — \{f.bytes.len()} bytes", "", 0);
+        o.kinds = commitsIn(o);
+        o.ms = (page.now() - began) as~ i32;
+        note.set("");
+        blank.set(null);
+        at.set(0);
+        opened.set(o);
+      }
     }
   }
 }
 
+Node Packs(Ui ui, Page page) {
+  auto opened = ui.state(none());
+  auto at = ui.state(0);
+  auto note = ui.state("or drop one anywhere on this page");
+  // What the detail pane says instead of a commit: something until a pack is read, nothing after a
+  // file that was not one, and null when it shows the commit at `at`.
+  auto blank = ui.state<string?>("Drop a pack to begin.");
+  ui.effect("", () => {
+    packs(page, opened, at, note, blank);
+    return () => { };
+  });
+  Opened o = opened.get();
+  i32 n = o.commits.len();
+  // Reading a commit means inflating it and walking its delta chain, so only when the pack or the
+  // cursor moved.
+  string shown = ui.memo<string>("\{opened.version} \{at.get()}", () => n == 0 ? "" : detail(o, o.commits.get(at.get())));
+  string where = o.name == "" ? "no commits loaded"
+    : n == 0 ? "no commits in this pack"
+    : "commit \{at.get() + 1} of \{n}" + (n == SHOWN ? " shown" : "");
+  // Legal, and worth saying rather than leaving blank: a pack is a bag of objects, and one sent for a
+  // single blob has no commit in it at all.
+  string none = "This pack holds no commits — which is legal: a pack is a bag of objects, and one sent "
+    + "for a single blob has none.";
+  string pane = blank.get() ?? (n == 0 ? none : shown);
+  return <div id="tool">
+    <style>{STYLE}</style>
+    <h1>a packfile, opened in a tab</h1>
+    <p class="sub">Drop <code>.git/objects/pack/pack-*.pack</code> from any repository on your machine.
+      There is no network here — a page cannot open a socket, and this does not need one. The pack
+      arrives with its index thrown away, and <code>packages/git</code> rebuilds it: every object
+      header, every zlib stream, and every delta resolved against what came before it. Check the
+      answer with <code>git verify-pack -v</code> on the same file.</p>
+    <div class="row">
+      <input type="file" id="f" accept=".pack"/>
+      <span id="note" class="dim">{note.get()}</span>
+    </div>
+    <dl>
+      <dt>pack</dt><dd><span id="packname" class="dim">{o.name == "" ? "nothing yet" : o.name}</span></dd>
+      <dt>objects</dt><dd><b id="count">{o.idx.count}</b> <span id="kinds" class="dim">{o.kinds}</span></dd>
+      <dt>took</dt><dd class="dim"><span id="ms">{o.ms}</span> ms to rebuild the index — delta depth
+        costs far more than size does</dd>
+    </dl>
+    <div class="row">
+      <button id="prev" onclick={(ElementEvent e) => {
+        if (at.get() + 1 < n) { at.set(at.get() + 1); }
+        blank.set(null);
+      }}>‹ older</button>
+      <button id="next" onclick={(ElementEvent e) => {
+        if (at.get() > 0) { at.set(at.get() - 1); }
+        blank.set(null);
+      }}>newer ›</button>
+      <span id="where" class="dim">{where}</span>
+    </div>
+    <pre id="detail">{pane}</pre>
+    <footer>The object database, the delta resolver and this page are wac. <a href={SOURCE}>source</a>.</footer>
+  </div>;
+}
+
+export async i32 main(Page page) {
+  page.title("wac: a packfile, opened in a tab");
+  page.mount((Ui ui) => Packs(ui, page));
+  return 0;
+}
+
 /**
- * Walk every object once: count the kinds, and collect the commits.
+ * Walk every object once: collect the commits into `o`, and answer the count of each kind.
  *
  * One pass rather than two, because reading an object out of a pack means inflating it and possibly
  * walking a delta chain — the expensive part — and a second pass to count what the first already saw
  * would double the wait for nothing.
  */
-Vec<string> commitsIn(Page page, u8[] pack, PackIndex idx) {
-  Pack p = openIndexed(pack, idx);
-  Vec<string> found = Vec.create();
+string commitsIn(Opened o) {
+  Pack p = openIndexed(o.bytes, o.idx);
   i32 commits = 0;
   i32 trees = 0;
   i32 blobs = 0;
   i32 tags = 0;
-
-  for (i32 i = 0; i < idx.count; i++) {
+  for (i32 i = 0; i < o.idx.count; i++) {
     u8[] name = u8[].filled(20, 0);
-    for (i32 k = 0; k < 20; k++) { name[k] = idx.names[i * 20 + k]; }
+    for (i32 k = 0; k < 20; k++) { name[k] = o.idx.names[i * 20 + k]; }
     match (objectNamed(p, name)) {
       Absent(why): { }
       Found(kind, data): {
         if (kind == 1) {
           commits = commits + 1;
-          if (found.len() < SHOWN) { found.push(idx.hexAt(i)); }
+          if (o.commits.len() < SHOWN) { o.commits.push(o.idx.hexAt(i)); }
         } else if (kind == 2) { trees = trees + 1; }
         else if (kind == 3) { blobs = blobs + 1; }
         else if (kind == 4) { tags = tags + 1; }
       }
     }
   }
-
-  page.setText("kinds", "— \{commits} commits, \{trees} trees, "
-    + "\{blobs} blobs, \{tags} tags");
-  return found;
-}
-
-/** The commit at `at`, with where it sits in the list. */
-void showAt(Page page, u8[] pack, PackIndex idx, const Vec<string> commits, i32 at) {
-  if (commits.len() == 0) {
-    page.setText("where", "no commits in this pack");
-    // Legal, and worth saying rather than leaving blank: a pack is a bag of objects, and one sent
-    // for a single blob has no commit in it at all.
-    page.setText("detail", "This pack holds no commits — which is legal: a pack is a bag of "
-      + "objects, and one sent for a single blob has none.");
-    return;
-  }
-  page.setText("where", "commit \{at + 1} of \{commits.len()}"
-    + (commits.len() == SHOWN ? " shown" : ""));
-  detail(page, pack, idx, commits.get(at));
+  return "— \{commits} commits, \{trees} trees, \{blobs} blobs, \{tags} tags";
 }
 
 /** One commit, parsed, with the tree it names listed underneath it. */
-void detail(Page page, u8[] pack, PackIndex idx, string hex) {
-  if (hex == "") { return; }
-  Pack p = openIndexed(pack, idx);
+string detail(Opened o, string hex) {
+  Pack p = openIndexed(o.bytes, o.idx);
   i32 at = -1;
-  for (i32 i = 0; i < idx.count; i++) {
-    if (idx.hexAt(i) == hex) { at = i; break; }
+  for (i32 i = 0; i < o.idx.count; i++) {
+    if (o.idx.hexAt(i) == hex) { at = i; break; }
   }
-  if (at < 0) {
-    page.setText("detail", "no object named \{hex} in this pack");
-    return;
-  }
+  if (at < 0) { return "no object named \{hex} in this pack"; }
   u8[] name = u8[].filled(20, 0);
-  for (i32 k = 0; k < 20; k++) { name[k] = idx.names[at * 20 + k]; }
-
+  for (i32 k = 0; k < 20; k++) { name[k] = o.idx.names[at * 20 + k]; }
   match (objectNamed(p, name)) {
-    Absent(why): { page.setText("detail", "could not read it: \{why}"); }
+    Absent(why): { return "could not read it: \{why}"; }
     Found(kind, data): {
       match (parseCommit(data)) {
-        Malformed(why): { page.setText("detail", "not a commit: \{why}"); }
+        Malformed(why): { return "not a commit: \{why}"; }
         Understood(c): {
           // Names are twenty raw bytes here, not text — `hexOf` is where they become readable, and
           // doing it at the edge rather than in the parser is why `objectNamed` can compare them
@@ -277,8 +265,8 @@ void detail(Page page, u8[] pack, PackIndex idx, string hex) {
           }
           out = out + "author  \{c.author.name}\n";
           out = out + "\n\{c.message}\n";
-          out = out + "\n--- the tree it names ---\n\{treeListing(p, idx, hexOf(c.tree))}";
-          page.setText("detail", out);
+          out = out + "\n--- the tree it names ---\n\{treeListing(p, o.idx, hexOf(c.tree))}";
+          return out;
         }
       }
     }
