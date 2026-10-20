@@ -53,6 +53,18 @@ struct Memo<T> : Slot { string dep; T v; }
 /** An effect: `run` after the render when its dependency changed; `cleanup` before the next run, and at the end. */
 struct Effect : Slot { string dep; fn<fn<void()>()> run; fn<void()> cleanup; bool pending; }
 
+/**
+ * A name for an element the component draws: `Ref at = ui.ref();` and `<canvas ref={at}/>`. Once the
+ * render that made the element has been applied — in an effect, or in a handler — `at.element()` is its
+ * handle, to draw in or focus; null before then and after the element is gone. Setting it renders
+ * nothing.
+ */
+export struct Ref : Slot {
+  Element? el = null;
+
+  Element? element(this) { return this.el; }
+}
+
 void noop() {}
 
 // ── A component ──────────────────────────────────────────────────────────────
@@ -139,6 +151,14 @@ export struct Ui {
     }
   }
 
+  /** A `Ref` that lasts as this component does — the same one every render. */
+  Ref ref(this) {
+    if (this.next == this.slots.len()) { this.slots.push(Ref {}); }
+    Slot got = this.slots.get(this.next);
+    this.next = this.next + 1;
+    return got as! Ref;
+  }
+
   /** Run `f` once after `ms` milliseconds, unless this component has gone. Answers its cancel. */
   fn<void()> after(this, i32 ms, fn<void()> f) { return this.timer(ms, false, f); }
 
@@ -190,11 +210,25 @@ export struct Mounted {
   /** The element or component this node sits in, and the element whose children its handles are. */
   Mounted? up;
   Element parentEl;
+  /** The `Ref` naming this element, as last rendered. */
+  Ref? ref;
 
   Mounted fresh(i32 kind, string tag, string? key, Ui owner, Mounted? up, Element parentEl) {
     Vec<Mounted> kids = Vec.create();
     Vec<string> listening = Vec.create();
-    return Mounted(kind, tag, key, null, null, kids, Attr[](), "", On[](), listening, owner, up, parentEl);
+    return Mounted(kind, tag, key, null, null, kids, Attr[](), "", On[](), listening, owner, up, parentEl, null);
+  }
+
+  /** Point `r` at this element, letting go of whatever `Ref` named it before. */
+  void named(this, Ref? r) {
+    if (this.ref is not null) {
+      Ref old = this.ref!;
+      bool kept = r is not null && old is r!;
+      // Only if it still names this element: another node may have taken it since.
+      if (!kept && this.el is not null && old.el is not null && old.el! is this.el!) { old.el = null; }
+    }
+    this.ref = r;
+    if (r is not null) { r!.el = this.el; }
   }
 
   /** The first handle in this node's range, or null for a component that rendered nothing. */
@@ -334,10 +368,11 @@ export struct View {
         m.text = t;
         return m;
       }
-      Element(tag, attrs, on, kids): {
+      Element(tag, attrs, on, kids, ref): {
         Mounted m = Mounted.fresh(0, tag, keyOfAttrs(attrs), owner, up, parent);
         Element el = parent.insert(tag, before);
         m.el = el;
+        m.named(ref);
         this.setAttrs(m, attrs);
         this.setHandlers(m, on);
         Vec<Node> flat = Vec.create();
@@ -434,7 +469,8 @@ export struct View {
           m.text = t;
         }
       }
-      Element(tag, attrs, on, kids): {
+      Element(tag, attrs, on, kids, ref): {
+        m.named(ref);
         this.setAttrs(m, attrs);
         this.setHandlers(m, on);
         Vec<Node> flat = Vec.create();
@@ -540,7 +576,7 @@ void flatten(Node n, Vec<Node> out) {
   match (n) {
     Fragment(kids): { for (i32 i = 0; i < kids.len(); i++) { flatten(kids[i], out); } }
     Text(t): { out.push(n); }
-    Element(tag, attrs, on, kids): { out.push(n); }
+    Element(tag, attrs, on, kids, ref): { out.push(n); }
     Component(name, key, draw, snaps, same): { out.push(n); }
   }
 }
@@ -554,7 +590,7 @@ string? keyOfAttrs(Attr[] attrs) { return attrIn(attrs, "key"); }
 
 string? keyOfNode(Node n) {
   match (n) {
-    Element(tag, attrs, on, kids): { return keyOfAttrs(attrs); }
+    Element(tag, attrs, on, kids, ref): { return keyOfAttrs(attrs); }
     Component(name, key, draw, snaps, same): { return key; }
     Text(t): { return null; }
     Fragment(kids): { return null; }
@@ -565,7 +601,7 @@ string? keyOfNode(Node n) {
 bool sameKind(Mounted m, Node n) {
   match (n) {
     Text(t): { return m.kind == 1; }
-    Element(tag, attrs, on, kids): { return m.kind == 0 && m.tag == tag; }
+    Element(tag, attrs, on, kids, ref): { return m.kind == 0 && m.tag == tag; }
     Component(name, key, draw, snaps, same): { return m.kind == 2 && m.tag == name; }
     Fragment(kids): { return false; }
   }
@@ -597,6 +633,7 @@ void moveBefore(Mounted m, Element? anchor) {
 
 void unmountAll(Mounted m) {
   if (m.comp is not null) { m.comp!.unmount(); }
+  m.named(null);
   for (i32 i = 0; i < m.kids.len(); i++) { unmountAll(m.kids.get(i)); }
 }
 

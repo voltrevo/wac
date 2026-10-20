@@ -80,6 +80,10 @@ export struct ElementOps {
   fn<void(i32)> focus;
   /** Ask for `id`'s value; the answer comes back as `valueArrived(req, value)`. */
   fn<void(i32, i32)> value;
+  /** Draw `rgba` — `w` by `h`, four bytes a pixel — as all of canvas `id`, sizing it to match. */
+  fn<void(i32, i32, i32, u8[])> pixels;
+  /** Draw `rgba`, `w` by `h`, into canvas `id` with its corner at `x`, `y`. */
+  fn<void(i32, i32, i32, i32, i32, u8[])> pixelsIn;
 
   /** A document that records nothing — for a test, which replaces the functions it watches. */
   ElementOps inert() {
@@ -87,7 +91,8 @@ export struct ElementOps {
       (i32 id, i32 parent, string tag, i32 before) => { }, (i32 id, i32 parent, string text, i32 before) => { },
       (i32 id, string text) => { }, (i32 id, string name, string value, bool present) => { },
       (i32 id, string name, string value, i32 seen) => { }, (i32 id, i32 before) => { }, (i32 id) => { },
-      (i32 id, string kind, string prevent) => { }, (i32 id) => { }, (i32 req, i32 id) => { }
+      (i32 id, string kind, string prevent) => { }, (i32 id) => { }, (i32 req, i32 id) => { },
+      (i32 id, i32 w, i32 h, u8[] rgba) => { }, (i32 id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => { }
     );
   }
 }
@@ -254,6 +259,26 @@ export struct Element {
   void focus(this) {
     this.alive("focus");
     this.es.ops.focus(this.id);
+  }
+
+  /** Draw `rgba` — `w` by `h`, four bytes a pixel, row by row — as all of this canvas, sized to match. */
+  void pixels(this, i32 w, i32 h, u8[] rgba) {
+    this.drawable("pixels", w, h, rgba);
+    this.es.ops.pixels(this.id, w, h, rgba);
+  }
+
+  /** Draw `rgba`, `w` by `h`, into this canvas with its corner at `x`, `y`; the rest stays as it was. */
+  void pixelsIn(this, i32 x, i32 y, i32 w, i32 h, u8[] rgba) {
+    this.drawable("pixelsIn", w, h, rgba);
+    this.es.ops.pixelsIn(this.id, x, y, w, h, rgba);
+  }
+
+  void drawable(this, string what, i32 w, i32 h, u8[] rgba) {
+    this.alive(what);
+    if (this.tag != "canvas") { trap "Element." + what + ": a " + this.tag + " is not a canvas"; }
+    if (w < 0 || h < 0 || rgba.len() != w * h * 4) {
+      trap "Element." + what + ": \{rgba.len()} bytes is not \{w}x\{h} pixels";
+    }
   }
 
   /** The element's value as the document has it now — a round trip, so a ticket. */

@@ -5,7 +5,7 @@ import { Sys } from "std";
 import { Attr, Node, On, Page, TestDoc, htmlOf } from "../../packages/web";
 
 Node el(string tag, string name, string value) {
-  return Node.Element(tag, [Attr(name, value)], On[](), Node[]());
+  return Node.Element(tag, [Attr(name, value)], On[](), Node[](), null);
 }
 
 export i32 main(Sys sys) {

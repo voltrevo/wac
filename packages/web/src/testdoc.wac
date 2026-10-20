@@ -138,7 +138,18 @@ export struct TestDoc {
         d.at(id).prevents.push(prevent);
       },
       (i32 id) => { d.ops++; },
-      (i32 req, i32 id) => { d.ops++; }
+      (i32 req, i32 id) => { d.ops++; },
+      // A canvas's picture as its text: its size and its first byte, which is what a test can tell apart.
+      (i32 id, i32 w, i32 h, u8[] rgba) => {
+        d.ops++;
+        TestNode n = d.at(id);
+        n.text = "pixels \{w}x\{h} \{rgba.len() > 0 ? rgba[0] as i32 : 0 - 1}";
+      },
+      (i32 id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => {
+        d.ops++;
+        TestNode n = d.at(id);
+        n.text = "pixelsIn \{x},\{y} \{w}x\{h} \{rgba.len() > 0 ? rgba[0] as i32 : 0 - 1}";
+      }
     );
   }
 

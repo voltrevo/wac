@@ -260,6 +260,8 @@ export string programSide() {
           (id, kind, prevent) => send(["listenOn", id, kind, prevent]),
           (id) => send(["focus", id]),
           (req, id) => send(["valueOf", req, id]),
+          (id, w, h, rgba) => send(["pixels", id, w, h, rgba], own(rgba)),
+          (id, x, y, w, h, rgba) => send(["pixelsIn", id, x, y, w, h, rgba], own(rgba)),
         );
         const dom = Dom.of(
           elements,
@@ -658,6 +660,16 @@ export string documentSide() {
             });
           },
           focus: (id) => { const n = nodes.get(id); if (n && n.focus) n.focus(); },
+          // A handle's canvas, which `Element.pixels` has already checked is one.
+          pixels: (id, w, h, rgba) => {
+            const el = nodes.get(id);
+            if (!el) return;
+            // Resizing clears a canvas, so only when the size changes.
+            if (el.width !== w) el.width = w;
+            if (el.height !== h) el.height = h;
+            blit(el.getContext("2d"), w, h, rgba, 0, 0);
+          },
+          pixelsIn: (id, x, y, w, h, rgba) => { const el = nodes.get(id); if (el) blit(el.getContext("2d"), w, h, rgba, x, y); },
           valueOf: (req, id) => {
             const n = nodes.get(id);
             const value = n && "value" in n ? String(n.value) : "";

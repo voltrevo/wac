@@ -37,7 +37,7 @@ import { Ui, View } from "./view.wac";
 export { Attr, Node, On, htmlOf, isVoidElement } from "./html.wac";
 export * as html from "./tags.wac";
 export { Element, ElementEvent, ElementOps, Listen } from "./element.wac";
-export { Mounted, State, Ui, View } from "./view.wac";
+export { Mounted, Ref, State, Ui, View } from "./view.wac";
 export { TestDoc, TestNode } from "./testdoc.wac";
 
 // A page's system — `page.sys` — is `system.wac`, exported from here because a package is one module.

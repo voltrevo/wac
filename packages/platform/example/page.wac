@@ -29,7 +29,7 @@ Node listOf(string[] items) {
   for (i32 i = 0; i < items.len(); i++) {
     kids[i] = <item at={i} of="args">{items[i]}</item>;
   }
-  return Node.Element("ul", [Attr("class", "args")], On[](), kids);
+  return Node.Element("ul", [Attr("class", "args")], On[](), kids, null);
 }
 
 /** The tree as HTML. Nothing here knows JSX exists. */
@@ -43,7 +43,7 @@ string render(Node n) {
     }
     // A component is what it draws; this page has none, and says so rather than guessing.
     Component(name, key, draw, snaps, same): { return ""; }
-    Element(tag, attrs, on, kids): {
+    Element(tag, attrs, on, kids, ref): {
       string out = "<" + tag;
       for (i32 i = 0; i < attrs.len(); i++) {
         out = out + " " + attrs[i].name + "=\"" + attrs[i].value + "\"";

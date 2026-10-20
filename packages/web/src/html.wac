@@ -11,7 +11,7 @@
 
 import { Buf, markup } from "core";
 import { ElementEvent, refuseAttr, refuseTag } from "./element.wac";
-import { Ui } from "./view.wac";
+import { Ref, Ui } from "./view.wac";
 
 export struct Attr {
   string name;
@@ -32,12 +32,15 @@ export struct On {
   fn<void(ElementEvent)> run;
 }
 
+// **An element may carry a `Ref`**, which the view points at the element it made for it (`view.wac`);
+// `htmlOf` makes no element and leaves it alone.
+//
 // **A component is a node too** — what a tag naming a component builds (`design/lang/0017`): its
 // function's name, its `key`, a closure drawing it, its attributes' snapshots and a test of them. The
 // view keeps an instance per one (`view.wac`); `htmlOf` draws it once, with hooks that hold their first
 // values.
 export enum Node {
-  Element(string tag, Attr[] attrs, On[] on, Node[] kids),
+  Element(string tag, Attr[] attrs, On[] on, Node[] kids, Ref? ref),
   Text(string text),
   Fragment(Node[] kids),
   Component(string name, string? key, fn<Node(Ui)> draw, anyref snaps, fn<bool(anyref)> same),
@@ -47,7 +50,7 @@ export enum Node {
   Node [markup.element](string tag, string[] names, string[] values, Node[] kids) {
     Attr[] attrs = Attr[].filled(names.len(), Attr("", ""));
     for (i32 i = 0; i < names.len(); i++) { attrs[i] = Attr(names[i], values[i]); }
-    return Node.Element(tag, attrs, On[](), kids);
+    return Node.Element(tag, attrs, On[](), kids, null);
   }
 }
 
@@ -83,7 +86,7 @@ void writeNode(Buf out, Node n, bool css) {
     Component(name, key, draw, snaps, same): {
       writeNode(out, draw(Ui.made(null, name, key, draw, snaps, same)), css);
     }
-    Element(tag, attrs, on, kids): {
+    Element(tag, attrs, on, kids, ref): {
       refuseTag("htmlOf", tag);
       out.pushStr("<");
       out.pushStr(tag);

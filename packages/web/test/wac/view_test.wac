@@ -9,9 +9,9 @@
 import { Check } from "./check.wac";
 import { Ticket, Vec } from "core";
 import { ElementEvent, Elements } from "../../src/element.wac";
-import { Node, html.b, html.button, html.div, html.input, html.li, html.main, html.p, html.ul } from "../../src/page.wac";
+import { Node, html.b, html.button, html.canvas, html.div, html.input, html.li, html.main, html.p, html.ul } from "../../src/page.wac";
 import { Runner } from "../../src/page.wac";
-import { State, Ui, View } from "../../src/view.wac";
+import { Ref, State, Ui, View } from "../../src/view.wac";
 import { TestDoc, TestNode } from "../../src/testdoc.wac";
 
 // ── A clock a test moves ─────────────────────────────────────────────────────
@@ -391,5 +391,34 @@ export string test_a_value_the_program_had_not_seen_typed_is_not_written_over() 
   field.typed = r.doc.seq + 1;
   r.es.deliver(r.doc.seq, "input", f, f, "ab", 0, 0, 0);
   t.eqStr(r.doc.attr(f, ".value") ?? "unset", "", "a value older than the typing is dropped, and the first render's stays");
+  return t.report();
+}
+
+// ── A canvas, drawn through a ref ────────────────────────────────────────────
+
+/** A picture the component draws itself: `ref` names the canvas, and an effect draws once it exists. */
+Node Picture(Ui ui) {
+  auto shade = ui.state(1);
+  Ref at = ui.ref();
+  ui.effect("\{shade.get()}", () => {
+    at.element()!.pixels(2, 1, u8[].filled(8, shade.get() as! u8));
+    return () => { };
+  });
+  return <div>
+    <canvas ref={at} id="c"></canvas>
+    <button id="darker" onclick={(ElementEvent e) => { shade.update((i32 v) => v + 1); }}>darker</button>
+  </div>;
+}
+
+export string test_a_ref_names_the_element_and_an_effect_draws_in_it() {
+  Check t = Check.create();
+  Rig r = Rig.create();
+  r.view.mount((Ui ui) => Picture(ui));
+  i32 c = r.doc.find("id", "c");
+  t.isTrue(c >= 0, "the canvas was made");
+  t.eqStr(r.doc.at(c).text, "pixels 2x1 1", "the effect drew in it, through the ref, once it existed");
+  r.fire("id", "darker", "click", "");
+  t.eqStr(r.doc.at(c).text, "pixels 2x1 2", "and again when what it draws changed");
+  t.eqI32(r.doc.find("id", "c"), c, "into the same canvas");
   return t.report();
 }
