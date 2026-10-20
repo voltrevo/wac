@@ -4,7 +4,7 @@
 - **Raised by:** agent-a, 2026-10-18, on the operator's direction: "there should be an underlying api that
   simply captures what we can do, and then we make diff-based rendering on top of that … I can see a need to
   be able to create a handle through which only one element (incl its events) is visible"
-- **Spans:** `packages/web`, `core/html.wac` and the JSX attribute set, `packages/web/tools/build.wac`, every
+- **Spans:** `packages/web`, a new `packages/view`, the markup lowering (`design/lang/0017`), `packages/web/tools/build.wac`, every
   page in the repository
 
 ## The target
@@ -216,9 +216,9 @@ Node Row(Ui ui, const Todo todo, fn<void()> ontoggle) {
   component's timers never fire whether or not anything cancelled them — a component cannot leak one.
 - **A closure holds the cell, not a copy of the value.** `draft.get()` in a handler that resumed after an
   `await` reads what the cell holds now, so React's stale-closure problem does not arise.
-- **The tag lowers to a node carrying the attributes, a `draw` closure and an `adopt` closure**, which the
-  prototype wrote by hand: `adopt` answers -1 unless the old instance came from the same function, and
-  otherwise writes the new attributes and `draw` into it and answers what changed.
+- **The tag lowers to `Ui.[markup.component](name, key, snapshots, compare, draw)`** (`design/lang/0017`),
+  which the prototype wrote by hand as an `adopt` closure: the view matches the old instance by function
+  name and `key`, stores the new `draw`, and renders it again if the snapshots differ.
 - `design/lang/0005` had struct components with a `render` method; an earlier draft of this note brought
   them back, with private fields as state and `mounted`/`unmounted` overrides. Hooks replaced them because
   stateful logic in a struct can only be shared by forwarding its lifecycle by hand, and in a function it is
@@ -256,11 +256,11 @@ with the change. Nothing tracks reads:
   ```
 
   A click marks the root, the root renders, `Show` gets the cell it already had — and by identity alone,
-  `<b>` says 0 forever. The tag's `adopt` therefore records `n.version` and treats a moved version as a
+  `<b>` says 0 forever. So `State` answers `(this, version)` as its `markup.snapshot` (0017), and a moved version is a
   changed attribute.
 - **Handlers are not compared.** A closure is new every render, so comparing them would render every child
-  every time. A child whose only changed attributes are handlers is marked *stale* instead, and renders
-  before an event is dispatched through it — so a handler that captured something that has since changed,
+  every time. A child that is skipped is marked *stale* instead, and renders before an event is dispatched
+  through it — so a handler that captured something that has since changed,
   an index say, is never the one that runs.
 - **Dirty components render outermost first**, once per turn; one that its parent already rendered this
   turn is not rendered again. Effects run after.
@@ -340,30 +340,35 @@ plain local is a `ui.state` cell now, since only a `set` renders anything. The r
 
 ## What the language needs
 
-- **`Node` carries handlers**: `Element(string tag, Attr[] attrs, On[] on, Node[] kids)` with
-  `On { string kind; fn<void(Ev)> run; }`, and JSX turning `onclick={…}` into one. No generics; `htmlOf`
-  ignores them. `key` and `ref` are attributes the view reads and never sends.
-- **Component tags**: a tag naming a function whose first parameter is `Ui` lowers to a node carrying its
-  attributes, `draw` and `adopt`, as above, and `Node` gains a variant for it. `Ui` is `packages/web`'s, so
-  the compiler knows the type by where it comes from, as it knows `Sys`.
-- **`data-*` and `aria-*` on the named tags.** Quoted tags already take any attribute; the named ones take 39.
-- **`{rows}` for a `Node[]` child**: a `toNode` for `Node[]`, answering a `Fragment`. `{s}` for a `string`
-  already works.
-- **Wanted, not blocking:** `with`, `Vec.map`, a generic `same`.
+**Only `design/lang/0017`: markup names no type.** The view's tree is `packages/view`'s own, so handlers on
+an element, a node for a component, `key` and `ref` are library matters, and so are `data-*`, `aria-*` and
+`{rows}`. What the language gives is the lowering: a component tag becomes a call to its first parameter's
+`[markup.component]`, with the attributes' `[markup.snapshot]`s — and `State` answers `(this, version)` as its
+snapshot, which is what keeps a cell attribute from going stale. The compiler never learns `Ui`'s name.
+
+- **Wanted, not blocking:** `with`, `Vec.map`, and `core` exporting 0017's comparison rule for `memo` and
+  `effect`.
 - The bugs above.
+
+## Where it lives
+
+| package | holds | depends on |
+|---|---|---|
+| `packages/web` | `Page`, `Element`, the protocol and the host, the build tool, the CSP | — |
+| `packages/view` | `Ui` and its hooks, the diff, its tree — elements with handlers, component nodes — and its tag functions | `web` |
+| `packages/html` | a static tree, the element and attribute sets, `htmlOf`, for a page written out as a file (0017) | — |
 
 ## The order of work
 
 1. **Close the injection in today's `render`**, with the CSP in the build. Independent of the rest, and true
    of what ships now. (A failing case first: the four constructions above.)
 2. **`Element`**: the operations, the mirror, events per handle, batching, `Listen`. Port `counter` and `notes`.
-3. **The language changes** above: handlers on `Node`, component tags, `data-*` and `aria-*`, `{rows}`,
-   the bugs.
-4. **`View`**: the diff, the turn, `key`, `ref`, `afterRender`, `Ui` and its hooks, rendering only what changed
+3. **The language changes**: `design/lang/0017`, and the bugs above.
+4. **`packages/view`**: the diff, the turn, `key`, `ref`, `afterRender`, `Ui` and its hooks, rendering only what changed
    and the development build's check of it. `main(Page)` with `page.sys`. Port `templates/webapp`.
 5. **The desktop**, with windows as tasks owning `Element`s; then the terminal, then every other page.
 6. **Delete** `render`-as-`innerHTML`, `setText`, `setValue`, `setStyle`, `renderInto`, `getValue` and
-   `page.on`. `htmlOf` stays, for a page written out as a file.
+   `page.on`. `htmlOf` moves to `packages/html` (0017), for a page written out as a file.
 
 ## State of play
 
