@@ -576,7 +576,7 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>1125 of 1125 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>1254 of 1254 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
@@ -586,7 +586,7 @@ export default function Stack() {
           own specification documents, the reference compiler&rsquo;s own test suite, a
           generated sweep over the cross product of type against context —{" "}
           <Lead>10,013 programs, 0 false alarms, 0 contradictions</Lead> — and, most recently, the
-          repository&rsquo;s own 1,247 wac files, with no false alarm among them. While the reference
+          repository&rsquo;s own 1,254 wac files, with no false alarm among them. While the reference
           compiler still existed it reported a subset of that compiler&rsquo;s diagnostics at its
           exact positions and never invented one; the specification is what holds it to that now.
         </P>

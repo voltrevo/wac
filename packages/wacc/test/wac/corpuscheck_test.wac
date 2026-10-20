@@ -59,10 +59,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines } from "../../../wactest/src/strings.wac";
 import { Core, Cli, FileResult } from "std";
 import { dumpTypeErrors, diagnoseGraphIn } from "../../src/api.wac";
-import { importSpecs } from "../../src/files.wac";
-import { Res, resolveFrom } from "../../src/path.wac";
-import { Located, Manifest, packageEntry, readManifest } from "../../../wacpkg/src/manifest.wac";
-import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { Corpus, loadCorpus, nestedProjects } from "./corpus_probe.wac";
 
 /** The `path\tline\tcol\tphase\tmessage\t…\tseverity` rows of a wire, warnings dropped. */
 string[] errorRows(string wire) {
@@ -105,44 +102,6 @@ string fileOf(string row) {
  * as an oracle: the run must report **exactly this file and nothing else**.
  */
 static string CANARY = "/packages/fmt/src/zzz_corpuscheck_canary.wac";
-
-/**
- * Each specifier that names a **nested project's directory**, mapped to the module its manifest
- * `exports` — what `wac` does for such an import (spec ch02 `§wac-import-nested-project-sd4s5n8`).
- * Without it a file importing `"../../web"` was reported for an import of *no file at that path*,
- * which is this harness not resolving what the command does, not a fault in the file.
- */
-Res nestedProjects(Cli cli, string[] keys, string[] sources) {
-  string[] from = string[]();
-  string[] spec = string[]();
-  string[] to = string[]();
-  for (i32 i = 0; i < keys.len(); i++) {
-    string[] specs = importSpecs(sources[i].toBytes());
-    for (i32 k = 0; k < specs.len(); k++) {
-      string sp = specs[k];
-      if (sp.len() == 0 || sp.slice(0, 1) != "." || (sp.len() > 4 && sp.slice(sp.len() - 4, sp.len()) == ".wac")) {
-        continue;
-      }
-      string dir = resolveFrom(keys[i], sp);
-      FileResult m = cli.readFile(dir.slice(1, dir.len()) + "/wac.json5").wait();
-      if (!m.ok) { continue; }
-      Manifest mf = readManifest(m.bytes);
-      if (!mf.ok || mf.exports == "") { continue; }
-      Located entry = packageEntry(dir.slice(1, dir.len()), mf.exports);
-      if (!entry.ok) { continue; }
-      from = grown(from, keys[i]);
-      spec = grown(spec, sp);
-      to = grown(to, "/" + entry.path);
-    }
-  }
-  return Res(string[](), from, spec, to, "");
-}
-
-string[] grown(string[] xs, string x) {
-  string[] out = string[].filled(xs.len() + 1, x);
-  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
-  return out;
-}
 
 export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core core, Cli cli) {
   T t = T.create();

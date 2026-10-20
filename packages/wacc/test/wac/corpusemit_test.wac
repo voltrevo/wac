@@ -29,8 +29,9 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains, has, joined, trimmed, startsWith, splitLines } from "../../../wactest/src/strings.wac";
 import { Core, Cli } from "std";
-import { emitFiles, blockedFiles } from "../../src/api.wac";
-import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { blockedFiles, blockedFilesIn, emitFilesIn } from "../../src/api.wac";
+import { Corpus, loadCorpus, nestedProjects } from "./corpus_probe.wac";
+import { Res } from "../../src/path.wac";
 import { Validated, validateAll, scratchDir } from "./artifacts_probe.wac";
 import { exportedFunctions } from "./wasm_probe.wac";
 
@@ -103,6 +104,8 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   t.isTrue(c.paths.len() >= 100, "only " + itoa(c.paths.len()) + " corpus files loaded");
 
   string dir = scratchDir(cli);
+  // What a nested project's directory names, as the command resolves it (`nestedProjects`).
+  Res res = nestedProjects(cli, c.paths, c.sources);
   i32 whole = 0;
   i32 partial = 0;
   i32 invalid = 0;
@@ -133,7 +136,7 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
       // **`emitFiles`, not `emitFilesSelfDescribing`.** Validating compiles the module and never
       // looks at a manifest, and building one costs two more link passes over the whole graph per
       // file — which is where this test's time actually went, not the forks it was blamed on.
-      u8[] wasm = emitFiles(c.paths, c.sources, c.paths[base + j]);
+      u8[] wasm = emitFilesIn(c.paths, c.sources, res, c.paths[base + j]);
       string at = dir + "/corpusemit" + itoa(j) + ".wasm";
       cli.writeFile(at, wasm).wait();
       wrote[j] = at;
@@ -158,7 +161,7 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
         continue;
       }
 
-      string why = blockedFiles(c.paths, c.sources, c.paths[f]);
+      string why = blockedFilesIn(c.paths, c.sources, res, c.paths[f]);
       if (why != "") {
         partial = partial + 1;
         if (!has(reasonSeen, why) && reasons < reasonSeen.len()) {
