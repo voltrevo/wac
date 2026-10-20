@@ -1,6 +1,7 @@
 # 0380a — an `async` lambda inside an `async` function is not emitted
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** ff2487f9b
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-19

@@ -1,6 +1,7 @@
 # 0385a — an identity test as a `?:` condition inside a lambda emits invalid wasm
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** ff2487f9b
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-19

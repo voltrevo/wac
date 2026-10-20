@@ -1,6 +1,7 @@
 # 0381a — a closure cannot capture a `for … in` loop variable
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** ff2487f9b
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-19
