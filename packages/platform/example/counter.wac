@@ -1,37 +1,29 @@
-// A page: draw something, then answer what the user does.
+// A page: a component, its state, and handlers that change it.
 //
 //   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
 //       packages/platform/example/counter.wac .cache/counter --page ./packages/web
 //
-// The program is a loop that waits — `await page.nextEvent()` hands control back to the browser until
-// something happens — so its state is ordinary locals.
+// `Counter` is a function of `Ui` (`packages/web`'s `view.wac`): `ui.state` keeps a value from one
+// render to the next, and setting it renders the component again. A handler is a closure that sets
+// state; the page follows.
 
-import { Event, Page, html.b, html.button, html.div, html.input, html.p } from "../../web";
+import { ElementEvent, Node, Page, Ui, html.b, html.button, html.div, html.input, html.p } from "../../web";
+
+Node Counter(Ui ui) {
+  auto n = ui.state(0);
+  auto said = ui.state("");
+  return <div>
+    <p>Clicks: <b id="n">{n.get()}</b></p>
+    <button id="up" onclick={(ElementEvent e) => { n.update((i32 x) => x + 1); }}>+1</button>
+    <button id="down" onclick={(ElementEvent e) => { n.update((i32 x) => x - 1); }}>-1</button>
+    <p><input id="echo" placeholder="type here"
+              oninput={(ElementEvent e) => { said.set(e.value == "" ? "" : "you typed: \{e.value}"); }}/></p>
+    <p id="said">{said.get()}</p>
+  </div>;
+}
 
 export async i32 main(Page page) {
   page.title("counter");
-  page.render(
-    <div>
-      <p>Clicks: <b id="n">0</b></p>
-      <button id="up">+1</button>
-      <button id="down">-1</button>
-      <p><input id="echo" placeholder="type here"/></p>
-      <p id="said"></p>
-    </div>
-  );
-  page.on("button", "click");
-  page.on("#echo", "input");
-  i32 n = 0;
-  while (true) {
-    Event e = await page.nextEvent();
-    if (e.kind == "input") {
-      page.setText("said", e.value == "" ? "" : "you typed: \{e.value}");
-    } else if (e.id == "up") {
-      n += 1;
-      page.setText("n", "\{n}");
-    } else if (e.id == "down") {
-      n -= 1;
-      page.setText("n", "\{n}");
-    }
-  }
+  page.mount((Ui ui) => Counter(ui));
+  return 0;
 }

@@ -3,40 +3,51 @@
 //   wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
 //       packages/platform/example/notes.wac .cache/notes --page ./packages/web --grant read,write
 //
-// Built with grants, a page's `main` is handed a `Sys` beside its `Page`, and `sys.readFile` and
-// `sys.writeFile` reach the browser's Origin Private File System — storage that belongs to the page's
-// origin and survives a reload. The same two calls a program on a command line makes, awaited the same
-// way; what answers them is the browser.
+// Built with `--grant read,write`, a page's `page.sys` reaches the browser's Origin Private File System —
+// storage that belongs to the page's origin and survives a reload. `readFile` and `writeFile` are the
+// two calls a program on a command line makes, awaited the same way; what answers them is the browser.
+// A handler cannot wait, so it starts an `async` function, and that sets state when its answer comes.
 
-import { Event, Page, html.button, html.div, html.p, html.span, html.textarea } from "../../web";
+import { ElementEvent, Node, Page, State, Ui, html.button, html.div, html.p, html.span, html.textarea } from "../../web";
 import { Sys } from "std";
 
 static string FILE = "notes.txt";
 
-export async i32 main(Page page) {
-  Sys sys = page.sys;
-  page.title("notes");
-  page.render(
-    <div>
-      <p><textarea id="text" rows="8" cols="60"></textarea></p>
-      <p><button id="save">save</button> <span id="said"></span></p>
-    </div>
-  );
+async void load(Sys sys, State<string> text, State<string> said) {
   match (await sys.readFile(FILE)) {
     Ok(bytes): {
-      page.setValue("text", string.fromBytes(bytes));
-      page.setText("said", "read \{bytes.len()} bytes");
+      text.set(string.fromBytes(bytes));
+      said.set("read \{bytes.len()} bytes");
     }
-    Err(why): { page.setText("said", "nothing saved yet"); }
+    Err(why): { said.set("nothing saved yet"); }
   }
-  page.on("#save", "click");
-  while (true) {
-    Event e = await page.nextEvent();
-    if (e.id != "save") { continue; }
-    string text = await page.getValue("text");
-    match (await sys.writeFile(FILE, text.toBytes())) {
-      Ok(): { page.setText("said", "saved \{text.len()} bytes"); }
-      Err(why): { page.setText("said", "could not save: \{why}"); }
-    }
+}
+
+async void save(Sys sys, string text, State<string> said) {
+  match (await sys.writeFile(FILE, text.toBytes())) {
+    Ok(): { said.set("saved \{text.len()} bytes"); }
+    Err(why): { said.set("could not save: \{why}"); }
   }
+}
+
+Node Notes(Ui ui, Sys sys) {
+  auto text = ui.state("");
+  auto said = ui.state("");
+  // Once, after the first render: the note as it was saved.
+  ui.effect("", () => {
+    load(sys, text, said);
+    return () => { };
+  });
+  return <div>
+    <p><textarea id="text" rows="8" cols="60" value={text.get()}
+                 oninput={(ElementEvent e) => { text.set(e.value); }}></textarea></p>
+    <p><button id="save" onclick={(ElementEvent e) => { save(sys, text.get(), said); }}>save</button> <span id="said">{said.get()}</span></p>
+  </div>;
+}
+
+export async i32 main(Page page) {
+  page.title("notes");
+  Sys sys = page.sys;
+  page.mount((Ui ui) => Notes(ui, sys));
+  return 0;
 }
