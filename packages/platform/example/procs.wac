@@ -8,7 +8,7 @@
 // input and directory its parent gave it. Each copy is a worker of its own — no shared memory, so
 // everything between the two crosses as a message, and a copy that never stops can be stopped.
 
-import { Event, Page, html.button, html.div, html.input, html.p, html.span } from "../../web";
+import { ElementEvent, Node, Page, State, Ui, html.button, html.div, html.input, html.p, html.span } from "../../web";
 import { Child, Sys } from "std";
 import { Buf, Read } from "core";
 
@@ -33,38 +33,43 @@ export async i32 upper(Sys sys) {
   return n;
 }
 
-export async i32 main(Page page) {
-  Sys sys = page.sys;
-  page.title("procs");
-  page.render(
-    <div>
-      <p><input id="text" value="hello from the page"></input> <button id="run">run</button></p>
-      <p>out: <span id="out"></span></p>
-      <p>status: <span id="status"></span></p>
-    </div>
-  );
-  page.on("#run", "click");
-  while (true) {
-    Event e = await page.nextEvent();
-    if (e.id != "run") { continue; }
-    string text = await page.getValue("text");
-    Child c = await sys.cli.spawnSelf([] as u8[][], 0, "/", false, false).ticket();
-    if (c.handle < 0) {
-      page.setText("status", "could not start: \{c.error}");
-      continue;
-    }
-    await sys.cli.send(c.handle, text.toBytes()).ticket();
-    sys.cli.closeFeed(c.handle);
-    Buf got = Buf.create();
-    bool reading = true;
-    while (reading) {
-      match (await sys.cli.recv(c.handle).ticket()) {
-        Data(bytes): { got.pushAll(bytes); }
-        End: { reading = false; }
-        Failed(why): { reading = false; }
-      }
-    }
-    page.setText("out", string.fromBytes(got.bytes()));
-    page.setText("status", "\{await sys.cli.exitCode(c.handle).ticket()}");
+/** Run `text` through a started copy, and show what came back and how it ended. */
+async void run(Sys sys, string text, State<string> out, State<string> status) {
+  Child c = await sys.cli.spawnSelf([] as u8[][], 0, "/", false, false).ticket();
+  if (c.handle < 0) {
+    status.set("could not start: \{c.error}");
+    return;
   }
+  await sys.cli.send(c.handle, text.toBytes()).ticket();
+  sys.cli.closeFeed(c.handle);
+  Buf got = Buf.create();
+  bool reading = true;
+  while (reading) {
+    match (await sys.cli.recv(c.handle).ticket()) {
+      Data(bytes): { got.pushAll(bytes); }
+      End: { reading = false; }
+      Failed(why): { reading = false; }
+    }
+  }
+  out.set(string.fromBytes(got.bytes()));
+  status.set("\{await sys.cli.exitCode(c.handle).ticket()}");
+}
+
+Node Procs(Ui ui, Sys sys) {
+  auto text = ui.state("hello from the page");
+  auto out = ui.state("");
+  auto status = ui.state("");
+  return <div>
+    <p><input id="text" value={text.get()} oninput={(ElementEvent e) => { text.set(e.value); }}></input>
+       <button id="run" onclick={(ElementEvent e) => { run(sys, text.get(), out, status); }}>run</button></p>
+    <p>out: <span id="out">{out.get()}</span></p>
+    <p>status: <span id="status">{status.get()}</span></p>
+  </div>;
+}
+
+export async i32 main(Page page) {
+  page.title("procs");
+  Sys sys = page.sys;
+  page.mount((Ui ui) => Procs(ui, sys));
+  return 0;
 }

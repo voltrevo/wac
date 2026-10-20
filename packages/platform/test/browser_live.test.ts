@@ -350,6 +350,17 @@ Deno.test({
       await new Promise((r) => setTimeout(r, 300));
       assertEquals(await page.textContent("#fr"), still, "ripple: paused, it stops stepping");
 
+      // A copy of the page started as a process from a handler: what it is fed comes back upper-cased,
+      // and its status is the byte count.
+      await buildPage("packages/platform/example/procs.wac", `${dir}/procs`, ["--grant", "read,write", "--spawn", "upper"]);
+      await page.goto(`http://127.0.0.1:${port}/procs/index.html`, { waitUntil: "load" });
+      await page.waitForSelector("#run", { timeout: 30_000 });
+      await page.fill("#text", "a child said this");
+      await page.click("#run");
+      await waitInPage(page, "document.getElementById('status').textContent !== ''", null, { timeout: 30_000 });
+      assertEquals(await page.textContent("#out"), "A CHILD SAID THIS", "procs: the copy's output");
+      assertEquals(await page.textContent("#status"), "17", "procs: its status");
+
       // A page with a `Sys`: built with `--grant read,write`, its `main` reads and writes the Origin
       // Private File System through the same `sys.readFile` a command-line program calls. The claim
       // is persistence, so the check is a reload — and a page that only kept the text in memory, or
