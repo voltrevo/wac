@@ -1,6 +1,235 @@
-// Not ported yet: the React site's `site/src/next/Language.tsx`.
+// The language: how it reads, the boundary, and where WebAssembly runs out.
+//
+// The snippets are carried over unchanged from the page this replaces — they are checked by
+// `site/tools/site.test.ts`, which compiles them, so editing them here without editing that would be the
+// drift the test exists to catch. They are `snippets.wac`'s.
+//
+// A type with angle brackets is written as a string child — `<m>{"Vec<T>"}</m>` — because markup reads
+// `<T>` between tags as a tag.
 
-import { Node } from "../../packages/web";
-import { NotYet } from "./ui.wac";
+import { Node, html.em } from "../../packages/web";
+import { A, BLOB, Code, Frame, Lead, P, PLAYGROUND, Pair, Runnable, Section, Sub, TREE, m } from "./ui.wac";
+import { Totals, totals } from "./built.wac";
+import { EX_ARRAYS, EX_BEWORD, EX_BINDGEN, EX_CONST, EX_CORE_LIB, EX_CORE_MAIN, EX_ENUM, EX_ERROR, EX_GENERIC, EX_HELLO,
+         EX_IMPORTS_MAIN, EX_IMPORTS_MATH, EX_MATH, EX_NULLABLE, EX_STRUCT, EX_UNION } from "./snippets.wac";
 
-export Node Language() { return <NotYet route="language"/>; }
+export Node Language() {
+  Totals T = totals();
+  i32 thousands = (T.lines + 500) / 1000;
+  return <Frame current="language">
+    <Section id="tour" kicker="the language" title="A tour, in one page">
+      <P>
+        Everything below compiles in <A href={PLAYGROUND}>the playground</A>. The claim the rest of the site makes rests on the
+        language being ordinary enough to write a Tor relay in and strict enough that the relay
+        works, so this is the part to be skeptical about first.
+      </P>
+      <P>
+        This is the short version. The long one is <A href="#/spec">the specification</A>:
+        forty-nine chapters whose examples are programs, each one compiled against the compiler in
+        the tree, with the answer it must give written above it.
+      </P>
+
+      <Sub id="hello" title="Hello world">
+        <P>
+          Functions have explicit return types. <m>export</m> makes them available
+          to the host and to other wac files.
+        </P>
+        <Runnable code={EX_HELLO}/>
+      </Sub>
+
+      <Sub id="primitives" title="Primitives and control flow">
+        <P>
+          <m>i8 i16 i32 i64</m>, their unsigned twins{" "}
+          <m>u8 u16 u32 u64</m>, <m>f32 f64 bool</m>, and{" "}
+          <m>string</m> as a reference type. Full control flow: <m>if</m>/<m>else</m>, <m>while</m>, <m>for</m>,{" "}
+          <m>do</m>-<m>while</m>, <m>switch</m>, and a
+          ternary.
+        </P>
+        <P>
+          Conversions are never implicit, and there are four of them, because “cast”
+          in C means four different things at once: <m>as</m> is lossless and the
+          only one the checker will let you write when it might not be,{" "}
+          <m>as!</m> is checked at run time and traps,{" "}
+          <m>as~</m> truncates on purpose, and <m>as@</m>{" "}
+          reinterprets the bits. <Lead>Which one you meant is in the source</Lead> rather than in
+          the reader’s head.
+        </P>
+        <Runnable code={EX_MATH}/>
+      </Sub>
+
+      <Sub id="errors" title="Errors point at the thing">
+        <P>
+          A condition has to be <m>bool</m> — there is no truthiness to reason
+          about — and the diagnostic says what to write instead.
+        </P>
+        <Code label="what the compiler prints" code={EX_ERROR}/>
+      </Sub>
+
+      <Sub id="structs" title="Structs, methods, subtyping">
+        <P>
+          Methods take an explicit receiver and reach their fields through it —{" "}
+          <m>this.x</m>, always; a bare field name is not in scope.{" "}
+          <m>const this</m> forbids mutating anything reachable through it — deeply,
+          not one level.
+        </P>
+        <Runnable code={EX_STRUCT}/>
+      </Sub>
+
+      <Sub id="const" title="Const is part of the type">
+        <P>
+          <m>const</m> at the front of a declaration applies throughout: the name
+          cannot be rebound, and nothing can be written through the reference, at any depth. It
+          travels with the reference — read out of a field, returned from a method, handed to a
+          parameter — and no binding of a plain type can hold it again.
+        </P>
+        <P>
+          Parentheses move the name outside it. <m>(const Counter) latest</m> can be
+          rebound, and whatever it holds is still read-only. That is the form a cursor walking a
+          const list is written in.
+        </P>
+        <Runnable code={EX_CONST}/>
+      </Sub>
+
+      <Sub id="nullable" title="Nullable references">
+        <P>
+          <m>T?</m> is a distinct type, <m>!</m> unwraps it, and{" "}
+          <m>is null</m> narrows. A reference that has not been checked cannot be
+          dereferenced.
+        </P>
+        <Runnable code={EX_NULLABLE}/>
+      </Sub>
+
+      <Sub id="enums" title="Enums carry payloads, and match is exhaustive">
+        <P>
+          The feature the rest of this project leans on hardest: a function that answers{" "}
+          <em>data, finished, or failed</em> cannot be written as a byte array with a convention,
+          and a caller cannot forget the third case.
+        </P>
+        <Runnable code={EX_ENUM}/>
+      </Sub>
+
+      <Sub id="unions" title="Unions take apart by type">
+        <P>
+          <m>{"union<f64, string, bool>"}</m> holds a value of any one of its members,
+          with no constructor to call: a member is a union value as it is. A{" "}
+          <m>match</m> on it has one arm per member type, the subject has that type
+          inside the arm, and leaving a member out is a compile error.
+        </P>
+        <Runnable code={EX_UNION}/>
+      </Sub>
+
+      <Sub id="generics" title="Generics, monomorphised">
+        <P>
+          One instantiation per distinct set of arguments, so <m>{"Vec<i32>"}</m> costs
+          what writing it by hand costs. Code size is byte-identical to the hand-written version.
+        </P>
+        <Runnable code={EX_GENERIC}/>
+      </Sub>
+
+      <Sub id="arrays" title="Arrays">
+        <P>
+          GC arrays, bounds-checked, with <m>[1, 2, 3]</m> for a literal and{" "}
+          <m>i32[].filled(5, 0)</m> for a sized one. A growable one is{" "}
+          <m>{"Vec<T>"}</m>, read with <m>.get(i)</m> — indexing with
+          brackets is for arrays.
+        </P>
+        <Runnable code={EX_ARRAYS}/>
+      </Sub>
+
+      <Sub id="imports" title="Multi-file imports">
+        <P>
+          File-based, with <m>as</m> to rename. Diamond imports resolve once;
+          circular imports are fine, because a wac file holds only declarations and there is no
+          initialisation order to get wrong.
+        </P>
+        <Pair leftLabel="main.wac" rightLabel="math.wac" left={EX_IMPORTS_MAIN} right={EX_IMPORTS_MATH}/>
+      </Sub>
+
+      <Sub id="core" title="One import is not a file">
+        <P>
+          <m>core</m> ships inside the compiler, so it is a name rather than a path —
+          there is no file to be right or wrong about, and it cannot be pointed anywhere else.
+        </P>
+        <Pair leftLabel="main.wac" rightLabel="report.wac" left={EX_CORE_MAIN} right={EX_CORE_LIB}/>
+        <P>
+          Those two files never mention each other, and neither declares{" "}
+          <m>Read</m>. That matters because wac has <em>nominal</em> types and no
+          closures: two identical declarations are two types, and nothing can convert between
+          them. Within one project that costs nothing. Across two published libraries it is fatal
+          — so a streaming transform naming <m>{"fn<Read()>"}</m> could never be handed
+          a reader built anywhere else.
+        </P>
+        <P>
+          Hence the rule for what goes in <m>core</m>, which is a test rather than a
+          taste: <Lead>must this type cross a repository boundary through a function
+          reference?</Lead> <m>Read</m> was the first thing to qualify. The markup
+          tree and the conversion symbols followed for the same reason, and the containers —{" "}
+          <m>Vec</m>, <m>Map</m> and{" "}
+          <m>Result</m> — for a weaker one: a program that wants a map should not
+          have to find a package first. Nothing in <m>core</m> holds a capability,
+          so importing it reaches nothing outside the program.
+        </P>
+      </Sub>
+    </Section>
+
+    <Section id="bindgen" kicker="the boundary" title="TypeScript bindgen">
+      <P>
+        The generator produces a self-contained <m>.ts</m> file with the wasm
+        base64-encoded inline and typed wrappers around it. Zero runtime dependencies; primitive
+        arrays marshal between JavaScript typed arrays and WasmGC arrays.
+      </P>
+      <Pair leftLabel="wac source" rightLabel="generated typescript" left={EX_ARRAYS} right={EX_BINDGEN} rightLang="ts"/>
+    </Section>
+
+    <Section id="wasm-gaps" kicker="the other direction" title="What WebAssembly is missing">
+      <P>
+        Writing {thousands},000 lines of byte-heavy systems code against WasmGC — TLS, SSH, Tor, gzip,
+        Zstandard, BLS12-381, SHA-2, ChaCha20 — with no C runtime underneath and no linear memory
+        in the artifact turns up gaps that are hard to see from anywhere else. The languages that
+        usually report on WasmGC bring Java, Kotlin, Dart and Scheme; none of them is parsing a
+        wire protocol out of a GC array.
+      </P>
+      <P>
+        <Lead>GC arrays are read one element at a time.</Lead> There is no way to read four bytes
+        of an <m>(array i8)</m> as an <m>i32</m>, so every word of
+        every SHA-2 block, TLS record header and Tor cell costs about ten instructions where a
+        load is one:
+      </P>
+      <Code label="packages/crypto/src/layout.wac" code={EX_BEWORD}/>
+      <P>
+        <Lead>No SIMD that a GC-array codec can use</Lead> — wasm’s vector instructions
+        address linear memory, so getting a <m>v128</m> out of a GC array costs
+        about as much as the vector operation saves.{" "}
+        <Lead>Ten MVP integer instructions are unreachable</Lead> from the language, including{" "}
+        <m>i32.rotl</m>, which is three quarters of every add-rotate-xor cipher.{" "}
+        <Lead>No widening multiply and no add-with-carry</Lead>, so arbitrary-precision arithmetic
+        — and therefore BLS12-381 — works in 32-bit limbs. And <Lead>nothing runs when a trap
+        unwinds</Lead>, so there is no way to release anything on the way out.
+      </P>
+      <P>
+        <Lead>And there is no byte swap.</Lead> Wasm loads are little-endian and most wire
+        protocols are big-endian — TLS, SSH, Tor, and SHA-1 and SHA-2’s message schedule —
+        so even with linear memory a big-endian word is a load plus a hand-rolled six-operation
+        swap. That one inverted a conclusion in our own design document: SHA-256 looked like the
+        obvious motivating example for linear memory and turned out to be among the weakest,
+        because the swap eats the gain, while a little-endian format like ChaCha20 or Zstandard
+        would gain a lot.
+      </P>
+      <P>
+        Every entry is marked <em>verified</em>, <em>believed</em> or <em>speculative</em>, and
+        the distinction is load-bearing rather than decorative. Integer rotate sat on the list as
+        a missing instruction until somebody checked:{" "}
+        <Lead><m>i32.rotl</m> has existed since 2017, and it was wac that had no
+        way to spell it.</Lead> A list of things another project should fix is worth exactly what
+        its worst entry is worth.
+      </P>
+      <P>
+        Each of those is an issue in the repository with a measurement attached rather than a
+        complaint:{" "}
+        <A href={TREE + "/issues/lang/open"} external={true}>the open list</A>, and{" "}
+        <A href={BLOB + "/WASM-WISHLIST.md"} external={true}>the wishlist</A> with the
+        numbers.
+      </P>
+    </Section>
+  </Frame>;
+}

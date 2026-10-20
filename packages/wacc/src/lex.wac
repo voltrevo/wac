@@ -1295,7 +1295,15 @@ export Lexed lex(u8[] src) {
       i32 prevKind = out.tokenCount == 0
         ? -1
         : out.tokens[(out.tokenCount - 1) * tokenStride()];
-      i32 kind = lexOperator(lx);
+      // **Inside a tag a `>` only ends it**, so it is one byte: `<m>==</m>` is a tag and the text `==`,
+      // where the operator reader would take `>=` and leave the tag open.
+      i32 kind = -1;
+      if (md.mode == mTag() && c == '>') {
+        lx.advance();
+        kind = kGt();
+      } else {
+        kind = lexOperator(lx);
+      }
       if (kind < 0) {
         fail(out, errUnexpectedChar(), startLine, startCol);
       } else if (kind == kRbrace() && md.topKind() == cInterp() && md.topNum() == 0) {

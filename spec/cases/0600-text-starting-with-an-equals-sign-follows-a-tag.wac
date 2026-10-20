@@ -1,0 +1,13 @@
+// expect: f() = ==|=|>=|=>
+// why: the `>` that ends a tag ends it; text after it that starts with `=` or `>` is text, not the
+//      rest of a `>=` or `>>` operator
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { markup } from "core";
+struct T {
+  string s;
+  T [markup.text](string s) { return T(s); }
+}
+T m(T[] kids) { return kids[0]; }
+export string f() {
+  return (<m>==</m>).s + "|" + (<m>=</m>).s + "|" + (<m>>=</m>).s + "|" + (<m>=></m>).s;
+}

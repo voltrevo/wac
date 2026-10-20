@@ -1,6 +1,783 @@
-// Not ported yet: the React site's `site/src/next/Stack.tsx`.
+// The stack: what has been built in wac, and what says each claim is true.
+//
+// This page merges what used to be two — an inventory of packages and a set of case studies — because
+// they were arguing the same thing from two ends and a reader had to visit both to get the point.
+// The order is deliberate: the capability world first, since it is what makes an *application*
+// possible at all, then the five things that would be hard to fake, then the whole inventory.
+//
+// Prose carried over from the pages this replaces, which had been corrected against the sources
+// several times; the numbers come from `./built.wac`, generated from the repository's own generated map.
 
-import { Node } from "../../packages/web";
-import { NotYet } from "./ui.wac";
+import { Node, html.a, html.div, html.em, html.span } from "../../packages/web";
+import { A, Caveat, Code, Fact, Facts, Frame, Lead, P, Section, Sub, TREE, Table, m, mono, t } from "./ui.wac";
+import { BuiltPackage, Totals, built, totals } from "./built.wac";
 
-export Node Stack() { return <NotYet route="stack"/>; }
+static string EX_WC = """
+  // packages/platform/example/wc.wac — a complete application, with no TypeScript beside it
+  export i32 main(Sys sys) {
+    Core core = sys.core;
+    Cli cli = sys.cli;
+    u8[] data = u8[].filled(0, 0);
+    if (cli.argCount().wait() < 1) {
+      data = cli.readStdin().wait();
+    } else {
+      FileResult f = cli.readFile(cli.arg(0).wait()).wait();
+      if (!f.ok) { core.warn("wc: " + f.error); return 1; }
+      data = f.bytes;
+    }
+    Counts n = count(data);
+    core.log(itoa(n.lines) + " " + itoa(n.words) + " " + itoa(n.bytes));
+    return 0;
+  }""";
+
+static string EX_SHEBANG = """
+  #!/usr/bin/env -S deno run                    # built with no capabilities
+  #!/usr/bin/env -S deno run --allow-read       # built with --allow-read""";
+
+static string EX_SEAM = """
+  export struct Output {
+    u8[] out;
+    u8[] err;
+    i32 status;
+    /** False when no program of that name exists, which the shell reports as 127. */
+    bool found;
+  }""";
+
+static string EX_SSH = """
+  $ ssh -p 2222 user@host 'seq 1 100 | grep 7 | wc -l'
+  19
+  $ ssh -p 2222 user@host 'x="a b c"; echo "$x" | tr " " "-"'
+  a-b-c""";
+
+static string EX_WAIT = """
+  // The wait list, and beside it what each entry belongs to: -2 the guard, -1 the
+  // listener, otherwise a client's index. Built rather than computed, because the offsets
+  // shift as clients come and go and an arithmetic slip here routes a stranger's bytes.
+  Vec<i32> ids = Vec.create();
+  Vec<i32> owner = Vec.create();
+  ids.push(linkRead.id);
+  owner.push(-2);
+  if (accepting) { ids.push(acc.id); owner.push(-1); }
+  for (i32 i = 0; i < clients.len(); i++) {
+    if (clients.get(i).reading) {
+      ids.push(clients.get(i).read.id);
+      owner.push(i);
+    }
+  }
+
+  i32 w = core.waitAny(ids.toArray(), -1);
+  if (w < 0) { break; }
+  i32 who = owner.get(w);""";
+
+static string EX_ONION = """
+  rendezvous established at test000a
+  introduction acknowledged
+  joined: the service is hop 4
+  HTTP/1.0 200 OK
+  hello from behind an onion""";
+
+static string EX_NTOR = """
+  // packages/tor/src/ntor.wac — tor-spec §5.1.4
+  u8[] xy = x25519(ephemeralPriv, serverEph);
+  u8[] xb = x25519(ephemeralPriv, onionKey);
+  // A small-order Y or B makes the shared value all zero for every scalar, so an
+  // attacker needs no private key at all. tor-spec says abort; nothing to salvage.
+  if (allZero(xy) || allZero(xb)) { return u8[].filled(0, 0); }
+
+  // Constant time, because a caller may retry and a timing difference here leaks
+  // which byte of AUTH was wrong.
+  i32 diff = 0;
+  for (i32 i = 0; i < 32; i++) { diff = diff | (expected[i] ^ auth[i]); }
+  if (diff != 0) { return u8[].filled(0, 0); }""";
+
+static string EX_NETWORK = """
+  network: all 4 nodes are up
+  consensus verified: 1 of 1 authorities signed
+  path: wacrelay2 -> wacrelay -> wacrelay3
+  circuit built, 3 hops
+  network: ok""";
+
+static string EX_PROOF = """
+  // packages/mpt/src/account.wac — what an eth_getProof answer actually is
+  AccountProof a = accountAt(stateRoot, address, accountNodes);
+  if (a.ok && a.present) {
+    // The storage root comes *out of the account proof*. A caller that supplies it
+    // from anywhere else can be handed a perfectly valid proof of a different
+    // account's storage.
+    StorageProof s = storageAt(a.account.storageRoot, slot, storageNodes);
+  }""";
+
+/** The shapes only this page draws: a verdict in a table, an aside, and the package table's cells. */
+static string STACK_CSS = """
+  .ok { color: var(--accent); }
+  .warn { color: var(--warm); }
+  .aside { font-size: 14.5px; color: var(--dim); }
+  .pkg { font-family: var(--mono); color: var(--accent); text-decoration: none; white-space: nowrap; }
+  .what { color: var(--dim); }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .gap { height: 12px; }
+""";
+
+/** `n` with a comma every three digits, as `toLocaleString` wrote it on the React page. */
+string commas(i32 n) {
+  string s = "\{n}";
+  string out = "";
+  i32 len = s.len();
+  for (i32 i = 0; i < len; i++) {
+    if (i > 0 && (len - i) % 3 == 0) { out = out + ","; }
+    out = out + s.slice(i, i + 1);
+  }
+  return out;
+}
+
+/** A verdict in a table: the accent when it holds, the warm colour when it does not. */
+Node ok(string s) { return <span class="ok">{s}</span>; }
+Node warn(string s) { return <span class="warn">{s}</span>; }
+
+/** The package table's rows, from the generated map. */
+Node[][] packageRows() {
+  BuiltPackage[] ps = built();
+  Node[][] rows = Node[][].filled(ps.len(), Node[]());
+  for (i32 i = 0; i < ps.len(); i++) {
+    BuiltPackage p = ps[i];
+    rows[i] = [
+      <a class="pkg" href={TREE + "/packages/" + p.name} target="_blank" rel="noopener">{p.name}</a>,
+      <span class="what">{p.what}</span>,
+      <span class="num">{commas(p.lines)}</span>,
+      <span class="num">{p.tests}</span>,
+    ];
+  }
+  return rows;
+}
+
+export Node Stack() {
+  Totals T = totals();
+  return <Frame current="stack" css={STACK_CSS}>
+    <Section id="top" kicker="the stack" title="What is built in it">
+      <P>
+        <Lead>{T.packages} packages, {commas(T.lines)} lines of wac,{" "}
+        {T.programs} command-line programs and four browser pages.</Lead> No C, no libc, no
+        runtime library, and no third-party code in any package’s <m>src/</m>.
+        Each was written because the layer under it needed something, which is why the list reads
+        like an operating system rather than a portfolio.
+      </P>
+      <Facts rows={[
+        Fact("packages", "\{T.packages}"),
+        Fact("lines of wac", "\{(T.lines + 500) / 1000}k"),
+        Fact("tests, both suites", "~\{((T.testsAll + 50) / 100) * 100}"),
+      ]}/>
+    </Section>
+
+    <Section id="capabilities" kicker="why an application is possible" title="Capabilities, because an import names a file">
+      <P>
+        wac’s <m>import</m> reads other wac source and does nothing else — a
+        file beside it, or <m>core</m>, which the compiler ships. There is no{" "}
+        <m>extern</m>, no declaration form, no way to write down the name of a
+        function that lives outside the program. The only host code a module can call is a value
+        somebody handed it.
+      </P>
+      <P>
+        Take that seriously and a whole program becomes a function that takes the world as
+        parameters. Here is one, and there is no TypeScript in its directory:
+      </P>
+      <Code label="the whole thing" code={EX_WC}/>
+      <P>
+        Reading <m>main</m>’s parameters tells you this program reads the
+        clock, prints, and touches the filesystem. Nothing else is reachable, because there is
+        nowhere else to reach. That is a property of the binary rather than a promise about it:{" "}
+        <Lead>a module that takes no function parameter imports nothing at all</Lead> — not
+        “nothing it uses”, an empty import section — and a module that takes one
+        imports exactly one dispatcher, per signature rather than per parameter. A spec test
+        compiles both and reads <m>WebAssembly.Module.imports</m> to say so. Behind <m>readFile(…).wait()</m> the host is doing
+        asynchronous work on another thread while this one is parked — asynchronous work called
+        synchronously, with none of the colouring that usually spreads through everything it
+        touches.
+      </P>
+      <P>
+        <Lead>The other half of that boundary was loose until this week, and it is worth saying
+        so.</Lead> What a program imports was always what it declared. What the host could reach{" "}
+        <em>into</em> was rooted in every <m>export</m> of every file the program
+        imported — where <m>export</m> means “visible to the file that imported
+        me”, not “reachable from JavaScript”. So a hello-world that logs one line
+        and takes <m>main(Core)</m> published a boundary of 31 structs and 51
+        callback signatures: <m>Socket</m>, <m>Child</m>,{" "}
+        <m>Page</m>. Ambient authority arriving through the import graph, which needs
+        no size argument to reject. It declares four and ten now — <m>Core</m> and
+        the three ticket shapes its methods answer with — and a test asserts the{" "}
+        <em>whole</em> manifest rather than a list of forbidden names, because a rule naming
+        today’s capabilities says nothing about the one added next week. The size followed
+        rather than led: <m>box</m> went from 991 KB built to 782 KB, a fifth off for
+        a change that was made for the other reason.
+      </P>
+      <P>
+        What the world leaves out is as deliberate as what it offers. <m>cwd</m> is
+        readable and there is <Lead>no <m>chdir</m></Lead>: a mutable working
+        directory is ambient state that changes what every relative path in a program means, from
+        anywhere, which is the shape this world exists to avoid. A program that moves around keeps
+        its own idea of where it is and passes whole paths — which is exactly what the shell does,
+        and why its <m>cd</m> is its own.
+      </P>
+      <Sub id="grants" title="Granted at build, not at run">
+        <P>
+          A built program takes no permission flags of its own and every argument goes to the
+          application. Whoever packages it decides what it may do; whoever runs it cannot widen
+          that. The shebang is exactly the grants, so the answer is readable with{" "}
+          <m>head -1</m>:
+        </P>
+        <Code label="the first line of the artifact" code={EX_SHEBANG} lang="ts"/>
+        <P>
+          And a child gets what its parent chose <em>intersected with what the parent itself
+          has</em>, enforced by the host rather than trusted. So a program can hand out one
+          capability of the several it holds, and <Lead>can never hand out one it lacks</Lead> —
+          authority only narrows.
+        </P>
+      </Sub>
+    </Section>
+
+    <Section id="shell" kicker="hard to fake, #1" title="A shell that agrees with bash">
+      <P>
+        Quoting, expansion, here-documents, <m>$(…)</m>, pipelines, redirection,
+        functions, loops, <m>case</m>, <m>read</m> —{" "}
+        <Lead>{T.corpus} scripts run through GNU bash and through this one</Lead>, and the two must agree
+        on standard output <em>and</em> on the exit status. That is the only test worth much for a
+        shell: nearly every rule has a case where the obvious implementation is subtly wrong, and
+        bash is the one thing that will say so.
+      </P>
+      <Code label="sh/src/program.wac · the seam external commands go through" code={EX_SEAM}/>
+      <P>
+        Bytes in, bytes out, a status, and <m>found</m> — because a shell reports
+        127 for <em>no such command</em> and the program’s own code for <em>ran and
+        failed</em>, and one integer cannot say both. That seam is why {T.applets} applets from another
+        package became commands you can type with a single line of wiring, in a browser tab as
+        much as on a command line, running the same code either way.
+      </P>
+      <P>
+        An SSH server hands a channel’s command string to that shell and sends the buffer
+        back down the channel. <Lead>OpenSSH’s own client cannot tell the difference</Lead>,
+        and you can point yours at it:
+      </P>
+      <Code label="a real client, our server" code={EX_SSH} lang="ts"/>
+      <P>
+        Ask it for a pty and it gives you one, which it refused for a year — and the refusal was the
+        honest answer at the time, because a client that gets a pty puts its terminal in raw mode and
+        stops echoing, expecting the server to echo every keystroke, and there was nothing here to
+        echo with. <m>packages/tty</m> is that something: every keystroke arrives on
+        its own, a line discipline decides what to send back and what counts as a line, and the
+        shell’s output gets <m>{"\\r\\n"}</m> on the way out because a terminal in
+        raw mode does not return the cursor on a bare newline. <Lead><m>^C</m> ends a
+        running command and the session carries on</Lead> — OpenSSH’s own client, an infinite
+        loop, an interrupt, and <m>echo alive=$?</m> printing 130 on a session that is
+        still there.
+      </P>
+      <P>
+        The modes in the request — speeds, <m>VERASE</m>, <m>ICANON</m> —
+        are <em>not</em> read. Canonical with echo is the one arrangement this serves, so a client
+        asking for raw mode gets canonical: a gap rather than a translation.
+      </P>
+      <Sub id="applets" title={"\{T.applets} programs it did not have to contain"}>
+        <P>
+          The shell used to carry its own small <m>cat</m>, <m>wc</m>{" "}
+          and <m>grep</m>, written only because nothing could be started. Another
+          package had those done properly and sixty-one besides. They are wired together with one
+          line — <m>sh.external = boxRun</m> — so <m>sort</m>,{" "}
+          <m>sha256sum</m>, <m>gzip</m> and <m>diff</m>{" "}
+          are commands you can type, <A href="#/run">in a browser tab</A> as much as on a command
+          line, running the same code either way.
+        </P>
+        <P>
+          An applet reads <m>cli.readChunk()</m> and writes{" "}
+          <m>cli.write(…)</m> — the process’s own streams — and wac has no
+          closures, so it cannot be handed a substitute world: a fake capability has nowhere to
+          put what it collected. So the host holds the child’s world instead, for the length
+          of one call. Between <m>pushChild</m> and <m>popChild</m>,
+          argv, standard input, both output streams and every relative path belong to the child.
+          The applet needs no change and cannot tell.
+        </P>
+        <P>
+          What that is <em>not</em> is isolation: same wasm instance, same authority — so it is
+          the <em>fallback</em>. The shell spawns them: a worker can create a worker, and a
+          browser bundle is its own program, so <m>sort</m> is this program again
+          with <m>sort</m> as its first argument — its own instance, its own
+          grants, its own worker. Which is why pipeline stages
+          run at once and <m>yes | head -1</m> terminates the way it does in bash.
+        </P>
+        <P>
+          Telling the two routes apart took the one place they differ, because an applet cannot:
+          a <em>called</em> applet’s output is captured and capped at 8 MiB, so{" "}
+          <m>seq 1 1500000 | wc -c</m> truncates, and a spawned one’s queue
+          drains as the next stage reads it. <Lead>The spawned answer is the one GNU gives</Lead>,
+          which is how a real Chromium says which route ran.
+        </P>
+      </Sub>
+    </Section>
+
+    <Section id="wacland" kicker="what the shell grew into" title="A system, not a shell with commands">
+      <P>
+        The shell and the applets were the first half. What has been built around them since is
+        the part that makes a session something you can leave and come back to.
+      </P>
+      <Table head={["what", "and what makes it more than a name"]} rows={[
+        [t("a filesystem that is a value"), <><m>Fs</m> is held by the program, not reached through the host — in memory, on a real disk, or synthesised, resolved by longest prefix so the three compose</>],
+        [t("an image"), t("that filesystem written to one file, so a session survives a restart — and a session that changes nothing writes byte-identical bytes")],
+        [t("users and login"), t("mode and owner enforced from data inside the image; two keys land in two homes and neither can read the other’s private file")],
+        [<mono>/bin</mono>, <>synthesised from the applet list, so it cannot disagree with what is wired in — and <m>/bin/wc -l</m> runs</>],
+        [<mono>/dev</mono>, t("a real CSPRNG in a program built with no filesystem grant at all, because randomness is a host function rather than a grant")],
+        [<mono>/proc</mono>, <>a process table, so <m>ps</m> answers about the session it is running in</>],
+        [<mono>init</mono>, <><m>/etc/init</m> is a file you can <m>cat</m> and edit; each line becomes a real child with its own grants</>],
+      ]}/>
+      <P>
+        Two things stop that list being a set of claims. The whole corpus runs against{" "}
+        <Lead>three different filesystems</Lead> — memory, an image and a real disk — and all{" "}
+        {T.corpus} scripts agree across them, which is the differential a virtual filesystem
+        needs and is easy not to have. Beside it a test that keeps the first from being vacuous:
+        if the image were secretly in memory too, three identical things would agree perfectly, so
+        it also checks the image outlives its own process and the sealed session does not.
+      </P>
+      <P>
+        And a sealed session — a shell built with <em>no capabilities at all</em> — is held to
+        being unable to reach the machine by any of four routes, through a pipe as well as
+        directly. Before that test the line was held by a comment, and a comment is what somebody
+        edits.
+      </P>
+      <Caveat title="init is not a supervisor, and says so">
+        No restart policy, no dependency order, no health checks, no readiness, and no way to stop
+        a service once it is running. All five are named in the source, because a supervisor that
+        quietly did none of them would look like the real thing until the first service died.
+      </Caveat>
+    </Section>
+
+    <Section id="transport" kicker="hard to fake, #2" title="The transport underneath, both directions">
+      <P>
+        Tor and the browser demos are not the bottom of the stack. Under them is TLS 1.3, and
+        under that a QUIC and a WebRTC implementation written here — <em>RFC 8446, RFC 9000 and
+        RFC 9001</em>, on this repository’s own crypto, with nothing borrowed but the
+        specifications.
+      </P>
+      <P>
+        <Lead>The oracle is somebody else’s implementation, on both ends.</Lead> A wac
+        program opens a datagram socket, sends an Initial carrying a ClientHello it wrote, and{" "}
+        <m>quinn</m> accepts the connection. Then the roles swap: Deno’s QUIC
+        client dials a server written here, and rustls has to accept our ServerHello, our key
+        share, our transport parameters, our certificate, an RSA-PSS signature over the transcript
+        and a Finished it recomputes. Any one of those wrong is a connection that does not happen,
+        which is what makes it a hard test to pass by accident.
+      </P>
+      <P>
+        The same shape one protocol over: Chromium’s{" "}
+        <m>RTCPeerConnection</m> opens a data channel to our WebRTC peer and gets
+        our echo back — SDP, ICE, DTLS 1.2, SCTP and DCEP, against libwebrtc rather than a second
+        implementation of our own reading. And all of it runs on both hosts, the JavaScript one
+        and the Rust one, which is a separate claim about the platform rather than the protocol.
+      </P>
+      <Caveat title="what a handshake does not establish">
+        One connection, on loopback, with no Retry and no address validation — and a server that
+        answers every packet immediately is the shape that amplifies an attack at a spoofed
+        address. <m>quic/src/server.wac</m> says so where somebody might otherwise
+        take the test as a licence. Interoperating is evidence that the bytes are right; it is not
+        evidence that the thing is safe to point at the internet, and none of these has been
+        reviewed by anyone.
+      </Caveat>
+    </Section>
+
+    <Section id="tor" kicker="hard to fake, #3" title="Tor, both ends">
+      <Caveat title="Not for production, and the packages say so first">
+        None of this has been reviewed by anyone. On side channels the honest statement is a
+        measurement rather than a shrug — see <A href="#/stack/crypto">below</A> — and anonymity
+        is a separate question from correctness that this does not have yet: Proposal 271 is
+        partial, there is no padding, and stream isolation is by port rather than by destination.
+        A wrong path selection builds a circuit that works perfectly with the anonymity quietly
+        removed, which is the failure mode that does not announce itself.{" "}
+        <Lead>Do not point it at the real Tor network.</Lead>
+      </Caveat>
+      <P>
+        It bootstraps <em>over Tor</em>: a one-hop circuit to a starting relay fetches the
+        consensus, the certificates and the microdescriptors, verifies them against the directory
+        authorities, and every circuit after that is chosen from what it learnt —
+        bandwidth-weighted per position, distinct /16s, mutual families excluded, an exit whose
+        policy carries the port, through a pinned guard set. There is a SOCKS5 proxy on top, and
+        it reaches onion services.
+      </P>
+      <P>
+        Almost none of the cryptography under that was new. Tor needs Curve25519, SHA-256, HMAC,
+        HKDF, AES-128-CTR and Ed25519, and the TLS work had already built every one of them; the{" "}
+        <Lead>only primitive this whole stack added was SHA-1</Lead>, which Tor still specifies
+        for the running digest that authenticates a circuit’s relay cells.
+      </P>
+      <Code label="tor/src/ntor.wac · the handshake, abridged" code={EX_NTOR}/>
+      <P>
+        The two Diffie-Hellmans do different jobs: the one between ephemeral keys gives forward
+        secrecy, the one against the relay’s published onion key is what makes it{" "}
+        <em>authenticated</em>. Drop either and the handshake still completes and still agrees a
+        key — so a round-trip test cannot tell the difference, and the tests remove each
+        contribution in turn.
+      </P>
+      <Sub id="waitany" title="One worker, every socket, one wait">
+        <P>
+          A SOCKS5 proxy on top of it, so anything that speaks SOCKS goes over Tor. It holds one
+          outstanding read per socket plus an accept, hands the list to{" "}
+          <m>waitAny</m>, and re-issues whichever answered.
+        </P>
+        <Code label="tor/src/socks.wac · the whole loop, less the branches" code={EX_WAIT}/>
+        <P>
+          Against a local testnet it has carried 3.2MB across eight concurrent streams,
+          byte-identical. Built, the whole thing is <Lead>852.7 KiB</Lead> as a self-contained
+          executable, 241.9 KiB gzipped — of which the wasm this repository compiles is{" "}
+          <Lead>181.9 KiB</Lead>, the rest being the floor every executable here stands on.
+          Measured 2026-09-01, and dated because a size is a snapshot: the figures before these
+          said 513.7 and 133.8 KiB and had sat here long enough to read as facts. They are not
+          evidence that the client grew by two thirds, and this is the trap a date alone does not
+          catch — they were measured 2026-08-11, and everything recorded before the 12th came from
+          the TypeScript compiler this project has since deleted. A snapshot needs to name the
+          compiler that produced it as well as the day, so: these are{" "}
+          <m>wacc</m>, self-hosted. That the floor dominates
+          is the finding rather than an aside, and it has since been pinned to one number:{" "}
+          <Lead>149 KB of host JavaScript</Lead>, the same under a program that only reads standard
+          input and under one carrying 65 applets and a shell. No wasm tool touches it —{" "}
+          <m>wasm-opt</m> takes 41% off the module and stops. Issue 0129 has since
+          answered why it does not vary: the host builds a <Lead>fixed capability table</Lead>, so
+          a program that never spawns, never draws and never opens a socket is handed the same one
+          as a shell with 65 applets in it — nothing is failing to shake, because nothing is asking
+          what the program uses. What that would be worth was run on 2026-08-12: stub
+          out the spawn half and the entry bundle drops <Lead>18.3 KB</Lead>, a fifth of it — which
+          lands between the two numbers that would have settled it, so the sockets are the next
+          thing to weigh and they are not yet in a file of their own. The cheaper lead was the one
+          already in hand: the demo pages on this site are built with{" "}
+          <m>wasm-opt</m> now, which takes <Lead>1 MB</Lead> off the eight of them,
+          between 15 and 26 per cent each.
+        </P>
+        <P>
+          <Lead>And the module has a floor of its own, which is the larger half.</Lead> Three
+          programs doing the same arithmetic, differing only in how many capabilities they name:
+          one that names none is <Lead>668 bytes</Lead> of wasm, naming{" "}
+          <m>Core</m> costs 41 KB, and naming <m>Cli</m> as well costs
+          168 KB. Beside them <m>wc</m> — which actually counts words — is 762 bytes
+          larger than the program that does nothing. <Lead>A wac program is under half a per cent
+          of its own module</Lead>; the rest is the boundary it declares.
+        </P>
+        <P>
+          The cost is per <em>distinct signature</em> rather than per field, which is the part
+          worth knowing because it decides what a fix would have to do. Capability structs of 1,
+          5, 10 and 20 fields whose shapes cycle through ten: the twenty-field one has two fields
+          of every shape the ten-field one has one of, and adds no new signature —{" "}
+          <Lead>ten more fields cost 3,178 bytes</Lead>, 318 each, where the first field of a new
+          shape costs thousands. So a narrower capability is worth nothing unless it drops a
+          shape, and that is measured rather than argued.
+        </P>
+      </Sub>
+      <Sub id="onion" title="It reaches onion services">
+        <P>
+          A v3 onion address <em>is</em> an ed25519 public key, so there is no lookup and no
+          registry: a client that reaches the right address cannot be talking to the wrong
+          service. Six pieces get from the address to a stream, and each is checked against
+          tor’s own values rather than against itself.
+        </P>
+        <Code label="fetching a page from a real service, over our own circuits" code={EX_ONION} lang="text"/>
+        <P>
+          Four things the specification does not say plainly, each producing a well-formed and
+          useless value with no local symptom. A time period is not a day on a testing network.
+          The MAC’s arguments are the other way round from how §3.3.2 reads. The INTRODUCE1
+          MAC covers the whole cell including twenty zero bytes — which are zeros, so nothing
+          local tells the two spans apart, and the first version of that test asserted the wrong
+          one and passed. And a BEGIN cell on a rendezvous circuit has an empty address.{" "}
+          <Lead>The first two fell to differentials against tor’s own values; the last two
+          needed a live service.</Lead>
+        </P>
+        <P>
+          It hosts one too, which is the mirror of every piece above and not a symmetry: the
+          client proves nothing about itself and the service proves everything, so every cell it
+          sends carries a signature or a MAC the client’s equivalent does not. Publication
+          works end to end — our directory and our relay accept a{" "}
+          <m>POST /tor/hs/3/publish</m>, check it the way tor’s own{" "}
+          <m>desc_decode_plaintext_v3</m> does, file it under the blinded key from
+          its certificate, and replace what they hold only for a strictly newer revision. The
+          descriptor decodes whole under tor’s{" "}
+          <m>hs_desc_decode_descriptor</m>, and key blinding matches in both
+          directions, so the blinded secret a service signs with is byte-identical to
+          tor’s.
+        </P>
+        <P>
+          Which is why the transcript on the front page is the one that counts:{" "}
+          <Lead>an unmodified <m>curl</m> fetched a page from a service we
+          host</Lead>, with the introduction point and the rendezvous point our relays as well.
+        </P>
+      </Sub>
+      <Sub id="tor-both" title="And it runs the other side">
+        <P>
+          There is a relay, a directory authority, and a launcher that stands a whole network up
+          from a description — waiting for each node to announce itself rather than sleeping, and
+          failing by name if one never does.
+        </P>
+        <Code label="a Tor network with no C tor in it, in about a second" code={EX_NETWORK} lang="text"/>
+        <P>
+          Which buys the test nothing else can give, with the other implementation as the client:{" "}
+          <Lead>a real C tor bootstraps from our directory authority, builds a three-hop circuit
+          through our relays, and carries a stream over it</Lead> — reaching <em>Bootstrapped
+          100%</em> having accepted our descriptor, certificate, vote and both consensus flavours
+          through its own parsers.
+        </P>
+        <P>
+          It also fills a window, which is the only way a flow-control bug shows itself. Without
+          SENDMEs a 200KB upload works and a 300KB one fails: 500 cells of 498 bytes is 249,000,
+          exactly where it stopped. With them, 1MB goes through, and 8MB the other way past a slow
+          reader.
+        </P>
+      </Sub>
+      <Sub id="found" title="What building it actually found">
+        <P>
+          The first real transfer through the proxy aborted the client, and the bug was older than
+          the proxy: the link layer had been handing the TLS client whatever the socket returned
+          since the day it was written. It survived a year of directory fetches because a
+          consensus arrives as a few small records that a segment does not usually split. The
+          first 400KB download arrived as 44KB in one chunk — eighty records with the last one cut
+          in half — and it aborted. <Lead>A fast-connection bug, not a slow-connection one</Lead>,
+          which is the opposite of where anyone looks for a framing fault.
+        </P>
+        <P>
+          The root cause was an asymmetric API: the server side had a framing helper and the
+          client side did not, so every client-side caller was invited to write the loop itself.
+          Two did. One was correct for a year and one was silently wrong for a year, which is the
+          expected score for an unwritten convention. <A href="#/checked/oracles">Why that is on
+          the method page →</A>
+        </P>
+      </Sub>
+    </Section>
+
+    <Section id="ethereum" kicker="hard to fake, #4" title="Ethereum, against the published vectors">
+      <P>
+        A pairing-based signature scheme is the least forgiving thing to write in a new language:
+        the answer is one bit, every intermediate is a 381-bit field element, and nothing short of
+        the whole tower being right produces anything but noise.{" "}
+        <Lead>It agrees with all 29 of <m>ethereum/bls12-381-tests</m>’ verify
+        fixtures</Lead>, all 28 deserialization fixtures and all 21 aggregate ones, at about 8ms a
+        signature. Verification only, deliberately — no signing, no key generation, no secret
+        material anywhere in the package.
+      </P>
+      <P>
+        Beside it SSZ, the consensus layer’s serialization and the Merkle proofs over it:{" "}
+        <Lead>2,233 vectors from <m>consensus-spec-tests</m></Lead>, including all
+        1,131 <em>invalid</em> ones — the half a decoder passes by being too permissive. On top of
+        those, the Altair sync protocol runs all four <m>light_client/sync</m> cases
+        step by step: nineteen steps, sixteen real sync-committee signatures, every Merkle branch.
+      </P>
+      <P>
+        The interesting part is what those vectors <em>cannot</em> check. Every update in them is
+        valid, so a <m>validateUpdate</m> that returns true unconditionally passes
+        all nineteen steps. The negatives are built by corrupting real data one field at a time,
+        and <Lead>each was confirmed to fail against a deliberately broken client before being
+        kept</Lead>.
+      </P>
+      <Sub id="proofs" title="From a verified header to a contract's answer">
+        <P>
+          A light client gives you a header, and a header says nothing about what is <em>in</em>{" "}
+          the state it commits to. keccak256, RLP, the contract ABI and Merkle-Patricia proofs
+          close that gap, so a contract read is <Lead>checked rather than trusted</Lead> — the
+          provider serving the answer cannot change it without the state root disagreeing.
+        </P>
+        <Code label="mpt/src/account.wac · what a proof is worth" code={EX_PROOF}/>
+        <P>
+          Two things that snippet hides. <Lead>Absence is an answer</Lead> — a sound proof that
+          nothing is stored at a slot is a result, not a failure. And the walk is <em>two</em>{" "}
+          steps, which is the trap: the storage proof must be checked under the root the account
+          proof yielded, or a caller can be handed a perfectly valid proof of a different
+          account’s storage.
+        </P>
+        <P>
+          <m>packages/ens</m> turns the name a person types into the node a contract
+          is asked about — EIP-137’s namehash, the DNS wire encoding and both calls’
+          calldata, every case against <m>npm:ethers</m>. The honest half is that{" "}
+          <Lead>ENSIP-15 normalisation is not implemented</Lead>, so a name is hashed as given: the
+          corpus generator refuses to admit a name unless <m>ethers</m> says it is
+          already normalised, which keeps the tests true and leaves the gap where a reader can see
+          it.
+        </P>
+      </Sub>
+    </Section>
+
+    <Section id="wacc" kicker="hard to fake, #5" title="The compiler, written in the language it compiles">
+      <P>
+        <m>packages/wacc</m> is the wac compiler, written in wac, and it compiles
+        itself. The point is not the compiler.{" "}
+        <Lead>A compiler is the program shape this language is worst at</Lead> — syntax trees want
+        sum types, symbol tables want generics, everything wants strings — so it exercises the
+        friction with a real consumer rather than by argument.
+      </P>
+      <P>
+        It was built a rung at a time, and each rung was checked against the TypeScript
+        implementation before the next was started. Same input, compare outputs, no judgement
+        calls about which is right. That implementation was deleted on 2026-08-28, once this one
+        could build itself without it — so the table below is how this compiler was{" "}
+        <em>arrived at</em>, and what holds it now is the specification’s own corpus, the
+        repository as a corpus, and a build that refuses itself unless compiling the compiler
+        twice gives the same bytes.
+      </P>
+      <P>
+        The chain that builds it from source is on{" "}
+        <A href="#/bootstrap">the bootstrap page</A>: five languages, the lowest hand-written wasm
+        assembly text, and nothing checked in that a compiler produced.
+      </P>
+      <Table head={["rung", "oracle", "state"]} rows={[
+        [<mono>lexer</mono>, t("token streams match, position for position"), ok("passes")],
+        [<mono>parser</mono>, t("syntax trees match under a canonical form"), ok("passes")],
+        [<mono>type checker</mono>, t("diagnostics match, including positions"), ok("passes")],
+        [<mono>emitter</mono>, t("both modules run and answer the same"), warn("1254 of 1254 files, 0 invalid")],
+        [<mono>bootstrap</mono>, t("a fixpoint: it compiles itself, byte for byte"), ok("reached")],
+      ]}/>
+      <P>
+        The type checker is the one worth reading the numbers for, because it was finished against{" "}
+        <em>four</em> independent corpora rather than one: every rejection the language’s
+        own specification documents, the reference compiler’s own test suite, a
+        generated sweep over the cross product of type against context —{" "}
+        <Lead>10,013 programs, 0 false alarms, 0 contradictions</Lead> — and, most recently, the
+        repository’s own 1,254 wac files, with no false alarm among them. While the reference
+        compiler still existed it reported a subset of that compiler’s diagnostics at its
+        exact positions and never invented one; the specification is what holds it to that now.
+      </P>
+      <P>
+        <Lead>A fifth, on a different axis.</Lead> The sweep above crosses type against context;
+        this one crosses operator against type. It exists because the <em>rules</em> being checked
+        were hand-written, and a list is exactly as wide as what somebody thought of — the missing
+        entry is missing from the list too, which is the one failure a list cannot find in itself.
+        So: sixteen operators against fifteen types on both sides, <Lead>3,600 programs</Lead>,
+        the reference deciding every cell. It found <Lead>51</Lead> where the
+        reference refused and wacc said nothing — 45 of them arithmetic on a reference, so{" "}
+        <m>S + S</m>, <m>i32[] - i32[]</m> and{" "}
+        <m>anyref % anyref</m> all compiled, because the rule that was there asked
+        about <m>bool</m> and funcrefs only. The other six were every comparison on{" "}
+        <m>anyref</m>. All closed, and the sweep is a test now rather than an
+        afternoon.
+      </P>
+      <P>
+        <Lead>Against the specification it is not a subset, and the honest numbers are worse than
+        the ones this page carried.</Lead> The contract was built on an extractor that read the
+        test file as text and found 101 of its 304 illegal programs, so “101 of 101 refused,
+        no exceptions” was true of a third of the spec. Over the whole of it the checker
+        refuses <Lead>303 of 304</Lead> and misses one; of the programs the spec calls legal it is
+        silent on <Lead>368 of 368</Lead>. Across files, where the recording was right from the
+        start, it is 15 of 15 and 41 of 41.
+      </P>
+      <P>
+        The false alarms are what mattered and there are none. A checker that reports less than the
+        reference can be compared to it; one that invents a diagnostic cannot, and that invariant
+        had been asserted over a third of its domain until the extractor was replaced. The missing
+        two thirds held 14 legal programs it refused, eleven of them one bug — a flag that answered
+        both <em>may I write through this</em> and <em>may I rebind this name</em>, which made
+        every linked-list walk in the spec illegal. The remaining sixteen rejections it missed were
+        closed in one pass, each written as a specification case first and watched to fail before
+        being implemented.
+      </P>
+      <P>
+        <span class="aside">
+          Deliberately a subset — it reports fewer diagnostics than the reference did, never
+          different ones, and where it cannot type something it stays quiet rather than guessing.
+          That rule was what kept the comparison meaningful while there was something to compare
+          against; it survives the reference because it is also the honest behaviour on its own.
+          A checker that guesses is a checker whose silence means nothing.
+        </span>
+      </P>
+      <P>
+        <Lead>The last rung is reached, which is the one the others were for.</Lead> The route
+        used to start at the reference: compile wacc with it to get stage A, compile wacc with
+        stage A to get stage B, ask stage B for stage C, and require B and C to be the same bytes.
+        Since the reference was deleted the start of that chain is{" "}
+        <A href="#/bootstrap">the ladder</A> instead, and the requirement is unchanged —{" "}
+        <m>./bootstrap.sh</m> rebuilds the compiler with the compiler it just built
+        until two rounds are byte-identical, and <Lead>refuses to install one that never
+        settles</Lead>. A compiler that reproduces itself is what a bootstrap means, and nothing
+        short of running it can show it.
+      </P>
+      <P>
+        It is finished, and the table above is where the number lives:{" "}
+        <Lead>every file in the corpus compiles whole, and none produces an invalid module</Lead>.
+        That figure used to fall as often as it rose, because the corpus is the live repository and
+        code written for other reasons walks in using things the emitter had not reached; what
+        changed is that the emitter caught up. Not producing an invalid module is the property that
+        had to hold before the fixpoint meant anything — a walk that approves a function the
+        emitter cannot actually emit would reach a fixpoint on garbage.
+      </P>
+      <Sub id="wacc-emitter" title="Why the emitter is not checked on its bytes">
+        <P>
+          The obvious oracle for an emitter is that the wasm comes out identical, and it is the
+          wrong one. Byte identity pins the type section’s ordering, index assignment,
+          section order and{" "}
+          <Lead>the width of a number’s encoding</Lead> — a wasm integer may legally be
+          written in one byte or five — none of which is the language. Held to it, this would have
+          been reproducing an implementation rather than a language, against a reference that
+          changed several times a day.
+        </P>
+        <P>
+          So the two modules are <em>run</em> and their answers compared, on every program in the
+          set. That is what catches the class of fault the whole exercise exists to find: a
+          literal reader that took decimal digits and stopped, so{" "}
+          <m>0xff</m> compiled to <m>0</m>. It had been there since
+          the first slice, and nothing found it because every hand-written case used plain decimal
+          — <em>a corpus tests what its author thought to write down.</em>
+        </P>
+      </Sub>
+    </Section>
+
+    <Section id="crypto" kicker="the unflattering part" title="What the side-channel trace says">
+      <P>
+        The compiler has a mode that records the ordered sequence of branches taken{" "}
+        <em>and</em> memory indices used. Run a routine twice with the same public input and
+        different secrets, compare the two traces, and a difference is a leak with a source line
+        on it. Both halves matter: a secret-dependent branch is the obvious one, and a
+        secret-dependent <em>index</em> has no branch at all — <m>SBOX[key_byte]</m>{" "}
+        touches a cache line the key chose, which is how AES keys have been recovered from cache
+        timing since 2005.
+      </P>
+      <Table head={["routine", "events per run", "result"]} align="lrl" rows={[
+        [<mono>sha256</mono>, t("1,540"), ok("uniform")],
+        [<mono>chachaBlock</mono>, t("509"), ok("uniform")],
+        [<mono>poly1305</mono>, t("138"), ok("uniform")],
+        [<mono>x25519Base</mono>, t("1,755,783"), ok("uniform")],
+        [<mono>ghash</mono>, t("739"), warn("leaks — control flow diverges")],
+        [<mono>aesExpandKey</mono>, t("515"), warn("leaks — four secret-dependent indices")],
+        [<mono>aesEncrypt</mono>, t("11,778"), warn("leaks — five, plus divergence")],
+        [<mono>bcryptPbkdf</mono>, t("8,177,000"), warn("leaks — two, in Blowfish’s round function")],
+      ]}/>
+      <P>
+        This is on the site because it is the shape of claim the rest of the site is making. The
+        x25519 row is the one worth reading twice — the ladder is uniform across every one of 1.76
+        million events, which is what “structurally uniform” used to assert without
+        evidence. And AES leaks in five places rather than one.
+      </P>
+      <P>
+        The bottom row used to say <em>not measured</em>, and that was the honest answer to a
+        tracer whose journal was a constant compiled into it: a single bcrypt hash is 129 Blowfish
+        key expansions, so the routines that overflow are the ones chosen for being expensive.
+        The journal takes the caller’s size now, and a run that overflows reports how large
+        it needed to be rather than asking for a blind doubling — 8,177,000 events, four times the
+        old ceiling. The verdict is the one the argument predicted, which is exactly why the row
+        stayed empty until it could be taken: predicting a result is not measuring it.
+      </P>
+      <P>
+        <span class="aside">
+          These are wacc’s figures. Every count moved when the instrumenting compiler
+          changed — <m>sha256</m> by fifteen events and{" "}
+          <m>chachaBlock</m> by a factor of three — because the two instrument
+          slightly different sets. No verdict moved with them. A published number that quietly
+          changes meaning is worse than one that changes value, so it is said here rather than
+          left for a reader to notice.
+        </span>
+      </P>
+      <Caveat title="Uniform is not a proof of constant time">
+        The trace is dynamic, it sees only what wasm does, and it cannot see that an
+        instruction’s own latency may depend on its operands. It says two runs took the same
+        path, not that they took the same time. Do not use any of this where an attacker can
+        observe timing.
+      </Caveat>
+    </Section>
+
+    <Section id="packages" kicker="all of it" title="Every package">
+      <P>
+        In dependency order — nothing imports anything above it. Generated from the repository’s
+        own generated map, so these numbers are the tree’s rather than a claim about it.
+      </P>
+      <Table head={["package", "what it is", "lines", "tests"]} align="llrr" rows={packageRows()}/>
+      <div class="gap"></div>
+      <P>
+        <A href="#/roadmap">Where this is going →</A>
+      </P>
+    </Section>
+  </Frame>;
+}

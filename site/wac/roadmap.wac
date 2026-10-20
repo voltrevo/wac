@@ -1,6 +1,337 @@
-// Not ported yet: the React site's `site/src/next/Roadmap.tsx`.
+// Where this is going, for somebody who has not read a design document.
+//
+// Each direction has a document written for the people building it — decisions with their reasons,
+// an order of work, a state of play. This says what each one is *for*, what would count as
+// arriving, and what exists today. Every section carries its own state table, because a plan
+// without a status is a wish, and because "not started" appearing this often is the thing that
+// makes the rest of the page credible.
 
-import { Node } from "../../packages/web";
-import { NotYet } from "./ui.wac";
+import { Node, html.em, html.span } from "../../packages/web";
+import { A, BLOB, Caveat, Code, Frame, Lead, P, Section, Table, m, t } from "./ui.wac";
+import { Totals, totals } from "./built.wac";
 
-export Node Roadmap() { return <NotYet route="roadmap"/>; }
+static string WAC_DESIGN = "https://github.com/voltrevo/wac/blob/master/design";
+
+static string SEALED = """
+  $ ssh -p 2222 user@host
+  $ ls /                       # a filesystem that is not the host's
+  bin  etc  home  tmp
+  $ echo hi > /home/user/notes
+  $ exit
+  # …and the writes are still there next time""";
+
+static string CORE = """
+  import { Read } from "core";        // embedded in the compiler
+  import { Cli } from "std";   // so is std
+  import { Thing } from "@/lib/thing.wac";  // the project root, wherever it is""";
+
+/** A step of a direction, and whether it exists. */
+struct Step {
+  string what;
+  string state;
+}
+
+/** A direction's steps and whether they exist. Done is the only state that gets the accent. */
+Node State(Step[] rows) {
+  Node[][] cells = Node[][].filled(rows.len(), Node[]());
+  for (i32 i = 0; i < rows.len(); i++) {
+    string cls = rows[i].state.indexOf("done") == 0 ? "state done" : "state";
+    cells[i] = [t(rows[i].what), <span class={cls}>{rows[i].state}</span>];
+  }
+  return <Table rows={cells} align="lr"/>;
+}
+
+static string ROADMAP_CSS = """
+  .state { font-family: var(--mono); white-space: nowrap; color: var(--dim); }
+  .state.done { color: var(--accent); }
+""";
+
+export Node Roadmap() {
+  Totals T = totals();
+  return <Frame current="roadmap" css={ROADMAP_CSS}>
+    <Section id="top" kicker="where this is going" title="Four directions, and what would count as arriving">
+      <P>
+        What these have in common is the shape of the claim. Not that wac <em>could</em> do these
+        things — that a specific, checkable thing would count as having done them, and that you
+        can see today how much of it exists.
+      </P>
+    </Section>
+
+    <Section id="wacland" kicker="direction one" title="One image, two very different hosts">
+      <P>
+        A system that is the same system wherever it runs: in a browser tab, on Deno or Node, and
+        in the userland of a bootable machine — a minimal kernel and a WebAssembly runtime, with no
+        JavaScript anywhere in it. Log in over real OpenSSH, land in a shell, and find a
+        filesystem, a home directory, <m>/bin</m> full of programs, a process table
+        you can <m>ps</m> and <m>kill</m>, and a{" "}
+        <m>^C</m> that interrupts — none of it touching the machine it happens to be
+        running on.
+      </P>
+      <Code label="a session on a filesystem that is not the host's" code={SEALED} lang="text"/>
+      <P>
+        What it is <em>not</em> is a Linux emulator: no ELF loading, no syscall emulation, no
+        qemu. The userland is this project’s own shell and applets, checked against
+        GNU’s behaviour, and the system under them is wac too.
+      </P>
+      <P>
+        <Lead>The arrival test</Lead> is deliberately hard to fudge: load one image in two{" "}
+        <em>substantially different</em> hosts and show the same users, files, programs, shell
+        behaviour and services in both, with no implicit access to either. Substantially different
+        means one JavaScript host and one that is not — two JavaScript hosts would satisfy the
+        sentence and prove nothing, because they share the transport, the worker model and the
+        event loop.
+      </P>
+      <State rows={[
+        Step("a filesystem of its own, in memory or on the host", "done"),
+        Step("an image format — persist and reload", "done"),
+        Step("a second host with no JavaScript in it", "done"),
+        Step("process table, users and login, a line discipline", "done"),
+        Step("init — services as a file in the image", "done"),
+        Step("a spawned stage reaching the session's filesystem", "done"),
+        Step("a desktop", "started"),
+      ]}/>
+      <P>
+        <Lead>Most of this direction arrived.</Lead> The whole differential corpus — all{" "}
+        {T.corpus} scripts — runs against three different filesystems, memory, an image and a
+        real disk, and agrees on every one. Beside that comparison sits the test that stops it
+        being vacuous: if the image were secretly in memory too, three identical things would
+        agree perfectly, so it also checks the image outlives its own process and the sealed
+        session does not.
+      </P>
+      <P>
+        The row that kept the strongest version of this honest has closed. A spawned stage used to
+        be handed the host’s filesystem rather than the session’s, so a sealed session
+        was sealed everywhere except through a spawn; a child asks its parent over a channel now,
+        and the browser terminal’s spawned programs see the same <m>/bin</m>{" "}
+        it does.
+      </P>
+      <P>
+        Closing it is also what made the rest visible, and that is the more useful thing to report.
+        Turning spawning on for sealed sessions made two latent leaks reachable within the day —{" "}
+        <m>tar</m> asking the host whether a path was a symbolic link, so the same
+        image archived differently depending on what the computer happened to have at that path —
+        and it turned out every service <m>init</m> started had no filesystem at all
+        and no way to say so. Both are fixed. Both were invisible while nothing spawned, which is
+        the argument for treating this direction as well exercised rather than finished.{" "}
+        <A href={BLOB + "/design/system/0001-a-self-contained-system.md"} external={true}>design/0001</A>
+      </P>
+      <P>
+        The desktop is the last of the eight steps and has started: a window manager written in wac
+        over this system, with the terminal as one window. Its test is the one that makes it a
+        system rather than a picture of one —{" "}
+        <m>cd /home/wac</m> typed in the terminal moves what the files window lists.
+        What is still missing is above all of it: <m>init</m> starts services and
+        never stops one, and there is no restart policy, no dependency order and no readiness.
+      </P>
+    </Section>
+
+    <Section id="native-host" kicker="direction two" title="A host with no JavaScript in it">
+      <P>
+        There were three hosts — browser, Node, Deno — and all three are JavaScript, so they share
+        the transport, the worker model and the event loop. That made them poor evidence for
+        portability: a design flaw common to all three is invisible from any of them. The fourth
+        is <Lead>Rust on wasmtime</Lead>, with no JavaScript in the artifact and, deliberately, no
+        WASI reaching the program — and it <Lead>exists now</Lead>.
+      </P>
+      <P>
+        <Lead>It is no longer the destination, and that makes it more load-bearing rather than
+        less.</Lead> The single-binary goal never needed it: <m>deno compile</m>{" "}
+        produces one file too, and measured against each other on wacc compiling itself the
+        wasmtime build was <Lead>3.4× slower</Lead> for a smaller artifact — 3.36s against
+        1.02s, and that is already after a collector fix that took it down from 12.3s. So wasmtime
+        is shelved as a target and kept as a host, and a Rust host on V8 becomes the primary one:
+        exactly Deno’s numbers in 63 MB against 105 MB, so a lean host and V8’s speed
+        turned out not to be a trade.
+      </P>
+      <P>
+        <Lead>It stopped being a plan while this page said it was one.</Lead> The V8 host serves
+        the filesystem, sockets, <m>readDir</m> and a ticket table that parks{" "}
+        <m>waitAny</m> on real threads, and it spawns a child with its own isolate
+        holding at most its parent’s grants — so <m>box</m>’s shell runs
+        on it, pipelines and all. What makes that a claim rather than a demonstration is that the
+        comparison is a test: the same five-line script on the Deno-built binary and on the Rust
+        host, with the outputs, the warnings and the exit codes required to agree. Two wrong
+        answers were found by exactly that check —{" "}
+        <m>sha256sum</m> hashing nothing inside the shell, and a pipeline dying on
+        an empty filename — and both looked correct from inside either host. The Deno half asserts
+        on its own values too, so a shell printing nothing on both would fail rather than agree,
+        and if cargo cannot build the crate the V8 half skips loudly.
+      </P>
+      <P>
+        <Lead>It is a toolchain now, not a runtime.</Lead> Build it with a compiled wacc beside it
+        and the same binary stops needing to be handed a program:{" "}
+        <m>wac compile packages/wacc/src/api.wac</m> answers with 601,855 bytes from
+        17 files, the same bytes the Deno toolchain writes from the same input, in <Lead>one 69 MB
+        file</Lead> with no Deno and no JavaScript in the path.{" "}
+        <m>check</m>, <m>build</m>, <m>run</m> — which
+        compiles and executes with no file in between — <m>bindgen</m>, and{" "}
+        <m>test</m>, which runs this repository’s own wac tests and reports
+        coverage per file. The one line of JavaScript left is{" "}
+        <m>new WebAssembly.Instance(…)</m>, because V8 exposes no C++ equivalent and
+        nothing of the program runs in it.
+      </P>
+      <P>
+        The cost of that is easy to lose, so it is written here too. Four hosts are a portability
+        requirement <em>because</em> browser, Node and Deno share an engine — and with a Rust host
+        on V8 as well, <Lead>wasmtime becomes the only thing here that is not V8</Lead>. Keeping it
+        green is what keeps the argument above true, which is why nobody is making it fast and
+        everybody is keeping it passing.
+      </P>
+      <P>
+        No WASI because the capability world already <em>is</em> the interface, and WASI would be
+        a second one with different opinions — plus the thing this system cannot do without is{" "}
+        <m>spawn</m>, and a wasm module cannot instantiate another wasm module. If
+        the runtime cannot make a second instance, nothing later can add it.
+      </P>
+      <P>
+        There is a second prize. Today a spawned child is confined by the <em>language</em> — wac
+        has no ambient authority, so a child cannot reach what it was not handed — but arbitrary
+        JavaScript in a worker can, because a worker inherits the process’s permissions. On
+        this host a child instance gets exactly the imports the parent hands it, so{" "}
+        <m>spawn</m> becomes a confinement primitive rather than only a composition
+        one.
+      </P>
+      <P>
+        And a third, which may be the one that matters most.{" "}
+        <Lead>A run should be reproducible, and time should be a scheduling decision rather than
+        a measurement.</Lead> Everything hard about testing this system comes from interleaving —
+        a zero-length write that ended a stream only when a reader happened to be parked; a corpus
+        that hangs once in fifty runs and only on an idle machine. Owning the schedule buys
+        replay. <em>Advancing</em> the clock when nothing is runnable buys something else: the
+        transitions that take hours become milliseconds.
+      </P>
+      <P>
+        That is not a mocked <m>now()</m>. A mocked clock lets a test <em>state</em>{" "}
+        a time; a scheduler-owned one lets a test <em>pass through</em> one. Almost everything the
+        Tor stack has pinned is a steady state, because every transition needs hours of wall clock
+        — a time period rolling while a client looks for a service, an introduction point expiring
+        with a message in flight. It is already costing accuracy rather than only coverage: the
+        rotation vectors use an eight-minute period because a test network shrinks the interval to
+        make rotation observable at all, so the production branch has never met a live network.
+      </P>
+      <State rows={[
+        Step("the toolchain, and the two mechanisms proven on a probe", "done"),
+        Step("the runtime itself — filesystem, spawn, network", "done"),
+        Step("a deterministic mode, and virtual time on top of it", "designed, not started"),
+      ]}/>
+      <P>
+        <Lead>The runtime arrived, and this direction is mostly finished.</Lead> The acceptance
+        test was one a host cannot pass by accident — two capability requests completing{" "}
+        <em>out of order</em>, waited on together, each resolving its own value, where a runtime
+        that answered everything immediately would pass the types and fail that. It passes, and it
+        was checked to fail: gutting the sleep so every ticket settles at once makes the test say
+        so by name. <A href={BLOB + "/issues/system/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md"} external={true}>Issue 0087</A>{" "}
+        is closed, and what it bought is on{" "}
+        <A href="#/checked/two-hosts">the method page</A>, because a second host is a kind of
+        evidence rather than a feature.
+      </P>
+      <P>
+        What is left here is the second half, and it is the half this direction was really for: a
+        deterministic mode and a clock the scheduler owns. The seams are in rather than
+        retrofitted — <m>waitAny</m> answers the first ticket in the{" "}
+        <em>caller’s</em> list rather than the first to finish, so a program’s
+        behaviour does not depend on how threads were scheduled, and a wait’s deadline lives
+        in the runtime’s own table rather than inside a worker’s memory, where a
+        scheduler can see it. The clock is still real; it is no longer invisible.
+      </P>
+    </Section>
+
+    <Section id="ethereum" kicker="direction three" title="Reading a contract without trusting whoever served it">
+      <P>
+        An <Lead>Ethereum-centric reference distribution</Lead>: one coherent system where a
+        person can see which network backend is in use and replace it, hold an account no
+        application ever sees the key for, resolve a name, read contract state <em>verified</em>{" "}
+        rather than believed, and inspect a signing request before approving it.
+      </P>
+      <P>
+        <em>Reference</em> because it is one worked example rather than a sanctioned one, and{" "}
+        <em>-centric</em> because Ethereum is what it is built around rather than what it belongs
+        to. Nobody has blessed this and nobody needs to — which is also why the core exposes
+        nothing Ethereum-shaped, and why no contract holds automatic authority over the system.
+      </P>
+      <State rows={[
+        Step("consensus verification — the Altair light client", "done"),
+        Step("SSZ, Merkle proofs, BLS12-381 verification", "done"),
+        Step("keccak256, RLP, the contract ABI", "done"),
+        Step("Merkle-Patricia state proofs", "done"),
+        Step("ENS — the name half", "done"),
+        Step("secp256k1 signing", "gated — see below"),
+        Step("the reference application itself", "not started"),
+      ]}/>
+      <P>
+        Most of the read path exists, and <A href="#/stack/ethereum">the stack page</A> has the
+        numbers. Signing is last on purpose, and not because it is hard: it is the first thing
+        here that touches secret material, so it gets a different gate.
+      </P>
+      <Caveat title="What the signing gate means">
+        Every secret-consuming routine under a constant-time trace from its <em>first</em> commit
+        rather than retrofitted, with structured keys rather than random ones; constant-time
+        inversion or blinding chosen by construction, because the trace is dynamic and a pass is
+        necessary rather than sufficient; and the distribution saying plainly what has and has not
+        been reviewed, for as long as that is true.
+      </Caveat>
+      <P>
+        <A href={BLOB + "/design/system/0003-an-ethereum-centric-reference-distribution.md"} external={true}>design/0003</A>
+      </P>
+    </Section>
+
+    <Section id="packages" kicker="direction four" title="Packages, and the version diamond wac cannot have">
+      <P>
+        Every import is a quoted path, and not all of them are files on disk.{" "}
+        <m>core</m> and <m>std</m> are source trees the compiler
+        carries — nothing on the filesystem answers for them, which is what makes them built-ins a
+        project cannot shadow — and <m>@/</m> names the project root wherever the
+        file importing it happens to live.
+      </P>
+      <Code code={CORE}/>
+      <P>
+        <Lead>This direction moved fast and is nearly done.</Lead> A bare <m>core</m>{" "}
+        used to be written without quotes, on the argument that a quoted specifier promises a path;
+        every specifier is a quoted path now, <m>core</m> included, and the bare word
+        is an error that says so. Both compilers agree on all of it, which is the only way a second
+        surface stays honest.
+      </P>
+      <P>
+        Beyond the language: a project says where its dependencies come from in{" "}
+        <m>wac.json5</m>, git mappings resolve to a commit, and{" "}
+        <m>wac.lock</m> pins what was fetched —{" "}
+        <m>packages/wacpkg</m>, 1,687 lines and 44 tests, with{" "}
+        <m>wacfetch</m> to resolve what the lock does not cover.{" "}
+        <m>wac task wac:install</m> builds the seed, checks it is a fixed point, and
+        installs the command; <m>wac self uninstall</m> removes exactly what it put there
+        and never a lockfile or a source file.
+      </P>
+      <P>
+        The constraint worth knowing now, because it decides what a package service can be:{" "}
+        <Lead>wac has nominal types and no closures</Lead>, so two identical declarations are two
+        types and nothing can convert between them. Cargo tolerates two versions of a crate in one
+        build because Rust has closures and the seam can usually be converted; here the call
+        cannot be made at all. So a package system on top of this has to resolve <em>flat</em> —
+        one version of each package globally, closer to Go than to npm. Deciding that now costs a
+        paragraph; discovering it later costs a manifest format.
+      </P>
+      <State rows={[
+        Step("`core` and `std`, embedded in the compiler", "done"),
+        Step("every specifier a quoted path, both compilers", "done"),
+        Step("`@/`, the project root as a prefix", "done"),
+        Step("git mappings and `wac.lock` — `packages/wacpkg`", "done"),
+        Step("`wac task wac:install`, and `wac self uninstall` beside it", "done"),
+        Step("one module however it is spelled", "half done"),
+        Step("a package service", "a destination, not a plan"),
+      ]}/>
+      <P>
+        <A href={WAC_DESIGN + "/0001-import-resolution-core-and-what-packages-inherit.md"} external={true}>wac design/0001</A>
+      </P>
+    </Section>
+
+    <Section id="not-this" kicker="the other list" title="What is deliberately not on it">
+      <P>
+        A package manager with a website. A standard library that grows by accretion. Anything
+        that requires a maintainer’s permission. The compiler is dependency-free TypeScript
+        and the point of every direction above is to keep the number of things you have to trust
+        small enough to read — a claim that gets harder to hold, not easier, as the list gets
+        longer.
+      </P>
+    </Section>
+  </Frame>;
+}

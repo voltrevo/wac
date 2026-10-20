@@ -1,6 +1,213 @@
-// Not ported yet: the React site's `site/src/next/Run.tsx`.
+// Things you can run in this tab, right now.
+//
+// The old site had these demos in a subsection near the bottom of a long page, and the first draft of
+// the React rewrite dropped them entirely — which was the worst call in it. A reader who believes
+// nothing else on this site can type into a shell that *is* the wac program, in their own browser, and
+// find out. That is the strongest evidence here and it belongs on its own page.
+//
+// The demo pages are written beside this one by `site/tools/syncDemos.ts`, so they are linked as
+// `./shell.html`. The React page showed each one's built size from `demos.json`; this one has no
+// network to fetch it with, and shows the links alone.
+//
+// **The maze and the bootstrap compile and run code in the page**, which this site cannot do yet: each
+// is a note saying what it is and a link to it on the React site.
 
-import { Node } from "../../packages/web";
-import { NotYet } from "./ui.wac";
+import { Node, html.a, html.div, html.em, html.span } from "../../packages/web";
+import { A, BLOB, Caveat, Frame, Lead, P, PLAYGROUND, Runnable, Section, m } from "./ui.wac";
+import { Totals, totals } from "./built.wac";
+import { EX_ENUM } from "./snippets.wac";
 
-export Node Run() { return <NotYet route="run"/>; }
+/** A demo page: where it is, what it is called, what it does, and its source under the repository. */
+struct Demo {
+  string file;
+  string title;
+  string what;
+  string src;
+}
+
+Demo[] demos(Totals T) {
+  return [
+    Demo("./shell.html", "A shell, in a tab",
+         "packages/sh with a keyboard in front of it, and all \{T.applets} packages/box applets as commands — sort, sha256sum, gzip, cut, diff, shuf — with pipelines, loops, variables, history, and redirection into a filesystem that survives a reload.",
+         "packages/box/example/term.wac"),
+    Demo("./desk.html", "A desktop, in a tab",
+         "design/0001's eighth and last step: a window manager written in wac, over the same system the "
+         + "shell above runs on. A window is markup rather than pixels — a terminal drawn on a canvas "
+         + "would mean reimplementing text layout, selection and the caret to get something worse than the "
+         + "browser already has. Each window and each terminal is a component, so typing renders one "
+         + "terminal and dragging moves one frame. Type `cd /home/wac` in the terminal and the files window "
+         + "follows it.",
+         "packages/box/example/desk.wac"),
+    Demo("./hash.html", "Hash and compress, as you type",
+         "SHA-256 and DEFLATE keeping up with your keystrokes — or with a file you drop on the page, which comes back compressed as a .gz your own gunzip will open.",
+         "packages/box/example/hash.wac"),
+    Demo("./pixels.html", "A Mandelbrot set, recomputed on every zoom",
+         "Pixels computed in wac and blitted to a canvas, with the escape count under the pointer and a dropped file handed straight back.",
+         "packages/platform/example/pixels.wac"),
+    Demo("./ripple.html", "A ripple tank",
+         "Click the water. The wave equation over 200x150 cells, in fixed-point integers so every "
+         + "machine gets the same frame — waves reflect off the walls with their phase inverted and "
+         + "interfere with each other, because that is what the equation does rather than something drawn "
+         + "to look like it. It proves nothing and says so; the millisecond counter is the only real claim.",
+         "packages/platform/example/ripple.wac"),
+    Demo("./life.html", "Life, from a file you drop",
+         "Conway's rule over 128x96 cells, seeded from any file you give it — one bit per cell. The "
+         + "interesting part is how unalike the results are: a structured file settles into gliders and "
+         + "blocks within twenty generations, and a compressed one churns for hundreds, because a .zip is "
+         + "the closest thing on your disk to random soup.",
+         "packages/platform/example/life.wac"),
+    Demo("./gitpack.html", "A packfile, opened in a tab",
+         "Drop `.git/objects/pack/pack-*.pack` from any repository on your machine. The index is thrown "
+         + "away in a pack, so packages/git rebuilds it — every object header, every zlib stream, every delta "
+         + "resolved against what came before — and then reads commits and trees out of it. There is no "
+         + "network here and none is needed: a page cannot open a socket, which is why the half that needs "
+         + "one is missing and the harder half is not.",
+         "packages/git/example/gitpage.wac"),
+    Demo("./wacc.html", "The self-hosted compiler, in a tab",
+         "The playground below runs the *reference* compiler, which is TypeScript. This one runs wacc: "
+         + "the compiler written in wac, compiled to WebAssembly, doing the compiling itself. It also "
+         + "reads the import section back out of what it just emitted, which is the one claim this whole "
+         + "system rests on: a module that takes no function parameter has no import section at all. "
+         + "Three buttons show the rule — none, one, and two exports sharing a signature, which still "
+         + "import a single dispatcher because it is per signature rather than per parameter.",
+         "packages/wacc/example/waccpage.wac"),
+  ];
+}
+
+/** Each demo as a card: its title as the link, what it does, and where its source is. */
+Node Cards(Demo[] ds) {
+  Node[] cards = Node[].filled(ds.len(), <></>);
+  for (i32 i = 0; i < ds.len(); i++) {
+    Demo d = ds[i];
+    cards[i] = <a class="demo" href={d.file}>
+      <div class="name"><span class="title">{d.title} →</span></div>
+      <div class="what">{d.what}</div>
+      <div class="src">source: {d.src}</div>
+    </a>;
+  }
+  return <div class="demos">{cards}</div>;
+}
+
+/** Something that runs here on the React site and not on this one yet: what it is, and the way to it. */
+Node Elsewhere(string title, string anchor, string what) {
+  return <Caveat title={title}>
+    {what} It compiles and runs code in the page, which this site cannot do yet:{" "}
+    <A href={"./#/run/" + anchor}>open it on the React site</A>.
+  </Caveat>;
+}
+
+static string RUN_CSS = """
+  .demos { display: grid; gap: 14px; margin-bottom: 28px; }
+  .demo { display: block; border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; text-decoration: none; background: var(--panel); }
+  .demo .name { display: flex; gap: 12px; align-items: baseline; margin-bottom: 7px; flex-wrap: wrap; }
+  .demo .title { font-family: var(--mono); font-size: 16px; color: var(--accent); }
+  .demo .what { color: var(--dim); font-size: 14.5px; line-height: 1.55; }
+  .demo .src { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-top: 8px; }
+""";
+
+export Node Run() {
+  Totals T = totals();
+  Demo[] ds = demos(T);
+  return <Frame current="run" css={RUN_CSS}>
+    <Section id="top" kicker="run it here" title={"\{ds.len()} whole applications, in this browser"}>
+      <P>
+        These are not snippets and not a sandbox pretending to be one. Each is a complete wac
+        program, compiled to wasm and built into one HTML file. <Lead>Each file is exactly what
+        its builder produces, copied unmodified</Lead> — the same builder a project of your own
+        uses, so what you open here is the artifact you would build yourself.
+      </P>
+      <Cards ds={ds}/>
+      <P>
+        The shell is the one to try first, and the thing to notice is that nothing about it is a
+        demonstration build. It is <m>packages/sh</m> — the shell that agrees with
+        GNU bash on {T.corpus} differential scripts — with a terminal in front of it, and the commands
+        are the same {T.applets} applets that run on a command line. Type <m>seq 1 20 | grep 7 | wc -l</m>.
+      </P>
+    </Section>
+
+    <Section id="how" kicker="what makes it possible" title="An await, a page, and processes as workers">
+      <P>
+        These are <m>packages/web</m> pages: <m>main(Page page)</m>, an{" "}
+        <m>async</m> function in a worker. It changes the document with plain calls
+        and waits for the next click, frame or file with <m>await</m>, and each wait
+        hands control back until something arrives. State is ordinary locals, the program reads
+        top to bottom, a long computation never freezes the tab, and the page needs nothing from
+        the server that serves it.
+      </P>
+      <P>
+        The shell and the desktop are the same kind of page, handed a{" "}
+        <m>Sys</m> as well: files in the browser’s own storage, read with the
+        same <m>await</m> a command-line program uses. Each command they run is a
+        copy of the page started as a process — a worker of its own, streaming to the next stage
+        of the pipeline by messages and asking the shell for files the same way. Nothing shares
+        memory, so nothing needs the cross-origin-isolation headers static hosting cannot send.
+      </P>
+    </Section>
+
+    <Section id="maze" kicker="a puzzle, not a demo" title="Write a program that gets the robot out">
+      <P>
+        The maze arrives as an argument, so you cannot hardcode a route you have not been shown —
+        you have to write something that reads it. Your <m>solve</m> is compiled here,
+        run in a worker with a deadline, and the route it returns is <em>replayed against the maze</em>{" "}
+        before the robot moves: a step into a wall fails with the step that did it, rather than
+        quietly ending somewhere plausible.
+      </P>
+      <Elsewhere title="the maze" anchor="maze"
+                 what="The puzzle is an editor for solve, a run button, and the robot walking the route it returned."/>
+      <Caveat title="what it is checking">
+        Not that the last square is the goal — a robot that walked through a wall to get there would
+        pass that. Every step is validated, which is what makes an off-by-one in your bounds check
+        show up as <em>step 7 walked into a wall</em> instead of a silent success.
+      </Caveat>
+    </Section>
+
+    <Section id="bootstrap" kicker="the one that needs running" title="wacc compiling itself, in your browser">
+      <P>
+        <Lead>A compiler that reproduces itself is what a bootstrap means, and nothing short of
+        running it can show that.</Lead> A ladder of five rungs runs in a page — the lowest
+        is hand-written wasm assembly text, and each one compiles the next — until wac-L5 compiles
+        wacc’s own <A href={BLOB + "/packages/wacc/src"}>sources</A> into stage A. A compiles
+        them into B. B compiles them into C. If wacc is a compiler that reproduces itself, B and C
+        are the same bytes.
+      </P>
+      <P>
+        <Lead>No compiler written in another language takes part in any of it.</Lead> This used to
+        start from a TypeScript reference compiler bundled into the page; that compiler was deleted
+        on 2026-08-28 and the ladder is the whole story now, which is the stronger claim anyway.
+      </P>
+      <P>
+        It runs on your machine, in a browser tab, and takes a second or two. The suite settles the same
+        claim in{" "}
+        <A href={BLOB + "/packages/wacc/test/wac/selfhost_test.wac"}>selfhost_test.wac</A>, and{" "}
+        <A href={BLOB + "/bootstrap.sh"}>bootstrap.sh</A> refuses to install a build that never
+        settles — this is that argument with the reader holding the evidence instead of being told
+        it.
+      </P>
+      <Elsewhere title="the bootstrap" anchor="bootstrap"
+                 what="The ladder, stage A, B and C, run one after another, with B and C compared byte for byte."/>
+      <Caveat title="what the page has to fetch, and why">
+        The page fetches wacc’s sources and one small glue file, because{" "}
+        <m>wacBindgen</m> emits TypeScript with a wasm binary baked into it — and
+        stage B’s bytes do not exist until stage A has run.{" "}
+        <A href={BLOB + "/tools/syncBootstrap.ts"}>tools/syncBootstrap.ts</A> generates that glue
+        once with the binary replaced by a placeholder and transpiles it, so the page can substitute
+        each stage’s own bytes. One glue serves every stage because every stage has the same
+        interface.
+      </Caveat>
+    </Section>
+
+    <Section id="playground" kicker="or write your own" title="The compiler, in the page">
+      <P>
+        The playground compiles entirely client-side — no server, nothing to install, and no
+        upload of what you type. Everything on this site that has a Run button uses the same
+        pipeline the command line uses.
+      </P>
+      <Runnable code={EX_ENUM}/>
+      <P>
+        <A href={PLAYGROUND}>The full playground</A>, with a file tree, several files at once,
+        and the examples — including one that imports <m>core</m>, and one written
+        in the indentation surface.
+      </P>
+    </Section>
+  </Frame>;
+}
