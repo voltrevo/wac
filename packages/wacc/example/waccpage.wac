@@ -25,8 +25,7 @@
 // So what this is: the compiler, self-hosted, running on what you give it. The size and the SHA-256
 // of the module it emits are checkable against `waccx emit` on the same input, on your machine.
 
-import { Event, Page, Picked, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.em, html.footer, html.h1, html.input, html.p, html.span, html.style, html.textarea } from "../../web";
-import { Ticket } from "core";
+import { ElementEvent, Node, Page, Picked, State, Ui, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.em, html.footer, html.h1, html.input, html.p, html.span, html.style, html.textarea } from "../../web";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Buf } from "core";
 import { Vec } from "core";
@@ -167,93 +166,81 @@ Vec<string> importsOf(u8[] wasm) {
   return names;
 }
 
+/** What the page says about one compile. */
+struct Compiled { i32 inlen; i32 outlen; string sha; i32 ms; i32 impn; string imps; string why; }
+
+/** Each `.wac` file dropped or picked, for as long as the page lives: it is the source, compiled. */
+async void files(Page page, State<string> src, State<Compiled> shown, State<string> note) {
+  while (true) {
+    Picked f = await page.nextFile();
+    if (!f.ok) {
+      note.set("could not read it: " + f.error);
+      continue;
+    }
+    string text = string.fromBytes(f.bytes);
+    src.set(text);
+    note.set(f.name);
+    shown.set(compile(page, text, f.name));
+  }
+}
+
+Node Compiler(Ui ui, Page page) {
+  auto src = ui.state(SAMPLE);
+  Compiled first = ui.memo<Compiled>("", () => compile(page, SAMPLE, "sample.wac"));
+  auto shown = ui.state(first);
+  auto note = ui.state("or drop a .wac file anywhere on this page");
+  ui.effect("", () => {
+    files(page, src, shown, note);
+    return () => { };
+  });
+  // **The point of the page, in one click.** The only difference between the sample programs is a
+  // parameter, and the import section follows it — which is what "a capability is an argument" means
+  // when you read the binary instead of the prose.
+  fn<void(string)> load = (string text) => {
+    src.set(text);
+    shown.set(compile(page, text, "sample.wac"));
+  };
+  Compiled c = shown.get();
+  return <div id="tool">
+    <style>{STYLE}</style>
+    <h1>the self-hosted compiler, in a tab</h1>
+    <p class="sub">The playground on this site runs the <em>reference</em> compiler, which is TypeScript.
+      This page runs <code>wacc</code> — the compiler written in wac, compiled to WebAssembly, doing the
+      compiling itself. Check the answer with <code>waccx emit</code> on the same input. The
+      <em>imports</em> line is the one to watch: a wac module can only call a function it was handed,
+      so a program that takes none has no import section at all — and the three buttons below show the
+      rule the site states, read off the binary rather than asserted. Two exports taking the same shape
+      of function still import <em>one</em> dispatcher; make their signatures differ and a second
+      appears.</p>
+    <textarea id="src" spellcheck="false" value={src.get()} oninput={(ElementEvent e) => { src.set(e.value); }}></textarea>
+    <div id="row">
+      <button id="go" onclick={(ElementEvent e) => { shown.set(compile(page, src.get(), "typed.wac")); }}>compile</button>
+      <button id="plain" onclick={(ElementEvent e) => { load(SAMPLE); }}>no function parameter</button>
+      <button id="one" onclick={(ElementEvent e) => { load(ONE_FN); }}>one function parameter</button>
+      <button id="two" onclick={(ElementEvent e) => { load(TWO_FN); }}>two exports, one signature</button>
+      <input type="file" id="f" accept=".wac"/>
+      <span id="note" class="dim">{note.get()}</span>
+    </div>
+    <dl>
+      <dt>source</dt><dd><b id="inlen">{c.inlen}</b> bytes</dd>
+      <dt>wasm</dt><dd><b id="outlen">{c.outlen}</b> bytes</dd>
+      <dt>sha-256</dt><dd id="sha">{c.sha}</dd>
+      <dt>took</dt><dd class="dim"><span id="ms">{c.ms}</span> ms</dd>
+      <dt>imports</dt><dd><b id="impn">{c.impn}</b> <span id="imps" class="dim">{c.imps}</span></dd>
+    </dl>
+    <div id="why">{c.why}</div>
+    <footer>The compiler, the hash and this page are wac. <a href={SOURCE}>source</a>. The
+      <em>fixpoint</em> — wacc compiling its own ten sources, twice, to the same bytes — is not shown
+      here: it needs the whole import closure, and running the second stage means instantiating a module
+      this page just produced, which no wac program can do. <code>test/wac/fixpointemit_test.wac</code>
+      settles that by running it.</footer>
+  </div>;
+}
+
 export async i32 main(Page page) {
   page.title("wac: the self-hosted compiler, in a tab");
-  page.render(
-    <div id="tool">
-      <style>{STYLE}</style>
-      <h1>the self-hosted compiler, in a tab</h1>
-      <p class="sub">The playground on this site runs the <em>reference</em> compiler, which is TypeScript.
-        This page runs <code>wacc</code> — the compiler written in wac, compiled to WebAssembly, doing the
-        compiling itself. Check the answer with <code>waccx emit</code> on the same input. The
-        <em>imports</em> line is the one to watch: a wac module can only call a function it was handed,
-        so a program that takes none has no import section at all — and the three buttons below show the
-        rule the site states, read off the binary rather than asserted. Two exports taking the same shape
-        of function still import <em>one</em> dispatcher; make their signatures differ and a second
-        appears.</p>
-      <textarea id="src" spellcheck="false"></textarea>
-      <div id="row">
-        <button id="go">compile</button>
-        <button id="plain">no function parameter</button>
-        <button id="one">one function parameter</button>
-        <button id="two">two exports, one signature</button>
-        <input type="file" id="f" accept=".wac"/>
-        <span id="note" class="dim">or drop a .wac file anywhere on this page</span>
-      </div>
-      <dl>
-        <dt>source</dt><dd><b id="inlen">0</b> bytes</dd>
-        <dt>wasm</dt><dd><b id="outlen">0</b> bytes</dd>
-        <dt>sha-256</dt><dd id="sha"></dd>
-        <dt>took</dt><dd class="dim"><span id="ms">0</span> ms</dd>
-        <dt>imports</dt><dd><b id="impn">0</b> <span id="imps" class="dim"></span></dd>
-      </dl>
-      <div id="why"></div>
-      <footer>The compiler, the hash and this page are wac. <a href={SOURCE}>source</a>. The
-        <em>fixpoint</em> — wacc compiling its own ten sources, twice, to the same bytes — is not shown
-        here: it needs the whole import closure, and running the second stage means instantiating a module
-        this page just produced, which no wac program can do. <code>test/wac/fixpointemit_test.wac</code>
-        settles that by running it.</footer>
-    </div>
-  );
-  page.on("#go", "click");
-  page.on("#plain", "click");
-  page.on("#one", "click");
-  page.on("#two", "click");
-  page.setValue("src", SAMPLE);
-
-  Ticket<Event> ev = page.nextEvent();
-  Ticket<Picked> file = page.nextFile();
-
-  compile(page, SAMPLE, "sample.wac");
-
-  while (true) {
-    await Ticket.any(ev, file);
-
-    if (file.settled()) {
-      Picked f = file.value();
-      file = page.nextFile();
-      if (!f.ok) {
-        page.setText("note", "could not read it: " + f.error);
-      } else {
-        string text = string.fromBytes(f.bytes);
-        page.setValue("src", text);
-        page.setText("note", f.name);
-        compile(page, text, f.name);
-      }
-    }
-
-    if (!ev.settled()) { continue; }
-    Event e = ev.value();
-    ev = page.nextEvent();
-    if (e.kind == "click" && e.id == "plain") {
-      page.setValue("src", SAMPLE);
-      compile(page, SAMPLE, "sample.wac");
-    } else if (e.kind == "click" && e.id == "one") {
-      // **The point of the page, in one click.** The only difference between these programs is a
-      // parameter, and the import section follows it — which is what "a capability is an argument"
-      // means when you read the binary instead of the prose.
-      page.setValue("src", ONE_FN);
-      compile(page, ONE_FN, "sample.wac");
-    } else if (e.kind == "click" && e.id == "two") {
-      page.setValue("src", TWO_FN);
-      compile(page, TWO_FN, "sample.wac");
-    } else if (e.kind == "click" && e.id == "go") {
-      // Read back rather than remembered: the textarea is the source of truth once a reader has
-      // typed in it, and holding a copy here would compile what was loaded instead of what is there.
-      string text = await page.getValue("src");
-      compile(page, text, "typed.wac");
-    }
-  }
+  page.mount((Ui ui) => Compiler(ui, page));
+  return 0;
 }
 
 /**
@@ -264,10 +251,7 @@ export async i32 main(Page page) {
  * That is the same pair the corpus test uses, and the reason its report can say *why* each of the
  * three files it cannot finish is unfinished rather than only counting them.
  */
-void compile(Page page, string text, string name) {
-  page.setText("inlen", itoa(text.toBytes().len()));
-  page.setText("why", "");
-
+Compiled compile(Page page, string text, string name) {
   string[] paths = string[].defaulted(1);
   string[] sources = string[].defaulted(1);
   paths[0] = name;
@@ -275,30 +259,21 @@ void compile(Page page, string text, string name) {
 
   f64 began = page.now();
   u8[] out = emitFiles(paths, sources, name);
-  f64 took = page.now() - began;
-
-  page.setText("ms", itoa(took as~ i32));
-  page.setText("outlen", itoa(out.len()));
+  i32 ms = (page.now() - began) as~ i32;
+  i32 inlen = text.toBytes().len();
 
   if (out.len() == 0) {
-    page.setText("sha", "");
     string why = blocked(text.toBytes());
-    page.setText("why", why == "" ? "wacc emitted nothing and gave no reason, which is a bug worth "
-      + "reporting" : why);
-    return;
+    return Compiled(inlen, 0, "", ms, 0, "", why == "" ? "wacc emitted nothing and gave no reason, which "
+      + "is a bug worth reporting" : why);
   }
-  page.setText("sha", hexOf(sha256(out)));
-
   Vec<string> imports = importsOf(out);
-  page.setText("impn", itoa(imports.len()));
-  if (imports.len() == 0) {
-    page.setText("imps", "— no import section at all, which is what a `main` taking no capability "
-      + "compiles to");
-  } else {
-    string list = "";
+  string imps = "— no import section at all, which is what a `main` taking no capability compiles to";
+  if (imports.len() > 0) {
+    imps = "";
     for (i32 i = 0; i < imports.len(); i++) {
-      list = list + (i == 0 ? "— " : ", ") + imports.get(i);
+      imps = imps + (i == 0 ? "— " : ", ") + imports.get(i);
     }
-    page.setText("imps", list);
   }
+  return Compiled(inlen, out.len(), hexOf(sha256(out)), ms, imports.len(), imps, "");
 }

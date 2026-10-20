@@ -396,6 +396,16 @@ Deno.test({
       assertEquals([newest, older].filter((d) => d.includes("\ncommit 2\n")).length, 1, `gitpage: one of them is the second commit:\n${newest}\n${older}`);
       assertEquals([newest, older].filter((d) => d.includes("\ncommit 1\n")).length, 1, "gitpage: and one the first");
 
+      // The compiler itself, in a tab: the sample compiles to a module with no imports, and the same
+      // program taking one function parameter imports one dispatcher.
+      await buildPage("packages/wacc/example/waccpage.wac", `${dir}/waccpage`);
+      await page.goto(`http://127.0.0.1:${port}/waccpage/index.html`, { waitUntil: "load" });
+      await waitInPage(page, "Number(document.getElementById('outlen')?.textContent ?? '0') > 0", null, { timeout: 60_000 });
+      assertEquals(await page.textContent("#impn"), "0", `waccpage: the sample imports nothing: ${await page.textContent("#why")}`);
+      await page.click("#one");
+      await waitInPage(page, "document.getElementById('impn').textContent === '1'", null, { timeout: 60_000 });
+      assertEquals(await page.inputValue("#src") !== "", true, "waccpage: the source shown is the one compiled");
+
       // A page with a `Sys`: built with `--grant read,write`, its `main` reads and writes the Origin
       // Private File System through the same `sys.readFile` a command-line program calls. The claim
       // is persistence, so the check is a reload — and a page that only kept the text in memory, or
