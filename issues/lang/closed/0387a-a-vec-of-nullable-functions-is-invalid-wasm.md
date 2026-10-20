@@ -1,7 +1,7 @@
 # 0387a — `Vec<fn<…>?>` emits an `at` the engine refuses
 
 - **Status:** closed
-- **Fixed in:** (the commit closing it)
+- **Fixed in:** 93415aaea
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-20

@@ -1,7 +1,7 @@
 # 0386a — a closure made in a loop of an `async` function sees the last iteration's local
 
 - **Status:** closed
-- **Fixed in:** (the commit closing it)
+- **Fixed in:** bfe509d0f
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-20
