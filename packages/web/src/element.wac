@@ -44,7 +44,10 @@ export struct ElementEvent {
   Element target;
   /** An input's value for `input` and `change`; the key for a key event, as the browser names it. */
   string value;
-  /** Where in the target, in its own pixels, for a pointer; 0 otherwise. */
+  /**
+   * Where the pointer is, in the pixels of the element that listened — not of whatever smaller element
+   * it is over — for a pointer event; 0 otherwise. A canvas's are its backing store's.
+   */
   i32 x;
   i32 y;
   /** The modifier keys held, as `MOD_*` bits from `page.wac`. */

@@ -825,16 +825,13 @@ Deno.test({
         "the second terminal shares the first's scrollback",
       );
 
-      // **Raising, and the line survives it.** `render` replaces the markup, so a manager that did
-      // not carry the half-typed command across would eat it — which is the one thing a window
-      // manager must not do to a terminal.
+      // **Raising, and the line survives it.** Raising moves the window's element to the end of the
+      // desktop; a manager that rebuilt the markup instead would eat the half-typed command — which is
+      // the one thing a window manager must not do to a terminal.
       await page2.fill("#cmd0", "half typed");
       await page2.click("#bar1");
-      // **Wait for the property being asserted, not for the re-render.** A redraw rebuilds the
-      // markup and *then* restores the fields, so a wait on the stacking order is satisfied in the
-      // gap between the two — and reading the field there gives the empty string that the restore is
-      // about to fill in. That is a race in the test rather than in the desktop, and waiting for the
-      // value both removes it and states the claim.
+      // **Wait for the property being asserted, not for the re-render**: both the stacking order and
+      // the value, which is the claim.
       await waitInPage(page2, 
         `document.querySelectorAll('.win')[2].querySelector('.bar').id === 'bar1' &&` +
           ` document.getElementById('cmd0').value === 'half typed'`,
@@ -845,9 +842,9 @@ Deno.test({
       // **Dragging, which is step 8's other half and needed three things.** A `pointermove` is a
       // position rather than an occurrence, so the host keeps only the newest — otherwise the worker
       // reads one per bridge round trip and finishes the drag long after the pointer stopped. The
-      // coordinates are the *bar's*, not the `<span>` the pointer is actually over. And the window
-      // moves through `setStyle`, so the document is not rebuilt: the half-typed line below is the
-      // assertion that it was not.
+      // coordinates are the *bar's*, not the `<span>` the pointer is actually over. And the window's
+      // position is an attribute of its frame, so a drag renders that and nothing in it: the
+      // half-typed line below is the assertion that nothing was rebuilt.
       await page2.fill("#cmd0", "still typing");
       const bar0 = await page2.locator("#bar0").boundingBox();
       if (bar0 === null) throw new Error("no #bar0 to drag");
