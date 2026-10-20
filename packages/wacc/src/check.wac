@@ -459,16 +459,15 @@ bool isInterpPlusTok(C c, i32 op) {
  * Whether a value interpolates: a string, a number or a `bool` by core's own spelling, and anything
  * else only through a method named by core's `toString` — under whatever alias it was imported
  * (spec ch23 `§wac-conversion-symbol-identity-4ga8txc`). Nullables, arrays and tuples have none
- * (`§wac-conversion-none-for-compound-urda9vz`).
+ * (`§wac-conversion-none-compound-r6tn2hx`).
  */
 void checkToText(C c, Expr e) {
   string t = typeOfExpr(c, e);
   if (t == typeNone() || t == "" || t == "string" || t == "bool" || numericShape(t)) { return; }
-  if (c.coreToString != "" && c.isStruct(templateOf(t))) {
-    string key = "[" + c.canon(c.coreToString) + "]";
-    i32 mi = c.methodAt(templateOf(t), key);
-    if (mi >= 0 && !c.methodStatics[mi] && c.methodReturns[mi] == "string") { return; }
-  }
+  // **Found on the type, by core's own name for the symbol.** The method was declared where the type
+  // was, under whatever alias that file imported `toString` as; the file interpolating it need not
+  // import it at all, and an enum implements it as a struct does (case 0569, 0576).
+  if (convertsToText(c, t)) { return; }
   c.reportWith(errNoTextConversion(), e.line, e.col, t + " has no toString conversion");
 }
 
@@ -2235,6 +2234,12 @@ export i32 errTypeCycle() { return 244; }
 export i32 errUsedBeforeDeclared() { return 245; }
 /** An `auto` result that could not be inferred: returns sharing no type, or a bare `return;` (ch34). */
 export i32 errAutoUnresolved() { return 246; }
+/**
+ * Markup with nothing to build it: a text child, a quoted tag or a fragment whose child type has no
+ * static method named by core's `markup` symbol for it, a child that is neither that type nor text, or a
+ * quoted tag with no type to build at all (`design/lang/0017`).
+ */
+export i32 errMarkupUnbuilt() { return 247; }
 /** Two declarations of one name at file scope. */
 export i32 errDuplicateName() { return 64; }
 /** Two fields, two methods, or a field and a method of one name in one struct. */
@@ -3717,6 +3722,31 @@ export struct C {
    * the slot, and is refused without one.
    */
   string ownerFree;
+  /**
+   * The type each quoted tag and fragment was checked to build, by node — what its context wanted
+   * (`design/lang/0017`) — so `typeOfExpr` can answer for it afterwards.
+   */
+  Expr[] markupAtE;
+  string[] markupAtK;
+  i32 markupAtN;
+  /**
+   * The imported types whose `[toString]` is core's, as `|Name|` — those whose own file imported the
+   * symbol — so a file interpolating one need not import it (`api.wac`, case 0576).
+   */
+  string coreTextTypes;
+
+  void noteMarkup(this, Expr e, string k) {
+    if (this.markupAtN >= this.markupAtE.len()) {
+      Expr[] a = Expr[].filled(this.markupAtE.len() * 2 + 8, e);
+      string[] b = string[].defaulted(this.markupAtE.len() * 2 + 8);
+      for (i32 i = 0; i < this.markupAtN; i++) { a[i] = this.markupAtE[i]; b[i] = this.markupAtK[i]; }
+      this.markupAtE = a;
+      this.markupAtK = b;
+    }
+    this.markupAtE[this.markupAtN] = e;
+    this.markupAtK[this.markupAtN] = k;
+    this.markupAtN = this.markupAtN + 1;
+  }
 
   void noteVirtual(this, string key) {
     string[] more = string[].defaulted(this.virtuals.len() + 1);
@@ -3825,7 +3855,8 @@ export struct C {
              string[].defaulted(decls), 0, false,
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
-             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0, null, "|");
+             string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0, null, "|",
+             Expr[](), string[](), 0, "");
   }
 
   /**
@@ -5859,10 +5890,10 @@ export string typeOfExpr(C c, Expr e) {
       return "never";
     }
     StaticTrapE(message): { return "never"; }
-    // **A JSX element is core's `Node`**, whatever it contains. `design/lang/0004`.
-    // A tag that is a name is a call, so its value is what the function returns (ch23).
+    // A tag that is a name is a call, so its value is what the function returns (ch23); a quoted tag
+    // or a fragment is the type it was checked to build (`design/lang/0017`).
     Jsx(tagTok, closeTok, attrs, kids): {
-      if (tagTok < 0 || tokenKind(c, tagTok) == kString()) { return "Node"; }
+      if (tagTok < 0 || tokenKind(c, tagTok) == kString()) { return markupTypeOf(c, e); }
       i32 jfi = c.funcAt(c.renamed(tokenText(c, tagTok)));
       return jfi < 0 ? typeNone() : c.funcReturns[jfi];
     }
@@ -6745,8 +6776,8 @@ void checkJsxCall(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
     string pt = c.funcParamTypes[at + k];
     if (pn == "kids") {
       takesKids = true;
-      if (pt != "Node[]" && pt != typeNone() && pt != "") {
-        c.reportTok(errJsxNotComponent(), tagTok, fname + "'s kids is " + pt + ", and children are a Node[]");
+      if (pt != typeNone() && pt != "" && arrayElemOf(pt) == "") {
+        c.reportTok(errJsxNotComponent(), tagTok, fname + "'s kids is " + pt + ", and children are an array");
       }
       continue;
     }
@@ -6761,38 +6792,103 @@ void checkJsxCall(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
   }
 }
 
+/** The element type of an array type's name, or "" for anything else. */
+string arrayElemOf(string t) {
+  if (t.len() > 2 && t.slice(t.len() - 2, t.len()) == "[]") { return t.slice(0, t.len() - 2); }
+  return "";
+}
+
 /**
- * A `{expr}` child, converted through core's `toNode` (spec ch23 `§wac-markup-child-tonode-vp842rw`):
- * a `Node` is itself, a string, a number or a `bool` becomes text, and anything else needs a method
- * named by core's symbol answering `Node`.
+ * What a tag's children become: the element type of its function's `kids` parameter, or unknown when
+ * the tag is not a function this checker can see into (`design/lang/0017`).
  */
-void checkJsxChild(C c, Expr kid) {
+string markupKidsOf(C c, i32 tagTok) {
+  i32 fi = c.funcAt(c.renamed(tokenText(c, tagTok)));
+  if (fi < 0) { return typeNone(); }
+  i32 at = c.funcParamAt[fi];
+  for (i32 k = 0; k < c.funcParamCount[fi]; k++) {
+    if (at + k < c.funcParamNames.len() && c.funcParamNames[at + k] == "kids") {
+      string e = arrayElemOf(c.funcParamTypes[at + k]);
+      return e == "" ? typeNone() : e;
+    }
+  }
+  return typeNone();
+}
+
+/**
+ * Whether the child type `k` builds markup's `sym` piece: a static method named by core's
+ * `markup.<sym>`, found on the type rather than through this file's imports, since a file that writes
+ * markup imports its tags and nothing else.
+ */
+bool markupCan(C c, string k, string sym) {
+  i32 mi = c.methodAt(templateOf(k), "[markup." + sym + "]");
+  return mi >= 0 && c.methodStatics[mi];
+}
+
+/** Refuse markup the child type `k` cannot build, naming the method it would need. */
+void needMarkup(C c, string k, string sym, i32 line, i32 col, string what) {
+  if (k == typeNone() || k == "" || markupCan(c, k, sym)) { return; }
+  c.reportWith(errMarkupUnbuilt(), line, col, what + " needs " + k + ".[markup." + sym + "], which it does not have");
+}
+
+/**
+ * A child, against the child type `k` (spec ch23, `design/lang/0017`): text is `k.[markup.text]`; a
+ * `{e}` is `e` when it is a `k`, `k.[markup.fragment](e)` when it is a `k[]`, and `k.[markup.text]` of
+ * its text when it converts to text; a nested element is whatever it builds, which must be a `k`.
+ */
+void checkJsxChild(C c, Expr kid, string k) {
+  match (kid.kind) {
+    JsxText(startOff, endOff): {
+      needMarkup(c, k, "text", kid.line, kid.col, "text");
+      return;
+    }
+    default: { }
+  }
   // A number written as a literal has no type to convert from — no fallback (spec ch09).
   i32 lit = litFamily(c, kid);
   if (lit == litInteger() || lit == litFloat()) {
     c.report(errUntypedLiteral(), kid.line, kid.col);
     return;
   }
-  if (lit != litNone()) { return; }
-  string got = typeOfExpr(c, kid);
-  if (got == typeNone() || got == "" || got == "string" || got == "bool" || numericShape(got)) {
+  if (lit != litNone()) {
+    needMarkup(c, k, "text", kid.line, kid.col, "text");
     return;
   }
-  // A `Node` is itself — a variant of one too, `Node.Text(…)`.
-  if (!isNullableName(got) && assignable(c, "Node", got)) { return; }
-  if (nullableIntoNonNull(c, "Node", got)) {
+  string got = typeOfExpr(c, kid);
+  if (got == typeNone() || got == "" || k == typeNone() || k == "") { return; }
+  if (!isNullableName(got) && assignable(c, k, got)) { return; }
+  if (nullableIntoNonNull(c, k, got)) {
     c.report(errNullableToNonNull(), kid.line, kid.col);
     return;
   }
-  if (c.isStruct(templateOf(got))) {
-    string key = c.coreMember("toNode");
-    i32 mi = key == "" ? -1 : c.methodAt(templateOf(got), key);
-    if (mi >= 0 && !c.methodStatics[mi] && c.methodReturns[mi] == "Node") { return; }
+  if (!isNullableName(got) && assignable(c, k + "[]", got)) {
+    needMarkup(c, k, "fragment", kid.line, kid.col, "a list of children");
+    return;
   }
-  c.reportWith(errFieldMismatch(), kid.line, kid.col, got + " has no toNode conversion");
+  if (convertsToText(c, got)) {
+    needMarkup(c, k, "text", kid.line, kid.col, "a child converted to text");
+    return;
+  }
+  c.reportWith(errMarkupUnbuilt(), kid.line, kid.col, got + " is not a " + k + ", a " + k + "[], or text");
 }
 
-void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
+/**
+ * Whether a value of type `t` converts to text: a string, a number, a `bool`, or a method named by
+ * core's `toString` — found under core's own name, which is how a type declared in a file that imported
+ * the symbol is seen from one that did not, or under this file's spelling of it, which is how a method
+ * written `[text]` after `import { toString as text }` is keyed.
+ */
+bool convertsToText(C c, string t) {
+  if (t == "string" || t == "bool" || numericShape(t)) { return true; }
+  string tt = templateOf(t);
+  if (!c.isStruct(tt) && !c.isEnum(tt)) { return false; }
+  i32 mi = -1;
+  if (c.coreToString != "") { mi = c.methodAt(tt, "[" + c.canon(c.coreToString) + "]"); }
+  if (mi < 0 && c.coreTextTypes.indexOf("|" + tt + "|") >= 0) { mi = c.methodAt(tt, "[toString]"); }
+  return mi >= 0 && !c.methodStatics[mi] && c.methodReturns[mi] == "string";
+}
+
+void checkJsx(C c, Expr e, string want, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
   // **A closing tag names the element it closes.** `<div></span>` is well formed as *shape* — the
   // parser read an element with a name at each end — and wrong as a program, which is why it is
   // said here, with the name that was written and the one that was expected.
@@ -6807,12 +6903,24 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
       }
     }
   }
-  // A name is a function in scope; a string, or no tag at all, builds a node itself.
+  // A name is a function in scope, and its children are its `kids`' element type. A string, or no
+  // tag at all, builds the type its context wants with that type's own methods (`design/lang/0017`).
+  string k = typeNone();
   if (tagTok >= 0 && tokenKind(c, tagTok) != kString()) {
     checkJsxCall(c, tagTok, attrs, kids);
+    k = markupKidsOf(c, tagTok);
   } else {
+    k = want;
+    bool quoted = tagTok >= 0;
+    if (k == typeNone() || k == "") {
+      c.reportWith(errMarkupUnbuilt(), e.line, e.col,
+                   (quoted ? "a quoted tag" : "a fragment") + " builds the type its context wants, and nothing here says which");
+    } else {
+      c.noteMarkup(e, k);
+      needMarkup(c, k, quoted ? "element" : "fragment", e.line, e.col, quoted ? "a quoted tag" : "a fragment");
+    }
     // A fragment takes no attributes — the parser has nowhere to put one — and an element's are
-    // strings, its `Attr`s' values.
+    // strings.
     for (i32 i = 0; i < attrs.len(); i++) {
       c.expected = "string";
       checkExpr(c, attrs[i].value);
@@ -6820,11 +6928,26 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
     }
   }
   for (i32 i = 0; i < kids.len(); i++) {
-    c.expected = typeNone();
+    // A nested quoted tag or fragment builds the child type; a `{e}` is whatever it is, and is then
+    // the child type, an array of it, or text — so nothing is expected of it.
+    bool nested = false;
+    match (kids[i].kind) {
+      Jsx(nt, nc, na, nk): { nested = true; }
+      default: { }
+    }
+    c.expected = nested ? k : typeNone();
     checkExpr(c, kids[i]);
-    checkJsxChild(c, kids[i]);
+    checkJsxChild(c, kids[i], k);
   }
   c.expected = typeNone();
+}
+
+/** The type a quoted tag or a fragment was checked to build, found by the node it is. */
+string markupTypeOf(C c, Expr e) {
+  for (i32 i = 0; i < c.markupAtN; i++) {
+    if (c.markupAtE[i] is e) { return c.markupAtK[i]; }
+  }
+  return typeNone();
 }
 
 void checkExpr(C c, Expr e) {
@@ -7161,7 +7284,7 @@ void checkExpr(C c, Expr e) {
     // binder the language has must be known, because anything missed is a false alarm on working
     // code rather than a gap. Locals, parameters, `this` and match bindings come from the name table;
     // functions, structs, enums, imports and the primitive type names are looked up where they live.
-    Jsx(tagTok, closeTok, attrs, kids): { checkJsx(c, tagTok, closeTok, attrs, kids); }
+    Jsx(tagTok, closeTok, attrs, kids): { checkJsx(c, e, want, tagTok, closeTok, attrs, kids); }
     Ident(tok): {
       string idn = tokenText(c, tok);
       // `_` binds nothing, so there is nothing to read (`§wac-underscore-unreadable-jqvkb32`).
@@ -10906,7 +11029,18 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // about enums made it live, and live it turns the check off for exactly the enums that had it —
   // `Maybe.Just(1, 2)` became accepted. The clause is gone rather than repaired, because what it was
   // there to exclude, a generic *struct*, `isEnum` already excludes. `issues/lang/0088`.
-  if (isStatic && c.isEnum(recv)) {
+  // **A name that is not a variant is a static or nothing.** The arm below returned for it in silence
+  // — its count was -1, which no call matches — so `Shape.make()` checked clean and the emitter declined
+  // it, and a static named by a symbol had its arguments asked about by nobody (cases 0578, 0579). A
+  // static falls through to the rules every struct's static is checked by.
+  if (isStatic && c.isEnum(recv) && c.variantArityIn(recv, name) < 0) {
+    i32 sm = c.ownMethodAt(recv, name);
+    if (sm < 0 || !c.methodStatics[sm]) {
+      c.reportWith(errNoStaticMethod(), callee.line, callee.col, "no " + recv + "." + name);
+      return;
+    }
+  }
+  if (isStatic && c.isEnum(recv) && c.variantArityIn(recv, name) >= 0) {
     i32 wantArgs = c.variantArityIn(recv, name);
     // **A variant with no payload is a value, not a call** (`§enum-construct-qualified-iuubvew`):
     // `Shape.Point()` is refused rather than read as `Shape.Point`.

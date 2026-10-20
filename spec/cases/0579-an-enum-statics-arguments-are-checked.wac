@@ -1,0 +1,13 @@
+// expect: refused
+// why: a static named by a symbol is called like any static, and its arguments are checked against
+//      its parameters
+symbol unit;
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Shape [unit](f64 r) { return Shape.Circle(r); }
+}
+export i32 made() {
+  Shape s = Shape.[unit]("one");
+  return 0;
+}

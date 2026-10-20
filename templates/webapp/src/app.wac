@@ -3,8 +3,7 @@
 // It is an ordinary `async` function. `await page.nextEvent()` hands control back to the browser until
 // something happens, so the state is ordinary locals and the program reads top to bottom.
 
-import { Event, Page } from "web";
-import { html.button, html.div, html.h1, html.input, html.li, html.p, html.ul, Node } from "core";
+import { Event, Page, html.button, html.div, html.h1, html.input, html.li, html.p, html.ul, Node } from "web";
 
 /** The list, drawn from what has been added. */
 Node listOf(string[] items, i32 n) {

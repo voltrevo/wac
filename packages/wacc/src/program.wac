@@ -14,7 +14,7 @@ import { Lexed, lex, tokenStride } from "./lex.wac";
 import { endsWith, startsWith } from "./path.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Decl, DeclKind, ImportItem, Param, Program, Ty, TyKind } from "./ast.wac";
-import { lowerNamespaces } from "./namespaces.wac";
+import { lowerNamespaces, lowerNamespacesForDeclarations } from "./namespaces.wac";
 import { Res } from "./path.wac";
 
 export struct ProgramEntry {
@@ -427,7 +427,7 @@ export struct DeclaredTest {
 
 /** The exported, non-generic, synchronous `test*` functions `text` declares, in order. */
 export DeclaredTest[] declaredTests(string text0) {
-  string text = asParsed(text0);
+  string text = lowerNamespacesForDeclarations(string[].filled(1, "test.wac"), string[].filled(1, text0), Res.empty())[0];
   u8[] src = text.toBytes();
   Lexed lexed = lex(src);
   P p = P.create(src, lexed);

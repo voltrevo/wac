@@ -1,0 +1,12 @@
+// expect: f() = 5
+// why: a member named by a namespace's symbol, `[shapes.size]`, is lowered like `[operators.add]`
+//      whatever the namespace is called — nothing about the spelling `operators` is special
+// ---- shapes.wac ----
+export symbol @"shapes.size";
+// ---- main.wac ----
+import { shapes } from "./shapes.wac";
+struct Box {
+  i32 w;
+  i32 [shapes.size](const this) { return this.w; }
+}
+export i32 f() { return Box(5).[shapes.size](); }

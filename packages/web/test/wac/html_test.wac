@@ -2,8 +2,7 @@
 // not built as markup.
 
 import { Check } from "./check.wac";
-import { Attr, Node, html.p, html.b, html.br, html.input, html.a } from "core";
-import { htmlOf } from "../../src/page.wac";
+import { Attr, Node, htmlOf, html.p, html.b, html.br, html.input, html.a } from "../../src/page.wac";
 
 export string test_elements_text_and_attributes() {
   Check t = Check.create();

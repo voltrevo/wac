@@ -1,7 +1,27 @@
 // expect: refused
 // why: a tag that is a name is a call, so it must name a function in scope — a struct is not one
 // from: spec ch23 §wac-markup-tag-is-function-vv4pvhq
-import { Attr, Node } from "core";
+import { markup } from "core";
+
+// A tree of the program's own: markup names no type (design/lang/0017).
+struct Attr {
+  string name;
+  string value;
+}
+
+enum Node {
+  Element(string tag, Attr[] attrs, Node[] kids),
+  Text(string text),
+  Fragment(Node[] kids),
+
+  Node [markup.text](string text) { return Node.Text(text); }
+  Node [markup.fragment](Node[] kids) { return Node.Fragment(kids); }
+  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) {
+    Attr[] attrs = Attr[].filled(names.len(), Attr("", ""));
+    for (i32 i = 0; i < names.len(); i++) { attrs[i] = Attr(names[i], values[i]); }
+    return Node.Element(tag, attrs, kids);
+  }
+}
 
 struct Card {
   string title;

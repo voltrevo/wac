@@ -1,9 +1,8 @@
 # 23 — Interpolation and markup
 
 Two pieces of syntax turn values into something else. Interpolation turns a value into text, through core's
-`toString` symbol. Markup builds a tree of `Node`, an ordinary type from `core`, and turns each child into a
-node through core's `toNode` symbol. Neither is a general implicit conversion: each applies only at its own
-syntax.
+`toString` symbol. Markup calls functions and builds a tree whose type the program supplies, through core's
+`markup` symbols. Neither is a general implicit conversion: each applies only at its own syntax.
 
 ## Interpolation
 
@@ -78,90 +77,114 @@ refused, whatever its other methods are called.
 
 ## Markup
 
-A markup element is an expression that evaluates to a `Node`:
+A markup element is an expression, and **the language names no type for it to build**. A tag calls a
+function in scope; what text, a `{child}`, a quoted tag and a fragment become is decided by a type the program
+supplies, through static methods named by `core`'s `markup` symbols. The trees themselves — HTML, a view with
+handlers, anything else — are libraries.
 
 ```wac
-// fragment — core's tree
-export struct Attr {
-  string name;
-  string value;
+// expect: shown() = "box[hello, 42, b(x=1)[bold], frag[a, b]]"
+import { markup } from "core";
+
+enum Tree {
+  Leaf(string text),
+  Branch(string tag, string attrs, Tree[] kids),
+
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.element](string tag, string[] names, string[] values, Tree[] kids) {
+    string a = "";
+    for (i32 i = 0; i < names.len(); i++) { a = a + names[i] + "=" + values[i]; }
+    return Tree.Branch(tag, a, kids);
+  }
+  Tree [markup.fragment](Tree[] kids) { return Tree.Branch("frag", "", kids); }
+
+  string show(const this) {
+    match (this) {
+      Leaf(t): { return t; }
+      Branch(tag, attrs, kids): {
+        string s = attrs == "" ? tag + "[" : tag + "(" + attrs + ")[";
+        for (i32 i = 0; i < kids.len(); i++) { s = s + (i == 0 ? "" : ", ") + kids[i].show(); }
+        return s + "]";
+      }
+    }
+  }
 }
 
-export enum Node {
-  Element(string tag, Attr[] attrs, Node[] kids),
-  Text(string text),
-  Fragment(Node[] kids),
-}
-```
+Tree box(Tree[] kids) { return Tree.Branch("box", "", kids); }
 
-Every tag is a name in scope. A tag is a function, its attributes are that function's named parameters, and
-its children are its `kids` parameter. So nothing here is a thing the language knows about beyond the syntax:
-`<p>` calls whatever `p` is in scope, and the HTML elements are ordinary functions in `core`
-([43](../7-library/43-markup-types.md)).
-
-```wac
-// expect: pageTag() = "div"
-// expect: pageChildren() = 1
-import { Node, html.div, html.p } from "core";
-
-Node greeting(string who, Node[] kids) {
-  return <p class="hi">Hello, {who}</p>;
-}
-
-Node page(string who) {
-  return <div><greeting who={who} /></div>;
-}
-
-export string pageTag() {
-  return match (page("wac")) {
-    Element(tag, attrs, kids): tag,
-    default: "",
-  };
-}
-
-export i32 pageChildren() {
-  return match (page("wac")) {
-    Element(tag, attrs, kids): kids.len(),
-    default: -1,
-  };
+export string shown() {
+  i32 n = 42;
+  return (<box>hello{n}<"b" x="1">bold</"b"><>a{"b"}</></box>).show();
 }
 ```
 
 `[§wac-markup-tag-is-function-vv4pvhq]` `<t a={x} …>…</t>` calls the function `t` in scope, passing each attribute
 to the parameter of that name and the children to its `kids` parameter. Its value is what `t` returns.
 
+`[§wac-markup-child-type-r7k2mvp]` A tag's children are built as the element type of its function's `kids`
+parameter — the *child type*. A quoted tag or a fragment builds the type its context expects, and its own
+children are built as that type too. A quoted tag or a fragment whose context expects no type is refused.
+
+`[§wac-markup-builds-with-its-type-q3xh8nd]` The child type builds text, quoted tags and fragments with its own
+static methods named by `core`'s `markup.text`, `markup.element` and `markup.fragment`, found on the type: a file
+that writes markup imports its tags and nothing else. A construct whose method the child type does not have is
+refused, so a tree with no `[markup.element]` has no quoted tags.
+
+The methods' shapes, for a child type `K`:
+
+| Written | Becomes |
+| --- | --- |
+| text between tags | `K.[markup.text]("text")` |
+| `<"x" a="1">…</"x">` | `K.[markup.element]("x", ["a"], ["1"], [...])` |
+| `<>…</>` | `K.[markup.fragment]([...])` |
+
+An enum may declare these: a static method is allowed on an enum when its name is a symbol, since
+`Tree.[markup.text](…)` cannot be mistaken for a variant ([13](../2-types/13-enums.md)).
+
 A tag that is yours is called the same way as one from an import. Markup is a tree of ordinary values, which a
 program builds, returns, stores and walks.
 
 ### A quoted tag is an element by name
 
-A tag written as a string is not looked up: it builds `Node.Element` with that name. A quoted name may be any
-name, which is how a custom element or a namespaced one is written:
+A tag written as a string is not looked up: it is built by the child type's `[markup.element]`, with that name.
+A quoted name may be any name, which is how a custom element or a namespaced one is written:
 
 ```wac
-// expect: icon() = "my-widget"
+// expect: icon() = "my-widget(data-size=8)"
 // expect: one() = "label"
 // expect: two() = "label"
 // expect: three() = "caption"
-import { Node } from "core";
+import { markup } from "core";
 
-string tagOf(Node n) {
-  return match (n) {
-    Element(tag, attrs, kids): tag,
-    default: "",
-  };
+enum Tree {
+  Leaf(string text),
+  Branch(string tag, string attrs, Tree[] kids),
+
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.element](string tag, string[] names, string[] values, Tree[] kids) {
+    string a = "";
+    for (i32 i = 0; i < names.len(); i++) { a = a + names[i] + "=" + values[i]; }
+    return Tree.Branch(tag, a, kids);
+  }
+
+  string name(const this) {
+    match (this) {
+      Leaf(t): { return ""; }
+      Branch(tag, attrs, kids): { return attrs == "" ? tag : tag + "(" + attrs + ")"; }
+    }
+  }
 }
 
-Node caption(Node[] kids) { return Node.Element("label", [], kids); }
+Tree caption(Tree[] kids) { return Tree.Branch("label", "", kids); }
 
-export string icon()  { return tagOf(<"my-widget" data-size="8" />); }
-export string one()   { return tagOf(<caption>Name</caption>); }       // calls caption
-export string two()   { return tagOf(<@"caption">Name</@"caption">); } // calls caption: a verbatim name
-export string three() { return tagOf(<"caption">Name</"caption">); }   // the caption element
+export string icon()  { Tree t = <"my-widget" data-size="8" />; return t.name(); }
+export string one()   { return (<caption>Name</caption>).name(); }        // calls caption
+export string two()   { return (<@"caption">Name</@"caption">).name(); }  // calls caption: a verbatim name
+export string three() { Tree t = <"caption">Name</"caption">; return t.name(); }   // the caption element
 ```
 
-`[§wac-markup-quoted-tag-3dnrvxj]` A tag written as a string literal builds `Node.Element` with that name, its
-attributes as `Attr`s and its children as `kids`. Nothing is looked up.
+`[§wac-markup-quoted-tag-builds-vn2k8xr]` A tag written as a string literal is `K.[markup.element]` of that name, its
+attributes' names and values as two arrays of `string`, and its children. Nothing is looked up.
 
 `[§wac-markup-verbatim-tag-ca3myup]` A tag written as a verbatim name `@"…"` is a name in scope, like a bare tag.
 
@@ -174,47 +197,33 @@ written as a verbatim name ([01](../1-programs/01-names-and-identity.md)):
 ```wac
 // expect: labelFor() = "name"
 // expect: widgetSize() = "8"
-import { Node, Attr } from "core";
-
-Node label(string id, string @"for", Node[] kids) {
-  return Node.Element("label", [Attr("id", id), Attr("for", @"for")], kids);
+struct Labelled {
+  string @"for";
+  string size;
 }
 
-Node widget(string @"data-size", Node[] kids) {
-  return <"my-widget" data-size={@"data-size"} />;
-}
+Labelled label(string @"for", string[] kids) { return Labelled(@"for", ""); }
+Labelled widget(string @"data-size") { return Labelled("", @"data-size"); }
 
-string attr(Node n, string name) {
-  match (n) {
-    Element(tag, attrs, kids): {
-      for (Attr a in attrs) {
-        if (a.name == name) { return a.value; }
-      }
-    }
-    default: { }
-  }
-  return "";
-}
-
-export string labelFor() { return attr(<label id="who" for="name">Name</label>, "for"); }
-export string widgetSize() { return attr(<widget data-size="8" />, "data-size"); }
+export string labelFor() { return (<label for="name" />).@"for"; }
+export string widgetSize() { return (<widget data-size="8" />).size; }
 ```
 
 `[§wac-markup-attr-verbatim-param-yd3farv]` An attribute whose name is a keyword or contains a hyphen fills the
 parameter whose verbatim name is that text: `for=` fills `@"for"`, `data-size=` fills `@"data-size"`.
 
-An attribute's value is written as a string literal or as `{expr}`, and is checked against the parameter's type.
-An attribute is written once:
+An attribute's value is written as a string literal or as `{expr}`, and is checked against the parameter's type;
+a quoted tag's attributes are `string`s. An attribute is written once:
 
 ```wac
 // expect: emits
-import { Node } from "core";
+i32 card(string @"class") { return 0; }
 
-export Node card() {
+export i32 cards() {
   // ERROR: an attribute is written once
-  // Node bad = <"div" class="a" class="b" />;
+  // i32 bad = <card class="a" class="b" />;
 
-  return <"div" class="card" />;
+  return <card class="card" />;
 }
 ```
 
@@ -223,58 +232,50 @@ precedence, and taking one silently is the behaviour not to inherit.
 
 ### Children
 
-Text between tags is a `Node.Text` child. A child written `{expr}` is converted through core's `toNode` symbol:
-strings become text nodes, and nodes remain nodes.
-
 ```wac
-// fragment — Node and div come from core
-import { toString, toNode } from "core";
+// expect: kinds() = "text:hi, text:7, text:a label, node, list"
+import { markup, toString } from "core";
 
 struct Label {
   string text;
-
   string [toString](const this) { return this.text; }
-  Node [toNode](const this) { return Node.Text(this.text); }
 }
 
-void example() {
-  Label label = Label("hello");
-  Node existingNode = Node.Text("already a node");
+enum Tree {
+  Leaf(string text),
+  Many(Tree[] kids),
+  Mark,
 
-  label.[toNode]();            // Node.Text("hello")
-  <div>{label}</div>;          // child: Node.Text("hello")
-  <div>{"hello"}</div>;        // child: Node.Text("hello")
-  <div>{existingNode}</div>;   // child: existingNode
-}
-```
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.fragment](Tree[] kids) { return Tree.Many(kids); }
 
-```wac
-// expect: childCount() = 4
-import { Node, toNode, html.div } from "core";
-
-struct Label {
-  string text;
-  Node [toNode](const this) { return Node.Text(this.text); }
+  string kind(const this) {
+    match (this) {
+      Leaf(t): { return "text:" + t; }
+      Many(kids): { return "list"; }
+      Mark: { return "node"; }
+    }
+  }
 }
 
-export i32 childCount() {
-  Label label = Label("hello");
-  Node existing = Node.Text("already a node");
-  Node n = <div>text {label}{"hello"}{existing}</div>;   // "text ", then three conversions
-  return match (n) {
-    Element(tag, attrs, kids): kids.len(),
-    default: -1,
-  };
+string list(Tree[] kids) {
+  string s = "";
+  for (i32 i = 0; i < kids.len(); i++) { s = s + (i == 0 ? "" : ", ") + kids[i].kind(); }
+  return s;
+}
+
+export string kinds() {
+  i32 n = 7;
+  Tree[] some = [Tree.Mark, Tree.Mark];
+  return <list>hi{n}{Label("a label")}{Tree.Mark}{some}</list>;
 }
 ```
 
-`[§jsx-text-is-a-child]` Text between tags is a `Node.Text` child.
+`[§wac-markup-text-child-m5c9qtw]` Text between tags is a child: `K.[markup.text]` of the text.
 
-`[§wac-markup-child-tonode-vp842rw]` A `{expr}` child is converted through core's `toNode` symbol, which must
-return `Node`. A `Node` is itself; a `string` becomes `Node.Text`.
-
-Markup child conversion uses the designated `toNode` symbol exported by `core`. Text and node conversions are
-separate operations and may produce different representations.
+`[§wac-markup-child-converts-w8d4ntc]` A `{e}` child is `e` when it is a `K`, `K.[markup.fragment](e)` when it is a
+`K[]`, and `K.[markup.text]` of its text when it converts to text — a `string`, a number, a `bool`, or a value
+whose type implements `core`'s `toString` ([Interpolation](#interpolation)). Anything else is refused.
 
 ### Markup is an ordinary expression
 
@@ -283,19 +284,29 @@ means there:
 
 ```wac
 // expect: asArgument() = 2
-import { Node } from "core";
+import { markup } from "core";
 
-i32 kidCount(Node n) {
-  return match (n) {
-    Element(tag, attrs, kids): kids.len(),
-    default: -1,
-  };
+enum Tree {
+  Leaf(string text),
+  Branch(string tag, Tree[] kids),
+
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.element](string tag, string[] names, string[] values, Tree[] kids) {
+    return Tree.Branch(tag, kids);
+  }
+
+  i32 kidCount(const this) {
+    match (this) {
+      Leaf(t): { return -1; }
+      Branch(tag, kids): { return kids.len(); }
+    }
+  }
 }
 
-export Node comparison(i32 x) { return <"div" a={x > 1 ? "y" : "n"} />; }   // a comparison
-export Node inner() { return <"div">{<"b" />}</"div">; }         // an element in an expression in an element
-export Node chosen(i32 x) { return x > 1 ? <"a" /> : <"b" />; }  // a ternary's branches
-export i32 asArgument() { return kidCount(<"p"><"i" /><"i" /></"p">); }   // an argument
+export Tree comparison(i32 x) { return <"div" a={x > 1 ? "y" : "n"} />; }   // a comparison
+export Tree inner() { return <"div">{<"b" />}</"div">; }         // an element in an expression in an element
+export Tree chosen(i32 x) { return x > 1 ? <"a" /> : <"b" />; }  // a ternary's branches
+export i32 asArgument() { Tree t = <"p"><"i" /><"i" /></"p">; return t.kidCount(); }
 ```
 
 `[§jsx-nests-in-expressions]` An element may stand anywhere an expression may, and `>` inside `{…}` is an
@@ -305,13 +316,13 @@ A closing tag names the element it closes:
 
 ```wac
 // expect: emits
-import { Node } from "core";
+i32 div(i32[] kids) { return 0; }
 
-export Node closed() {
-  // ERROR: </"span"> does not close <"div">
-  // Node bad = <"div"></"span">;
+export i32 closed() {
+  // ERROR: </span> does not close <div>
+  // i32 bad = <div></span>;
 
-  return <"div"></"div">;
+  return <div></div>;
 }
 ```
 
@@ -326,20 +337,17 @@ or an operator. A run ends at `{`, or at a `<` that begins a tag:
 ```wac
 // expect: quotes() = "it's here, a \" b, see http://x"
 // expect: lessThan() = "1 < 2 and 3 > 2"
-import { Node } from "core";
+import { markup } from "core";
 
-string text(Node n) {
-  return match (n) {
-    Element(tag, attrs, kids): match (kids[0]) {
-      Text(t): t,
-      default: "",
-    },
-    default: "",
-  };
+struct Text {
+  string s;
+  Text [markup.text](string s) { return Text(s); }
 }
 
-export string quotes() { return text(<"p">it's here, a " b, see http://x</"p">); }
-export string lessThan() { return text(<"p">1 < 2 and 3 > 2</"p">); }   // a < before neither a name nor / is text
+string p(Text[] kids) { return kids[0].s; }
+
+export string quotes() { return <p>it's here, a " b, see http://x</p>; }
+export string lessThan() { return <p>1 < 2 and 3 > 2</p>; }   // a < before neither a name nor / is text
 ```
 
 `[§jsx-text-is-not-wac-source]` Text between tags is not read as wac: quotes, `//` and operators there are text.
@@ -353,24 +361,25 @@ several lines loses its indentation, and a space within a line is kept, because 
 ```wac
 // expect: sameLine() = 3
 // expect: twoLines() = 2
-import { Node } from "core";
+import { markup } from "core";
 
-i32 count(Node n) {
-  return match (n) {
-    Element(t, a, kids): kids.len(),
-    default: 0,
-  };
+struct Text {
+  string s;
+  Text [markup.text](string s) { return Text(s); }
 }
 
+i32 count(Text[] kids) { return kids.len(); }
+Text b(Text[] kids) { return kids[0]; }
+
 export i32 sameLine() {
-  return count(<"div"><"b">a</"b"> <"b">b</"b"></"div">);     // the space is text
+  return <count><b>a</b> <b>b</b></count>;     // the space is text
 }
 
 export i32 twoLines() {
-  return count(<"div">
-    <"b">a</"b">
-    <"b">b</"b">
-  </"div">);                                                    // the breaks are layout
+  return <count>
+    <b>a</b>
+    <b>b</b>
+  </count>;                                      // the breaks are layout
 }
 ```
 
@@ -381,26 +390,29 @@ a newline.
 
 ### Fragments
 
-`<>…</>` is an element with no tag. It evaluates to `Node.Fragment(kids)` — several nodes where one is wanted:
+`<>…</>` is an element with no tag — several children where one is wanted:
 
 ```wac
 // expect: pairSize() = 2
-import { Node } from "core";
+import { markup } from "core";
 
-Node pair(Node a, Node b) { return <>{a}{b}</>; }
-
-export i32 pairSize() {
-  return match (pair(Node.Text("x"), Node.Text("y"))) {
-    Fragment(kids): kids.len(),
-    default: -1,
-  };
+struct Many {
+  string[] texts;
+  Many [markup.text](string s) { return Many([s]); }
+  Many [markup.fragment](Many[] kids) {
+    string[] all = string[].defaulted(kids.len());
+    for (i32 i = 0; i < kids.len(); i++) { all[i] = kids[i].texts[0]; }
+    return Many(all);
+  }
 }
+
+Many pair(string a, string b) { return <>{a}{b}</>; }
+
+export i32 pairSize() { return pair("x", "y").texts.len(); }
 ```
 
-`[§jsx-fragment-is-a-node]` `<>…</>` evaluates to `Node.Fragment` of its children. It takes no attributes, and
-closes with `</>`.
-
-`Fragment` is a variant like any other, so a renderer that walks the tree must handle it: `match` is exhaustive.
+`[§wac-markup-fragment-built-p8j3zrk]` `<>…</>` is `K.[markup.fragment]` of its children. It takes no attributes, and closes
+with `</>`.
 
 ## Imports preserve the designated identity
 
@@ -446,24 +458,20 @@ is reserved.
 
 ## Built-in conversions
 
-`toString` and `toNode` are exported directly from `core`, not `core.operators`. Intrinsic types receive these
-implementations from the compiler and core; no external implementation mechanism is introduced.
+`toString` is exported directly from `core`, not `core.operators`. Intrinsic types receive its implementation from
+the compiler and core; no external implementation mechanism is introduced.
 
-| Type | `toString` | `toNode` |
-| --- | --- | --- |
-| `string` | The string itself | `Node.Text` containing the string |
-| `bool` | `"true"` or `"false"` | Text containing that spelling |
-| Every integer primitive | Decimal digits, a minus sign if negative, no grouping | Text containing that spelling |
-| Every floating-point primitive | Shortest decimal that round-trips to the same float type | Text containing that spelling |
-| `Node` | No implementation | The node itself |
+| Type | `toString` |
+| --- | --- |
+| `string` | The string itself |
+| `bool` | `"true"` or `"false"` |
+| Every integer primitive | Decimal digits, a minus sign if negative, no grouping |
+| Every floating-point primitive | Shortest decimal that round-trips to the same float type |
 
 Float special spellings are `"NaN"`, `"Infinity"`, `"-Infinity"`, and `"-0"`.
 
 ```wac
 // expect: spelled() = "answer: 42 -7 false 0.5 -0"
-// expect: childText() = "42"
-import { Node, html.div } from "core";
-
 export string spelled() {
   i32 n = 42;
   i32 m = -7;
@@ -472,72 +480,27 @@ export string spelled() {
   f64 negZero = -0.0;
   return "answer: \{n} \{m} \{flag} \{half} \{negZero}";
 }
-
-export string childText() {
-  i32 n = 42;
-  return match (<div>{n}</div>) {
-    Element(tag, attrs, kids): match (kids[0]) {
-      Text(t): t,
-      default: "",
-    },
-    default: "",
-  };
-}
 ```
 
-`[§wac-tostring-builtin-4t3buvz]` `bool`, every integer and every float type implement `toString` and `toNode` as the
-table says: decimal for integers, the shortest round-tripping decimal for floats, and `true` or `false`.
+`[§wac-tostring-builtin-only-k9w4hcz]` `bool`, every integer and every float type implement `toString` as the table says:
+decimal for integers, the shortest round-tripping decimal for floats, and `true` or `false`. A markup child of one of
+these types is text through the same conversion ([Children](#children)).
 
-```wac
-// fragment — with toString/toNode imported, and div/Node supplied by the HTML API
-void example() {
-  i32 n = 42;
-  bool flag = false;
-  string text = "<b>hello</b>";
-  Node node = Node.Text("hello");
-
-  n.[toString]();              // "42"
-  "answer: \{n}";             // "answer: 42"
-  <div>{n}</div>;              // child: Node.Text("42")
-  <div>{flag}</div>;           // child: Node.Text("false"), not omitted
-  <div>{text}</div>;           // text, never parsed as markup
-  node.[toNode]();             // node itself
-
-  // ERROR: Node has no toString implementation
-  // "markup: \{node}";
-}
-```
-
-No automatic conversions are supplied for nullable values, arrays, tuples, user-defined structs, or enums. An
-author can implement the symbols on a type; callers handle absence or convert collections explicitly. `Node`'s
-identity implementation is the specified exception among enum types.
+No automatic conversions are supplied for nullable values, arrays, tuples, user-defined structs, or enums. An author
+can implement the symbol on a type; callers handle absence or convert collections explicitly.
 
 ```wac
 // expect: emits
-import { Node, html.div } from "core";
-
-export Node greeting(string? name, i32[] xs) {
-  // ERROR: string? has no toNode conversion
-  // Node b = <div>{name}</div>;
-
+export string greeting(string? name, i32[] xs) {
   // ERROR: i32[] has no toString conversion
   // string c = "\{xs}";
 
-  return <div>{name ?? "unknown"}</div>;
+  return "hello \{name ?? "unknown"}";
 }
 ```
 
-`[§wac-conversion-none-for-compound-urda9vz]` Nullable values, arrays, tuples, structs and enums have no built-in
-`toString` or `toNode`; interpolating or nesting one that does not implement the symbol is refused.
-
-Implementing `toString` does not automatically grant `toNode`. A type wanting both can delegate explicitly:
-
-```wac
-// fragment — inside a type with a toString implementation
-Node [toNode](const this) {
-  return Node.Text(this.[toString]());
-}
-```
+`[§wac-conversion-none-compound-r6tn2hx]` Nullable values, arrays, tuples, structs and enums have no built-in
+`toString`; interpolating one whose type does not implement the symbol is refused.
 
 ## Open
 
@@ -546,4 +509,4 @@ Node [toNode](const this) {
 - **Attributes a tag function does not declare.** Whether a tag function's parameters may have defaults, so an
   attribute can be omitted, and whether spread, namespaced and boolean-shorthand attributes exist, is not
   decided.
-- **HTML serialisation and rendering.** These are library APIs, outside the language.
+- **HTML serialisation and rendering.** These are library APIs, outside the language, and so are the trees.

@@ -1,7 +1,33 @@
 // expect: run() = 0
-// why: an attribute left out fills a nullable parameter with `null`, as core's html functions take every attribute
-// from: spec ch23, ch43 §wac-html-tag-functions-sb9cij9
-import { Attr, Node, html.p } from "core";
+// why: an attribute left out fills a nullable parameter with `null`
+// from: spec ch23
+import { markup } from "core";
+
+// A tree of the program's own: markup names no type (design/lang/0017).
+struct Attr {
+  string name;
+  string value;
+}
+
+enum Node {
+  Element(string tag, Attr[] attrs, Node[] kids),
+  Text(string text),
+  Fragment(Node[] kids),
+
+  Node [markup.text](string text) { return Node.Text(text); }
+  Node [markup.fragment](Node[] kids) { return Node.Fragment(kids); }
+  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) {
+    Attr[] attrs = Attr[].filled(names.len(), Attr("", ""));
+    for (i32 i = 0; i < names.len(); i++) { attrs[i] = Attr(names[i], values[i]); }
+    return Node.Element(tag, attrs, kids);
+  }
+}
+
+/** Every attribute nullable, as an HTML tag function takes them: one left out is absent. */
+Node p(string? @"class", Node[] kids) {
+  Attr[] attrs = @"class" is null ? Attr[]() : [Attr("class", @"class"!)];
+  return Node.Element("p", attrs, kids);
+}
 
 /** `note` is optional, `title` is not. */
 Node card(string title, string? note, Node[] kids) {
@@ -31,7 +57,7 @@ i32 attrCount(Node n) {
 export i32 run() {
   if (textOf(<card title="x"/>) != "") { return 1; }
   if (textOf(<card title="x" note="n"/>) != "n") { return 2; }
-  // `html.p` takes every attribute as nullable, and one left out is absent from the element.
+  // `p` takes its attribute as nullable, and one left out is absent from the element.
   if (attrCount(<card title="x"/>) != 1) { return 3; }
   return 0;
 }

@@ -1,0 +1,7 @@
+// expect: refused
+// why: a quoted tag builds its context's type, and `auto` gives it none
+// from: design/lang/0017
+export i32 f() {
+  auto t = <"p">hello</"p">;
+  return 0;
+}

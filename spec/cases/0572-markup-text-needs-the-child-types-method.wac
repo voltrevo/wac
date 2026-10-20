@@ -1,0 +1,13 @@
+// expect: refused
+// why: a text child is built by the child type's `[markup.text]`, and a type without one has no text
+//      children — the tree decides what markup it supports
+// from: design/lang/0017
+enum Tree {
+  Leaf(i32 n),
+  Branch(Tree[] kids),
+}
+Tree box(Tree[] kids) { return Tree.Branch(kids); }
+export i32 f() {
+  Tree t = <box>hello</box>;
+  return 0;
+}

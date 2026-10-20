@@ -1,0 +1,16 @@
+// expect: refused
+// why: a `{e}` child is the child type, an array of it, or something with a `toString`; a struct with
+//      none of those is not a child
+// from: design/lang/0017
+import { markup } from "core";
+struct Point { i32 x; }
+enum Tree {
+  Leaf(string text),
+  Branch(Tree[] kids),
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+}
+Tree box(Tree[] kids) { return Tree.Branch(kids); }
+export i32 f() {
+  Tree t = <box>{Point(1)}</box>;
+  return 0;
+}

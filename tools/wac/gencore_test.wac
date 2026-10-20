@@ -1,7 +1,7 @@
 // `core`'s embedding is the one `core/` generates.
 //
 // `packages/wacc/src/coretext.wac` is written by `wac task gen:core` from `core/read.wac`,
-// `core/jsx.wac`, the five siblings and `std/platform.wac`, and which declarations wacc gets is
+// `core/text.wac`, its siblings and `std/platform.wac`, and which declarations wacc gets is
 // said by which file they are in. `core/README.md` is the argument.
 //
 // **This is here because nothing else runs the check.** `wac task gen:core --check` answers it,
@@ -43,11 +43,11 @@ export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) 
   // covers it — but this canary is what stops that check being vacuous, and a canary that names only
   // one of the two trees goes quiet about the other on the day somebody empties it.
   string[] files = [
-                            "core/read.wac", "core/jsx.wac", "core/README.md",
+                            "core/read.wac", "core/text.wac", "core/README.md",
                             "std/platform.wac", "std/README.md"
   ];
   string[] holds = [
-                            "export enum Read", "export enum Node", "| `hash.wac` |",
+                            "export enum Read", "export symbol @\"markup.text\"", "| `hash.wac` |",
                             "export struct Cli", "A capability, or the type of one"
   ];
   for (i32 i = 0; i < files.len(); i++) {
@@ -59,16 +59,12 @@ export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) 
     }
   }
 
-  // **The omission was the point of the directory**, and there is one embedding now. `jsx.wac` went
-  // to wacc and not to the reference, so the reference's copy had to *not* contain `Node` — a
-  // generator writing one text into both would have passed every check above while deleting a
-  // documented difference. The reference is deleted, so the difference has nowhere to be.
   FileResult wacc = cli.readFile("packages/wacc/src/coretext.wac").wait();
   t.isTrue(wacc.ok, "wacc's embedding is there");
   if (wacc.ok) {
     string text = string.fromBytes(wacc.bytes);
     t.isTrue(contains(text, "export enum Read"), "and it carries Read");
-    t.isTrue(contains(text, "export enum Node"), "and Node as well");
+    t.isTrue(contains(text, "markup.text"), "and the markup symbols as well");
   }
   return t.report();
 }

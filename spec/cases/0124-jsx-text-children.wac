@@ -1,8 +1,28 @@
 // expect: run() = 0
 // why: text between tags is a child, and a line break between elements is layout
 // from: design/lang/0004
-// spec:  §jsx-text-is-a-child §jsx-whitespace-breaks-are-layout §jsx-empty-run-is-not-a-child
-import { Attr, Node } from "core";
+// spec:  §wac-markup-text-child-m5c9qtw §jsx-whitespace-breaks-are-layout §jsx-empty-run-is-not-a-child
+import { markup } from "core";
+
+// A tree of the program's own: markup names no type (design/lang/0017).
+struct Attr {
+  string name;
+  string value;
+}
+
+enum Node {
+  Element(string tag, Attr[] attrs, Node[] kids),
+  Text(string text),
+  Fragment(Node[] kids),
+
+  Node [markup.text](string text) { return Node.Text(text); }
+  Node [markup.fragment](Node[] kids) { return Node.Fragment(kids); }
+  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) {
+    Attr[] attrs = Attr[].filled(names.len(), Attr("", ""));
+    for (i32 i = 0; i < names.len(); i++) { attrs[i] = Attr(names[i], values[i]); }
+    return Node.Element(tag, attrs, kids);
+  }
+}
 
 /** Every text node, in order — which is what says the runs were split where they should be. */
 string textOf(Node n) {

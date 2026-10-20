@@ -1,0 +1,12 @@
+// expect: f() = a point
+// why: a value converts through its type's `[toString]`, which its own file declared; a file that only
+//      interpolates it imports the type and nothing else
+// ---- point.wac ----
+import { toString } from "core";
+export struct Point {
+  i32 x;
+  string [toString](const this) { return "a point"; }
+}
+// ---- main.wac ----
+import { Point } from "./point.wac";
+export string f() { return "\{Point(1)}"; }

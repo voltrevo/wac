@@ -8,9 +8,8 @@
 // origin and survives a reload. The same two calls a program on a command line makes, awaited the same
 // way; what answers them is the browser.
 
-import { Event, Page } from "../../web";
+import { Event, Page, html.button, html.div, html.p, html.span, html.textarea } from "../../web";
 import { Sys } from "std";
-import { html.button, html.div, html.p, html.span, html.textarea } from "core";
 
 static string FILE = "notes.txt";
 

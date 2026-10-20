@@ -353,18 +353,18 @@ export string test_a_match_expression_unifies_its_arms_like_a_ternary() {
 
 export string test_a_jsx_attribute_and_child_refuse_a_nullable() {
   T t = T.create();
-  const string HEAD = "import { Attr, Node } from \"core\";\n";
+  const string HEAD = "import { markup } from \"core\";\nstruct Attr { string name; string value; }\nenum Node {\n  Element(string tag, Attr[] attrs, Node[] kids),\n  Text(string text),\n  Fragment(Node[] kids),\n  Node [markup.text](string t) { return Node.Text(t); }\n  Node [markup.fragment](Node[] k) { return Node.Fragment(k); }\n  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) { return Node.Element(tag, Attr[](), kids); }\n}\n";
   i32 attrNull = dumpTypeErrors((HEAD + "export Node f(string? s) { return <\"div\" class={s}></\"div\">; }\n").toBytes()).len() / 3;
   i32 kidNull = dumpTypeErrors((HEAD + "export Node f(Node? kid) { return <\"div\">{kid}</\"div\">; }\n").toBytes()).len() / 3;
   t.isTrue(attrNull > 0, "a nullable string in an attribute was accepted");
   t.isTrue(kidNull > 0, "a nullable Node as a child was accepted");
-  // The slots do check — an `i32` attribute and a child with no `toNode` are refused — so the rows
-  // above are a gap rather than a position nothing looks at. An `i32` child is not one: a number
-  // converts to text through core's `toNode` (spec ch23).
+  // The slots do check — an `i32` attribute and a child that is neither a `Node` nor text are refused —
+  // so the rows above are a gap rather than a position nothing looks at. An `i32` child is not one: a
+  // number converts to text (spec ch23).
   i32 attrWrong = dumpTypeErrors((HEAD + "export Node f(i32 n) { return <\"div\" class={n}></\"div\">; }\n").toBytes()).len() / 3;
   i32 kidWrong = dumpTypeErrors((HEAD + "struct P { i32 x; }\nexport Node f(P kid) { return <\"div\">{kid}</\"div\">; }\n").toBytes()).len() / 3;
   t.isTrue(attrWrong > 0, "an i32 attribute was accepted, so this slot checks nothing");
-  t.isTrue(kidWrong > 0, "a child with no toNode was accepted, so this slot checks nothing");
+  t.isTrue(kidWrong > 0, "a child that is neither a Node nor text was accepted, so this slot checks nothing");
   // ...and the ordinary programs stay ordinary.
   i32 attrOk = dumpTypeErrors((HEAD + "export Node f(string s) { return <\"div\" class={s}></\"div\">; }\n").toBytes()).len() / 3;
   i32 kidOk = dumpTypeErrors((HEAD + "export Node f(Node kid) { return <\"div\">{kid}</\"div\">; }\n").toBytes()).len() / 3;
@@ -376,7 +376,7 @@ export string test_a_jsx_attribute_and_child_refuse_a_nullable() {
 export string test_a_tag_and_its_call_agree() {
   T t = T.create();
   const string DECL =
-    "import { Attr, Node } from \"core\";\n" +
+    "import { markup } from \"core\";\nstruct Attr { string name; string value; }\nenum Node {\n  Element(string tag, Attr[] attrs, Node[] kids),\n  Text(string text),\n  Fragment(Node[] kids),\n  Node [markup.text](string t) { return Node.Text(t); }\n  Node [markup.fragment](Node[] k) { return Node.Fragment(k); }\n  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) { return Node.Element(tag, Attr[](), kids); }\n}\n" +
     "struct P { i32 x; }\n" +
     "Node card(P p, Node[] kids) { return <\"section\" class=\"card\"></\"section\">; }\n";
   // A nullable into the non-null parameter, both ways round: a tag is a call (spec ch23), so

@@ -676,16 +676,45 @@ enum Shape {
 export f64 twiceRect() { return Shape.Rect(3.0, 4.0).twiceArea(); }
 ```
 
-`[§enum-methods-6vkq2wn]` An enum's methods take `this` as the enum, may take further parameters, and may
-call each other through `this`. A method with no receiver, an `override`, and a method named like a
-variant are refused.
+`[§wac-enum-methods-receiver-d7xk2nv]` An enum's methods take `this` as the enum, may take further parameters, and may
+call each other through `this`. A method with no receiver named by a word, an `override`, and a method named
+like a variant are refused.
 
 Variants come first and methods follow. A method is recognised by its shape — a type, a name and a
-parameter list — which a variant cannot have.
+parameter list — which a variant cannot have. Its name may be a symbol ([21](21-symbols.md)).
 
 Two shapes are refused deliberately. An `override` would mean per-variant virtual dispatch, a
-different feature. A method with no receiver would be called `Shape.make()`, which is already how a
-variant is constructed, so that spelling has to keep meaning one thing.
+different feature. A method with no receiver named by a word would be called `Shape.make()`, which is
+already how a variant is constructed, so that spelling has to keep meaning one thing. A symbol's name
+cannot be a variant's, so a method with no receiver *is* allowed when a symbol names it — `Shape.[make]()`
+means one thing — which is how a tree builds its own markup ([23](../3-expressions/23-interpolation-and-markup.md)):
+
+```wac
+// expect: made() = 2.0
+symbol unit;
+
+enum Shape {
+  Point,
+  Circle(f64 radius),
+
+  Shape [unit]() { return Shape.Circle(1.0); }
+
+  // ERROR: an enum method must take 'this'
+  // Shape make() { return Shape.Circle(1.0); }
+
+  f64 width(const this) {
+    return match (this) {
+      Point:     0.0,
+      Circle(r): 2.0 * r,
+    };
+  }
+}
+
+export f64 made() { return Shape.[unit]().width(); }
+```
+
+`[§wac-enum-symbol-static-h6tq3wz]` An enum method with no receiver is allowed when its name is a symbol, and is
+called on the enum's name: `Shape.[unit]()`.
 
 A method may be `private`, visible only inside the enum's body ([12](12-structs.md)):
 

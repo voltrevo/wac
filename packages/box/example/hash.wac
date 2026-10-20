@@ -18,9 +18,8 @@
 // a command line and neither changed for this — fast enough to rerun on every keystroke. The page's
 // JavaScript is the builder's few lines of glue, the same for every page; none was written for this one.
 
-import { Event, Page, Picked } from "../../web";
-import { Ticket, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.footer,
-         html.h1, html.input, html.p, html.span, html.style, html.textarea } from "core";
+import { Event, Page, Picked, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.footer, html.h1, html.input, html.p, html.span, html.style, html.textarea } from "../../web";
+import { Ticket } from "core";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { gzipBest } from "../../gzip/src/gzip.wac";
 // The shared ones, not a local copy of each: this file had its own `hex` and its own `itoa`, and the

@@ -8,10 +8,9 @@
 // input and directory its parent gave it. Each copy is a worker of its own — no shared memory, so
 // everything between the two crosses as a message, and a copy that never stops can be stopped.
 
-import { Event, Page } from "../../web";
+import { Event, Page, html.button, html.div, html.input, html.p, html.span } from "../../web";
 import { Child, Sys } from "std";
 import { Buf, Read } from "core";
-import { html.button, html.div, html.input, html.p, html.span } from "core";
 
 /** What a started copy runs: its input, upper-cased, to its output. Its status is the byte count. */
 export async i32 upper(Sys sys) {

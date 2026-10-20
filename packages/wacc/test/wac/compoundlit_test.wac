@@ -34,8 +34,8 @@ import { dumpTypeErrors, blockedFiles } from "../../src/api.wac";
 
 i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
 
-/** A JSX program needs core's tree in scope, as `spec/cases/0121` does. */
-static string JSX = "import { Attr, Node } from \"core\";\n";
+/** A tree of the program's own, implementing core's `markup` symbols, as `spec/cases/0121` has. */
+static string JSX = "import { markup } from \"core\";\nstruct Attr { string name; string value; }\nenum Node {\n  Element(string tag, Attr[] attrs, Node[] kids),\n  Text(string text),\n  Fragment(Node[] kids),\n  Node [markup.text](string t) { return Node.Text(t); }\n  Node [markup.fragment](Node[] k) { return Node.Fragment(k); }\n  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) { return Node.Element(tag, Attr[](), kids); }\n}\n";
 
 string[] refusedNames() {
   return [
@@ -50,7 +50,7 @@ string[] refusedNames() {
     "builtin, slice wants two i32s",
     "builtin, string.fromCodepoint wants an i32",
     "JSX attribute value",
-    "JSX child, which must be a Node",
+    "JSX child, which must be a Node or convert to text",
     "array size, a ternary of strings",
     "array index read, a ternary of strings",
     "array index written, a ternary of strings",

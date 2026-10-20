@@ -1128,7 +1128,7 @@ bool endsExpression(i32 kind) {
 bool startsTag(Lexer lx, i32 offset) {
   i32 c = lx.peek(offset);
   // `<@"caption">` — a tag name written verbatim is a name like any other — and `<"my-widget">`, an
-  // element by name (spec ch23 `§wac-markup-quoted-tag-3dnrvxj`).
+  // element by name (spec ch23 `§wac-markup-quoted-tag-builds-vn2k8xr`).
   return c == '/' || c == '>' || c == '"' || isIdentStart(c) || (c == '@' && lx.peek(offset + 1) == '"');
 }
 

@@ -1,7 +1,27 @@
 // expect: refused
 // why: an attribute's value is checked against its parameter's type, not against string
 // from: spec ch23
-import { Attr, Node } from "core";
+import { markup } from "core";
+
+// A tree of the program's own: markup names no type (design/lang/0017).
+struct Attr {
+  string name;
+  string value;
+}
+
+enum Node {
+  Element(string tag, Attr[] attrs, Node[] kids),
+  Text(string text),
+  Fragment(Node[] kids),
+
+  Node [markup.text](string text) { return Node.Text(text); }
+  Node [markup.fragment](Node[] kids) { return Node.Fragment(kids); }
+  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) {
+    Attr[] attrs = Attr[].filled(names.len(), Attr("", ""));
+    for (i32 i = 0; i < names.len(); i++) { attrs[i] = Attr(names[i], values[i]); }
+    return Node.Element(tag, attrs, kids);
+  }
+}
 
 Node card(i32 count, Node[] kids) { return <"p">{""}</"p">; }
 

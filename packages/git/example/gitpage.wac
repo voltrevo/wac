@@ -23,9 +23,8 @@
 // we shipped. `git verify-pack -v` on the same file, on your machine, prints the same object count
 // and the same names — which is a check anyone can run and nobody has to trust us for.
 
-import { Event, Page, Picked } from "../../web";
-import { Ticket, Vec, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt,
-         html.footer, html.h1, html.input, html.p, html.pre, html.span, html.style } from "core";
+import { Event, Page, Picked, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.footer, html.h1, html.input, html.p, html.pre, html.span, html.style } from "../../web";
+import { Ticket, Vec } from "core";
 import { encode } from "../../codec/src/hex.wac";
 import { PackIndex } from "../src/idx.wac";
 import { Got, Indexed, Pack, indexPack, objectNamed, openIndexed } from "../src/pack.wac";

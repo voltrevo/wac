@@ -1,0 +1,10 @@
+// expect: refused
+// why: an enum method without `this` is refused when its name is a word: `Shape.make()` is how a
+//      variant is constructed, so a static spelled that way would mean two things
+enum Shape {
+  Point,
+  Circle(f64 r),
+
+  Shape make(f64 r) { return Shape.Circle(r); }
+}
+export i32 f() { return 0; }

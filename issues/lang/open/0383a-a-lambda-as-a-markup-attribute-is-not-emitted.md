@@ -11,14 +11,17 @@
 
 ```wac
 import { Sys } from "std";
-import { Node, html.li, html.ul } from "core";
-Node Row(Node[] kids, string name, fn<void()> onremove) { return <li>{Node.Text(name)}</li>; }
+struct N { string s; }
+N row(string name, fn<void()> onremove) { return N(name); }
+N list(N[] kids) { return N(""); }
 export i32 main(Sys sys) {
   string removed = "";
-  Node n = <ul><Row name="milk" onremove={() => { removed = "milk"; }}/></ul>;
+  N n = <list><row name="milk" onremove={() => { removed = "milk"; }}/></list>;
   return 0;
 }
 ```
+
+(Written against a tree of its own since `design/lang/0017` took `Node` out of core.)
 
 Expected: compiles; `onremove` is the lambda.
 Actual: `wacc: cannot emit … — the function \`__wacMain\` is not in the module the emitter produced — a

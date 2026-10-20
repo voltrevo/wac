@@ -13,7 +13,7 @@ import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHint
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
 import { declsOfFiles, declsOfProgram, evalAllConsts } from "./consteval.wac";
-import { Param, Program, Ty } from "./ast.wac";
+import { Method, Param, Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
          warningsOf, widthsOf, errNoSuchExport, errStaleBuiltinEmbedding, isBuiltinSubpath,
@@ -1926,6 +1926,44 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
           }
         }
         default: { }
+      }
+    }
+    // **Which of this file's types implement core's `toString`**: those with a method named by the
+    // symbol under whatever spelling this file imported it. Interpolating one in a file that did not
+    // import the symbol itself is still core's conversion (case 0576); a method named by a fresh symbol
+    // spelled the same is not (case 0397), and the method tables, keyed by spelling, cannot tell.
+    string coreText = "";
+    for (i32 d = 0; d < iprog.decls.len(); d++) {
+      match (iprog.decls[d].kind) {
+        Import(tpathTok, tprefixTok, titems): {
+          string tq = tpathTok < 0 ? "" : tokenTextOf(isrc, ilexed, tpathTok);
+          if (tq != "\"core\"") { continue; }
+          for (i32 j = 0; j < titems.len(); j++) {
+            if (titems[j].nameTok < 0 || titems[j].aliasTok < 0) { continue; }
+            if (tokenTextOf(isrc, ilexed, titems[j].nameTok) == "toString") {
+              coreText = tokenTextOf(isrc, ilexed, titems[j].aliasTok);
+            }
+          }
+        }
+        default: { }
+      }
+    }
+    if (coreText != "") {
+      for (i32 d = 0; d < iprog.decls.len(); d++) {
+        i32 ttok = -1;
+        Method[] tmethods = Method[]();
+        match (iprog.decls[d].kind) {
+          StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): { ttok = nameTok; tmethods = methods; }
+          EnumDecl(nameTok, variants, exported, methods, typeParams): { ttok = nameTok; tmethods = methods; }
+          default: { }
+        }
+        if (ttok < 0) { continue; }
+        for (i32 m = 0; m < tmethods.len(); m++) {
+          string mn = tokenTextOf(isrc, ilexed, tmethods[m].nameTok);
+          if (mn == "[toString]" || mn == "[" + coreText + "]") {
+            c.coreTextTypes = c.coreTextTypes + "|" + c.renamed(tokenTextOf(isrc, ilexed, ttok)) + "|";
+          }
+        }
       }
     }
     // **A reached variant the entry declares a type of the same name for** is declared under a name no

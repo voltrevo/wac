@@ -34,6 +34,14 @@ not have.
 | `§wac-precedence-x7mj5mk` | `§wac-precedence-tests-78cupm3` | `is`, `is not` and `matches` bind as comparisons, tighter than `&&`, instead of loosest of all ([22](../3-expressions/22-operators.md)) |
 | `§wac-grammar-keywords-h4mq7wn` | `§wac-keywords-reserved-w9tpxmx` | the rule is now that the words are reserved, not that a list matches the lexer ([A](A-grammar.md)) |
 | `§wac-diag-assign-j3qm7xf` | `§wac-diag-literal-fraction-33zp6u3` | a literal has no type of its own, so the diagnostic is about the literal, not about an `f64` ([B](B-diagnostics.md)) |
+| `§wac-markup-quoted-tag-3dnrvxj` | `§wac-markup-quoted-tag-builds-vn2k8xr` | a quoted tag is built by the child type's `[markup.element]`, not as `core`'s `Node.Element` ([23](../3-expressions/23-interpolation-and-markup.md)) |
+| `§jsx-text-is-a-child` | `§wac-markup-text-child-m5c9qtw` | text is the child type's `[markup.text]`, not `Node.Text` |
+| `§jsx-fragment-is-a-node` | `§wac-markup-fragment-built-p8j3zrk` | a fragment is the child type's `[markup.fragment]`, not `Node.Fragment` |
+| `§wac-markup-child-tonode-vp842rw` | `§wac-markup-child-converts-w8d4ntc` | a `{e}` child is the child type, a fragment of an array of it, or text through `toString`; `toNode` is gone |
+| `§wac-tostring-builtin-4t3buvz` | `§wac-tostring-builtin-only-k9w4hcz` | the built-in conversions are `toString` alone |
+| `§wac-conversion-none-for-compound-urda9vz` | `§wac-conversion-none-compound-r6tn2hx` | as above |
+| `§enum-methods-6vkq2wn` | `§wac-enum-methods-receiver-d7xk2nv` | an enum method with no receiver is refused only when a word names it; a symbol may ([13](../2-types/13-enums.md)) |
+| `§wac-core-exports-v8uuuut` | `§wac-core-exports-markup-c3v8pwq` | `core` exports the `markup` namespace and no markup tree ([37](../7-library/37-core.md)) |
 
 ## Retired
 
@@ -49,6 +57,7 @@ not have.
 | `§wac-ll-push-front-k4mf2js`, `§wac-ll-push-back-p9qn3xl`, `§wac-ll-len-w7rk5bt`, `§wac-ll-len-empty-m3hd8qz`, `§wac-ll-sum-j2fn9rk`, `§wac-ll-pop-front-h8wd2pm`, `§wac-ll-pop-all-f4kp7wn`, `§wac-ll-pop-empty-n2qm8xl`, `§wac-ll-reverse-c7jw3kf`, `§wac-ll-front-back-q8kn2wp` | the linked list was an example program, not part of the language or of `core` |
 | `§wac-buf-basic-k4mf2js`, `§wac-buf-getset-p9qn3xl`, `§wac-buf-overwrite-w7rk5bt`, `§wac-buf-grow-m3hd8qz`, `§wac-buf-pop-j2fn9rk`, `§wac-buf-equals-h8wd2pm`, `§wac-buf-oob-get-f4kp7wn`, `§wac-buf-oob-set-n2qm8xl`, `§wac-buf-pop-empty-c7jw3kf` | the `Buffer` example program; `core`'s `Buf` has tags of its own ([42](../7-library/42-buf.md)) |
 | `§wac-wapy-h3nq7fv`, `§wac-wapy-import-8kd3mqp`, `§wac-wapy-core-5wq8jhn`, `§wac-wapy-nolines-4gt7wxb`, `§wac-wapy-words-p2vm9kx`, `§wac-wapy-dedent-3nq8vrk`, `§wac-wapy-asyncdef-9mk2xrt`, `§wac-wapy-range-6mn4dtq`, `§wac-wapy-switch-w9pk2hs`, `§wac-wapy-matchexpr-3jx8rvc`, `§wac-wapy-roundtrip-5vd2qnw` | wapy is outside this specification |
+| `§wac-node-tree-b4hr8je`, `§wac-html-tag-functions-sb9cij9` | the markup tree and the HTML tag functions are a library, `packages/html` — markup names no type (`design/lang/0017`) |
 
 ## Shared suffixes
 

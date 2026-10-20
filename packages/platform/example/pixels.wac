@@ -17,9 +17,7 @@
 // pixels, each an iteration loop, recomputed on every zoom, in compiled code fast enough that the
 // page never notices. A drawing API would have made this the slow way to do it.
 
-import { Event, Page } from "../../web";
-import { html.b, html.button, html.canvas, html.dd, html.div, html.dl, html.dt, html.footer, html.h1, html.a,
-         html.p, html.style } from "core";
+import { Event, Page, html.b, html.button, html.canvas, html.dd, html.div, html.dl, html.dt, html.footer, html.h1, html.a, html.p, html.style } from "../../web";
 
 static string STYLE =
   ":root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +

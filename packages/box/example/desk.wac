@@ -40,9 +40,8 @@
 // **Resizing** and **minimise** — there is no taskbar to minimise *to* yet.
 
 import { Core, Cli, Sys } from "std";
-import { Event, MOD_CTRL, Page } from "../../web";
-import { Node, Ticket, TicketBase, Vec } from "core";
-import { html.button, html.div, html.input, html.pre, html.span, html.style } from "core";
+import { Event, MOD_CTRL, Page, Node, html.button, html.div, html.input, html.pre, html.span, html.style } from "../../web";
+import { Ticket, TicketBase, Vec } from "core";
 import { boxApplet } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";
 

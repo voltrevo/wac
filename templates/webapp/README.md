@@ -11,8 +11,7 @@ A page written entirely in wac: `src/app.wac` is the application, and `wac task 
 ## How a page works
 
 ```wac
-import { Event, Page } from "web";
-import { html.b, html.button, html.p } from "core";
+import { Event, Page, html.b, html.button, html.p } from "web";
 
 export async i32 main(Page page) {
   page.render(<p>Clicks: <b id="n">0</b> <button id="up">+1</button></p>);

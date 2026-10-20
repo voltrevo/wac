@@ -28,9 +28,8 @@
 // disagree; this is here to be played with. The millisecond counter is the only real claim, and it
 // is about how fast wac compiled to WebAssembly runs a stencil over 30,000 cells.
 
-import { Event, Page } from "../../web";
-import { Ticket, html.a, html.b, html.button, html.canvas, html.div, html.footer, html.h1, html.p, html.span,
-         html.style } from "core";
+import { Event, Page, html.a, html.b, html.button, html.canvas, html.div, html.footer, html.h1, html.p, html.span, html.style } from "../../web";
+import { Ticket } from "core";
 
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/ripple.wac";

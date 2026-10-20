@@ -1,0 +1,40 @@
+// expect: f() = box[hi , 7, b(x=1)[y], frag[z], frag[p, q]]
+// why: markup names no type: text, a quoted tag, a fragment and a `{e}` child are built by static
+//      methods named by core's `markup` symbols on the tag's child type — here a tree of the program's own
+// from: design/lang/0017
+import { markup } from "core";
+
+enum Tree {
+  Leaf(string text),
+  Branch(string tag, string attrs, Tree[] kids),
+
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.element](string tag, string[] names, string[] values, Tree[] kids) {
+    string a = "";
+    for (i32 i = 0; i < names.len(); i++) { a = a + names[i] + "=" + values[i]; }
+    return Tree.Branch(tag, a, kids);
+  }
+  Tree [markup.fragment](Tree[] kids) { return Tree.Branch("frag", "", kids); }
+
+  string show(const this) {
+    match (this) {
+      Leaf(t): { return t; }
+      Branch(tag, attrs, kids): {
+        string s = tag;
+        if (attrs != "") { s = s + "(" + attrs + ")"; }
+        s = s + "[";
+        for (i32 i = 0; i < kids.len(); i++) { s = s + (i == 0 ? "" : ", ") + kids[i].show(); }
+        return s + "]";
+      }
+    }
+  }
+}
+
+Tree box(Tree[] kids) { return Tree.Branch("box", "", kids); }
+
+export string f() {
+  i32 n = 7;
+  Tree[] list = [Tree.Leaf("p"), Tree.Leaf("q")];
+  Tree t = <box>hi {n}<"b" x="1">y</"b"><>z</>{list}</box>;
+  return t.show();
+}

@@ -1,0 +1,111 @@
+// A static HTML tree: what markup builds when its tags come from here, and the text a browser parses.
+//
+// **A library, not the language** (`design/lang/0017`). Markup names no type: a tag calls a function in
+// scope, and its children are that function's `kids` element type, which builds text, quoted tags and
+// fragments itself through `core`'s `markup` symbols. This tree is one such type; the view's, with handlers
+// and components, is another (`design/system/0012`), and a module gets whichever its tags were imported
+// from.
+//
+// The tags are `tags.wac`, which the package exports as the namespace `html`: `import { html.div } from
+// "web"` brings in one and `<div>` calls it.
+
+import { Buf, markup } from "core";
+
+export struct Attr {
+  string name;
+  string value;
+}
+
+// **`Fragment` is a variant rather than an element with an empty tag**, so that a renderer is
+// *told*: `match` is exhaustive, and a walk written before fragments existed stops compiling with
+// the arm it is missing named. An empty tag would have rendered as `<>` in every renderer that had
+// not heard of them. `design/lang/0006`.
+export enum Node {
+  Element(string tag, Attr[] attrs, Node[] kids),
+  Text(string text),
+  Fragment(Node[] kids),
+
+  Node [markup.text](string text) { return Node.Text(text); }
+  Node [markup.fragment](Node[] kids) { return Node.Fragment(kids); }
+  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) {
+    Attr[] attrs = Attr[].filled(names.len(), Attr("", ""));
+    for (i32 i = 0; i < names.len(); i++) { attrs[i] = Attr(names[i], values[i]); }
+    return Node.Element(tag, attrs, kids);
+  }
+}
+
+// ── As HTML ───────────────────────────────────────────────────────────────────
+//
+// **Everything is escaped**: text and attribute values are data, never markup, so a string that happens
+// to hold `<script>` arrives as those characters.
+//
+// **A `<style>` is the one exception, because its text is not HTML**: the browser reads it as CSS up to
+// the first `</style`, and escaping `>` would break every child combinator in it. So its text goes out as
+// it is, with each `<` written as CSS's own escape for it, `\3c ` — which no stylesheet needs to spell
+// literally, and which is what makes `</style>` inside one impossible.
+
+/** `n` as HTML. */
+export string htmlOf(Node n) {
+  Buf out = Buf.create();
+  writeNode(out, n, false);
+  return string.fromBytes(out.take());
+}
+
+void writeNode(Buf out, Node n, bool css) {
+  match (n) {
+    Text(t): {
+      if (css) { writeCss(out, t); } else { writeEscaped(out, t, false); }
+    }
+    Fragment(kids): {
+      for (Node k in kids) { writeNode(out, k, css); }
+    }
+    Element(tag, attrs, kids): {
+      out.pushStr("<");
+      out.pushStr(tag);
+      for (Attr a in attrs) {
+        out.pushStr(" ");
+        out.pushStr(a.name);
+        out.pushStr("=\"");
+        writeEscaped(out, a.value, true);
+        out.pushStr("\"");
+      }
+      out.pushStr(">");
+      // A void element has no content and no end tag: `<br></br>` is two line breaks to a browser.
+      if (isVoidElement(tag)) { return; }
+      for (Node k in kids) { writeNode(out, k, tag == "style"); }
+      out.pushStr("</");
+      out.pushStr(tag);
+      out.pushStr(">");
+    }
+  }
+}
+
+/**
+ * `s` with what would be read as markup replaced by references: `&` and `<` always, `>` too, and in
+ * an attribute value the `"` that would end it.
+ */
+void writeEscaped(Buf out, string s, bool inAttr) {
+  u8[] b = s.toBytes();
+  for (u8 c in b) {
+    if (c == '&') { out.pushStr("&amp;"); }
+    else if (c == '<') { out.pushStr("&lt;"); }
+    else if (c == '>') { out.pushStr("&gt;"); }
+    else if (inAttr && c == '"') { out.pushStr("&quot;"); }
+    else { out.push(c); }
+  }
+}
+
+/** A stylesheet's text as it is, except `<`, written as CSS's escape for it so nothing can end the element. */
+void writeCss(Buf out, string s) {
+  u8[] b = s.toBytes();
+  for (u8 c in b) {
+    if (c == '<') { out.pushStr("\\3c "); } else { out.push(c); }
+  }
+}
+
+/** The HTML elements that cannot have content (the "void elements" of the HTML standard). */
+export bool isVoidElement(string tag) {
+  return tag == "area" || tag == "base" || tag == "br" || tag == "col" || tag == "embed" || tag == "hr"
+      || tag == "img" || tag == "input" || tag == "link" || tag == "meta" || tag == "source"
+      || tag == "track" || tag == "wbr";
+}

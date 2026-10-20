@@ -212,6 +212,7 @@ spec/2-types/13-enums.md#23
 spec/2-types/13-enums.md#24
 spec/2-types/13-enums.md#25
 spec/2-types/13-enums.md#26
+spec/2-types/13-enums.md#27
 spec/2-types/14-tuples.md#1
 spec/2-types/14-tuples.md#2
 spec/2-types/14-tuples.md#3
@@ -463,8 +464,6 @@ spec/7-library/42-buf.md#1
 spec/7-library/42-buf.md#2
 spec/7-library/42-buf.md#3
 spec/7-library/42-buf.md#4
-spec/7-library/43-markup-types.md#1
-spec/7-library/43-markup-types.md#2
 spec/7-library/44-std.md#1
 spec/7-library/44-std.md#2
 spec/7-library/44-std.md#3

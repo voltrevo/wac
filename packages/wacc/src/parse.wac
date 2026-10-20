@@ -75,11 +75,11 @@ export i32 perrBareSpec()    { return 29; }
  */
 export i32 perrKeywordName() { return 30; }
 
-/** `override` on an enum method — `[§enum-methods-6vkq2wn]`, which states the message. */
+/** `override` on an enum method — `[§wac-enum-methods-receiver-d7xk2nv]`, which states the message. */
 export i32 perrEnumOverride() { return 31; }
 
 /**
- * An enum method declared without `this` — `[§enum-methods-6vkq2wn]`.
+ * An enum method declared without `this` — `[§wac-enum-methods-receiver-d7xk2nv]`.
  *
  * Its own code because `perrMethodName` was carrying both faults, and the one it names is the one
  * that did not happen: `i32 make() { … }` has a method name, in the right place, spelled correctly.
@@ -3347,6 +3347,7 @@ Decl parseEnumDecl(P p, bool exported) {
     bool enumAsync = p.eat(kAsync());
     Ty returnType = parseReturnType(p);
     i32 mTok = p.symbolMemberName();             // `string [toString](const this)` (ch21)
+    bool bySymbol = mTok >= 0;
     if (mTok < 0) {
       if (p.at1(kIdent())) { mTok = p.advance(); } else { p.fail(perrMethodName()); }
     }
@@ -3370,9 +3371,10 @@ Decl parseEnumDecl(P p, bool exported) {
       }
     }
     p.expect(kRparen());
-    // A static method would be spelled `Shape.make()`, which is already how a variant is constructed,
-    // so one is refused until that ambiguity is decided deliberately.
-    if (!hasThis) { p.fail(perrEnumMethodThis()); }
+    // A static method named by a word would be spelled `Shape.make()`, which is already how a variant
+    // is constructed, so one is refused. A symbol's name cannot be a variant's — `Shape.[make](…)` —
+    // so a static named by one is allowed: it is how a tree type builds its own text (`design/lang/0017`).
+    if (!hasThis && !bySymbol) { p.fail(perrEnumMethodThis()); }
     methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, -1, hasThis, thisConst,
                         i32[](), enumAsync, methodPrivate, false));
   }
@@ -3401,6 +3403,8 @@ bool looksLikeEnumMethod(P p) {
     else if (p.kindAt(j) == kQuestion()) { j++; }
     else { break; }
   }
+  // A name that is a symbol: `string [toString](const this)` (ch21). A variant is never followed by `[`.
+  if (p.kindAt(j) == kLbrack() && p.kindAt(j + 1) == kIdent()) { return true; }
   return p.kindAt(j) == kIdent() && p.kindAt(j + 1) == kLparen();
 }
 

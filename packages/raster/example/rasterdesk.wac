@@ -13,8 +13,7 @@
 // model's idea of a rectangle and the page's shows up as a colour in the wrong place.
 //
 
-import { Event, Page } from "../../web";
-import { html.canvas, html.div, html.style } from "core";
+import { Event, Page, html.canvas, html.div, html.style } from "../../web";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
 import { Desk, barHeight } from "../src/desk.wac";
 import { Surface, cellHeight, cellWidth } from "../src/surface.wac";

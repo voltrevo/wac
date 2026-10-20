@@ -12,14 +12,14 @@ It is reached like any package — by its name, through its entry module — and
 | Name | What it is | Chapter |
 |---|---|---|
 | `operators` | namespace of the operator symbols, and their `FromLeft` reverses | [22](../3-expressions/22-operators.md) |
-| `toString`, `toNode` | the conversion symbols interpolation and markup use | [23](../3-expressions/23-interpolation-and-markup.md) |
+| `toString` | the conversion symbol interpolation uses | [23](../3-expressions/23-interpolation-and-markup.md) |
+| `markup` | namespace of the symbols a markup tree builds itself with | [23](../3-expressions/23-interpolation-and-markup.md) |
 | `fromNumber`, `NumberLiteral` | literal conversion for a type of the program's own | [09](../2-types/09-numeric-literals.md) |
 | `Vec<T>` | a growable array | [38](38-vec.md) |
 | `Map<K, V>`, the hash and equality functions | a hash map | [39](39-map-and-hash.md) |
 | `Result<T, E>` | success or failure | [40](40-result.md) |
 | `Read` | the answer of a read that can end or fail | [41](41-read.md) |
 | `Buf` | a growable byte buffer | [42](42-buf.md) |
-| `Node`, `Attr`, `html` | the markup tree, and the HTML tag functions | [43](43-markup-types.md) |
 | `Ticket<T>`, `TicketBase`, `Continuation`, `Queue<T>` | tickets and the scheduling they need | [35](../6-concurrency/35-tickets-and-await.md) |
 | `Step`, `Coroutine`, `Generator`, `AsyncGenerator` | the machine under `async` and `gen` | [36](../6-concurrency/36-coroutines-and-generators.md) |
 | `hypothetical<T>()` | an expression of type `T` for `typeof`, which traps if run | [30](../4-static/30-computed-types.md) |
@@ -40,11 +40,11 @@ export i32 fromCoreRoot() {
 }
 ```
 
-`[§wac-core-exports-v8uuuut]` Every name in the table above is exported by `core`'s entry module, at its root or — for
-`operators` and `html` — as a namespace.
+`[§wac-core-exports-markup-c3v8pwq]` Every name in the table above is exported by `core`'s entry module, at its root or — for
+`operators` and `markup` — as a namespace.
 
-Families of related names are namespaces — the operator symbols, the HTML tag functions — and everything else is at
-the root.
+Families of related names are namespaces — the operator symbols, the markup symbols — and everything else is at the
+root.
 
 ```wac
 // fragment — from core
@@ -56,10 +56,10 @@ export T hypothetical<T>() { trap; }
 
 ## Why these are in `core`
 
-A name belongs in `core` when the language needs one agreed declaration of it. Types are nominal, so two declarations of
-the same shape are two types with nothing to convert between them: a tree built in one repository and a renderer in
-another must name one `Node` or nothing composes, and the compiler itself builds `Node`s for markup and calls
-`toString` for interpolation. Those are the strongest cases.
+A name belongs in `core` when the language needs one agreed declaration of it. A symbol is the strongest case: the
+compiler calls `toString` for interpolation and the `markup` methods for markup, and a fresh symbol spelled the same is
+a different one. A type the compiler does not build is not a case at all — markup's trees are libraries, because
+markup lowers to calls of the tree's own methods and names no type ([23](../3-expressions/23-interpolation-and-markup.md)).
 
 The data structures are here for a weaker but still real reason: a program that wants a map should not have to find a
 package first, and two hand-written maps are two places for the same bugs.

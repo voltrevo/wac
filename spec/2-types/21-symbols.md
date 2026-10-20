@@ -264,7 +264,7 @@ Symbols here are declared identities used for static member selection. Runtime s
 comparison, and runtime generation of fresh symbols are not part of the language. Neither are trait
 declarations or external implementation blocks. `const` alone does not establish static knowledge.
 
-The symbols the language itself gives meaning to — the operators, `toString`, `toNode`, `fromNumber` — are
+The symbols the language itself gives meaning to — the operators, `toString`, the `markup` symbols, `fromNumber` — are
 exported by `core` ([37](../7-library/37-core.md)) and used by
 [22](../3-expressions/22-operators.md), [23](../3-expressions/23-interpolation-and-markup.md) and
 [09](09-numeric-literals.md).

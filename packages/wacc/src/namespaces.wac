@@ -536,6 +536,20 @@ struct NsExports {
  * member it reaches, and the imports that reach it.
  */
 export string[] lowerNamespaces(string[] paths, string[] sources, const Res res) {
+  return lowerNamespacesIn(paths, sources, res, false);
+}
+
+/**
+ * The same, for a reader that wants only a file's declarations and will not compile the text: an
+ * import from a module the set does not hold has each `X.m` item spelled `@"X.m" as m`, so the file
+ * parses (`declaredTests`). A build must not see that spelling — the module it names may export `X` as
+ * a namespace, and nothing declares `@"X.m"` — which is why it is a separate entry.
+ */
+export string[] lowerNamespacesForDeclarations(string[] paths, string[] sources, const Res res) {
+  return lowerNamespacesIn(paths, sources, res, true);
+}
+
+string[] lowerNamespacesIn(string[] paths, string[] sources, const Res res, bool loose) {
   i32 n = paths.len();
   bool any = false;
   for (i32 i = 0; i < n; i++) {
@@ -553,14 +567,30 @@ export string[] lowerNamespaces(string[] paths, string[] sources, const Res res)
   for (i32 i = 0; i < n; i++) { exports[i] = exportsOfFlat(paths, flat, res, i); }
 
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = rewriteUses(paths, flat, res, exports, locals, i); }
+  for (i32 i = 0; i < n; i++) { out[i] = rewriteUses(paths, flat, res, exports, locals, i, loose); }
   return out;
 }
 
 /** Whether a source could hold anything this file lowers — a cheap test before any lexing. */
 bool mentionsNamespaces(string s) {
-  return s.indexOf("namespace") >= 0 || s.indexOf("* as") >= 0 || s.indexOf("operators") >= 0
+  return s.indexOf("namespace") >= 0 || s.indexOf("* as") >= 0 || dottedSymbolName(s)
       || dottedListItem(s) || (s.indexOf("struct") >= 0 && s.indexOf("  static ") >= 0);
+}
+
+/**
+ * Whether a member is named by a namespace's symbol — `[operators.add]`, `[markup.text]`: a `[`, a name,
+ * then a `.`. This asked for the word `operators` until `design/lang/0017` gave core a second namespace
+ * of symbols, and a file naming only `[markup.text]` went unlowered and failed to parse (case 0577).
+ */
+bool dottedSymbolName(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i + 2 < b.len(); i++) {
+    if (b[i] != '[') { continue; }
+    i32 j = i + 1;
+    while (j < b.len() && ((b[j] >= 'a' && b[j] <= 'z') || (b[j] >= 'A' && b[j] <= 'Z') || (b[j] >= '0' && b[j] <= '9') || b[j] == '_')) { j++; }
+    if (j > i + 1 && j < b.len() && b[j] == '.') { return true; }
+  }
+  return false;
 }
 
 /** Whether an `import { … }` or `export { … }` list names a member by path — `html.div`. */
@@ -757,7 +787,7 @@ string importItem(string name, string local) {
 
 string verbatimIfNeeded(string name) { return name.indexOf(".") >= 0 ? "@\"" + name + "\"" : name; }
 
-string rewriteUses(string[] paths, string[] flat, const Res res, NsExports[] exports, NsLocal[] locals, i32 f) {
+string rewriteUses(string[] paths, string[] flat, const Res res, NsExports[] exports, NsLocal[] locals, i32 f, bool loose) {
   NsFile src = NsFile.of(flat[f]);
   NsEdits ed = NsEdits.create();
   NsBindings binds = NsBindings(NsStrs.create(), i32[].filled(8, 0), NsStrs.create());
@@ -791,7 +821,7 @@ string rewriteUses(string[] paths, string[] flat, const Res res, NsExports[] exp
       continue;
     }
     if (depth == 0 && k == kImport()) {
-      t = rewriteImport(paths, res, exports, src, ed, binds, wanted, f, t);
+      t = rewriteImport(paths, res, exports, src, ed, binds, wanted, f, t, loose);
       continue;
     }
     if (k == kLbrace() || k == kLparen() || k == kLbrack()) { depth = depth + 1; }
@@ -882,7 +912,7 @@ string[] splitSpace(string s) {
  * `X.m` becomes an import of the member from the module that declares it.
  */
 i32 rewriteImport(string[] paths, const Res res, NsExports[] exports, NsFile src, NsEdits ed, NsBindings binds,
-                  NsWanted wanted, i32 f, i32 t) {
+                  NsWanted wanted, i32 f, i32 t, bool loose) {
   i32 endTok = t;
   while (endTok < src.count() && src.kind(endTok) != kSemi()) { endTok = endTok + 1; }
   // `import * as X from "s";`
@@ -900,7 +930,37 @@ i32 rewriteImport(string[] paths, const Res res, NsExports[] exports, NsFile src
   i32 fromTok = close + 2;
   if (src.kind(fromTok) != kString()) { return endTok; }
   i32 target = targetOf(paths, res, f, unquote(src.text(fromTok)));
-  if (target == -1) { return endTok; }
+  // **A module this file set does not hold** cannot say which of its items are namespaces, so a build
+  // leaves the line for the whole graph to lower. A reader of declarations alone — `declaredTests`, a
+  // test file parsed by itself — needs it to parse, so each `X.m` is spelled as the member's own name,
+  // `@"X.m" as m`. Left as it was there, `import { html.p } from "./page.wac"` did not parse, and a
+  // directory run dropped every test in the file without a word.
+  if (target == -1 && !loose) { return endTok; }
+  if (target == -1) {
+    i32 u = t + 2;
+    while (u < close) {
+      i32 uStart = u;
+      string uChain = src.text(u);
+      i32 v = u;
+      bool dotted = false;
+      while (src.kind(u) == kIdent() && src.kind(v + 1) == kDot() && src.kind(v + 2) == kIdent()) {
+        uChain = uChain + "." + src.text(v + 2);
+        v = v + 2;
+        dotted = true;
+      }
+      string uLast = src.text(v);
+      bool renamed = src.kind(v + 1) == kAs();
+      // Only a chain written with dots: an item already lowered is one verbatim name, `@"X.m"`, whose
+      // dot is inside its quotes.
+      if (dotted) {
+        ed.add(src.outerStart(uStart), src.outerEnd(v), "@\"" + uChain + "\"" + (renamed ? "" : " as " + uLast));
+      }
+      if (renamed) { v = v + 2; }
+      u = v + 1;
+      if (src.kind(u) == kComma()) { u = u + 1; }
+    }
+    return endTok;
+  }
 
   // Items between `{` and `}`: a chain of names, then perhaps `as Y`.
   i32 kept = 0;

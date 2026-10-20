@@ -1,0 +1,30 @@
+// expect: childCount() = 5
+// why: a `{expr}` child is the child type itself, a fragment of an array of it, or text: a string, a
+//      number, or a struct through core's `toString`
+// from: spec ch23 §wac-markup-child-converts-w8d4ntc
+import { markup, toString } from "core";
+
+enum Node {
+  Text(string text),
+  Element(Node[] kids),
+  Node [markup.text](string text) { return Node.Text(text); }
+  Node [markup.fragment](Node[] kids) { return Node.Element(kids); }
+}
+
+struct Label {
+  string text;
+  string [toString](const this) { return this.text; }
+}
+
+Node div(Node[] kids) { return Node.Element(kids); }
+
+export i32 childCount() {
+  Label label = Label("hello");
+  Node existing = Node.Text("already a node");
+  i32 n = 3;
+  Node t = <div>text {label}{n}{existing}{[existing, existing]}</div>;
+  return match (t) {
+    Element(kids): kids.len(),
+    default: -1,
+  };
+}

@@ -1,0 +1,30 @@
+// expect: f() = 3
+// why: the child type's `markup` methods are found on the type, so a file that writes markup imports
+//      its tags and nothing else
+// from: design/lang/0017
+// ---- tree.wac ----
+import { markup } from "core";
+export enum Tree {
+  Leaf(string text),
+  Branch(Tree[] kids),
+
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.fragment](Tree[] kids) { return Tree.Branch(kids); }
+  i32 count(const this) {
+    match (this) {
+      Leaf(t): { return 1; }
+      Branch(kids): {
+        i32 n = 0;
+        for (i32 i = 0; i < kids.len(); i++) { n = n + kids[i].count(); }
+        return n;
+      }
+    }
+  }
+}
+export Tree box(Tree[] kids) { return Tree.Branch(kids); }
+// ---- main.wac ----
+import { Tree, box } from "./tree.wac";
+export i32 f() {
+  Tree t = <box>a<box>b</box><>c</></box>;
+  return t.count();
+}

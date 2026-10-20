@@ -1,7 +1,27 @@
 // expect: refused
-// why: a child that is not a node, text or a number converts only through a method named by core's toNode
-// from: spec ch23 §wac-markup-child-tonode-vp842rw
-import { Node } from "core";
+// why: a child that is not the child type, an array of it, or something with a `toString` is refused
+// from: spec ch23 §wac-markup-child-converts-w8d4ntc
+import { markup } from "core";
+
+// A tree of the program's own: markup names no type (design/lang/0017).
+struct Attr {
+  string name;
+  string value;
+}
+
+enum Node {
+  Element(string tag, Attr[] attrs, Node[] kids),
+  Text(string text),
+  Fragment(Node[] kids),
+
+  Node [markup.text](string text) { return Node.Text(text); }
+  Node [markup.fragment](Node[] kids) { return Node.Fragment(kids); }
+  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) {
+    Attr[] attrs = Attr[].filled(names.len(), Attr("", ""));
+    for (i32 i = 0; i < names.len(); i++) { attrs[i] = Attr(names[i], values[i]); }
+    return Node.Element(tag, attrs, kids);
+  }
+}
 
 struct Plain { string text; }
 

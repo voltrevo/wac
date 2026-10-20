@@ -205,15 +205,15 @@ Exec testFrom(Cli cli, string dir, string target) {
 string saidBy(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
 
 export string test_a_file_importing_a_namespace_member_is_not_dropped_from_a_directory_run(Core core, Cli cli) {
-  // `import { html.p } from "core"` is how every JSX test brings in its tags. The walk found a file's
+  // `import { operators.add } from "core"` is a namespace member, as every JSX test's tags are. The walk found a file's
   // tests by parsing it without lowering its namespaces first, so such a file had none, and the run
   // dropped it without a word — "1 file: 1 ok" for a directory of two.
   T t = T.create();
   string dir = scratch(cli, "agg-ns");
   t.eqStr(freshDir(cli, dir), "", "a fresh directory");
   t.eqStr(putFile(cli, "\{dir}/test/a_test.wac",
-                  "import { Node, html.p } from \"core\";\n"
-                  + "export string test_tagged() { Node n = <p>x</p>; return \"\"; }\n"), "", "a JSX test");
+                  "import { operators.add } from \"core\";\n"
+                  + "export string test_tagged() { return \"\"; }\n"), "", "a test importing a member");
   t.eqStr(putFile(cli, "\{dir}/test/b_test.wac", "export string test_plain() { return \"\"; }\n"), "",
           "and a plain one");
   Exec r = testFrom(cli, dir, "test");
@@ -221,6 +221,28 @@ export string test_a_file_importing_a_namespace_member_is_not_dropped_from_a_dir
   t.eqI32(r.status, 0, "both pass — \{out}");
   t.isTrue(contains(out, "2 files: 2 ok"), "and both are counted — \{out}");
   t.isTrue(contains(out, "test_tagged"), "the JSX one ran — \{out}");
+  return t.report();
+}
+
+export string test_a_file_importing_a_member_of_a_neighbours_namespace_is_not_dropped(Core core, Cli cli) {
+  // The same drop one step on: the namespace is a neighbouring file's `export * as`, which the walk —
+  // parsing each test file alone — cannot see into. `import { tags.p } from "../lib.wac"` did not parse
+  // there, and the run reported "1 file: 1 ok" for a directory of two (`packages/web`'s html_test).
+  T t = T.create();
+  string dir = scratch(cli, "agg-nsfile");
+  t.eqStr(freshDir(cli, dir), "", "a fresh directory");
+  t.eqStr(putFile(cli, "\{dir}/tags.wac", "export i32 p() { return 1; }\n"), "", "a module of tags");
+  t.eqStr(putFile(cli, "\{dir}/lib.wac", "export * as tags from \"./tags.wac\";\n"), "", "re-exported as a namespace");
+  t.eqStr(putFile(cli, "\{dir}/test/a_test.wac",
+                  "import { tags.p } from \"../lib.wac\";\n"
+                  + "export string test_member() { return p() == 1 ? \"\" : \"wrong\"; }\n"), "", "a test importing a member");
+  t.eqStr(putFile(cli, "\{dir}/test/b_test.wac", "export string test_plain() { return \"\"; }\n"), "",
+          "and a plain one");
+  Exec r = testFrom(cli, dir, "test");
+  string out = saidBy(r);
+  t.eqI32(r.status, 0, "both pass — \{out}");
+  t.isTrue(contains(out, "2 files: 2 ok"), "and both are counted — \{out}");
+  t.isTrue(contains(out, "test_member"), "the one importing a member ran — \{out}");
   return t.report();
 }
 

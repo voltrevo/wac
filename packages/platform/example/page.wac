@@ -11,7 +11,7 @@
 // wacc only, as JSX is: `design/lang/0004` and compiler/README.md's omissions table.
 
 import { Cli, Core, Sys } from "std";
-import { Attr, Node, html.li } from "core";
+import { Attr, Node, html.li } from "../../web";
 
 /**
  * A tag function: its parameters are its attributes, and it answers a tree.

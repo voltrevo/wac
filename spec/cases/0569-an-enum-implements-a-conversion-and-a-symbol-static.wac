@@ -1,0 +1,19 @@
+// expect: f() = 9
+// why: an enum's method may be named by a symbol, as a struct's may, and one with no receiver is
+//      allowed when its name is a symbol: `E.[s](…)` cannot be mistaken for a variant
+// from: design/lang/0017, whose tree types are enums that build their own text
+import { toString } from "core";
+symbol make;
+enum Kind {
+  Blob,
+  Tree(string name),
+
+  string [toString](const this) {
+    return match (this) { Blob: "blob", Tree(n): n };
+  }
+  Kind [make](string name) { return Kind.Tree(name); }
+}
+export i32 f() {
+  Kind k = Kind.[make]("tree!");
+  return "\{k}".len() + "\{Kind.Blob}".len();
+}

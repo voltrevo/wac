@@ -310,7 +310,7 @@ export string test_a_keyword_in_a_name_position_names_the_keyword() {
 }
 
 /**
- * `§enum-methods-6vkq2wn` — the two enum-method shapes the spec refuses, and what it calls them.
+ * `§wac-enum-methods-receiver-d7xk2nv` — the two enum-method shapes the spec refuses, and what it calls them.
  *
  * Found the same way and fixed in the same change as the keyword clause above, but this pair is worth
  * separating because one of them was not merely vague. `i32 make() { … }` inside an enum answered

@@ -4,7 +4,8 @@
 // tested here.
 
 import { Check } from "./check.wac";
-import { Ticket, html.p, html.b } from "core";
+import { Ticket } from "core";
+import { html.p, html.b } from "../../src/page.wac";
 import { Dom, Event, Page, deliver, timerFired, valueArrived } from "../../src/page.wac";
 
 /** What the fake document saw, as one line per call. */

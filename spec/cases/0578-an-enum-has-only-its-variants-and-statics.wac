@@ -1,0 +1,11 @@
+// expect: refused
+// why: `E.m()` on an enum names a variant or a static the enum declares; a name it has neither of is
+//      refused by the checker rather than declined by the emitter
+enum Shape {
+  Point,
+  Circle(f64 radius),
+}
+export f64 made() {
+  Shape bad = Shape.make();
+  return 1.0;
+}

@@ -25,9 +25,8 @@
 // So what this is: the compiler, self-hosted, running on what you give it. The size and the SHA-256
 // of the module it emits are checkable against `waccx emit` on the same input, on your machine.
 
-import { Event, Page, Picked } from "../../web";
-import { Ticket, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.em,
-         html.footer, html.h1, html.input, html.p, html.span, html.style, html.textarea } from "core";
+import { Event, Page, Picked, html.a, html.b, html.button, html.code, html.dd, html.div, html.dl, html.dt, html.em, html.footer, html.h1, html.input, html.p, html.span, html.style, html.textarea } from "../../web";
+import { Ticket } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Buf } from "core";
 import { Vec } from "core";

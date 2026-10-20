@@ -1,4 +1,4 @@
-// Text — the built-in `toString` conversions. spec ch23 `§wac-tostring-builtin-4t3buvz`.
+// Text — the built-in `toString` conversions. spec ch23 `§wac-tostring-builtin-only-k9w4hcz`.
 //
 // `bool`, every integer and every float type convert to text without a method of their own: decimal
 // digits for an integer, the shortest decimal that reads back as the same float, and `true` or
@@ -15,8 +15,14 @@ import { Buf } from "./buf.wac";
 
 /** The conversion interpolation uses: a method named by this turns its type into text (ch23). */
 export symbol toString;
-/** The conversion markup uses: a method named by this turns its type into a `Node` (ch23). */
-export symbol toNode;
+
+// The markup symbols — `design/lang/0017`. Markup names no tree: a tag's children are its `kids`
+// parameter's element type, and that type builds text, quoted tags and fragments itself with static
+// methods named by these. `K.[markup.text](string)`, `K.[markup.element](string tag, string[] names,
+// string[] values, K[] kids)` and `K.[markup.fragment](K[] kids)`, each answering a `K`.
+export symbol @"markup.text";
+export symbol @"markup.element";
+export symbol @"markup.fragment";
 
 /** Decimal text of an `i32`, a minus sign if negative — the minimum included. */
 string coreTextI32(i32 v) { return coreTextI64(v as i64); }

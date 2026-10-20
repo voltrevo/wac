@@ -21,9 +21,8 @@
 // cells at whatever rate the tab allows, in WebAssembly compiled from wac, and the millisecond
 // counter is not decoration.
 
-import { Event, Page, Picked } from "../../web";
-import { Ticket, html.a, html.b, html.button, html.canvas, html.code, html.div, html.footer, html.h1,
-         html.input, html.p, html.span, html.style } from "core";
+import { Event, Page, Picked, html.a, html.b, html.button, html.canvas, html.code, html.div, html.footer, html.h1, html.input, html.p, html.span, html.style } from "../../web";
+import { Ticket } from "core";
 
 static string SOURCE =
   "https://github.com/voltrevo/wac/blob/master/packages/platform/example/life.wac";

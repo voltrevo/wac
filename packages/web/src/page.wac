@@ -25,8 +25,13 @@
 // has settled. Each ticket is the program's until it settles, so asking for the next event while one
 // is still outstanding queues a second waiter rather than replacing the first.
 
-import { Attr, Buf, Continuation, Node, Queue, Ticket, TicketBase } from "core";
+import { Continuation, Queue, Ticket, TicketBase } from "core";
 import { Answer, World } from "./system.wac";
+import { Node, htmlOf } from "./html.wac";
+
+// The static tree and its tags are this package's too, so a page imports everything from `"web"`.
+export { Attr, Node, htmlOf, isVoidElement } from "./html.wac";
+export * as html from "./tags.wac";
 
 // A page's system — `main(Page page, Sys sys)` — is `system.wac`, exported from here because a package
 // is one module.
@@ -390,84 +395,3 @@ struct Slots<T> {
   }
 }
 
-// ── A markup tree as HTML ─────────────────────────────────────────────────────
-//
-// JSX builds `core`'s `Node` (spec ch23, ch43), and the spec leaves serialising it to a library; this
-// is that library. **Everything is escaped**: text and attribute values are data, never markup, so a
-// string that happens to hold `<script>` arrives as those characters. `Page.render` is the only way a
-// page puts HTML into the document, and it comes through here — which makes that a property of the
-// program rather than of each place that builds a string.
-//
-// **A `<style>` is the one exception, because its text is not HTML**: the browser reads it as CSS up
-// to the first `</style`, and escaping `>` would break every child combinator in it. So its text goes
-// out as it is, with each `<` written as CSS's own escape for it, `\3c ` — which no stylesheet needs
-// to spell literally, and which is what makes `</style>` inside one impossible.
-//
-// Here rather than in a file of its own because a package is one module (spec ch04): what a project
-// imports from `web` is this file, and an import does not re-export.
-
-/** `n` as HTML. */
-export string htmlOf(Node n) {
-  Buf out = Buf.create();
-  writeNode(out, n, false);
-  return string.fromBytes(out.take());
-}
-
-void writeNode(Buf out, Node n, bool css) {
-  match (n) {
-    Text(t): {
-      if (css) { writeCss(out, t); } else { writeEscaped(out, t, false); }
-    }
-    Fragment(kids): {
-      for (Node k in kids) { writeNode(out, k, css); }
-    }
-    Element(tag, attrs, kids): {
-      out.pushStr("<");
-      out.pushStr(tag);
-      for (Attr a in attrs) {
-        out.pushStr(" ");
-        out.pushStr(a.name);
-        out.pushStr("=\"");
-        writeEscaped(out, a.value, true);
-        out.pushStr("\"");
-      }
-      out.pushStr(">");
-      // A void element has no content and no end tag: `<br></br>` is two line breaks to a browser.
-      if (isVoidElement(tag)) { return; }
-      for (Node k in kids) { writeNode(out, k, tag == "style"); }
-      out.pushStr("</");
-      out.pushStr(tag);
-      out.pushStr(">");
-    }
-  }
-}
-
-/**
- * `s` with what would be read as markup replaced by references: `&` and `<` always, `>` too, and in
- * an attribute value the `"` that would end it.
- */
-void writeEscaped(Buf out, string s, bool inAttr) {
-  u8[] b = s.toBytes();
-  for (u8 c in b) {
-    if (c == '&') { out.pushStr("&amp;"); }
-    else if (c == '<') { out.pushStr("&lt;"); }
-    else if (c == '>') { out.pushStr("&gt;"); }
-    else if (inAttr && c == '"') { out.pushStr("&quot;"); }
-    else { out.push(c); }
-  }
-}
-
-/** A stylesheet's text as it is, except `<`, written as CSS's escape for it so nothing can end the element. */
-void writeCss(Buf out, string s) {
-  u8[] b = s.toBytes();
-  for (u8 c in b) {
-    if (c == '<') { out.pushStr("\\3c "); } else { out.push(c); }
-  }
-}
-
-/** The HTML elements that cannot have content (the "void elements" of the HTML standard). */
-export bool isVoidElement(string tag) {
-  return tag == "area" || tag == "base" || tag == "br" || tag == "col" || tag == "embed" || tag == "hr"
-      || tag == "img" || tag == "input" || tag == "link" || tag == "meta" || tag == "source"
-      || tag == "track" || tag == "wbr";
-}

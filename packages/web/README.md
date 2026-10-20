@@ -7,8 +7,7 @@ thread. There is no shared memory and nothing the server has to send, so a built
 `index.html` that works from a `file://` URL or any static server.
 
 ```wac
-import { Event, Page } from "web";
-import { html.b, html.button, html.p } from "core";
+import { Event, Page, html.b, html.button, html.p } from "web";
 
 export async i32 main(Page page) {
   page.render(<p>Clicks: <b id="n">0</b> <button id="up">+1</button></p>);

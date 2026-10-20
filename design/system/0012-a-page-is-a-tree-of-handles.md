@@ -4,7 +4,7 @@
 - **Raised by:** agent-a, 2026-10-18, on the operator's direction: "there should be an underlying api that
   simply captures what we can do, and then we make diff-based rendering on top of that … I can see a need to
   be able to create a handle through which only one element (incl its events) is visible"
-- **Spans:** `packages/web`, a new `packages/view`, the markup lowering (`design/lang/0017`), `packages/web/tools/build.wac`, every
+- **Spans:** `packages/web`, the markup lowering (`design/lang/0017`), `packages/web/tools/build.wac`, every
   page in the repository
 
 ## The target
@@ -340,7 +340,7 @@ plain local is a `ui.state` cell now, since only a `set` renders anything. The r
 
 ## What the language needs
 
-**Only `design/lang/0017`: markup names no type.** The view's tree is `packages/view`'s own, so handlers on
+**Only `design/lang/0017`: markup names no type.** The view's tree is its own, so handlers on
 an element, a node for a component, `key` and `ref` are library matters, and so are `data-*`, `aria-*` and
 `{rows}`. What the language gives is the lowering: a component tag becomes a call to its first parameter's
 `[markup.component]`, with the attributes' `[markup.snapshot]`s — and `State` answers `(this, version)` as its
@@ -352,11 +352,16 @@ snapshot, which is what keeps a cell attribute from going stale. The compiler ne
 
 ## Where it lives
 
-| package | holds | depends on |
-|---|---|---|
-| `packages/web` | `Page`, `Element`, the protocol and the host, the build tool, the CSP | — |
-| `packages/view` | `Ui` and its hooks, the diff, its tree — elements with handlers, component nodes — and its tag functions | `web` |
-| `packages/html` | a static tree, the element and attribute sets, `htmlOf`, for a page written out as a file (0017) | — |
+All of it is `packages/web`, as modules re-exported from its entry, so a page imports everything from
+`"web"`. `web` is a project — templates depend on it by git — and a project imports only what is inside it,
+so a library it builds on has to be inside it too.
+
+| module | holds |
+|---|---|
+| `page.wac` | `Page`, the protocol and the host |
+| `element.wac` | `Element`, the handle layer |
+| `view.wac` | `Ui` and its hooks, the diff, its tree — elements with handlers, component nodes — and its tags |
+| `html.wac`, `tags.wac` | the static tree, its tags as the namespace `html`, `htmlOf` (`design/lang/0017`) |
 
 ## The order of work
 
@@ -364,11 +369,11 @@ snapshot, which is what keeps a cell attribute from going stale. The compiler ne
    of what ships now. (A failing case first: the four constructions above.)
 2. **`Element`**: the operations, the mirror, events per handle, batching, `Listen`. Port `counter` and `notes`.
 3. **The language changes**: `design/lang/0017`, and the bugs above.
-4. **`packages/view`**: the diff, the turn, `key`, `ref`, `afterRender`, `Ui` and its hooks, rendering only what changed
+4. **The view**: the diff, the turn, `key`, `ref`, `afterRender`, `Ui` and its hooks, rendering only what changed
    and the development build's check of it. `main(Page)` with `page.sys`. Port `templates/webapp`.
 5. **The desktop**, with windows as tasks owning `Element`s; then the terminal, then every other page.
 6. **Delete** `render`-as-`innerHTML`, `setText`, `setValue`, `setStyle`, `renderInto`, `getValue` and
-   `page.on`. `htmlOf` moves to `packages/html` (0017), for a page written out as a file.
+   `page.on`. `htmlOf` stays, for a page written out as a file.
 
 ## State of play
 

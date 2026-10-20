@@ -22,20 +22,27 @@ await Deno.writeTextFile(`${dir}/wacc-api.js`, await buildWaccAsset());
 const wacc = await import(`${dir}/wacc-api.js`) as unknown as WaccModule;
 
 Deno.test("a snippet the reference cannot compile runs in the playground's runner", async () => {
-  // JSX, a component and a fragment — three things the seed does not have.
+  // Markup building a tree of the snippet's own, and a tag that calls a function.
   const files = {
-    "main.wac": `import { Attr, Node } from "core";
+    "main.wac": `import { markup } from "core";
 
-struct Row {
-  string label;
-  Node render(const this, Node[] kids) { return <li>{Node.Text(this.label)}</li>; }
+enum Node {
+  Element(string tag, Node[] kids),
+  Text(string text),
+  Fragment(Node[] kids),
+
+  Node [markup.text](string t) { return Node.Text(t); }
+  Node [markup.fragment](Node[] kids) { return Node.Fragment(kids); }
+  Node [markup.element](string tag, string[] names, string[] values, Node[] kids) { return Node.Element(tag, kids); }
 }
+
+Node row(string label) { return <"li">{label}</"li">; }
 
 i32 count(Node n) {
   match (n) {
-    case Text(t): return 1;
-    case Fragment(kids): { i32 c = 0; for (i32 i = 0; i < kids.len(); i++) { c = c + count(kids[i]); } return c; }
-    case Element(tag, attrs, kids): {
+    Text(t): { return 1; }
+    Fragment(kids): { i32 c = 0; for (i32 i = 0; i < kids.len(); i++) { c = c + count(kids[i]); } return c; }
+    Element(tag, kids): {
       i32 c = 1;
       for (i32 i = 0; i < kids.len(); i++) { c = c + count(kids[i]); }
       return c;
@@ -43,7 +50,7 @@ i32 count(Node n) {
   }
 }
 
-export i32 nodes() { return count(<ul><Row label="a"/><Row label="b"/></ul>); }
+export i32 nodes() { Node n = <"ul"><row label="a"/><row label="b"/></"ul">; return count(n); }
 `,
   };
 
