@@ -1,0 +1,4 @@
+// expect: refused
+// why: `\{` opens an expression, and an interpolation with none is a mistake said as one
+// from: spec/3-expressions/23-interpolation-and-markup.md
+export string f() { return "a\{}b"; }

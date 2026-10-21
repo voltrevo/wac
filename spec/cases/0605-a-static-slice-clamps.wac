@@ -1,0 +1,7 @@
+// expect: f() = lo||hel
+// why: `slice` clamps and never traps, in a static initialiser as anywhere
+// from: spec/2-types/16-strings.md
+static string A = "hello".slice(3, 99);
+static string B = "hello".slice(3, 1);
+static string C = "hello".slice(-2, 3);
+export string f() { return A + "|" + B + "|" + C; }

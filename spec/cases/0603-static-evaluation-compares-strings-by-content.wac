@@ -1,0 +1,11 @@
+// expect: f() = 7
+// why: static evaluation runs by the rules a running program uses, and `==`, `!=`, `<` and `<=` compare
+//      strings by their bytes
+// from: spec/4-static/28-static-evaluation.md
+i32 code(string s) { return s == "on" ? 1 : 0; }
+static i32 ON = code("on");
+static bool NE = "ab" != "ab";
+static bool LT = "a" < "b";
+static bool LE = "ab" <= "aa";
+static bool GT = "b" > "a";
+export i32 f() { return ON + (NE ? 100 : 2) + (LT ? 1 : 100) + (LE ? 100 : 1) + (GT ? 2 : 100); }

@@ -91,6 +91,8 @@ export i32 errBlockStringOpen()     { return 10; }
 export i32 errBlockInterp()         { return 11; }
 /** `@""`, or a `@"…` the line ends inside — a verbatim name holds some text, on one line. */
 export i32 errVerbatimName()        { return 12; }
+/** `"a\{}b"` — an interpolation with nothing in it, which would otherwise be reported as `()`. */
+export i32 errEmptyInterp()         { return 13; }
 
 // ── Character classification ──────────────────────────────────────────────────
 //
@@ -510,7 +512,7 @@ export u8[] blockValue(u8[] src, i32 start, i32 len) {
   while (lastNl > from && src[lastNl - 1] != 10) { lastNl = lastNl - 1; }
   bool markAlone = true;
   for (i32 k = lastNl; k < to; k++) { if (src[k] != 32) { markAlone = false; } }
-  i32 contentEnd = lastNl == from || !markAlone ? to : lastNl;
+  i32 contentEnd = markAlone ? lastNl : to;
 
   i32 margin = blockMargin(src, from, contentEnd);
   if (margin < 0) { margin = 0; }          // a tab: reported by the caller, decoded as written
@@ -1313,6 +1315,12 @@ export Lexed lex(u8[] src) {
         // **The `}` is the other `+`**, and the literal resumes at it: the next segment's span
         // starts on this byte, so `}bc"` is one contiguous run of the file. The expression's group
         // closes first, zero-width.
+        // **An empty one is the reader's mistake, and is said as one**: the group the lexer opened
+        // would otherwise reach the checker as a `()` the reader never wrote.
+        if (out.tokenCount > 0 && out.tokens[(out.tokenCount - 1) * tokenStride()] == kLparen()
+            && out.tokens[(out.tokenCount - 1) * tokenStride() + 2] == 0) {
+          fail(out, errEmptyInterp(), startLine, startCol);
+        }
         pushToken(out, kRparen(), start, 0, startLine, startCol);
         pushToken(out, kPlus(), start, 1, startLine, startCol);
         md.mode = md.topRet();

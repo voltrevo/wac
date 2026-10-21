@@ -1,0 +1,8 @@
+// expect: f() = b:1 😀:4 :0 1
+// why: indexing a string answers the character whose encoding begins there, as a string, statically too
+// from: spec/2-types/16-strings.md
+static string B = "abc"[1];
+static string E = "a😀b"[1];
+static string M = "a😀b"[2];
+static i32 L = "abc"[1].len() + "a😀b"[2].len();
+export string f() { return B + ":\{B.len()} " + E + ":\{E.len()} " + M + ":\{M.len()} \{L}"; }

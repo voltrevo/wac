@@ -1,0 +1,11 @@
+// expect: f() = 0
+// why: the closing mark's indentation does not enter the value, so a block string with no content
+//      line is empty wherever its mark sits
+// from: spec/2-types/16-strings.md
+export i32 f() {
+  string a = """
+      """;
+  string b = """
+""";
+  return a.len() + b.len();
+}

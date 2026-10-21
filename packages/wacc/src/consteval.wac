@@ -959,7 +959,7 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
       return noneValue();
     }
 
-    Binary(op, left, right): { return evalBinary(ev, cx, fi, opKind(lx, op), left, right, want); }
+    Binary(op, left, right): { return evalBinary(ev, cx, fi, opKind(lx, op), op, left, right, want); }
 
     Ternary(cond, then, els): {
       Value c = evalExpr(ev, cx, fi, cond, "bool");
@@ -986,6 +986,16 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
       if (n < (0 as i64) || n >= (ev.heap[id].count as i64)) {
         ev.raise("array index out of bounds");
         return noneValue();
+      }
+      // **A string's element is a character, not a byte** (spec ch16): the one whose encoding begins
+      // here, as a string — and "" in the middle of one, or where no well-formed one begins.
+      if (ev.heap[id].type == "string") {
+        u8[] bytes = stringOf(ev, id).toBytes();
+        i32 at = n as~ i32;
+        i32 w = utf8CharWidth(bytes, at);
+        u8[] ch = u8[].filled(w, 0);
+        for (i32 k = 0; k < w; k++) { ch[k] = bytes[at + k]; }
+        return stringFrom(ev, ch);
       }
       return ev.heap[id].slots[n as~ i32];
     }
@@ -1143,7 +1153,7 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
  * whatever `n` is. Asking the left first and falling back to the right is what the checker does
  * with the same problem.
  */
-export Value evalBinary(Ev ev, Decls cx, i32 fi, i32 op, Expr left, Expr right, string want) {
+export Value evalBinary(Ev ev, Decls cx, i32 fi, i32 op, i32 opTok, Expr left, Expr right, string want) {
   // Short-circuit before either side is a value, or the right one runs when it must not.
   if (op == kAndAnd() || op == kOrOr()) {
     Value l = evalExpr(ev, cx, fi, left, "bool");
@@ -1165,6 +1175,12 @@ export Value evalBinary(Ev ev, Decls cx, i32 fi, i32 op, Expr left, Expr right, 
   if (isStringValue(ev, a) && op == kPlus()) {
     Value r = evalExpr(ev, cx, fi, right, "string");
     if (!evFinished(ev.status)) { return noneValue(); }
+    // **The `+` the lexer writes for `\{` converts its right side to text**, as the emitter's does
+    // (spec ch23): through the same core function, so the text is the running program's to the byte.
+    if (!isStringValue(ev, r) && isInterpOp(cx, fi, opTok)) {
+      r = textValue(ev, cx, r);
+      if (!evFinished(ev.status)) { return noneValue(); }
+    }
     return concatStrings(ev, a, r);
   }
   string t = typeOfValue(a);
@@ -1184,6 +1200,19 @@ export Value evalBinary(Ev ev, Decls cx, i32 fi, i32 op, Expr left, Expr right, 
   if (t == "") { t = "i32"; }
 
   if (t == "f32" || t == "f64") { return floatBinary(ev, op, t, f64Of(a), f64Of(b)); }
+
+  // **Two strings compare by their bytes**, as at run time: `sameValue` and `lessThan` below answer for
+  // numbers and references, and a string reached them as a reference — so `"on" == "on"` was false in
+  // a static initialiser and true in the function it called.
+  if (compares && isStringValue(ev, a) && isStringValue(ev, b)) {
+    i32 cmp = compareStrings(ev, refOf(a), refOf(b));
+    if (op == kEq()) { return boolValue(cmp == 0); }
+    if (op == kNe()) { return boolValue(cmp != 0); }
+    if (op == kLt()) { return boolValue(cmp < 0); }
+    if (op == kGt()) { return boolValue(cmp > 0); }
+    if (op == kLe()) { return boolValue(cmp <= 0); }
+    return boolValue(cmp >= 0);
+  }
 
   i64 x = intOf(a);
   i64 y = intOf(b);
@@ -1220,6 +1249,53 @@ export Value evalBinary(Ev ev, Decls cx, i32 fi, i32 op, Expr left, Expr right, 
 export bool isStringValue(Ev ev, Value v) {
   i32 id = refOf(v);
   return id >= 0 && id < ev.heapCount && ev.heap[id].type == "string";
+}
+
+/** Whether the `+` at token `op` of file `fi` is the one the lexer wrote for `\{` in a literal. */
+bool isInterpOp(Decls cx, i32 fi, i32 op) {
+  Lexed lx = cx.lexOf(fi);
+  return lx.tokens[op * tokenStride() + 2] == 2 && tokText(cx.srcOf(fi), lx, op) == "\\{";
+}
+
+/** The core function that spells a built-in type as text, or "" for a type with no built-in one. */
+export string textFunctionFor(string t) {
+  if (t == "i32" || t == "i8" || t == "i16" || t == "u8" || t == "u16") { return "coreTextI32"; }
+  if (t == "u32") { return "coreTextU32"; }
+  if (t == "i64") { return "coreTextI64"; }
+  if (t == "u64") { return "coreTextU64"; }
+  if (t == "f64") { return "coreTextF64"; }
+  if (t == "f32") { return "coreTextF32"; }
+  if (t == "bool") { return "coreTextBool"; }
+  return "";
+}
+
+/**
+ * `v` as text, by running the core function the emitter calls for its type. A type with no built-in
+ * spelling — one converting by its own `toString` — is past what this evaluates, and says so.
+ */
+Value textValue(Ev ev, Decls cx, Value v) {
+  string fname = textFunctionFor(typeOfValue(v));
+  i32 d = 0 - 1;
+  for (i32 i = 0; fname != "" && i < cx.decls.len(); i++) {
+    if (cx.keys[i] != "" && cx.nameOf(i) == fname) { d = i; }
+  }
+  if (d < 0) {
+    ev.unsupported("interpolating a value with no built-in spelling");
+    return noneValue();
+  }
+  Value[] argv = Value[].filled(1, v);
+  return callNamed(ev, cx, fname, argv, 1, cx.declFiles[d]);
+}
+
+/** The two strings' bytes compared: negative, zero or positive, as `str_cmp` answers at run time. */
+i32 compareStrings(Ev ev, i32 x, i32 y) {
+  i32 n = ev.heap[x].count < ev.heap[y].count ? ev.heap[x].count : ev.heap[y].count;
+  for (i32 i = 0; i < n; i++) {
+    i64 a = intOf(ev.heap[x].slots[i]) & (255 as i64);
+    i64 b = intOf(ev.heap[y].slots[i]) & (255 as i64);
+    if (a != b) { return a < b ? 0 - 1 : 1; }
+  }
+  return ev.heap[x].count - ev.heap[y].count;
 }
 
 export Value concatStrings(Ev ev, Value a, Value b) {
@@ -1433,6 +1509,35 @@ export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
           if (ev.localAt(on, ev.frameBase) < 0 && cx.constAt(on, fi) < 0 && typeDeclIndex(cx, on) >= 0) {
             return callMethod(ev, cx, fi, on, nm, false, noneValue(), args);
           }
+          // `f64.toBits(x)`, `f32.fromBits(b)` and their kin — a float's pattern and back, which core's
+          // float-to-text conversion starts from.
+          if ((on == "f64" || on == "f32") && (nm == "toBits" || nm == "fromBits") && args.len() == 1
+              && ev.localAt(on, ev.frameBase) < 0) {
+            string bitsType = "u64";
+            if (on == "f32") { bitsType = "u32"; }
+            if (nm == "toBits") {
+              Value fv = evalExpr(ev, cx, fi, args[0], on);
+              if (!evFinished(ev.status)) { return noneValue(); }
+              if (on == "f64") { return numValue("u64", f64.toBits(f64Of(fv)) as@ i64); }
+              f32 narrow = f64Of(fv) as~ f32;
+              return numValue("u32", f32.toBits(narrow) as i64);
+            }
+            Value iv = evalExpr(ev, cx, fi, args[0], bitsType);
+            if (!evFinished(ev.status)) { return noneValue(); }
+            if (on == "f64") { return f64Value(f64.fromBits(intOf(iv) as@ u64)); }
+            return f32Value(f32.fromBits(intOf(iv) as~ u32));
+          }
+          // `string.fromBytes(b)` — a copy of the bytes as a string, which is how core's own text
+          // conversions finish, so interpolating a number in a static initialiser arrives here.
+          if (on == "string" && nm == "fromBytes" && args.len() == 1 && ev.localAt(on, ev.frameBase) < 0) {
+            Value bv = evalExpr(ev, cx, fi, args[0], "u8[]");
+            if (!evFinished(ev.status)) { return noneValue(); }
+            i32 bid = refOf(bv);
+            if (bid < 0) { ev.raise("a method was called through null"); return noneValue(); }
+            u8[] raw = u8[].filled(ev.heap[bid].count, 0);
+            for (i32 k = 0; k < raw.len(); k++) { raw[k] = (intOf(ev.heap[bid].slots[k]) & (255 as i64)) as~ u8; }
+            return stringFrom(ev, raw);
+          }
         }
         default: { }
       }
@@ -1444,6 +1549,9 @@ export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
       if (id < 0) { ev.raise("a method was called through null"); return noneValue(); }
       // The string methods core's own conversions use, answered here as `len` is.
       if (ev.heap[id].type == "string") { return stringMethod(ev, cx, fi, id, nm, args); }
+      if (endsWithBrackets(ev.heap[id].type) && (nm == "copyFrom" || nm == "fill")) {
+        return arrayBulk(ev, cx, fi, id, nm, args);
+      }
       string owner = ownerOfHeapType(ev.heap[id].type);
       if (typeDeclIndex(cx, owner) >= 0) { return callMethod(ev, cx, fi, owner, nm, true, o, args); }
       ev.unsupported("the method `" + ev.heap[id].type + "." + nm + "`");
@@ -1563,12 +1671,89 @@ Value callMethod(Ev ev, Decls cx, i32 fromFi, string owner, string mname, bool h
 }
 
 /** A new string object holding `bytes`. */
+/**
+ * How many bytes the character beginning at `at` takes: 1 to 4 for a well-formed UTF-8 sequence, and 0
+ * for a continuation byte, a byte that begins nothing, or a sequence whose continuation bytes are not
+ * there.
+ */
+export i32 utf8CharWidth(u8[] b, i32 at) {
+  i32 c = b[at] as i32;
+  i32 w = 0;
+  if (c < 128) { return 1; }
+  if (c >= 194 && c <= 223) { w = 2; }
+  if (c >= 224 && c <= 239) { w = 3; }
+  if (c >= 240 && c <= 244) { w = 4; }
+  if (w == 0 || at + w > b.len()) { return 0; }
+  for (i32 k = 1; k < w; k++) {
+    i32 d = b[at + k] as i32;
+    if (d < 128 || d > 191) { return 0; }
+  }
+  return w;
+}
+
 Value stringFrom(Ev ev, u8[] bytes) {
   i32 id = ev.alloc("string", true, bytes.len());
   if (id < 0) { return noneValue(); }
   for (i32 i = 0; i < bytes.len(); i++) { ev.heap[id].slots[i] = numValue("i8", wrapTo("i8", bytes[i] as i64)); }
   return refValue(id);
 }
+
+bool endsWithBrackets(string t) { return t.len() > 2 && t.slice(t.len() - 2, t.len()) == "[]"; }
+
+/**
+ * `dst.copyFrom(src, srcStart, dstStart, count)` and `a.fill(value, start, count)` on the array `id`
+ * (spec ch15 `§wac-arr-bulk-7kmq4wn`): a range out of either array, or a negative count, traps as the
+ * running program's does; and ranges of one array that overlap copy as if through a temporary, as
+ * `array.copy` does. Core's own text conversions copy digits with it, so interpolating a number in a
+ * static initialiser reaches here.
+ */
+Value arrayBulk(Ev ev, Decls cx, i32 fi, i32 id, string nm, Expr[] args) {
+  i32 want = 3;
+  if (nm == "copyFrom") { want = 4; }
+  if (args.len() != want) {
+    ev.unsupported("the method `" + nm + "` with these arguments");
+    return noneValue();
+  }
+  string firstType = "";
+  if (nm == "fill") { firstType = elementOf(ev.heap[id].type); }
+  Value first = evalExpr(ev, cx, fi, args[0], firstType);
+  if (!evFinished(ev.status)) { return noneValue(); }
+  i64[] n = i64[].filled(3, 0 as i64);
+  for (i32 k = 1; k < args.len(); k++) {
+    Value v = evalExpr(ev, cx, fi, args[k], "i32");
+    if (!evFinished(ev.status)) { return noneValue(); }
+    n[k - 1] = intOf(v);
+  }
+  if (nm == "fill") {
+    i64 start = n[0];
+    i64 count = n[1];
+    if (count < (0 as i64) || start < (0 as i64) || start + count > (ev.heap[id].count as i64)) {
+      ev.raise("array index out of bounds");
+      return noneValue();
+    }
+    i32 s0 = start as~ i32;
+    i32 c0 = count as~ i32;
+    for (i32 k = s0; k < s0 + c0; k++) { ev.heap[id].slots[k] = first; }
+    return noneValue();
+  }
+  i32 sid = refOf(first);
+  if (sid < 0) { ev.raise("a method was called through null"); return noneValue(); }
+  i64 from = n[0];
+  i64 to = n[1];
+  i64 count = n[2];
+  if (count < (0 as i64) || from < (0 as i64) || to < (0 as i64) || from + count > (ev.heap[sid].count as i64)
+      || to + count > (ev.heap[id].count as i64)) {
+    ev.raise("array index out of bounds");
+    return noneValue();
+  }
+  i32 c = count as~ i32;
+  Value[] tmp = Value[].filled(c, noneValue());
+  for (i32 k = 0; k < c; k++) { tmp[k] = ev.heap[sid].slots[(from as~ i32) + k]; }
+  for (i32 k = 0; k < c; k++) { ev.heap[id].slots[(to as~ i32) + k] = tmp[k]; }
+  return noneValue();
+}
+
+string elementOf(string t) { return t.slice(0, t.len() - 2); }
 
 /** `s.slice(a, b)`, `s.toBytes()` and `s.indexOf(t)` on the string object `id`. */
 Value stringMethod(Ev ev, Decls cx, i32 fi, i32 id, string nm, Expr[] args) {
@@ -1584,9 +1769,17 @@ Value stringMethod(Ev ev, Decls cx, i32 fi, i32 id, string nm, Expr[] args) {
     if (!evFinished(ev.status)) { return noneValue(); }
     Value b = evalExpr(ev, cx, fi, args[1], "i32");
     if (!evFinished(ev.status)) { return noneValue(); }
-    i32 from = intOf(a) as! i32;
-    i32 to = intOf(b) as! i32;
-    if (from < 0 || to > bytes.len() || from > to) { ev.raise("a slice out of range"); return noneValue(); }
+    // **Clamped, never a trap** (spec ch16 `§wac-str-slice-clamp-3qnv7wk`): the overlap of the range
+    // asked for with the string, and empty when there is none.
+    i64 lo = intOf(a);
+    i64 hi = intOf(b);
+    i64 len = bytes.len() as i64;
+    if (lo < (0 as i64)) { lo = 0 as i64; }
+    if (hi > len) { hi = len; }
+    if (lo > len) { lo = len; }
+    if (hi < lo) { hi = lo; }
+    i32 from = lo as~ i32;
+    i32 to = hi as~ i32;
     u8[] part = u8[].filled(to - from, 0);
     for (i32 i = from; i < to; i++) { part[i - from] = bytes[i]; }
     return stringFrom(ev, part);

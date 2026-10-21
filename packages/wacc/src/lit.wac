@@ -161,7 +161,10 @@ f64 decimalToF64(u8[] digits, i32 count, i32 exp10) {
   // 2^-1074 whatever its leading bit is, so the count of bits shrinks as the exponent falls.
   i32 want = 53;
   if (exp2 < 0 - 1022) { want = exp2 + 1075; }
-  if (want < 0) { want = 0; }
+  // **Below half the smallest subnormal the nearest is zero.** Clamped to no bits instead, the round
+  // bit below was taken from a quotient that is always at least one, so `1e-1000` rounded up to
+  // 2^-1074. At exactly `want == 0` the value is in [2^-1075, 2^-1074) and that bit is right.
+  if (want < 0) { return 0.0; }
 
   i64 q = 0;
   for (i32 b = 0; b < want; b++) {
@@ -256,16 +259,41 @@ export f64 floatLit(string s) {
         continue;
       }
       if (c3 < 48 || c3 > 57) { break; }
-      exp = exp * 10 + (c3 - 48);
+      // Saturated rather than wrapped: `1e4294967297` is infinity, not `1e1`.
+      if (exp < 100000) { exp = exp * 10 + (c3 - 48); }
       i = i + 1;
     }
   }
   i32 e10 = (neg ? 0 - exp : exp) - frac;
-  // Past these the answer is zero or infinity whatever the digits are, and the exact path would be
-  // asked for a power of ten with three thousand digits in it.
-  if (e10 > 400) { e10 = 400; }
-  if (e10 < 0 - 400) { e10 = 0 - 400; }
-  return decimalToF64(digits, count, e10);
+  // Leading zeros carry nothing, and the value is about 10^(significant digits + e10): past the range
+  // of an f64 on either side the answer is zero or infinity whatever the digits are. Clamping `e10`
+  // alone ignored how many digits there were, so a 1 with five hundred zeros after it and `e-500` —
+  // which is 1 — came out as 1e100.
+  i32 lead = 0;
+  while (lead < count && digits[lead] == 48) { lead = lead + 1; }
+  if (lead == count) { return 0.0; }
+  u8[] sig = u8[].filled(count - lead + 1, 0);
+  i32 n = 0;
+  for (i32 k = lead; k < count; k++) {
+    sig[n] = digits[k];
+    n = n + 1;
+  }
+  if (n + e10 > 310) { return f64.fromBits(9218868437227405312 as@ u64); }
+  if (n + e10 < 0 - 330) { return 0.0; }
+  // **Seven hundred and eighty digits decide any f64**, which needs seventeen: past that only whether
+  // the rest is zero matters, and a single nonzero digit after the kept ones says it is not.
+  if (n > 780) {
+    bool rest = false;
+    for (i32 k = 780; k < n; k++) { if (sig[k] != 48) { rest = true; } }
+    e10 = e10 + (n - 780);
+    n = 780;
+    if (rest) {
+      sig[780] = 49;
+      n = 781;
+      e10 = e10 - 1;
+    }
+  }
+  return decimalToF64(sig, n, e10);
 }
 
 /**

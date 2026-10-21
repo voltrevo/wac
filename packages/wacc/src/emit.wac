@@ -19,7 +19,8 @@
 import {
   Decls, Ev, StaticBind, Value, bindStaticLocals, demandConst, evFinished, isIntName, outcomeName, declExportedOf, declNameOf,
   decimalText, evalExpr, evLimit, evUnsupported, numValue, staticForCap, staticForName,
-  staticForType, staticForValues, truthy, wrapTo, vF32, vF64, vNum, evTyName, typeDeclAt, unfoldTypeName, intOf, noneValue,
+  staticForType, staticForValues, textFunctionFor, truthy, wrapTo, vF32, vF64, vNum, evTyName, typeDeclAt, unfoldTypeName, intOf,
+  noneValue,
 } from "./consteval.wac";
 import { stringLiteralBytes } from "./strlit.wac";
 import { programGraph } from "./program.wac";
@@ -7394,6 +7395,14 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // one more — an array, a struct, a signature — every index after it is a lie, and the module names
   // a type it does not have: *"no signature at index 353 (353 types)"*. Rather than emit that, the
   // module is declined, which is the same answer the walk gives for everything it cannot do.
+  // **A body that declined while it was being written is a module that cannot be shipped.** The walk
+  // decides what is emittable before any body is written, and a decline after that — inside a hoisted
+  // lambda, or a coroutine's state machine — returns from the middle of an expression and leaves an
+  // instruction without its operand. Nothing asked: the module went out, and the engine rejected it
+  // with a stack-shape error naming a lambda by its line and column, where `fullWhy` held the sentence
+  // that said what was not emitted. `wac.wac`'s own `main` coroutine cost two bisections to learn this.
+  if (env.full) { return bareModule(); }
+
   if (env.arrayCount + env.structCount + env.sigCount != declTypes) {
     // **Which type, not how many.** This said "N counted, M wanted" and nothing else, and the
     // difference was always 1 — a number that narrows the cause to every type the program has. The
@@ -12975,17 +12984,6 @@ bool isInterpPlus(u8[] src, Lexed lexed, i32 op) {
   return lexed.tokens[op * tokenStride() + 2] == 2 && tokenTextOf(src, lexed, op) == "\\{";
 }
 
-/** The core function that spells a built-in type as text, or "" for a type with no built-in one. */
-string textFunctionFor(string t) {
-  if (t == "i32" || t == "i8" || t == "i16" || t == "u8" || t == "u16") { return "coreTextI32"; }
-  if (t == "u32") { return "coreTextU32"; }
-  if (t == "i64") { return "coreTextI64"; }
-  if (t == "u64") { return "coreTextU64"; }
-  if (t == "f64") { return "coreTextF64"; }
-  if (t == "f32") { return "coreTextF32"; }
-  if (t == "bool") { return "coreTextBool"; }
-  return "";
-}
 
 /**
  * `e` as a string, through core's `toString` (spec ch23 `§wac-interp-tostring-2qpb4rs`): a string
@@ -21868,6 +21866,12 @@ void emitStringCompare(B funcs, B code, Env env) {
  * Indexing a string is a **decode**, not a read: the lead byte says how many bytes the character is,
  * a byte in the middle of a sequence is `""` rather than half a character, and an index past the end
  * traps — which `array.get` does on its own, so the bounds check is the instruction.
+ *
+ * **A lead byte is a promise its continuation bytes keep, and they are checked.** Sized from the lead
+ * byte alone, `[0xE2, 0x41, 0x41]` indexed at 0 answered all three bytes — `"AA"` swallowed into a
+ * "character" — where the spec answers `""` for a byte that begins no well-formed sequence. The same
+ * holds for the leads UTF-8 never uses: 0xC0 and 0xC1 begin only overlong encodings, and 0xF5 to 0xF7
+ * only codepoints past U+10FFFF. `consteval.wac`'s `utf8CharWidth` is the same rule for a static string.
  */
 void emitStringIndex(B types, B funcs, B code, Env env, i32 index, i32 declTypes) {
   i32 at = env.arrayType("i8[]");
@@ -21875,9 +21879,10 @@ void emitStringIndex(B types, B funcs, B code, Env env, i32 index, i32 declTypes
   funcs.u32leb(env.sigType("fn[string(string,i32)]"));
 
   B b = B.create();
-  b.u32leb(2);
+  b.u32leb(3);
   b.u32leb(2); b.byte(127);              // locals 2, 3: the lead byte and the character's length
   b.u32leb(1); b.byte(99); b.i32leb(at); // local 4: the result
+  b.u32leb(1); b.byte(127);              // local 5: the continuation byte being checked
 
   // lead = s[i] — and this is the bounds check, since `array.get` traps on its own.
   b.byte(32); b.u32leb(0);
@@ -21896,7 +21901,7 @@ void emitStringIndex(B types, B funcs, B code, Env env, i32 index, i32 declTypes
   b.byte(65); b.i32leb(1); b.byte(33); b.u32leb(3);
   b.byte(11);
 
-  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(192); b.byte(79);   // i32.ge_u
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(194); b.byte(79);   // i32.ge_u — not 0xC0, 0xC1
   b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(224); b.byte(73);
   b.byte(113);                                                      // i32.and
   b.byte(4); b.byte(64);
@@ -21911,7 +21916,7 @@ void emitStringIndex(B types, B funcs, B code, Env env, i32 index, i32 declTypes
   b.byte(11);
 
   b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(240); b.byte(79);
-  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(248); b.byte(73);
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(245); b.byte(73);   // not 0xF5 to 0xF7
   b.byte(113);
   b.byte(4); b.byte(64);
   b.byte(65); b.i32leb(4); b.byte(33); b.u32leb(3);
@@ -21927,6 +21932,28 @@ void emitStringIndex(B types, B funcs, B code, Env env, i32 index, i32 declTypes
   b.byte(65); b.i32leb(0);
   b.byte(251); b.u32leb(7); b.u32leb(at);                           // array.new_default
   b.byte(15);                                                       // return
+  b.byte(11);
+
+  // Every continuation byte is 10xxxxxx, or this is no character at all.
+  b.byte(65); b.i32leb(1); b.byte(33); b.u32leb(5);                 // k = 1
+  b.byte(2); b.byte(64);                                            // block
+  b.byte(3); b.byte(64);                                            // loop
+  b.byte(32); b.u32leb(5); b.byte(32); b.u32leb(3); b.byte(79);     // k >= n
+  b.byte(13); b.u32leb(1);                                          // br_if out of the block
+  b.byte(32); b.u32leb(0);
+  b.byte(32); b.u32leb(1); b.byte(32); b.u32leb(5); b.byte(106);    // i + k
+  b.byte(251); b.u32leb(13); b.u32leb(at);                          // array.get_u
+  b.byte(65); b.i32leb(192); b.byte(113);                           // & 0xC0
+  b.byte(65); b.i32leb(128); b.byte(71);                            // != 0x80
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(0);
+  b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(15);                                                       // return ""
+  b.byte(11);
+  b.byte(32); b.u32leb(5); b.byte(65); b.i32leb(1); b.byte(106);
+  b.byte(33); b.u32leb(5);                                          // k++
+  b.byte(12); b.u32leb(0);                                          // br to the loop
+  b.byte(11);
   b.byte(11);
 
   b.byte(32); b.u32leb(3);

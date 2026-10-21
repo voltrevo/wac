@@ -1,0 +1,8 @@
+// expect: f() = n=7 x=-2.5 ok=true big=18446744073709551615
+// why: interpolation converts a value to text in a static initialiser exactly as it does at run time
+// from: spec/4-static/28-static-evaluation.md
+static i32 N = 7;
+static f64 X = -2.5;
+static u64 BIG = 18446744073709551615;
+static string D = "n=\{N} x=\{X} ok=\{N > 3} big=\{BIG}";
+export string f() { return D; }

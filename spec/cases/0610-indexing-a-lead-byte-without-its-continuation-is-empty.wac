@@ -1,0 +1,12 @@
+// expect: f() = 0|0|0|0|3
+// why: indexing a byte that begins no well-formed UTF-8 sequence answers "": a lead byte whose
+//      continuation bytes are not there, an overlong lead, or a lead past U+10FFFF
+// from: spec/2-types/16-strings.md
+export string f() {
+  string a = string.fromBytes([0xE2, 0x41, 0x41]);
+  string b = string.fromBytes([0xC0, 0x80]);
+  string c = string.fromBytes([0xF5, 0x80, 0x80, 0x80]);
+  string d = string.fromBytes([0xE2, 0x82]);
+  string e = string.fromBytes([0xE2, 0x82, 0xAC]);
+  return "\{a[0].len()}|\{b[0].len()}|\{c[0].len()}|\{d[0].len()}|\{e[0].len()}";
+}

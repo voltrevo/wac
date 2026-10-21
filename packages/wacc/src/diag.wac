@@ -40,8 +40,8 @@ export string lexMessage(i32 code) {
   // answer and useless: a reader looking at a literal that appears to hold nothing wrong needs to be
   // told the character is invisible, not what Unicode files it under. `design/lang/0013` D3.
   if (code == 9) {
-    return "a literal cannot hold this character raw — it is a control, a format or an "
-         + "unassigned code point; write it as `\\u{...}`";
+    return "a literal cannot hold this character raw — it is a control or an invisible format "
+         + "character; write it as `\\u{...}`";
   }
   if (code == 10) {
     return "a block string opens with `\"\"\"` and a newline — the content starts on the next line";
@@ -50,6 +50,7 @@ export string lexMessage(i32 code) {
     return "a block string does not interpolate — `\\{` opens an expression only in a one-line literal";
   }
   if (code == 12) { return "a verbatim name is `@\"text\"`, with some text and on one line"; }
+  if (code == 13) { return "`\\{` opens an expression, and there is none before its `}`"; }
   return "the lexer refused this";
 }
 
