@@ -5,12 +5,9 @@ dist
 *.tsbuildinfo
 .cache/
 
-# The demos are build output — `site/tools/syncDemos.ts` writes them from `packages/box` and
-# `packages/platform`, and CI runs it on every deploy. Committing them meant a megabyte of
-# generated HTML in git that was stale by the next day. The rest of `site/public/` is
-# hand-written and stays.
-site/public/*.html
-site/public/demos.json
+# The demos are build output — `site/tools/syncDemos.ts` writes them into `site/dist/`, beside the
+# site's pages, which `dist` above already ignores. Committing them meant a megabyte of generated HTML
+# in git that was stale by the next day.
 # The compiler as a browser asset, written by `site/tools/syncWacc.ts` on every deploy: 389K of
 # base64 that is exactly reproducible from `packages/wacc/src`, and stale the moment that changes.
 site/public/wacc-api.js

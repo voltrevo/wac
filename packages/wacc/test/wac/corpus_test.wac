@@ -85,14 +85,14 @@ export string test_the_corpus_size_the_site_quotes_is_the_corpus(Core core, Cli 
   t.isTrue(c.ok, "the walk: " + c.error);
   if (!c.ok) { return t.report(); }
 
-  FileResult f = cli.readFile("site/src/next/Stack.tsx").wait();
+  FileResult f = cli.readFile("site/wac/stack.wac").wait();
   t.isTrue(f.ok, "reading the page — " + f.error);
   if (!f.ok) { return t.report(); }
   string page = string.fromBytes(f.bytes);
 
   // The figure is written with a thousands separator, which is how the page writes every other one.
   i32 at = page.indexOf("own 1,");
-  t.isTrue(at >= 0, "Stack.tsx no longer states a corpus size in the form `own N,NNN wac files`");
+  t.isTrue(at >= 0, "site/wac/stack.wac no longer states a corpus size in the form `own N,NNN wac files`");
   if (at < 0) { return t.report(); }
   string rest = page.slice(at + 4, page.len());
   i32 sp = rest.indexOf(" ");

@@ -10,7 +10,7 @@
 
 import { Node, html.a, html.div, html.em, html.span } from "../../packages/web";
 import { A, Caveat, Code, Fact, Facts, Frame, Lead, P, Section, Sub, TREE, Table, m, mono, t } from "./ui.wac";
-import { BuiltPackage, Totals, built, totals } from "./built.wac";
+import { BuiltPackage, Figures, Totals, commas } from "./figures.wac";
 
 static string EX_WC = """
   // packages/platform/example/wc.wac — a complete application, with no TypeScript beside it
@@ -118,25 +118,14 @@ static string STACK_CSS = """
   .gap { height: 12px; }
 """;
 
-/** `n` with a comma every three digits, as `toLocaleString` wrote it on the React page. */
-string commas(i32 n) {
-  string s = "\{n}";
-  string out = "";
-  i32 len = s.len();
-  for (i32 i = 0; i < len; i++) {
-    if (i > 0 && (len - i) % 3 == 0) { out = out + ","; }
-    out = out + s.slice(i, i + 1);
-  }
-  return out;
-}
 
 /** A verdict in a table: the accent when it holds, the warm colour when it does not. */
 Node ok(string s) { return <span class="ok">{s}</span>; }
 Node warn(string s) { return <span class="warn">{s}</span>; }
 
 /** The package table's rows, from the generated map. */
-Node[][] packageRows() {
-  BuiltPackage[] ps = built();
+Node[][] packageRows(BuiltPackage[] ps) {
+
   Node[][] rows = Node[][].filled(ps.len(), Node[]());
   for (i32 i = 0; i < ps.len(); i++) {
     BuiltPackage p = ps[i];
@@ -150,8 +139,8 @@ Node[][] packageRows() {
   return rows;
 }
 
-export Node Stack() {
-  Totals T = totals();
+export Node Stack(Figures F) {
+  Totals T = F.totals;
   return <Frame current="stack" css={STACK_CSS}>
     <Section id="top" kicker="the stack" title="What is built in it">
       <P>
@@ -281,7 +270,7 @@ export Node Stack() {
           package had those done properly and sixty-one besides. They are wired together with one
           line — <m>sh.external = boxRun</m> — so <m>sort</m>,{" "}
           <m>sha256sum</m>, <m>gzip</m> and <m>diff</m>{" "}
-          are commands you can type, <A href="#/run">in a browser tab</A> as much as on a command
+          are commands you can type, <A href="run.html">in a browser tab</A> as much as on a command
           line, running the same code either way.
         </P>
         <P>
@@ -382,7 +371,7 @@ export Node Stack() {
     <Section id="tor" kicker="hard to fake, #3" title="Tor, both ends">
       <Caveat title="Not for production, and the packages say so first">
         None of this has been reviewed by anyone. On side channels the honest statement is a
-        measurement rather than a shrug — see <A href="#/stack/crypto">below</A> — and anonymity
+        measurement rather than a shrug — see <A href="stack.html#crypto">below</A> — and anonymity
         is a separate question from correctness that this does not have yet: Proposal 271 is
         partial, there is no padding, and stream isolation is by port rather than by destination.
         A wrong path selection builds a circuit that works perfectly with the anonymity quietly
@@ -536,7 +525,7 @@ export Node Stack() {
           The root cause was an asymmetric API: the server side had a framing helper and the
           client side did not, so every client-side caller was invited to write the loop itself.
           Two did. One was correct for a year and one was silently wrong for a year, which is the
-          expected score for an unwritten convention. <A href="#/checked/oracles">Why that is on
+          expected score for an unwritten convention. <A href="checked.html#oracles">Why that is on
           the method page →</A>
         </P>
       </Sub>
@@ -612,7 +601,7 @@ export Node Stack() {
       </P>
       <P>
         The chain that builds it from source is on{" "}
-        <A href="#/bootstrap">the bootstrap page</A>: five languages, the lowest hand-written wasm
+        <A href="bootstrap.html">the bootstrap page</A>: five languages, the lowest hand-written wasm
         assembly text, and nothing checked in that a compiler produced.
       </P>
       <Table head={["rung", "oracle", "state"]} rows={[
@@ -679,7 +668,7 @@ export Node Stack() {
         used to start at the reference: compile wacc with it to get stage A, compile wacc with
         stage A to get stage B, ask stage B for stage C, and require B and C to be the same bytes.
         Since the reference was deleted the start of that chain is{" "}
-        <A href="#/bootstrap">the ladder</A> instead, and the requirement is unchanged —{" "}
+        <A href="bootstrap.html">the ladder</A> instead, and the requirement is unchanged —{" "}
         <m>./bootstrap.sh</m> rebuilds the compiler with the compiler it just built
         until two rounds are byte-identical, and <Lead>refuses to install one that never
         settles</Lead>. A compiler that reproduces itself is what a bootstrap means, and nothing
@@ -773,10 +762,10 @@ export Node Stack() {
         In dependency order — nothing imports anything above it. Generated from the repository’s
         own generated map, so these numbers are the tree’s rather than a claim about it.
       </P>
-      <Table head={["package", "what it is", "lines", "tests"]} align="llrr" rows={packageRows()}/>
+      <Table head={["package", "what it is", "lines", "tests"]} align="llrr" rows={packageRows(F.built)}/>
       <div class="gap"></div>
       <P>
-        <A href="#/roadmap">Where this is going →</A>
+        <A href="roadmap.html">Where this is going →</A>
       </P>
     </Section>
   </Frame>;

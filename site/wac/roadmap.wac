@@ -8,7 +8,7 @@
 
 import { Node, html.em, html.span } from "../../packages/web";
 import { A, BLOB, Caveat, Code, Frame, Lead, P, Section, Table, m, t } from "./ui.wac";
-import { Totals, totals } from "./built.wac";
+import { Figures, Totals } from "./figures.wac";
 
 static string WAC_DESIGN = "https://github.com/voltrevo/wac/blob/master/design";
 
@@ -46,8 +46,8 @@ static string ROADMAP_CSS = """
   .state.done { color: var(--accent); }
 """;
 
-export Node Roadmap() {
-  Totals T = totals();
+export Node Roadmap(Figures F) {
+  Totals T = F.totals;
   return <Frame current="roadmap" css={ROADMAP_CSS}>
     <Section id="top" kicker="where this is going" title="Four directions, and what would count as arriving">
       <P>
@@ -222,7 +222,7 @@ export Node Roadmap() {
         was checked to fail: gutting the sleep so every ticket settles at once makes the test say
         so by name. <A href={BLOB + "/issues/system/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md"} external={true}>Issue 0087</A>{" "}
         is closed, and what it bought is on{" "}
-        <A href="#/checked/two-hosts">the method page</A>, because a second host is a kind of
+        <A href="checked.html#two-hosts">the method page</A>, because a second host is a kind of
         evidence rather than a feature.
       </P>
       <P>
@@ -259,7 +259,7 @@ export Node Roadmap() {
         Step("the reference application itself", "not started"),
       ]}/>
       <P>
-        Most of the read path exists, and <A href="#/stack/ethereum">the stack page</A> has the
+        Most of the read path exists, and <A href="stack.html#ethereum">the stack page</A> has the
         numbers. Signing is last on purpose, and not because it is hard: it is the first thing
         here that touches secret material, so it gets a different gate.
       </P>

@@ -9,12 +9,12 @@
 
 import { Node, html.em } from "../../packages/web";
 import { A, BLOB, Code, Frame, Lead, P, PLAYGROUND, Pair, Runnable, Section, Sub, TREE, m } from "./ui.wac";
-import { Totals, totals } from "./built.wac";
+import { Figures, Totals } from "./figures.wac";
 import { EX_ARRAYS, EX_BEWORD, EX_BINDGEN, EX_CONST, EX_CORE_LIB, EX_CORE_MAIN, EX_ENUM, EX_ERROR, EX_GENERIC, EX_HELLO,
          EX_IMPORTS_MAIN, EX_IMPORTS_MATH, EX_MATH, EX_NULLABLE, EX_STRUCT, EX_UNION } from "./snippets.wac";
 
-export Node Language() {
-  Totals T = totals();
+export Node Language(Figures F) {
+  Totals T = F.totals;
   i32 thousands = (T.lines + 500) / 1000;
   return <Frame current="language">
     <Section id="tour" kicker="the language" title="A tour, in one page">
@@ -24,7 +24,7 @@ export Node Language() {
         works, so this is the part to be skeptical about first.
       </P>
       <P>
-        This is the short version. The long one is <A href="#/spec">the specification</A>:
+        This is the short version. The long one is <A href="spec.html">the specification</A>:
         forty-nine chapters whose examples are programs, each one compiled against the compiler in
         the tree, with the answer it must give written above it.
       </P>

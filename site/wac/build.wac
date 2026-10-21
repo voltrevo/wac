@@ -1,0 +1,122 @@
+// Build the website: every page written as HTML, ahead of time, by this program.
+//
+//   wac run --allow-read --allow-write site/wac/build.wac [out-dir]     # from the repository root; site/dist
+//
+// **Nothing on these pages runs in the browser.** Each one is a function from the figures it quotes to a
+// markup tree (`ui.wac` and a file per page), and this writes each tree with `documentOf` — so the
+// pages are plain HTML and one stylesheet, readable without JavaScript, and the figures are the tree's
+// at the moment of the build (`figures.wac`), read from the repository rather than copied into a file.
+// The one script is `redirect.js`, on the front page only: links written for the site before this one
+// carried the page in the hash — `#/stack/crypto` — and a fragment never reaches a server, so the page
+// it lands on has to move it.
+//
+// **The files are flat** — `stack.html`, `spec-16-strings.html` — so every link between them is a bare
+// file name that works at the root of a domain, under a project's path on GitHub Pages and from a
+// `file://` checkout alike. The playground is a React app built into `playground/` beside them, and the
+// demos (`site/tools/syncDemos.ts`) are written beside them too.
+
+import { Cli, Sys } from "std";
+import { Vec } from "core";
+import { Head, Node, documentOf } from "../../packages/web";
+import { CSS, Doc, Link, fileOf, pages } from "./ui.wac";
+import { Figures, readFigures, readText } from "./figures.wac";
+import { Bootstrap } from "./bootstrap.wac";
+import { Checked } from "./checked.wac";
+import { Home } from "./home.wac";
+import { Language } from "./language.wac";
+import { Roadmap } from "./roadmap.wac";
+import { Run } from "./run.wac";
+import { Stack } from "./stack.wac";
+import { Start } from "./start.wac";
+import { SpecSource, readSpec, specDocs } from "./spec.wac";
+
+static string NAME = "wac — a language, and the stack being rebuilt in it";
+static string ABOUT = "A C-family language for WebAssembly GC, and a systems stack written in it: TLS 1.3, SSH, Tor at both ends, a shell that agrees with bash, an Ethereum light client. No C, no libc, no allocator, no dependencies. Every claim checked against the implementation it has to interoperate with.";
+
+/** Every page, from the figures and the spec as they are in the tree. */
+export Doc[] site(Figures F, SpecSource spec) {
+  Vec<Doc> out = Vec.create();
+  out.push(Doc("index.html", NAME, ABOUT, Home(F)));
+  out.push(Doc(fileOf("start"), "wac — use it", ABOUT, Start(F)));
+  out.push(Doc(fileOf("language"), "wac — the language", ABOUT, Language(F)));
+  out.push(Doc(fileOf("run"), "wac — run it here", ABOUT, Run(F)));
+  out.push(Doc(fileOf("stack"), "wac — the stack", ABOUT, Stack(F)));
+  out.push(Doc(fileOf("bootstrap"), "wac — the bootstrap", ABOUT, Bootstrap(F)));
+  out.push(Doc(fileOf("checked"), "wac — how it is checked", ABOUT, Checked(F)));
+  out.push(Doc(fileOf("roadmap"), "wac — where this is going", ABOUT, Roadmap(F)));
+  Doc[] sp = specDocs(spec);
+  for (Doc d in sp) { out.push(d); }
+  Doc[] all = Doc[].filled(out.len(), Doc("", "", "", Node.Text("")));
+  for (i32 i = 0; i < out.len(); i++) { all[i] = out.get(i); }
+  return all;
+}
+
+/**
+ * What these pages may do: their own stylesheet and the styles written on their elements, their own
+ * images, and one script of their own — and nothing fetched from anywhere else.
+ */
+export string policy() {
+  return "default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'; "
+       + "base-uri 'none'; form-action 'none'";
+}
+
+/**
+ * The front page's script: an old link's `#/<page>/<heading>` — or `#/spec/<chapter>/<heading>` — as the
+ * file and heading it is now. A route the site before that one used goes where it moved to.
+ */
+export string redirectScript() {
+  Link[] ps = pages();
+  string known = "\"\": \"index.html\", \"playground\": \"playground/\", \"built\": \"stack.html\", \"showcase\": \"stack.html\"";
+  for (Link l in ps) {
+    if (l.route != "spec") { known = known + ", \"" + l.route + "\": \"" + fileOf(l.route) + "\""; }
+  }
+  return """
+    // Written by site/wac/build.wac. Links written for an earlier site carried the page in the hash —
+    // `#/stack/crypto`, `#/spec/16-strings/indexing` — and a fragment never reaches a server, so the
+    // front page moves it to the file it names now — on arrival, and when the hash changes under it.
+    const move = () => {
+      if (!location.hash.startsWith("#/")) return;
+      const parts = location.hash.slice(2).split("/");
+    """ + "  const files = { " + known + " };\n" + """
+      const [first, second, third] = parts;
+      let to;
+      if (first === "spec") to = second ? `spec-${second}.html${third ? "#" + third : ""}` : "spec.html";
+      else if (first in files) to = files[first] + (second ? "#" + second : "");
+      if (to !== undefined && to !== "index.html") location.replace(to);
+    };
+    move();
+    addEventListener("hashchange", move);
+    """;
+}
+
+/** Each page, with the shared head, under `out`, and the files beside them. */
+export i32 buildSite(Cli cli, string root, string out) {
+  Figures F = readFigures(cli, root);
+  Doc[] docs = site(F, readSpec(cli, root));
+  cli.mkdir(out, true).wait();
+  for (Doc d in docs) {
+    string[] scripts = d.file == "index.html" ? ["redirect.js"] : string[]();
+    string html = documentOf(Head(d.title, d.description, policy(), ["site.css"], scripts, "logo.svg"), d.body);
+    write(cli, out + "/" + d.file, html.toBytes());
+  }
+  write(cli, out + "/site.css", CSS.toBytes());
+  write(cli, out + "/redirect.js", redirectScript().toBytes());
+  for (string asset in ["logo.svg", "banner.svg"]) {
+    write(cli, out + "/" + asset, readText(cli, root + "/site/public/" + asset).toBytes());
+  }
+  // Where this site was staged while it replaced the one before it: a link somebody kept still arrives.
+  cli.mkdir(out + "/next", true).wait();
+  write(cli, out + "/next/index.html", readText(cli, root + "/site/next/index.html").toBytes());
+  cli.writeErr("site: \{docs.len()} pages in \{out}\n".toBytes());
+  return 0;
+}
+
+void write(Cli cli, string path, u8[] bytes) {
+  auto c = cli.writeFile(path, bytes).wait();
+  if (!c.ok()) { trap path + ": " + c.message; }
+}
+
+export i32 main(Sys sys) {
+  string[] args = sys.args();
+  return buildSite(sys.cli, ".", args.len() > 0 ? args[0] : "site/dist");
+}

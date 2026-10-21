@@ -14,7 +14,7 @@
 
 import { Node, html.a, html.div, html.em, html.span } from "../../packages/web";
 import { A, BLOB, Caveat, Frame, Lead, P, PLAYGROUND, Runnable, Section, m } from "./ui.wac";
-import { Totals, totals } from "./built.wac";
+import { Figures, Totals } from "./figures.wac";
 import { EX_ENUM } from "./snippets.wac";
 
 /** A demo page: where it is, what it is called, what it does, and its source under the repository. */
@@ -25,12 +25,12 @@ struct Demo {
   string src;
 }
 
-Demo[] demos(Totals T) {
+Demo[] demoCards(Totals T) {
   return [
-    Demo("./shell.html", "A shell, in a tab",
+    Demo("shell.html", "A shell, in a tab",
          "packages/sh with a keyboard in front of it, and all \{T.applets} packages/box applets as commands — sort, sha256sum, gzip, cut, diff, shuf — with pipelines, loops, variables, history, and redirection into a filesystem that survives a reload.",
          "packages/box/example/term.wac"),
-    Demo("./desk.html", "A desktop, in a tab",
+    Demo("desk.html", "A desktop, in a tab",
          "design/0001's eighth and last step: a window manager written in wac, over the same system the "
          + "shell above runs on. A window is markup rather than pixels — a terminal drawn on a canvas "
          + "would mean reimplementing text layout, selection and the caret to get something worse than the "
@@ -38,32 +38,32 @@ Demo[] demos(Totals T) {
          + "terminal and dragging moves one frame. Type `cd /home/wac` in the terminal and the files window "
          + "follows it.",
          "packages/box/example/desk.wac"),
-    Demo("./hash.html", "Hash and compress, as you type",
+    Demo("hash.html", "Hash and compress, as you type",
          "SHA-256 and DEFLATE keeping up with your keystrokes — or with a file you drop on the page, which comes back compressed as a .gz your own gunzip will open.",
          "packages/box/example/hash.wac"),
-    Demo("./pixels.html", "A Mandelbrot set, recomputed on every zoom",
+    Demo("pixels.html", "A Mandelbrot set, recomputed on every zoom",
          "Pixels computed in wac and blitted to a canvas, with the escape count under the pointer and a dropped file handed straight back.",
          "packages/platform/example/pixels.wac"),
-    Demo("./ripple.html", "A ripple tank",
+    Demo("ripple.html", "A ripple tank",
          "Click the water. The wave equation over 200x150 cells, in fixed-point integers so every "
          + "machine gets the same frame — waves reflect off the walls with their phase inverted and "
          + "interfere with each other, because that is what the equation does rather than something drawn "
          + "to look like it. It proves nothing and says so; the millisecond counter is the only real claim.",
          "packages/platform/example/ripple.wac"),
-    Demo("./life.html", "Life, from a file you drop",
+    Demo("life.html", "Life, from a file you drop",
          "Conway's rule over 128x96 cells, seeded from any file you give it — one bit per cell. The "
          + "interesting part is how unalike the results are: a structured file settles into gliders and "
          + "blocks within twenty generations, and a compressed one churns for hundreds, because a .zip is "
          + "the closest thing on your disk to random soup.",
          "packages/platform/example/life.wac"),
-    Demo("./gitpack.html", "A packfile, opened in a tab",
+    Demo("gitpack.html", "A packfile, opened in a tab",
          "Drop `.git/objects/pack/pack-*.pack` from any repository on your machine. The index is thrown "
          + "away in a pack, so packages/git rebuilds it — every object header, every zlib stream, every delta "
          + "resolved against what came before — and then reads commits and trees out of it. There is no "
          + "network here and none is needed: a page cannot open a socket, which is why the half that needs "
          + "one is missing and the harder half is not.",
          "packages/git/example/gitpage.wac"),
-    Demo("./wacc.html", "The self-hosted compiler, in a tab",
+    Demo("wacc.html", "The self-hosted compiler, in a tab",
          "The playground below runs the *reference* compiler, which is TypeScript. This one runs wacc: "
          + "the compiler written in wac, compiled to WebAssembly, doing the compiling itself. It also "
          + "reads the import section back out of what it just emitted, which is the one claim this whole "
@@ -75,6 +75,14 @@ Demo[] demos(Totals T) {
 }
 
 /** Each demo as a card: its title as the link, what it does, and where its source is. */
+/** The demos' files, which `site/tools/syncDemos.ts` writes beside these pages. */
+export string[] demos() {
+  Demo[] ds = demoCards(Totals(0, 0, 0, 0, 0, 0, 0, 0, 0));
+  string[] files = string[].filled(ds.len(), "");
+  for (i32 i = 0; i < ds.len(); i++) { files[i] = ds[i].file; }
+  return files;
+}
+
 Node Cards(Demo[] ds) {
   Node[] cards = Node[].filled(ds.len(), <></>);
   for (i32 i = 0; i < ds.len(); i++) {
@@ -88,11 +96,14 @@ Node Cards(Demo[] ds) {
   return <div class="demos">{cards}</div>;
 }
 
-/** Something that runs here on the React site and not on this one yet: what it is, and the way to it. */
+/**
+ * Something that compiles and runs code in the page: what it is, and the way to it. It is the React
+ * app's, beside the playground, until these pages can carry a program of their own.
+ */
 Node Elsewhere(string title, string anchor, string what) {
   return <Caveat title={title}>
-    {what} It compiles and runs code in the page, which this site cannot do yet:{" "}
-    <A href={"./#/run/" + anchor}>open it on the React site</A>.
+    {what} It compiles and runs code in your browser, on a page of its own:{" "}
+    <A href={"playground/#/" + anchor}>open it</A>.
   </Caveat>;
 }
 
@@ -105,9 +116,9 @@ static string RUN_CSS = """
   .demo .src { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-top: 8px; }
 """;
 
-export Node Run() {
-  Totals T = totals();
-  Demo[] ds = demos(T);
+export Node Run(Figures F) {
+  Totals T = F.totals;
+  Demo[] ds = demoCards(T);
   return <Frame current="run" css={RUN_CSS}>
     <Section id="top" kicker="run it here" title={"\{ds.len()} whole applications, in this browser"}>
       <P>

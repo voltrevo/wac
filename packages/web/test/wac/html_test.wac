@@ -2,7 +2,7 @@
 // not built as markup.
 
 import { Check } from "./check.wac";
-import { Attr, Node, htmlOf, html.p, html.b, html.br, html.input, html.a } from "../../src/page.wac";
+import { Attr, Head, Node, documentOf, htmlOf, html.p, html.b, html.br, html.input, html.a } from "../../src/page.wac";
 
 export string test_elements_text_and_attributes() {
   Check t = Check.create();
@@ -26,5 +26,24 @@ export string test_text_and_attribute_values_are_escaped() {
 export string test_a_void_element_has_no_end_tag() {
   Check t = Check.create();
   t.eqStr(htmlOf(<p>a<br/>b<input id="q"/></p>), "<p>a<br>b<input id=\"q\"></p>", "br and input stand alone");
+  return t.report();
+}
+
+export string test_a_document_is_its_head_and_its_body() {
+  Check t = Check.create();
+  Head h = Head("Notes & more", "what \"this\" is", "default-src 'none'", ["site.css"], ["go.js"], "logo.svg");
+  string d = documentOf(h, <p>hi</p>);
+  t.isTrue(d.indexOf("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n") == 0, "it starts as a document: " + d);
+  t.isTrue(d.indexOf("<title>Notes &amp; more</title>") > 0, "the title, escaped");
+  t.isTrue(d.indexOf("<meta name=\"description\" content=\"what &quot;this&quot; is\">") > 0, "the description, escaped");
+  t.isTrue(d.indexOf("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'\">") > 0, "the policy");
+  t.isTrue(d.indexOf("<link rel=\"stylesheet\" href=\"site.css\">") > 0, "a stylesheet");
+  t.isTrue(d.indexOf("<script src=\"go.js\" defer></script>") > 0, "a script, by URL only");
+  t.isTrue(d.indexOf("<link rel=\"icon\" href=\"logo.svg\">") > 0, "the icon");
+  t.isTrue(d.indexOf("<body>\n<p>hi</p>\n</body>\n</html>\n") > 0, "and the body is the tree: " + d);
+  Head bare = Head("t", "", "", string[](), string[](), "");
+  string b = documentOf(bare, <p>x</p>);
+  t.isTrue(b.indexOf("description") < 0 && b.indexOf("Content-Security") < 0 && b.indexOf("<link") < 0
+           && b.indexOf("<script") < 0, "what is empty is left out: " + b);
   return t.report();
 }

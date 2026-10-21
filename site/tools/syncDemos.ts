@@ -1,5 +1,5 @@
 #!/usr/bin/env -S deno run -A
-// Build this repository's browser applications and copy them into `public/`, for the site to link.
+// Build this repository's browser applications into `dist/`, beside the site's pages, for them to link.
 //
 //   deno run -A site/tools/syncDemos.ts [repo-root]
 //
@@ -8,15 +8,14 @@
 // about them is specific to this site: each file is what its builder produces, which is the point.
 // What you can open on the website is the artifact you would build yourself.
 //
-// **They are build output and are not committed.** `.github/workflows/pages.yml` checks out
-// this repository and runs this before `vite build`, so what the site serves is built from
-// the two repositories at the moment of the deploy. They used to be committed — a megabyte of
+// **They are build output and are not committed.** `.github/workflows/pages.yml` runs this after
+// `site/wac/build.wac` has written the pages, so what the site serves is built from the tree at the
+// moment of the deploy. They used to be committed — a megabyte of
 // generated HTML in git, refreshed by hand — which meant the demos on the site were as current as
 // whenever somebody last remembered, and they were three weeks of changes stale within a day.
 //
-// Run this locally to see them: `deno run -A site/tools/syncDemos.ts`, then `npm run dev`.
-// Without it the demo links are still right and simply 404, which is the honest state of a checkout
-// that has not built them.
+// Run this locally to see them beside a local build of the site. Without it the demo links are still
+// right and simply 404, which is the honest state of a checkout that has not built them.
 
 type Demo = {
   /** Where it lands in `public/`. */
@@ -31,7 +30,7 @@ type Demo = {
 };
 
 // What each demo *is* — its name, its description and where its source lives — belongs to the site
-// and lives in `src/sections/Built.tsx`. This file knows only how to build them.
+// and lives in `site/wac/run.wac`. This file knows only how to build them.
 const DEMOS: Demo[] = [
   {
     file: "shell.html",
@@ -92,18 +91,8 @@ const DEMOS: Demo[] = [
       "the self-hosted compiler, in the tab: wacc — written in wac, compiled to wasm — compiling " +
       "whatever wac you paste, where the playground elsewhere on this site runs the TypeScript one",
   },
-  {
-    // **This site, written in wac** (`site/wac/`), beside the React one while its pages move over. Not a
-    // demo, but built the way one is, and served from the same root so that its links to a page it has
-    // not ported yet — `./#/stack` — reach the React site's.
-    file: "wac.html",
-    entry: "site/wac/main.wac",
-    extra: [],
-    what: "this website, written in wac: the pages ported so far, routed by the location hash",
-  },
 ];
 
-const sizes: { file: string; size: string }[] = [];
 
 const mono = // The repository root. Run from there — the build below is spawned with a path relative
 // to it, and it reads `packages/` and `MAP.md`. This said "these shell out to `deno
@@ -114,7 +103,8 @@ const mono = // The repository root. Run from there — the build below is spawn
 // caller's promise: `tools/syncBootstrap.ts` had the same shape and took the website's
 // deploy down when a workflow step ran it with `working-directory: site`.
 Deno.args[0] ?? new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
-const out = new URL("../public/", import.meta.url).pathname;
+const out = new URL("../dist/", import.meta.url).pathname;
+await Deno.mkdir(out, { recursive: true });
 
 /**
  * A `wac` command to run `packages/web`'s builder with: this checkout's native one when it has been
@@ -177,22 +167,7 @@ for (const demo of DEMOS) {
   const dest = `${out}${demo.file}`;
   console.log(`building ${demo.file} from ${demo.entry}, with packages/web`);
   await buildWebPage(demo, dest);
-  const size = (await Deno.stat(dest)).size;
-  sizes.push({ file: demo.file, size: `${Math.round(size / 1024)}K` });
-  console.log(`  ${demo.file}: ${Math.round(size / 1024)}K`);
+  console.log(`  ${demo.file}: ${Math.round((await Deno.stat(dest)).size / 1024)}K`);
 }
 
-// The sizes go beside the pages rather than into a TypeScript module, so that nothing generated has
-// to be imported — and therefore nothing generated has to exist for `npm run build` to work. The site
-// fetches this and shows no number when it is absent. A figure typed into a component would be right
-// on the day it was typed and wrong after the next rebuild, which is the same argument as before; only
-// the direction of the dependency has changed.
-await Deno.writeTextFile(
-  `${out}demos.json`,
-  JSON.stringify(Object.fromEntries(sizes.map((d) => [d.file, d.size])), null, 2) + "\n",
-);
-
-console.log(
-  "\nBuilt into public/, which is gitignored: these are output from another repository and CI\n" +
-    "rebuilds them on every deploy. `npm run dev` will serve them from here.",
-);
+console.log("\nBuilt into dist/, which is gitignored: CI rebuilds them on every deploy.");

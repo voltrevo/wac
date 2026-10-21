@@ -35,7 +35,7 @@ import { Ui, View } from "./view.wac";
 
 // The tree, its tags, the handles and the view are this package's too, so a page imports everything from
 // `"web"` (`design/system/0012`).
-export { Attr, Node, On, htmlOf, isVoidElement } from "./html.wac";
+export { Attr, Head, Node, On, documentOf, htmlOf, isVoidElement } from "./html.wac";
 export * as html from "./tags.wac";
 export { Element, ElementEvent, ElementOps, Listen } from "./element.wac";
 export { Mounted, Ref, State, Ui, View } from "./view.wac";

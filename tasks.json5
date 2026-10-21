@@ -24,7 +24,6 @@
   "test:heavy": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net tools/runTests.wac -- --heavy",
   "docs": "./native/v8/target/release/wac test --allow-read --allow-write --allow-run tools/",
   "map": "./native/v8/target/release/wac run --allow-read --allow-write tools/wac/map.wac",
-  "site:map": "deno run --allow-read --allow-write site/tools/syncMap.ts",
 
   // **The spec's grammar, run rather than read.** `grammar` audits the EBNF itself — undefined
   // names, left recursion, a repetition that cannot terminate — and is instant. `grammar:parse`

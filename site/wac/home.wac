@@ -18,7 +18,7 @@
 
 import { Node, html.a, html.div, html.em, html.h1, html.p, html.pre, html.span } from "../../packages/web";
 import { A, Caveat, Code, Fact, Facts, Frame, Lead, P, Runnable, Section, TREE, Table, m, t } from "./ui.wac";
-import { BuiltPackage, SpecStatus, Totals, built, specStatus, totals } from "./built.wac";
+import { BuiltPackage, Figures, SpecStatus, Totals, Tree, commas } from "./figures.wac";
 
 /**
  * The bootstrap, as the suite reports it — `packages/wacc/test/wac/selfhostemit_test.wac`.
@@ -28,13 +28,18 @@ import { BuiltPackage, SpecStatus, Totals, built, specStatus, totals } from "./b
  * is a fixed point, checked rather than asserted. What the block is really claiming is the word at
  * the end of the line.
  */
-static string BOOTSTRAP = """
-  wac-L0 .. L5   five rungs, the lowest hand-written wasm assembly text
-  stage A        wacc, built by wac-L5
-  stage B        wacc, built by stage A
-  stage C        wacc, as stage B compiles it
+string bootstrapBlock(Tree tree) {
+  return """
+    wac-L0 .. L5   five rungs, the lowest hand-written wasm assembly text
+    stage A        wacc, built by wac-L5
+    stage B        wacc, built by stage A
+    stage C        wacc, as stage B compiles it
 
-  B == C         30 sources, 3,333 KB, identical""";
+    """ + "B == C         \{tree.compilerSources} sources, " + SEED_KB + ", identical";
+}
+
+/** The seed's size, rounded — typed, and checked against `native/v8/seed/wacc.wasm` by `test/site_test.wac`. */
+export static string SEED_KB = "3,333 KB";
 
 /** A command the terminal shows, and what it prints. */
 struct Said {
@@ -58,7 +63,7 @@ Said[] transcript() {
  * One program, compiled and run before it was put here. A name that may be absent, and what to say
  * when it is: `string?` and `??`. The commented line is the invitation.
  */
-static string EX_HELLO = """
+export static string EX_GREET = """
   export string greet() {
     string? name = null;
     // string? name = "Alice and Bob";
@@ -73,18 +78,6 @@ static string EX_HELLO = """
 static string GET_IT = """
   $ curl -fsSL https://raw.githubusercontent.com/voltrevo/wac/master/bootstrap.sh \\
       | sh -s -- --host deno""";
-
-/** `n` with a comma every three digits, as the React site's `toLocaleString` wrote it. */
-string commas(i32 n) {
-  string s = "\{n}";
-  string out = "";
-  i32 len = s.len();
-  for (i32 i = 0; i < len; i++) {
-    if (i > 0 && (len - i) % 3 == 0) { out = out + ","; }
-    out = out + s.slice(i, i + 1);
-  }
-  return out;
-}
 
 /** The session the shell opens on, printed. */
 Node Terminal() {
@@ -102,15 +95,15 @@ Node Terminal() {
       <pre>{lines}</pre>
       <div class="opens">
         The shell opens on its own page, a wac program in a worker of its own:{" "}
-        <A href="./shell.html">open it and type →</A>
+        <A href="shell.html">open it and type →</A>
       </div>
     </div>
   </div>;
 }
 
 /** Every package, in dependency order, and the total. */
-Node[][] packageRows(Totals T) {
-  BuiltPackage[] ps = built();
+Node[][] packageRows(Totals T, BuiltPackage[] ps) {
+
   Node[][] rows = Node[][].filled(ps.len() + 1, Node[]());
   for (i32 i = 0; i < ps.len(); i++) {
     BuiltPackage p = ps[i];
@@ -130,9 +123,9 @@ Node[][] packageRows(Totals T) {
   return rows;
 }
 
-export Node Home() {
-  Totals T = totals();
-  SpecStatus SPEC = specStatus();
+export Node Home(Figures F) {
+  Totals T = F.totals;
+  SpecStatus SPEC = F.spec;
   return <Frame current="" contents={false} css={CSS}>
     <div class="hero">
       <div class="rule"></div>
@@ -163,7 +156,7 @@ export Node Home() {
           <m>diff</m>, <m>tar</m>, <m>nc</m> — with
           pipelines, loops, variables and redirection into a filesystem that survives a reload.
           The shell agrees with GNU bash on <Lead>{T.corpus} differential scripts</Lead>, on
-          standard output and exit status. <A href="#/run">Two more running here →</A>
+          standard output and exit status. <A href="run.html">Two more running here →</A>
         </span>
       </P>
     </Section>
@@ -174,7 +167,7 @@ export Node Home() {
         It builds the compiler from source through the ladder, so there is no seed to fetch and
         nothing from npm. Drop the <m>-s -- --host deno</m> for the default, a native
         binary on V8, which is faster and needs cargo and a C++ toolchain — every host carries the
-        same command. <A href="#/start">Using it in a project of your own →</A>
+        same command. <A href="start.html">Using it in a project of your own →</A>
       </P>
     </Section>
 
@@ -185,12 +178,12 @@ export Node Home() {
         unchecked. Generics cost nothing at runtime. The collector is the platform’s own, so
         there is no allocator to write and no linear memory to manage.
       </P>
-      <Runnable code={EX_HELLO}/>
+      <Runnable code={EX_GREET}/>
       <P>
         <span class="aside">
           No headers, no build system, no package manager: a file imports another file, and{" "}
           <m>core</m> is the only thing the compiler ships. Nothing to install.{" "}
-          <A href="#/language">The rest of the language →</A>
+          <A href="language.html">The rest of the language →</A>
         </span>
       </P>
     </Section>
@@ -199,16 +192,16 @@ export Node Home() {
       <P>
         <Lead>wac is self-hosted, and there is no seed.</Lead>{" "}
         <m>packages/wacc</m> is the compiler, written in wac —{" "}
-        <Lead>~61,000 lines</Lead> — and it is what builds everything here: the packages, the
+        <Lead>~{commas((F.tree.compilerLines + 500) / 1000 * 1000)} lines</Lead> — and it is what builds everything here: the packages, the
         programs, the demos on this page. It grew out of a compiler written in TypeScript, which
         was the seed until 2026-08-28 and is deleted. What builds wacc now is a ladder of five
         rungs whose lowest is hand-written wasm assembly text, so nothing here starts from a
         binary somebody compiled once and checked in.
       </P>
-      <Code label="wacc compiling itself" lang="text" code={BOOTSTRAP}/>
+      <Code label="wacc compiling itself" lang="text" code={bootstrapBlock(F.tree)}/>
       <P>
         Those two figures are read from the suite and typed here, so they are a snapshot; the same
-        chain <A href="./#/run/bootstrap">runs in your browser</A> on the Run page, where the byte
+        chain <A href="run.html#bootstrap">runs in your browser</A> on the Run page, where the byte
         count is whatever your machine just produced rather than whatever was true when this
         sentence was written.
       </P>
@@ -216,7 +209,7 @@ export Node Home() {
         It is measured against the specification rather than against the other compiler. The
         spec is written as <Lead>{SPEC.examples} example programs</Lead>, each with its outcome
         above it, and the suite compiles every one: it meets <Lead>{SPEC.met}</Lead>, and{" "}
-        <A href="#/spec">the spec pages</A> mark each verdict beside its program. Beside them is a
+        <A href="spec.html">the spec pages</A> mark each verdict beside its program. Beside them is a
         corpus of cases in <m>spec/cases</m> — programs the language must refuse,
         answers it must give, places it must trap — and it passes all of them, with no list of
         known misses to hide one in.
@@ -238,7 +231,7 @@ export Node Home() {
         compression library uses instructions only wacc has.
       </Caveat>
       <P>
-        <span class="aside"><A href="#/stack/wacc">How the compiler is checked →</A></span>
+        <span class="aside"><A href="stack.html#wacc">How the compiler is checked →</A></span>
       </P>
     </Section>
 
@@ -267,7 +260,7 @@ export Node Home() {
         that it does not answer.
       </Caveat>
       <P>
-        <span class="aside"><A href="#/stack/tor">What is in it, and what checked each piece →</A></span>
+        <span class="aside"><A href="stack.html#tor">What is in it, and what checked each piece →</A></span>
       </P>
     </Section>
 
@@ -297,7 +290,7 @@ export Node Home() {
         client is Altair on a minimal config and has never followed mainnet.
       </Caveat>
       <P>
-        <span class="aside"><A href="#/stack/ethereum">The packages under that, and their vectors →</A></span>
+        <span class="aside"><A href="stack.html#ethereum">The packages under that, and their vectors →</A></span>
       </P>
     </Section>
 
@@ -307,14 +300,14 @@ export Node Home() {
         In dependency order — nothing imports anything above it. No C, no libc, no runtime library,
         and no third-party code in any package’s <m>src/</m>.
       </P>
-      <Table head={["package", "what it is", "lines", "tests"]} align="llrr" rows={packageRows(T)}/>
+      <Table head={["package", "what it is", "lines", "tests"]} align="llrr" rows={packageRows(T, F.built)}/>
       <Facts rows={[
         Fact("dependencies", "0"),
         Fact("TypeScript in them", "0"),
         Fact("tests, both suites", "~\{(T.testsAll + 50) / 100 * 100}"),
       ]}/>
       <P>
-        <A href="#/checked">How each of those is checked →</A>{" "}
+        <A href="checked.html">How each of those is checked →</A>{" "}
         <span class="dim">
           — eight kinds of evidence, starting with a foreign implementation on the other end.
         </span>

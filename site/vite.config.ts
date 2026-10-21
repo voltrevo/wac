@@ -1,21 +1,15 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// **The playground, not the site.** The website is written in wac and built ahead of time into
+// `dist/` (`site/wac/build.wac`); this app is what still needs React — the playground and the two demos
+// that compile code in the page — and it is built into `dist/playground/` beside the site's pages.
+// `BASE_URL` is the deploy's own path, which CI sets to the repository name for a project page.
 export default defineConfig({
   plugins: [react()],
-  base: process.env.BASE_URL || "/",
-  // The spec pages read `spec/` and the ladder demo `bootstrap/js/`, both outside this directory;
-  // the dev server refuses files outside its root unless told the repository is fair game.
+  base: (process.env.BASE_URL || "/") + "playground/",
+  build: { outDir: "dist/playground", emptyOutDir: true },
+  // `bootstrap/js/` is outside this directory; the dev server refuses files outside its root unless
+  // told the repository is fair game.
   server: { fs: { allow: [".."] } },
-  build: {
-    rollupOptions: {
-      // One site, and a stub where it used to be built. `next/` was the rewrite, deployed beside
-      // the live one so it could be looked at before it replaced anything; it is the site now, and
-      // what is left at that path is a redirect, because the URL was shared while it was staging.
-      input: {
-        main: new URL("index.html", import.meta.url).pathname,
-        moved: new URL("next/index.html", import.meta.url).pathname,
-      },
-    },
-  },
 });

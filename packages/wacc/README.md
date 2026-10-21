@@ -303,8 +303,7 @@ answer *about* the code rather than the code itself. The ladder cannot see any o
 every rung compares behaviour and none of them changes any.
 
 What is left before wacc could be the primary compiler is the dozen TypeScript tools that call
-`wacCompile` directly — `tools/mutate`, `tools/fuzz`, `harness/ctTrace`, `site/src/snippets.ts` and
-the rest. Some of those are differential oracles and should keep calling it forever.
+`wacCompile` directly — `tools/mutate`, `tools/fuzz`, `harness/ctTrace` and the rest. Some of those are differential oracles and should keep calling it forever.
 
 `tor` alone is 305 tests, and `unicode`, `url`, `zstd`'s neighbours and eleven others pass outright. Compiling the corpus
 was never the same as running it, and this is the first time anything in the repository has run on

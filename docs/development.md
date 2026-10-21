@@ -90,7 +90,7 @@ npm run build                     # production build
 
 ```sh
 deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
-deno run -A site/tools/syncMap.ts # refresh the derived figures in site/src/data
+wac run --allow-read --allow-write site/wac/build.wac   # the website itself, into site/dist
 ```
 
 `site/src` is a vite project whose extensionless imports Deno's resolver refuses, which is why those

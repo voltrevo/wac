@@ -15,6 +15,7 @@
 
 import { Node, html.b, html.i } from "../../packages/web";
 import { A, BLOB, Caveat, Code, Frame, Lead, P, Section, Table, m, t } from "./ui.wac";
+import { Figures } from "./figures.wac";
 
 static string GUIDE = BLOB + "/docs/your-own-project.md";
 
@@ -22,7 +23,7 @@ static string EX_START_CURL = """
   $ curl -fsSL https://raw.githubusercontent.com/voltrevo/wac/master/bootstrap.sh \\
       | sh -s -- --host deno""";
 
-static string EX_START_HELLO = """
+export static string EX_START_HELLO = """
   // main.wac
   import { Sys } from "std";
 
@@ -60,7 +61,7 @@ static string EX_START_COMMANDS = """
   wac test    src/math_test.wac         # or a directory
   wac bindgen src/main.wac [--js]       # the glue a JavaScript host calls it through""";
 
-export Node Start() {
+export Node Start(Figures F) {
   return <Frame current="start">
     <Section id="get" kicker="start here" title="Getting the command">
       <Lead>

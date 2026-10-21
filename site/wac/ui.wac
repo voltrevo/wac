@@ -20,10 +20,21 @@ export static string GITHUB = "https://github.com/voltrevo/wac";
 export static string TREE = "https://github.com/voltrevo/wac/tree/master";
 export static string BLOB = "https://github.com/voltrevo/wac/blob/master";
 /**
- * The playground, which is still the React site's: an editor is a project of its own. This page is
- * served beside that site's `index.html`, so `./` is it.
+ * The playground, which is still a React app: an editor is a project of its own. It is built into
+ * `playground/` beside these pages.
  */
-export static string PLAYGROUND = "./#/playground";
+export static string PLAYGROUND = "playground/";
+
+/** The file a route is: `index.html` for the front page, `<route>.html` for the rest. */
+export string fileOf(string route) { return route == "" ? "index.html" : route + ".html"; }
+
+/** One file of the site: where it goes, its head, and what it shows. `build.wac` writes each. */
+export struct Doc {
+  string file;
+  string title;
+  string description;
+  Node body;
+}
 
 /** One entry of the navigation: the route it shows, and what it is called. */
 export struct Link {
@@ -165,18 +176,6 @@ export Node Runnable(string code, string? label) {
   </div>;
 }
 
-/** A page the React site still holds: that it is not here yet, and the link to it there. */
-export Node NotYet(string route) {
-  return <Frame current={route}>
-    <Section id="top" kicker="not ported yet" title={"#/" + route}>
-      <P>
-        This page has not been written in wac yet. The React site still has it:{" "}
-        <A href={"./#/" + route}>read it there</A>.
-      </P>
-    </Section>
-  </Frame>;
-}
-
 /** A bulleted list of prose. */
 export Node Bullets(Node[] kids) { return <ul class="bullets">{kids}</ul>; }
 
@@ -196,12 +195,12 @@ Node Nav(string current) {
   Node[] links = Node[].filled(ps.len(), <></>);
   for (i32 i = 0; i < ps.len(); i++) {
     links[i] = ps[i].route == current
-      ? <"a" href={"#/" + ps[i].route} class="here" aria-current="page">{ps[i].label}</"a">
-      : <a href={"#/" + ps[i].route}>{ps[i].label}</a>;
+      ? <"a" href={fileOf(ps[i].route)} class="here" aria-current="page">{ps[i].label}</"a">
+      : <a href={fileOf(ps[i].route)}>{ps[i].label}</a>;
   }
   return <"nav" class="top" aria-label="Pages">
     <div class="row">
-      <a href="#/" class="home"><Wordmark size="19"/></a>
+      <a href="index.html" class="home"><Wordmark size="19"/></a>
       <div class="links">{links}</div>
       <a href={PLAYGROUND} class="play">playground →</a>
     </div>
@@ -221,14 +220,14 @@ struct Heading {
  * The React site read them back out of the document after rendering; here they are in the tree before
  * it is rendered at all.
  */
-Node Contents(string route, Node[] kids) {
+Node Contents(Node[] kids) {
   Vec<Heading> found = Vec.create();
   for (Node k in kids) { headingsIn(k, found); }
   if (found.len() < 5) { return <></>; }
   Node[] items = Node[].filled(found.len(), <></>);
   for (i32 i = 0; i < found.len(); i++) {
     Heading h = found.get(i);
-    items[i] = <li><a class={h.sub ? "sub" : ""} href={"#/" + route + "/" + h.id}>{h.label}</a></li>;
+    items[i] = <li><a class={h.sub ? "sub" : ""} href={"#" + h.id}>{h.label}</a></li>;
   }
   return <"nav" class="contents" aria-label="Contents">
     <div class="what">On this page</div>
@@ -286,7 +285,7 @@ string textOfAll(Node[] kids) {
 Node Footer() {
   return <footer class="foot">
     <a href={PLAYGROUND}>playground</a>
-    <a href="#/spec">spec</a>
+    <a href="spec.html">spec</a>
     <a href={GITHUB} target="_blank" rel="noopener">source</a>
     <a href={TREE + "/packages"} target="_blank" rel="noopener">packages</a>
     <span class="note">Every snippet is real source from those repositories, abridged only by removing lines.</span>
@@ -295,16 +294,16 @@ Node Footer() {
 
 /**
  * A whole page: the navigation, its contents when it has enough headings, the page, and the footer.
- * `css` is a stylesheet of the page's own, for a shape no other page draws.
+ * `css` is a stylesheet of the page's own, for a shape no other page draws; the shared one is `CSS`,
+ * which the build writes as `site.css`.
  */
 export Node Frame(Node[] kids, string current, bool? contents, string? css) {
   return <div class="site">
-    <style>{CSS}</style>
     {css is null ? <></> : <style>{css!}</style>}
     <Nav current={current}/>
     <div class="column">
       <main>
-        {(contents ?? true) ? Contents(current, kids) : <></>}
+        {(contents ?? true) ? Contents(kids) : <></>}
         {kids}
       </main>
       <Footer/>
@@ -319,7 +318,7 @@ export Node Frame(Node[] kids, string current, bool? contents, string? css) {
 // same width, because a 68ch measure inside a wider page left every paragraph ending short of every
 // table beside it, which reads as a layout bug rather than as a considered measure.
 
-static string CSS = """
+export static string CSS = """
   :root {
     --bg: #0a0b0e; --panel: #101319; --panel-hi: #151922; --line: #1f242e; --line-bright: #2b3240;
     --text: #e8eaed; --body: #b8c0cc; --dim: #8b95a5; --faint: #5e6878;

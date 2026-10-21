@@ -1,0 +1,207 @@
+// The spec's pages, built from `spec/` as it is: the markdown subset they read, and the one rule that
+// must agree with the suite — which fence is example N.
+//
+// `spec.html` and `spec-<chapter>.html` put "met" on a fence by counting ` ```wac ` fences that are not
+// fragments, per document, the way `packages/wacc/test/wac/specexamples.wac` does. A page that counted
+// one fence differently — a fence in a list, a `// fragment` with a leading space — would put every later
+// verdict on the wrong program and look perfectly fine. So: the same documents, the same counts as
+// STATUS.md, every key in MET on a fence, and every in-spec link and anchor landing somewhere.
+
+import { Cli, Core } from "std";
+import { Vec } from "core";
+import { T } from "../../../packages/wactest/src/assert.wac";
+import { Block, Chapter, DocStatus, Inline, Route, SpecSource, Status, chaptersOf, exampleKey, metOf,
+         parseBlocks, parseInline, plain, readSpec, routeOf, slugify, specDocs, statusOf } from "../spec.wac";
+
+export string test_headings_take_githubs_anchors() {
+  T t = T.create();
+  t.eqStr(slugify("23 — Interpolation and markup"), "23--interpolation-and-markup", "a dash is dropped, its spaces kept");
+  t.eqStr(slugify("`s.len()` and `+`"), "slen-and", "code marks and punctuation go, and the end is trimmed");
+  t.eqStr(slugify("Block strings"), "block-strings", "lower case, a space a hyphen");
+  t.eqStr(plain("The **one** `rule` in [a link](x.md)"), "The one rule in a link", "markup stripped");
+  Block[] bs = parseBlocks("# Title\n\n## Open\n\ntext\n\n## Open\n");
+  string ids = "";
+  for (Block b in bs) {
+    match (b) {
+      Heading(level, text, id): { ids = ids + id + ","; }
+      default: { }
+    }
+  }
+  t.eqStr(ids, "title,open,open-1,", "a repeated heading is numbered, as GitHub numbers it");
+  return t.report();
+}
+
+export string test_the_blocks_of_a_document() {
+  T t = T.create();
+  string md = "para one\ncontinues\n\n- a\n- b\n  more\n\n1. x\n2. y\n\n| a | `b|c` |\n|---|---:|\n| 1 | 2 |\n\n```wac\n// expect: f() = 1\nexport i32 f() { return 1; }\n```\n\n```wac\n// fragment\nx\n```\n\n```wac\n// expect: emits\n```\n";
+  Block[] bs = parseBlocks(md);
+  string kinds = "";
+  for (Block b in bs) {
+    match (b) {
+      Heading(level, text, id): { kinds = kinds + "h "; }
+      Para(text): { kinds = kinds + "p(" + text + ") "; }
+      List(ordered, items): { kinds = kinds + (ordered ? "ol" : "ul") + "\{items.len()}(" + items[items.len() - 1] + ") "; }
+      Table(head, align, rows): { kinds = kinds + "table(" + head[1] + "|" + align[1] + "|\{rows.len()}) "; }
+      Fenced(f): { kinds = kinds + "fence\{f.ordinal}/\{f.expects.len()} "; }
+    }
+  }
+  t.eqStr(kinds, "p(para one continues) ul2(b more) ol2(y) table(`b|c`|right|1) fence1/1 fence-1/0 fence2/1 ",
+          "paragraphs join, lists continue, a | in code is no column, fragments are not counted");
+  return t.report();
+}
+
+/** The inline nodes as a short string: what kind each is, and its text. */
+string shape(Inline[] ns) {
+  string s = "";
+  for (Inline n in ns) {
+    match (n) {
+      Text(x): { s = s + "t(" + x + ")"; }
+      Code(x): { s = s + "c(" + x + ")"; }
+      Strong(k): { s = s + "b(" + shape(k) + ")"; }
+      Em(k): { s = s + "i(" + shape(k) + ")"; }
+      Link(href, k): { s = s + "a[" + href + "](" + shape(k) + ")"; }
+    }
+  }
+  return s;
+}
+
+export string test_inline_markup() {
+  T t = T.create();
+  t.eqStr(shape(parseInline("a `x*y*` b")), "t(a )c(x*y*)t( b)", "nothing inside code is markup");
+  t.eqStr(shape(parseInline("**bold** and *em*.")), "b(t(bold))t( and )i(t(em))t(.)", "strong and emphasis");
+  t.eqStr(shape(parseInline("a snake_case_name")), "t(a snake_case_name)", "an underscore inside a word is not emphasis");
+  t.eqStr(shape(parseInline("see [`f[0]`](x.md#y)")), "t(see )a[x.md#y](c(f[0]))", "a link around code with brackets");
+  t.eqStr(shape(parseInline("`` ` ``")), "c(`)", "padding lets a code span hold a backtick");
+  return t.report();
+}
+
+export string test_links_go_to_the_page_they_name() {
+  T t = T.create();
+  Chapter[] chs = chaptersOf("**2 — Types**\n\n- 16 [Strings](2-types/16-strings.md)\n- 17 [Const](2-types/17-const.md)\n");
+  t.eqI32(chs.len(), 2, "two chapters");
+  t.eqStr(chs[0].slug + "|" + chs[0].num + "|" + chs[0].part, "16-strings|16|2 — Types", "slug, number and part");
+  Route r = routeOf("17-const.md#x", "2-types/16-strings.md", chs, "B");
+  t.eqStr(r.href, "spec-17-const.html#x", "another chapter, at a heading");
+  t.eqStr(routeOf("#y", "2-types/16-strings.md", chs, "B").href, "#y", "a heading here");
+  t.eqStr(routeOf("../README.md", "2-types/16-strings.md", chs, "B").href, "spec.html", "the README is the contents");
+  Route gh = routeOf("../cases/", "2-types/16-strings.md", chs, "https://x/blob/master");
+  t.eqStr(gh.href, "https://x/tree/master/spec/cases", "a directory is a tree on GitHub");
+  t.isTrue(gh.external, "and leaves the site");
+  t.isTrue(routeOf("https://a.b/c", "x.md", chs, "B").external, "a URL is external");
+  return t.report();
+}
+
+/** Every link in an inline tree, as `(href)`. */
+void hrefsIn(Inline[] ns, Vec<string> into) {
+  for (Inline n in ns) {
+    match (n) {
+      Strong(k): { hrefsIn(k, into); }
+      Em(k): { hrefsIn(k, into); }
+      Link(href, k): {
+        into.push(href);
+        hrefsIn(k, into);
+      }
+      default: { }
+    }
+  }
+}
+
+bool has(string[] v, string s) {
+  for (string x in v) { if (x == s) { return true; } }
+  return false;
+}
+
+export string test_the_pages_count_examples_as_the_probe_does_and_their_links_resolve(Core core, Cli cli) {
+  T t = T.create();
+  SpecSource src = readSpec(cli, ".");
+  Chapter[] chapters = chaptersOf(src.readme);
+  t.isTrue(chapters.len() >= 40, "only \{chapters.len()} chapters read from spec/README.md");
+  string[] met = metOf(src.met);
+  Status status = statusOf(src.status);
+
+  Vec<string> paths = Vec.create();
+  Vec<string> texts = Vec.create();
+  paths.push("README.md");
+  texts.push(src.readme);
+  for (i32 i = 0; i < src.paths.len(); i++) { paths.push(src.paths[i]); texts.push(src.texts[i]); }
+
+  Vec<string> keys = Vec.create();
+  Vec<string> idsByDoc = Vec.create();
+  Block[][] docs = Block[][].filled(paths.len(), Block[]());
+  for (i32 d = 0; d < paths.len(); d++) {
+    Block[] blocks = parseBlocks(texts.get(d));
+    docs[d] = blocks;
+    string ids = "|";
+    i32 n = 0;
+    for (Block b in blocks) {
+      match (b) {
+        Heading(level, text, id): { ids = ids + id + "|"; }
+        Fenced(f): {
+          if (f.ordinal >= 0) {
+            n++;
+            keys.push(exampleKey(paths.get(d), f.ordinal));
+          }
+        }
+        default: { }
+      }
+    }
+    idsByDoc.push(ids);
+    DocStatus? said = status.of(paths.get(d));
+    i32 want = said is null ? 0 : said!.examples;
+    t.eqI32(n, want, paths.get(d) + ": the page counts its examples as STATUS.md does");
+  }
+  string[] allKeys = string[].filled(keys.len(), "");
+  for (i32 i = 0; i < keys.len(); i++) { allKeys[i] = keys.get(i); }
+  for (string k in met) { t.isTrue(has(allKeys, k), "MET names " + k + ", which is no fence the page numbers"); }
+
+  // Links: every chapter link resolves to a chapter, and every anchor to a heading in it.
+  i32 checked = 0;
+  for (i32 d = 0; d < paths.len(); d++) {
+    string path = paths.get(d);
+    Vec<string> texts2 = Vec.create();
+    for (Block b in docs[d]) {
+      match (b) {
+        Para(text): { texts2.push(text); }
+        List(ordered, items): { for (string it in items) { texts2.push(it); } }
+        Table(head, align, rows): {
+          for (string h in head) { texts2.push(h); }
+          for (string[] row in rows) { for (string c in row) { texts2.push(c); } }
+        }
+        default: { }
+      }
+    }
+    for (i32 i = 0; i < texts2.len(); i++) {
+      Vec<string> hrefs = Vec.create();
+      hrefsIn(parseInline(texts2.get(i)), hrefs);
+      for (i32 h = 0; h < hrefs.len(); h++) {
+        Route r = routeOf(hrefs.get(h), path, chapters, "BLOB");
+        if (r.external) { continue; }
+        checked++;
+        string page = r.href;
+        string anchor = "";
+        i32 hash = page.indexOf("#");
+        if (hash >= 0) {
+          anchor = page.slice(hash + 1, page.len());
+          page = page.slice(0, hash);
+        }
+        // The page a link lands on: this one, the contents (the README), or a chapter.
+        i32 target = 0 - 1;
+        if (page == "") { target = d; }
+        else if (page == "spec.html") { target = 0; }
+        else {
+          for (i32 c = 0; c < chapters.len(); c++) {
+            if ("spec-" + chapters[c].slug + ".html" == page) { target = c + 1; }
+          }
+        }
+        if (target < 0) { t.isTrue(false, path + ": " + hrefs.get(h) + " goes to no chapter"); continue; }
+        if (anchor != "") {
+          t.isTrue(idsByDoc.get(target).indexOf("|" + anchor + "|") >= 0,
+                   path + ": " + hrefs.get(h) + " — no heading #" + anchor + " in " + paths.get(target));
+        }
+      }
+    }
+  }
+  t.isTrue(checked > 100, "only \{checked} in-spec links were checked");
+  t.eqI32(specDocs(src).len(), chapters.len() + 1, "a page for the contents and one per chapter");
+  return t.report();
+}

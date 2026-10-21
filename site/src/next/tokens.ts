@@ -5,8 +5,8 @@
 // fronting nothing. This is a spec sheet instead: near-black, hairlines rather than panels, one
 // accent, monospace for anything that is a fact, and enough space that a claim has room to be read.
 //
-// Nothing here is a component. Components are in `ui.tsx`; this is the vocabulary they share, so a
-// colour or a step in the type scale is decided once.
+// The site is written in wac now (`site/wac/ui.wac` holds the same palette as CSS); this is what the
+// playground's frame and the demos beside it share.
 
 export const c = {
   /** Page background. Blue-black rather than grey-black; it makes the teal read as deliberate. */
@@ -71,3 +71,10 @@ export const space = {
  * `/wac/next/` alike, and stays right when the site moves.
  */
 export const ASSETS: string = import.meta.env.BASE_URL;
+
+/**
+ * The website's own pages, from this app: one directory up, always, because `vite.config.ts` builds
+ * this app into `playground/` beside them. A path written relative to wherever a page happens to be
+ * served is the mistake the site test hunts for; this is relative to a directory the build fixes.
+ */
+export const SITE = "../";

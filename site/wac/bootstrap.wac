@@ -16,6 +16,7 @@
 
 import { Node, html.b, html.em } from "../../packages/web";
 import { A, BLOB, Caveat, Code, Fact, Facts, Frame, Lead, P, Section, Sub, Table, m, mono, n, t } from "./ui.wac";
+import { Figures, commas } from "./figures.wac";
 
 static string EX_L0 = """
   ;; the ladder's root: one instruction per line, every index named
@@ -32,7 +33,7 @@ static string EX_L1 = """
           ((symbol? e) (emit-load (lookup e env)))
           (else        (compile-call e env))))""";
 
-static string EX_L2 = """
+export static string EX_L2 = """
   // A wx string literal is a length then its bytes, so writing one out is a loop over both.
   (fn emits ((s i32)) i32
     (do (let n (load s))
@@ -42,7 +43,7 @@ static string EX_L2 = """
           (set i (+ i 1)))
         0))""";
 
-static string EX_L3 = """
+export static string EX_L3 = """
   i32 emits(i32 s) {
     i32 n = load(s);
     i32 i = 0;
@@ -50,12 +51,12 @@ static string EX_L3 = """
     return 0;
   }""";
 
-static string EX_L4 = """
+export static string EX_L4 = """
   struct Tok { i32 kind; i32 start; i32 len; i32 val; }
 
   Tok[] toks;""";
 
-static string EX_L5 = """
+export static string EX_L5 = """
   enum Result {
     Ok(i32 v), Err(string e)
     bool isOk(const this) {
@@ -76,7 +77,9 @@ static string BOOTSTRAP_CSS = """
   .table td.first .mono { white-space: nowrap; }
 """;
 
-export Node Bootstrap() {
+export Node Bootstrap(Figures F) {
+  i32[] tr = F.tree.trusted;
+  i32[] rung = F.tree.rungLines;
   return <Frame current="bootstrap" css={BOOTSTRAP_CSS}>
     <Section id="nothing" kicker="the whole point" title="Nothing here starts from a binary somebody compiled once">
       <P>
@@ -108,10 +111,10 @@ export Node Bootstrap() {
         derivation — it was produced by something already trusted.
       </P>
       <Facts rows={[
-        Fact("the assembler that runs", "1,217 lines of Rust — turns L0 text into wasm bytes"),
-        Fact("the L1 interpreter", "1,814 lines of hand-written L0 — the only program written in it"),
-        Fact("the flattener", "500 lines — resolves imports, which no rung can do"),
-        Fact("trusted by reading", "3,558 lines, being those three"),
+        Fact("the assembler that runs", commas(tr[0]) + " lines of Rust — turns L0 text into wasm bytes"),
+        Fact("the L1 interpreter", commas(tr[1]) + " lines of hand-written L0 — the only program written in it"),
+        Fact("the flattener", commas(tr[2]) + " lines — resolves imports, which no rung can do"),
+        Fact("trusted by reading", commas(tr[0] + tr[1] + tr[2]) + " lines, being those three"),
         Fact("trusted by derivation", "everything else: four compilers and the wac compiler itself"),
         Fact("what it replaced", "18,203 lines of TypeScript, all of it in the first column"),
       ]}/>
@@ -150,11 +153,11 @@ export Node Bootstrap() {
         [<mono>wac-L0</mono>, t("wasm as text: one instruction per line, every index named, structs, arrays, packed bytes"),
          t("TypeScript and Rust, twice over"), t("—")],
         [<mono>wac-L1</mono>, t("s-expressions, closures, a heap — an interpreter, not a compiler"),
-         <Lead>hand-written wac-L0</Lead>, t("1,814 lines")],
-        [<mono>wac-L2</mono>, t("i32, memory, functions, while, string literals"), t("wac-L1"), t("298 lines")],
-        [<mono>wac-L3</mono>, t("C-family syntax, globals, scopes, shadowing"), t("wac-L2"), t("591 lines")],
-        [<mono>wac-L4</mono>, t("structs, arrays, enum/match, methods, u8[] strings, wasm GC"), t("wac-L3"), t("1,331 lines")],
-        [<mono>wac-L5</mono>, t("wac itself — all of core/ and all of wacc/src"), t("wac-L4"), t("4,192 lines")],
+         <Lead>hand-written wac-L0</Lead>, t(commas(rung[0]) + " lines")],
+        [<mono>wac-L2</mono>, t("i32, memory, functions, while, string literals"), t("wac-L1"), t(commas(rung[1]) + " lines")],
+        [<mono>wac-L3</mono>, t("C-family syntax, globals, scopes, shadowing"), t("wac-L2"), t(commas(rung[2]) + " lines")],
+        [<mono>wac-L4</mono>, t("structs, arrays, enum/match, methods, u8[] strings, wasm GC"), t("wac-L3"), t(commas(rung[3]) + " lines")],
+        [<mono>wac-L5</mono>, t("wac itself — all of core/ and all of wacc/src"), t("wac-L4"), t(commas(rung[4]) + " lines")],
       ]}/>
       <P>
         Filenames say the same thing: <m>bootstrap/boot/l4.l3</m> is the L4

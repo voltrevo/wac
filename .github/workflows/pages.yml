@@ -1,9 +1,12 @@
 name: Deploy to GitHub Pages
 
-# The demos are built here, from source, on every deploy.
+# **The site is a wac program's output.** `site/wac/build.wac` writes every page as HTML into
+# `site/dist/`, reading the figures it quotes from the tree as it is at this commit. The demos are
+# built beside those pages, and the React app that still holds the playground goes into
+# `site/dist/playground/`.
 #
-# They are whole wac applications — `site/public/*.html`, each a self-contained page with the wasm
-# inside it — built from `packages/box` and `packages/platform`. They used to be committed: a
+# The demos are whole wac applications — each a self-contained page with the wasm inside it — built
+# from `packages/box` and `packages/platform`. They used to be committed: a
 # megabyte of generated HTML in git, refreshed whenever somebody remembered, which is to say
 # usually stale.
 #
@@ -41,8 +44,12 @@ jobs:
       # are built here rather than committed — a megabyte of generated HTML in git was stale by the
       # next day. Both of these used to take the path of a sibling checkout; the merge made them
       # local.
+      # First, because it builds the `wac` command the next step runs — with Deno, since this machine
+      # has no cargo — into `.cache/wac-deno`.
       - name: Build the demos
         run: deno run -A site/tools/syncDemos.ts
+      - name: Build the site
+        run: .cache/wac-deno run --allow-read --allow-write site/wac/build.wac site/dist
       # The compiler as a file the page can import: reference-built (that is the bootstrap) with wacc's
       # own bindgen writing the JavaScript. Build output like the demos, and for the same reason.
       # `--import-map` is load-bearing: `site/package.json` puts this subtree in an npm resolution
@@ -52,11 +59,6 @@ jobs:
       # to the reference compiler in production without saying so. See `issues/system/0146`.
       - name: Build the wacc asset
         run: deno run -A --import-map deno.json site/tools/syncWacc.ts
-      # `site/src/data/built.ts` is committed so a checkout can build the site without running this,
-      # but the numbers in it go stale the same way the demos used to. Refresh them: the committed
-      # copy is the fallback, not the source.
-      - name: Refresh the package table from MAP.md
-        run: deno run -A site/tools/syncMap.ts
 
       - uses: actions/setup-node@v4
         with:

@@ -4,6 +4,7 @@ import OutputPanel from "./editor/OutputPanel";
 import FileTree from "./editor/FileTree";
 import { loadFiles, saveFiles, displayPath, absPath, takeHandOff, DEFAULT_FILES, type FileMap } from "./editor/file-store";
 import { allExampleFiles } from "./editor/examples";
+import { SITE } from "./next/tokens";
 
 const EXAMPLE_FILES = allExampleFiles();
 const ORIGINALS: FileMap = { ...DEFAULT_FILES, ...EXAMPLE_FILES };
@@ -96,7 +97,7 @@ export default function Playground() {
         }}
       >
         <a
-          href="#/"
+          href={`${SITE}index.html`}
           style={{
             fontFamily: "ui-monospace, monospace",
             fontSize: 18,
@@ -107,10 +108,10 @@ export default function Playground() {
         >
           wac<span style={{ color: "#2dd4bf" }}>;</span>
         </a>
-        <a href="#/" style={{ color: "#9ca3af", textDecoration: "none" }}>&larr; home</a>
-        <a href="shell.html" style={{ color: "#9ca3af", textDecoration: "none" }}>shell demo</a>
+        <a href={`${SITE}index.html`} style={{ color: "#9ca3af", textDecoration: "none" }}>&larr; home</a>
+        <a href={`${SITE}shell.html`} style={{ color: "#9ca3af", textDecoration: "none" }}>shell demo</a>
         <a
-          href="#/spec"
+          href={`${SITE}spec.html`}
           style={{ color: "#9ca3af", textDecoration: "none" }}
         >
           spec

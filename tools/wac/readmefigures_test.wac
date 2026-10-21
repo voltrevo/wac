@@ -225,25 +225,25 @@ export string test_packages_readme_repeats_what_the_map_generates(Core core, Cli
 /**
  * The README's shell transcript is the front page's, character for character.
  *
- * `packages/box/test/wac/frontpage_test.wac` runs those commands for real — but it reads `Home.tsx`, so the README's
+ * `packages/box/test/wac/frontpage_test.wac` runs those commands for real — but it reads the front page, so the README's
  * copy is a second transcription with nothing behind it. The README says out loud that the lines are
  * tested, which is only true while the two agree, so this is what makes that sentence honest.
  */
 export string test_the_readmes_transcript_is_the_front_pages(Core core, Cli cli) {
   T t = T.create();
-  string home = read(core, cli, "site/src/next/Home.tsx");
+  string home = read(core, cli, "site/wac/home.wac");
   string readme = read(core, cli, "README.md");
 
-  i32 open = home.indexOf("export const TRANSCRIPT: [string, string][] = [");
-  t.isTrue(open >= 0, "Home.tsx has no TRANSCRIPT table — has it been renamed?");
+  i32 open = home.indexOf("Said[] transcript() {");
+  t.isTrue(open >= 0, "site/wac/home.wac has no transcript() table — has it been renamed?");
   if (open < 0) { return t.report(); }
-  i32 close = home.slice(open, home.len()).indexOf("\n];");
-  t.isTrue(close >= 0, "the TRANSCRIPT table is not closed");
+  i32 close = home.slice(open, home.len()).indexOf("\n}");
+  t.isTrue(close >= 0, "the transcript() table is not closed");
   if (close < 0) { return t.report(); }
   string block = home.slice(open, open + close);
 
   string[] theirs = transcriptPairs(block);
-  t.isTrue(theirs.len() > 0, "no entries parsed out of TRANSCRIPT — this check is blind");
+  t.isTrue(theirs.len() > 0, "no entries parsed out of transcript() — this check is blind");
 
   i32 fence = readme.indexOf("```\n$ seq");
   t.isTrue(fence >= 0, "the README no longer opens with a `$ seq …` transcript block");
@@ -265,11 +265,11 @@ export string test_the_readmes_transcript_is_the_front_pages(Core core, Cli cli)
 }
 
 /**
- * `["cmd", "output"]` pairs out of the TRANSCRIPT table, as `$ cmd` then `output`.
+ * `Said("cmd", "output")` pairs out of the front page's `transcript()` table, as `$ cmd` then `output`.
  *
- * The escapes are undone by hand rather than by the JSON parser: these are TypeScript string
- * literals and only `\n`, `\"` and `\\` appear in them, so a parser would be a heavier answer to a
- * narrower question — and one that accepted more than TypeScript writes would hide a drift.
+ * The escapes are undone by hand rather than by a parser: these are wac string literals and only
+ * `\n`, `\"` and `\\` appear in them, so a parser would be a heavier answer to a narrower question —
+ * and one that accepted more than the page writes would hide a drift.
  */
 string[] transcriptPairs(string block) {
   string[] out = string[].filled(64, "");
@@ -801,9 +801,9 @@ export string test_every_measurement_in_the_wacc_table_names_its_printer(Core co
  * `rust-ladder/src/flatten.rs` and grown to 500. The table's own total disagreed with the same total
  * quoted five lines below it, 2,827 against 2,782, which is the tell that nothing was reading either.
  *
- * `site/src/next/Bootstrap.tsx` states the same three figures and `site/tools/site.test.ts` has
- * checked them for a while — so the *website* was right and the document it says it took its numbers
- * from was not. This is the missing half of that check.
+ * The website stated the same three figures and `site/tools/site.test.ts` checked them — so the
+ * *website* was right and the document it says it took its numbers from was not. The site reads them
+ * from the files now, when it is built (`site/wac/figures.wac`); this is the README's half.
  *
  * **Exact, not a tolerance.** The rest of this file allows drift because the things it counts move
  * with every commit; these three files change a few times a year, and the point of the claim is that

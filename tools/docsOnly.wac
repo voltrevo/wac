@@ -43,10 +43,10 @@
 // ## What a caller may do with a yes, and what it may not
 //
 // **It may not skip the suite.** A pure prose edit routinely breaks it, by design:
-// compiler/wacSpec.test.ts asserts `N issues, M closed.` against the files in `issues/*/`, and the
-// website's `Checked.tsx` carries a count of tagged claims that `spec/` has to agree with. Both are
-// markdown reading markdown, both live in the suite rather than in `wac task docs`, and both go red on
-// an edit this predicate calls documentation. That is correct of them and a hard limit on this.
+// compiler/wacSpec.test.ts asserts `N issues, M closed.` against the files in `issues/*/`, and
+// `site/wac/test/spec_test.wac` holds `spec/_status/STATUS.md`'s example counts to the spec's own fences.
+// Both are markdown reading markdown, both live in the suite rather than in `wac task docs`, and both go
+// red on an edit this predicate calls documentation. That is correct of them and a hard limit on this.
 //
 // What it may skip is work that reads *code* — the coverage ratchets measure branch coverage of each
 // package's own sources, and a markdown edit with no fence in it cannot move them.

@@ -1,38 +1,32 @@
-// The site, without a browser: every route renders, the locations a link can hold are taken apart the
-// way the React site took them apart, and every link from one page of the site to another lands on a
-// page that exists and a heading that page draws.
+// The site, as `build.wac` writes it: every page renders from the tree's own figures, every link from one
+// page to another names a file the build writes — or a demo or the playground written beside them — and
+// every heading a link names is one that page draws.
 //
 // **A link to a heading that is not there is the failure this exists for.** The browser follows it
 // without complaint — the page opens at its top — and nothing about the page that wrote it looks wrong.
-// The React site's `site/tools/site.test.ts` checked the same of its own pages.
 
+import { Change, Cli, Core, Exec, Stat } from "std";
 import { Vec } from "core";
 import { T } from "../../../packages/wactest/src/assert.wac";
-import { Attr, Node, Page, TestDoc, Ui, located } from "../../../packages/web";
-import { App, Where, pageOf, parse, routes } from "../main.wac";
+import { Attr, Node } from "../../../packages/web";
+import { Doc } from "../ui.wac";
+import { Figures, readFigures } from "../figures.wac";
+import { readSpec } from "../spec.wac";
+import { demos } from "../run.wac";
+import { redirectScript, site } from "../build.wac";
+import { EX_L2, EX_L3, EX_L4, EX_L5 } from "../bootstrap.wac";
+import { EX_GREET, SEED_KB } from "../home.wac";
+import { EX_START_HELLO } from "../start.wac";
+import { EX_ARRAYS, EX_CONST, EX_CORE_LIB, EX_CORE_MAIN, EX_ENUM, EX_GENERIC, EX_HELLO, EX_MATH, EX_NULLABLE, EX_STRUCT,
+         EX_UNION } from "../snippets.wac";
+import { filesUnder, newlines, readText } from "../figures.wac";
+import { wacBinary } from "../../../packages/wactest/src/built.wac";
 
-export string test_a_location_is_a_page_a_chapter_and_a_heading() {
-  T t = T.create();
-  Where w = parse("/checked/oracles");
-  t.eqStr(w.route + "|" + w.chapter + "|" + w.anchor, "checked||oracles", "a page and a heading");
-  w = parse("/spec/strings/indexing");
-  t.eqStr(w.route + "|" + w.chapter + "|" + w.anchor, "spec|strings|indexing", "the spec has a chapter between them");
-  w = parse("");
-  t.eqStr(w.route + "|" + w.anchor, "|", "no hash is the front page");
-  w = parse("/built");
-  t.eqStr(w.route, "stack", "a route that moved goes where it moved to");
-  w = parse("/nowhere/at-all");
-  t.eqStr(w.route + "|" + w.anchor, "|", "an unknown page is the front page, with no heading");
-  return t.report();
-}
-
-/** Every `href` under `n` that is a location on this site — `#/…`. */
+/** Every `href` under `n`. */
 void linksIn(Node n, Vec<string> into) {
   match (n) {
     Element(tag, attrs, on, kids, ref): {
-      for (Attr a in attrs) {
-        if (a.name == "href" && a.value.indexOf("#/") == 0) { into.push(a.value.slice(1, a.value.len())); }
-      }
+      for (Attr a in attrs) { if (a.name == "href") { into.push(a.value); } }
       for (Node k in kids) { linksIn(k, into); }
     }
     Fragment(kids): { for (Node k in kids) { linksIn(k, into); } }
@@ -59,63 +53,211 @@ bool has(Vec<string> v, string s) {
   return false;
 }
 
-export string test_every_link_between_pages_lands_on_a_page_and_a_heading_it_draws() {
+Doc[] built(Cli cli) { return site(readFigures(cli, "."), readSpec(cli, ".")); }
+
+export string test_the_figures_are_the_trees(Core core, Cli cli) {
   T t = T.create();
-  string[] all = routes();
-  i32 checked = 0;
-  for (string r in all) {
+  Figures F = readFigures(cli, ".");
+  t.isTrue(F.totals.packages > 30 && F.built.len() == F.totals.packages,
+           "MAP.md's package count is its rows: \{F.totals.packages} and \{F.built.len()}");
+  t.isTrue(F.totals.lines > 100000 && F.totals.tests > 1000, "and its totals parsed: \{F.totals.lines} lines, \{F.totals.tests} tests");
+  t.isTrue(F.totals.testsAll > F.totals.tests, "the whole repository has more tests than its packages");
+  t.isTrue(F.totals.corpus > 900 && F.totals.applets > 60 && F.totals.wacTests > 600,
+           "the corpus, the applets and the wac test files are counted: \{F.totals.corpus}, \{F.totals.applets}, \{F.totals.wacTests}");
+  t.isTrue(F.spec.examples > 400 && F.spec.met <= F.spec.examples, "the spec's status is summed: \{F.spec.met} of \{F.spec.examples}");
+  return t.report();
+}
+
+export string test_every_link_between_pages_lands_on_a_file_and_a_heading_it_draws(Core core, Cli cli) {
+  T t = T.create();
+  Doc[] docs = built(cli);
+  Vec<string> beside = Vec.create();
+  for (string f in demos()) { beside.push(f); }
+  i32 named = 0;
+  for (Doc d in docs) {
     Vec<string> links = Vec.create();
-    linksIn(pageOf(parse("/" + r)), links);
+    linksIn(d.body, links);
     for (i32 i = 0; i < links.len(); i++) {
       string link = links.get(i);
-      Where w = parse(link);
-      // An unknown page parses as the front page; a link that names one is the mistake.
-      if (w.route == "" && link != "/" && link != "") {
-        t.isTrue(false, "#/" + r + " links to " + link + ", which is no page");
+      if (link.indexOf("https://") == 0 || link.indexOf("http://") == 0 || link.indexOf("playground/") == 0) { continue; }
+      i32 hash = link.indexOf("#");
+      string file = hash < 0 ? link : link.slice(0, hash);
+      string anchor = hash < 0 ? "" : link.slice(hash + 1, link.len());
+      if (file == "") { file = d.file; }
+      if (has(beside, file)) { continue; }
+      Doc? target = null;
+      for (Doc o in docs) { if (o.file == file) { target = o; } }
+      if (target is null) {
+        t.isTrue(false, d.file + " links to " + link + ", and the site has no " + file);
         continue;
       }
-      if (w.anchor == "" || w.route == "spec") { continue; }
+      if (anchor == "") { continue; }
       Vec<string> ids = Vec.create();
-      idsIn(pageOf(w), ids);
-      t.isTrue(has(ids, w.anchor), "#/" + r + " links to " + link + ", and #/" + w.route + " draws no heading " + w.anchor);
-      checked++;
+      idsIn(target!.body, ids);
+      t.isTrue(has(ids, anchor), d.file + " links to " + link + ", and " + file + " draws no heading " + anchor);
+      named++;
     }
   }
-  t.isTrue(checked > 0, "some link names a heading, or this checked nothing");
+  t.isTrue(named > 10, "links name headings, or this checked nothing: \{named}");
   return t.report();
 }
 
-export string test_no_page_draws_one_id_twice() {
+export string test_no_page_draws_one_id_twice(Core core, Cli cli) {
   T t = T.create();
-  string[] all = routes();
-  for (string r in all) {
+  for (Doc d in built(cli)) {
     Vec<string> ids = Vec.create();
-    idsIn(pageOf(parse("/" + r)), ids);
+    idsIn(d.body, ids);
     for (i32 i = 0; i < ids.len(); i++) {
       for (i32 j = 0; j < i; j++) {
-        t.isTrue(ids.get(i) != ids.get(j), "#/" + r + " draws the id " + ids.get(i) + " twice");
+        t.isTrue(ids.get(i) != ids.get(j), d.file + " draws the id " + ids.get(i) + " twice");
       }
     }
   }
   return t.report();
 }
 
-export string test_the_site_follows_the_location_and_draws_each_page() {
+export string test_the_redirect_knows_every_page_but_the_spec_by_name() {
   T t = T.create();
-  TestDoc doc = TestDoc.create();
-  Page page = Page.create(doc.dom());
-  doc.attach(page);
-  located(page, "#/checked/mutation");
-  schedule page.take;
-  page.mount((Ui ui) => <App page={page}/>);
-  page.turn();
-  t.isTrue(doc.find("id", "mutation") >= 0, "a link to a heading opens the page that draws it");
-  t.eqStr(doc.scrolled, "0 mutation", "scrolled to that heading");
-  string[] all = routes();
-  for (string r in all) {
-    located(page, "#/" + r);
-    t.isTrue(doc.findTag("main") >= 0, "#/" + r + " drew a page");
-    t.eqStr(doc.scrolled, "0 ", "#/" + r + " opened at its top");
+  string js = redirectScript();
+  for (string r in ["start", "language", "run", "stack", "bootstrap", "checked", "roadmap"]) {
+    t.isTrue(js.indexOf("\"" + r + "\": \"" + r + ".html\"") >= 0, "an old #/" + r + " link goes to " + r + ".html");
   }
+  t.isTrue(js.indexOf("\"built\": \"stack.html\"") >= 0, "and #/built, which moved, to the stack");
+  t.isTrue(js.indexOf("spec-${second}.html") >= 0, "a chapter of the spec to its file");
+  return t.report();
+}
+
+/** `wac check` of `files` (names and texts) written under `dir`, entry first: what it said, or "" when clean. */
+string checks(Cli cli, string dir, string[] names, string[] texts) {
+  cli.mkdir(dir, true).wait();
+  for (i32 i = 0; i < names.len(); i++) { cli.writeFile(dir + "/" + names[i], texts[i].toBytes()).wait(); }
+  Exec r = cli.exec(wacBinary(cli), ["check", dir + "/" + names[0]], u8[]()).wait();
+  if (!r.ran()) { return "could not run wac: " + r.error; }
+  return r.status == 0 ? "" : string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+}
+
+/**
+ * **The programs the pages invite a reader to run compile.** Each is a claim about the compiler, and the
+ * front page's is the most embarrassing one on the site to have broken. The core pair is a claim too:
+ * neither file declares `Read` and they still meet through it, which only a compile can check.
+ */
+export string test_the_pages_runnable_snippets_compile(Core core, Cli cli) {
+  T t = T.create();
+  string[] names = ["EX_GREET", "EX_HELLO", "EX_L5", "EX_START_HELLO", "EX_MATH", "EX_STRUCT", "EX_CONST", "EX_NULLABLE",
+                    "EX_ENUM", "EX_UNION", "EX_GENERIC", "EX_ARRAYS"];
+  string[] texts = [EX_GREET, EX_HELLO, EX_L5, EX_START_HELLO, EX_MATH, EX_STRUCT, EX_CONST, EX_NULLABLE, EX_ENUM,
+                    EX_UNION, EX_GENERIC, EX_ARRAYS];
+  for (i32 i = 0; i < names.len(); i++) {
+    string said = checks(cli, ".cache/site-snippets/" + names[i], ["a.wac"], [texts[i]]);
+    t.eqStr(said, "", names[i] + " compiles");
+  }
+  t.eqStr(checks(cli, ".cache/site-snippets/core", ["main.wac", "report.wac"], [EX_CORE_MAIN, EX_CORE_LIB]), "",
+          "the core snippets are one program");
+  return t.report();
+}
+
+/**
+ * **The rung excerpts are quotations**, and each names the file it came from: somebody tidies a rung and
+ * the page goes on showing what it used to say. Compiling them is not the check — L2 to L4 are not wac,
+ * and a compiler that accepted them would be the thing going wrong.
+ */
+export string test_the_ladder_pages_rung_excerpts_are_verbatim(Core core, Cli cli) {
+  T t = T.create();
+  string[] excerpts = [EX_L2, EX_L3, EX_L4];
+  string[] files = ["l3.l2", "l4.l3", "l5.l4"];
+  for (i32 i = 0; i < 3; i++) {
+    t.isTrue(readText(cli, "bootstrap/boot/" + files[i]).indexOf(excerpts[i]) >= 0,
+             "EX_L\{i + 2} is verbatim in bootstrap/boot/" + files[i]);
+  }
+  return t.report();
+}
+
+/** Every `wac <word>` the pages print as code: in `<m>…</m>`, between backticks, or in a code block. */
+void commandWords(string src, Vec<string> into) {
+  for (string open in ["<m>wac ", "`wac ", "\n  $ wac ", "\n    $ wac "]) {
+    i32 at = src.indexOf(open);
+    while (at >= 0) {
+      i32 from = at + open.len();
+      i32 end = from;
+      u8[] b = src.toBytes();
+      while (end < b.len() && b[end] >= 'a' && b[end] <= 'z') { end++; }
+      // A file is not a subcommand: `wac hello.wasm` runs a module.
+      bool file = end < b.len() && (b[end] == '.' || b[end] == '_' || (b[end] >= '0' && b[end] <= '9'));
+      if (end > from && !file) {
+        string w = src.slice(from, end);
+        if (!has(into, w)) { into.push(w); }
+      }
+      i32 next = src.slice(from, src.len()).indexOf(open);
+      at = next < 0 ? 0 - 1 : from + next;
+    }
+  }
+}
+
+/**
+ * **Every command spelling the site prints is one the CLI chapter names.** `wac uninstall` became
+ * `wac self uninstall` and the site printed the old spelling in two places; a reader who typed it got
+ * `unknown command`. Only what is marked as code — the pages say "wac is" in prose all over.
+ */
+export string test_the_command_spellings_the_site_prints_are_the_cli_pages(Core core, Cli cli) {
+  T t = T.create();
+  string chapter = readText(cli, "spec/8-tooling/45-cli.md");
+  Vec<string> words = Vec.create();
+  for (string f in filesUnder(cli, "site/wac")) {
+    if (f.indexOf("/test/") < 0 && f.indexOf(".wac") == f.len() - 4) { commandWords(readText(cli, f), words); }
+  }
+  t.isTrue(words.len() >= 3, "the pages print commands, or this read nothing: \{words.len()}");
+  for (i32 i = 0; i < words.len(); i++) {
+    t.isTrue(chapter.indexOf("wac " + words.get(i)) >= 0,
+             "the site prints `wac " + words.get(i) + "`, which spec/8-tooling/45-cli.md does not name");
+  }
+  return t.report();
+}
+
+/**
+ * **Every repository path the site links to is in the tree** — `BLOB + "/path"` and `TREE + "/path"`,
+ * written as literals. The links are public and a dead one is a 404 for anyone who follows it.
+ */
+export string test_every_repository_path_the_site_links_to_is_in_the_tree(Core core, Cli cli) {
+  T t = T.create();
+  i32 seen = 0;
+  for (string f in filesUnder(cli, "site/wac")) {
+    if (f.indexOf("/test/") >= 0) { continue; }
+    string src = readText(cli, f);
+    for (string open in ["BLOB + \"/", "TREE + \"/"]) {
+      i32 at = src.indexOf(open);
+      while (at >= 0) {
+        i32 from = at + open.len();
+        i32 end = from + src.slice(from, src.len()).indexOf("\"");
+        string path = src.slice(from, end);
+        i32 hash = path.indexOf("#");
+        if (hash >= 0) { path = path.slice(0, hash); }
+        if (path != "") {
+          Stat st = cli.stat(path).wait();
+          t.isTrue(st.exists, f + " links to " + path + ", which is not in the tree");
+          seen++;
+        }
+        i32 next = src.slice(end, src.len()).indexOf(open);
+        at = next < 0 ? 0 - 1 : end + next;
+      }
+    }
+  }
+  t.isTrue(seen > 5, "the site links into the tree, or this read nothing: \{seen}");
+  return t.report();
+}
+
+/**
+ * **The seed's size the front page types is the seed's, within a tenth.** It moves with every change to
+ * the compiler, so it is rounded and checked rather than exact. The seed is one per checkout and
+ * gitignored, so a checkout without one cannot answer — which is not a failure.
+ */
+export string test_the_seed_size_the_front_page_states_is_the_seeds(Core core, Cli cli) {
+  T t = T.create();
+  Stat st = cli.stat("native/v8/seed/wacc.wasm").wait();
+  if (!st.exists) { return t.report(); }
+  i32 kb = (st.size / (1000 as i64)) as! i32;
+  i32 said = 0;
+  for (u8 c in SEED_KB.toBytes()) { if (c >= '0' && c <= '9') { said = said * 10 + (c - '0') as i32; } }
+  t.isTrue(kb * 10 >= said * 9 && kb * 10 <= said * 11,
+           "the front page says the seed is " + SEED_KB + "; native/v8/seed/wacc.wasm is \{kb} KB");
   return t.report();
 }

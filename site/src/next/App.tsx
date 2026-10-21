@@ -1,75 +1,50 @@
-// Routing for the staging site. Same shape as the live one — the hash carries the page and,
-// after a slash, a heading to scroll to — because two hashes in one URL is not a thing.
+// What is left of the React site: the parts that compile and run code in the page.
+//
+// The website itself is written in wac and built ahead of time (`site/wac/build.wac`), as plain HTML.
+// This app is built into `playground/` beside it and holds what a static page cannot do yet: the
+// playground, which is an editor — a project of its own — and the two demos on the Run page that
+// compile a program in your browser and run it, the maze and the bootstrap. `#/maze` and `#/bootstrap`
+// open those; anything else is the playground, which is also what every old `#/playground` link wanted.
 
-import { lazy, Suspense, useEffect, useState } from "react";
-import Home from "./Home";
-import Start from "./Start";
-import Language from "./Language";
-import Stack from "./Stack";
-import Bootstrap from "./Bootstrap";
-import Run from "./Run";
-import Checked from "./Checked";
-import Roadmap from "./Roadmap";
+import { useEffect, useState, type ReactNode } from "react";
 import Playground from "../Playground";
-import type { Route } from "./ui";
+import Maze from "../editor/Maze";
+import Bootstrap from "../editor/Bootstrap";
+import { c, font, SITE } from "./tokens";
 
-// The spec is fifty documents and a renderer for them; nobody reading the front page should fetch it.
-const Spec = lazy(() => import("./Spec"));
+type Route = "playground" | "maze" | "bootstrap";
 
-const ROUTES: Record<string, Route> = { "": "home", start: "start", language: "language", run: "run",
-  bootstrap: "bootstrap", stack: "stack", checked: "checked", roadmap: "roadmap", spec: "spec", playground: "playground" };
+function parse(): Route {
+  const first = window.location.hash.replace(/^#\/?/, "").split("/")[0];
+  return first === "maze" || first === "bootstrap" ? first : "playground";
+}
 
-/**
- * Where the site this replaces sent people, for links written before it did.
- *
- * `#/built` was the package inventory and `#/showcase` the case studies, and both of those are
- * `#/stack` now. Without these an old link resolves to nothing and lands on the front page —
- * silently, because an unknown route falls back rather than failing, which is the shape this
- * repo's own route test exists to catch one layer up. A reader who followed a link about Tor and
- * arrived at a heading about a language cannot tell that anything went wrong.
- */
-const MOVED: Record<string, Route> = { built: "stack", showcase: "stack" };
-
-/**
- * `#/<page>/<heading>`, except the spec, which has a chapter between the two:
- * `#/spec/<chapter>/<heading>`.
- */
-function parse(): { route: Route; chapter: string | null; anchor: string | null } {
-  const [first, second, third] = window.location.hash.replace(/^#\/?/, "").split("/");
-  const route = ROUTES[first] ?? MOVED[first] ?? "home";
-  if (route === "spec") return { route, chapter: second || null, anchor: third || null };
-  return { route, chapter: null, anchor: second || null };
+/** A demo on a page of its own: the way back to the site, and what it is. */
+function Alone({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div style={{ background: c.bg, minHeight: "100vh", color: c.text, fontFamily: font.sans }}>
+      <div style={{ maxWidth: 820, margin: "0 auto", padding: "24px 24px 60px" }}>
+        <div style={{ fontFamily: font.mono, fontSize: 13, display: "flex", gap: 18, marginBottom: 28 }}>
+          <a href={`${SITE}run.html`} style={{ color: c.dim, textDecoration: "none" }}>← run it here</a>
+          <a href="#/playground" style={{ color: c.accent, textDecoration: "none", marginLeft: "auto" }}>playground →</a>
+        </div>
+        <h1 style={{ fontFamily: font.mono, fontSize: 27, fontWeight: 600, margin: "0 0 24px" }}>{title}</h1>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
-  const [{ route, chapter, anchor }, setLocation] = useState(parse);
-
+  const [route, setRoute] = useState(parse);
   useEffect(() => {
-    const handle = () => setLocation(parse());
+    const handle = () => setRoute(parse());
     window.addEventListener("hashchange", handle);
     return () => window.removeEventListener("hashchange", handle);
   }, []);
-
-  useEffect(() => {
-    // A chapter arrives after the route does, and scrolls itself once it has.
-    if (route === "spec") return;
-    if (anchor === null) { window.scrollTo(0, 0); return; }
-    const id = requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView({ block: "start" }));
-    return () => cancelAnimationFrame(id);
-  }, [route, anchor]);
-
   switch (route) {
-    case "start":    return <Start />;
-    case "language": return <Language />;
-    case "run":      return <Run />;
-    case "stack":    return <Stack />;
-    case "bootstrap": return <Bootstrap />;
-    case "checked":  return <Checked />;
-    case "roadmap":  return <Roadmap />;
-    case "spec":     return <Suspense fallback={null}><Spec chapter={chapter} anchor={anchor} /></Suspense>;
-    // The playground is a tool rather than a page, and is carried over as it is — sending a reader
-    // to the other site to use it would be a stranger seam than its styling being a step behind.
-    case "playground": return <Playground />;
-    default:         return <Home />;
+    case "maze": return <Alone title="A maze whose solution is a wac program"><Maze /></Alone>;
+    case "bootstrap": return <Alone title="wacc compiling itself, in your browser"><Bootstrap /></Alone>;
+    default: return <Playground />;
   }
 }

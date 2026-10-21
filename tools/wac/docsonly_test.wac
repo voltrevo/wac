@@ -140,9 +140,9 @@ export string test_nothing_else_in_the_tree_mentions_a_fence_marker(Core core, C
     "packages/wacc/src/coretext.wac",
     "std/platform.wac",
     "core/map.wac",
-    // The site's spec page, which numbers the spec's examples the way the test above counts them.
-    "site/src/next/specModel.ts",
-    "site/tools/site.test.ts"
+    // The site's spec pages, which number the spec's examples the way the test above counts them.
+    "site/wac/spec.wac",
+    "site/wac/test/spec_test.wac"
   ];
   string[] why = [
     "runs every example in spec",

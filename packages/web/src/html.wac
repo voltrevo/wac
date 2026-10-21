@@ -134,6 +134,63 @@ void writeCss(Buf out, string s) {
   }
 }
 
+// ── As a document ────────────────────────────────────────────────────────────
+//
+// **For a builder writing a page ahead of time** — a static site, which runs nothing in the browser.
+// `htmlOf` refuses `meta`, `link` and `script` because what a *program* draws must not load or run
+// anything; a document's head is exactly those, and it is the builder's, written from fields rather
+// than from a tree, so the tree's policy still holds over everything in the body.
+
+/** What goes in a document's head. An empty string, or an empty list, leaves its element out. */
+export struct Head {
+  string title;
+  string description;
+  /** The Content Security Policy, as the `content` of its `meta`. */
+  string policy;
+  /** Stylesheets, by URL. */
+  string[] styles;
+  /** Scripts, by URL — never inline, so a policy can allow them as `'self'` — each deferred. */
+  string[] scripts;
+  string icon;
+}
+
+/** `body` as a whole document under `head`: a doctype, the head, and `htmlOf(body)`. */
+export string documentOf(Head head, Node body) {
+  Buf out = Buf.create();
+  out.pushStr("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n");
+  out.pushStr("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
+  if (head.policy != "") { metaTag(out, "http-equiv", "Content-Security-Policy", head.policy); }
+  out.pushStr("<title>");
+  writeEscaped(out, head.title, false);
+  out.pushStr("</title>\n");
+  if (head.description != "") { metaTag(out, "name", "description", head.description); }
+  if (head.icon != "") { linkTag(out, "icon", head.icon); }
+  for (string s in head.styles) { linkTag(out, "stylesheet", s); }
+  for (string s in head.scripts) {
+    refuseAttr("documentOf", "src", s);
+    out.pushStr("<script src=\"");
+    writeEscaped(out, s, true);
+    out.pushStr("\" defer></script>\n");
+  }
+  out.pushStr("</head>\n<body>\n");
+  writeNode(out, body, false);
+  out.pushStr("\n</body>\n</html>\n");
+  return string.fromBytes(out.take());
+}
+
+void metaTag(Buf out, string kind, string name, string content) {
+  out.pushStr("<meta " + kind + "=\"" + name + "\" content=\"");
+  writeEscaped(out, content, true);
+  out.pushStr("\">\n");
+}
+
+void linkTag(Buf out, string rel, string href) {
+  refuseAttr("documentOf", "href", href);
+  out.pushStr("<link rel=\"" + rel + "\" href=\"");
+  writeEscaped(out, href, true);
+  out.pushStr("\">\n");
+}
+
 /** The HTML elements that cannot have content (the "void elements" of the HTML standard). */
 export bool isVoidElement(string tag) {
   return tag == "area" || tag == "base" || tag == "br" || tag == "col" || tag == "embed" || tag == "hr"

@@ -1,0 +1,321 @@
+// The figures the site quotes, read from the repository when the site is built.
+//
+// **Read, not generated into a file and committed.** The site said 652 differential scripts against a
+// corpus of 817, in four places, before its numbers were derived; then they were derived into a
+// generated module that a deploy refreshed and a checkout carried stale. The site is built by a wac
+// program now (`build.wac`), so it asks the tree directly: `MAP.md` for the packages — generated, and
+// its staleness a failing test — `spec/_status/STATUS.md` for the spec, the corpus and the applet list
+// by importing them, and the test files by counting them. The pages still round the headline figures:
+// a snapshot of a moving tree should not pretend to four significant digits.
+
+import { Cli, FileResult, Stat } from "std";
+import { Vec } from "core";
+import { corpus } from "../../packages/sh/test/wac/corpus.wac";
+import { appletNames } from "../../packages/box/src/box.wac";
+import { countTestsDeclaredHere } from "../../tools/wac/map.wac";
+
+/** Package count, lines of wac, tests, command-line programs, browser pages, and what is counted beside them. */
+export struct Totals {
+  i32 packages;
+  i32 lines;
+  /** The *packages'* tests — the number that belongs beside the package table. */
+  i32 tests;
+  i32 programs;
+  i32 pages;
+  /**
+   * The whole repository's: the packages', and the `Deno.test` declarations of the compiler, harness and
+   * tooling around them. An undercount, since a test generated in a loop is one declaration and several runs.
+   */
+  i32 testsAll;
+  /** Scripts in the bash differential corpus — `packages/sh/test/wac/corpus.wac`. */
+  i32 corpus;
+  /** Applets `packages/box` dispatches: what `appletNames()` returns and `/bin` lists. */
+  i32 applets;
+  /** Test files written in wac rather than in the host language, under each package's `test/`. */
+  i32 wacTests;
+}
+
+/** A row of the package table: `MAP.md`'s. */
+export struct BuiltPackage {
+  string name;
+  string what;
+  i32 lines;
+  i32 tests;
+}
+
+/** The spec's examples, and how many of them the compiler meets. */
+export struct SpecStatus {
+  i32 examples;
+  i32 met;
+  i32 missed;
+  i32 unsupported;
+}
+
+/** What the pages say about particular files, counted from them. */
+export struct Tree {
+  /** Distinct `[§wac-…]` tags in the spec's markdown: claims, not mentions — a tag written twice is one claim. */
+  i32 specTags;
+  /** `packages/wacc/src`: its `.wac` files, and their lines. */
+  i32 compilerSources;
+  i32 compilerLines;
+  /** The rungs' sources, `bootstrap/boot/l1.l0` … `l5.l4`, in lines: wac-L1 to wac-L5. */
+  i32[] rungLines;
+  /**
+   * What has to be read to trust the ladder, in lines: the assembler `./bootstrap.sh` runs, the L1
+   * interpreter that is the only program written in hand-typed L0, and the flattener that has no second
+   * implementation — in that order.
+   */
+  i32[] trusted;
+  /** Packages — a directory under `packages/` with a `src/` — and those with a `coverage:<name>` task. */
+  i32 packages;
+  i32 ledgered;
+  /** The packages without one, sorted. */
+  string[] unledgered;
+}
+
+export struct Figures {
+  Totals totals;
+  Tree tree;
+  /** In dependency order, as `MAP.md` lists them: nothing imports anything above it. */
+  BuiltPackage[] built;
+  SpecStatus spec;
+}
+
+/** Everything the site quotes, from the tree at `root` (`"."` from the repository's root). Traps on a file whose format moved. */
+export Figures readFigures(Cli cli, string root) {
+  string map = readText(cli, root + "/MAP.md");
+  string[] lines = linesOf(map);
+  i32[] head = i32[].filled(5, 0 - 1);
+  for (i32 i = 0; i + 1 < lines.len(); i++) {
+    // `41 packages, 176,160 lines of wac, 3053 tests,` and then `87 command-line programs and 14 browser pages.`
+    string[] a = numbersIn(lines[i]);
+    if (a.len() == 3 && lines[i].indexOf(" packages, ") > 0 && lines[i + 1].indexOf("command-line programs") > 0) {
+      string[] b = numbersIn(lines[i + 1]);
+      head = [num(a[0]), num(a[1]), num(a[2]), num(b[0]), num(b[1])];
+      break;
+    }
+  }
+  if (head[0] < 0) { trap root + "/MAP.md: no totals line — has its format changed?"; }
+
+  Vec<BuiltPackage> rows = Vec.create();
+  for (string l in lines) {
+    // `| [`name`](packages/name/) | summary | 1,234 | 56 | deps |`
+    if (l.indexOf("| [`") != 0) { continue; }
+    string[] cells = cellsOf(l);
+    if (cells.len() < 4) { continue; }
+    string name = cells[0].slice(3, cells[0].indexOf("`]"));
+    // Backticks and bold markers go: the page shows this as text, and a summary that starts
+    // mid-emphasis would otherwise put two asterisks on screen.
+    rows.push(BuiltPackage(name, without(without(cells[1], "`"), "*"), num(cells[2]), num(cells[3])));
+  }
+  if (rows.len() == 0) { trap root + "/MAP.md: no package rows — has its format changed?"; }
+
+  i32 other = 0;
+  for (string dir in ["compiler", "harness", "tools", "site/tools"]) {
+    for (string f in filesUnder(cli, root + "/" + dir)) {
+      if (endsWith(f, ".test.ts")) { other += countTestsDeclaredHere(readText(cli, f)); }
+    }
+  }
+  i32 wacTests = 0;
+  string[]? pkgs = cli.readDir(root + "/packages").wait();
+  for (string p in pkgs ?? string[]()) {
+    for (string f in filesUnder(cli, root + "/packages/" + p + "/test")) {
+      if (endsWith(f, ".wac")) { wacTests++; }
+    }
+  }
+
+  SpecStatus spec = SpecStatus(0, 0, 0, 0);
+  for (string l in linesOf(readText(cli, root + "/spec/_status/STATUS.md"))) {
+    // `| spec/2-types/16-strings.md | 17 | 17 | 0 | 0 |`
+    if (l.indexOf("| spec/") != 0) { continue; }
+    string[] cells = cellsOf(l);
+    if (cells.len() < 5) { continue; }
+    spec = SpecStatus(spec.examples + num(cells[1]), spec.met + num(cells[2]), spec.missed + num(cells[3]),
+                      spec.unsupported + num(cells[4]));
+  }
+  if (spec.examples == 0) { trap root + "/spec/_status/STATUS.md: no rows — has its format changed?"; }
+
+  BuiltPackage[] built = BuiltPackage[].filled(rows.len(), BuiltPackage("", "", 0, 0));
+  for (i32 i = 0; i < rows.len(); i++) { built[i] = rows.get(i); }
+  Totals t = Totals(head[0], head[1], head[2], head[3], head[4], head[2] + other, corpus().len(), appletNames().len(),
+                    wacTests);
+  return Figures(t, treeOf(cli, root), built, spec);
+}
+
+Tree treeOf(Cli cli, string root) {
+  Vec<string> tags = Vec.create();
+  for (string f in filesUnder(cli, root + "/spec")) {
+    if (!endsWith(f, ".md")) { continue; }
+    string text = readText(cli, f);
+    i32 at = text.indexOf("[§wac-");
+    while (at >= 0) {
+      i32 end = at + 2;
+      u8[] b = text.toBytes();
+      while (end < b.len() && ((b[end] >= 'a' && b[end] <= 'z') || (b[end] >= '0' && b[end] <= '9') || b[end] == '-')) { end++; }
+      if (end < b.len() && b[end] == ']') {
+        string tag = text.slice(at + 3, end);
+        bool seen = false;
+        for (i32 i = 0; i < tags.len(); i++) { if (tags.get(i) == tag) { seen = true; break; } }
+        if (!seen) { tags.push(tag); }
+      }
+      i32 next = text.slice(end, text.len()).indexOf("[§wac-");
+      at = next < 0 ? 0 - 1 : end + next;
+    }
+  }
+  i32 sources = 0;
+  i32 lines = 0;
+  string[]? names = cli.readDir(root + "/packages/wacc/src").wait();
+  for (string n in names ?? string[]()) {
+    if (!endsWith(n, ".wac")) { continue; }
+    sources++;
+    lines += newlines(readText(cli, root + "/packages/wacc/src/" + n));
+  }
+  i32[] rungs = i32[].filled(5, 0);
+  string[] rungFiles = ["l1.l0", "l2.l1", "l3.l2", "l4.l3", "l5.l4"];
+  for (i32 i = 0; i < 5; i++) { rungs[i] = newlines(readText(cli, root + "/bootstrap/boot/" + rungFiles[i])); }
+  string[] trustedFiles = ["bootstrap/rust/src/lib.rs", "bootstrap/boot/l1.l0", "bootstrap/rust-ladder/src/flatten.rs"];
+  i32[] trusted = i32[].filled(3, 0);
+  for (i32 i = 0; i < 3; i++) { trusted[i] = newlines(readText(cli, root + "/" + trustedFiles[i])); }
+  // As `tools/wac/coverageall.wac` derives them: a package is a directory under `packages/` with a
+  // `src/`, and it carries a ledger if `tasks.json5` has a `coverage:<name>` task.
+  string tasks = readText(cli, root + "/tasks.json5");
+  Vec<string> without = Vec.create();
+  i32 pkgs = 0;
+  string[]? dirs = cli.readDir(root + "/packages").wait();
+  for (string d in dirs ?? string[]()) {
+    Stat st = cli.stat(root + "/packages/" + d + "/src").wait();
+    if (!st.isDir) { continue; }
+    pkgs++;
+    if (tasks.indexOf("\"coverage:" + d + "\"") < 0) { without.push(d); }
+  }
+  string[] un = string[].filled(without.len(), "");
+  for (i32 i = 0; i < without.len(); i++) { un[i] = without.get(i); }
+  return Tree(tags.len(), sources, lines, rungs, trusted, pkgs, pkgs - un.len(), sorted(un));
+}
+
+/** How many line breaks `s` has: a file's lines, when it ends with one. */
+export i32 newlines(string s) {
+  i32 n = 0;
+  for (u8 c in s.toBytes()) { if (c == '\n') { n++; } }
+  return n;
+}
+
+string[] sorted(string[] a) {
+  for (i32 i = 1; i < a.len(); i++) {
+    string x = a[i];
+    i32 j = i - 1;
+    while (j >= 0 && a[j] > x) { a[j + 1] = a[j]; j--; }
+    a[j + 1] = x;
+  }
+  return a;
+}
+
+/** `176160` as `"176,160"`. */
+export string commas(i32 v) {
+  string digits = "\{v}";
+  string out = "";
+  i32 n = digits.len();
+  for (i32 i = 0; i < n; i++) {
+    if (i > 0 && (n - i) % 3 == 0) { out = out + ","; }
+    out = out + digits.slice(i, i + 1);
+  }
+  return out;
+}
+
+/** A file's text; a file that cannot be read traps, since a figure read from nothing is a wrong figure. */
+export string readText(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) { trap path + ": " + r.error; }
+  return string.fromBytes(r.bytes);
+}
+
+/** Every file under `dir`, recursively; none when it is not there. */
+export string[] filesUnder(Cli cli, string dir) {
+  Vec<string> out = Vec.create();
+  Vec<string> todo = Vec.create();
+  todo.push(dir);
+  while (todo.len() > 0) {
+    string at = todo.pop()!;
+    string[]? names = cli.readDir(at).wait();
+    for (string n in names ?? string[]()) {
+      string path = at + "/" + n;
+      Stat s = cli.stat(path).wait();
+      if (s.isDir) { todo.push(path); } else { out.push(path); }
+    }
+  }
+  string[] all = string[].filled(out.len(), "");
+  for (i32 i = 0; i < out.len(); i++) { all[i] = out.get(i); }
+  return all;
+}
+
+export string[] linesOf(string s) { return splitOn(s, "\n"); }
+
+/** `s` cut at every `sep`. */
+export string[] splitOn(string s, string sep) {
+  Vec<string> out = Vec.create();
+  string rest = s;
+  i32 at = rest.indexOf(sep);
+  while (at >= 0) {
+    out.push(rest.slice(0, at));
+    rest = rest.slice(at + sep.len(), rest.len());
+    at = rest.indexOf(sep);
+  }
+  out.push(rest);
+  string[] all = string[].filled(out.len(), "");
+  for (i32 i = 0; i < out.len(); i++) { all[i] = out.get(i); }
+  return all;
+}
+
+export bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+/** The cells of a markdown table row, trimmed: `| a | b |` is `["a", "b"]`. */
+string[] cellsOf(string row) {
+  string[] parts = splitOn(row, "|");
+  if (parts.len() < 2) { return string[](); }
+  string[] cells = string[].filled(parts.len() - 2, "");
+  for (i32 i = 1; i + 1 < parts.len(); i++) { cells[i - 1] = trimmed(parts[i]); }
+  return cells;
+}
+
+/** The runs of digits and commas in `s`, each starting with a digit. */
+string[] numbersIn(string s) {
+  Vec<string> out = Vec.create();
+  u8[] b = s.toBytes();
+  i32 i = 0;
+  while (i < b.len()) {
+    if (b[i] < '0' || b[i] > '9') { i++; continue; }
+    i32 start = i;
+    while (i < b.len() && ((b[i] >= '0' && b[i] <= '9') || (b[i] == ',' && i + 1 < b.len() && b[i + 1] >= '0' && b[i + 1] <= '9'))) { i++; }
+    out.push(s.slice(start, i));
+  }
+  string[] all = string[].filled(out.len(), "");
+  for (i32 k = 0; k < out.len(); k++) { all[k] = out.get(k); }
+  return all;
+}
+
+/** `"176,160"` as 176160. */
+i32 num(string s) {
+  i32 n = 0;
+  for (u8 c in s.toBytes()) {
+    if (c >= '0' && c <= '9') { n = n * 10 + (c - '0') as i32; }
+  }
+  return n;
+}
+
+string without(string s, string drop) {
+  string[] parts = splitOn(s, drop);
+  string out = "";
+  for (string p in parts) { out = out + p; }
+  return out;
+}
+
+export string trimmed(string s) {
+  u8[] b = s.toBytes();
+  i32 from = 0;
+  i32 to = b.len();
+  while (from < to && (b[from] == ' ' || b[from] == '\n' || b[from] == '\t')) { from++; }
+  while (to > from && (b[to - 1] == ' ' || b[to - 1] == '\n' || b[to - 1] == '\t')) { to--; }
+  return s.slice(from, to);
+}

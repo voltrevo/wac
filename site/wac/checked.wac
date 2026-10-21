@@ -10,7 +10,7 @@
 
 import { Node, html.em } from "../../packages/web";
 import { A, BLOB, Caveat, Code, Fact, Facts, Frame, Lead, P, Section, Table, m, mono, t } from "./ui.wac";
-import { Totals, totals } from "./built.wac";
+import { Figures, Totals, Tree, commas } from "./figures.wac";
 
 static string EX_INTERLEAVE = """
   // packages/platform/test/bridge_model.test.ts
@@ -22,8 +22,24 @@ static string EX_CT = """
   // ordered sequence of branches AND memory indices is compared.
   assertNoSecretDependence(routine, { publicInput, secrets: [allZero, allOnes, oneBit] });""";
 
-export Node Checked() {
-  Totals T = totals();
+/**
+ * The packages with no ledger, as a list in prose — `wacc` with its size, since it is the one a reader
+ * would expect to have one, and its own project.
+ */
+Node unledgered(Tree tree) {
+  string[] un = tree.unledgered;
+  Node[] parts = Node[].filled(un.len(), <></>);
+  for (i32 i = 0; i < un.len(); i++) {
+    string sep = i + 1 == un.len() ? "" : i + 2 == un.len() ? "; and " : "; ";
+    parts[i] = un[i] == "wacc"
+      ? <><m>wacc</m>, which is {commas((tree.compilerLines + 500) / 1000 * 1000)} lines and its own project{sep}</>
+      : <><m>{un[i]}</m>{sep}</>;
+  }
+  return <>{parts}</>;
+}
+
+export Node Checked(Figures F) {
+  Totals T = F.totals;
   return <Frame current="checked">
     <Section id="top" kicker="how this is checked" title="We do not grade our own homework">
       <P>
@@ -173,7 +189,7 @@ export Node Checked() {
         branch-counting tool calls it uniform.
       </P>
       <P>
-        The results are on <A href="#/stack/crypto">the stack page</A>, including the two routines
+        The results are on <A href="stack.html#crypto">the stack page</A>, including the two routines
         that leak and the five lines they leak at. They are published because a measurement that
         only appears when it is flattering is not a measurement.
       </P>
@@ -217,12 +233,10 @@ export Node Checked() {
         write down why.
       </P>
       <P>
-        <Lead>36 of the 41 packages carry a coverage ledger</Lead> — and so does{" "}
+        <Lead>{F.tree.ledgered} of the {F.tree.packages} packages carry a coverage ledger</Lead> — and so does{" "}
         <m>core</m>, which is not a package — a file listing every branch point the
-        suite does not reach, each with a sentence saying what would reach it. The five without one
-        are <m>wacc</m>, which is 36,000 lines and its own project;{" "}
-        <m>box</m>; <m>wac</m>; <m>ts</m>; and{" "}
-        <m>web</m>.
+        suite does not reach, each with a sentence saying what would reach it. The ones without one
+        are {unledgered(F.tree)}.
       </P>
       <P>
         <Lead>The ratchet runs both ways, and the second direction is the unusual one.</Lead> An
@@ -253,7 +267,7 @@ export Node Checked() {
 
     <Section id="spec" kicker="evidence, seventh kind" title="A specification that cannot drift">
       <P>
-        The language has a written specification, and <Lead>708 of its claims carry a tag</Lead>{" "}
+        The language has a written specification, and <Lead>{commas(F.tree.specTags)} of its claims carry a tag</Lead>{" "}
         like <m>[§wac-core-one-type-8fjm2wq]</m>. Every tag names a test. A claim
         without evidence beside it reads as evidence, which is the failure mode a specification
         has, so a test walks the specification and fails with the list of any tag nothing covers.

@@ -22,7 +22,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, FileResult, Stat } from "std";
 
-static string SITE = "site/src/next/Home.tsx";
+static string SITE = "site/wac/home.wac";
 static string TERM = "packages/box/example/term.wac";
 static string SHELL = "packages/box/example/boxsh.wac";
 
@@ -52,7 +52,7 @@ string agentDir(Cli cli) {
 string binary(Cli cli) { return "\{cli.cwd().wait()}/native/v8/target/release/wac"; }
 
 /**
- * Every double-quoted string in `text`, with TypeScript's escapes undone.
+ * Every double-quoted string in `text`, with its escapes undone.
  *
  * Only `\\"` and `\\\\` appear in these tables, and anything else traps rather than being guessed at —
  * a transcript that grew a `\\n` would be a real difference between the page and the shell, and
@@ -108,10 +108,9 @@ string between(string text, string open, string close) {
   return text.slice(from, from + b);
 }
 
-/** The `TRANSCRIPT` table on the front page: each command and the output printed beneath it. */
+/** The `transcript()` table on the front page: each command and the output printed beneath it. */
 string[] transcript(Core core, Cli cli) {
-  string block = between(read(core, cli, SITE),
-                         "export const TRANSCRIPT: [string, string][] = [", "\n];");
+  string block = between(read(core, cli, SITE), "Said[] transcript() {", "\n}");
   if (block == "") { trap; }
   return quotedStrings(block);
 }

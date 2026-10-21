@@ -1,0 +1,1042 @@
+// The specification, rendered at build time: `spec.html` is the contents and `spec-<chapter>.html` a
+// chapter.
+//
+// Read from `spec/` as it is in the tree when the site is built — nothing is generated or copied, so
+// what these pages show is the spec of the commit that deployed them. Every ` ```wac ` fence is a
+// program with its outcome written above it, so each one is shown with that outcome and with whether
+// the compiler in the tree meets it — from `spec/_status/MET`, which the suite writes.
+//
+// **Which fence is example N** is the rule that matters most here. `spec/_status/MET` names examples as
+// `spec/<doc>#<ordinal>`, counted the way `packages/wacc/test/wac/specexamples.wac` counts them — every
+// ` ```wac ` fence that is not a `// fragment`, from 1, per document. A page that counted differently
+// would put "met" on the wrong program, and look right doing it; `test/spec_test.wac` holds the two to
+// the same counts as `STATUS.md`.
+//
+// The markdown is the subset the spec is written in, and deliberately no more: headings to `###`,
+// paragraphs, `-` and numbered lists, pipe tables, fences, and inline code, emphasis and links. A
+// construct outside that renders as a paragraph of its own text, which is visible, rather than being
+// dropped, which is not. **Everything read from a document becomes a text node**, never markup, so the
+// spec's own `<div>`s and `</style>`s are characters on the page.
+//
+// It was `site/src/next/specModel.ts` and `Spec.tsx`, which loaded each chapter in the browser.
+
+import { Cli } from "std";
+import { Vec } from "core";
+import { Node, html.a, html.code, html.div, html.em, html.h1, html.h2, html.h3, html.li, html.ol, html.p,
+         html.span, html.strong, html.table, html.tbody, html.td, html.th, html.thead, html.tr,
+         html.ul } from "../../packages/web";
+import { BLOB, Doc, Fact, Facts, Frame } from "./ui.wac";
+import { linesOf, readText, splitOn, trimmed } from "./figures.wac";
+import { highlighted } from "./highlight.wac";
+
+// ── The model ────────────────────────────────────────────────────────────────
+
+export enum Inline {
+  Text(string text),
+  Code(string text),
+  Strong(Inline[] kids),
+  Em(Inline[] kids),
+  Link(string href, Inline[] kids),
+}
+
+export struct Fence {
+  string lang;
+  string code;
+  /** The line of the opening fence in the markdown file, 1-based. */
+  i32 line;
+  /** The example's number in its document, or -1 for a fragment and for anything not ` ```wac `. */
+  i32 ordinal;
+  /** Its `// expect` lines, as written after the `//`. */
+  string[] expects;
+}
+
+export enum Block {
+  Heading(i32 level, string text, string id),
+  Para(string text),
+  List(bool ordered, string[] items),
+  Table(string[] head, string[] align, string[][] rows),
+  Fenced(Fence fence),
+}
+
+/** A chapter, as `spec/README.md` lists it. */
+export struct Chapter {
+  /** The file's name without `.md`, which is also its page: `spec-17-const.html`. */
+  string slug;
+  /** Relative to `spec/`: `2-types/17-const.md`. */
+  string path;
+  /** `17`, or `A` for an appendix. */
+  string num;
+  string title;
+  string part;
+}
+
+export struct DocStatus {
+  i32 examples;
+  i32 met;
+  i32 missed;
+  i32 unsupported;
+}
+
+/** The spec's files as they are in the tree: what the pages are made from. */
+export struct SpecSource {
+  string readme;
+  string met;
+  string status;
+  /** Each chapter's path relative to `spec/`, and its text, in the README's order. */
+  string[] paths;
+  string[] texts;
+}
+
+/** `spec/` under `root`: its README, its status files, and every chapter the README lists. */
+export SpecSource readSpec(Cli cli, string root) {
+  string readme = readText(cli, root + "/spec/README.md");
+  Chapter[] chs = chaptersOf(readme);
+  string[] paths = string[].filled(chs.len(), "");
+  string[] texts = string[].filled(chs.len(), "");
+  for (i32 i = 0; i < chs.len(); i++) {
+    paths[i] = chs[i].path;
+    texts[i] = readText(cli, root + "/spec/" + chs[i].path);
+  }
+  return SpecSource(readme, readText(cli, root + "/spec/_status/MET"), readText(cli, root + "/spec/_status/STATUS.md"),
+                    paths, texts);
+}
+
+// ── Text ─────────────────────────────────────────────────────────────────────
+
+bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
+
+bool endsWithText(string s, string p) { return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p; }
+
+/** Where `x` first is in `s` at or after `from`, or -1. */
+i32 indexFrom(string s, string x, i32 from) {
+  if (from > s.len()) { return 0 - 1; }
+  i32 at = s.slice(from, s.len()).indexOf(x);
+  return at < 0 ? at : at + from;
+}
+
+bool isSpaceByte(u8 c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+bool isDigitByte(u8 c) { return c >= '0' && c <= '9'; }
+bool isWordByte(u8 c) { return isDigitByte(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
+
+/** Whether `b[at..]` begins with the em dash, `—`. */
+bool emDashAt(u8[] b, i32 at) {
+  return at >= 0 && at + 2 < b.len() && b[at] == 0xE2 && b[at + 1] == 0x80 && b[at + 2] == 0x94;
+}
+
+string[] stringsOf(Vec<string> v) {
+  string[] out = string[].filled(v.len(), "");
+  for (i32 i = 0; i < v.len(); i++) { out[i] = v.get(i); }
+  return out;
+}
+
+/** The code point starting at `b[i]`, and how many bytes it takes, packed as `cp * 8 + len`. */
+i32 codePointAt(u8[] b, i32 i) {
+  i32 c = b[i] as i32;
+  if (c < 0x80) { return c * 8 + 1; }
+  if (c >= 0xF0 && i + 3 < b.len()) {
+    return (((c & 7) << 18) | (((b[i + 1] as i32) & 63) << 12) | (((b[i + 2] as i32) & 63) << 6) | ((b[i + 3] as i32) & 63)) * 8 + 4;
+  }
+  if (c >= 0xE0 && i + 2 < b.len()) {
+    return (((c & 15) << 12) | (((b[i + 1] as i32) & 63) << 6) | ((b[i + 2] as i32) & 63)) * 8 + 3;
+  }
+  if (c >= 0xC0 && i + 1 < b.len()) { return (((c & 31) << 6) | ((b[i + 1] as i32) & 63)) * 8 + 2; }
+  return c * 8 + 1;
+}
+
+/**
+ * Whether a code point above ASCII is punctuation or a symbol, which GitHub's anchors drop — the dashes,
+ * quotes, `§`, `×`, arrows and the mathematical operators the spec's headings use. Everything else above
+ * ASCII is taken as a letter, which it is in every heading the spec has.
+ */
+bool droppedFromSlug(i32 cp) {
+  return (cp >= 0xA0 && cp <= 0xBF) || cp == 0xD7 || cp == 0xF7 || (cp >= 0x2000 && cp <= 0x206F)
+      || (cp >= 0x2190 && cp <= 0x2BFF) || (cp >= 0x3000 && cp <= 0x303F);
+}
+
+/** GitHub's heading anchors, which is what the spec's own `#links` were written against. */
+export string slugify(string text) {
+  // Lower case, backticks gone, and anything but a letter, a number, whitespace, `_` or `-` gone.
+  u8[] b = text.toBytes();
+  Vec<string> kept = Vec.create();
+  i32 i = 0;
+  while (i < b.len()) {
+    i32 packed = codePointAt(b, i);
+    i32 cp = packed / 8;
+    i32 n = packed % 8;
+    u8 c = b[i];
+    if (n == 1) {
+      if (c >= 'A' && c <= 'Z') { kept.push(string.fromBytes([c + 32])); }
+      else if (isWordByte(c) || c == '-' || isSpaceByte(c)) { kept.push(string.fromBytes([c])); }
+    } else if (!droppedFromSlug(cp)) {
+      kept.push(text.slice(i, i + n));
+    }
+    i = i + n;
+  }
+  string s = "";
+  for (i32 k = 0; k < kept.len(); k++) { s = s + kept.get(k); }
+  // Trimmed, then each whitespace character a hyphen — not collapsed, which is GitHub's rule too.
+  s = trimmed(s);
+  u8[] t = s.toBytes();
+  for (i32 k = 0; k < t.len(); k++) { if (isSpaceByte(t[k])) { t[k] = '-'; } }
+  return string.fromBytes(t);
+}
+
+/** A heading's text with its inline markup stripped, as the anchor and the contents list want it. */
+export string plain(string text) {
+  // `code` → code
+  string out = "";
+  i32 i = 0;
+  while (i < text.len()) {
+    if (text[i] == "`") {
+      i32 end = indexFrom(text, "`", i + 1);
+      if (end > 0) { out = out + text.slice(i + 1, end); i = end + 1; continue; }
+    }
+    out = out + text.slice(i, i + 1);
+    i++;
+  }
+  // **strong** → strong
+  string s2 = "";
+  i = 0;
+  while (i < out.len()) {
+    if (startsWith(out.slice(i, out.len()), "**")) {
+      i32 end = indexFrom(out, "**", i + 2);
+      if (end > i + 2 && out.slice(i + 2, end).indexOf("*") < 0) { s2 = s2 + out.slice(i + 2, end); i = end + 2; continue; }
+    }
+    s2 = s2 + out.slice(i, i + 1);
+    i++;
+  }
+  // [text](href) → text
+  string s3 = "";
+  i = 0;
+  while (i < s2.len()) {
+    if (s2[i] == "[") {
+      i32 close = indexFrom(s2, "]", i + 1);
+      if (close > 0 && close + 1 < s2.len() && s2[close + 1] == "(") {
+        i32 paren = indexFrom(s2, ")", close + 2);
+        if (paren > 0) { s3 = s3 + s2.slice(i + 1, close); i = paren + 1; continue; }
+      }
+    }
+    s3 = s3 + s2.slice(i, i + 1);
+    i++;
+  }
+  return s3;
+}
+
+/** A table row's cells. A `|` inside backticks is code, not a column — the operator tables are full of them. */
+string[] cells(string row) {
+  string r = trimmed(row);
+  if (startsWith(r, "|")) { r = r.slice(1, r.len()); }
+  if (endsWithText(r, "|") && !endsWithText(r, "\\|")) { r = r.slice(0, r.len() - 1); }
+  Vec<string> out = Vec.create();
+  u8[] b = r.toBytes();
+  i32 start = 0;
+  string cur = "";
+  i32 tick = 0;
+  i32 i = 0;
+  while (i < b.len()) {
+    u8 ch = b[i];
+    if (ch == '`') {
+      i32 n = 0;
+      while (i + n < b.len() && b[i + n] == '`') { n++; }
+      cur = cur + r.slice(i, i + n);
+      tick = tick == 0 ? n : (tick == n ? 0 : tick);
+      i = i + n;
+      continue;
+    }
+    if (ch == '\\' && i + 1 < b.len() && b[i + 1] == '|') { cur = cur + "|"; i = i + 2; continue; }
+    if (ch == '|' && tick == 0) { out.push(trimmed(cur)); cur = ""; i++; continue; }
+    i32 packed = codePointAt(b, i);
+    i32 n = packed % 8;
+    cur = cur + r.slice(i, i + n);
+    i = i + n;
+  }
+  out.push(trimmed(cur));
+  return stringsOf(out);
+}
+
+/** `:?-{3,}:?` — one cell of a table's rule. */
+bool isRuleCell(string c) {
+  string t = trimmed(c);
+  if (startsWith(t, ":")) { t = t.slice(1, t.len()); }
+  if (endsWithText(t, ":")) { t = t.slice(0, t.len() - 1); }
+  if (t.len() < 3) { return false; }
+  for (u8 x in t.toBytes()) { if (x != '-') { return false; } }
+  return true;
+}
+
+/** A table's rule: `|---|:--:|` and its spellings. */
+bool isRule(string line) {
+  string t = trimmed(line);
+  if (startsWith(t, "|")) { t = t.slice(1, t.len()); }
+  if (endsWithText(t, "|")) { t = t.slice(0, t.len() - 1); }
+  string[] parts = splitOn(t, "|");
+  for (string p in parts) { if (!isRuleCell(p)) { return false; } }
+  return parts.len() > 0;
+}
+
+/** How many `#` open a heading line — 1 to 3, followed by whitespace — or 0. */
+i32 headingLevel(string t) {
+  u8[] b = t.toBytes();
+  i32 n = 0;
+  while (n < b.len() && b[n] == '#') { n++; }
+  if (n < 1 || n > 3 || n >= b.len() || !(b[n] == ' ' || b[n] == '\t')) { return 0; }
+  return n;
+}
+
+/** The length of a `- ` or `* ` marker and the space after it, or 0. */
+i32 bulletLen(string t) {
+  u8[] b = t.toBytes();
+  if (b.len() < 2 || !(b[0] == '-' || b[0] == '*') || !isSpaceByte(b[1])) { return 0; }
+  i32 n = 1;
+  while (n < b.len() && isSpaceByte(b[n])) { n++; }
+  return n;
+}
+
+/** The length of a `1. ` marker and the space after it, or 0. */
+i32 numberLen(string t) {
+  u8[] b = t.toBytes();
+  i32 n = 0;
+  while (n < b.len() && isDigitByte(b[n])) { n++; }
+  if (n == 0 || n + 1 >= b.len() || b[n] != '.' || !isSpaceByte(b[n + 1])) { return 0; }
+  n = n + 1;
+  while (n < b.len() && isSpaceByte(b[n])) { n++; }
+  return n;
+}
+
+bool startsIndented(string line) { return line.len() > 0 && (line[0] == " " || line[0] == "\t"); }
+
+/** One document, as blocks. Heading ids are made unique the way GitHub makes them. */
+export Block[] parseBlocks(string md) {
+  string[] lines = linesOf(md);
+  Vec<Block> blocks = Vec.create();
+  Vec<string> usedIds = Vec.create();
+  Vec<i32> usedCounts = Vec.create();
+  i32 ordinal = 0;
+  i32 i = 0;
+  while (i < lines.len()) {
+    string t = trimmed(lines[i]);
+    if (t == "") { i++; continue; }
+
+    if (startsWith(t, "```")) {
+      string lang = trimmed(t.slice(3, t.len()));
+      i32 open = i;
+      i32 j = i + 1;
+      while (j < lines.len() && trimmed(lines[j]) != "```") { j++; }
+      i32 end = j < lines.len() ? j : lines.len();
+      Vec<string> body = Vec.create();
+      for (i32 k = open + 1; k < end; k++) { body.push(lines[k]); }
+      bool fragment = body.len() > 0 && startsWith(trimmed(body.get(0)), "// fragment");
+      bool counted = lang == "wac" && !fragment;
+      if (counted) { ordinal++; }
+      Vec<string> expects = Vec.create();
+      for (i32 k = 0; k < body.len(); k++) {
+        string bt = trimmed(body.get(k));
+        if (!startsWith(bt, "// expect")) { break; }
+        expects.push(bt.slice(3, bt.len()));
+      }
+      string code = "";
+      for (i32 k = 0; k < body.len(); k++) { code = code + (k == 0 ? "" : "\n") + body.get(k); }
+      blocks.push(Block.Fenced(Fence(lang, code, open + 1, counted ? ordinal : 0 - 1, stringsOf(expects))));
+      i = j + 1;
+      continue;
+    }
+
+    i32 level = headingLevel(t);
+    if (level > 0) {
+      string text = trimmed(t.slice(level, t.len()));
+      string id = slugify(plain(text));
+      i32 seen = 0 - 1;
+      for (i32 k = 0; k < usedIds.len(); k++) { if (usedIds.get(k) == id) { seen = k; } }
+      if (seen < 0) {
+        usedIds.push(id);
+        usedCounts.push(1);
+      } else {
+        i32 n = usedCounts.get(seen);
+        usedCounts.set(seen, n + 1);
+        id = id + "-\{n}";
+      }
+      blocks.push(Block.Heading(level, text, id));
+      i++;
+      continue;
+    }
+
+    if (startsWith(t, "|") && i + 1 < lines.len() && isRule(lines[i + 1])) {
+      string[] head = cells(t);
+      string[] rule = cells(lines[i + 1]);
+      string[] align = string[].filled(rule.len(), "left");
+      for (i32 k = 0; k < rule.len(); k++) {
+        string c = rule[k];
+        if (startsWith(c, ":") && endsWithText(c, ":")) { align[k] = "center"; }
+        else if (endsWithText(c, ":")) { align[k] = "right"; }
+      }
+      Vec<string[]> rows = Vec.create();
+      i32 j = i + 2;
+      while (j < lines.len() && startsWith(trimmed(lines[j]), "|")) { rows.push(cells(lines[j])); j++; }
+      string[][] all = string[][].filled(rows.len(), string[]());
+      for (i32 k = 0; k < rows.len(); k++) { all[k] = rows.get(k); }
+      blocks.push(Block.Table(head, align, all));
+      i = j;
+      continue;
+    }
+
+    if (bulletLen(t) > 0 || numberLen(t) > 0) {
+      bool ordered = numberLen(t) > 0;
+      Vec<string> items = Vec.create();
+      i32 j = i;
+      while (j < lines.len()) {
+        string lt = trimmed(lines[j]);
+        i32 m = ordered ? numberLen(lt) : bulletLen(lt);
+        if (m > 0) { items.push(lt.slice(m, lt.len())); j++; continue; }
+        // A continuation line: indented, not blank, not a new block.
+        if (lt != "" && startsIndented(lines[j]) && items.len() > 0) {
+          items.set(items.len() - 1, items.get(items.len() - 1) + " " + lt);
+          j++;
+          continue;
+        }
+        break;
+      }
+      blocks.push(Block.List(ordered, stringsOf(items)));
+      i = j;
+      continue;
+    }
+
+    // A paragraph runs to the next blank line or the next thing that starts a block.
+    string para = t;
+    i32 j = i + 1;
+    while (j < lines.len()) {
+      string lt = trimmed(lines[j]);
+      if (lt == "" || startsWith(lt, "```") || headingLevel(lt) > 0 || bulletLen(lt) > 0 || numberLen(lt) > 0) { break; }
+      if (startsWith(lt, "|") && j + 1 < lines.len() && isRule(lines[j + 1])) { break; }
+      para = para + " " + lt;
+      j++;
+    }
+    blocks.push(Block.Para(para));
+    i = j;
+  }
+  Block[] out = Block[].filled(blocks.len(), Block.Para(""));
+  for (i32 k = 0; k < blocks.len(); k++) { out[k] = blocks.get(k); }
+  return out;
+}
+
+Inline[] inlinesOf(Vec<Inline> v) {
+  Inline[] out = Inline[].filled(v.len(), Inline.Text(""));
+  for (i32 i = 0; i < v.len(); i++) { out[i] = v.get(i); }
+  return out;
+}
+
+/** Whether the byte before `i` lets emphasis open: the start, whitespace, `(`, a quote or `—`. */
+bool emOpensAfter(u8[] b, i32 i) {
+  if (i == 0) { return true; }
+  u8 p = b[i - 1];
+  return isSpaceByte(p) || p == '(' || p == '"' || p == '\'' || emDashAt(b, i - 3);
+}
+
+/** Whether emphasis may close before `b[at]`: the end, whitespace, punctuation, a quote or `—`. */
+bool emClosesBefore(u8[] b, i32 at) {
+  if (at >= b.len()) { return true; }
+  u8 c = b[at];
+  return isSpaceByte(c) || c == '.' || c == ',' || c == ';' || c == ':' || c == ')' || c == '!' || c == '?'
+      || c == '"' || c == '\'' || emDashAt(b, at);
+}
+
+/** Inline markup: code spans first, since nothing inside one is markup. */
+export Inline[] parseInline(string text) {
+  Vec<Inline> out = Vec.create();
+  u8[] b = text.toBytes();
+  i32 plainFrom = 0;
+  i32 i = 0;
+  while (i < b.len()) {
+    u8 ch = b[i];
+    i32 took = 0 - 1;
+    Inline? made = null;
+    if (ch == '`') {
+      i32 n = 0;
+      while (i + n < b.len() && b[i + n] == '`') { n++; }
+      string fence = text.slice(i, i + n);
+      i32 end = indexFrom(text, fence, i + n);
+      if (end > 0) {
+        string code = text.slice(i + n, end);
+        // CommonMark: one space either side is padding, so `` ` `` can show a backtick.
+        if (code.len() > 1 && startsWith(code, " ") && endsWithText(code, " ")) { code = code.slice(1, code.len() - 1); }
+        made = Inline.Code(code);
+        took = end + n;
+      }
+    }
+    if (made is null && ch == '*' && i + 1 < b.len() && b[i + 1] == '*') {
+      i32 end = indexFrom(text, "**", i + 2);
+      if (end > i + 2) {
+        made = Inline.Strong(parseInline(text.slice(i + 2, end)));
+        took = end + 2;
+      }
+    }
+    if (made is null && (ch == '*' || ch == '_') && i + 1 < b.len() && b[i + 1] != ' ' && b[i + 1] != ch && emOpensAfter(b, i)) {
+      i32 end = indexFrom(text, text.slice(i, i + 1), i + 1);
+      if (end > i + 1 && b[end - 1] != ' ' && emClosesBefore(b, end + 1)) {
+        made = Inline.Em(parseInline(text.slice(i + 1, end)));
+        took = end + 1;
+      }
+    }
+    if (made is null && ch == '[') {
+      // The matching `]`, allowing a code span with brackets inside the link text.
+      i32 depth = 0;
+      i32 k = i;
+      bool inCode = false;
+      while (k < b.len()) {
+        if (b[k] == '`') { inCode = !inCode; }
+        if (!inCode) {
+          if (b[k] == '[') { depth++; }
+          else if (b[k] == ']') {
+            depth--;
+            if (depth == 0) { break; }
+          }
+        }
+        k++;
+      }
+      if (k < b.len() && k + 1 < b.len() && b[k + 1] == '(') {
+        i32 close = indexFrom(text, ")", k + 2);
+        string href = close > 0 ? text.slice(k + 2, close) : "";
+        bool spaced = false;
+        for (u8 x in href.toBytes()) { if (isSpaceByte(x)) { spaced = true; } }
+        if (close > 0 && !spaced) {
+          made = Inline.Link(href, parseInline(text.slice(i + 1, k)));
+          took = close + 1;
+        }
+      }
+    }
+    if (made is not null) {
+      if (plainFrom < i) { out.push(Inline.Text(text.slice(plainFrom, i))); }
+      out.push(made!);
+      i = took;
+      plainFrom = took;
+      continue;
+    }
+    i++;
+  }
+  if (plainFrom < b.len()) { out.push(Inline.Text(text.slice(plainFrom, b.len()))); }
+  return inlinesOf(out);
+}
+
+// ── The contents, read from the spec's own README ────────────────────────────
+
+/**
+ * The reading order, from `spec/README.md`'s list rather than typed here: a hand-kept list of fifty-odd
+ * chapters goes stale the first time one is added or renamed, and the README's list is the one a person
+ * reading the repository follows.
+ */
+export Chapter[] chaptersOf(string readme) {
+  Vec<Chapter> out = Vec.create();
+  string part = "";
+  for (string raw in linesOf(readme)) {
+    string line = trimmedEnd(raw);
+    // `**2 — Types**` on a line of its own names the part that follows.
+    if (startsWith(line, "**") && endsWithText(line, "**") && line.len() > 4) {
+      part = line.slice(2, line.len() - 2);
+      continue;
+    }
+    // `- 16 [Strings](2-types/16-strings.md)`
+    if (!startsWith(line, "- ")) { continue; }
+    u8[] b = line.toBytes();
+    i32 w = 2;
+    while (w < b.len() && isWordByte(b[w])) { w++; }
+    if (w == 2 || w + 1 >= b.len() || b[w] != ' ' || b[w + 1] != '[') { continue; }
+    if (!endsWithText(line, ")")) { continue; }
+    i32 split = line.indexOf("](");
+    // The last `](`, so a title with brackets in it is still the title.
+    i32 at = split;
+    while (at >= 0) {
+      split = at;
+      at = indexFrom(line, "](", at + 1);
+    }
+    if (split < 0) { continue; }
+    string title = line.slice(w + 2, split);
+    string path = line.slice(split + 2, line.len() - 1);
+    if (title == "" || !endsWithText(path, ".md") || path.indexOf(")") >= 0) { continue; }
+    string file = path;
+    i32 slash = file.indexOf("/");
+    while (slash >= 0) {
+      file = file.slice(slash + 1, file.len());
+      slash = file.indexOf("/");
+    }
+    out.push(Chapter(file.slice(0, file.len() - 3), path, line.slice(2, w), plain(title), part));
+  }
+  Chapter[] all = Chapter[].filled(out.len(), Chapter("", "", "", "", ""));
+  for (i32 i = 0; i < out.len(); i++) { all[i] = out.get(i); }
+  return all;
+}
+
+string trimmedEnd(string s) {
+  u8[] b = s.toBytes();
+  i32 to = b.len();
+  while (to > 0 && isSpaceByte(b[to - 1])) { to--; }
+  return s.slice(0, to);
+}
+
+/** `spec/_status/MET`: one met example per line. */
+export string[] metOf(string text) {
+  Vec<string> out = Vec.create();
+  for (string l in linesOf(text)) {
+    string t = trimmed(l);
+    if (t != "") { out.push(t); }
+  }
+  return stringsOf(out);
+}
+
+/** The examples' status: every document's, and the total. */
+export struct Status {
+  DocStatus total;
+  /** Paths relative to `spec/`, and each one's status. */
+  string[] paths;
+  DocStatus[] docs;
+
+  /** The status of the document at `path`, or none. */
+  DocStatus? of(this, string path) {
+    for (i32 i = 0; i < this.paths.len(); i++) { if (this.paths[i] == path) { return this.docs[i]; } }
+    return null;
+  }
+}
+
+/** `spec/_status/STATUS.md`'s table, by document path relative to `spec/`. */
+export Status statusOf(string text) {
+  Vec<string> paths = Vec.create();
+  Vec<DocStatus> docs = Vec.create();
+  DocStatus total = DocStatus(0, 0, 0, 0);
+  for (string l in linesOf(text)) {
+    // `| spec/2-types/16-strings.md | 17 | 17 | 0 | 0 |`
+    if (!startsWith(l, "| spec/")) { continue; }
+    string[] c = cells(l);
+    if (c.len() != 5 || !endsWithText(c[0], ".md")) { continue; }
+    DocStatus s = DocStatus(number(c[1]), number(c[2]), number(c[3]), number(c[4]));
+    paths.push(c[0].slice(5, c[0].len()));
+    docs.push(s);
+    total = DocStatus(total.examples + s.examples, total.met + s.met, total.missed + s.missed,
+                      total.unsupported + s.unsupported);
+  }
+  DocStatus[] ds = DocStatus[].filled(docs.len(), DocStatus(0, 0, 0, 0));
+  for (i32 i = 0; i < docs.len(); i++) { ds[i] = docs.get(i); }
+  return Status(total, stringsOf(paths), ds);
+}
+
+i32 number(string s) {
+  i32 n = 0;
+  for (u8 c in s.toBytes()) { if (isDigitByte(c)) { n = n * 10 + (c - '0') as i32; } }
+  return n;
+}
+
+/** The key `MET` uses for example `ordinal` of a document at `path` (relative to `spec/`). */
+export string exampleKey(string path, i32 ordinal) { return "spec/" + path + "#\{ordinal}"; }
+
+/** Where a link goes: its href, and whether it leaves this site. */
+export struct Route {
+  string href;
+  bool external;
+}
+
+/** A chapter's page. */
+export string pageOf(string slug) { return "spec-" + slug + ".html"; }
+
+/**
+ * Where a link in a document at `from` (relative to `spec/`) goes on this site.
+ *
+ * Another chapter becomes its page, a heading becomes the page plus its anchor, and anything else under
+ * `spec/` — `tour.wac`, `cases/` — goes to the file on GitHub, since this site does not render it.
+ */
+export Route routeOf(string href, string from, Chapter[] chapters, string blob) {
+  u8[] hb = href.toBytes();
+  i32 s = 0;
+  while (s < hb.len() && hb[s] >= 'a' && hb[s] <= 'z') { s++; }
+  if (s > 0 && s < hb.len() && hb[s] == ':') { return Route(href, true); }
+  i32 hash = href.indexOf("#");
+  string path = hash < 0 ? href : href.slice(0, hash);
+  string anchor = hash < 0 ? "" : href.slice(hash + 1, href.len());
+  string tail = anchor == "" ? "" : "#" + anchor;
+  if (path == "") { return Route(anchor == "" ? "#" : "#" + anchor, false); }
+  string[] fromParts = splitOn(from, "/");
+  Vec<string> parts = Vec.create();
+  for (i32 i = 0; i + 1 < fromParts.len(); i++) { parts.push(fromParts[i]); }
+  for (string seg in splitOn(path, "/")) {
+    if (seg == "..") { if (parts.len() > 0) { parts.pop(); } }
+    else if (seg != "." && seg != "") { parts.push(seg); }
+  }
+  string target = "";
+  for (i32 i = 0; i < parts.len(); i++) { target = target + (i == 0 ? "" : "/") + parts.get(i); }
+  if (target == "README.md") { return Route("spec.html", false); }
+  for (Chapter c in chapters) {
+    if (c.path == target) { return Route(pageOf(c.slug) + tail, false); }
+  }
+  // A directory is a tree on GitHub, not a blob.
+  string base = endsWithText(path, "/") ? treeOf(blob) : blob;
+  return Route(base + "/spec/" + target + tail, true);
+}
+
+string treeOf(string blob) {
+  i32 at = blob.indexOf("/blob/");
+  return at < 0 ? blob : blob.slice(0, at) + "/tree/" + blob.slice(at + 6, blob.len());
+}
+
+// ── Rendering ────────────────────────────────────────────────────────────────
+
+/** Everything a page of the spec needs to know beside its own text. */
+struct Ctx {
+  Chapter[] chapters;
+  string[] met;
+  Status status;
+}
+
+bool isMet(Ctx x, string key) {
+  for (string m in x.met) { if (m == key) { return true; } }
+  return false;
+}
+
+/** `[§wac-const-var-7b4swc8]` — a claim's tag, whose name is between the `§` and the `]`. */
+string tagOf(string code) {
+  if (!startsWith(code, "[§") || !endsWithText(code, "]")) { return ""; }
+  string name = code.slice(3, code.len() - 1);
+  if (name == "") { return ""; }
+  for (u8 c in name.toBytes()) { if (!isWordByte(c) && c != '-') { return ""; } }
+  return name;
+}
+
+Node[] inlineNodes(Ctx x, Inline[] ns, string from) {
+  Node[] out = Node[].filled(ns.len(), Node.Text(""));
+  for (i32 i = 0; i < ns.len(); i++) { out[i] = inlineNode(x, ns[i], from); }
+  return out;
+}
+
+Node inlineNode(Ctx x, Inline n, string from) {
+  match (n) {
+    Text(t): { return Node.Text(t); }
+    Code(t): {
+      // A claim's tag is its address: `[§wac-const-var-7b4swc8]` links to itself.
+      string tag = tagOf(t);
+      if (tag != "") {
+        string shown = startsWith(tag, "wac-") ? tag.slice(4, tag.len()) : tag;
+        return <a class="tag" id={tag} href={"#" + tag} title="this claim's tag — every one names a test">{"§" + shown}</a>;
+      }
+      return <code class="m">{Node.Text(t)}</code>;
+    }
+    Strong(kids): { return <strong class="lead">{inlineNodes(x, kids, from)}</strong>; }
+    Em(kids): { return <em>{inlineNodes(x, kids, from)}</em>; }
+    Link(href, kids): {
+      Route r = routeOf(href, from, x.chapters, BLOB);
+      if (r.external) {
+        return <a class="link" href={r.href} target="_blank" rel="noopener">{inlineNodes(x, kids, from)}</a>;
+      }
+      return <a class="link" href={r.href}>{inlineNodes(x, kids, from)}</a>;
+    }
+  }
+}
+
+Node md(Ctx x, string text, string from) { return Node.Fragment(inlineNodes(x, parseInline(text), from)); }
+
+/** `expect: f(1) = 2` → `f(1) = 2`; `expect (wac check): refused` → `wac check: refused`. */
+string expectLabel(string e) {
+  string s = startsWith(e, "expect") ? e.slice(6, e.len()) : e;
+  u8[] b = s.toBytes();
+  i32 i = 0;
+  while (i < b.len() && isSpaceByte(b[i])) { i++; }
+  s = s.slice(i, s.len());
+  if (startsWith(s, "(")) {
+    i32 close = s.indexOf("):");
+    if (close > 1) {
+      string rest = trimmedStart(s.slice(close + 2, s.len()));
+      return s.slice(1, close) + ": " + rest;
+    }
+  }
+  if (startsWith(s, ":")) { return trimmedStart(s.slice(1, s.len())); }
+  return s;
+}
+
+string trimmedStart(string s) {
+  u8[] b = s.toBytes();
+  i32 i = 0;
+  while (i < b.len() && isSpaceByte(b[i])) { i++; }
+  return s.slice(i, s.len());
+}
+
+Node chip(string text, string kind, string? title) {
+  if (title is null) { return <span class={"chip " + kind}>{text}</span>; }
+  return <span class={"chip " + kind} title={title!}>{text}</span>;
+}
+
+Node fenceNode(Ctx x, Fence f, string path) {
+  bool counted = f.ordinal >= 0;
+  bool met = counted && isMet(x, exampleKey(path, f.ordinal));
+  string lang = f.lang == "wac" ? "wac" : (f.lang == "ts" ? "ts" : "text");
+  Node head = <></>;
+  if (counted || f.lang != "") {
+    Vec<Node> chips = Vec.create();
+    chips.push(<span class="which">{counted ? "example \{f.ordinal}" : (f.lang == "wac" ? "fragment" : f.lang)}</span>);
+    for (string e in f.expects) { chips.push(chip(expectLabel(e), "dim", null)); }
+    if (counted) {
+      chips.push(met
+        ? chip("met", "met", "the compiler in this tree does what the example says — spec/_status/MET")
+        : chip("missed", "missed", "the compiler in this tree does not yet do what the example says — spec/_status/STATUS.md"));
+    }
+    Node[] cs = Node[].filled(chips.len(), Node.Text(""));
+    for (i32 i = 0; i < chips.len(); i++) { cs[i] = chips.get(i); }
+    head = <div class="fence-head">{cs}</div>;
+  }
+  return <div class={met || !counted ? "fence" : "fence missed"}>
+    {head}
+    {highlighted(f.code, lang)}
+  </div>;
+}
+
+Node blockNode(Ctx x, Block b, string from) {
+  match (b) {
+    Heading(level, text, id): {
+      if (level == 1) { return <></>; }
+      Node inner = <a class="self" href={"#" + id}>{md(x, text, from)}</a>;
+      return level == 2 ? <h2 id={id}>{inner}</h2> : <h3 id={id}>{inner}</h3>;
+    }
+    Para(text): { return <p>{md(x, text, from)}</p>; }
+    List(ordered, items): {
+      Node[] lis = Node[].filled(items.len(), Node.Text(""));
+      for (i32 i = 0; i < items.len(); i++) { lis[i] = <li>{md(x, items[i], from)}</li>; }
+      return ordered ? <ol>{lis}</ol> : <ul>{lis}</ul>;
+    }
+    Table(head, align, rows): {
+      Node[] ths = Node[].filled(head.len(), Node.Text(""));
+      for (i32 j = 0; j < head.len(); j++) {
+        ths[j] = <th style={"text-align: " + (j < align.len() ? align[j] : "left")}>{md(x, head[j], from)}</th>;
+      }
+      Node[] trs = Node[].filled(rows.len(), Node.Text(""));
+      for (i32 r = 0; r < rows.len(); r++) {
+        Node[] tds = Node[].filled(rows[r].len(), Node.Text(""));
+        for (i32 j = 0; j < rows[r].len(); j++) {
+          string cls = j == 0 ? "first" : "";
+          tds[j] = <td class={cls} style={"text-align: " + (j < align.len() ? align[j] : "left")}>{md(x, rows[r][j], from)}</td>;
+        }
+        trs[r] = <tr>{tds}</tr>;
+      }
+      return <div class="spec-table"><table><thead><tr>{ths}</tr></thead><tbody>{trs}</tbody></table></div>;
+    }
+    Fenced(f): { return fenceNode(x, f, from); }
+  }
+}
+
+Node[] blockNodes(Ctx x, Block[] bs, i32 from, i32 to, string path) {
+  Node[] out = Node[].filled(to - from, Node.Text(""));
+  for (i32 i = from; i < to; i++) { out[i - from] = blockNode(x, bs[i], path); }
+  return out;
+}
+
+Node statusLine(Ctx x, string path) {
+  DocStatus? got = x.status.of(path);
+  if (got is null || got!.examples == 0) { return <span class="faint">no examples</span>; }
+  DocStatus s = got!;
+  if (s.met == s.examples) {
+    return <span class="dim">{s.examples} {s.examples == 1 ? "example" : "examples"}, <span class="ok">all met</span></span>;
+  }
+  return <span class="dim">{s.examples} examples, {s.met} met, <span class="warn">{s.examples - s.met} not yet</span></span>;
+}
+
+/** A part's heading id: `**2 — Types**` is `2-types`. */
+string partId(string part) {
+  string p = plain(part);
+  u8[] b = p.toBytes();
+  string out = "";
+  bool dash = false;
+  for (u8 c in b) {
+    u8 l = c >= 'A' && c <= 'Z' ? c + 32 : c;
+    if ((l >= 'a' && l <= 'z') || isDigitByte(l)) {
+      if (dash && out != "") { out = out + "-"; }
+      dash = false;
+      out = out + string.fromBytes([l]);
+    } else {
+      dash = true;
+    }
+  }
+  return out;
+}
+
+/** The README as a chapter, for the examples its conventions section shows. */
+static string README_PATH = "README.md";
+
+Node contentsPage(Ctx x, string readme) {
+  Block[] bs = parseBlocks(readme);
+  i32 firstH2 = bs.len();
+  i32 conv = 0 - 1;
+  for (i32 i = 0; i < bs.len(); i++) {
+    match (bs[i]) {
+      Heading(level, text, id): {
+        if (level == 2 && firstH2 == bs.len()) { firstH2 = i; }
+        if (text == "Conventions" && conv < 0) { conv = i; }
+      }
+      default: { }
+    }
+  }
+  i32 numbered = 0;
+  for (Chapter c in x.chapters) {
+    bool digits = c.num != "";
+    for (u8 d in c.num.toBytes()) { if (!isDigitByte(d)) { digits = false; } }
+    if (digits) { numbered++; }
+  }
+  DocStatus t = x.status.total;
+  string misses = t.missed == 0 ? ""
+    : (t.missed == 1 ? " The one it misses is marked where it sits." : " The \{t.missed} it misses are marked where they sit.");
+
+  Vec<string> parts = Vec.create();
+  for (Chapter c in x.chapters) {
+    bool have = false;
+    for (i32 i = 0; i < parts.len(); i++) { if (parts.get(i) == c.part) { have = true; } }
+    if (!have) { parts.push(c.part); }
+  }
+  Node[] partNodes = Node[].filled(parts.len(), Node.Text(""));
+  for (i32 p = 0; p < parts.len(); p++) {
+    string part = parts.get(p);
+    Vec<Node> rows = Vec.create();
+    for (Chapter c in x.chapters) {
+      if (c.part != part) { continue; }
+      rows.push(<a class="spec-ch" href={pageOf(c.slug)}>
+        <span class="num">{c.num}</span>
+        <span class="title">{c.title}</span>
+        <span class="state">{statusLine(x, c.path)}</span>
+      </a>);
+    }
+    Node[] rs = Node[].filled(rows.len(), Node.Text(""));
+    for (i32 i = 0; i < rows.len(); i++) { rs[i] = rows.get(i); }
+    partNodes[p] = <div class="spec-part">
+      <h2 id={partId(part)}>{part}</h2>
+      <div class="list">{rs}</div>
+    </div>;
+  }
+
+  return <Frame current="spec" contents={false} css={SPEC_CSS}>
+    <div class="spec">
+      <div class="kicker">the specification</div>
+      <h1>wac, as it is defined</h1>
+      {blockNodes(x, bs, 0, firstH2, README_PATH)}
+      <Facts rows={[
+        Fact("chapters", "\{numbered}"),
+        Fact("example programs", "\{t.examples}"),
+        Fact("met by the compiler", "\{t.met}"),
+      ]}/>
+      <p class="aside">
+        “Met” is measured, not claimed: the suite compiles every example against the
+        compiler in the tree and writes the answer to{" "}
+        <a class="link" href={BLOB + "/spec/_status/STATUS.md"} target="_blank" rel="noopener">spec/_status</a>,
+        which this page reads when the site is built.{misses}
+      </p>
+      {partNodes}
+      {blockNodes(x, bs, conv >= 0 ? conv : bs.len(), bs.len(), README_PATH)}
+    </div>
+  </Frame>;
+}
+
+Node chapterPage(Ctx x, i32 at, string text) {
+  Chapter ch = x.chapters[at];
+  Block[] bs = parseBlocks(text);
+  Node title = Node.Text(ch.num + " — " + ch.title);
+  Vec<Node> toc = Vec.create();
+  bool haveTitle = false;
+  for (Block b in bs) {
+    match (b) {
+      Heading(level, t, id): {
+        if (level == 1 && !haveTitle) {
+          title = md(x, t, ch.path);
+          haveTitle = true;
+        } else if (level > 1) {
+          toc.push(<li><a class={level == 3 ? "sub" : ""} href={"#" + id}>{plain(t)}</a></li>);
+        }
+      }
+      default: { }
+    }
+  }
+  Node contents = <></>;
+  if (toc.len() >= 4) {
+    Node[] items = Node[].filled(toc.len(), Node.Text(""));
+    for (i32 i = 0; i < toc.len(); i++) { items[i] = toc.get(i); }
+    contents = <"nav" class="spec-toc" aria-label="Contents"><ul>{items}</ul></"nav">;
+  }
+  Node prev = at > 0
+    ? <a href={pageOf(x.chapters[at - 1].slug)}>{"← " + x.chapters[at - 1].num + " " + x.chapters[at - 1].title}</a>
+    : <span></span>;
+  Node next = at + 1 < x.chapters.len()
+    ? <a class="next" href={pageOf(x.chapters[at + 1].slug)}>{x.chapters[at + 1].num + " " + x.chapters[at + 1].title + " →"}</a>
+    : <span></span>;
+  return <Frame current="spec" contents={false} css={SPEC_CSS}>
+    <div class="spec">
+      <div class="crumbs"><a href="spec.html">spec</a><span>/</span><span>{ch.part}</span></div>
+      <h1>{title}</h1>
+      <div class="spec-status">
+        {statusLine(x, ch.path)}
+        <a class="source" href={BLOB + "/spec/" + ch.path} target="_blank" rel="noopener">source ↗</a>
+      </div>
+      {contents}
+      {blockNodes(x, bs, 0, bs.len(), ch.path)}
+      <div class="spec-nav">{prev}{next}</div>
+    </div>
+  </Frame>;
+}
+
+/** The contents page, `spec.html`, and a page per chapter, `spec-<slug>.html`. */
+export Doc[] specDocs(SpecSource src) {
+  Chapter[] chapters = chaptersOf(src.readme);
+  Ctx x = Ctx(chapters, metOf(src.met), statusOf(src.status));
+  Vec<Doc> out = Vec.create();
+  out.push(Doc("spec.html", "wac — the spec",
+               "The wac specification: every rule shown as a program with its outcome written next to it, and whether the compiler in the tree meets it.",
+               contentsPage(x, src.readme)));
+  for (i32 i = 0; i < chapters.len(); i++) {
+    string text = "";
+    for (i32 k = 0; k < src.paths.len(); k++) { if (src.paths[k] == chapters[i].path) { text = src.texts[k]; } }
+    out.push(Doc(pageOf(chapters[i].slug), "wac spec — " + chapters[i].num + " " + chapters[i].title,
+                 chapters[i].num + " — " + chapters[i].title + ", from the wac specification.",
+                 chapterPage(x, i, text)));
+  }
+  Doc[] all = Doc[].filled(out.len(), Doc("", "", "", Node.Text("")));
+  for (i32 i = 0; i < out.len(); i++) { all[i] = out.get(i); }
+  return all;
+}
+
+static string SPEC_CSS = """
+  .spec .kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin-bottom: 10px; }
+  .spec h1 { font-family: var(--mono); font-size: 30px; font-weight: 600; color: var(--text); letter-spacing: -0.02em; margin: 0 0 8px; }
+  .spec > p, .spec > ul, .spec > ol { color: var(--body); font-size: 16px; line-height: 1.68; margin: 0 0 18px; }
+  .spec > ul, .spec > ol { padding-left: 22px; }
+  .spec li { margin-bottom: 4px; }
+  .spec h2 { font-family: var(--mono); font-size: 23px; font-weight: 600; color: var(--text); margin: 44px 0 16px; line-height: 1.3; scroll-margin-top: 110px; }
+  .spec h3 { font-family: var(--mono); font-size: 17.5px; font-weight: 600; color: var(--text); margin: 28px 0 12px; scroll-margin-top: 110px; }
+  .spec a.self { color: inherit; text-decoration: none; }
+  .spec .aside { font-size: 14.5px; color: var(--dim); }
+  .spec .crumbs { font-family: var(--mono); font-size: 12.5px; color: var(--faint); margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .spec .crumbs a { color: var(--dim); text-decoration: none; }
+  .spec-status { font-family: var(--mono); font-size: 12.5px; margin-bottom: 28px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .spec-status .source { color: var(--faint); text-decoration: none; }
+  .spec .faint { color: var(--faint); } .spec .dim { color: var(--dim); }
+  .spec .ok { color: var(--accent); } .spec .warn { color: var(--warm); }
+  .spec .tag { font-family: var(--mono); font-size: 12px; color: var(--faint); text-decoration: none; border: 1px solid var(--line);
+               border-radius: 3px; padding: 1px 6px; margin-right: 6px; white-space: nowrap; scroll-margin-top: 110px; }
+  .fence { margin-bottom: 28px; }
+  .fence-head { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-bottom: 7px; }
+  .fence-head .which { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-right: 2px; }
+  .fence.missed .code { border-color: #f5b54466; }
+  .chip { font-family: var(--mono); font-size: 11.5px; border-radius: 3px; padding: 1px 7px; white-space: nowrap; }
+  .chip.dim { color: var(--dim); border: 1px solid #8b95a555; }
+  .chip.met { color: var(--accent); border: 1px solid #5eead455; }
+  .chip.missed { color: var(--warm); border: 1px solid #f5b54455; }
+  .spec-table { border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; margin-bottom: 28px; }
+  .spec-table table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  .spec-table th { padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); color: var(--faint);
+                   font-family: var(--mono); font-size: 11.5px; font-weight: 600; }
+  .spec-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--body); vertical-align: top; line-height: 1.5; }
+  .spec-table td.first { color: var(--text); }
+  .spec-toc { border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px; margin-bottom: 36px; }
+  .spec-toc ul { list-style: none; margin: 0; padding: 0; columns: 2 230px; column-gap: 26px; }
+  .spec-toc li { break-inside: avoid; margin-bottom: 2px; }
+  .spec-toc a { color: var(--text); font-size: 14px; text-decoration: none; line-height: 1.6; }
+  .spec-toc a.sub { color: var(--dim); font-size: 13px; padding-left: 14px; }
+  .spec-part { margin-bottom: 34px; }
+  .spec-part h2 { font-size: 15px; color: var(--faint); letter-spacing: 0.04em; margin: 0 0 10px; }
+  .spec-part .list { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .spec-ch { display: flex; gap: 14px; align-items: baseline; padding: 9px 14px; border-top: 1px solid var(--line); text-decoration: none; background: var(--bg); }
+  .spec-ch:first-child { border-top: none; }
+  .spec-ch .num { font-family: var(--mono); font-size: 13px; color: var(--faint); width: 22px; flex-shrink: 0; }
+  .spec-ch .title { color: var(--text); font-size: 15.5px; flex: 1; }
+  .spec-ch .state { font-family: var(--mono); font-size: 12px; }
+  .spec-nav { display: flex; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); margin-top: 72px;
+              padding-top: 18px; font-family: var(--mono); font-size: 13.5px; }
+  .spec-nav a { color: var(--dim); text-decoration: none; }
+  .spec-nav a.next { text-align: right; }
+""";
