@@ -51,6 +51,7 @@ export string lexMessage(i32 code) {
   }
   if (code == 12) { return "a verbatim name is `@\"text\"`, with some text and on one line"; }
   if (code == 13) { return "`\\{` opens an expression, and there is none before its `}`"; }
+  if (code == 14) { return "a hex literal is `0x` and at least one hex digit"; }
   return "the lexer refused this";
 }
 

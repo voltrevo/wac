@@ -1123,7 +1123,7 @@ export void fseEnc(i32 i) {
   // 200 random distributions, which is what finds the normaliser's corners rather than what a chosen
   // list would. The seed is folded from `i` so a case is reproducible from its index alone.
   if (i < 200) {
-    i32 x = 0x1234567 + i * 2654435761;
+    i32 x = 0x1234567 + i * 0x9E3779B1;
     i32 maxSymbol = 1 + ((x >> 7) & 0x7FFFFFFF) % 50;
     i32 n = 20 + ((x >> 3) & 0x7FFFFFFF) % 3000;
     i32[] symbols = i32[].filled(n, 0);

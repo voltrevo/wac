@@ -1,0 +1,4 @@
+// expect: f() = 7
+// why: every integer type has the bit methods, at its own width: a `u8` of 1 has seven leading zeros
+// from: spec/2-types/08-primitives.md
+export i32 f() { u8 x = 1; return x.leadingZeros() as i32; }

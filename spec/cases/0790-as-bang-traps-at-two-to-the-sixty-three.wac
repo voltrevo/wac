@@ -1,0 +1,4 @@
+// expect: traps f
+// why: 2^63 has no `i64`, and the saturated maximum converts back to the same float, so the round trip cannot tell
+// from: spec/3-expressions/24-casts.md
+export i64 f() { f64 x = 9223372036854775808.0; return x as! i64; }

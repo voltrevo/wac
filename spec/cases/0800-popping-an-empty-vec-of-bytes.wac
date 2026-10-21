@@ -1,0 +1,5 @@
+// expect: f() = true
+// why: `pop()` answers `T?` for every `T`, a packed one included
+// from: spec/7-library/38-vec.md
+import { Vec } from "core";
+export bool f() { Vec<u8> v; bool none = v.pop() is null; v.push(3); return none && v.pop()! == 3; }

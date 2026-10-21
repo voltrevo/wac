@@ -1,0 +1,4 @@
+// expect: traps f
+// why: `as! bool` accepts exactly 0 or 1
+// from: spec/3-expressions/24-casts.md
+export bool f() { i32 x = 2; return x as! bool; }

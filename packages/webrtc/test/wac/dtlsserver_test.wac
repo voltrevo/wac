@@ -78,7 +78,7 @@ u8[] recordOf(i32 kind, i32 epoch, i64 seq, u8[] fragment) {
   out[2] = 0xFD;
   out[3] = ((epoch >> 8) & 255) as@ u8;
   out[4] = (epoch & 255) as@ u8;
-  for (i32 i = 0; i < 6; i++) { out[5 + i] = (((seq >> ((5 - i) * 8)) & 255) as i32) as@ u8; }
+  for (i32 i = 0; i < 6; i++) { out[5 + i] = ((seq >> ((5 - i) * 8)) & 255) as@ u8; }
   out[11] = ((fragment.len() >> 8) & 255) as@ u8;
   out[12] = (fragment.len() & 255) as@ u8;
   out.copyFrom(fragment, 0, 13, fragment.len());

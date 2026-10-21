@@ -1,0 +1,4 @@
+// expect: f() = true
+// why: a hex literal names bits, so `0xFF` in an `i8` is the `i8` whose bits those are — -1, not 255
+// from: spec/2-types/09-numeric-literals.md
+export bool f() { i8 x = 0xFF; i16 y = 0xFFFF; return x == -1 && y == -1 && x < 0; }

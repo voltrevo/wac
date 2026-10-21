@@ -1,0 +1,4 @@
+// expect: f() = true
+// why: a literal rounds to nearest in its own type once — through an f64 first it can land on the wrong side of a midpoint
+// from: spec/2-types/09-numeric-literals.md
+export bool f() { f32 x = 1.0000000596046447753906251; return x > 1.0; }

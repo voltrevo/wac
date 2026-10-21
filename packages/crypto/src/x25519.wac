@@ -66,7 +66,7 @@ export u8[] x25519(const u8[] scalar, const u8[] u) {
   // Bit 254 down to 0. Bit 255 is cleared by the clamp and bit 254 is set, so starting
   // at 254 is not an optimisation — it is the whole of the scalar that can be set.
   for (i32 t = 254; t >= 0; t--) {
-    i32 kt = (e[t / 8] >> (t % 8)) & 1;
+    i32 kt = ((e[t / 8] as i32) >> (t % 8)) & 1;
     swap = swap ^ kt;
     feCSwap(x2, x3, swap);
     feCSwap(z2, z3, swap);

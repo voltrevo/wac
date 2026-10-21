@@ -23,7 +23,7 @@
 import { Arm, Decl, DeclKind, Expr, ExprKind, ImportItem, Lvalue, LvalueKind, Method, Param, Program,
          Stmt, StmtKind, Ty } from "./ast.wac";
 import { Lexed, tokenStride } from "./lex.wac";
-import { floatLit, parseInt } from "./lit.wac";
+import { f32Lit, floatIntegerText, floatLit, parseInt } from "./lit.wac";
 import { stringLiteralBytes } from "./strlit.wac";
 import { endsWith, resolveFrom } from "./path.wac";
 import { genericArgs, genericBase, isTupleName, tupleMembers, tupleName } from "./tuples.wac";
@@ -896,15 +896,22 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
     // A literal takes the type its slot wants — the same rule the emitter states as "a literal is
     // polymorphic over a family", and the reason `i64 x = 1` is not an i32 widened.
     IntLit(tok): {
-      i64 v = parseInt(tokText(src, lx, tok));
-      if (want == "f32") { return f32Value(v as~ f32); }
-      if (want == "f64") { return f64Value(v as~ f64); }
+      string itext = tokText(src, lx, tok);
+      i64 v = parseInt(itext);
+      // In a float slot an integer spelling is read as a decimal, as the emitter reads it — through an
+      // `i64` its digits wrapped — and a hex one keeps its unsigned value.
+      bool hex = itext.len() > 2 && (itext.slice(1, 2) == "x" || itext.slice(1, 2) == "X");
+      if (want == "f32") { return f32Value(hex ? (v as@ u64) as~ f32 : f32Lit(itext)); }
+      if (want == "f64") { return f64Value(hex ? (v as@ u64) as~ f64 : floatLit(itext)); }
       string t = isIntName(want) ? want : "i32";
       return numValue(t, wrapTo(t, v));
     }
     FloatLit(tok): {
-      f64 v = floatLit(tokText(src, lx, tok));
-      return want == "f32" ? f32Value(v as~ f32) : f64Value(v);
+      string ftext = tokText(src, lx, tok);
+      // Rounded once to an `f32`; and in an integer slot, the integer it names (spec ch09).
+      if (want == "f32") { return f32Value(f32Lit(ftext)); }
+      if (isIntName(want)) { return numValue(want, wrapTo(want, parseInt(floatIntegerText(ftext)))); }
+      return f64Value(floatLit(ftext));
     }
     BoolLit(value): { return boolValue(value); }
     NullLit: { return nullValue(); }
@@ -941,6 +948,16 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
       return noneValue();
     }
 
+    // **`x++` and `++x` as expressions** — `++a;` is one, as a statement — the same step the statement
+    // takes, answering the value before it or after it.
+    Incr(target, op, prefix): {
+      Value cur = readLvalue(ev, cx, fi, target);
+      if (!evFinished(ev.status)) { return noneValue(); }
+      Value next = stepped(cur, opKind(lx, op) == kInc());
+      writeLvalue(ev, cx, fi, target, next);
+      return prefix ? next : cur;
+    }
+
     Unary(op, operand): {
       i32 k = opKind(lx, op);
       Value v = evalExpr(ev, cx, fi, operand, k == kBang() ? "bool" : want);
@@ -948,8 +965,12 @@ export Value evalExpr(Ev ev, Decls cx, i32 fi, Expr e, string want) {
       if (k == kBang()) { return boolValue(!truthy(v)); }
       string t = typeOfValue(v);
       if (k == kMinus()) {
-        if (v.kind == vF32()) { return f32Value(0.0 as~ f32 - (v.fval as~ f32)); }
-        if (v.kind == vF64()) { return f64Value(0.0 - v.fval); }
+        // **The sign bit flipped**, as `f64.neg` does: `0.0 - x` is +0.0 for a zero, so a static
+        // holding `-z` divided one into +Infinity where the running program got -Infinity.
+        if (v.kind == vF32()) {
+          return f32Value(f32.fromBits(f32.toBits(v.fval as~ f32) ^ (2147483648 as u32)));
+        }
+        if (v.kind == vF64()) { return f64Value(f64.fromBits(f64.toBits(v.fval) ^ ((1 as u64) << (63 as u64)))); }
         if (v.kind == vNum()) { return numValue(v.ty, wrapTo(v.ty, 0 as i64 - v.bits)); }
         ev.unsupported("unary minus on this value");
         return noneValue();
@@ -1379,18 +1400,31 @@ export Value castTo(Ev ev, i32 op, Value v, string to) {
     // Truncating for both put this one apart from the emitted code on `-3.9`, which is what the
     // differential is for.
     f64 x = f64Of(v);
+    // NaN has no integer: `as!` traps on it and the saturating casts answer 0, as `trunc_sat` does.
+    if (x != x) {
+      if (op == kAsBang()) { ev.raise("`as!` of NaN, which has no integer"); return noneValue(); }
+      return numValue(to, 0 as i64);
+    }
     f64 whole = op == kAsAt() ? towardZero(x) : nearestEven(x);
     if (op == kAsBang() && whole != x) { ev.raise("`as!` lost a fraction"); return noneValue(); }
-    i64 lo = minOf(to);
-    i64 hi = maxOf(to);
-    if (isUnsignedName(to)) { lo = 0 as i64; }
-    if (whole < (lo as~ f64)) {
+    // **The range is asked of exact float bounds**: 2^w (or 2^(w-1)) is the first whole number past the
+    // top, and each is exact in an `f64`. Asking `maxOf(to) as~ f64` instead read `u64`'s maximum —
+    // held as -1 — as -1.0, so every positive value was above the range of a `u64`.
+    i32 w = bitsOf(to);
+    bool uns = isUnsignedName(to);
+    f64 top = powerOfTwo(uns ? w : w - 1);
+    f64 bottom = uns ? 0.0 : 0.0 - powerOfTwo(w - 1);
+    if (whole < bottom) {
       if (op == kAsBang()) { ev.raise("`as!` went below the range of " + to); return noneValue(); }
-      return numValue(to, lo);
+      return numValue(to, uns ? 0 as i64 : minOf(to));
     }
-    if (whole > (hi as~ f64)) {
+    if (whole >= top) {
       if (op == kAsBang()) { ev.raise("`as!` went above the range of " + to); return noneValue(); }
-      return numValue(to, hi);
+      return numValue(to, maxOf(to));
+    }
+    // A `u64` past 2^63 has no `i64` to pass through; its bits are the value less 2^64.
+    if (whole >= 9223372036854775808.0) {
+      return numValue(to, f64ToI64(whole - 9223372036854775808.0) + minOf("i64"));
     }
     return numValue(to, wrapTo(to, f64ToI64(whole)));
   }
@@ -1406,10 +1440,40 @@ export Value castTo(Ev ev, i32 op, Value v, string to) {
 
   // Integer to integer. `as@` keeps the bits and reads them as the new type; the rest keep the
   // value, and `as!` is the one that complains when the value will not fit.
+  //
+  // **Whether it fits is a question about the value**, read in the source's signedness — comparing
+  // the bits before and after said `-1 as! u64` fit, since -1 and `u64`'s maximum are the same 64 bits,
+  // and `as~` never clamped at all: `-1 as~ u32` came out as 4294967295 where the running program says 0.
   i64 bits = intOf(v);
   i64 out = wrapTo(to, bits);
-  if (op == kAsBang() && out != bits) { ev.raise("`as!` does not fit in " + to); return noneValue(); }
-  return numValue(to, out);
+  if (op == kAsAt() || op == kAs()) { return numValue(to, out); }
+  bool big = isUnsignedName(from) && bits < (0 as i64);      // a `u64` at or past 2^63
+  bool fits = false;
+  if (to == "bool") { fits = !big && (bits == (0 as i64) || bits == (1 as i64)); }
+  else if (big) { fits = to == "u64"; }
+  else if (bits < (0 as i64)) { fits = !isUnsignedName(to) && bits >= minOf(to); }
+  else { fits = to == "u64" || bits <= maxOf(to); }
+  if (fits) { return numValue(to, out); }
+  if (op == kAsBang()) { ev.raise("`as!` does not fit in " + to); return noneValue(); }
+  if (to == "bool") { return numValue(to, bits != (0 as i64) ? 1 as i64 : 0 as i64); }
+  // `as~`: the nearest value in range — the top for anything above it, the bottom for anything below.
+  if (big || bits >= (0 as i64)) { return numValue(to, maxOf(to)); }
+  return numValue(to, isUnsignedName(to) ? 0 as i64 : minOf(to));
+}
+
+/** `v` plus or minus one, in its own type: wrapping for an integer, IEEE for a float. */
+Value stepped(Value v, bool up) {
+  if (v.kind == vF64()) { return f64Value(up ? v.fval + 1.0 : v.fval - 1.0); }
+  if (v.kind == vF32()) { return f32Value((up ? v.fval + 1.0 : v.fval - 1.0) as~ f32); }
+  string t = typeOfValue(v);
+  return numValue(t, wrapTo(t, intOf(v) + (up ? 1 as i64 : 0 - 1 as i64)));
+}
+
+/** 2 to the `n`, exactly — every power of two up to 2^64 is an `f64`. */
+f64 powerOfTwo(i32 n) {
+  f64 x = 1.0;
+  for (i32 i = 0; i < n; i++) { x = x * 2.0; }
+  return x;
 }
 
 /** The largest value a type holds. */
@@ -1837,10 +1901,7 @@ export void execStmt(Ev ev, Decls cx, i32 fi, Stmt st) {
     IncrStmt(target, op): {
       Value cur = readLvalue(ev, cx, fi, target);
       if (!evFinished(ev.status)) { return; }
-      string t = typeOfValue(cur);
-      i64 one = 0 - 1 as i64;
-      if (opKind(lx, op) == kInc()) { one = 1 as i64; }
-      writeLvalue(ev, cx, fi, target, numValue(t, wrapTo(t, intOf(cur) + one)));
+      writeLvalue(ev, cx, fi, target, stepped(cur, opKind(lx, op) == kInc()));
     }
 
     If(cond, then, els): {

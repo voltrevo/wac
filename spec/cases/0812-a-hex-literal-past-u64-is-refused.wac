@@ -1,0 +1,4 @@
+// expect: refused
+// why: 2^64 is past every integer type, and wrapping it to zero is not a reading
+// from: spec/2-types/09-numeric-literals.md
+export u64 f() { u64 x = 0x1_0000_0000_0000_0000; return x; }

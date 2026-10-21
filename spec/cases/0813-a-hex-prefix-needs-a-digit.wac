@@ -1,0 +1,4 @@
+// expect: refused
+// why: a hex literal is `0x` and at least one hex digit
+// from: spec/appendices/A-grammar.md
+export i32 f() { i32 x = 0x; return x; }

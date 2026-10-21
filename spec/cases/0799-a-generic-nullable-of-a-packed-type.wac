@@ -1,0 +1,5 @@
+// expect: f() = true
+// why: a packed type may be nullable, so `T?` with `T` a `u8` holds a `u8` or null like any other
+// from: spec/2-types/08-primitives.md
+T? first<T>(T[] xs) { if (xs.len() == 0) { return null; } return xs[0]; }
+export bool f() { u8[] e = []; u8[] one = [7]; return first(e) is null && first(one)! == 7; }

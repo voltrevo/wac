@@ -1,0 +1,4 @@
+// expect: f() = 1.5
+// why: an integer spelling may be read as a float where a float is expected, inside a sum of literals too
+// from: spec/2-types/09-numeric-literals.md
+export f64 f() { f64 x = 1 + 0.5; return x; }

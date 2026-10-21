@@ -152,7 +152,7 @@ export Jac jacMul(Curve c, const u8[] scalar, Jac p) {
   i32 bits = 8 * byteLen(c);
   for (i32 i = 0; i < bits; i++) {
     acc = jacDouble(c, acc);
-    i32 bit = (scalar[i / 8] >> (7 - (i % 8))) & 1;
+    i32 bit = ((scalar[i / 8] as i32) >> (7 - (i % 8))) & 1;
     // **Add on every bit and keep the answer only when the bit is set.** `if (bit == 1)` made the work
     // — and the time — a function of the scalar's Hamming weight and of *which* bits were set;
     // `packages/crypto/tools/ct.wac` put the first divergence between two P-256 keys at this line and

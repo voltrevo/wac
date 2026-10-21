@@ -1,0 +1,4 @@
+// expect: refused
+// why: a literal with no reading in its type is refused, and sixty-four bits of ones has none in an `i32`
+// from: spec/2-types/09-numeric-literals.md
+export i32 f() { i32 x = 0xFFFF_FFFF_FFFF_FFFF; return x; }

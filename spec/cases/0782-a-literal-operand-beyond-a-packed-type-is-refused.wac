@@ -1,0 +1,4 @@
+// expect: refused
+// why: `x + 256` reads 256 as a `u8`, and a `u8` has no reading of 256
+// from: spec/2-types/09-numeric-literals.md
+export u8 f() { u8 x = 1; return x + 256; }

@@ -1,0 +1,9 @@
+// expect: f() = 506
+// why: a local a lambda captures lives in a cell, and `c++` reads and writes the cell
+// from: spec/3-expressions/22-operators.md
+export i32 f() {
+  i32 c = 5;
+  fn<i32()> g = () => c;
+  i32 old = c++;
+  return old * 100 + g();
+}

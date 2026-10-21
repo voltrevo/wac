@@ -1,0 +1,6 @@
+// expect: f() = 5
+// why: a static initialiser runs the function it calls by the rules a running program uses, `++` included
+// from: spec/4-static/28-static-evaluation.md
+i32 inc() { i32 a = 1; ++a; i32 b = a++; return a + b; }
+static i32 S = inc();
+export i32 f() { return S; }

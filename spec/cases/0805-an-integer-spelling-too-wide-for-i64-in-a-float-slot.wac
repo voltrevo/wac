@@ -1,0 +1,4 @@
+// expect: f() = true
+// why: an integer-spelled literal in a float slot is read as a float, not through an i64 that wraps
+// from: spec/2-types/09-numeric-literals.md
+export bool f() { f64 x = 18446744073709551615; f64 y = 100000000000000000000; return x > 1.8e19 && y == 1e20; }

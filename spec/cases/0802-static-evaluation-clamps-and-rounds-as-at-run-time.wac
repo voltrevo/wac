@@ -1,0 +1,10 @@
+// expect: f() = true
+// why: `as~` clamps statically as it does at run time, and a float rounds into a `u64`
+// from: spec/4-static/28-static-evaluation.md
+u32 clampNeg() { i32 a = -1; return a as~ u32; }
+u64 roundF() { f64 a = 5.0; return a as~ u64; }
+u64 exact() { f64 a = 5.0; return a as! u64; }
+static u32 A = clampNeg();
+static u64 B = roundF();
+static u64 C = exact();
+export bool f() { return A == 0 && B == 5 && C == 5; }

@@ -1,0 +1,7 @@
+// expect: f() = true
+// why: a value computed statically is the value the running program computes, and `-z` of a zero is -0.0
+// from: spec/4-static/28-static-evaluation.md
+f64 negZero() { f64 z = 0.0; return -z; }
+static f64 S = negZero();
+static f64 L = -0.0;
+export bool f() { return 1.0 / S < 0.0 && 1.0 / L < 0.0; }

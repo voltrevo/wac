@@ -1,0 +1,4 @@
+// expect: f() = true
+// why: `>>>` answers the left operand's type, at its width: an `i8` of -1 shifted right four is 15
+// from: spec/3-expressions/22-operators.md
+export bool f() { i8 a = -1; i16 b = -1; return (a >>> 4) == 15 && (b >>> 8) == 255; }

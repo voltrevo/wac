@@ -296,6 +296,144 @@ export f64 floatLit(string s) {
   return decimalToF64(sig, n, e10);
 }
 
+/** A decimal literal taken apart: its significant digits, how many, and the power of ten they are scaled by. */
+struct DecimalParts {
+  u8[] digits;
+  i32 count;
+  i32 e10;
+}
+
+/**
+ * A literal's text as digits and a decimal exponent — `1_000.5e3` is `10005` and `e10 = 2` — with the
+ * leading zeros gone and the exponent saturated rather than wrapped. The same reading `floatLit` does,
+ * for the readers below that need the parts rather than an `f64`.
+ */
+DecimalParts decimalParts(string s) {
+  u8[] a = s.toBytes();
+  u8[] digits = u8[].filled(a.len() + 1, 0);
+  i32 count = 0;
+  i32 frac = 0;
+  i32 i = 0;
+  bool point = false;
+  while (i < a.len()) {
+    i32 c = a[i] as i32;
+    if (c == 95) { i = i + 1; continue; }
+    if (c == 46 && !point) { point = true; i = i + 1; continue; }
+    if (c < 48 || c > 57) { break; }
+    // Leading zeros carry nothing, before the point or after it.
+    if (count > 0 || c != 48) {
+      digits[count] = c as@ u8;
+      count = count + 1;
+    }
+    if (point) { frac = frac + 1; }
+    i = i + 1;
+  }
+  i32 exp = 0;
+  bool neg = false;
+  if (i < a.len() && (a[i] == 101 || a[i] == 69)) {
+    i = i + 1;
+    if (i < a.len() && (a[i] == 43 || a[i] == 45)) {
+      neg = a[i] == 45;
+      i = i + 1;
+    }
+    while (i < a.len()) {
+      i32 c3 = a[i] as i32;
+      if (c3 == 95) { i = i + 1; continue; }
+      if (c3 < 48 || c3 > 57) { break; }
+      if (exp < 100000) { exp = exp * 10 + (c3 - 48); }
+      i = i + 1;
+    }
+  }
+  return DecimalParts(digits, count, (neg ? 0 - exp : exp) - frac);
+}
+
+/**
+ * The digits of the integer a literal names, in decimal — or "" when it names a fraction.
+ *
+ * Spelling does not decide the type (spec ch09): `1e9` in an `i64` is a billion, and `1.0` in an `i32`
+ * is one, while `1.5` has no integer reading. Answered as text so the range is asked of the digits,
+ * which do not wrap — the integer may be far past what any type holds. Zero is `"0"`.
+ */
+export string floatIntegerText(string s) {
+  DecimalParts p = decimalParts(s);
+  if (p.count == 0) { return "0"; }
+  if (p.e10 < 0) {
+    // The value is integral exactly when the digits the exponent moves past the point are zeros.
+    if (0 - p.e10 >= p.count) { return ""; }
+    for (i32 k = p.count + p.e10; k < p.count; k++) { if (p.digits[k] != 48) { return ""; } }
+    return string.fromBytes(p.digits).slice(0, p.count + p.e10);
+  }
+  // Past forty digits it fits nothing, and saying so takes forty-one of them.
+  i32 len = p.count + p.e10 > 41 ? 41 : p.count + p.e10;
+  u8[] out = u8[].filled(len, 48);
+  for (i32 k = 0; k < len && k < p.count; k++) { out[k] = p.digits[k]; }
+  return string.fromBytes(out);
+}
+
+/**
+ * The `f32` nearest to a literal's value, rounded **once**, ties to even.
+ *
+ * Reading it as an `f64` and narrowing rounds twice, and the second rounding can land on the wrong side
+ * of an `f32` midpoint: `1.0000000596046447753906251` is above the one between 1.0 and the next `f32`,
+ * and its nearest `f64` is that midpoint exactly, which then rounds to even — down. The same integer
+ * arithmetic as `decimalToF64`, taken to 24 bits.
+ */
+export f32 f32Lit(string s) {
+  DecimalParts p = decimalParts(s);
+  if (p.count == 0) { return 0.0; }
+  if (p.count + p.e10 > 40) { return f32.fromBits(2139095040 as@ u32); }
+  if (p.count + p.e10 < 0 - 50) { return 0.0; }
+  u8[] digits = p.digits;
+  i32 count = p.count;
+  i32 e10 = p.e10;
+  // Two hundred digits decide any f32, which needs nine; past them only whether the rest is zero matters.
+  if (count > 200) {
+    bool rest = false;
+    for (i32 k = 200; k < count; k++) { if (digits[k] != 48) { rest = true; } }
+    e10 = e10 + (count - 200);
+    count = 200;
+    if (rest) {
+      digits[200] = 49;
+      count = 201;
+      e10 = e10 - 1;
+    }
+  }
+  i32[] num = i32[].filled(400, 0);
+  i32[] den = i32[].filled(400, 0);
+  den[0] = 1;
+  i32 nn = 1;
+  i32 dn = 1;
+  for (i32 i = 0; i < count; i++) { nn = bigMulSmall(num, nn, 10, digits[i] as i32 - 48); }
+  i32 e = e10;
+  while (e > 0) { nn = bigMulSmall(num, nn, 10, 0); e = e - 1; }
+  while (e < 0) { dn = bigMulSmall(den, dn, 10, 0); e = e + 1; }
+  // Align the quotient into [1, 2), as `decimalToF64` does, then take its bits from the top.
+  i32 exp2 = 0;
+  i32 diff = bigBits(num, nn) - bigBits(den, dn);
+  if (diff > 0) { dn = bigShl(den, dn, diff); exp2 = exp2 + diff; }
+  if (diff < 0) { nn = bigShl(num, nn, 0 - diff); exp2 = exp2 + diff; }
+  if (bigCmp(num, nn, den, dn) < 0) { nn = bigShl(num, nn, 1); exp2 = exp2 - 1; }
+  // A subnormal's last bit weighs 2^-149 whatever its leading bit is; below half of that is zero.
+  i32 want = 24;
+  if (exp2 < 0 - 126) { want = exp2 + 150; }
+  if (want < 0) { return 0.0; }
+  i64 q = 0;
+  for (i32 b = 0; b < want; b++) {
+    q = q * 2;
+    if (bigCmp(num, nn, den, dn) >= 0) { bigSub(num, nn, den, dn); q = q + 1; }
+    nn = bigShl(num, nn, 1);
+  }
+  i32 roundBit = 0;
+  if (bigCmp(num, nn, den, dn) >= 0) { bigSub(num, nn, den, dn); roundBit = 1; }
+  bool sticky = bigLen(num, nn) > 0;
+  if (roundBit == 1 && (sticky || (q & 1) == 1)) { q = q + 1; }
+  if (want < 24) { return f32.fromBits(q as@ u32); }
+  if (q >= 16777216) { q = q / 2; exp2 = exp2 + 1; }
+  i64 biased = (exp2 + 127) as i64;
+  if (biased >= 255) { return f32.fromBits(2139095040 as@ u32); }
+  return f32.fromBits((biased * 8388608 + (q - 8388608)) as@ u32);
+}
+
 /**
  * A decimal integer literal's value, at `i64`.
  *

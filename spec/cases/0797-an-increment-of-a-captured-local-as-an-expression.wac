@@ -1,0 +1,9 @@
+// expect: f() = 1
+// why: `++` is an expression as well as a statement, on a local a lambda captured as on any other
+// from: spec/3-expressions/22-operators.md
+export i32 f() {
+  i32 c = 0;
+  fn<i32()> g = () => c++;
+  g();
+  return g();
+}

@@ -1,0 +1,4 @@
+// expect: refused
+// why: a float literal has no reading as an `i32`, so `x + 1.5` on an `i32` is refused rather than built
+// from: spec/2-types/09-numeric-literals.md
+export i32 f() { i32 x = 1; return x + 1.5; }

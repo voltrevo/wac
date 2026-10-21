@@ -1,0 +1,5 @@
+// expect: f() = true
+// why: a literal just below the midpoint above f32's largest value rounds down to that value, not to
+//      infinity — though its nearest f64 is the midpoint itself
+// from: spec/2-types/09-numeric-literals.md
+export bool f() { f32 x = 3.4028235677973366e38; f32 m = 3.4028234663852886e38; return x == m; }

@@ -267,7 +267,7 @@ export i64[] feFromBytes(const u8[] s) {
     for (i32 b = 0; b < width; b++) {
       i32 idx = bitPos + b;
       i32 byteIdx = idx / 8;
-      i32 bit = (s[byteIdx] >> (idx % 8)) & 1;
+      i32 bit = ((s[byteIdx] as i32) >> (idx % 8)) & 1;
       v = v | ((bit as i64) << b);
     }
     h[i] = v;

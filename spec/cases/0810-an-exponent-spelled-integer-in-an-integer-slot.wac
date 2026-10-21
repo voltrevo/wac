@@ -1,0 +1,4 @@
+// expect: f() = 1000000001
+// why: spelling does not decide the type: `i64 n = 1e9;` is a billion, and an integer target refuses only a fraction
+// from: spec/2-types/09-numeric-literals.md
+export i64 f() { i64 n = 1e9; i32 m = 1.0; return n + m as i64; }

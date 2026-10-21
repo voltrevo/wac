@@ -125,7 +125,7 @@ struct Built {
 
 /** A filesystem built from a seed: names, depths, contents, modes and owners all vary with it. */
 async Built build(i32 seed) {
-  Rng rng = Rng(seed * 2654435761 + 12345);
+  Rng rng = Rng(seed * 0x9E3779B1 + 12345);
   Fs fs = Fs.inMemory(NOW);
   string[] mounts = seed % 3 == 0 ? ["/", "/mnt"] : ["/"];
   // A second mount some of the time, because an image carries every memory mount and a test with one

@@ -38,7 +38,7 @@ import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFin
          vNum, declsOfFiles, noneValue, tokText } from "./consteval.wac";
 import { P, parseProgram } from "./parse.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
-import { floatLit, parseInt } from "./lit.wac";
+import { f32Lit, floatIntegerText, floatLit, parseInt } from "./lit.wac";
 import { stringLiteralBytes } from "./strlit.wac";
 import { coreExports, coreSymbols, isBuiltinSpec, stdSource } from "./coretext.wac";
 import { endsWith, startsWith } from "./path.wac";
@@ -2517,8 +2517,10 @@ bool rawCast(string from, string to) {
   i32 wf = intWidth(from);
   i32 wt = intWidth(to);
   if (wf > 0 && wt > 0) { return wt < wf || (wt == wf && intSigned(to) != intSigned(from)); }
-  // A float truncates toward zero into an integer of 32 bits or fewer; into 64 the reference has none.
-  if (from == "f32" || from == "f64") { return wt > 0 && wt <= 32; }
+  // **A float truncates toward zero into an integer of any width** (spec ch24: "a float to an integer
+  // truncates toward zero", with no width in it). This stopped at 32 bits because the reference had no
+  // 64-bit form, which is a fact about the reference rather than the language.
+  if (from == "f32" || from == "f64") { return wt > 0; }
   return false;
 }
 
@@ -5611,6 +5613,88 @@ bool isHexText(string t) {
   return t.len() > 2 && t.slice(0, 1) == "0" && (t.slice(1, 2) == "x" || t.slice(1, 2) == "X");
 }
 
+/** How many bits a hex literal's value needs — its significant digits, the leading one counted exactly. */
+i32 hexBits(string t) {
+  u8[] a = t.toBytes();
+  i32 bits = 0;
+  for (i32 i = 2; i < a.len(); i++) {
+    i32 c = a[i] as i32;
+    if (c == 95) { continue; }
+    i32 d = 0 - 1;
+    if (c >= 48 && c <= 57) { d = c - 48; }
+    if (c >= 97 && c <= 102) { d = c - 87; }
+    if (c >= 65 && c <= 70) { d = c - 55; }
+    if (d < 0) { break; }
+    if (bits == 0) {
+      while (d > 0) { bits = bits + 1; d = d / 2; }
+    } else {
+      bits = bits + 4;
+    }
+  }
+  return bits;
+}
+
+/**
+ * Whether the integer a literal's decimal digits name fits `want`: the bounds compared as text, since
+ * the digits may name a number no integer here can hold. `negated` is a minus written in front.
+ */
+bool decimalDigitsFit(string digits, string want, bool negated) {
+  // A minus in front of a nonzero value has no reading in an unsigned type; `-0` is zero.
+  bool below = negated && decimalExceeds(digits, "0");
+  if (want == "u64") { return !below && !decimalExceeds(digits, "18446744073709551615"); }
+  if (want == "u32") { return !below && !decimalExceeds(digits, "4294967295"); }
+  if (want == "u16") { return !below && !decimalExceeds(digits, "65535"); }
+  if (want == "u8") { return !below && !decimalExceeds(digits, "255"); }
+  if (want == "i64") { return !decimalExceeds(digits, negated ? "9223372036854775808" : "9223372036854775807"); }
+  if (want == "i32") { return !decimalExceeds(digits, negated ? "2147483648" : "2147483647"); }
+  if (want == "i16") { return !decimalExceeds(digits, negated ? "32768" : "32767"); }
+  if (want == "i8") { return !decimalExceeds(digits, negated ? "128" : "127"); }
+  return false;
+}
+
+/**
+ * Whether a float-spelled literal names an integer `want` can hold — spec ch09: "Spelling does not
+ * decide the type: an exponent is part of the value, and `i64 n = 1e9;` is a billion", and "Integer
+ * targets reject fractional or out-of-range values". A sign is the unary operator in front of it.
+ */
+bool floatSpellingFitsInteger(C c, string want, Expr e, bool negated) {
+  match (e.kind) {
+    FloatLit(tok): {
+      string digits = floatIntegerText(tokenText(c, tok));
+      return digits != "" && decimalDigitsFit(digits, want, negated);
+    }
+    Unary(op, operand): {
+      return floatSpellingFitsInteger(c, want, operand, tokenKind(c, op) == kMinus() ? !negated : negated);
+    }
+    default: { return false; }
+  }
+}
+
+/**
+ * Whether a numeric literal's value overflows the float type `want` — `1e309` in an `f64`, or an integer
+ * spelling of forty digits in an `f32`. Read as the slot reads it: an `f32` rounds once, from the
+ * decimal, so the midpoint above its largest value overflows (ties go to its even neighbour, infinity).
+ */
+bool floatLiteralOverflows(C c, string want, Expr e) {
+  match (e.kind) {
+    FloatLit(tok): { return floatTextOverflows(want, tokenText(c, tok)); }
+    IntLit(tok): {
+      string t = tokenText(c, tok);
+      // A hex literal is at most 64 bits, which every float type holds the magnitude of.
+      if (isHexText(t) || (t.len() >= 3 && t.slice(0, 1) == "'")) { return false; }
+      return floatTextOverflows(want, t);
+    }
+    Unary(op, operand): { return floatLiteralOverflows(c, want, operand); }
+    default: { return false; }
+  }
+}
+
+bool floatTextOverflows(string want, string text) {
+  if (want == "f32") { return !(f32Lit(text) as f64 < 3.5e38); }
+  f64 v = floatLit(text);
+  return !(v <= 1.7976931348623157e308);
+}
+
 bool integerLiteralFits(C c, string want, Expr e, bool negated) {
   match (e.kind) {
     IntLit(tok): {
@@ -5621,10 +5705,15 @@ bool integerLiteralFits(C c, string want, Expr e, bool negated) {
       // for one is the type's *width* and for the other its signed range, and a check that used one
       // bound for both reported four of the spec's own programs and eight working files.
       if (isHexText(text)) {
-        if (want == "i32" || want == "u32") { return v <= 4294967295; }
-        if (want == "i16" || want == "u16") { return v <= 65535; }
-        if (want == "i8" || want == "u8") { return v <= 255; }
-        return true;
+        // **Counted in digits first, because `parseInt` wraps past 64 bits**: seventeen significant
+        // hex digits fit nothing, and sixteen with the top bit set come back negative — so
+        // `0xFFFF_FFFF_FFFF_FFFF` read as -1 and passed every `v <= …` below, and `0x1_0000_…_0005`
+        // came out as 5.
+        i32 bits = hexBits(text);
+        if (want == "i32" || want == "u32") { return bits <= 32; }
+        if (want == "i16" || want == "u16") { return bits <= 16; }
+        if (want == "i8" || want == "u8") { return bits <= 8; }
+        return bits <= 64;
       }
       // **The 64-bit bounds are compared as text.** `parseInt` answers an `i64`, so a literal one past
       // the top wraps and comes back looking small — 2^63 arrives negative and 2^64 arrives as zero.
@@ -5672,20 +5761,39 @@ f64 floatLiteralValue(C c, i32 tok) {
 }
 
 /**
- * Whether a literal fits the slot it is going into — the family question, plus `f32`'s range.
+ * Whether a literal fits the slot it is going into — the family question, plus the range.
  *
  * One function so the range rule reaches every position at once. It applies in all of them, measured:
- * an initialiser, a return, an argument, an array element, a field, an assignment. Only `f32` is
- * checked — the reference accepts `f64 x = 1.0e400`, which is out of range for an `f64` too, and
- * matching that is the job rather than improving on it.
+ * an initialiser, a return, an argument, an array element, a field, an assignment, and since the
+ * operand rule asks it too, the other side of a binary operator.
  */
 bool literalFits(C c, string want, Expr e) {
   // `litFamily`, not `litKindOf`: an expression made only of literals is one of them for this
   // question — `f64 s = 1 + 2` is an integer literal sum in a float slot. `issues/lang/0120`.
   i32 lit = litFamily(c, e);
-  if (!acceptsLiteral(want, lit)) { return false; }
+  // **A conditional of literals fits when each branch does**: both take the slot's type, so
+  // `u8 r = c ? 1 : 300` has a branch with no reading in a `u8`. Asked of the family alone, the
+  // whole conditional was an integer and the range was never looked at.
+  match (e.kind) {
+    Ternary(tc, tt, te): {
+      if (lit != litNone()) { return literalFits(c, want, tt) && literalFits(c, want, te); }
+    }
+    MatchExpr(subject, arms): {
+      if (lit != litNone()) {
+        for (i32 i = 0; i < arms.len(); i++) {
+          if (arms[i].value is not null && !literalFits(c, want, arms[i].value!)) { return false; }
+        }
+        return true;
+      }
+    }
+    default: { }
+  }
   string core = withoutNull(want);
   string base = core == "" ? want : core;
+  // **A float spelling names a number, and the number decides** (spec ch09): `i64 n = 1e9;` is a
+  // billion and fits, `1.5` is a fraction and fits no integer type.
+  if (lit == litFloat() && isIntegerish(base)) { return floatSpellingFitsInteger(c, base, e, false); }
+  if (!acceptsLiteral(want, lit)) { return false; }
   // Into a union: the one alternative that takes it (checked above) is the slot it must fit — and a
   // `null` into `union<…>?` is the outer layer's.
   if (isUnionName(base) && lit == litNull()) { return true; }
@@ -5694,23 +5802,22 @@ bool literalFits(C c, string want, Expr e) {
     for (i32 i = 0; i < ms.len(); i++) { if (acceptsLiteral(ms[i], lit)) { return literalFits(c, ms[i], e); } }
     return false;
   }
-  // **An integer literal has to fit the slot it is going into**, which is a different question from
-  // the family one above: `4294967296` is an integer and an `i32` has no room for it. Asked of the
-  // types whose bounds are exact here — the 64-bit ones would need the literal's own width to answer
-  // honestly, and a guess about the top of `u64` is worse than saying nothing.
-  if (lit == litInteger()) { return integerLiteralFits(c, base, e, false); }
-  if (base != "f32" || lit != litFloat()) { return true; }
-  match (e.kind) {
-    FloatLit(tok): {
-      // f32's largest finite value plus half an ulp: anything above it rounds to infinity, and
-      // anything at or below it rounds to something an `f32` can hold.
-      return floatLiteralValue(c, tok) <= 3.4028235677973366e38;
-    }
-    // The sign is a unary operator and the magnitude is what the range is about, so this asks the
-    // same question one node down. The reference agrees: it reports at the literal, not at the `-`.
-    Unary(op, operand): { return literalFits(c, want, operand); }
-    default: { return true; }
+  // **A float slot refuses a value its magnitude overflows**, integer-spelled or not and `f64` as
+  // well as `f32` (spec ch09 `§wac-float-literal-ctx-8dqm2vw`). This asked `f32` alone, to match a
+  // reference that accepted `f64 x = 1e309` — which the spec refuses.
+  if ((base == "f32" || base == "f64") && (lit == litInteger() || lit == litFloat())) {
+    return !floatLiteralOverflows(c, base, e);
   }
+  // **An integer literal has to fit the slot it is going into**, which is a different question from
+  // the family one above: `4294967296` is an integer and an `i32` has no room for it.
+  if (lit == litInteger()) { return integerLiteralFits(c, base, e, false); }
+  return true;
+}
+
+/** The integer types, packed ones included — the slots a literal's range is asked of. */
+bool isIntegerish(string t) {
+  return t == "i32" || t == "u32" || t == "i64" || t == "u64" || t == "i8" || t == "u8" || t == "i16" ||
+         t == "u16";
 }
 
 /**
@@ -5737,7 +5844,10 @@ i32 litFamily(C c, Expr e) {
         return litNone();
       }
       i32 l = litFamily(c, left);
-      if (l != litFamily(c, right)) { return litNone(); }
+      i32 r = litFamily(c, right);
+      // An integer beside a float is read as one (spec ch09), so the sum is a float literal.
+      if ((l == litInteger() && r == litFloat()) || (l == litFloat() && r == litInteger())) { return litFloat(); }
+      if (l != r) { return litNone(); }
       return l == litInteger() || l == litFloat() ? l : litNone();
     }
     // **A conditional of literals is a literal of the family they share.** `cond ? 1 : 2` in an `i64`
@@ -6245,6 +6355,13 @@ export string typeOfExpr(C c, Expr e) {
       // reference had already finished with.
       if (!lLit && bl == typeNone()) { return typeNone(); }
       if (!rLit && br == typeNone()) { return typeNone(); }
+      // **A shift is its left operand's type, whatever its amount's is** (spec ch22): the amount is a
+      // count and may be any integer. The rule below read `u8 << i32` as two operands disagreeing and
+      // answered nothing — so `(b << n) | c` on a `u8 b` and an `i32 c` was never compared, and only
+      // the emitter, which knew better, noticed.
+      if ((bk == kShl() || bk == kShr() || bk == kShrU()) && hasBitMethods(bl) && (rLit || hasBitMethods(br))) {
+        return bl;
+      }
       // **Two known operands that disagree make the result unknown**, which is how the reference
       // behaves and why it reports `t.a + t.b + t.c` once rather than twice: the first `+` is an
       // error, so what it produces is not a `string` for the second `+` to complain about. Answering
@@ -7501,7 +7618,12 @@ void checkExpr(C c, Expr e) {
       // and the rest — and the answer is the same every time, reported at the operator. Same family
       // is silent, including `true + false`, which is the numeric rule's business and not this one's.
       bool bothLit = litKindOf(left) != litNone() && litKindOf(right) != litNone();
-      if (bothLit && litKindOf(left) != litKindOf(right) &&
+      // **An integer beside a float is no mismatch**: an integer spelling is read as a float where a
+      // float is expected (spec ch09 `§wac-float-integer-spelled-ur9ttxq`), and beside a float literal
+      // one is — `f64 x = 1 + 0.5;` is 1.5, as `(1 + 2) * 0.5` already was.
+      bool numericPair = (litKindOf(left) == litInteger() && litKindOf(right) == litFloat()) ||
+                         (litKindOf(left) == litFloat() && litKindOf(right) == litInteger());
+      if (bothLit && litKindOf(left) != litKindOf(right) && !numericPair &&
           litKindOf(left) != litNull() && litKindOf(right) != litNull() &&
           (arith || k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() ||
            k == kGe())) {
@@ -7593,6 +7715,23 @@ void checkExpr(C c, Expr e) {
         if (sameType && !operandRuleSaid && !bothLit && oneString &&
             nl2 != typeNone() && nr2 != typeNone()) {
           c.report(errOperandMismatch(), e.line, e.col);
+          return;
+        }
+        // **A literal operand takes the other side's type, so it must have a reading in it** (spec
+        // ch09 `§wac-int-context-9wkq4mz`, `§wac-litctx-nofit-k3mq8wl`). This branch let every
+        // literal through once its family looked right, so `x == 4294967296` on an `i32` compared
+        // against zero, `x + 256` on a `u8` added nothing, and `x + 1.5` on an `i32` built a module
+        // the engine refused. Asked exactly as a slot asks it, and reported the same way.
+        // Numbers only: a string or bool literal beside a number is the operand rule's fault, and it
+        // has already said so — `n * "a"` is one complaint.
+        bool lLit = litFamily(c, left) == litInteger() || litFamily(c, left) == litFloat();
+        bool rLit = litFamily(c, right) == litInteger() || litFamily(c, right) == litFloat();
+        if (lLit != rLit) {
+          Expr litSide = lLit ? left : right;
+          string otherType = typeOfExpr(c, lLit ? right : left);
+          if (numericShape(otherType) && !literalFits(c, otherType, litSide)) {
+            reportLiteral(c, otherType, litSide, errOperandMismatch(), litSide.line, litSide.col);
+          }
         }
         return;
       }
@@ -11355,7 +11494,7 @@ string builtinReturnType(string recv, string name) {
   // **An integer's five answer in the receiver's own width**, which is what the instruction does:
   // `i64.clz` is `[i64] -> [i64]`, not `[i64] -> [i32]`. Stating it here rather than assuming `i32`
   // is what keeps `i64 n = x.leadingZeros()` from being a mismatch on one side or the other.
-  if (isIntegerType(recv) && isIntBuiltin(name)) { return recv; }
+  if (hasBitMethods(recv) && isIntBuiltin(name)) { return recv; }
   // `fill` and `copyFrom` are deliberately absent: they answer nothing, and an expression with no
   // type is what `typeNone` already means everywhere else here.
   return "";
@@ -11414,6 +11553,15 @@ i32 intBuiltinArity(string name) {
 /** Whether a receiver is an integer, which is the one thing these five need of it. */
 bool isIntegerType(string t) {
   return t == "i32" || t == "u32" || t == "i64" || t == "u64";
+}
+
+/**
+ * The integer types, packed ones included, which is what has the five bit methods: "every integer type
+ * has `leadingZeros`…" (spec ch22 `§wacc-int-bit-methods`), and the packed types are integer types like
+ * any other (spec ch08). `isIntegerType` answers for the four the instructions are written for.
+ */
+bool hasBitMethods(string t) {
+  return isIntegerType(t) || t == "i8" || t == "u8" || t == "i16" || t == "u16";
 }
 
 /**
@@ -11657,7 +11805,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // **The integer bit methods.** Signedness is irrelevant to all five and the opcode is chosen by
   // width alone, so `i32`/`u32` and `i64`/`u64` get the same five; the result and a rotation's count
   // are the receiver's own type, which is what makes `x.rotateLeft(1)` need no inference.
-  if (isIntegerType(recv) && isIntBuiltin(name)) {
+  if (hasBitMethods(recv) && isIntBuiltin(name)) {
     i32 wantArgs = intBuiltinArity(name);
     if (args.len() != wantArgs) {
       c.report(errBuiltinArity(), call.line, call.col);
@@ -11671,7 +11819,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
         continue;
       }
       string got = typeOfExpr(c, args[i]);
-      if (got != typeNone() && !isIntegerType(got)) {
+      if (got != typeNone() && !hasBitMethods(got)) {
         c.reportWith(errBuiltinArg(), args[i].line, args[i].col, expectedFound("an integer count", got));
       }
     }
@@ -11679,7 +11827,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   }
   // An integer has those five and nothing else, which is worth saying by name rather than letting
   // the struct rules look for a method on an `i32`.
-  if (isIntegerType(recv) && !isIntBuiltin(name)) {
+  if (hasBitMethods(recv) && !isIntBuiltin(name)) {
     c.reportWith(errNoMethod(), callee.line, callee.col, "no " + recv + "." + name);
     return;
   }

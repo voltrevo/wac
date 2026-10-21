@@ -34,7 +34,7 @@ import { isTupleName, tupleMembers, tupleName } from "./tuples.wac";
 import { methodUsesOwnerLetters } from "./ownerletters.wac";
 import { flattenUnion, isConstAlt, isUnionName, spellUnion, unionBoxes, unionMembers } from "./unions.wac";
 import { pruneCoreMembers } from "./reach.wac";
-import { floatLit, parseInt } from "./lit.wac";
+import { f32Lit, floatIntegerText, floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { endsWith, Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
@@ -8237,12 +8237,15 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
           string n = typeOfTyName(env, src, lexed, inner);
           // **The same three questions the `Prim` arm asks, and not `isWritableValType`.** That
           // predicate counts `anyref` and `i31ref`, which the arm above deliberately returns
-          // *without* a `?` because they are already references, and it counts `u8`/`u16`, which
-          // that arm does not box. Reaching for the nearby predicate instead of mirroring the arm
-          // would have spelled `anyref?` for `T?` at an `anyref`.
+          // *without* a `?` because they are already references. Reaching for the nearby predicate
+          // instead of mirroring the arm would have spelled `anyref?` for `T?` at an `anyref`.
+          //
+          // **And the packed types, which the `Prim` arm boxes too.** Mirroring it from before it did
+          // left `T?` at `T = u8` spelled `u8`: `return null` pushed nothing into a function promising
+          // a `u8`, and `Vec<u8>.pop()` was declined.
           if (n == "string" || n == "anyref" || n == "i31ref") { return n; }
           if (n == "i32" || n == "u32" || n == "i64" || n == "u64"
-              || n == "f32" || n == "f64" || n == "bool") {
+              || n == "f32" || n == "f64" || n == "bool" || isPackedValue(n)) {
             return n + "?";
           }
           return n;
@@ -10190,7 +10193,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
             // amount emitted `i64.shl` with an `i32` on the stack and the module would not load.
             // `emitExprAt` steers a *literal*; a typed local ignores it and arrives as itself, which
             // is why this is `emitAt`. `issues/lang/0117`.
-            if (isShiftAssign(kf)) { emitAt(fb, src, lexed, env, rhs, fty); }
+            if (isShiftAssign(kf)) { emitShiftAmount(fb, src, lexed, env, rhs, fty); }
             else { emitExprAt(fb, src, lexed, env, rhs, fty); }
             emitCompound(fb, env, kf, fty);
             fb.byte(251);
@@ -10264,7 +10267,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
               fb.u32leb(env.structType(cellStructName(wty)));
               fb.u32leb(0);
             }
-            if (isShiftAssign(wk)) { emitAt(fb, src, lexed, env, rhs, wty); }
+            if (isShiftAssign(wk)) { emitShiftAmount(fb, src, lexed, env, rhs, wty); }
             else { emitExprAt(fb, src, lexed, env, rhs, wty); }
             if (wk != kAssign()) { emitCompound(fb, env, wk, wty); }
             fb.byte(251); fb.u32leb(5);                 // struct.set
@@ -10297,7 +10300,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
             }
           }
           // See the field case above: a shift's amount is converted rather than assumed.
-          if (isShiftAssign(k)) { emitAt(fb, src, lexed, env, rhs, at2); }
+          if (isShiftAssign(k)) { emitShiftAmount(fb, src, lexed, env, rhs, at2); }
           else { emitExprAt(fb, src, lexed, env, rhs, at2); }
           if (k != kAssign()) { emitCompound(fb, env, k, at2); }
           if (cell) {
@@ -10864,10 +10867,43 @@ void emitIncrExpr(B fb, u8[] src, Lexed lexed, Env env, Lvalue rawTarget, i32 op
     // Peeled above, so this cannot arrive — but the language wants every variant named.
     LUnwrap(base): { emitIncrExpr(fb, src, lexed, env, base, op, prefix); }
     LIdent(tok): {
-      i32 at = env.localAt(tokenTextOf(src, lexed, tok));
-      if (at < 0) {
-        env.declineFor("`" + tokenTextOf(src, lexed, tok) + "`, which is incremented here and is "
-                       + "not a local this emitter can find");
+      string nm = tokenTextOf(src, lexed, tok);
+      // **A captured name, or a local a lambda captured, lives in a cell**, and the value is the cell's
+      // field — the statement form knew that and this did not, so `() => c++` declined and `c++` beside
+      // a lambda that captures `c` read the cell as if it were the number. Read and written through
+      // the cell as a field is, the cell kept in a scratch so it is fetched once.
+      i32 icap = env.captureAt(env.emittingLambda, nm);
+      i32 at = icap >= 0 ? 0 - 1 : env.localAt(nm);
+      if (icap < 0 && at < 0) {
+        env.declineFor("`" + nm + "`, which is incremented here and is not a local this emitter can find");
+        return;
+      }
+      if (icap >= 0 || env.localIsCell(at)) {
+        string ct = icap >= 0 ? env.capTypes[env.emittingLambda][icap] : env.localTypes[at];
+        string cellName = cellStructName(ct);
+        i32 cellT = env.structType(cellName);
+        i32 cl = env.scratchNamed("iecell", cellName);
+        i32 cv = env.scratchNamed("ieval", ct);
+        if (icap >= 0) {
+          fb.byte(32); fb.u32leb(0);
+          fb.byte(251); fb.u32leb(2); fb.u32leb(env.structType(captureStructName(env.emittingLambda)));
+          fb.u32leb(icap);
+        } else {
+          fb.byte(32); fb.u32leb(at);
+        }
+        fb.byte(33); fb.u32leb(cl);
+        if (!prefix) {
+          fb.byte(32); fb.u32leb(cl);
+          fb.byte(251); fb.u32leb(2); fb.u32leb(cellT); fb.u32leb(0);   // the old value stays underneath
+        }
+        fb.byte(32); fb.u32leb(cl);
+        fb.byte(32); fb.u32leb(cl);
+        fb.byte(251); fb.u32leb(2); fb.u32leb(cellT); fb.u32leb(0);
+        if (valType(ct) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
+        emitBinary(fb, env, kind, ct);
+        if (prefix) { fb.byte(34); fb.u32leb(cv); }
+        fb.byte(251); fb.u32leb(5); fb.u32leb(cellT); fb.u32leb(0);
+        if (prefix) { fb.byte(32); fb.u32leb(cv); }
         return;
       }
       string t = env.localTypes[at];
@@ -11082,18 +11118,38 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // A literal is emitted at the type its **context** wants, which is the same fact the checker
       // states as "a literal is polymorphic over a family": `i64 x = 1;` needs `i64.const`, and the
       // `1` says nothing about that.
-      i64 v = parseInt(tokenTextOf(src, lexed, tok));
+      string itext = tokenTextOf(src, lexed, tok);
+      i64 v = parseInt(itext);
       if (valType(want) == 126) { fb.byte(66); fb.i64leb(v); return; }
-      if (want == "f32") { fb.byte(67); fb.f32bits(v as~ f32); return; }
-      if (want == "f64") { fb.byte(68); fb.f64bits(v as~ f64); return; }
+      // **In a float slot an integer spelling is read as a decimal**, not through an `i64`: the digits
+      // of 18446744073709551615 wrapped to -1 there. A hex literal names its bits, so it keeps its
+      // unsigned value, which is what a 64-bit pattern means as a magnitude.
+      bool hex = isHexLiteralText(itext);
+      if (want == "f32") { fb.byte(67); fb.f32bits(hex ? (v as@ u64) as~ f32 : f32Lit(itext)); return; }
+      if (want == "f64") { fb.byte(68); fb.f64bits(hex ? (v as@ u64) as~ f64 : floatLit(itext)); return; }
       fb.byte(65);
+      // **A hex literal in a narrow signed slot is its bit pattern** (spec ch09): `0xFF` in an `i8` is
+      // the `i8` whose bits those are, -1. The carrier holds a narrow value sign-extended, and 255 there
+      // was an `i8` no arithmetic can produce — it compared unequal to -1 and not less than zero.
+      if (want == "i8") { fb.i32leb(((v & 255) ^ 128) as@ i32 - 128); return; }
+      if (want == "i16") { fb.i32leb(((v & 65535) ^ 32768) as@ i32 - 32768); return; }
       fb.i32leb(v as@ i32);
     }
     FloatLit(tok): {
-      f64 v = floatLit(tokenTextOf(src, lexed, tok));
-      if (want == "f32") { fb.byte(67); fb.f32bits(v as~ f32); return; }
+      string ftext = tokenTextOf(src, lexed, tok);
+      // Rounded once, to the slot's own type: through an `f64` first, a literal can round twice.
+      if (want == "f32") { fb.byte(67); fb.f32bits(f32Lit(ftext)); return; }
+      // **Spelling does not decide the type** (spec ch09): `1e9` in an `i64` is a billion. The checker
+      // admits a float spelling into an integer slot only when it names an integer that fits.
+      if (isIntType(want) || isPackedValue(want)) {
+        i64 iv = parseInt(floatIntegerText(ftext));
+        if (valType(want) == 126) { fb.byte(66); fb.i64leb(iv); return; }
+        fb.byte(65);
+        fb.i32leb(iv as@ i32);
+        return;
+      }
       fb.byte(68);
-      fb.f64bits(v);
+      fb.f64bits(floatLit(ftext));
     }
     // **A type is not a value**, so nothing here can emit one. It reaches the emitter only for a
     // program the checker should have refused: `TypeName` is valid solely as the object of a
@@ -11420,7 +11476,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // `i64.shr_s` wants both sides `i64` — so a right operand that is genuinely a different width
       // is converted rather than assumed. `emitExprAt` only steers *literals*; a typed local ignores
       // it and arrives as itself.
-      emitAt(fb, src, lexed, env, right, ot);
+      //
+      // **And converted by keeping its low bits**, because the amount is taken modulo the width (spec
+      // ch22): `emitAt`'s conversion saturates, so an `i64` amount of 2^32 + 1 on an `i32` became the
+      // largest `i32` — a shift by 31 — where its low bits say 1.
+      if (k == kShl() || k == kShr() || k == kShrU()) { emitShiftAmount(fb, src, lexed, env, right, ot); }
+      else { emitAt(fb, src, lexed, env, right, ot); }
       emitBinary(fb, env, k, ot);
     }
     Construct(ctype, args, named): {
@@ -11873,6 +11934,10 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // **The five integer bit methods**, each one instruction with no other spelling in the
           // language: `clz`, `ctz`, `popcnt`, `rotl`, `rotr`. The opcode comes from the receiver's
           // width alone, since signedness cannot change any of them. `issues/lang/0069`.
+          if (isPackedValue(ot) && intBuiltinOp(ot, mname) >= 0) {
+            emitPackedBitMethod(fb, src, lexed, env, obj, ot, mname, args);
+            return;
+          }
           if (isIntType(ot) && intBuiltinOp(ot, mname) >= 0) {
             emitExpr(fb, src, lexed, env, obj);
             // A rotation's count is any integer, brought to the receiver's width — modulo it anyway.
@@ -12357,11 +12422,10 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       // and the type is not, which is the same distinction `repType` exists for.
       if (a == "string") { return "string"; }
       if (!isArrayType(a)) { return ""; }
-      string e = elemOf(a);
-      // A packed element is an `i32` where it is used — the getter zero- or sign-extends it — which
-      // is the checker's rule about packed types arrived at from the emitter's side.
-      if (e == "u8" || e == "i8" || e == "u16" || e == "i16") { return "i32"; }
-      return e;
+      // **A packed element is its own type**, as a packed field or local is: the getter zero- or
+      // sign-extends it into the `i32` carrier, and the type is what tells arithmetic on it to wrap at
+      // 8 or 16 bits. Answering `i32` here made `xs[0] + 1` on a `u8[]` holding 255 come out 256.
+      return elemOf(a);
     }
     Call(callee, args, callTargs): {
       match (callee.kind) {
@@ -12399,7 +12463,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (isArrayType(ot) && mn == "fill") { return "void"; }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
           // An integer's five answer in its own width: `i64.clz` is `[i64] -> [i64]`.
-          if (isIntType(ot) && intBuiltinOp(ot, mn) >= 0) { return ot; }
+          if ((isIntType(ot) || isPackedValue(ot)) && intBuiltinOp(ot, mn) >= 0) { return ot; }
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(fft)) { return sigReturn(fft); }
           i32 mi = methodSlotForArgs(env, src, lexed, ot, mn, callTargs, args);
@@ -15001,6 +15065,58 @@ i32 intBuiltinOp(string t, string name) {
 }
 
 /**
+ * An integer bit method on a packed receiver, at the receiver's own width (spec ch08: every integer
+ * type has them). The instructions are 32-bit, so the value is taken to its own bits first — an `i8`
+ * of -1 is 32 ones in its carrier — and the count is corrected for the 24 or 16 bits above it; a
+ * rotation is two shifts within the width, its count taken modulo the width as a shift's is.
+ */
+void emitPackedBitMethod(B fb, u8[] src, Lexed lexed, Env env, Expr obj, string t, string name, Expr[] args) {
+  i32 w = t == "i8" || t == "u8" ? 8 : 16;
+  i32 mask = w == 8 ? 255 : 65535;
+  emitExpr(fb, src, lexed, env, obj);
+  fb.byte(65); fb.i32leb(mask);
+  fb.byte(113);                                                   // i32.and
+  if (name == "leadingZeros") {
+    fb.byte(103);                                                 // i32.clz
+    fb.byte(65); fb.i32leb(32 - w);
+    fb.byte(107);                                                 // i32.sub
+    return;
+  }
+  if (name == "trailingZeros") {
+    // A bit just above the width, so zero counts to the width rather than to 32.
+    fb.byte(65); fb.i32leb(mask + 1);
+    fb.byte(114);                                                 // i32.or
+    fb.byte(104);                                                 // i32.ctz
+    return;
+  }
+  if (name == "onesCount") {
+    fb.byte(105);                                                 // i32.popcnt
+    return;
+  }
+  i32 v = env.scratchNamed("packed rotate value", "i32");
+  i32 n = env.scratchNamed("packed rotate count", "i32");
+  fb.byte(33); fb.u32leb(v);                                      // local.set
+  string ct = typeOfE(src, lexed, env, args[0]);
+  if (ct == "") { ct = "i32"; }
+  emitExprAt(fb, src, lexed, env, args[0], ct);
+  if (ct == "i64" || ct == "u64") { fb.byte(167); }               // i32.wrap_i64
+  fb.byte(65); fb.i32leb(w - 1);
+  fb.byte(113);                                                   // i32.and — modulo the width
+  fb.byte(33); fb.u32leb(n);
+  bool left = name == "rotateLeft";
+  fb.byte(32); fb.u32leb(v);
+  fb.byte(32); fb.u32leb(n);
+  fb.byte(left ? 116 : 118);                                      // i32.shl / i32.shr_u
+  fb.byte(32); fb.u32leb(v);
+  fb.byte(65); fb.i32leb(w);
+  fb.byte(32); fb.u32leb(n);
+  fb.byte(107);                                                   // w - n
+  fb.byte(left ? 118 : 116);                                      // the other way
+  fb.byte(114);                                                   // i32.or
+  emitNormalize(fb, t);
+}
+
+/**
  * The names a condition narrows, and to what: `"p Q;s Circle"` — each `x is T` where `x` is a local and
  * `T` a struct below its type or a variant of its enum, found through `&&` from either side (spec ch12
  * `§wac-narrow-if-2mkq8vp`). Empty when it narrows nothing.
@@ -15123,6 +15239,26 @@ string commonStructAncestor(Env env, string a, string b) {
     x = env.parentOf(x);
   }
   return "";
+}
+
+/**
+ * A shift's amount, at the width of the value `t` it shifts — converted by keeping its low bits, since
+ * the amount is taken modulo the width (spec ch22). `emitAt` would saturate an `i64` amount onto
+ * `i32`'s largest value, a shift by 31, where its low bits say something else.
+ */
+void emitShiftAmount(B fb, u8[] src, Lexed lexed, Env env, Expr e, string t) {
+  string amt = typeOfE(src, lexed, env, e);
+  if (amt == "" || valType(amt) == valType(t) || isFloat(amt) || isFloat(t)) {
+    emitAt(fb, src, lexed, env, e, t);
+    return;
+  }
+  emitExprAt(fb, src, lexed, env, e, amt);
+  fb.byte(valType(t) == 126 ? 173 : 167);                     // i64.extend_i32_u, or i32.wrap_i64
+}
+
+/** Whether a literal's text is hex — `0x…`, which names bits rather than a magnitude. */
+bool isHexLiteralText(string t) {
+  return t.len() > 2 && t.slice(0, 1) == "0" && (t.slice(1, 2) == "x" || t.slice(1, 2) == "X");
 }
 
 /** Whether this compound assignment is a shift, whose amount may be a different width. */
@@ -15269,8 +15405,38 @@ void emitCheckedArith(B fb, Env env, i32 k, string t) {
  */
 void emitBinary(B fb, Env env, i32 k, string t) {
   if (!isPackedValue(t)) { emitBinaryAt(fb, env, k, t); return; }
+  bool shift = k == kShl() || k == kShr() || k == kShrU();
+  // **A shift amount is taken modulo the width of the value shifted** (spec ch22) — 8 or 16 here, not
+  // the carrier's 32: `i8 3 << 9` is 6, where the `i32` instruction alone answered 0.
+  if (shift) {
+    fb.byte(65); fb.i32leb(t == "i8" || t == "u8" ? 7 : 15);
+    fb.byte(113);                                               // i32.and
+  }
+  // **`>>>` on a signed packed value shifts its own bits in zeros**, so they are taken unsigned first:
+  // the carrier holds an `i8` of -1 sign-extended to 32 ones, and shifting that right four left 28.
+  if (k == kShrU() && (t == "i8" || t == "i16")) {
+    i32 amount = env.scratchNamed("packed shift", "i32");
+    fb.byte(33); fb.u32leb(amount);                             // local.set
+    fb.byte(65); fb.i32leb(t == "i8" ? 255 : 65535);
+    fb.byte(113);                                               // i32.and
+    fb.byte(32); fb.u32leb(amount);                             // local.get
+  }
   emitBinaryAt(fb, env, k, packedCarrier(t));
-  if (k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() || k == kPercent() || k == kShl()) {
+  // **The signed minimum divided by -1 traps** (spec ch22), at the type's own width. In the carrier the
+  // division cannot overflow, so the one quotient out of range — `128` for an `i8`, `32768` for an
+  // `i16` — is the sign that it happened, and no other pair of operands produces it.
+  if (k == kSlash() && (t == "i8" || t == "i16")) {
+    i32 q = env.scratchNamed("packed quotient", "i32");
+    fb.byte(34); fb.u32leb(q);                                  // local.tee
+    fb.byte(65); fb.i32leb(t == "i8" ? 128 : 32768);
+    fb.byte(70);                                                // i32.eq
+    fb.byte(4); fb.byte(64);                                    // if
+    fb.byte(0);                                                 // unreachable
+    fb.byte(11);
+    fb.byte(32); fb.u32leb(q);                                  // local.get
+  }
+  if (k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() || k == kPercent() || k == kShl() ||
+      k == kShrU()) {
     emitNormalize(fb, t);
   }
 }
@@ -15313,13 +15479,16 @@ void emitPackedCast(B fb, Env env, string from, string to, i32 op) {
   if (op == kAs()) { return; }
   bool floatSource = isFloat(from);
   if (op == kAsAt() && !floatSource) { emitNormalize(fb, to); return; }
+  // **Compared in the carrier's own signedness.** A `u8` or `u16` is carried in a `u32`, and the
+  // largest `u32` read as a signed number is -1 — below the range, so `4294967295 as~ u8` clamped to 0.
+  bool uc = carrier == "u32";
   i32 v = env.scratchNamed("packed", "i32");
   fb.byte(34); fb.u32leb(v);                                  // local.tee
   fb.byte(65); fb.i32leb(packedMin(to));
-  fb.byte(72);                                                // i32.lt_s
+  fb.byte(uc ? 73 : 72);                                      // i32.lt_u / i32.lt_s
   fb.byte(32); fb.u32leb(v);
   fb.byte(65); fb.i32leb(packedMax(to));
-  fb.byte(74);                                                // i32.gt_s
+  fb.byte(uc ? 75 : 74);                                      // i32.gt_u / i32.gt_s
   fb.byte(114);                                               // i32.or — outside the range
   if (op == kAsBang()) {
     fb.byte(4); fb.byte(64);                                  // if
@@ -15332,7 +15501,7 @@ void emitPackedCast(B fb, Env env, string from, string to, i32 op) {
   fb.byte(4); fb.byte(127);                                   // if (result i32)
   fb.byte(32); fb.u32leb(v);
   fb.byte(65); fb.i32leb(0);
-  fb.byte(72);                                                // i32.lt_s
+  fb.byte(uc ? 73 : 72);                                      // below zero — never, unsigned
   fb.byte(4); fb.byte(127);
   fb.byte(65); fb.i32leb(packedMin(to));
   fb.byte(5);
@@ -15519,6 +15688,14 @@ void emitCast(B fb, Env env, string from, string to, i32 op) {
   // from one table over a section it does not cover is what left `-1 as! u32` answering 0 for as long
   // as it did. The branch above handles that case now, so what is left here is the saving, which is
   // real: six instructions and about eighteen bytes per cast that can never fire.
+  // **`as! bool` accepts exactly 0 and 1** (spec ch24 `§wac-cast-matrix-6hkq4wz`); `bool` is not one of
+  // the types the round trip below compares, so it fell to the plain conversion and `2 as! bool` was
+  // `true`.
+  if (op == kAsBang() && to == "bool" && isNumericTy(from)) {
+    emitBoolRangeTrap(fb, env, from);
+    emitConversion(fb, env, from, to, op);
+    return;
+  }
   if (op != kAsBang() || from == to || !isNumericTy(from) || !isNumericTy(to) ||
       valType(from) == valType(to)) {
     emitConversion(fb, env, from, to, op);
@@ -15527,7 +15704,12 @@ void emitCast(B fb, Env env, string from, string to, i32 op) {
   i32 srcL = env.scratchNamed("castsrc", from);
   i32 dstL = env.scratchNamed("castdst", to);
   fb.byte(34); fb.u32leb(srcL);              // local.tee  — keep the original
-  emitConversion(fb, env, from, to, op);
+  // **Out of a float, the trapping truncation going forward as well.** The saturating one clamps 2^31
+  // onto `i32`'s largest value, and that converts back to 2^31 in an `f32` — so the comparison below saw
+  // nothing lost where everything was. A value out of range now traps here, and one merely fractional
+  // still comes back different. NaN traps too, having no integer at all.
+  if (isFloat(from) && !isFloat(to)) { fb.byte(truncTrapOpcode(from, to)); }
+  else { emitConversion(fb, env, from, to, op); }
   fb.byte(34); fb.u32leb(dstL);              // local.tee  — keep the converted
   // **Coming back from a float, the *trapping* truncation.** `emitConversion` uses the saturating one
   // — right for `as~`, and blind here: `u64`'s maximum rounds *up* to 2^64 in an `f64` and saturation
@@ -15542,10 +15724,46 @@ void emitCast(B fb, Env env, string from, string to, i32 op) {
   fb.byte(32); fb.u32leb(srcL);              // local.get  — the original
   fb.byte(eqOpcode(from));
   fb.byte(69);                               // i32.eqz — true when they differ
+  // **NaN is always exact and never traps** (spec ch24) — between two float types, where it survives
+  // as itself and compares unequal to itself all the same. So a difference counts only when the
+  // original equals itself.
+  if (isFloat(from) && isFloat(to)) {
+    fb.byte(32); fb.u32leb(srcL);
+    fb.byte(32); fb.u32leb(srcL);
+    fb.byte(eqOpcode(from));
+    fb.byte(113);                            // i32.and
+  }
   fb.byte(4); fb.byte(64);                   // if (void)
   fb.byte(0);                                // unreachable
   fb.byte(11);                               // end
   fb.byte(32); fb.u32leb(dstL);              // local.get — the converted value
+}
+
+/** Trap unless the number on the stack is 0 or 1, leaving it there — `as! bool`'s check. */
+void emitBoolRangeTrap(B fb, Env env, string from) {
+  i32 v = env.scratchNamed("castbool", from);
+  fb.byte(34); fb.u32leb(v);                                    // local.tee
+  i32 vt = valType(from);
+  if (vt == 126) {
+    fb.byte(66); fb.i64leb(1); fb.byte(86);                     // i64.const 1, i64.gt_u
+  } else if (vt == 124 || vt == 125) {
+    // A float is 0.0 or 1.0, or it is neither — NaN included.
+    bool f32t = vt == 125;
+    fb.byte(f32t ? 67 : 68);
+    if (f32t) { fb.f32bits(0.0); } else { fb.f64bits(0.0); }
+    fb.byte(f32t ? 92 : 98);                                    // ne 0.0
+    fb.byte(32); fb.u32leb(v);
+    fb.byte(f32t ? 67 : 68);
+    if (f32t) { fb.f32bits(1.0); } else { fb.f64bits(1.0); }
+    fb.byte(f32t ? 92 : 98);                                    // ne 1.0
+    fb.byte(113);                                               // i32.and
+  } else {
+    fb.byte(65); fb.i32leb(1); fb.byte(75);                     // i32.const 1, i32.gt_u
+  }
+  fb.byte(4); fb.byte(64);
+  fb.byte(0);                                                   // unreachable
+  fb.byte(11);
+  fb.byte(32); fb.u32leb(v);
 }
 
 /**
@@ -17474,7 +17692,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return ""; }
           // The five bit methods are instructions, not functions, so there is no method to find.
-          if (isIntType(ot) && intBuiltinOp(ot, mn) >= 0) {
+          if ((isIntType(ot) || isPackedValue(ot)) && intBuiltinOp(ot, mn) >= 0) {
             for (i32 i = 0; i < args.len(); i++) {
               string ab = unsupportedValueAt(src, lexed, env, args[i], ot);
               if (ab != "") { return ab; }

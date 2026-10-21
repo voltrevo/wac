@@ -1,0 +1,4 @@
+// expect: refused
+// why: both branches of a conditional of literals take the slot's type, and 300 is no `u8`
+// from: spec/2-types/09-numeric-literals.md
+export u8 f() { bool c = false; u8 r = c ? 1 : 300; return r; }

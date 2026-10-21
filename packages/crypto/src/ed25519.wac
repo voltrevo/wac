@@ -276,7 +276,7 @@ export Point ptMul(u8[] scalar, Point p) {
   Point acc = ptIdentity();
   Point addend = Point(feCopy(p.x), feCopy(p.y), feCopy(p.z), feCopy(p.t));
   for (i32 i = 0; i < 256; i++) {
-    i32 bit = (scalar[i / 8] >> (i % 8)) & 1;
+    i32 bit = ((scalar[i / 8] as i32) >> (i % 8)) & 1;
     Point sum = ptAdd(acc, addend);
     acc = Point(
       feSelect(acc.x, sum.x, bit),
@@ -330,7 +330,7 @@ u8[] scReduce(u8[] wide) {
     i32 bitShift = k % 8;
     i32 carry = 0;
     for (i32 i = 0; i < 32; i++) {
-      i32 v = (L[i] << bitShift) | carry;
+      i32 v = ((L[i] as i32) << bitShift) | carry;
       if (byteShift + i < 64) { shifted[byteShift + i] = (v & 0xFF) as@ u8; }
       carry = (v >> 8) & 0xFF;
     }

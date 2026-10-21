@@ -1,0 +1,4 @@
+// expect: f() = true
+// why: NaN is always exact and never traps, though it never equals itself
+// from: spec/3-expressions/24-casts.md
+export bool f() { f64 z = 0.0; f32 r = (z / z) as! f32; return r != r; }

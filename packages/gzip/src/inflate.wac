@@ -66,7 +66,7 @@ struct BitReader {
           Failed(why): { this.drained = true; this.broken = why; return; }
         }
       }
-      this.bitBuf |= this.data[this.pos] << this.bitCount;
+      this.bitBuf |= (this.data[this.pos] as i32) << this.bitCount;
       this.pos++;
       this.bitCount += 8;
     }

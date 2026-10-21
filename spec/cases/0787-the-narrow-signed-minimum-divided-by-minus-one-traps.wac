@@ -1,0 +1,4 @@
+// expect: traps f
+// why: integer `/` traps on the signed minimum divided by -1, at the type's own width
+// from: spec/3-expressions/22-operators.md
+export i8 f() { i8 a = -128; i8 b = -1; return a / b; }

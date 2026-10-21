@@ -1,0 +1,6 @@
+// expect: refused
+// why: `-1 as! u64` traps at run time, so computing a static with it is a trap the compiler reports
+// from: spec/4-static/28-static-evaluation.md
+u64 bad() { i64 a = -1; return a as! u64; }
+static u64 D = bad();
+export u64 f() { return D; }

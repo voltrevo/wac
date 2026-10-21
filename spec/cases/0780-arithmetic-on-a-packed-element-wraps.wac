@@ -1,0 +1,8 @@
+// expect: f() = true
+// why: indexing a packed array answers its element type, and arithmetic on that type wraps at its width
+// from: spec/2-types/08-primitives.md
+export bool f() {
+  u8[] xs = [255];
+  i8[] ys = [127];
+  return xs[0] + 1 == 0 && ys[0] + 1 == -128 && xs[0] + xs[0] == 254;
+}

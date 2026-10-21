@@ -1,0 +1,4 @@
+// expect: refused
+// why: a floating target refuses a value its magnitude overflows, integer-spelled or not
+// from: spec/2-types/09-numeric-literals.md
+export f32 f() { f32 x = 1000000000000000000000000000000000000000; return x; }

@@ -1,0 +1,5 @@
+// expect: refused
+// why: f32's largest finite value has an odd significand, so the exact midpoint above it rounds to infinity
+//      and overflows — read from the decimal, since through an f64 a literal just below it rounds onto it
+// from: spec/2-types/09-numeric-literals.md
+export f32 f() { f32 x = 340282356779733661637539395458142568448.0; return x; }

@@ -319,7 +319,7 @@ export i32 main() {
   stream(gzipBest(repetitive), 512, true, false);
   stream(gzipBest(repetitive), 1 << 20, true, false);
   u8[] patterned = u8[].filled(200000, 0);
-  for (i32 i = 0; i < patterned.len(); i++) { patterned[i] = ((i * 2654435761) & 0xFF) as@ u8; }
+  for (i32 i = 0; i < patterned.len(); i++) { patterned[i] = ((i * 0x9E3779B1) & 0xFF) as@ u8; }
   stream(gzipStored(patterned), 999, true, false);
   stream(gzipStored(patterned), 1 << 20, true, false);
   // The same length again but Huffman-coded, so it arrives as literals rather than as a bulk copy.
@@ -395,7 +395,7 @@ export i32 main() {
   // Incompressible, so the per-block comparison picks stored — including a length that needs more than
   // one 64 KiB piece within a single block.
   u8[] random = u8[].filled(300000, 0);
-  for (i32 i = 0; i < random.len(); i++) { random[i] = (((i * 2654435761) >> 13) & 0xFF) as@ u8; }
+  for (i32 i = 0; i < random.len(); i++) { random[i] = (((i * 0x9E3779B1) >> 13) & 0xFF) as@ u8; }
   compressStream(random, 1 << 16, false);
   compressStream(random, 1 << 20, false);
 

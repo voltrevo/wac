@@ -93,6 +93,8 @@ export i32 errBlockInterp()         { return 11; }
 export i32 errVerbatimName()        { return 12; }
 /** `"a\{}b"` — an interpolation with nothing in it, which would otherwise be reported as `()`. */
 export i32 errEmptyInterp()         { return 13; }
+/** `0x` with no hex digit after it — the grammar's `"0x" , hex , {hex | "_"}` wants at least one. */
+export i32 errHexDigits()           { return 14; }
 
 // ── Character classification ──────────────────────────────────────────────────
 //
@@ -843,6 +845,8 @@ void lexNumber(Lexer lx, Lexed out, i32 startLine, i32 startCol) {
   if (lx.peek(0) == '0' && (lx.peek(1) == 'x' || lx.peek(1) == 'X')) {
     lx.advance();
     lx.advance();
+    // A digit first: `0x` and `0x_` were read as zero, which no spelling of zero should be.
+    if (lx.atEnd() || !isHexDigit(lx.peek(0))) { fail(out, errHexDigits(), startLine, startCol); }
     while (!lx.atEnd() && (isHexDigit(lx.peek(0)) || lx.peek(0) == '_')) { lx.advance(); }
     pushToken(out, kInt(), start, lx.pos - start, startLine, startCol);
     return;

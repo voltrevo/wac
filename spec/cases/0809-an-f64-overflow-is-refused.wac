@@ -1,0 +1,4 @@
+// expect: refused
+// why: a float literal whose magnitude overflows its target is refused, an `f64` as much as an `f32`
+// from: spec/2-types/09-numeric-literals.md
+export f64 f() { f64 x = 1e309; return x; }

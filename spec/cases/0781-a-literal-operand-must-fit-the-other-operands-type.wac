@@ -1,0 +1,4 @@
+// expect: refused
+// why: a literal operand takes the other operand's type, and a literal with no reading in that type is refused
+// from: spec/2-types/09-numeric-literals.md
+export bool f() { i32 x = 0; return x == 4294967296; }

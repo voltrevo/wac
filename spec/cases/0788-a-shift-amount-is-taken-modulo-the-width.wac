@@ -1,0 +1,5 @@
+// expect: f() = 602
+// why: a shift amount is taken modulo the width of the value shifted — 8 for an `i8`, and wrapped, not
+//      clamped, when the amount is an `i64`
+// from: spec/3-expressions/22-operators.md
+export i32 f() { i8 a = 3; i32 v = 1; i64 n = 4294967297; return (a << 9) as i32 * 100 + (v << n); }
