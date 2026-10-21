@@ -1,0 +1,14 @@
+// expect: refused
+// why: a tag gives a function no type arguments, and nothing infers them from attributes yet
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { markup } from "core";
+enum Tree {
+  Leaf(string text),
+  Many(Tree[] kids),
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.element](string tag, string[] n, string[] v, Tree[] kids) { return Tree.Many(kids); }
+  Tree [markup.fragment](Tree[] kids) { return Tree.Many(kids); }
+}
+i32 count(Tree[] kids) { return kids.len(); }
+T first<T>(T[] kids) { return kids[0]; }
+export i32 f() { Tree x = Tree.Leaf("x"); Tree t = <first>{x}</first>; return 1; }

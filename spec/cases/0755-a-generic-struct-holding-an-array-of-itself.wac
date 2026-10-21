@@ -1,0 +1,6 @@
+// expect: f() = 3
+// why: a generic struct may hold an array of its own instantiation, as a plain struct may hold one of
+//      itself
+// from: spec/2-types/19-generics.md
+struct Node<T> { Node<T>[] kids; T v; }
+export i32 f() { Node<i32> leaf = Node<i32>(Node<i32>[](), 2); Node<i32> n = Node<i32>([leaf], 1); return n.v + n.kids[0].v; }

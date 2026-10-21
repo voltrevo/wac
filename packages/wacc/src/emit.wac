@@ -535,14 +535,27 @@ void registerNamed(Env env, string t) {
   // registered while a body was emitted, after the section was sized. An enum instance's payload
   // fields belong to its variants, which is why the owner may be one of those. A box holds a number,
   // so this cannot recurse either.
+  //
+  // **Only an array not registered yet**, because an array's element can be the instance itself:
+  // `struct Node<T> { Node<T>[] kids; }` registered `Node<i32>[]`, whose element is `Node<i32>`, whose
+  // field is `Node<i32>[]` again — round until the compiler's stack ran out. An array is registered
+  // before its element is visited, so asking first ends every such cycle at its second step.
   if (t.indexOf("<") > 0 && (env.isStructName(t) || env.isEnumName(t))) {
     for (i32 f = 0; f < env.fieldCount; f++) {
       string owner = env.fieldOwners[f];
       if (owner != t && env.enumOf(owner) != t) { continue; }
       string ft = env.fieldTypes[f];
-      if (isArrayType(ft) || isBoxedName(ft)) { registerNamed(env, ft); }
+      if ((isArrayType(ft) && !hasArrayType(env, ft)) || isBoxedName(ft)) { registerNamed(env, ft); }
     }
   }
+}
+
+/** Whether array type `t` has its type-section entry already. */
+bool hasArrayType(Env env, string t) {
+  for (i32 i = 0; i < env.arrayCount; i++) {
+    if (env.arrayTypes[i] == t) { return true; }
+  }
+  return false;
 }
 
 /**
@@ -8683,7 +8696,11 @@ void emitComponentTag(B fb, u8[] src, Lexed lexed, Env env, i32 fi, i32 tagTok, 
   fb.byte(251); fb.u32leb(0); fb.u32leb(env.tupleType(atn));          // struct.new — the attributes
   fb.byte(251); fb.u32leb(0); fb.u32leb(env.pairType("fn[" + k + "(" + p + ")]"));
 
-  fb.byte(65); fb.i32leb(0);
+  // **Member 0 says which component the snapshots are of** — its function's index — so that `same`
+  // answers false for another component whose attributes happen to have the same types: `ref.test`
+  // against the tuple's type cannot tell `Row(string label)` from `Col(string title)` (spec ch23
+  // `§wac-markup-snapshot-same-fgyw5xf`, "the snapshots of the same attributes").
+  fb.byte(65); fb.i32leb(env.funcIndex[fi]);
   for (i32 j = 1; j < sn; j++) {
     fb.byte(32); fb.u32leb(sfrom[j]);
     if (smethod[j] >= 0) { fb.byte(16); fb.u32leb(env.funcIndex[smethod[j]]); }
@@ -8786,13 +8803,47 @@ void emitSnapshotsSame(B b, Env env, string tt, i32[] ct, i32[] ci, i32 depth, b
   string[] ms = tupleMembers(tt);
   i32 ti = env.tupleType(tt);
   b.byte(65); b.i32leb(1);
-  for (i32 i = top ? 1 : 0; i < ms.len(); i++) {
+  for (i32 i = 0; i < ms.len(); i++) {
     string mt = ms[i];
     if (depth >= ct.len()) { b.byte(65); b.i32leb(0); b.byte(113); continue; }
     ct[depth] = ti;
     ci[depth] = i;
     if (isTupleName(mt)) {
       emitSnapshotsSame(b, env, mt, ct, ci, depth + 1, false);
+      b.byte(113);                                                     // i32.and
+      continue;
+    }
+    // **A nullable string or number is equal to another when both are null, or neither is and what they
+    // hold is.** Compared as references they were: a `string?` was handed to `str_eq` as it was, which
+    // trapped on a null, and an `i32?` box was compared by identity, so `n={1}` changed every render.
+    bool boxed = isBoxedName(mt) && !endsWith(mt, "??");
+    // Every string, since a `string?` attribute's member can reach here spelled `string`.
+    i32 eqN = mt == "string?" || mt == "string" ? env.funcAt(" str_eq") : -1;
+    bool strN = eqN >= 0 && env.funcIndex[eqN] >= 0;
+    if (boxed || strN) {
+      emitChain(b, 0, ct, ci, depth + 1); b.byte(209);                 // ref.is_null
+      emitChain(b, 2, ct, ci, depth + 1); b.byte(209);
+      b.byte(114);                                                     // i32.or
+      b.byte(4); b.byte(127);                                          // if (result i32) — either null
+      emitChain(b, 0, ct, ci, depth + 1); b.byte(209);
+      emitChain(b, 2, ct, ci, depth + 1); b.byte(209);
+      b.byte(113);                                                     // both
+      b.byte(5);                                                       // else — compare what they hold
+      if (strN) {
+        emitChain(b, 0, ct, ci, depth + 1); b.byte(212);               // ref.as_non_null
+        emitChain(b, 2, ct, ci, depth + 1); b.byte(212);
+        b.byte(16); b.u32leb(env.funcIndex[eqN]);
+      } else {
+        string inner = mt.slice(0, mt.len() - 1);
+        i32 bt = env.boxType(inner);
+        emitChain(b, 0, ct, ci, depth + 1); b.byte(251); b.u32leb(2); b.u32leb(bt); b.u32leb(0);
+        emitChain(b, 2, ct, ci, depth + 1); b.byte(251); b.u32leb(2); b.u32leb(bt); b.u32leb(0);
+        if (valType(inner) == 126) { b.byte(81); }                     // i64.eq
+        else if (valType(inner) == 125) { b.byte(91); }                // f32.eq
+        else if (valType(inner) == 124) { b.byte(97); }                // f64.eq
+        else { b.byte(70); }                                           // i32.eq
+      }
+      b.byte(11);
       b.byte(113);                                                     // i32.and
       continue;
     }
@@ -8948,6 +8999,12 @@ void emitJsxChild(B fb, u8[] src, Lexed lexed, Env env, Expr e, string k) {
     default: { }
   }
   string t = typeOfE(src, lexed, env, e);
+  // **A `K` is itself**, whatever else it converts to (spec ch23 `§wac-markup-child-converts-w8d4ntc`):
+  // asked after the text conversion, a child type of `i32` read every `i32` child as text to build.
+  if (t != "" && t == k) {
+    emitExprAt(fb, src, lexed, env, e, k);
+    return;
+  }
   if (t != "" && t == k + "[]") {
     i32 fm = markupMethod(env, k, "fragment");
     if (fm < 0) { return; }
@@ -8962,20 +9019,57 @@ void emitJsxChild(B fb, u8[] src, Lexed lexed, Env env, Expr e, string k) {
     fb.byte(16); fb.u32leb(env.funcIndex[tm]);    // call
     return;
   }
+  // **Anything else must be a `K` already.** Inside a generic the checker cannot see what `{v}` will be,
+  // and an instance where it is neither — or a `K?`, whose null the tree would then hold — went out as
+  // the value with no conversion, which the engine refused or which trapped on first read.
+  string why = jsxChildWhy(src, lexed, env, e, k);
+  if (why != "") {
+    env.declineFor(why);
+    return;
+  }
   emitExprAt(fb, src, lexed, env, e, k);
 }
 
+/**
+ * Why a `{e}` child cannot be built as a `k`, or "": it is a `k` (or a subtype, or a variant of the enum
+ * `k` is), a `k[]`, or something that converts to text. Asked by the emitter and by the walk that says
+ * what it would decline, so the two agree.
+ */
+string jsxChildWhy(u8[] src, Lexed lexed, Env env, Expr e, string k) {
+  string t = typeOfE(src, lexed, env, e);
+  if (t == "" || k == "" || t == k || t == k + "[]" || isLiteral(e)) { return ""; }
+  if (t == "string" || textFunctionFor(t) != "" || env.methodAt(t, "[toString]") >= 0) { return ""; }
+  if (isOrDescends(env, t, k) || env.enumOf(t) == k || env.canonType(env.enumOf(t)) == env.canonType(k)) { return ""; }
+  return "a markup child of type " + t + ", which is not a " + k + ", a " + k + "[], or text";
+}
+
 /** A `string` from text the source did not quote — a tag name, or an attribute's name. */
-void emitRawString(B fb, Env env, string text) {
-  u8[] bytes = text.toBytes();
-  for (i32 i = 0; i < bytes.len(); i++) {
-    fb.byte(65);
-    fb.i32leb(bytes[i] as i32);
+void emitRawString(B fb, Env env, string text) { emitStringBytes(fb, env, text.toBytes()); }
+
+/**
+ * A `string` of these bytes: from the data segment, so it costs three instructions whatever its length
+ * — or, in a constant expression, which cannot name a segment (`Env.inConstExpr`), one `i32.const` a
+ * byte. **Every string the emitter builds comes through here**: markup text built its own the second
+ * way everywhere, so a run of more than ten thousand bytes was an `array.new_fixed` the engine refuses.
+ */
+void emitStringBytes(B fb, Env env, u8[] bytes) {
+  if (env.inConstExpr) {
+    for (i32 i = 0; i < bytes.len(); i++) { fb.byte(65); fb.i32leb(bytes[i] as i32); }
+    fb.byte(251);
+    fb.u32leb(8);   // array.new_fixed
+    fb.u32leb(env.arrayType("i8[]"));
+    fb.u32leb(bytes.len());
+    return;
   }
+  i32 at = env.data.len;
+  env.data.raw(bytes);
+  env.usedData = true;
+  fb.byte(65); fb.i32leb(at);
+  fb.byte(65); fb.i32leb(bytes.len());
   fb.byte(251);
-  fb.u32leb(8);   // array.new_fixed
+  fb.u32leb(9);   // array.new_data
   fb.u32leb(env.arrayType("i8[]"));
-  fb.u32leb(bytes.len());
+  fb.u32leb(0);   // the one segment
 }
 
 /**
@@ -8992,14 +9086,9 @@ void emitJsxText(B fb, u8[] src, Env env, i32 startOff, i32 endOff, string k) {
   JsxSpan span = jsxTrim(src, startOff, endOff);
   i32 tm = markupMethod(env, k, "text");
   if (tm < 0) { return; }
-  for (i32 i = span.from; i < span.to; i++) {
-    fb.byte(65);
-    fb.i32leb(src[i] as i32);
-  }
-  fb.byte(251);
-  fb.u32leb(8);   // array.new_fixed
-  fb.u32leb(env.arrayType("i8[]"));
-  fb.u32leb(span.to - span.from);
+  u8[] text = u8[].filled(span.to - span.from, 0);
+  for (i32 i = span.from; i < span.to; i++) { text[i - span.from] = src[i]; }
+  emitStringBytes(fb, env, text);
   fb.byte(16); fb.u32leb(env.funcIndex[tm]);    // call
 }
 
@@ -10965,25 +11054,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // and the module carried no data at all. `issues/lang/0162` has the measurement and the
       // arithmetic. It is three instructions now whatever the literal's length: the offset, the
       // length, and `array.new_data` over segment 0.
-      u8[] bytes = stringLiteralBytes(src, lexed, tok);
-      if (env.inConstExpr) {
-        // A constant expression cannot name a data segment — see `Env.inConstExpr`.
-        for (i32 i = 0; i < bytes.len(); i++) { fb.byte(65); fb.i32leb(bytes[i] as i32); }
-        fb.byte(251);
-        fb.u32leb(8);   // array.new_fixed
-        fb.u32leb(env.arrayType("i8[]"));
-        fb.u32leb(bytes.len());
-      } else {
-        i32 at = env.data.len;
-        env.data.raw(bytes);
-        env.usedData = true;
-        fb.byte(65); fb.i32leb(at);
-        fb.byte(65); fb.i32leb(bytes.len());
-        fb.byte(251);
-        fb.u32leb(9);   // array.new_data
-        fb.u32leb(env.arrayType("i8[]"));
-        fb.u32leb(0);   // the one segment
-      }
+      emitStringBytes(fb, env, stringLiteralBytes(src, lexed, tok));
     }
     Cast(op, operand, target): {
       // **`[a, b] as T[]` is not a conversion**: it builds the literal at `T[]` in the first place, so
@@ -16342,7 +16413,7 @@ string unsupportedValueAtJudged(u8[] src, Lexed lexed, Env env, Expr e, string w
     Jsx(tagTok, closeTok, attrs, kids): {
       bool built = tagTok < 0 || lexed.tokens[tagTok * tokenStride()] == kString();
       if (!built) { return unsupportedValue(src, lexed, env, e); }
-      string jr = unsupportedExpr(src, lexed, env, e);
+      string jr = unsupportedJsx(src, lexed, env, tagTok, attrs, kids, want);
       if (jr != "") { return jr; }
       return want == "" ? "a quoted tag or a fragment in a slot of no known type" : "";
     }
@@ -16492,6 +16563,57 @@ string unsupportedValueAtJudged(u8[] src, Lexed lexed, Env env, Expr e, string w
       return want == "" ? "a null in a slot of no known type" : "a null in a " + want + " slot";
     }
     default: { return unsupportedValue(src, lexed, env, e); }
+  }
+}
+
+/**
+ * Whether markup's pieces can be emitted, each asked at the slot it fills — as emitting fills them: an
+ * attribute at its parameter's type (a quoted tag's at `string`), and a child that builds by its slot
+ * (a fragment, a quoted tag, or a conditional between them) at the child type, which is the tag's
+ * `kids` element or, for markup with no name, `want`. Asked with no slot, `<f xs={[]}/>` declined the
+ * literal its parameter types, and `{c ? <>a</> : <"b"/>}` the markup its tag's children are.
+ */
+string unsupportedJsx(u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, Expr[] kids, string want) {
+  bool built = tagTok < 0 || lexed.tokens[tagTok * tokenStride()] == kString();
+  string k = want;
+  i32 fi = built ? 0 - 1 : env.funcAt(nameKeyOf(env, src, lexed, tagTok));
+  if (!built) { k = fi >= 0 ? jsxKidsType(env, fi) : ""; }
+  for (i32 i = 0; i < attrs.len(); i++) {
+    string pt = built ? "string" : "";
+    if (fi >= 0) {
+      string an = tokenTextOf(src, lexed, attrs[i].nameTok);
+      for (i32 p = 0; p < env.funcParamCount[fi]; p++) {
+        if (env.paramNameAt(fi, p) == an) { pt = env.paramTypeAt(fi, p); }
+      }
+    }
+    string why = pt != "" ? unsupportedValueAt(src, lexed, env, attrs[i].value, pt)
+                          : unsupportedExpr(src, lexed, env, attrs[i].value);
+    if (why != "") { return why; }
+  }
+  for (i32 i = 0; i < kids.len(); i++) {
+    string why = k != "" && slotBuilt(lexed, kids[i]) ? unsupportedValueAt(src, lexed, env, kids[i], k)
+                                                     : unsupportedExpr(src, lexed, env, kids[i]);
+    if (why != "") { return why; }
+    match (kids[i].kind) {
+      JsxText(startOff, endOff): { }
+      Jsx(nt, nc, na, nk): { }
+      default: {
+        if (k != "" && !slotBuilt(lexed, kids[i])) {
+          string cw = jsxChildWhy(src, lexed, env, kids[i], k);
+          if (cw != "") { return cw; }
+        }
+      }
+    }
+  }
+  return "";
+}
+
+/** Whether `e` builds by its slot's type: markup with no function, or a conditional between such. */
+bool slotBuilt(Lexed lexed, Expr e) {
+  match (e.kind) {
+    Jsx(tagTok, closeTok, attrs, kids): { return builtBySlot(lexed, e); }
+    Ternary(cond, then, els): { return slotBuilt(lexed, then) || slotBuilt(lexed, els); }
+    default: { return false; }
   }
 }
 
@@ -16795,17 +16917,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     FloatLit(tok): { return ""; }
     BoolLit(value): { return ""; }
     JsxText(startOff, endOff): { return ""; }
-    Jsx(tagTok, closeTok, attrs, kids): {
-      for (i32 i = 0; i < attrs.len(); i++) {
-        string why = unsupportedExpr(src, lexed, env, attrs[i].value);
-        if (why != "") { return why; }
-      }
-      for (i32 i = 0; i < kids.len(); i++) {
-        string why = unsupportedExpr(src, lexed, env, kids[i]);
-        if (why != "") { return why; }
-      }
-      return "";
-    }
+    Jsx(tagTok, closeTok, attrs, kids): { return unsupportedJsx(src, lexed, env, tagTok, attrs, kids, ""); }
     StrLit(tok): {
       return knownEscapes(src, lexed, tok) ? "" : "a string literal with an escape this slice cannot read";
     }

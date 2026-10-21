@@ -39,6 +39,7 @@ import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFin
 import { P, parseProgram } from "./parse.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
+import { stringLiteralBytes } from "./strlit.wac";
 import { coreExports, coreSymbols, isBuiltinSpec, stdSource } from "./coretext.wac";
 import { endsWith, startsWith } from "./path.wac";
 import { flattenUnion, isUnionName, spellUnion, unionMembers } from "./unions.wac";
@@ -5940,7 +5941,8 @@ export string typeOfExpr(C c, Expr e) {
     Jsx(tagTok, closeTok, attrs, kids): {
       if (tagTok < 0 || tokenKind(c, tagTok) == kString()) { return markupTypeOf(c, e); }
       i32 jfi = c.funcAt(c.renamed(tokenText(c, tagTok)));
-      return jfi < 0 ? typeNone() : c.funcReturns[jfi];
+      // A generic one is refused at the tag, and its written `T` is no type to report against.
+      return jfi < 0 || c.funcGenerics[jfi] ? typeNone() : c.funcReturns[jfi];
     }
     Ident(tok): {
       string idName = tokenText(c, tok);
@@ -6289,6 +6291,10 @@ export string typeOfExpr(C c, Expr e) {
       if (other != typeNone() && other != "" && isPlainLiteral(c, then) && literalFits(c, other, then)) {
         return other;
       }
+      // **And an array literal beside an array takes its type**, as a number literal does: the literal is
+      // built at the slot it fills (spec ch15), and the other branch is that slot.
+      if (isArrayName(t) && isArrLitExpr(els)) { return t; }
+      if (isArrayName(other) && isArrLitExpr(then)) { return other; }
       // **Branches that differ only in nullability unify to the nullable one**, which is their common
       // type: `c ? a : b` for a `P` and a `P?` is a `P?`. Answering unknown instead made
       // `P r = c ? a : b;` silent — unknown is silent everywhere in this checker — while `P r = b;`
@@ -6809,6 +6815,27 @@ void checkJsxAttrValue(C c, JsxAttr a, string want) {
 void checkJsxCall(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
   string fname = tokenText(c, tagTok);
   i32 fi = c.funcAt(c.renamed(fname));
+  // **A tag calls a function, never a local** — a variable named like a tag, a funcref among them, is
+  // not what it names (spec case 0132). The emitter found no function and declined the tag as untyped.
+  if (fi < 0 && c.findName(fname) >= 0) {
+    c.reportTok(errJsxNotComponent(), tagTok, fname + " is a local here, not a function — a tag calls one");
+    for (i32 i = 0; i < attrs.len(); i++) {
+      c.expectedUnknown = true;
+      checkExpr(c, attrs[i].value);
+    }
+    return;
+  }
+  // **A tag gives no type arguments**, and nothing infers them from attributes yet: the result read as
+  // the function's written `T`. Refused by name until a tag can instantiate one.
+  if (fi >= 0 && c.funcGenerics[fi]) {
+    c.reportTok(errJsxNotComponent(), tagTok,
+                fname + " is generic, and a tag cannot give it type arguments — call it as a function");
+    for (i32 i = 0; i < attrs.len(); i++) {
+      c.expectedUnknown = true;
+      checkExpr(c, attrs[i].value);
+    }
+    return;
+  }
   if (fi < 0) {
     // A name this checker knows of but cannot see into — an import from a file it was not handed —
     // says nothing, as an unknown says nothing everywhere here.
@@ -6912,7 +6939,7 @@ string arrayElemOf(string t) {
  */
 string markupKidsOf(C c, i32 tagTok) {
   i32 fi = c.funcAt(c.renamed(tokenText(c, tagTok)));
-  if (fi < 0) { return typeNone(); }
+  if (fi < 0 || c.funcGenerics[fi]) { return typeNone(); }
   i32 at = c.funcParamAt[fi];
   for (i32 k = 0; k < c.funcParamCount[fi]; k++) {
     if (at + k < c.funcParamNames.len() && c.funcParamNames[at + k] == "kids") {
@@ -6929,16 +6956,87 @@ string markupKidsOf(C c, i32 tagTok) {
  * markup imports its tags and nothing else.
  */
 bool markupCan(C c, string k, string sym) {
-  i32 mi = c.methodAt(templateOf(k), "[markup." + sym + "]");
+  i32 mi = markupMethodAt(c, k, sym);
   return mi >= 0 && c.methodStatics[mi];
+}
+
+/**
+ * The method of `k` named by core's `markup.<sym>`, or -1 — under core's own spelling, which is how a
+ * type declared in a file that imported `markup` plainly is keyed, or under this file's alias for it:
+ * `import { markup as m }` keys a method written `[m.text]` by that spelling (spec ch23
+ * `§wac-conversion-symbol-identity-4ga8txc` — a symbol keeps its identity under any alias).
+ */
+i32 markupMethodAt(C c, string k, string sym) {
+  string owner = templateOf(k);
+  i32 mi = c.methodAt(owner, "[markup." + sym + "]");
+  if (mi >= 0) { return mi; }
+  // The namespace rewrite imports each member it meets as `@"markup.text" as @"m.text"`, so the member
+  // this file writes is core's `markup.text` under the name `coreMember` answers.
+  string local = c.coreMember("markup." + sym);
+  return local == "" ? 0 - 1 : c.methodAt(owner, local);
+}
+
+/**
+ * Why `k`'s `[markup.<sym>]` method `mi` cannot build markup, or "" — the shape each piece has to have
+ * (spec ch23): `text` takes a `string`, `fragment` a `K[]`, `element` a tag, its attributes' names and
+ * values and a `K[]`, and each answers the `K` it builds. A method of another shape compiled to a call
+ * that handed the tree the wrong thing, which the engine refused with an index and no names in it.
+ */
+string markupShapeWhy(C c, string k, i32 mi, string sym) {
+  if (sym == "component" || sym == "snapshot") { return ""; }
+  string ret = c.methodReturns[mi];
+  string[] want = string[].filled(4, "");
+  i32 n = 0;
+  string spelled = "";
+  if (sym == "text") {
+    want[0] = "string";
+    n = 1;
+    spelled = "(string)";
+  } else if (sym == "fragment") {
+    want[0] = k + "[]";
+    n = 1;
+    spelled = "(" + k + "[])";
+  } else if (sym == "element") {
+    want[0] = "string";
+    want[1] = "string[]";
+    want[2] = "string[]";
+    want[3] = k + "[]";
+    n = 4;
+    spelled = "(string, string[], string[], " + k + "[])";
+  } else {
+    return "";
+  }
+  bool ok = ret == typeNone() || ret == "" || templateOf(ret) == templateOf(k);
+  if (c.methodParamCount[mi] != n) { ok = false; }
+  for (i32 i = 0; ok && i < n; i++) {
+    string got = c.methodParamTypes[c.methodParamAt[mi] + i];
+    if (got != typeNone() && got != "" && templateOf(got) != templateOf(want[i]) && got != want[i]) { ok = false; }
+  }
+  if (ok) { return ""; }
+  return k + ".[markup." + sym + "] has to take " + spelled + " and answer " + k + " to build markup";
 }
 
 /** Refuse markup the child type `k` cannot build, naming the method it would need. */
 void needMarkup(C c, string k, string sym, i32 line, i32 col, string what) {
-  if (k == typeNone() || k == "" || markupCan(c, k, sym)) { return; }
-  // A type this checker cannot see into — imported from a file it was not handed — says nothing, as
-  // an unknown says nothing everywhere here.
-  if (!c.isStruct(templateOf(k)) && !c.isEnum(templateOf(k))) { return; }
+  if (k == typeNone() || k == "") { return; }
+  i32 mi = markupMethodAt(c, k, sym);
+  if (mi >= 0 && c.methodStatics[mi]) {
+    string why = markupShapeWhy(c, k, mi, sym);
+    if (why != "") { c.reportWith(errMarkupUnbuilt(), line, col, why); }
+    return;
+  }
+  if (mi >= 0) {
+    c.reportWith(errMarkupUnbuilt(), line, col, what + " needs " + k + ".[markup." + sym
+                 + "] to be static — markup calls it on the type, with no tree to call it on");
+    return;
+  }
+  // **A type that can have no methods cannot build markup**: a primitive, a `string`, an array, a tuple,
+  // a funcref or a nullable one — so a child of one is refused here rather than declined by the emitter.
+  // Only a name this checker cannot see into — imported from a file it was not handed — says nothing,
+  // as an unknown says nothing everywhere here.
+  bool methodless = isPrimitiveName(k) || k == "string" || isArrayName(k) || isTupleName(k) || startsWithFn(k)
+                 || isNullableName(k);
+  if (!methodless && !c.isStruct(templateOf(k)) && !c.isEnum(templateOf(k))) { return; }
   c.reportWith(errMarkupUnbuilt(), line, col, what + " needs " + k + ".[markup." + sym + "], which it does not have");
 }
 
@@ -6961,6 +7059,14 @@ void checkJsxChild(C c, Expr kid, string k) {
     c.report(errUntypedLiteral(), kid.line, kid.col);
     return;
   }
+  // **`{null}` is no child**: not a `K`, a `K[]` or text (spec ch23 `§wac-markup-child-converts-w8d4ntc`,
+  // "anything else is refused"). It used to be counted with the literals that convert to text.
+  if (lit == litNull()) {
+    if (k != typeNone() && k != "") {
+      c.reportWith(errMarkupUnbuilt(), kid.line, kid.col, "null is not a " + k + ", a " + k + "[], or text");
+    }
+    return;
+  }
   if (lit != litNone()) {
     needMarkup(c, k, "text", kid.line, kid.col, "text");
     return;
@@ -6981,6 +7087,15 @@ void checkJsxChild(C c, Expr kid, string k) {
     return;
   }
   if (!c.isStruct(templateOf(k)) && !c.isEnum(templateOf(k))) { return; }
+  // A nullable child is the nullable mistake, said as that rather than as a tree missing a method.
+  if (isNullableName(got)) {
+    string inner = withoutNull(got);
+    if (inner == k || convertsToText(c, inner) || assignable(c, k, inner)) {
+      c.reportWith(errMarkupUnbuilt(), kid.line, kid.col,
+                   "this child is " + got + ", and a child is never null — unwrap it with `!`, or leave it out with a conditional");
+      return;
+    }
+  }
   c.reportWith(errMarkupUnbuilt(), kid.line, kid.col, got + " is not a " + k + ", a " + k + "[], or text");
 }
 
@@ -7004,7 +7119,7 @@ void checkJsx(C c, Expr e, string want, i32 tagTok, i32 closeTok, JsxAttr[] attr
   // **A closing tag names the element it closes.** `<div></span>` is well formed as *shape* — the
   // parser read an element with a name at each end — and wrong as a program, which is why it is
   // said here, with the name that was written and the one that was expected.
-  if (closeTok >= 0 && tagTok >= 0 && tokenText(c, closeTok) != tokenText(c, tagTok)) {
+  if (closeTok >= 0 && tagTok >= 0 && tagNameOf(c, closeTok) != tagNameOf(c, tagTok)) {
     c.reportTok(errJsxTagMismatch(), closeTok,
                 "</" + tokenText(c, closeTok) + "> does not close <" + tokenText(c, tagTok) + ">");
   }
@@ -7049,6 +7164,24 @@ void checkJsx(C c, Expr e, string want, i32 tagTok, i32 closeTok, JsxAttr[] attr
     checkJsxChild(c, kids[i], k);
   }
   c.expected = typeNone();
+}
+
+/**
+ * The name a tag token gives: its text, or for a quoted tag the string it denotes — so `<"a\u{62}">`
+ * is closed by `</"ab">`, both naming the element `ab`.
+ */
+string tagNameOf(C c, i32 tok) {
+  if (tokenKind(c, tok) != kString()) { return tokenText(c, tok); }
+  Lexed lx = Lexed(c.toks, 0, i32[](), 0, 0, false);
+  return string.fromBytes(stringLiteralBytes(c.src, lx, tok));
+}
+
+/** Whether `e` is an array literal, written bare — `[a, b]`, which takes its type from a slot. */
+bool isArrLitExpr(Expr e) {
+  match (e.kind) {
+    ArrLit(elements): { return true; }
+    default: { return false; }
+  }
 }
 
 /** Whether `e` is markup, or a conditional with markup for an arm — a child that builds its tag's child type. */
@@ -7857,16 +7990,25 @@ void checkExpr(C c, Expr e) {
       // `want`, not `c.expected`: the slot was read and cleared at the top of this function, which is
       // the whole mechanism — an expression gets the context it was given and cannot leak it sideways.
       string slot = want;
+      // **An array literal in a ternary with no slot builds at the other branch's type** — `(c ? ts :
+      // [P(2)]).len()` — as a number literal takes the other branch's; its elements are then checked at
+      // that type, and the two branches agree by construction.
+      string slotThen = slot;
+      string slotEls = slot;
+      if (slot == typeNone() || slot == "") {
+        if (isArrLitExpr(els) && !isArrLitExpr(then) && isArrayName(typeOfExpr(c, then))) { slotEls = typeOfExpr(c, then); }
+        if (isArrLitExpr(then) && !isArrLitExpr(els) && isArrayName(typeOfExpr(c, els))) { slotThen = typeOfExpr(c, els); }
+      }
       checkExpr(c, cond);
       // A slot this file cannot see stays unseen in both branches — `run(ok ? [a, f(b)] : [c])` with
       // `run` imported — rather than becoming "nothing wanted", which an array literal reads as an
       // instruction to infer its own type.
-      c.expected = slot;
+      c.expected = slotThen;
       c.expectedUnknown = wantUnknown;
       openMatchScope(c, cond);
       checkExpr(c, then);
       c.popScope();
-      c.expected = slot;
+      c.expected = slotEls;
       c.expectedUnknown = wantUnknown;
       checkExpr(c, els);
       c.expectedUnknown = false;
@@ -7916,7 +8058,8 @@ void checkExpr(C c, Expr e) {
         // states and this rule did not know: `flag ? c : r` on a `Circle` and a `Rect` is a `Shape`,
         // and neither branch is assignable to the other. Asking assignability in both directions
         // answers "no" for every pair of siblings, and refused four programs the spec runs.
-        if (tt != typeNone() && et != typeNone() && !assignable(c, tt, et) &&
+        bool litBuilt = (isArrLitExpr(els) && slotEls != slot) || (isArrLitExpr(then) && slotThen != slot);
+        if (!litBuilt && tt != typeNone() && et != typeNone() && !assignable(c, tt, et) &&
             !assignable(c, et, tt) && !shareAncestor(c, tt, et)) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
@@ -7997,6 +8140,11 @@ void checkExpr(C c, Expr e) {
             string slotSpelled = ctargs.len() > 0 && !nameIsGenericFunc(c, cname)
                                ? typeOfTy(c, ctype) : cname;
             c.expected = argumentSlot(c, cname, slotSpelled, i);
+            // **A generic function with its type arguments written has its parameters' types**, so
+            // `id<Tree>(<>x</>)` gives the fragment its slot as `id<Tree[]>([])` gives the array its.
+            if (ctargs.len() > 0 && nameIsGenericFunc(c, cname)) {
+              c.expected = genericParamWritten(c, c.funcAt(cname), ctargs, i);
+            }
             // `argumentSlot` answers `typeNone()` for four different reasons, and one of them is that
             // `cname` is neither a struct nor a function *this file* contains — an imported type,
             // under a single-file check. Empty therefore means "could not tell" here as it does in
@@ -10721,6 +10869,21 @@ string genericCallReturnWritten(C c, i32 at, Ty[] typeArgs) {
     if (bound[i] == typeNone() || bound[i] == "") { return typeNone(); }
   }
   return applyBindings(c.funcReturns[at], names, bound);
+}
+
+/** Parameter `i` of generic function `at` with its written type arguments bound, or unknown. */
+string genericParamWritten(C c, i32 at, Ty[] typeArgs, i32 i) {
+  if (at < 0 || i >= c.funcParamCount[at]) { return typeNone(); }
+  i32 n = c.funcTypeParamCount[at];
+  if (typeArgs.len() != n) { return typeNone(); }
+  string[] names = string[].defaulted(n);
+  string[] bound = string[].defaulted(n);
+  for (i32 j = 0; j < n; j++) {
+    names[j] = c.funcTypeParamNames[c.funcTypeParamAt[at] + j];
+    bound[j] = typeOfTy(c, typeArgs[j]);
+    if (bound[j] == typeNone() || bound[j] == "") { return typeNone(); }
+  }
+  return applyBindings(c.funcParamTypes[c.funcParamAt[at] + i], names, bound);
 }
 
 /**

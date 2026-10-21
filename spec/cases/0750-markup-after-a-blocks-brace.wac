@@ -1,0 +1,16 @@
+// expect: f() = 6
+// why: markup nests in expressions, and a statement may begin with one after a block — the `<` after a
+//      block's `}` opens a tag, and text in it is not wac
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { markup } from "core";
+enum E { A, B }
+struct Text { string s; Text [markup.text](string s) { return Text(s); } }
+struct Log { i32 n; }
+void note(Log l, Text[] kids) { l.n += kids[0].s.len(); }
+i32 two(E e) { i32 lim = 2; return match (e) { A: lim - 1, B: lim } < lim ? 1 : 0; }
+export i32 f() {
+  Log l = Log(0);
+  if (l.n == 0) { l.n = 1; } <note l={l}>it's</note>;
+  for (i32 i = 0; i < 1; i++) { } <note l={l}>x</note>;
+  return l.n + two(E.A) - two(E.B) - 1;
+}

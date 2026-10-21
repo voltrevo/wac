@@ -1,0 +1,8 @@
+// expect: refused
+// why: a child type builds text with a static method taking a string and answering itself; one
+//      answering something else cannot build the tree
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { markup } from "core";
+struct K { string s; string [markup.text](string s) { return s; } }
+string p(K[] kids) { return kids[0].s; }
+export string f() { return <p>hello</p>; }

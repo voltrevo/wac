@@ -1,0 +1,6 @@
+// expect: f() = 7
+// why: each attribute is passed to the parameter of that name, so a value that takes its type from the
+//      slot — an empty array, a null, a tuple — takes the parameter's
+// from: spec/3-expressions/23-interpolation-and-markup.md
+i32 f1(i32[] xs, string? s, (i32, string) t) { return xs.len() + (s is null ? 1 : 0) + t.0 + t.1.len(); }
+export i32 f() { return <f1 xs={[]} s={null} t={(4, "ab")}/>; }

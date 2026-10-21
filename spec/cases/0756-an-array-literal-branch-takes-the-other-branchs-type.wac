@@ -1,0 +1,13 @@
+// expect: f() = 3
+// why: an array literal is built at the slot it fills, and in a conditional with no slot the other
+//      branch is that slot — as a number literal takes the other branch's type
+// from: spec/3-expressions/22-operators.md
+struct P { i32 x; }
+enum E { A(i32 n), B }
+export i32 f() {
+  bool c = false;
+  P[] ps = [P(1)];
+  E[] es = [E.A(1)];
+  i32[] ns = [1];
+  return (c ? ps : [P(2)]).len() + (c ? [E.B, E.B] : es).len() + (c ? ns : [2]).len();
+}

@@ -1,0 +1,4 @@
+// expect: refused
+// why: a tag calls a function in scope, and a local of that name is not one
+// from: spec/3-expressions/23-interpolation-and-markup.md
+export i32 f() { i32 n = 1; i32 r = <n/>; return r; }

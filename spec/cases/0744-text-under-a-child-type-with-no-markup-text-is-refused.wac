@@ -1,0 +1,6 @@
+// expect: refused
+// why: text is K.[markup.text] of the text, and a `string` has no such method, so text under a tag whose
+//      children are strings is refused
+// from: spec/3-expressions/23-interpolation-and-markup.md
+string first(string[] kids) { return kids[0]; }
+export string f() { return <first>hi</first>; }

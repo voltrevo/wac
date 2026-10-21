@@ -1125,6 +1125,76 @@ bool endsExpression(i32 kind) {
 }
 
 /**
+ * **Which `}` ends an expression.** A `}` closing a struct literal or the arms of a `match` used as a
+ * value ends one — `match (s) { A: 1, B: 2 } < 2` compares — and every other `}` closes a block: an
+ * `if`, a loop, a function's body, a lambda's. After a block a `<` cannot be the operator, so it is a
+ * tag: `if (c) { … } <note l={l}>it's</note>;` read `it's` as a character literal while `endsExpression`
+ * counted every `}` alike.
+ *
+ * Decided at the `{` from what precedes it, which is all a lexer has: a name or a `>` before it is a
+ * struct literal (`P {`, `Box<i32> {`), and a `)` is a `match` subject when the `(` it closes followed
+ * `match` written as a value rather than as a statement. Each `(` remembers what preceded it, and each
+ * `{` what it was, on stacks the size of the source's bracket count.
+ */
+struct Nesting {
+  i32[] openers;
+  i32 parens;
+  bool[] exprs;
+  i32 braces;
+  /** What preceded the `(` the last `)` closed — `matchStmt()` for `match` starting a statement. */
+  i32 closedOpener;
+  /** Whether the last `}` ended an expression. */
+  bool rbraceEnds;
+
+  /** The `(` just read, after `prev` — and `before`, the token preceding that one. */
+  void openParen(this, i32 prev, i32 before) {
+    if (this.parens >= this.openers.len()) { return; }
+    bool stmt = prev == kMatch() && (before < 0 || before == kSemi() || before == kLbrace() || before == kRbrace());
+    this.openers[this.parens] = stmt ? matchStmt() : prev;
+    this.parens = this.parens + 1;
+  }
+
+  void closeParen(this) {
+    if (this.parens == 0) { this.closedOpener = 0 - 1; return; }
+    this.parens = this.parens - 1;
+    this.closedOpener = this.openers[this.parens];
+  }
+
+  /** The `{` just read, after `prev` — or `{` opening an expression in markup, which is always one. */
+  void openBrace(this, i32 prev, bool always) {
+    if (this.braces >= this.exprs.len()) { return; }
+    this.exprs[this.braces] = always || prev == kIdent() || prev == kGt()
+                           || (prev == kRparen() && this.closedOpener == kMatch());
+    this.braces = this.braces + 1;
+  }
+
+  void closeBrace(this) {
+    if (this.braces == 0) { this.rbraceEnds = true; return; }
+    this.braces = this.braces - 1;
+    this.rbraceEnds = this.exprs[this.braces];
+  }
+
+  /** Whether a token of kind `prev`, just read, ends an expression. */
+  bool ends(const this, i32 prev) {
+    if (prev == kRbrace()) { return this.rbraceEnds; }
+    return endsExpression(prev);
+  }
+}
+
+/** An opener mark no token kind uses: `match` at the start of a statement, whose braces are a block. */
+i32 matchStmt() { return 0 - 2; }
+
+/** How many `(` and `{` the source has, which bounds how deep `Nesting` can go. */
+i32 bracketCount(u8[] src) {
+  i32 count = 0;
+  for (i32 i = 0; i < src.len(); i++) {
+    i32 c = src[i] as i32;
+    if (c == '(' || c == '{') { count++; }
+  }
+  return count + 8;
+}
+
+/**
  * Whether `<` at the current position opens or closes a tag rather than being text.
  *
  * `>` is here for the fragment `<>…</>`, which is a tag with no name — and it is why `<p>1 < 2</p>`
@@ -1143,12 +1213,12 @@ bool startsTag(Lexer lx, i32 offset) {
  * Only operators move it — a string, a number or an identifier never changes which
  * language is being read — so this is called from one place.
  */
-void jsxAfterOperator(Modes md, Lexer lx, i32 kind, i32 prevKind) {
+void jsxAfterOperator(Modes md, Lexer lx, i32 kind, i32 prevKind, bool prevEnds) {
   if (md.mode == mNormal()) {
     // **`fn<` is a function type, never a tag.** `fn` cannot end an expression, so without this the
     // `<` after it read as markup opening — `fn<i32(i32)> g` lexed `i32(i32)` as a tag and everything
     // after the `>` as text.
-    if (kind == kLt() && !endsExpression(prevKind) && prevKind != kFn() && startsTag(lx, 0)) {
+    if (kind == kLt() && !prevEnds && prevKind != kFn() && startsTag(lx, 0)) {
       md.push(cTag(), mNormal(), 0);
       md.mode = mTag();
       return;
@@ -1223,6 +1293,8 @@ export Lexed lex(u8[] src) {
   );
   Lexer lx = Lexer(src, 0, 1, 1);
   Modes md = Modes(i32[].filled(modeDepth(src) * 3, 0), 0, mNormal());
+  i32 depth = bracketCount(src);
+  Nesting nest = Nesting(i32[].filled(depth, 0), 0, bool[].filled(depth, false), 0, 0 - 1, false);
 
   while (true) {
     // **Text first, and no whitespace skipping**: in an element's children a space is
@@ -1236,6 +1308,7 @@ export Lexed lex(u8[] src) {
       if (c0 == '{') {
         lx.advance();
         pushToken(out, kLbrace(), textStart, 1, textLine, textCol);
+        nest.openBrace(kLbrace(), true);
         md.push(cExpr(), mText(), 1);
         md.mode = mNormal();
         continue;
@@ -1327,14 +1400,21 @@ export Lexed lex(u8[] src) {
         md.pop();
         lexStringBody(lx, out, md, start, startLine, startCol, true);
       } else {
+        // Whether the token before ended an expression, asked before this one moves the stacks.
+        bool prevEnds = nest.ends(prevKind);
+        i32 before = out.tokenCount < 2 ? 0 - 1 : out.tokens[(out.tokenCount - 2) * tokenStride()];
         pushToken(out, kind, start, lx.pos - start, startLine, startCol);
+        if (kind == kLparen()) { nest.openParen(prevKind, before); }
+        if (kind == kRparen()) { nest.closeParen(); }
+        if (kind == kLbrace()) { nest.openBrace(prevKind, md.mode == mTag()); }
+        if (kind == kRbrace()) { nest.closeBrace(); }
         // Braces the interpolation is not ended by — a lambda body, a struct literal. Only counted
         // while this frame is the interpolation's; JSX pushes its own and counts its own.
         if (md.topKind() == cInterp()) {
           if (kind == kLbrace()) { md.setTopNum(md.topNum() + 1); }
           if (kind == kRbrace()) { md.setTopNum(md.topNum() - 1); }
         }
-        jsxAfterOperator(md, lx, kind, prevKind);
+        jsxAfterOperator(md, lx, kind, prevKind, prevEnds);
       }
     }
   }

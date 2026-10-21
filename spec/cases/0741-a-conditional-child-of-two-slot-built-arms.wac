@@ -1,0 +1,17 @@
+// expect: f() = 3
+// why: a fragment or a quoted tag in either arm of a conditional child builds the child type, both arms
+//      included
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { markup } from "core";
+enum Tree {
+  Leaf(string text),
+  Many(Tree[] kids),
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.element](string tag, string[] n, string[] v, Tree[] kids) { return Tree.Many(kids); }
+  Tree [markup.fragment](Tree[] kids) { return Tree.Many(kids); }
+}
+i32 count(Tree[] kids) { return kids.len(); }
+export i32 f() {
+  bool c = true;
+  return <count>{c ? <>a</> : <"b"/>}{c ? <"a"/> : <"b"/>}{!c ? <>a</> : <>b</>}</count>;
+}

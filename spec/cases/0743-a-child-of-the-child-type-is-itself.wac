@@ -1,0 +1,6 @@
+// expect: f() = 5
+// why: a `{e}` child is `e` when it is a K, before any conversion to text — so a child type of i32 takes
+//      its i32 children as they are
+// from: spec/3-expressions/23-interpolation-and-markup.md
+i32 sum(i32[] kids) { i32 t = 0; for (i32 k in kids) { t += k; } return t; }
+export i32 f() { i32 n = 2; i32 m = 3; return <sum>{n}{m}</sum>; }

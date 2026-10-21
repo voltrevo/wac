@@ -1819,6 +1819,19 @@ Expr parseJsx(P p) {
   // rather than its shape, so the checker says `</span> closes <div>` with both positions, where
   // the parser could only say "unexpected". A fragment closes with `</>`, which names nothing and
   // therefore cannot mismatch.
+  // **A fragment and an element do not close each other, and the diagnostic names both** (spec ch23
+  // `§jsx-closing-tag-names-its-element`) — read as a shape, `</count>` after `<>` was "expected `>`".
+  if (tagTok < 0 && (p.at1(kIdent()) || p.at1(kString()))) {
+    p.failWith(perrExpected(), "</" + p.textOf(p.at) + "> does not close <> — a fragment closes with </>");
+    p.advance();
+    p.expect(kGt());
+    return Expr(ExprKind.Jsx(tagTok, -1, attrs.take(), kids.take()), line, col);
+  }
+  if (tagTok >= 0 && p.at1(kGt())) {
+    p.failWith(perrExpected(), "</> does not close <" + p.textOf(tagTok) + "> — it closes a fragment");
+    p.advance();
+    return Expr(ExprKind.Jsx(tagTok, -1, attrs.take(), kids.take()), line, col);
+  }
   i32 closeTok = tagTok < 0 ? -1 : p.at1(kString()) ? p.advance() : p.expect(kIdent());
   p.expect(kGt());
   return Expr(ExprKind.Jsx(tagTok, closeTok, attrs.take(), kids.take()), line, col);

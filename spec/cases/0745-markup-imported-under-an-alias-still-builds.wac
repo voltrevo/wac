@@ -1,0 +1,8 @@
+// expect: f() = hello
+// why: a symbol keeps its identity under whatever alias it was imported, so a method written `[m.text]`
+//      after `import { markup as m }` is markup's text
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { markup as m } from "core";
+struct Text { string s; Text [m.text](string s) { return Text(s); } }
+string p(Text[] kids) { return kids[0].s; }
+export string f() { return <p>hello</p>; }

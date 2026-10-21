@@ -1,0 +1,13 @@
+// expect: f() = 1
+// why: a quoted tag names an element by the string it denotes, so `<"a\u{62}">` is closed by `</"ab">`
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { markup } from "core";
+enum Tree {
+  Leaf(string text),
+  Many(Tree[] kids),
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.element](string tag, string[] n, string[] v, Tree[] kids) { return Tree.Many(kids); }
+  Tree [markup.fragment](Tree[] kids) { return Tree.Many(kids); }
+}
+i32 count(Tree[] kids) { return kids.len(); }
+export i32 f() { Tree t = <"a\u{62}">x</"ab">; return 1; }

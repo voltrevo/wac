@@ -1,0 +1,23 @@
+// expect: f() = true true false false true
+// why: two instances' snapshots are the same when they hold the same attributes and each agrees —
+//      numbers and strings by value, a null equal only to a null — and another component's never are
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { markup } from "core";
+struct Ui {
+  i32 n;
+  Shown [markup.component](string name, string? key, fn<Shown(Ui)> draw, anyref snaps, fn<bool(anyref)> same) {
+    return Shown(snaps, same);
+  }
+}
+struct Shown { anyref snaps; fn<bool(anyref)> same; }
+Shown Row(Ui ui, string? note, i32? n) { return Shown(ui, (anyref o) => false); }
+Shown Col(Ui ui, string? title, i32? m) { return Shown(ui, (anyref o) => false); }
+export string f() {
+  Shown a = <Row/>;
+  Shown b = <Row/>;
+  Shown c = <Row note="ab" n={1}/>;
+  Shown d = <Row note="ab" n={1}/>;
+  Shown e = <Col title="ab" m={1}/>;
+  Shown g = <Row note="ab" n={2}/>;
+  return "\{a.same(b.snaps)} \{c.same(d.snaps)} \{c.same(e.snaps)} \{c.same(g.snaps)} \{d.same(c.snaps)}";
+}

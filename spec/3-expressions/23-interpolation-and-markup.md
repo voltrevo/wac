@@ -347,11 +347,12 @@ struct Text {
 string p(Text[] kids) { return kids[0].s; }
 
 export string quotes() { return <p>it's here, a " b, see http://x</p>; }
-export string lessThan() { return <p>1 < 2 and 3 > 2</p>; }   // a < before neither a name nor / is text
+export string lessThan() { return <p>1 < 2 and 3 > 2</p>; }   // a < that begins no tag is text
 ```
 
 `[§jsx-text-is-not-wac-source]` Text between tags is not read as wac: quotes, `//` and operators there are text.
-A `<` followed by neither a name nor `/` is text.
+A `<` that does not begin a tag is text — one begins only where a name, a quoted or verbatim name, `/`
+or `>` follows it.
 
 ### Whitespace
 
