@@ -143,7 +143,7 @@ read something changed without a `set`, a `Vec` in a cell pushed to in place.
 allowed by its hash, which starts the rest from `blob:` URLs; nothing is loaded from anywhere else — no
 outside image, style sheet or font — and an inline handler or a script element written into the
 document by any route does not run. A test driving a built page waits with `waitInPage` from
-`harness/buildPage.ts`, since Playwright's `waitForFunction("…")` is an `eval` the policy refuses.
+`harness/buildPage.ts`, since Playwright's string `waitForFunction` is an `eval` the policy refuses.
 
 The output directory has to be inside the directory the build runs in, since the wrapper is written
 there and imports the program.

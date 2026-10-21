@@ -1,5 +1,5 @@
 // A page driven with no browser: a `Dom` made of lambdas that record what the program did, and the
-// host's calls made by hand. What a browser adds is the document, and `tools/build.wac`'s host is the
+// host's calls made by hand. What a browser adds is the document, and `packages/web/tools/build.wac`'s host is the
 // whole of that — so what a program can ask of a page, and every order in which things can arrive, is
 // tested here. The view over the elements is `view_test.wac`'s.
 
