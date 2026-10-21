@@ -1,0 +1,14 @@
+// expect: f() = true
+// why: a block string closed at the end of its last content line ends without a newline — and still
+//      holds that line, however many lines come before it
+// from: spec/2-types/16-strings.md
+export bool f() {
+  string two = """
+      a {
+      }""";
+  string three = """
+      one
+        two
+      three""";
+  return two == "a {\n}" && three == "one\n  two\nthree";
+}

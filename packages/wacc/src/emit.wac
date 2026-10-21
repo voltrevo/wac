@@ -11983,7 +11983,19 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       string et = typeOfE(src, lexed, env, els);
       // **A branch typed by its slot has no type to offer** — `p.len() == 0 ? [tag()] : p` is a `u8[]`
       // because `p` is, and `[tag()]` alone would have said `i32[]`. Both slot-typed, the slot decides.
-      if (slotTyped(then) && slotTyped(els) && want != "") { tt = want; et = want; }
+      // **Markup that names no function builds its slot's type** — a fragment or a quoted tag has no
+      // type of its own, so `c ? Tree.Many(…) : <></>` is a `Tree`: the slot's when there is one, and
+      // otherwise the other arm's, whose own type is its *variant* when it is a construction — a type
+      // with no `[markup.fragment]`, so the fragment was declined.
+      bool tm = builtBySlot(lexed, then);
+      bool em = builtBySlot(lexed, els);
+      if (tm || em) {
+        string other = tm ? et : tt;
+        string k = want != "" ? want : (env.enumOf(other) != "" ? env.enumOf(other) : other);
+        tt = k;
+        et = k;
+      }
+      else if (slotTyped(then) && slotTyped(els) && want != "") { tt = want; et = want; }
       else if (slotTyped(then) && et != "") { tt = et; }
       else if (slotTyped(els) && tt != "") { et = tt; }
       // **Two arms of related types need the type they share**, not the first one's. `flag ? c : s`
@@ -16465,6 +16477,14 @@ bool isFloatLiteral(Expr e) {
  * or an array literal, whose elements may be numbers that are typed only by the array they land in.
  * A comparison of its own type against the slot's would be comparing against a guess.
  */
+/** Whether `e` is markup built by its slot's type — a fragment, or a quoted tag — rather than a call. */
+bool builtBySlot(Lexed lexed, Expr e) {
+  match (e.kind) {
+    Jsx(tagTok, closeTok, attrs, kids): { return tagTok < 0 || lexed.tokens[tagTok * tokenStride()] == kString(); }
+    default: { return false; }
+  }
+}
+
 bool slotTyped(Expr e) {
   match (e.kind) {
     ArrLit(elements): { return true; }

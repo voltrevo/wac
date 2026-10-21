@@ -502,12 +502,15 @@ export u8[] blockValue(u8[] src, i32 start, i32 len) {
   i32 to = start + len - 3;
   if (to < from) { to = from; }
 
-  // The closing mark's own line is not content and does not set the margin. It is whatever sits
-  // between the last newline and the mark — spaces, by construction, since anything else would be
-  // content on that line.
+  // The closing mark's own line is not content and does not set the margin: what sits between the
+  // last newline and the mark, **when that is only spaces**. Anything else is the last content line
+  // with the mark at its end — `  }"""` — and it was dropped whole whenever a line came before it,
+  // so every multi-line value closed that way lost its last line.
   i32 lastNl = to;
   while (lastNl > from && src[lastNl - 1] != 10) { lastNl = lastNl - 1; }
-  i32 contentEnd = lastNl == from ? to : lastNl;
+  bool markAlone = true;
+  for (i32 k = lastNl; k < to; k++) { if (src[k] != 32) { markAlone = false; } }
+  i32 contentEnd = lastNl == from || !markAlone ? to : lastNl;
 
   i32 margin = blockMargin(src, from, contentEnd);
   if (margin < 0) { margin = 0; }          // a tab: reported by the caller, decoded as written

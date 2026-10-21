@@ -1,0 +1,19 @@
+// expect: f() = 1
+// why: markup in one arm of a conditional builds the type of the other arm, and a variant constructor's
+//      type is its enum, not the variant
+// from: spec/3-expressions/23-interpolation-and-markup.md
+import { markup } from "core";
+enum Tree {
+  Leaf(string text),
+  Many(Tree[] kids),
+  Tree [markup.text](string text) { return Tree.Leaf(text); }
+  Tree [markup.fragment](Tree[] kids) { return Tree.Many(kids); }
+}
+export i32 f() {
+  bool c = true;
+  Tree t = c ? Tree.Many([Tree.Leaf("x")]) : <></>;
+  match (t) {
+    Leaf(s): { return 0; }
+    Many(k): { return k.len(); }
+  }
+}
