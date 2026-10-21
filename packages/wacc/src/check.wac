@@ -7004,7 +7004,11 @@ void checkJsxCall(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
   i32 fi = c.funcAt(c.renamed(fname));
   // **A tag calls a function, never a local** — a variable named like a tag, a funcref among them, is
   // not what it names (spec case 0132). The emitter found no function and declined the tag as untyped.
-  if (fi < 0 && c.findName(fname) >= 0) {
+  // A *local* only: a name at file scope is an import or a declaration, and an import from a file this
+  // checker was not handed is a function it cannot see — silence, as an unknown is everywhere here.
+  // Asking `findName` alone reported every imported tag of a page checked on its own, 245 of them.
+  i32 local = c.findName(fname);
+  if (fi < 0 && local >= 0 && c.depthOf(local) > 0) {
     c.reportTok(errJsxNotComponent(), tagTok, fname + " is a local here, not a function — a tag calls one");
     for (i32 i = 0; i < attrs.len(); i++) {
       c.expectedUnknown = true;

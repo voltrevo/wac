@@ -11090,7 +11090,8 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     Lambda(params, body, lamAsync): {
       i32 li = env.lambdaAtPos(e.line, e.col);
       if (li < 0 || env.lambdaSigs[li] == "") {
-        env.declineFor("a lambda whose type this emitter could not work out");
+        env.declineFor("a lambda whose type this emitter could not work out, at line " + numText(e.line) + ":"
+                       + numText(e.col));
         return;
       }
       if (env.lambdaCapCount[li] > 0) {

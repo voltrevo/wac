@@ -1287,7 +1287,7 @@ export string test_rung3_every_expression_form_against_every_return_type(Core co
  * family. And `P(x: 1)` is **not** named-argument syntax: the reference answers *"expects 2
  * arguments"* and *"undefined variable 'x'"*, so whatever that spelling means it is not this.
  *
- * Inherited fields come **first**, which is measured rather than guessed: `C(1.0, 2.0)` for
+ * Inherited fields come **first**, which is measured rather than guessed: `C(1.5, 2.0)` for
  * `struct C : B` puts the reference's complaint on the first argument, where `B`'s `i32 b` is.
  */
 export string test_rung3_struct_construction_against_field_types(Core core, Cli cli) {
@@ -1295,7 +1295,7 @@ export string test_rung3_struct_construction_against_field_types(Core core, Cli 
   string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
   caughtAndQuiet(t, [
     d + "export void b() { P p = P(\"y\", 1); }",
-    d + "export void g() { C q = C(1.0, 2.0); }",
+    d + "export void g() { C q = C(1.5, 2.0); }",
     d + "export void k(i64 n) { P p = P(n, \"y\"); }",
     d + "export void l(string t) { C q = C(1, t); }",
     // Arity is a family of its own rather than this rule, but it is implemented now, so these are no
@@ -1522,7 +1522,7 @@ export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core cor
     // Argument type, at the argument. Exact, not assignable: an f32 widens to an f64 everywhere else,
     // and still cannot be the argument of `f32.toBits`.
     "export string bad() { return string.fromCodepoint(1.5); }",
-    "export f64 bad() { return f64.fromBits(1.0); }",
+    "export f64 bad() { return f64.fromBits(1.5); }",
     "export u32 bad(f64 x) { return f32.toBits(x); }",
     "export f32 bad(u64 b) { return f32.fromBits(b); }",
     "export string bad() { return string.fromBytes(5); }",
@@ -1777,8 +1777,8 @@ export string test_rung3_a_literals_value_and_a_local_that_aliases_something_con
     "export f32 f() { f32 x = 1.0e38; return x; }",
     "export f32 f() { f32 x = 340282350000000000000000000000000000000.0; return x; }",
     "export f32 f() { f32 x = 1.0e-50; return x; }",
-    // An f64 is not range-checked at all, even by a literal no f64 can hold.
-    "export f64 f() { f64 x = 1.0e400; return x; }",
+    // An f64 well inside its range. One past it, `1.0e400`, is refused since 2026-10-21 — the spec
+    // refuses an overflow, and the reference's silence there was the reference's.
     "export f64 f() { f64 x = 1.0e40; return x; }",
     // The same aliasing with nothing const about it.
     c + "export i32 f(Counter p) { Counter a = p; a.mutate(); return 1; }",
@@ -1807,7 +1807,7 @@ export string test_rung3_a_bare_generic_takes_its_arguments_from_the_slot(Core c
     b + "export void f() { Box(1.0); }",
     b + "export void f() { i32 n = Box(1.0).get(); }",
     // A slot that says what the argument must be — inference feeding the argument check.
-    b + "export void f() { Box<i32> b = Box(1.0); }"
+    b + "export void f() { Box<i32> b = Box(1.5); }"
   ],
   [
     // Every slot the reference accepts one in.
