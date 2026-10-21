@@ -1,0 +1,13 @@
+// expect: f() = 1
+// why: a capturing lambda in a static method of a generic struct, reached through its bare name, is
+//      emitted with the signature it was registered under — `Ticket.first` is core's
+// from: spec/6-concurrency/35-tickets-and-await.md
+import { Ticket, TicketBase } from "core";
+export i32 f() {
+  Ticket<string> name;
+  Ticket<i32> size;
+  TicketBase[] open = [name, size];
+  Ticket<i32> won = Ticket.first(open);
+  size.resolve(3);
+  return won.wait()!;
+}

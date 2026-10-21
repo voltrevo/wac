@@ -6884,10 +6884,16 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     // **In the world it was written in**, as its emission below is: a lambda in a generic writes its
     // parameters in the template's letters, and registered without the instance's substitution its
     // signature still said `T` — a type nothing can write, which declined the module.
+    // `popSubstitution` clears the instance rather than restoring it, so what was in force is put back
+    // by hand — this runs between passes that read `curInst`.
+    string wasInst = env.curInst;
+    string wasGeneric = env.curGeneric;
     i32 cpushed = env.lambdaInst[li] == "" ? 0 : pushInstSubstitution(env, src, lexed, prog, env.lambdaInst[li]);
     string rsig = emittedSigOf(env, src, lexed, sigReturn(env.lambdaSigs[li]),
                                env.lambdaParams[li], captureStructName(li));
     if (cpushed > 0) { popSubstitution(env, cpushed); }
+    env.curInst = wasInst;
+    env.curGeneric = wasGeneric;
     env.sigType(rsig);
     env.sigType(envSig(rsig));
   }
