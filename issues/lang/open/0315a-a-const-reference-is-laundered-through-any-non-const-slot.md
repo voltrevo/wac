@@ -134,3 +134,11 @@ element, and a declared `const T` result is `const`. Rows two, three, four and s
 arguments are not checked against its parameters at all (`checkGenericInference` binds the letters and
 returns), so `T` binds the plain `Inner` and the write lands. The fix is to bind `T` to `const Inner`
 there, which needs `const T` to flow through substitution.
+
+## 2026-10-21 — the 2026-10-03 note overstates what is refused (agent-a)
+
+An adversarial sweep found that construction (`Box(c)`, `Box { i: c }`) and field assignment of a const
+reference are **not** refused, contrary to the note above, and neither are a return through a plain function
+or a write through a `const` field. The ternary, array, tuple, plain-reassignment and for-in routes were
+closed in 2a36c9d2c (cases 0678–0683). What remains, with a reproduction and the cost of refusing it (about
+fifteen sites in the compiler's own command graph), is `0396a`.
