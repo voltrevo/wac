@@ -191,7 +191,7 @@ string[] topLevelParts(string s) {
   for (i32 i = 0; i < b.len(); i++) {
     i32 ch = b[i] as i32;
     if (ch == 60 || ch == 40) { depth = depth + 1; }          // `<` `(`
-    if (ch == 62 || ch == 41) { depth = depth - 1; }          // `>` `)`
+    if ((ch == 62 && !(i > 0 && b[i - 1] == 45)) || ch == 41) { depth = depth - 1; }   // `>` `)`, not `->`
     if (ch == 44 && depth == 0) { n = n + 1; }                // `,`
   }
   string[] out = string[].filled(n, "");
@@ -203,7 +203,7 @@ string[] topLevelParts(string s) {
     if (!cut) {
       i32 ch = b[i] as i32;
       if (ch == 60 || ch == 40) { depth = depth + 1; }
-      if (ch == 62 || ch == 41) { depth = depth - 1; }
+      if ((ch == 62 && !(i > 0 && b[i - 1] == 45)) || ch == 41) { depth = depth - 1; }
       cut = ch == 44 && depth == 0;
     }
     if (!cut) { continue; }

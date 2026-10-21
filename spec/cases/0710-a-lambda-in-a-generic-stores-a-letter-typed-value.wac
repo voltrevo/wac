@@ -1,0 +1,15 @@
+// expect: f() = 9
+// why: a lambda inside a generic is instantiated with it, and may store a value of a letter's type
+// from: spec/2-types/20-functions-and-funcrefs.md
+struct Box<T> {
+  T v;
+  void set(this, T y) { fn<void(T)> s = (T x) => { this.v = x; }; s(y); }
+}
+void put<T>(T[] b, T y) { fn<void(T)> s = (T x) => { b[0] = x; }; s(y); }
+export i32 f() {
+  i32[] b = [1];
+  put(b, 4 as i32);
+  Box<i32> c = Box(0);
+  c.set(5);
+  return b[0] + c.v;
+}

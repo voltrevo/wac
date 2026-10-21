@@ -2392,6 +2392,38 @@ bool fixedE(Rz z, Expr e) {
         default: { return false; }
       }
     }
+    // **A lambda is fixed too**: making one runs nothing, and what it captures it reaches through the
+    // cells every machine local lives in, so made now or after the suspension it reads the same. Kept
+    // in a temporary it needed `typeof` of a lambda, which has no type of its own, and the emitter
+    // declined the machine — `apply((i32 x) => x + 1, await t)`.
+    Lambda(lps, lbody, la): { return true; }
+    // **And a struct this file declares, built from fixed parts**: a construction has no effect but
+    // the object, and `take(Box(1), await t)` — a construction typed by its slot — has no `typeof`
+    // either. A call of a function of the same shape is not this, and is kept.
+    Construct(ctype, args, named): {
+      if (named.len() > 0 || !declaresStruct(z, ctype)) { return false; }
+      for (i32 i = 0; i < args.len(); i++) { if (!fixedE(z, args[i])) { return false; } }
+      return true;
+    }
+    default: { return false; }
+  }
+}
+
+/** Whether `t` names a struct this program declares. */
+bool declaresStruct(Rz z, Ty t) {
+  match (t.kind) {
+    Named(tok, targs): {
+      string n = rzText(z, tok);
+      for (i32 d = 0; d < z.prog.decls.len(); d++) {
+        match (z.prog.decls[d].kind) {
+          StructDecl(sName, sParent, sFields, sMethods, sExported, sConst, sTypeParams): {
+            if (rzText(z, sName) == n) { return true; }
+          }
+          default: { }
+        }
+      }
+      return false;
+    }
     default: { return false; }
   }
 }
@@ -3381,19 +3413,105 @@ Expr? asyncLambdaOf(u8[] src, Lexed lexed, Stmt s) {
   }
 }
 
-/** Whether this file has an `async` lambda the lowering can take. */
+/**
+ * The statement lists nested directly inside `s` — an `if`'s two branches, a loop's body, a block, a
+ * `switch`'s cases, a `match`'s arms. **An `async` lambda is declared wherever a statement may be**,
+ * and every walk below used to look only at a function's top level: one written inside an `if`, a
+ * loop or a method body was never lowered, and the emitter said so with *an async lambda the lowering
+ * did not take* about a program the checker had accepted.
+ */
+Stmt[][] childBodies(Stmt s) {
+  match (s.kind) {
+    If(cond, then, els): {
+      Stmt[][] two = Stmt[][].filled(2, then);
+      two[1] = els;
+      return two;
+    }
+    While(cond, body): { return Stmt[][].filled(1, body); }
+    For(init, cond, update, body): { return Stmt[][].filled(1, body); }
+    ForIn(type, nameTok, iterable, body): { return Stmt[][].filled(1, body); }
+    DoWhile(body, cond): { return Stmt[][].filled(1, body); }
+    Block(body): { return Stmt[][].filled(1, body); }
+    Switch(subject, cases): {
+      Stmt[][] out = Stmt[][].filled(cases.len(), Stmt[]());
+      for (i32 i = 0; i < cases.len(); i++) { out[i] = cases[i].body; }
+      return out;
+    }
+    Match(subject, arms): {
+      Stmt[][] out = Stmt[][].filled(arms.len(), Stmt[]());
+      for (i32 i = 0; i < arms.len(); i++) { out[i] = arms[i].body; }
+      return out;
+    }
+    default: { return Stmt[][](); }
+  }
+}
+
+/** Whether `body`, at any depth, declares an `async` lambda the lowering can take. */
+bool bodyHasAsyncLambda(u8[] src, Lexed lexed, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    Expr? lam = asyncLambdaOf(src, lexed, body[i]);
+    if (lam is not null) { return true; }
+    Stmt[][] kids = childBodies(body[i]);
+    for (i32 k = 0; k < kids.len(); k++) {
+      if (bodyHasAsyncLambda(src, lexed, kids[k])) { return true; }
+    }
+  }
+  return false;
+}
+
+/** The most parameters any lowerable `async` lambda in `body` takes, at any depth. */
+i32 bodyLambdaArgs(u8[] src, Lexed lexed, Stmt[] body) {
+  i32 most = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    Expr? lam = asyncLambdaOf(src, lexed, body[i]);
+    if (lam is not null) {
+      match (lam!.kind) {
+        Lambda(lps, lbody, la): { if (lps.len() > most) { most = lps.len(); } }
+        default: { }
+      }
+    }
+    Stmt[][] kids = childBodies(body[i]);
+    for (i32 k = 0; k < kids.len(); k++) {
+      i32 w = bodyLambdaArgs(src, lexed, kids[k]);
+      if (w > most) { most = w; }
+    }
+  }
+  return most;
+}
+
+/** The most states any lowerable `async` lambda in `body` needs, at any depth. */
+i32 bodyLambdaStates(u8[] src, Lexed lexed, Stmt[] body) {
+  i32 most = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    Expr? lam = asyncLambdaOf(src, lexed, body[i]);
+    if (lam is not null) {
+      match (lam!.kind) {
+        Lambda(lps, lbody, la): {
+          i32 w = statesNeeded(lbody);
+          if (w > most) { most = w; }
+        }
+        default: { }
+      }
+    }
+    Stmt[][] kids = childBodies(body[i]);
+    for (i32 k = 0; k < kids.len(); k++) {
+      i32 w2 = bodyLambdaStates(src, lexed, kids[k]);
+      if (w2 > most) { most = w2; }
+    }
+  }
+  return most;
+}
+
+/** Whether this file has an `async` lambda the lowering can take — in a function or a method, at any depth. */
 bool anyLambdaLowerable(Program prog, u8[] src, Lexed lexed) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
+    Method[] ms = methodsOf(prog.decls[d]);
+    for (i32 m = 0; m < ms.len(); m++) {
+      if (bodyHasAsyncLambda(src, lexed, ms[m].body)) { return true; }
+    }
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        for (i32 i = 0; i < body.len(); i++) {
-          Expr? lam = asyncLambdaOf(src, lexed, body[i]);
-          if (lam is null) { continue; }
-          match (lam!.kind) {
-            Lambda(lps, lbody, la): { if (la) { return true; } }
-            default: { }
-          }
-        }
+        if (bodyHasAsyncLambda(src, lexed, body)) { return true; }
       }
       default: { }
     }
@@ -3436,29 +3554,13 @@ i32 argsNeeded(Program prog, u8[] src, Lexed lexed) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     Method[] ms = methodsOf(prog.decls[d]);
     for (i32 m = 0; m < ms.len(); m++) {
-      for (i32 i = 0; i < ms[m].body.len(); i++) {
-        Expr? lamM = asyncLambdaOf(src, lexed, ms[m].body[i]);
-        if (lamM is null) { continue; }
-        match (lamM!.kind) {
-          Lambda(mps, mbody, ma): {
-            if (mps.len() > most) { most = mps.len(); }
-          }
-          default: { }
-        }
-      }
+      i32 wm = bodyLambdaArgs(src, lexed, ms[m].body);
+      if (wm > most) { most = wm; }
     }
     match (prog.decls[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        for (i32 i = 0; i < body.len(); i++) {
-          Expr? lam = asyncLambdaOf(src, lexed, body[i]);
-          if (lam is null) { continue; }
-          match (lam!.kind) {
-            Lambda(lps, lbody, la): {
-              if (lps.len() > most) { most = lps.len(); }
-            }
-            default: { }
-          }
-        }
+        i32 w = bodyLambdaArgs(src, lexed, body);
+        if (w > most) { most = w; }
       }
       default: { }
     }
@@ -3479,6 +3581,8 @@ i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     Method[] ms = methodsOf(prog.decls[d]);
     for (i32 m = 0; m < ms.len(); m++) {
+      i32 lamM = bodyLambdaStates(src, lexed, ms[m].body);
+      if (lamM > most) { most = lamM; }
       if (!isMachineDecl(src, lexed, ms[m].returnType, ms[m].isAsync)) { continue; }
       i32 wantM = statesNeeded(ms[m].body);
       if (wantM > most) { most = wantM; }
@@ -3489,17 +3593,8 @@ i32 numsNeeded(Program prog, u8[] src, Lexed lexed) {
           i32 want = statesNeeded(body);
           if (want > most) { most = want; }
         }
-        for (i32 i = 0; i < body.len(); i++) {
-          Expr? lam = asyncLambdaOf(src, lexed, body[i]);
-          if (lam is null) { continue; }
-          match (lam!.kind) {
-            Lambda(lps, lbody, la): {
-              i32 w = statesNeeded(lbody);
-              if (w > most) { most = w; }
-            }
-            default: { }
-          }
-        }
+        i32 w = bodyLambdaStates(src, lexed, body);
+        if (w > most) { most = w; }
       }
       default: { }
     }
@@ -3597,15 +3692,16 @@ Stmt[]? machineOf(Lw w, Site at, Stmt[] body, Ty ret, string[] extra) {
 /**
  * Every `async` lambda declared directly in `body`, rewritten into a machine.
  *
- * **Directly, not at any depth.** A declaration nested inside an `if` or a loop is left alone and
- * declined by name, which is the same standard the four suspension shapes `design/lang/0014` could
- * not flatten are held to. Declaring a handler is a top-of-body act, so this is where they are.
+ * **At any depth.** This took only declarations directly in the body, on the grounds that declaring a
+ * handler is a top-of-body act — and one inside an `if`, a loop or a `match` arm then reached the
+ * emitter unlowered, which declined a program the checker accepted. A nested body is lowered by the
+ * same rule, and its statement rebuilt around it.
  */
 Stmt[] lowerLambdasIn(Lw w, Stmt[] body, i32 selfTok) {
   if (body.len() == 0) { return body; }
   Stmt[] out = Stmt[].filled(body.len(), body[0]);
   for (i32 i = 0; i < body.len(); i++) {
-    out[i] = body[i];
+    out[i] = lowerLambdasNested(w, body[i], selfTok);
     match (body[i].kind) {
       Var(type, nameTok, init, isConst): {
         Ty? tick = slotTicketTy(w.src, w.lexed, type);
@@ -3646,6 +3742,40 @@ Stmt[] lowerLambdasIn(Lw w, Stmt[] body, i32 selfTok) {
     }
   }
   return out;
+}
+
+/** `s` with the `async` lambdas in the bodies nested inside it lowered — `s` itself when there are none. */
+Stmt lowerLambdasNested(Lw w, Stmt s, i32 selfTok) {
+  match (s.kind) {
+    If(cond, then, els): {
+      return Stmt(StmtKind.If(cond, lowerLambdasIn(w, then, selfTok), lowerLambdasIn(w, els, selfTok)), s.line, s.col);
+    }
+    While(cond, body): { return Stmt(StmtKind.While(cond, lowerLambdasIn(w, body, selfTok)), s.line, s.col); }
+    For(init, cond, update, body): {
+      return Stmt(StmtKind.For(init, cond, update, lowerLambdasIn(w, body, selfTok)), s.line, s.col);
+    }
+    ForIn(type, nameTok, iterable, body): {
+      return Stmt(StmtKind.ForIn(type, nameTok, iterable, lowerLambdasIn(w, body, selfTok)), s.line, s.col);
+    }
+    DoWhile(body, cond): { return Stmt(StmtKind.DoWhile(lowerLambdasIn(w, body, selfTok), cond), s.line, s.col); }
+    Block(body): { return Stmt(StmtKind.Block(lowerLambdasIn(w, body, selfTok)), s.line, s.col); }
+    Switch(subject, cases): {
+      Case[] cs = Case[].filled(cases.len(), cases.len() > 0 ? cases[0] : Case(null, Stmt[](), s.line, s.col));
+      for (i32 i = 0; i < cases.len(); i++) {
+        cs[i] = Case(cases[i].value, lowerLambdasIn(w, cases[i].body, selfTok), cases[i].line, cases[i].col);
+      }
+      return Stmt(StmtKind.Switch(subject, cs), s.line, s.col);
+    }
+    Match(subject, arms): {
+      Arm[] out = Arm[].filled(arms.len(), arms.len() > 0 ? arms[0] : Arm(0 - 1, 0 - 1, i32[](), Stmt[](), null));
+      for (i32 i = 0; i < arms.len(); i++) {
+        Arm a = arms[i];
+        out[i] = Arm(a.variantTok, a.elseTok, a.bindingToks, lowerLambdasIn(w, a.body, selfTok), a.value);
+      }
+      return Stmt(StmtKind.Match(subject, out), s.line, s.col);
+    }
+    default: { return s; }
+  }
 }
 
 /** The name token of the struct `at` declares, or -1 for an enum — what `this` is in its methods. */

@@ -62,13 +62,13 @@ export string test_the_shapes_this_cut_declines_are_named_apart() {
                  + "  while (await cli.ready()) { }\n"
                  + "  return 0;\n"
                  + "}\n"),
-          "declined: an `await` in a `while` condition\n", "a suspension in a condition");
+          "declined: line 2: an `await` in a `while` condition\n", "a suspension in a condition, at its line");
   // **Not a block split but an expression split**, which is why it is a different sentence.
   t.eqStr(planOf("async i32 f(Cli cli) {\n"
                  + "  i32 n = g(await cli.readFile(\"x\"));\n"
                  + "  return n;\n"
                  + "}\n"),
-          "declined: an `await` nested inside a larger expression, on a ticket whose type this file does not write — bind it first: `T v = await e;`\n",
+          "declined: line 2: an `await` nested inside a larger expression, on a ticket whose type this file does not write — bind it first: `T v = await e;`\n",
           "nested in a call, as the plan sees it before the lowering hoists what it can read");
   // **A discarded value needs no slot type**: the machine parks on the ticket as a `TicketBase?`
   // and nothing reads what it answered (spec ch35).

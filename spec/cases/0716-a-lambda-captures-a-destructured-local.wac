@@ -1,0 +1,4 @@
+// expect: f() = 7
+// why: a lambda captures the locals it uses, and a destructuring declares locals
+// from: spec/2-types/20-functions-and-funcrefs.md
+export i32 f() { (i32 x, i32 y) = (3, 4); fn<i32()> g = () => x + y; return g(); }

@@ -28,7 +28,8 @@ export string[] unionMembers(string t) {
     if (!end) {
       u8 ch = b[i];
       if (ch == '<' || ch == '(' || ch == '[') { depth = depth + 1; }
-      if (ch == '>' || ch == ')' || ch == ']') { depth = depth - 1; }
+      // Not the `>` of a funcref member's `->`, which closes nothing.
+      if ((ch == '>' && !(i > 0 && b[i - 1] == '-')) || ch == ')' || ch == ']') { depth = depth - 1; }
       if (ch != ',' || depth != 0) { continue; }
     }
     string part = trimSpaces(inner.slice(from, i));

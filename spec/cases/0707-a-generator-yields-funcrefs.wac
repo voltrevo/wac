@@ -1,0 +1,7 @@
+// expect: f() = 3
+// why: a generator yields values of its declared type, a funcref among them
+// from: spec/6-concurrency/36-coroutines-and-generators.md
+i32 one() { return 1; }
+i32 two() { return 2; }
+gen<fn<i32()>> void fns() { yield one; yield two; }
+export i32 f() { i32 t = 0; for (fn<i32()> g in fns()) { t += g(); } return t; }

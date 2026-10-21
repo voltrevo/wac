@@ -1,0 +1,16 @@
+// expect: f() = 8
+// why: a lambda whose parameter is written with a type parameter has the instantiated type, returned
+//      directly as much as bound to a local first
+// from: spec/2-types/20-functions-and-funcrefs.md
+fn<i32(T)> ident<T>() { return (T x) => 1; }
+struct Cell<T> {
+  T v;
+  fn<void(T)> setter(this) { return (T x) => { this.v = x; }; }
+}
+export i32 f() {
+  fn<i32(i32)> g = ident<i32>();
+  Cell<i32> c = Cell(0);
+  fn<void(i32)> s = c.setter();
+  s(7);
+  return g(3) + c.v;
+}

@@ -1,0 +1,12 @@
+// expect: f() = 13
+// why: a generic construction takes its type arguments from its slot, and a call's argument is a slot
+//      whether the call is to a function or through a funcref
+// from: spec/2-types/19-generics.md
+struct Box<T> { T v; }
+struct Has { fn<i32(Box<i32>)> h; }
+i32 un(Box<i32> b) { return b.v; }
+export i32 f() {
+  fn<i32(Box<i32>)> h = un;
+  Has x = Has(un);
+  return h(Box(6)) + x.h(Box(7));
+}

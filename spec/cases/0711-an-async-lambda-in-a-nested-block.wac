@@ -1,0 +1,22 @@
+// expect: f() = 21
+// why: an async lambda is lowered wherever it is written: a nested block, a loop body, a method
+// from: spec/6-concurrency/35-tickets-and-await.md
+import { Ticket } from "core";
+struct S {
+  i32 k;
+  Ticket<i32> go(this, Ticket<i32> t) {
+    fn<Ticket<i32>(Ticket<i32>)> g = async (Ticket<i32> u) => { i32 v = await u; return v + this.k; };
+    return g(t);
+  }
+}
+export i32 f() {
+  Ticket<i32> t;
+  Ticket<i32> r = t;
+  if (true) {
+    fn<Ticket<i32>(Ticket<i32>)> g = async (Ticket<i32> u) => { i32 v = await u; return v; };
+    r = g(t);
+  }
+  Ticket<i32> q = S(1).go(t);
+  t.resolve(10);
+  return r.wait()! + q.wait()!;
+}

@@ -1,0 +1,14 @@
+// expect: f() = 7
+// why: `yield v` takes an expression, whatever token it starts with
+// from: spec/6-concurrency/36-coroutines-and-generators.md
+gen<f64> void ps() { yield 1.5; yield 2.5; }
+gen<i32[]> void arrs() { yield [3]; }
+gen<i32> void bits() { yield ~-1; }
+export i32 f() {
+  f64 t = 0.0;
+  for (f64 g in ps()) { t = t + g; }
+  i32 n = 0;
+  for (i32[] a in arrs()) { n += a[0]; }
+  for (i32 b in bits()) { n += b; }
+  return (t as~ i32) + n;
+}

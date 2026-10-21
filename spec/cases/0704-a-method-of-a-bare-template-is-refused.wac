@@ -1,0 +1,6 @@
+// expect: refused
+// why: a method taken from a generic struct needs its type arguments written — nothing in `Box.get`
+//      says which instantiation it is
+// from: spec/2-types/19-generics.md
+struct Box<T> { T v; T get(const this) { return this.v; } }
+export i32 f() { fn<i32(Box<i32>)> h = Box.get; Box<i32> b = Box(6); return h(b); }

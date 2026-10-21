@@ -2397,9 +2397,13 @@ export Stmt parseStatement(P p) {
     return Stmt(StmtKind.Trap(msg), line, col);
   }
   if (p.at1(kLbrace()))   { return Stmt(StmtKind.Block(parseBlock(p)), line, col); }
-  // `yield v;` and `yield;` — a word only where a statement starts (spec ch36).
+  // `yield v;` and `yield;` — a word only where a statement starts (spec ch36). Any token that can
+  // begin an operand follows it: `yield 1.5;`, `yield [3];` and `yield ~m;` did not parse, since the
+  // test borrowed `try`'s list, which has no float, `[` or `~`. The cost is that a local named
+  // `yield` cannot begin a statement by being indexed, which nothing does.
   if (p.at1(kIdent()) && p.textAt(0) == "yield" && (p.kindAt(1) == kSemi() || startsTryOperand(p.kindAt(1))
-                                                     || p.kindAt(1) == kLparen())) {
+                                                     || p.kindAt(1) == kLparen() || p.kindAt(1) == kFloat()
+                                                     || p.kindAt(1) == kLbrack() || p.kindAt(1) == kTilde())) {
     p.advance();
     if (p.at1(kSemi())) { p.advance(); return Stmt(StmtKind.Yield(null), line, col); }
     Expr yv = parseExpr(p);

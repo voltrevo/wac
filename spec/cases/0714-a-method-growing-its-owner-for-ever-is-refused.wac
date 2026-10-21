@@ -1,0 +1,6 @@
+// expect: refused
+// why: a generic that instantiates a larger instance of itself for ever is refused, through a method's
+//      signature as through a field
+// from: spec/2-types/19-generics.md
+struct Box<T> { T v; Box<Box<T>> nest(const this) { return Box(this); } }
+export i32 f() { Box<i32> b = Box(3); return b.v; }

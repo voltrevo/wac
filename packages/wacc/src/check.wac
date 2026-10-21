@@ -379,6 +379,25 @@ string yieldOf(string written) {
   return a.len() == 2 ? a[0] : "";
 }
 
+/** What `yield` stands for where a generator yields a type this walk cannot name — `gen<T>` in a generic. */
+string yieldUnknown() { return "?"; }
+
+/**
+ * What a function declared to answer `rt` yields: its `Y` for a generator, `""` for anything else, and
+ * `yieldUnknown()` for a generator whose `Y` this walk cannot name. **Read from the declaration's shape
+ * before its type**: inside a generic `gen<T> void` resolves to unknown, so asking the type alone said
+ * the function was not a generator at all and refused its every `yield`.
+ */
+string yieldTypeOf(C c, Ty rt) {
+  string t = yieldOf(typeOfTy(c, rt));
+  if (t != "") { return t; }
+  match (rt.kind) {
+    Named(tok, typeArgs): { if (typeArgs.len() == 2 && tokenText(c, tok) == "gen") { return yieldUnknown(); } }
+    default: { }
+  }
+  return "";
+}
+
 /** The `Coroutine<W, Y, R>` behind what a machine call answers, or unknown. */
 string coroutineTypeOf(string t) {
   string[] a = genericArgs(t);
@@ -396,6 +415,7 @@ void checkYield(C c, Stmt s, Expr? value) {
                                                       : "yield outside a generator");
     return;
   }
+  if (c.yieldType == yieldUnknown()) { return; }
   if (value is null) {
     if (c.yieldType != "void") { c.reportWith(errYield(), s.line, s.col, "this generator yields " + c.yieldType); }
     return;
@@ -1176,7 +1196,7 @@ void checkInstances(C c, Program prog) {
           string wasTry = c.tryReturn;
           string wasYield = c.yieldType;
           c.tryReturn = typeOfTy(c, bodyReturnTy(c, returnType));
-          c.yieldType = yieldOf(typeOfTy(c, returnType));
+          c.yieldType = yieldTypeOf(c, returnType);
           checkAll(c, body, bodyReturnTy(c, returnType));
           c.tryReturn = wasTry;
           c.yieldType = wasYield;
@@ -2890,7 +2910,7 @@ string withoutSingletonUnions(string t) {
     while (i < b.len() && depth > 0) {
       i32 ch = b[i] as i32;
       if (ch == 60 || ch == 40) { depth = depth + 1; }
-      if (ch == 62 || ch == 41) { depth = depth - 1; }
+      if ((ch == 62 && !(i > 0 && b[i - 1] == 45)) || ch == 41) { depth = depth - 1; }
       if (ch == 44 && depth == 1) { comma = true; }
       i = i + 1;
     }
@@ -3627,6 +3647,11 @@ export struct C {
 
   /** Remember the array type a literal was checked at — growing the table, since literals are many. */
   void noteArrLit(this, i32 line, i32 col, string t) {
+    // **Not a type spelled in a template's own letters.** A generic is checked as a template and again
+    // per instance, and the table is keyed by position, so whichever pass ran last decided what
+    // `[v]` was: the template's `T[]` won, and `T[] one<T>(T v) { return [v]; }` was told at every
+    // instantiation that it returned a `T[]` where an `i32[]` was due.
+    if (this.activeParamCount > 0 && mentionsActiveParam(this, t)) { return; }
     i32 key = line * 65536 + col;
     for (i32 i = 0; i < this.arrLitCount; i++) {
       if (this.arrLitAt[i] == key) { this.arrLitTypes[i] = t; return; }
@@ -7975,8 +8000,14 @@ void checkExpr(C c, Expr e) {
         default: { }
       }
       if (literalTyped) {
-        c.expected = typeOfTy(c, target);
+        // In a template a target written in its letters is one this walk cannot name, which is not
+        // the same as no target: the instance check names it. Reported as no element type, the help
+        // suggested writing exactly the `[…] as T[]` that was there.
+        string lt = typeOfTy(c, target);
+        c.expected = lt;
+        c.expectedUnknown = lt == typeNone() && c.activeParamCount > 0;
         checkExpr(c, operand);
+        c.expectedUnknown = false;
       } else {
         checkExpr(c, operand);
         checkCast(c, e, op, operand, target);
@@ -8308,6 +8339,11 @@ void checkExpr(C c, Expr e) {
       }
       i32 methodIx = methodOwner == "" ? -1 : c.methodAt(methodOwner, tokenText(c, calleeName(c, callee)));
       string builtinSlot = builtinStaticSlot(c, callee);
+      // **A call through a funcref has slots too**: its parameters. Without them a generic construction
+      // there — `h(Box(6))` — had nothing to take its type arguments from, fell through to the
+      // not-callable report, and said `Box` could not be called, though `un(Box(6))` was fine.
+      string viaRef = payloadOwner == "" && methodIx < 0 && builtinSlot == typeNone()
+        ? funcrefCalleeType(c, callee) : typeNone();
       for (i32 i = 0; i < args.len(); i++) {
         // **Whether this argument has a slot at all**, which is a different question from what the
         // slot is. Neither branch fires when the receiver is a type this file does not contain — an
@@ -8329,6 +8365,9 @@ void checkExpr(C c, Expr e) {
           string osub = methodInst == "" ? mslot : substituteType(c, methodInst, mslot);
           // **And the method's own letters**, which nothing bound before `design/lang/0010` option C.
           c.expected = bindMethodLettersAuto(c, methodIx, methodInst, callTargs, args, osub);
+          slotted = true;
+        } else if (viaRef != typeNone() && i < funcrefParamCount(viaRef)) {
+          c.expected = funcrefParamAt(viaRef, i);
           slotted = true;
         }
         c.expectedUnknown = !slotted;
@@ -8357,6 +8396,21 @@ void checkExpr(C c, Expr e) {
           if (litKindOf(callee) == litNull()) {
             c.report(errNotCallable(), callee.line, callee.col);
             return;
+          }
+          // **A generic struct with nothing to say which instance** is callable once something does —
+          // a slot, or written arguments — so the report says that, rather than that a struct cannot
+          // be called: `Vec([], 0).len()` drew *only a function, a funcref or a method is callable*.
+          match (callee.kind) {
+            Ident(gtok): {
+              string gn = tokenText(c, gtok);
+              if (!c.isDeclaredName(gn) && c.isStruct(gn) && c.isGeneric(gn)) {
+                c.reportWith(errNotCallable(), callee.line, callee.col,
+                             gn + " is generic, and nothing here says its type arguments — write " + gn
+                             + "<…>(…), or construct it where a " + gn + "<…> is wanted");
+                return;
+              }
+            }
+            default: { }
           }
           string ct = naturalTypeOf(c, callee);
           if (ct != typeNone() && ct != "" && !startsWithFn(ct)) {
@@ -8595,6 +8649,9 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
  * empty parameter list is zero rather than one, which is the whole of the special case.
  */
 i32 funcrefArity(string t) {
+  // **A nested funcref's `->` is not a closing bracket** — here and in the three walks below, which
+  // each read its `>` as one: `fn(fn(i32) -> i32, u8[])` went below depth zero at the arrow, never saw
+  // the comma, and counted one parameter.
   if (!startsWithFn(t)) { return -1; }
   u8[] a = t.toBytes();
   i32 depth = 0;
@@ -8603,7 +8660,7 @@ i32 funcrefArity(string t) {
   for (i32 i = 3; i < a.len(); i++) {
     if (a[i] == 41 && depth == 0) { break; }
     if (a[i] == 40 || a[i] == 60) { depth = depth + 1; }
-    else if (a[i] == 41 || a[i] == 62) { depth = depth - 1; }
+    else if (a[i] == 41 || (a[i] == 62 && !(i > 0 && a[i - 1] == 45))) { depth = depth - 1; }
     else if (a[i] == 44 && depth == 0) { n = n + 1; }
     if (a[i] != 32) { empty = false; }
   }
@@ -8629,7 +8686,7 @@ string funcrefParam(string t, i32 index) {
       return "";
     }
     if (a[i] == 40 || a[i] == 60) { depth = depth + 1; }
-    else if (a[i] == 41 || a[i] == 62) { depth = depth - 1; }
+    else if (a[i] == 41 || (a[i] == 62 && !(i > 0 && a[i - 1] == 45))) { depth = depth - 1; }
     else if (a[i] == 44 && depth == 0) {
       if (n == index) { return trimmed(t, from, i); }
       n = n + 1;
@@ -8772,13 +8829,20 @@ void checkLambda(C c, string slot, bool wantUnknown, Expr e, Param[] params, Stm
 
   string ret = funcrefReturn(want);
   string got = "fn(";
+  // **A parameter whose type this walk cannot name agrees with any slot**, as an unknown agrees with
+  // everything else here. Inside a generic a written letter is that: `typeOfTy` answers it unknown,
+  // while a slot spelled from the declared return still says `T` — so `return (T x) => 1;` in
+  // `fn<i32(T)> ident<T>()` was told *expected fn<i32(T)>, found fn<i32()>*, a mismatch between a
+  // letter and the absence of one. The count is still compared, and every named type still is.
+  bool agree = params.len() == funcrefParamCount(want);
   for (i32 i = 0; i < params.len(); i++) {
     string pt = typeOfTy(c, params[i].type);
     if (i > 0) { got = got + ", "; }
-    got = got + pt;
+    got = got + (pt == typeNone() ? writtenTy(c, params[i].type) : pt);
+    if (agree && pt != typeNone() && pt != funcrefParamAt(want, i)) { agree = false; }
   }
   got = got + ") -> " + ret;
-  if (got != want) {
+  if (!agree) {
     c.reportWith(errLambdaSignature(), e.line, e.col, expectedFound(want, got));
     return;
   }
@@ -8856,6 +8920,28 @@ void checkLambda(C c, string slot, bool wantUnknown, Expr e, Param[] params, Stm
   c.inAsync = outerAsync;
 }
 
+/**
+ * The funcref type a call goes through — a local or parameter holding one, or a field — or unknown for
+ * a callee that names a function, a method or a type, which have slots of their own or none.
+ */
+string funcrefCalleeType(C c, Expr callee) {
+  string t = typeNone();
+  match (callee.kind) {
+    Ident(tok): { if (c.isDeclaredName(tokenText(c, tok))) { t = typeOfExpr(c, callee); } }
+    Member(obj, nameTok): { t = typeOfExpr(c, callee); }
+    default: { }
+  }
+  return startsWithFn(t) ? t : typeNone();
+}
+
+/** Whether `e` is a lambda. */
+bool isLambdaExpr(Expr e) {
+  match (e.kind) {
+    Lambda(params, body, isAsync): { return true; }
+    default: { return false; }
+  }
+}
+
 /** A call's method name token, or -1 when the callee is not a member access. */
 i32 calleeName(C c, Expr callee) {
   match (callee.kind) {
@@ -8895,7 +8981,7 @@ i32 funcrefParamCount(string t) {
   u8[] a = inside.toBytes();
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] == 40 || a[i] == 60) { depth = depth + 1; }
-    else if (a[i] == 41 || a[i] == 62) { depth = depth - 1; }
+    else if (a[i] == 41 || (a[i] == 62 && !(i > 0 && a[i - 1] == 45))) { depth = depth - 1; }
     else if (a[i] == 44 && depth == 0) { n = n + 1; }
   }
   return n;
@@ -8909,7 +8995,7 @@ string funcrefParamAt(string t, i32 at) {
   u8[] a = inside.toBytes();
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] == 40 || a[i] == 60) { depth = depth + 1; }
-    else if (a[i] == 41 || a[i] == 62) { depth = depth - 1; }
+    else if (a[i] == 41 || (a[i] == 62 && !(i > 0 && a[i - 1] == 45))) { depth = depth - 1; }
     else if (a[i] == 44 && depth == 0) {
       if (n == at) { return trimSpace(inside.slice(start, i)); }
       n = n + 1;
@@ -9146,6 +9232,8 @@ bool funcrefCall(C c, Expr e) {
 bool onlyNumbersSay(C c, i32 at, Expr[] args, string t) {
   for (i32 i = 0; i < args.len() && i < c.funcParamCount[at]; i++) {
     if (!mentionsTypeParam(c.funcParamTypes[c.funcParamAt[at] + i], t)) { continue; }
+    // A lambda says no more about a letter than a number does — less: it has no type of its own.
+    if (isLambdaExpr(args[i])) { continue; }
     i32 lit = litFamily(c, args[i]);
     if (lit != litInteger() && lit != litFloat()) { return false; }
   }
@@ -9280,14 +9368,11 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], foundType(c, args[i]), names, fromNum, numClash);
     for (i32 t = 0; t < n; t++) { if (bound[t] == "" && fromNum[t] != "") { bound[t] = fromNum[t]; } }
   }
-  // **A funcref parameter is not judged.** `mapOption<T, U>(Option<T> o, fn<U(T)> f)` binds `U`
-  // through the *shape* of a function type, and `bindTypeParams` decomposes arrays, nullables and
-  // generic instances but not `fn(…) -> …`. Reporting an unbound `U` here refused
-  // core/test/option_test.wac — `mapOption`, since removed with `Option` — which was correct code. Silence until the binder can
-  // read a funcref, which is the direction to be wrong in.
-  for (i32 i = 0; i < args.len(); i++) {
-    if (startsWithFn(c.funcParamTypes[c.funcParamAt[at] + i])) { return; }
-  }
+  // **A funcref parameter is judged like any other**, now that `bindTypeParams` reads a funcref's
+  // shape: a named function binds what its type says, and a lambda binds nothing — it has no type of
+  // its own to contribute (spec ch19). It was skipped wholesale while the binder could not decompose
+  // `fn(…) -> …`, which left `map(xs, (i32 x) => x * 2)` unjudged with `U` bound by nothing, and the
+  // emitter declined the call.
   // **A generic that instantiates itself with a bigger type never bottoms out.** `i32 grow<T>(T a)
   // { Box<T> b = Box(a); return grow(b); }` asks for `grow<Box<T>>`, then `grow<Box<Box<T>>>`, and
   // no depth limit makes that finite. The binding is what says so: an ordinary recursion binds `T`
@@ -9321,6 +9406,8 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   for (i32 i = 0; i < args.len(); i++) {
     if (litKindOf(args[i]) == litNull()) { continue; }
     if (funcrefCall(c, args[i])) { continue; }
+    // A lambda is nameless and evident, as `null` is: what it says about a letter is nothing.
+    if (isLambdaExpr(args[i])) { continue; }
     // A tuple of bare numbers is nameless for a reason that is the program's (0367a), not this
     // checker's: it says nothing about `T`, as decided above.
     if (holdsUntypedNumber(c, args[i])) { continue; }
@@ -10785,12 +10872,19 @@ string applyBindings(string written, string[] names, string[] bound) {
   if (startsWithFn(core)) {
     string fret = funcrefReturn(core);
     if (fret != "") {
+      // **An unbound letter leaves the whole funcref unknown**, as the instantiation arm below does.
+      // Pasting the unknown in as text built `fn() -> ` for `konst(5)`, whose literal binds nothing —
+      // a type nobody wrote, reported as *expected fn<i32()>, found fn<()>*.
       string out = "fn(";
       for (i32 i = 0; i < funcrefParamCount(core); i++) {
         if (i > 0) { out = out + ", "; }
-        out = out + applyBindings(funcrefParamAt(core, i), names, bound);
+        string pone = applyBindings(funcrefParamAt(core, i), names, bound);
+        if (pone == typeNone()) { return typeNone(); }
+        out = out + pone;
       }
-      return suffixed(out + ") -> " + applyBindings(fret, names, bound), suffix);
+      string rone = applyBindings(fret, names, bound);
+      if (rone == typeNone()) { return typeNone(); }
+      return suffixed(out + ") -> " + rone, suffix);
     }
   }
   // **And inside an instantiation.** `Box<T> wrap<T>(T v)` returns a `Box<T>`, whose core is not a
@@ -10893,6 +10987,13 @@ string genericParamWritten(C c, i32 at, Ty[] typeArgs, i32 i) {
  * asks which one the name is, exactly as the checking rules do one level up.
  */
 string argumentSlot(C c, string name, string spelled, i32 i) {
+  // **A local holding a funcref is called before any function of that name** (`§wac-param-shadows-
+  // func-5nkq2wp`), and its parameters are slots: `h(Box(6))` gives `Box` its type arguments as
+  // `un(Box(6))` does.
+  if (c.isDeclaredName(name)) {
+    string lt = c.typeOfName(name);
+    if (startsWithFn(lt)) { return i < funcrefParamCount(lt) ? funcrefParamAt(lt, i) : typeNone(); }
+  }
   if (c.isStruct(name)) {
     if (c.isGeneric(name) && spelled == name) { return typeNone(); }
     return substituteType(c, spelled, c.constructFieldAt(spelled, i));
@@ -11000,7 +11101,19 @@ void checkMember(C c, Expr at, Expr obj, string name) {
       // not an `i32`, which is a type error about the return and not about the reference. Seven
       // programs in rung 4's own corpus said so within the minute.
       if (c.isStruct(en) && c.typeOfName(en) == typeNone()) {
-        if (c.methodAt(en, name) >= 0) { return; }
+        // **Taken from a generic's bare template, a method with a receiver is no one function**: its
+        // receiver is a `Box<T>`, so `Box.get` is `Box<i32>.get` or `Box<string>.get` and nothing in
+        // the spelling says which. The emitter was left to find out and answered *unresolved name
+        // Box*. A static is the rule's other half (`§wac-generic-unused-param-unbound-k4p2xqz`) and is
+        // left to the paths that already apply it.
+        i32 tm = c.methodAt(en, name);
+        if (tm >= 0 && c.isGeneric(en) && !c.methodStatics[tm]) {
+          c.reportWith(errInferType(), at.line, at.col,
+                       en + "." + name + " uses " + en + "'s type parameters, and nothing in it says which "
+                       + en + " this is — write " + en + "<…>." + name);
+          return;
+        }
+        if (tm >= 0) { return; }
         // A field is *present* and reached the wrong way, which is a different sentence from a name
         // the type does not have — and worth the branch because the shared code says "static method"
         // and a field is not one. The reference answers `cannot use static method 'P.v' as a value`
@@ -11048,6 +11161,17 @@ void checkMember(C c, Expr at, Expr obj, string name) {
     // place it may be named. Reported before the other questions, which would all say it is fine.
     if (checkPrivateMember(c, t, name, at.line, at.col)) { return; }
     if (c.hasField(t, name)) { return; }
+    // **A method with type parameters of its own is no one function to bind**: `c.pick` is
+    // `pick<i32>` or `pick<string>`, and written arguments after a member without a call are not kept.
+    // Nothing refused it, and the emitter bound the uninstantiated template — a module the engine
+    // rejected. A lambda calling it says which instance is meant.
+    i32 gmi = c.methodAt(templateOf(t), name);
+    if (gmi >= 0 && !c.methodStatics[gmi] && gmi < c.methodTypeParams.len() && c.methodTypeParams[gmi] != "") {
+      c.reportWith(errInferType(), at.line, at.col,
+                   name + " takes type parameters of its own, so it is not one function to take as a value — "
+                   + "call it inside a lambda: (…) => x." + name + "(…)");
+      return;
+    }
     if (c.isGeneric(t) && c.methodAt(templateOf(t), name) >= 0) { return; }
     // A method reached as a *value*. This function is only asked about members that are not the
     // callee of a call — the `Call` arm walks the object instead — so a method name arriving here is
@@ -11593,7 +11717,14 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     c.reportWith(errNoMethod(), callee.line, callee.col, "no " + recv + "." + name);
     return;
   }
-  if (startsWithFn(recv) || recv == "anyref" || recv == "i31ref") {
+  // **A funcref has no methods, and is said so in words**: `recv.name` spliced a method name onto a
+  // funcref's spelling, which the renderer then rewrote as `fn<i32.call(i32)>` — a type nobody wrote.
+  if (startsWithFn(recv)) {
+    c.reportWith(errNoMethod(), callee.line, callee.col,
+                 "a " + recv + " has no methods, `" + name + "` among them — call it directly: f(…)");
+    return;
+  }
+  if (recv == "anyref" || recv == "i31ref") {
     c.reportWith(errNoMethod(), callee.line, callee.col, "no " + recv + "." + name);
     return;
   }
@@ -12703,7 +12834,13 @@ void checkStmt(C c, Stmt s, Ty want) {
     // statement that is just a call is the commonest shape in the language and had no rule applied
     // to it at all, which is how the const-receiver check looked broken when it was merely unreached.
     Yield(value): {
-      if (value is not null) { checkExpr(c, value!); }
+      // The generator's yield type is the value's slot, as a return type is a `return`'s: `yield [3];`
+      // in a `gen<i32[]>` is an `i32[]` literal, not one with no element type.
+      if (value is not null) {
+        c.expected = c.yieldType == yieldUnknown() ? typeNone() : c.yieldType;
+        checkExpr(c, value!);
+        c.expected = typeNone();
+      }
       checkYield(c, s, value);
     }
     Schedule(target): {
@@ -13724,6 +13861,21 @@ void checkDeclarationRules(C c, Program prog) {
           if (!growsItself(c, fields[f].type, owner, typeParams)) { continue; }
           c.report(errInfiniteGeneric(), fields[f].type.line, fields[f].type.col);
         }
+        // **A method's signature too**: every instance of the struct has every method, so `Box<Box<T>>
+        // nest()` asks for `Box<Box<T>>`, whose `nest` asks for `Box<Box<Box<T>>>`, whether or not
+        // anything calls it. The emitter instantiated until its table was full and said it had run out
+        // of room for generic instantiations, about a program with one.
+        for (i32 m = 0; m < methods.len(); m++) {
+          if (growsItself(c, methods[m].returnType, owner, typeParams)) {
+            c.report(errInfiniteGeneric(), methods[m].returnType.line, methods[m].returnType.col);
+            continue;
+          }
+          for (i32 p = 0; p < methods[m].params.len(); p++) {
+            Ty pty = methods[m].params[p].type;
+            if (!growsItself(c, pty, owner, typeParams)) { continue; }
+            c.report(errInfiniteGeneric(), pty.line, pty.col);
+          }
+        }
       }
       default: { }
     }
@@ -14707,7 +14859,7 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
     string wasTryM = c.tryReturn;
     string wasYieldM = c.yieldType;
     c.tryReturn = typeOfTy(c, bodyReturnTy(c, methods[mi].returnType));
-    c.yieldType = yieldOf(typeOfTy(c, methods[mi].returnType));
+    c.yieldType = yieldTypeOf(c, methods[mi].returnType);
     checkAll(c, methods[mi].body, bodyReturnTy(c, methods[mi].returnType));
     checkDefiniteAssignment(c, methods[mi].body);
     c.tryReturn = wasTryM;
@@ -15033,7 +15185,7 @@ export void checkModule(C c, Program prog) {
         string wasTry = c.tryReturn;
         string wasYield = c.yieldType;
         c.tryReturn = typeOfTy(c, bodyReturnTy(c, returnType));
-        c.yieldType = yieldOf(typeOfTy(c, returnType));
+        c.yieldType = yieldTypeOf(c, returnType);
         checkAll(c, body, bodyReturnTy(c, returnType));
         checkDefiniteAssignment(c, body);
         c.tryReturn = wasTry;

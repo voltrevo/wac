@@ -1,0 +1,5 @@
+// expect: f() = 6
+// why: any function may take type parameters, a generator among them
+// from: spec/6-concurrency/36-coroutines-and-generators.md
+gen<T> void each<T>(T[] xs) { for (T x in xs) { yield x; } }
+export i32 f() { i32 t = 0; for (i32 v in each([1, 2, 3])) { t += v; } return t; }

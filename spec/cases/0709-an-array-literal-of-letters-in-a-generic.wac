@@ -1,0 +1,14 @@
+// expect: f() = 9
+// why: a generic is checked at each instantiation with its letters bound, an array literal of them too
+// from: spec/2-types/19-generics.md
+struct Box<T> { T v; }
+T[] one<T>(T v) { return [v]; }
+Box<T>[] boxes<T>(T v) { return [Box(v)]; }
+T[] cast<T>(T v) { return [v] as T[]; }
+export i32 f() {
+  i32 x = 4;
+  i32[] a = one(x);
+  Box<i32>[] b = boxes(x);
+  i32[] c = cast(1 as i32);
+  return a[0] + b[0].v + c[0];
+}

@@ -6881,8 +6881,13 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     env.curFile = env.lambdaFile[li];
     src = srcFor(env.fileSrcs, csrc0, env.curFile);
     lexed = lexFor(env.fileLexeds, clex0, env.curFile);
+    // **In the world it was written in**, as its emission below is: a lambda in a generic writes its
+    // parameters in the template's letters, and registered without the instance's substitution its
+    // signature still said `T` — a type nothing can write, which declined the module.
+    i32 cpushed = env.lambdaInst[li] == "" ? 0 : pushInstSubstitution(env, src, lexed, prog, env.lambdaInst[li]);
     string rsig = emittedSigOf(env, src, lexed, sigReturn(env.lambdaSigs[li]),
                                env.lambdaParams[li], captureStructName(li));
+    if (cpushed > 0) { popSubstitution(env, cpushed); }
     env.sigType(rsig);
     env.sigType(envSig(rsig));
   }
@@ -9157,6 +9162,79 @@ void emitTagOf(B fb, Env env, i32 subj, string en) {
  * backwards, and retiring the entry by renaming it — rather than by dropping it — keeps the wasm
  * slot and its type, which the declaration list still has to describe.
  */
+/**
+ * Whether the binding written at token `tok` — a match arm's, a pattern's, a destructuring's — is
+ * captured by a lambda. Keyed by the binding's own token, as `walkBindingAt` records it: several such
+ * names come from one statement, and a statement's position would make them one declaration.
+ */
+bool bindingPromoted(Env env, Lexed lexed, i32 tok) {
+  return env.isPromoted(lexed.tokens[tok * tokenStride() + 3], lexed.tokens[tok * tokenStride() + 4]);
+}
+
+/** The value on the stack into local `at` — through a fresh cell when the binding at `tok` is captured. */
+void setBinding(B fb, Env env, Lexed lexed, i32 tok, i32 at) {
+  if (bindingPromoted(env, lexed, tok)) {
+    fb.byte(251); fb.u32leb(0);                   // struct.new $cell$T
+    fb.u32leb(env.structType(cellStructName(env.localTypes[at])));
+    if (at < env.localCell.len()) { env.localCell[at] = true; }
+  }
+  fb.byte(33); fb.u32leb(at);
+}
+
+/**
+ * A match subject's type as the capture walk can tell it, or `""`, **recording nothing**. The walk's
+ * scope is its own and the emitter's locals do not exist yet, so a subject naming a local funcref —
+ * gzip's `match (read())` — resolves as a global function here; asked plainly, that marked `read`
+ * ambiguous and declined the whole command. A name the walk declared is answered from the walk, and
+ * anything else is asked with the decline and the ambiguity put back as they were.
+ */
+string walkSubjectType(Env env, u8[] src, Lexed lexed, Expr e) {
+  match (e.kind) {
+    Ident(tok): {
+      string wt = env.walkTypeOf(tokenTextOf(src, lexed, tok));
+      if (wt != "") { return wt; }
+    }
+    default: { }
+  }
+  bool wasFull = env.full;
+  string wasWhy = env.fullWhy;
+  bool wasAmbiguous = env.ambiguous;
+  string wasName = env.ambiguousName;
+  string t = typeOfE(src, lexed, env, e);
+  bool spoke = env.full != wasFull || env.ambiguous != wasAmbiguous;
+  env.full = wasFull;
+  env.fullWhy = wasWhy;
+  env.ambiguous = wasAmbiguous;
+  env.ambiguousName = wasName;
+  return spoke ? "" : t;
+}
+
+/** Bring a binding into the capture walk's scope, keyed by its token so a capture can promote it. */
+void walkBindingAt(Env env, u8[] src, Lexed lexed, i32 tok, string ty) {
+  env.addLocal(tokenTextOf(src, lexed, tok), ty);
+  env.walkDeclareAt(tokenTextOf(src, lexed, tok), ty, lexed.tokens[tok * tokenStride() + 3],
+                    lexed.tokens[tok * tokenStride() + 4]);
+}
+
+/**
+ * A variant pattern's bindings — a match arm's or a `matches`' — in the capture walk's scope, each at
+ * its payload slot's type. **Without this a lambda in an arm could not capture them**: the walk never
+ * heard of the names, so it recorded no capture, and the emitter found `x` was neither a local nor a
+ * module constant when it built the lambda's environment.
+ */
+void walkVariantBindings(Env env, u8[] src, Lexed lexed, string st, i32 variantTok, i32[] toks) {
+  if (st == "" || variantTok < 0) { return; }
+  i32 vi = env.variantAt(armVariant(env, src, lexed, variantTok, env.canonType(refCore(env, st))));
+  if (vi < 0) { return; }
+  string owner = env.variantOwners[vi];
+  for (i32 b = 0; b < toks.len(); b++) {
+    if (b >= env.variantArity[vi] || toks[b] < 0) { continue; }
+    string bn = tokenTextOf(src, lexed, toks[b]);
+    if (bn == "_" || bn == "is") { continue; }
+    walkBindingAt(env, src, lexed, toks[b], env.fieldTypeAt(owner, env.variantSlot[vi] + b));
+  }
+}
+
 void emitArmNames(B fb, u8[] src, Lexed lexed, Env env, i32 subj, string vn, i32[] bindingToks,
                   Expr subject) {
   i32 vi = env.variantAt(vn);
@@ -9177,8 +9255,7 @@ void emitArmNames(B fb, u8[] src, Lexed lexed, Env env, i32 subj, string vn, i32
     fb.u32leb(2);
     fb.u32leb(env.structType(en));
     fb.u32leb(env.variantSlot[vi] + b);
-    fb.byte(33);
-    fb.u32leb(at);
+    setBinding(fb, env, lexed, bindingToks[b], at);
   }
   // **Narrowing is a binding, not a retyping** — the spec says so, and it is also the only version
   // this emitter could implement: the subject keeps its wasm type either way, and what the arm needs
@@ -9266,7 +9343,7 @@ void emitMatches(B fb, u8[] src, Lexed lexed, Env env, Pattern pat, Expr subject
   for (i32 b = 0; b < pat.slotNames.len(); b++) {
     if (pat.slotNames[b] < 0 || tokenTextOf(src, lexed, pat.slotNames[b]) == "_") { continue; }
     readPayload(fb, env, subj, owner, env.variantSlot[vi] + b);
-    fb.byte(33); fb.u32leb(at);
+    setBinding(fb, env, lexed, pat.slotNames[b], at);
     at = at + 1;
   }
   fb.byte(11);
@@ -12893,7 +12970,7 @@ void emitBindingFrom(B fb, u8[] src, Lexed lexed, Env env, TupleBinding b, strin
     }
     string lt = kid.type is null ? ms[i] : typeOfTyName(env, src, lexed, kid.type!);
     env.addLocal(tokenTextOf(src, lexed, kid.nameTok), lt);
-    fb.byte(33); fb.u32leb(env.localCount - 1);
+    setBinding(fb, env, lexed, kid.nameTok, env.localCount - 1);
   }
 }
 
@@ -12910,8 +12987,11 @@ void addBindingLocals(u8[] src, Lexed lexed, Env env, TupleBinding b, string t) 
 /** Every name a pattern declares, with its type, for a walk that tracks locals. */
 void declareBindingE(u8[] src, Lexed lexed, Env env, TupleBinding b, string t, i32 line, i32 col) {
   if (b.nameTok >= 0) {
+    // At the name's own token: a destructuring declares several names in one statement, and keyed by
+    // the statement they were one declaration — which the emitter then never made a cell for.
     env.walkDeclareAt(tokenTextOf(src, lexed, b.nameTok),
-                      b.type is null ? t : typeOfTyName(env, src, lexed, b.type!), line, col);
+                      b.type is null ? t : typeOfTyName(env, src, lexed, b.type!),
+                      lexed.tokens[b.nameTok * tokenStride() + 3], lexed.tokens[b.nameTok * tokenStride() + 4]);
     return;
   }
   string[] ms = tupleMembers(t);
@@ -14105,7 +14185,15 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
     Trap(value): { if (!(value is null)) { findLambdasExpr(env, src, lexed, value!, "string"); } }
     Match(subject, arms): {
       findLambdasExpr(env, src, lexed, subject, "");
-      for (i32 i = 0; i < arms.len(); i++) { findLambdas(env, src, lexed, arms[i].body, ret); }
+      string mst = walkSubjectType(env, src, lexed, subject);
+      for (i32 i = 0; i < arms.len(); i++) {
+        i32 amark = env.walkCount;
+        i32 alocals = env.localCount;
+        walkVariantBindings(env, src, lexed, mst, arms[i].variantTok, arms[i].bindingToks);
+        findLambdas(env, src, lexed, arms[i].body, ret);
+        env.walkCount = amark;
+        env.localCount = alocals;
+      }
     }
     Block(bbody): { findLambdas(env, src, lexed, bbody, ret); }
     Defer(dbody): { findLambdas(env, src, lexed, [dbody] as Stmt[], ret); }
@@ -14380,9 +14468,15 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     }
     MatchExpr(subject, arms): {
       findLambdasExpr(env, src, lexed, subject, "");
+      string mst = walkSubjectType(env, src, lexed, subject);
       for (i32 i = 0; i < arms.len(); i++) {
+        i32 amark = env.walkCount;
+        i32 alocals = env.localCount;
+        walkVariantBindings(env, src, lexed, mst, arms[i].variantTok, arms[i].bindingToks);
         if (!(arms[i].value is null)) { findLambdasExpr(env, src, lexed, arms[i].value!, want); }
         findLambdas(env, src, lexed, arms[i].body, want);
+        env.walkCount = amark;
+        env.localCount = alocals;
       }
     }
     IntLit(tok): { }
@@ -14446,7 +14540,14 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
         }
       }
     }
-    Matches(pat, subject): { findLambdasExpr(env, src, lexed, subject, ""); }
+    // The names a variant pattern binds live on past the expression — `if (A(y) matches e) { … y … }`
+    // — so they stay in the walk's scope until the enclosing block's end takes them out.
+    Matches(pat, subject): {
+      findLambdasExpr(env, src, lexed, subject, "");
+      if (pat.type is null) {
+        walkVariantBindings(env, src, lexed, walkSubjectType(env, src, lexed, subject), pat.variantTok, pat.slotNames);
+      }
+    }
     // Both arms stand where the whole ternary stands, which is what makes `p ? () => 1 : () => 2`
     // two lambdas of the same type rather than two of no type.
     Ternary(cond, then, els): {
@@ -14630,6 +14731,12 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
         return;
       }
       string cname = typeOfTyName(env, src, lexed, ctype);
+      // **A generic construction typed by its slot names its instance there**: `Holder<i32> h =
+      // Holder(…)` writes the bare template, which is in no struct table, so its fields — the types a
+      // lambda argument takes — came back empty and the lambda had no target.
+      if (!env.isStructName(cname) && want != "" && genericBaseOf(want) == cname && env.isStructName(want)) {
+        cname = want;
+      }
       bool isStruct = env.isStructName(cname);
       i32 cat = isStruct ? -1 : env.funcAt(cname);
       // **A funcref called by its name is a `Construct` too**, and is neither a struct nor a declared
@@ -20339,7 +20446,7 @@ string bindTypeSpelling(Env env, string t, string templatePath) {
       if (depth == 1) { start = i + 1; }
       continue;
     }
-    if (c == 62) {                                            // `>`
+    if (c == 62 && !(i > 0 && a[i - 1] == 45)) {             // `>`, and not a funcref's `->`
       depth = depth - 1;
       if (depth != 0) { continue; }
       out = out + "$" + bindTypeSpelling(env, t.slice(start, i), "");

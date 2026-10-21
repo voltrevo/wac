@@ -1,0 +1,11 @@
+// expect: f() = 9
+// why: a generic's type arguments are inferred from its arguments and its expected result, and a
+//      literal argument takes its type from the slot the result fills
+// from: spec/2-types/19-generics.md
+fn<T()> konst<T>(T v) { return () => v; }
+export i32 f() {
+  fn<i32()> a = konst(5);
+  fn<bool()> b = konst(true);
+  fn<f64()> c = konst(2.0);
+  return a() + (b() ? 1 : 0) + (c() as~ i32) + 1;
+}

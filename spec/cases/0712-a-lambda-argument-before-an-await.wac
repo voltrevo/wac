@@ -1,0 +1,10 @@
+// expect: f() = 7
+// why: the arguments before an `await` in one call are evaluated first, whatever they are — a lambda,
+//      or a construction typed by its parameter
+// from: spec/6-concurrency/35-tickets-and-await.md
+import { Ticket } from "core";
+struct Box<T> { T v; }
+i32 apply(fn<i32(i32)> g, i32 x) { return g(x); }
+i32 take(Box<i32> b, i32 x) { return b.v + x; }
+async i32 v(Ticket<i32> t) { return apply((i32 x) => x + 1, await t) + take(Box(1), await t) - 5; }
+export i32 f() { Ticket<i32> t; t.resolve(5); return v(t).wait()!; }

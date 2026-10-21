@@ -1,0 +1,5 @@
+// expect: f() = 15
+// why: a generic construction typed by its slot types its arguments too, a lambda among them
+// from: spec/2-types/19-generics.md
+struct Holder<T> { fn<T(T)> f; }
+export i32 f() { Holder<i32> h = Holder((i32 x) => x * 2); return h.f(7) + 1; }

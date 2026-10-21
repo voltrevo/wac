@@ -1,0 +1,7 @@
+// expect: refused
+// why: a method with type parameters of its own is a family of functions, not one, so naming it on a
+//      receiver without a call has no single signature to be a value of — it was accepted and emitted
+//      as the uninstantiated template, a module the engine rejected
+// from: spec/2-types/20-functions-and-funcrefs.md
+struct Cell<T> { T v; U pick<U>(const this, U a) { return a; } }
+export i32 f() { Cell<i32> c = Cell(5); fn<i32(i32)> g = c.pick; return g(7); }
