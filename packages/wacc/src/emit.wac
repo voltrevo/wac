@@ -529,9 +529,18 @@ void registerNamed(Env env, string t) {
   // builds an `i32[]` that nothing else in the body names, and the literal took its type from the
   // field only while being emitted — after the type section was sized. Arrays only, so a struct that
   // reaches itself through a field does not recurse here.
-  if (t.indexOf("<") > 0 && env.isStructName(t)) {
+  //
+  // **And their nullable numbers' boxes**, for the same reason: `Opt<i32?>` holds an `i32?` in its
+  // `Some`, and nothing else in a program that writes no `i32?` of its own named the box — so it was
+  // registered while a body was emitted, after the section was sized. An enum instance's payload
+  // fields belong to its variants, which is why the owner may be one of those. A box holds a number,
+  // so this cannot recurse either.
+  if (t.indexOf("<") > 0 && (env.isStructName(t) || env.isEnumName(t))) {
     for (i32 f = 0; f < env.fieldCount; f++) {
-      if (env.fieldOwners[f] == t && isArrayType(env.fieldTypes[f])) { registerNamed(env, env.fieldTypes[f]); }
+      string owner = env.fieldOwners[f];
+      if (owner != t && env.enumOf(owner) != t) { continue; }
+      string ft = env.fieldTypes[f];
+      if (isArrayType(ft) || isBoxedName(ft)) { registerNamed(env, ft); }
     }
   }
 }
@@ -5461,20 +5470,28 @@ void emitUnionMatch(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] ar
   i32 subj = env.localCount - 1;
   emitExprAt(fb, src, lexed, env, subject, u);
   fb.byte(33); fb.u32leb(subj);
-  // The default last, wherever it is written.
+  // A `null` arm first — a null passes no `ref.test`, so it has to be asked before any — and the
+  // default last, wherever either is written (spec ch18, `§wac-match-nullable-subject-zcnasbp`).
   i32 n = arms.len();
   i32[] order = i32[].filled(n, 0);
   i32 k = 0;
-  for (i32 a = 0; a < n; a++) { if (arms[a].variantTok >= 0) { order[k] = a; k = k + 1; } }
+  for (i32 a = 0; a < n; a++) { if (isNullArmE(lexed, arms[a])) { order[k] = a; k = k + 1; } }
+  for (i32 a = 0; a < n; a++) {
+    if (arms[a].variantTok >= 0 && !isNullArmE(lexed, arms[a])) { order[k] = a; k = k + 1; }
+  }
   for (i32 a = 0; a < n; a++) { if (arms[a].variantTok < 0) { order[k] = a; k = k + 1; } }
   i32 opened = 0;
   for (i32 o = 0; o < n; o++) {
     Arm arm = arms[order[o]];
     bool tail = o == n - 1;
-    string m = arm.variantTok < 0 ? "" : unionArmMemberE(env, u, armWrittenE(src, lexed, arm), src, lexed, arm.variantTok);
+    bool nullArm = isNullArmE(lexed, arm);
+    string m = arm.variantTok < 0 || nullArm ? "" : unionArmMemberE(env, u, armWrittenE(src, lexed, arm), src, lexed, arm.variantTok);
     if (!tail) {
-      if (m == "") { env.declineFor("a union arm that names no alternative"); return; }
-      if (isConstAlt(m)) {
+      if (m == "" && !nullArm) { env.declineFor("a union arm that names no alternative"); return; }
+      if (nullArm) {
+        fb.byte(32); fb.u32leb(subj);
+        fb.byte(209);                                                     // ref.is_null
+      } else if (isConstAlt(m)) {
         // Either permission (spec ch18): the object, or its `const` box.
         emitConstTest(fb, env, subj, u, m.slice(6, m.len()));
       } else {
@@ -5588,6 +5605,10 @@ bool isOrDescends(Env env, string t, string anc) {
  */
 string unionTargetE(u8[] src, Lexed lexed, Env env, string u, Expr e) {
   string t = typeOfE(src, lexed, env, e);
+  // **A variant is its enum here**: one struct in the type section, and a subtype of it in the
+  // language — so `E.A(3)` enters by the `E` alternative, which no alternative could be when it was
+  // asked as the variant.
+  if (env.enumOf(t) != "") { t = env.enumOf(t); }
   string[] ms = unionMembers(u);
   // **A `const` source enters by a `const` alternative** (spec ch18 `§wac-union-permission-recorded-
   // d7yfbag`): the permission recorded is the reference's, whatever the object is.
@@ -9272,6 +9293,9 @@ bool typeTestable(Env env, string from, string to) {
   if (isUnionName(from) && isConstAlt(to)) { return true; }
   if (isUnionName(from) && env.isStructName(env.canonType(to))) { return true; }
   if (isUnionName(from) && unionBoxes(to) && unionHasMember(from, to)) { return true; }
+  // A string or an array alternative is a `ref.test` against its own array type, as `match` asks it —
+  // `string s matches v` was refused here while `v is string` compiled.
+  if (isUnionName(from) && (to == "string" || isArrayType(to)) && unionHasMember(from, to)) { return true; }
   if (isBoxedName(from) && boxedInner(from) == to) { return true; }
   string fc = env.canonType(refCore(env, from));
   string tc = env.canonType(refCore(env, to));
@@ -9293,7 +9317,8 @@ bool typeTestable(Env env, string from, string to) {
  */
 void emitTypeTest(B fb, Env env, i32 at, string from, string to) {
   if (isUnionName(from) && isConstAlt(to)) { emitConstTest(fb, env, at, from, to.slice(6, to.len())); return; }
-  if (isUnionName(from) && (env.isStructName(env.canonType(to)) || unionBoxes(to))) {
+  if (isUnionName(from) && (env.isStructName(env.canonType(to)) || unionBoxes(to) || to == "string"
+                            || isArrayType(to))) {
     fb.byte(32); fb.u32leb(at);
     fb.byte(251); fb.u32leb(20); fb.i32leb(unionHeapType(env, to));         // ref.test the object or its box
     return;
@@ -9355,7 +9380,8 @@ void emitTypeBind(B fb, Env env, i32 at, string from, string to) {
     emitConstFromUnion(fb, env, from, to.slice(6, to.len()), env.localCount - 1);
     return;
   }
-  if (isUnionName(from) && (env.isStructName(env.canonType(to)) || unionBoxes(to))) {
+  if (isUnionName(from) && (env.isStructName(env.canonType(to)) || unionBoxes(to) || to == "string"
+                            || isArrayType(to))) {
     fb.byte(32); fb.u32leb(at);
     emitFromUnion(fb, env, to);
     return;
@@ -11832,6 +11858,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       string tt3 = typeOfTyName(env, src, lexed, target!);
       i32 vi = env.variantAt(tt3);
       if (vi < 0) {
+        string q9 = instanceVariantOf(src, lexed, env, left, target!);
+        if (q9 != "") {
+          tt3 = q9;
+          vi = env.variantAt(q9);
+        }
+      }
+      if (vi < 0) {
         // **`x is Proc` on a `Proc?` asks whether it is there.** A reference is nullable in wasm
         // whatever the source says, so the test that remains is exactly the one `is null` makes,
         // negated — and with no struct inheritance in this emitter, a target that is the value's
@@ -11941,10 +11974,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitExprAt(fb, src, lexed, env, left, en);
       fb.byte(33);
       fb.u32leb(at);
+      // **A null is no variant**, so the test answers no rather than reading a tag through it: on an
+      // `E?` holding null the tag read trapped. `emitTypeTest` guards the same way for `matches`.
+      fb.byte(32); fb.u32leb(at);
+      fb.byte(209);                                  // ref.is_null
+      fb.byte(4); fb.byte(127);                      // if (result i32)
+      fb.byte(65); fb.i32leb(negated ? 1 : 0);
+      fb.byte(5);
       emitTagOf(fb, env, at, en);
       fb.byte(65);
       fb.i32leb(env.variantTags[vi]);
       fb.byte(negated ? 71 : 70);   // i32.ne / i32.eq
+      fb.byte(11);
     }
     MatchExpr(subject, arms): {
       emitMatchExpr(fb, src, lexed, env, subject, arms, want);
@@ -11990,6 +12031,11 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // it has nothing to do with.
       string tt = typeOfE(src, lexed, env, then);
       string et = typeOfE(src, lexed, env, els);
+      // **A number beside `null` is a nullable number** (spec ch10 `[§wac-ternary-null-3kx9ba2]`): the
+      // `null` arm is typed by its slot, and taking the other arm's `i32` for that slot put a `null` in
+      // a block that has no absence — a module the engine refused.
+      if (isNullLit(els) && tt != "" && isPrimitiveNumberType(tt)) { tt = tt + "?"; et = tt; }
+      else if (isNullLit(then) && et != "" && isPrimitiveNumberType(et)) { et = et + "?"; tt = et; }
       // **A branch typed by its slot has no type to offer** — `p.len() == 0 ? [tag()] : p` is a `u8[]`
       // because `p` is, and `[tag()]` alone would have said `i32[]`. Both slot-typed, the slot decides.
       // **Markup that names no function builds its slot's type** — a fragment or a quoted tag has no
@@ -12300,6 +12346,20 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         mt = typeOfE(src, lexed, env, arms[a].value!);
         env.localCount = saved;
       }
+      // **Arms that are all number literals type the match as a literal would be typed** — `f64` when
+      // one is a float, `i32` otherwise — since this walk sees no slot. Answering unknown declined
+      // `1 + match (s) { A: 10, B: 20 }` with *untyped match*, a program the checker accepts.
+      if (mt == "") {
+        bool allLit = false;
+        bool floaty = false;
+        for (i32 a = 0; a < arms.len(); a++) {
+          if (arms[a].value is null) { continue; }
+          if (!isLiteral(arms[a].value!)) { return ""; }
+          allLit = true;
+          if (isFloatLiteral(arms[a].value!)) { floaty = true; }
+        }
+        if (allLit) { return floaty ? "f64" : "i32"; }
+      }
       return mt;
     }
     StaticMatch(subject, types, values, defaultAt): {
@@ -12312,6 +12372,9 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       // one, so the other is asked first.
       if (slotTyped(then) && !slotTyped(els)) {
         string et = typeOfE(src, lexed, env, els);
+        // `c ? null : x` on a number is the nullable number, as `c ? x : null` is below — answered
+        // here because this branch returned the bare `i32` first, and the `null` went into it.
+        if (et != "" && isNullLit(then) && isPrimitiveNumberType(et)) { return et + "?"; }
         if (et != "") { return et; }
       }
       string tt = typeOfE(src, lexed, env, then);
@@ -14694,14 +14757,25 @@ i32 intBuiltinOp(string t, string name) {
 }
 
 /**
- * Bind the narrowed name, when a condition is `x is T` and `T` is a struct below `x`'s type.
+ * The names a condition narrows, and to what: `"p Q;s Circle"` — each `x is T` where `x` is a local and
+ * `T` a struct below its type or a variant of its enum, found through `&&` from either side (spec ch12
+ * `§wac-narrow-if-2mkq8vp`). Empty when it narrows nothing.
  *
- * Emitted at the top of the guarded block: read the outer local, `ref.cast` it, store it in a new
- * local of the same name. Everything after this in the block resolves the name to the narrowed one.
- * A condition of any other shape narrows nothing and this writes no instructions.
+ * **`&&` was not looked into**, so `if (c && (p is Q))` typed `p.y` for the checker and declined here
+ * with *untyped member*; and **a variant was not narrowed at all**, so `if (s is Circle)` went on reading
+ * the variable — a lambda's write to it between the test and the read changed what the block saw,
+ * where the language makes the narrowed name a binding of its own.
  */
 string narrowedBy(u8[] src, Lexed lexed, Env env, Expr cond) {
   match (cond.kind) {
+    Binary(op, left, right): {
+      if (lexed.tokens[op * tokenStride()] != kAndAnd()) { return ""; }
+      string a = narrowedBy(src, lexed, env, left);
+      string b = narrowedBy(src, lexed, env, right);
+      if (a == "") { return b; }
+      if (b == "") { return a; }
+      return a + ";" + b;
+    }
     Is(left, target, other, negated): {
       if (negated) { return ""; }
       if (target is null) { return ""; }
@@ -14710,10 +14784,14 @@ string narrowedBy(u8[] src, Lexed lexed, Env env, Expr cond) {
           string name = tokenTextOf(src, lexed, tok);
           if (env.localAt(name) < 0) { return ""; }
           string to = typeOfTyName(env, src, lexed, target!);
-          if (!env.isStructName(env.canonType(to))) { return ""; }
-          if (!isDescendantStruct(env, env.canonType(to), env.canonType(env.localType(name)))) {
-            return "";
+          string declared = env.localType(name);
+          if (declared.len() > 1 && declared.slice(declared.len() - 1, declared.len()) == "?") {
+            declared = declared.slice(0, declared.len() - 1);
           }
+          string from = env.canonType(declared);
+          if (env.variantAt(to) >= 0 && env.enumOf(to) == from) { return name + " " + to; }
+          if (!env.isStructName(env.canonType(to))) { return ""; }
+          if (!isDescendantStruct(env, env.canonType(to), from)) { return ""; }
           return name + " " + to;
         }
         default: { return ""; }
@@ -14724,33 +14802,64 @@ string narrowedBy(u8[] src, Lexed lexed, Env env, Expr cond) {
 }
 
 /**
- * Bind the narrowed name for a *walk*: the type, and no instructions.
+ * Bind the narrowed names for a *walk*: the types, and no instructions.
  *
  * The emittability walk types every expression the way the emitter will, so it has to know the same
  * shadow — without it, `s.radius` inside `if (s is Circle)` is `untyped member` and the whole file is
  * declined. One rule (`narrowedBy`), asked by both.
  */
 void narrowTypes(u8[] src, Lexed lexed, Env env, Expr cond) {
-  string pair = narrowedBy(src, lexed, env, cond);
-  if (pair == "") { return; }
-  i32 sp = pair.indexOf(" ");
-  env.addLocal(pair.slice(0, sp), pair.slice(sp + 1, pair.len()));
+  string rest = narrowedBy(src, lexed, env, cond);
+  while (rest != "") {
+    i32 semi = rest.indexOf(";");
+    string pair = semi < 0 ? rest : rest.slice(0, semi);
+    rest = semi < 0 ? "" : rest.slice(semi + 1, rest.len());
+    i32 sp = pair.indexOf(" ");
+    env.addLocal(pair.slice(0, sp), pair.slice(sp + 1, pair.len()));
+  }
 }
 
+/**
+ * Bind them for real, at the top of the guarded block: each name's value, read the way any read of it
+ * is — through its cell when a lambda captured and writes it, which reading the local's slot directly
+ * did not, and `ref.cast` it saw the cell and trapped — cast to the struct, and stored under the same
+ * name in a fresh local. A variant is its enum's struct, so it needs no cast.
+ */
 void narrowInto(B fb, u8[] src, Lexed lexed, Env env, Expr cond) {
-  string pair = narrowedBy(src, lexed, env, cond);
-  if (pair == "") { return; }
-  i32 sp = pair.indexOf(" ");
-  string name = pair.slice(0, sp);
-  string to = pair.slice(sp + 1, pair.len());
-  fb.byte(32);
-  fb.u32leb(env.localAt(name));
-  fb.byte(251);
-  fb.u32leb(23);   // ref.cast (ref $T) — the `is` above has already answered
-  fb.i32leb(env.structType(env.canonType(to)));
-  env.addLocal(name, to);
-  fb.byte(33);
-  fb.u32leb(env.localCount - 1);
+  string rest = narrowedBy(src, lexed, env, cond);
+  while (rest != "") {
+    i32 semi = rest.indexOf(";");
+    string pair = semi < 0 ? rest : rest.slice(0, semi);
+    rest = semi < 0 ? "" : rest.slice(semi + 1, rest.len());
+    i32 sp = pair.indexOf(" ");
+    string name = pair.slice(0, sp);
+    string to = pair.slice(sp + 1, pair.len());
+    emitLocalValue(fb, src, lexed, env, cond, name);
+    if (env.variantAt(to) < 0) {
+      fb.byte(251);
+      fb.u32leb(23);   // ref.cast (ref $T) — the `is` above has already answered
+      fb.i32leb(env.structType(env.canonType(to)));
+    }
+    env.addLocal(name, to);
+    fb.byte(33);
+    fb.u32leb(env.localCount - 1);
+  }
+}
+
+/** The value of the local `name`, read through the `x is T` in `cond` that names it. */
+void emitLocalValue(B fb, u8[] src, Lexed lexed, Env env, Expr cond, string name) {
+  match (cond.kind) {
+    Binary(op, left, right): {
+      if (narrowedBy(src, lexed, env, left).indexOf(name + " ") == 0
+          || narrowedBy(src, lexed, env, left).indexOf(";" + name + " ") >= 0) {
+        emitLocalValue(fb, src, lexed, env, left, name);
+      } else {
+        emitLocalValue(fb, src, lexed, env, right, name);
+      }
+    }
+    Is(left, target, other, negated): { emitExpr(fb, src, lexed, env, left); }
+    default: { }
+  }
 }
 
 /**
@@ -15250,6 +15359,27 @@ void emitConversion(B fb, Env env, string from, string to, i32 op) {
   string fromCore = from.len() > 1 && from.slice(from.len() - 1, from.len()) == "?"
     ? from.slice(0, from.len() - 1)
     : from;
+  // **Down from an enum to one of its variants**, which share one struct: there is no type to cast to,
+  // so the check `as!` promises is on the tag — a value of another variant traps, where nothing was
+  // emitted and `e as! A` on a `B` read `B`'s payload slots as `A`'s. A null passes only into `A?`.
+  i32 cvi = env.variantAt(castTo);
+  if (cvi >= 0 && op == kAsBang() && env.variantOwners[cvi] == env.canonType(fromCore)) {
+    i32 tmp = env.scratchNamed("variant cast", fromCore);
+    fb.byte(34); fb.u32leb(tmp);                       // local.tee
+    fb.byte(32); fb.u32leb(tmp);
+    fb.byte(209);                                      // ref.is_null
+    fb.byte(4); fb.byte(64);                           // if
+    if (castTo == to) { fb.byte(0); }                  // unreachable — a null is no `A`
+    fb.byte(5);                                        // else
+    emitTagOf(fb, env, tmp, env.variantOwners[cvi]);
+    fb.byte(65); fb.i32leb(env.variantTags[cvi]);
+    fb.byte(71);                                       // i32.ne
+    fb.byte(4); fb.byte(64);
+    fb.byte(0);                                        // unreachable — another variant
+    fb.byte(11);
+    fb.byte(11);
+    return;
+  }
   bool downcast = from != "anyref" && env.isStructName(env.canonType(fromCore))
     && isDescendantStruct(env, env.canonType(castTo), env.canonType(fromCore));
   if ((from == "anyref" || downcast) && to != "i31ref" && env.isStructName(env.canonType(castTo))) {
@@ -15815,7 +15945,7 @@ string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms
   string en = matchSubjectE(src, lexed, env, subject, arms);
   if (isUnionName(en)) {
     for (i32 a = 0; a < arms.len(); a++) {
-      if (arms[a].variantTok < 0) { continue; }
+      if (arms[a].variantTok < 0 || isNullArmE(lexed, arms[a])) { continue; }
       if (unionArmMemberE(env, en, tokenTextOf(src, lexed, arms[a].variantTok), src, lexed, arms[a].variantTok) == "") {
         return "the arm " + tokenTextOf(src, lexed, arms[a].variantTok) + " names no alternative of " + en;
       }
@@ -16475,6 +16605,27 @@ bool isFloatLiteral(Expr e) {
  * or an array literal, whose elements may be numbers that are typed only by the array they land in.
  * A comparison of its own type against the slot's would be comparing against a guess.
  */
+/**
+ * The variant `target` names on the generic enum instance `left` is, keyed as the instance keys it —
+ * `Opt<i32>.Some` for `o is Opt.Some` — or "" when it names none. A generic enum's variants have no
+ * name of their own, so the bare token the parser kept is asked of the subject's own instance, as a
+ * `match` arm is.
+ */
+string instanceVariantOf(u8[] src, Lexed lexed, Env env, Expr left, Ty target) {
+  string lt = typeOfE(src, lexed, env, left);
+  if (lt.len() > 1 && lt.slice(lt.len() - 1, lt.len()) == "?") { lt = lt.slice(0, lt.len() - 1); }
+  lt = env.canonType(lt);
+  if (!isInstance(lt)) { return ""; }
+  match (target.kind) {
+    Named(vtok, vargs): {
+      if (vargs.len() > 0) { return ""; }
+      string q = armVariant(env, src, lexed, vtok, lt);
+      return env.variantAt(q) >= 0 ? q : "";
+    }
+    default: { return ""; }
+  }
+}
+
 /** Whether `e` is markup built by its slot's type — a fragment, or a quoted tag — rather than a call. */
 bool builtBySlot(Lexed lexed, Expr e) {
   match (e.kind) {
@@ -17139,6 +17290,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       if (target is null) { return "is null"; }
       string ty3 = typeOfTyName(env, src, lexed, target!);
+      if (env.variantAt(ty3) < 0 && instanceVariantOf(src, lexed, env, left, target!) != "") { return unsupportedValue(src, lexed, env, left); }
       if (env.variantAt(ty3) < 0) {
         string lt3 = unsupportedValue(src, lexed, env, left);
         if (lt3 != "") { return lt3; }

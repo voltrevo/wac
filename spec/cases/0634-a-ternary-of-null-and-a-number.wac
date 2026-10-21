@@ -1,0 +1,10 @@
+// expect: f() = 7
+// why: a ternary of `null` and a typed number has the nullable type, either way round
+// from: spec/2-types/10-nullability.md
+i32? pick(bool c, i32 x) { return c ? x : null; }
+i32? other(bool c, i32 x) { return c ? null : x; }
+export i32 f() {
+  i32 five = 5;
+  auto r = true ? five : null;
+  return (pick(true, 1) ?? 0) + (pick(false, 9) ?? 0) + (other(false, 1) ?? 0) + (other(true, 9) ?? 0) + (r ?? 0);
+}

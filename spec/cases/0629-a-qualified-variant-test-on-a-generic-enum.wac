@@ -1,0 +1,5 @@
+// expect: f() = true
+// why: `x is E.V` names the variant by its enum, for a generic enum too
+// from: spec/2-types/13-enums.md
+enum Opt<T> { Some(T v), None }
+export bool f() { Opt<i32> o = Opt.Some(1); return o is Opt.Some; }

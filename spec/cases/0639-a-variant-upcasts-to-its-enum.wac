@@ -1,0 +1,9 @@
+// expect: f() = 4
+// why: a variant is a subtype of its enum, and `as` goes up the hierarchy
+// from: spec/3-expressions/24-casts.md
+enum E { A(i32 n), B }
+export i32 f() {
+  A a = E.A(4);
+  E e = a as E;
+  return match (e) { A(n): n, B: 0 };
+}

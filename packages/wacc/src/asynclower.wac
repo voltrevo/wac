@@ -3202,7 +3202,7 @@ Expr rebindMatches(Rz z, Expr cond, Stmt[] copies, i32[] n) {
           copies[n[0]] = Stmt(StmtKind.Var(cloneTy(pat.type!), pat.nameTok, eId(c, f), false), cond.line, freshCol(c));
           n[0] = n[0] + 1;
         }
-        Pattern p2 = Pattern(pat.type, f, pat.variantTok, pat.slotNames, pat.slotTests, pat.line, pat.col);
+        Pattern p2 = Pattern(pat.type, f, pat.variantTok, pat.slotNames, pat.slotTests, pat.line, pat.col, pat.parens);
         return Expr(ExprKind.Matches(p2, subject), cond.line, cond.col);
       }
       if (pat.variantTok < 0 || pat.slotNames.len() == 0) { return cond; }
@@ -3220,7 +3220,7 @@ Expr rebindMatches(Rz z, Expr cond, Stmt[] copies, i32[] n) {
           n[0] = n[0] + 1;
         }
       }
-      Pattern p3 = Pattern(pat.type, pat.nameTok, pat.variantTok, slots2, pat.slotTests, pat.line, pat.col);
+      Pattern p3 = Pattern(pat.type, pat.nameTok, pat.variantTok, slots2, pat.slotTests, pat.line, pat.col, pat.parens);
       return Expr(ExprKind.Matches(p3, subject), cond.line, cond.col);
     }
     Binary(op, left, right): {

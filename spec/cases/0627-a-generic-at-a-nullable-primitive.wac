@@ -1,0 +1,11 @@
+// expect: f() = 3
+// why: a generic instantiated at a nullable number works with no other nullable number in the program
+// from: spec/2-types/10-nullability.md
+enum Opt<T> { Some(T v), None }
+export i32 f() {
+  Opt<i32?> o = Opt.Some(3);
+  match (o) {
+    Some(v): { return v ?? 0; }
+    None: { return 0; }
+  }
+}

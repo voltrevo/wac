@@ -1,0 +1,12 @@
+// expect: f() = 5
+// why: a typed pattern tests and binds a union member of any type, a string and an array included
+// from: spec/2-types/18-unions.md
+export i32 f() {
+  union<i32, string> v = "abc";
+  i32[] xs = [1, 2];
+  union<i32, i32[]> w = xs;
+  i32 n = 0;
+  if (string s matches v) { n += s.len(); }
+  if (i32[] a matches w) { n += a.len(); }
+  return n;
+}

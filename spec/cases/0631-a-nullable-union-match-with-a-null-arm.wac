@@ -1,0 +1,5 @@
+// expect: f() = -1
+// why: a match on a nullable union covers null with a null arm
+// from: spec/2-types/18-unions.md
+struct S { i32 x; }
+export i32 f() { union<S, string>? v = null; return match (v) { S: v.x, string: 0, null: -1 }; }

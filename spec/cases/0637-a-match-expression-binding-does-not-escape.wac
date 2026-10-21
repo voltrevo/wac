@@ -1,0 +1,5 @@
+// expect: refused
+// why: a match expression's bindings end with their arm
+// from: spec/2-types/13-enums.md
+enum E { S(string e), N(i32 e) }
+export i32 f() { E e = E.N(5); i32 r = match (e) { N(x): x, default: 0 }; return x; }

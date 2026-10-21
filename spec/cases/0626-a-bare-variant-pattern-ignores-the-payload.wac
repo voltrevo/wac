@@ -1,0 +1,5 @@
+// expect: f() = true
+// why: a pattern with no parentheses ignores the payload, in `matches` as in a match arm
+// from: spec/3-expressions/25-control-flow.md
+enum E { A(i32 n), B }
+export bool f() { E e = E.A(1); return A matches e; }

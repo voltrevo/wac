@@ -1192,11 +1192,22 @@ bool looksLikeTypeHere(P p) {
   if (next == kLbrack() || next == kQuestion()) { return true; }
   // Lowercase initial: a variable, by the struct-naming convention.
   if (startsLower(p.src, p.startAt(0), p.lenAt(0))) { return false; }
+  // **`Box<i32>` is a type unless what follows the angles continues a value** — `Cache<i32>.marker`
+  // is a static field and `Make<i32>(…)` a call. Asked of the tokens after the type arguments, since
+  // the angles alone cannot say which.
+  if (next == kLt()) {
+    i32 k = afterTypeArgs(p, 1);
+    if (k < 0) { return false; }
+    i32 after = p.kindAt(k);
+    return after != kDot() && after != kLparen() && after != kLbrack();
+  }
+  // **Only what binds tighter than `is` continues a value.** `is` binds as tightly as `<` (spec ch22
+  // `§wac-precedence-tests-78cupm3`), so a name followed by `&&`, `||`, `==`, `!=` or a comparison ends
+  // its operand whichever it is — and an uppercase one is a type by the naming convention. Listing
+  // those here sent `p is P && c` down the value path, to *a type name is not a value*.
   bool exprFollow = next == kLparen() || next == kIdent()
       || next == kPlus() || next == kMinus() || next == kStar() || next == kSlash()
-      || next == kPercent() || next == kEq() || next == kNe()
-      || next == kLt() || next == kGt() || next == kLe() || next == kGe()
-      || next == kAndAnd() || next == kOrOr() || next == kDot()
+      || next == kPercent() || next == kDot()
       || next == kLbrack() || next == kBang() || next == kTilde();
   bool typeFollow = next == kRparen() || next == kSemi() || next == kRbrace()
       || next == kComma() || next == kColon() || next == kEof();
@@ -1375,6 +1386,7 @@ Pattern parsePattern(P p) {
     i32 v = p.advance();
     IntList names = IntList.create();
     TyOptList tests = TyOptList.create();
+    bool parens = p.at1(kLparen());
     if (p.eat(kLparen())) {
       while (!p.at1(kRparen()) && !p.at1(kEof())) {
         if (p.eat(kIs())) {
@@ -1388,11 +1400,11 @@ Pattern parsePattern(P p) {
       }
       p.expect(kRparen());
     }
-    return Pattern(null, 0 - 1, v, names.take(), tests.take(), line, col);
+    return Pattern(null, 0 - 1, v, names.take(), tests.take(), line, col, parens);
   }
   Ty t = parseTypeArg(p);
   i32 name = p.expect(kIdent());
-  return Pattern(t, name, 0 - 1, i32[](), Ty?[](), line, col);
+  return Pattern(t, name, 0 - 1, i32[](), Ty?[](), line, col, false);
 }
 
 /** The inner type of a nullable, or the type itself when it is not one. */

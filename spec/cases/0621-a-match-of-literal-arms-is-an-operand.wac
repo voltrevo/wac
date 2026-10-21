@@ -1,0 +1,5 @@
+// expect: f() = 21
+// why: a match expression whose arms are all literals has the literals' type, and can be an operand
+// from: spec/2-types/13-enums.md
+enum S { A, B }
+export i32 f() { S s = S.B; return 1 + match (s) { A: 10, B: 20 }; }

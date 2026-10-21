@@ -1,0 +1,8 @@
+// expect: refused
+// why: tuple `==` is defined when every member type has `==`, and `i32?` has none
+// from: spec/2-types/14-tuples.md
+export bool f() {
+  (i32?, i32) a = (null, 1);
+  (i32?, i32) b = (null, 1);
+  return a == b;
+}

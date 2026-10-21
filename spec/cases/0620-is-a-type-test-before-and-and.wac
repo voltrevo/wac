@@ -1,0 +1,17 @@
+// expect: f() = 3
+// why: `is` binds as tightly as `<`, so in `p is P && c` the uppercase name ends at `&&` and is a type; and a
+//      generic type after `is` is one too
+// from: spec/3-expressions/22-operators.md
+struct P { i32 x; }
+struct Q : P { i32 y; }
+struct Box<T> { T v; }
+export i32 f() {
+  P p = Q(1, 2);
+  bool c = true;
+  Box<i32> b = Box<i32>(1);
+  i32 n = 0;
+  if (p is Q && c) { n += 1; }
+  if (p is P == c) { n += 1; }
+  if (b is Box<i32>) { n += 1; }
+  return n;
+}

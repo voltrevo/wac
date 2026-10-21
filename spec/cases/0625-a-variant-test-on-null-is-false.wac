@@ -1,0 +1,11 @@
+// expect: f() = 2
+// why: a type test answers whether the value has the type, and null has none — for a variant as for a struct
+// from: spec/2-types/13-enums.md
+enum E { A(i32 n), B }
+export i32 f() {
+  E? e = null;
+  i32 n = 0;
+  if (!(e is A)) { n += 1; }
+  if (!(e is E.B)) { n += 1; }
+  return n;
+}

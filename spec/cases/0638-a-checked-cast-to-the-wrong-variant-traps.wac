@@ -1,0 +1,5 @@
+// expect: traps f
+// why: `as!` down the hierarchy is checked, and a value of another variant traps
+// from: spec/3-expressions/24-casts.md
+enum E { A(i32 n), B(string s) }
+export i32 f() { E e = E.B("hey"); A a = e as! A; return a.n; }

@@ -1,0 +1,6 @@
+// expect: f() = 0
+// why: a match on a nullable subject must cover null, with a null arm or a default — so a default after every
+//      variant is not unreachable
+// from: spec/2-types/10-nullability.md
+enum S { A, B }
+export i32 f() { bool c = false; S? s = c ? S.A : null; return match (s) { A: 1, B: 2, default: 0 }; }

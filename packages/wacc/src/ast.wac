@@ -555,6 +555,11 @@ export struct Pattern {
   Ty?[] slotTests;
   i32 line;
   i32 col;
+  /**
+   * Whether the variant was written with parentheses. `A` ignores the payload whatever it is (spec ch13
+   * `[§enum-match-ignore]`) and `A()` says there is none, which an empty `slotNames` cannot tell apart.
+   */
+  bool parens;
 }
 
 /** One variant of an `enum` declaration. Payload fields are shaped like params. */

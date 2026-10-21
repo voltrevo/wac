@@ -1,0 +1,5 @@
+// expect: f() = 6
+// why: bindings in a match expression are scoped to their arm, so two arms may bind one name at two types
+// from: spec/2-types/13-enums.md
+enum E { S(string e), N(i32 e) }
+export i32 f() { E e = E.N(5); return match (e) { S(x): x.len(), N(x): x + 1 }; }

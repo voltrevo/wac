@@ -49,7 +49,7 @@ import {
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
   kLbrace, kQuestion, kSymName, kString, kNull, kConst, kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq,
-  kCaretEq, kInc,
+  kCaretEq, kInc, kDot,
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
@@ -2103,11 +2103,43 @@ void checkMatches(C c, Expr e, Pattern pat, Expr subject) {
     c.reportWith(errPatternType(), pat.line, pat.col, core + " has no variant " + vname);
     return;
   }
-  if (pat.slotNames.len() != arity) {
+  // **No parentheses ignores the payload** (spec ch13 `[§enum-match-ignore]`), as a match arm's does:
+  // only a written list has to name every field.
+  if (pat.parens && pat.slotNames.len() != arity) {
     c.reportWith(errPatternArity(), pat.line, pat.col,
                  vname + " carries " + countText(arity) + ", and this pattern names " +
                  countText(pat.slotNames.len()));
   }
+}
+
+/**
+ * Whether `t` is `Enum.Variant` written after `is`, naming a variant of the generic enum `have` is an
+ * instance of. The parser keeps only the variant's token, so the enum is read off the two before it.
+ */
+bool qualifiedGenericVariant(C c, Ty t, string have) {
+  match (t.kind) {
+    Named(tok, args): {
+      if (args.len() > 0 || tok < 2 || tokenKind(c, tok - 1) != kDot()) { return false; }
+      string base = templateOf(withoutNull(have) == "" ? have : withoutNull(have));
+      if (!c.isEnum(base) || !c.isGeneric(base) || tokenText(c, tok - 2) != base) { return false; }
+      return c.variantArityIn(base, tokenText(c, tok)) >= 0;
+    }
+    default: { return false; }
+  }
+}
+
+/** Whether every member of tuple type `t` — a nested tuple's included — has `==`. */
+bool tupleComparable(C c, string t) {
+  string[] ms = tupleMembers(t);
+  for (i32 i = 0; i < ms.len(); i++) {
+    string m = ms[i];
+    if (isTupleName(m)) {
+      if (!tupleComparable(c, m)) { return false; }
+      continue;
+    }
+    if (m != "string" && !startsWithFn(m) && isReferenceName(c, m)) { return false; }
+  }
+  return true;
 }
 
 /** The first type up `name`'s chain that has a private field and is not the body being checked, or `""`. */
@@ -6292,10 +6324,13 @@ export string typeOfExpr(C c, Expr e) {
         // `1` is an `f64`, which is why a literal cannot be asked what it is here — reading one as
         // `i32` refused a program the spec runs.
         if (litFamily(c, arms[i].value!) != litNone()) { continue; }
-        // With the subject narrowed, as the arm is checked: `string: cell` is a string.
+        // With the subject narrowed and the arm's bindings in scope, as the arm is checked: `string:
+        // cell` is a string, and `N(x): x + 1` is whatever `N` carries.
+        i32 namesBefore = openArmScope(c, subject, arms[i]);
         string narrowedFrom = armNarrowing(c, subject, arms[i]);
         string at = typeOfExpr(c, arms[i].value!);
         restoreNarrowing(c, subject, narrowedFrom);
+        closeArmScope(c, namesBefore);
         if (at == typeNone() || at == "") { return typeNone(); }
         // The same unification a ternary's branches get — `unifyArms`, shared rather than restated.
         // This required the arms to be *equal*, so a nullable arm or a subtype pair answered unknown,
@@ -7224,6 +7259,13 @@ void checkExpr(C c, Expr e) {
           c.report(errNotComparable(), e.line, e.col);
           return;
         }
+        // **A tuple has `==` when every member does** (spec ch14 `[§wac-tuple-equality-9cjg4r6]`), and
+        // a tuple is no reference, so the rule above never looked inside one: `(i32?, i32)` compared
+        // clean here and the emitter declined it.
+        if ((k == kEq() || k == kNe()) && isTupleName(nl) && !tupleComparable(c, nl)) {
+          c.report(errNotComparable(), e.line, e.col);
+          return;
+        }
       }
       // **Arithmetic on a reference**, which is the same question one operator family along. This
       // asked about `bool` and funcrefs only, so `S + S`, `E * E`, `i32[] - i32[]` and
@@ -7456,7 +7498,11 @@ void checkExpr(C c, Expr e) {
       // variant needs importing like any other name (`§wac-type-name-scope-8vqk3mn`). The identity
       // form `x is Other`, where `Other` is a variable, arrives as `other` rather than `target` and
       // is untouched by this.
-      if (!(target is null)) {
+      if (!(target is null) && qualifiedGenericVariant(c, target!, typeOfExpr(c, left))) {
+        // `o is Opt.Some` on an `Opt<i32>`: a generic enum's variant has no name of its own — the bare
+        // `o is Some` is refused for that reason (`spec/cases/0037`) — but qualified by its enum it
+        // names the subject's own instance's (spec ch13 `[§enum-is-qualified-8jkq4wp]`).
+      } else if (!(target is null)) {
         string want = typeOfTy(c, target!);
         // **`A is B` where the two share no ancestor is always false** — the second of
         // `issues/lang/0126`'s three. Legal, and the reader believes it defends something.
@@ -7651,15 +7697,16 @@ void checkExpr(C c, Expr e) {
       // The bindings are declared *here* rather than in `declareStmt`, because that walks statements
       // and this is an expression: a `match` used for its value can sit inside an initialiser or a
       // return, where the declaration pass never goes. Three files said so — `Some(v): v * 3`
-      // reported `v` as undefined. Declaring them at the point of use is enough because an arm's
-      // value is walked immediately afterwards, and leaving them in scope for the rest of the
-      // function is over-permissive in the silent direction, which is the one to err in.
+      // reported `v` as undefined.
+      //
+      // **In a scope of the arm's own, retired after it** (spec ch13: bindings are scoped to the arm).
+      // They used to stay for the rest of the function, which was not only over-permissive: a second
+      // arm binding the same name at another type kept the first one's, so `S(x): x.len(), N(x): x + 1`
+      // was refused, and `x` read after the match got past here and was declined by the emitter.
       checkArmVariants(c, subject, arms, e.line, e.col);
+      string[] shapes = string[].filled(arms.len(), "");
       for (i32 i = 0; i < arms.len(); i++) {
-        for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
-          if (tokenText(c, arms[i].bindingToks[b]) == "is") { continue; }
-          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
-        }
+        i32 namesBefore = openArmScope(c, subject, arms[i]);
         checkBindingCollision(c, subject, arms[i]);
         checkPayloadIs(c, subject, arms[i]);
         // **An arm of an expression match narrows too.** Only the statement form did, so
@@ -7671,11 +7718,15 @@ void checkExpr(C c, Expr e) {
         bool wasConst = subj == "" ? false : c.isConstName(subj);
         bool wasAlias = subj == "" ? false : c.isAliasOnlyName(subj);
         if (subj != "" && arms[i].variantTok >= 0) { c.setConstFlags(subj, true, false); }
-        if (!(arms[i].value is null)) { checkExpr(c, arms[i].value!); }
+        if (!(arms[i].value is null)) {
+          checkExpr(c, arms[i].value!);
+          shapes[i] = armShape(c, arms[i].value!);
+        }
         if (subj != "") { c.setConstFlags(subj, wasConst, wasAlias); }
         restoreNarrowing(c, subject, saved);
+        closeArmScope(c, namesBefore);
       }
-      checkArmValueTypes(c, arms, e.line, e.col);
+      checkArmValueTypes(c, shapes, e.line, e.col);
     }
     // `[1, 2] as i32[]`, `[1.5] as i8[]`, `E[].filled(2, 5)` — every element and the fill must fit the element
     // type, which is the same question as an initialiser with the type coming from the `[]`.
@@ -11771,7 +11822,10 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
     // The same condition as `assignable`'s, deliberately: a primitive still does not widen to
     // `anyref`, so `5 as anyref` stays a downcast and stays reported.
     bool toAnyref = toBase == "anyref" && (fromBase == "i31ref" || isReferenceType(c, fromBase));
-    bool widensType = fromBase == toBase || descendsFrom(c, fromBase, toBase) || toAnyref;
+    // **A variant is a subtype of its enum** (spec ch13), and `descendsFrom` follows struct parents only,
+    // so `a as E` on an `A` was reported as going *down* — while `E e = a;` compiled.
+    bool variantUp = fromBase != "" && variantOwnerOf(c, fromBase) == toBase;
+    bool widensType = fromBase == toBase || descendsFrom(c, fromBase, toBase) || toAnyref || variantUp;
     // **And `anyref` is already nullable**, so nothing is taken away by casting a `S?` into it. This
     // is the nullability half of the same fact as `toAnyref` above and it has to be said separately,
     // because the two conditions are independent by design — the comment above this block says so.
@@ -12031,11 +12085,8 @@ void declareStmt(C c, Stmt s) {
       // name is not. `while (cur is not null) { cur = cur!.next; }` walks a list in a `const this`
       // method, which is what ten of the spec's own linked-list programs do.
       if (!isConst && aliasesConst) { c.markAliasOnly(tokenText(c, nameTok)); }
-      // **A `match` used as an initialiser binds names too**, and this walked only statements — so
-      // `i32 got = match (o) { Some(v): v * 3, … };` left `v` undeclared, every arm typed as
-      // unknown, and the whole initialiser unknown with them. The statement form two arms down has
-      // always done this; the expression form was simply never walked.
-      if (init is not null) { declareMatchBindings(c, init!); }
+      // A `match` used as an initialiser binds names too, scoped to each arm: the checking walk and
+      // `typeOfExpr` declare them there (`openArmScope`), so nothing is declared for the function here.
     }
     Destructure(whole, pattern, init): { declareBinding(c, pattern, destructuredType(c, whole, pattern, init)); }
     Block(body): { declareScoped(c, body); }
@@ -12087,33 +12138,6 @@ void declareStmt(C c, Stmt s) {
         }
         declareAll(c, arms[i].body);
         c.popScope();
-      }
-    }
-    default: { }
-  }
-}
-
-/** Every name declared in a list of statements. */
-/**
- * Declare the bindings of a `match` written as an expression.
- *
- * `declareAll` walks statements, and an arm's bindings are declared where the statement form is
- * walked. An initialiser is an *expression*, so a match in one was never reached and its bindings
- * never existed — which made every arm mentioning one unknown, and the match unknown with them.
- *
- * Only the initialiser itself, not every expression inside it: a match nested deeper is a shape this
- * repository does not contain, and walking all of `ExprKind` to find one would be a lot of code for
- * a case nothing writes. The bindings are declared with `armBindingType`, the same answer the
- * statement form uses.
- */
-void declareMatchBindings(C c, Expr e) {
-  match (e.kind) {
-    MatchExpr(subject, arms): {
-      for (i32 i = 0; i < arms.len(); i++) {
-        for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
-          if (tokenText(c, arms[i].bindingToks[b]) == "is") { continue; }
-          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
-        }
       }
     }
     default: { }
@@ -13144,12 +13168,31 @@ void checkStmt(C c, Stmt s, Ty want) {
  * disagreement between arms. Two concrete types that cannot stand in for one another in either
  * direction are the case worth reporting, and the second one is where the mistake reads.
  */
-void checkArmValueTypes(C c, Arm[] arms, i32 line, i32 col) {
+/**
+ * Open a scope for a match expression's arm and declare its bindings in it; answers what to hand
+ * `closeArmScope`. A fresh scope, so a name another arm bound is a new binding rather than a clash.
+ */
+i32 openArmScope(C c, Expr subject, Arm arm) {
+  i32 before = c.nameCount;
+  c.pushScope(Stmt[]());
+  for (i32 b = 0; b < arm.bindingToks.len(); b++) {
+    if (tokenText(c, arm.bindingToks[b]) == "is") { continue; }
+    c.declare(tokenText(c, arm.bindingToks[b]), armBindingType(c, subject, arm, b));
+  }
+  return before;
+}
+
+/** Retire an arm's bindings: the names declared since `openArmScope`, and its scope. */
+void closeArmScope(C c, i32 before) {
+  c.popScope();
+  c.nameCount = before;
+}
+
+/** The arms' value shapes, as `armShape` gave them with each arm's bindings in scope: "" for none. */
+void checkArmValueTypes(C c, string[] shapes, i32 line, i32 col) {
   string first = "";
-  for (i32 i = 0; i < arms.len(); i++) {
-    if (arms[i].value is null) { continue; }
-    Expr v = arms[i].value!;
-    string vt = armShape(c, v);
+  for (i32 i = 0; i < shapes.len(); i++) {
+    string vt = shapes[i];
     if (vt == "") { continue; }
     if (first == "") { first = vt; continue; }
     if (vt == first) { continue; }
@@ -14118,14 +14161,29 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   bool nullArm = false;
   bool anyDefault = false;
   for (i32 i = 0; i < arms.len(); i++) {
-    if (isNullArm(c, arms[i])) { nullArm = true; }
+    if (isNullArm(c, arms[i])) {
+      // A second `null` arm is a repeat, as a second arm for one variant is.
+      if (nullArm) { c.reportTok(errDuplicateCase(), arms[i].variantTok - 1, ""); }
+      nullArm = true;
+    }
     if (arms[i].variantTok < 0) { anyDefault = true; }
   }
+  // Whether the `default` is what covers `null`, which makes it reachable however many variants the
+  // other arms name — `match (s) { A: 1, B: 2, default: 0 }` on an `S?` has nowhere else for a null to go.
+  bool defaultCoversNull = false;
   if (withoutNull(t) != "") {
     if (!nullArm && !anyDefault) {
       c.reportWith(errMatchNullable(), subject.line, subject.col, "match does not cover null");
       return;
     }
+    // **`T??` has two absent states and an arm covers one** — absent, and present holding `null` —
+    // so no set of arms can be exhaustive over it. It reached the emitter and was declined there.
+    if (withoutNull(withoutNull(t)) != "") {
+      c.reportWith(errMatchNullable(), subject.line, subject.col,
+                   "a match covers null once, and " + t + " has two ways to be absent");
+      return;
+    }
+    defaultCoversNull = !nullArm;
     t = withoutNull(t);
   } else if (nullArm) {
     for (i32 i = 0; i < arms.len(); i++) {
@@ -14285,7 +14343,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   }
   // And the other way round: once every variant is named, an `else` is a branch nothing reaches — and
   // here there is an arm to point at, so it gets pointed at.
-  if (hasElse && covered == total) {
+  if (hasElse && covered == total && !defaultCoversNull) {
     if (firstElse >= 0) { c.reportTok(errElseUnreachable(), firstElse, ""); }
     else { c.report(errElseUnreachable(), mline, mcol); }
   }

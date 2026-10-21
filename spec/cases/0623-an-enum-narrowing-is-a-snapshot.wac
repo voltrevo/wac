@@ -1,0 +1,11 @@
+// expect: f() = 2
+// why: `if (s is V)` shadows `s` for the block with a const binding at the variant's type, so a later write
+//      to the variable through a lambda does not change what the block reads
+// from: spec/2-types/13-enums.md
+enum S { Circle(i32 r), Sq(i32 side) }
+export i32 f() {
+  S s = S.Circle(2);
+  fn<void()> flip = () => { s = S.Sq(9); };
+  if (s is Circle) { flip(); return s.r; }
+  return -1;
+}

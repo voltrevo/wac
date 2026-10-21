@@ -265,7 +265,9 @@ export string hintFor(i32 code) {
   // this is the cause: recursion on the *same* type parameter is the commonest shape there is.
   if (code == 53) { return "a recursive generic must pass `T` along, not something that contains it"; }
   if (code == 30) { return "use `as!` — a cast down the hierarchy has to be checked"; }
-  if (code == 40) { return "unwrap it with `!`, or test it with `is null` first"; }
+  // Not "test it with `is null` first": a test does not narrow a nullable (`issues/lang/0321a`), so a
+  // reader who followed that advice met the same refusal on the next line.
+  if (code == 40) { return "unwrap it with `!`, or give it a default with `??`"; }
   if (code == 29) { return "quote it — `core` included, since D5 removed the one bare spelling"; }
   if (code == 46) { return "the cast can be removed"; }
   // Kept useful for the float case without asserting the literal is one — `i32 b = 5000000000;` was
@@ -279,7 +281,7 @@ export string hintFor(i32 code) {
   if (code == 57) { return "import the type, or check the spelling"; }
   if (code == 58) { return "add the missing arms, or a `default`"; }
   if (code == 60) { return "remove the `default` — every variant is already covered"; }
-  if (code == 62) { return "unwrap the subject with `!`, or test it with `is null` first"; }
+  if (code == 62) { return "unwrap the subject with `!`, or give it a default with `??`"; }
   if (code == 209) { return "compare against the bytes — `\"é\".toBytes()` is 195 169, not 233"; }
   if (code == 210) { return "`core/` and `std/` are carried inside the compiler — run `wac task gen:core` if you have edited one"; }
   if (code == 211) { return "declare the function `async`, or `.wait()` the ticket — which blocks"; }
