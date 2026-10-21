@@ -18,7 +18,7 @@
 // dropped, which is not. **Everything read from a document becomes a text node**, never markup, so the
 // spec's own `<div>`s and `</style>`s are characters on the page.
 //
-// It was `site/src/next/specModel.ts` and `Spec.tsx`, which loaded each chapter in the browser.
+// It was site/src/next/specModel.ts and Spec.tsx, which loaded each chapter in the browser.
 
 import { Cli } from "std";
 import { Vec } from "core";

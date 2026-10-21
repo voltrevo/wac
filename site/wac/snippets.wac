@@ -1,8 +1,7 @@
 // The language's example snippets, for the pages that print them: `language.wac` and `run.wac`.
 //
-// Carried over unchanged from the React site's `site/src/snippets.ts`, which `site/tools/site.test.ts`
-// compiles by name. Two copies of a snippet is two things to keep true; the React copy goes when its
-// pages do.
+// Carried over unchanged from the React site's site/src/snippets.ts. Each one a page invites a reader
+// to run is compiled by `site/wac/test/site_test.wac`.
 
 export static string EX_ENUM = """
   enum Shape {
