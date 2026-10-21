@@ -1,0 +1,12 @@
+// expect: f() = 82
+// why: importing a struct makes its static fields usable, directly and through a namespace
+// from: spec/2-types/12-structs.md
+// ---- lib.wac ----
+export struct P {
+  static i32 K = 40;
+  i32 x;
+}
+// ---- main.wac ----
+import { P } from "./lib.wac";
+import * as lib from "./lib.wac";
+export i32 f() { return P.K + lib.P.K + 2; }

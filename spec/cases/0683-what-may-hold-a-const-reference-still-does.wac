@@ -1,0 +1,17 @@
+// expect: f() = 6
+// why: a const binding, a rebindable `(const T)` binding, a const array and a const field take const
+//      references, and reading through any of them is fine
+// from: spec/2-types/17-const.md
+struct In { i32 v; }
+struct Box { const In i; }
+export i32 f() {
+  const In c = In(1);
+  const In d = In(2);
+  (const In) m = c;
+  m = d;
+  const In[] xs = [c, d];
+  i32 n = 0;
+  for (In x in xs) { n += x.v; }
+  Box b = Box(c);
+  return m.v + n + b.i.v;
+}

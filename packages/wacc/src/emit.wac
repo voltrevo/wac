@@ -11441,6 +11441,23 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             lcap = env.captureAt(env.emittingLambda, lraw);
             if (lcap >= 0) { lty = env.capTypes[env.emittingLambda][lcap]; }
           }
+          // **Or a static holding one** — `static fn<i32(i32)> F = triple;` called as `F(2)`. A
+          // module static lives in a global, which `emitNameValue` does not read; without this the call
+          // reached the construction path, which declined it as "a call to F".
+          i32 sci = lcap < 0 && !isFuncrefType(lty) && env.localAt(lraw) < 0 ? funcrefStatic(env, src, lexed, tok) : 0 - 1;
+          if (sci >= 0) {
+            string sty = env.constTypes[sci];
+            fb.byte(35); fb.u32leb(env.constGlobal[sci]);   // global.get
+            fb.byte(251); fb.u32leb(2); fb.u32leb(env.pairType(sty)); fb.u32leb(1);   // struct.get env
+            for (i32 i = 0; i < args.len(); i++) {
+              emitExprAt(fb, src, lexed, env, args[i], sigParamAt(sty, i));
+            }
+            fb.byte(35); fb.u32leb(env.constGlobal[sci]);
+            fb.byte(251); fb.u32leb(2); fb.u32leb(env.pairType(sty)); fb.u32leb(0);   // struct.get fn
+            fb.byte(20);   // call_ref
+            fb.u32leb(env.sigType(envSig(sty)));
+            return;
+          }
           if (isFuncrefType(lty)) {
             // **The env first, then the arguments, then the funcref** — `design/lang/0002`. A `fn[…]`
             // value is a pair, so a call reads both of its fields. `emitNameValue` pushes the pair
@@ -11759,6 +11776,15 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           if (sowner != "") {
             i32 sa = env.funcAt(sowner + "." + mname);
             if (!haveRequired(env, sa, sowner + "." + mname)) { return; }
+            // **`(Base.f)(b)` is the same call as `b.f()`** (spec ch20 `§wac-fnref-inline-f7km2xq`), so
+            // a virtual method named on its type dispatches on the receiver it is handed first.
+            string[] sovers = env.funcRecv[sa] != "" && args.len() > 0 ? overridersOf(env, sowner, mname, sa) : string[]();
+            if (sovers.len() > 0) {
+              Expr[] rest = Expr[].filled(args.len() - 1, args[0]);
+              for (i32 i = 1; i < args.len(); i++) { rest[i - 1] = args[i]; }
+              emitVirtualCall(fb, src, lexed, env, args[0], sowner, mname, sa, rest, sovers, e.line, e.col);
+              return;
+            }
             for (i32 i = 0; i < args.len(); i++) {
               emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(sa, i));
             }
@@ -12560,6 +12586,10 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
             if (cap3 >= 0) { lt3 = env.capTypes[env.emittingLambda][cap3]; }
           }
           if (isFuncrefType(lt3)) { return sigReturn(lt3); }
+          if (env.localAt(nm3) < 0) {
+            i32 sc3 = funcrefStatic(env, src, lexed, tok);
+            if (sc3 >= 0) { return sigReturn(env.constTypes[sc3]); }
+          }
           string n2 = typeOfTyName(env, src, lexed, ctype);
           if (env.isStructName(n2)) { return n2; }
           i32 at = env.funcAt(n2);
@@ -13169,6 +13199,30 @@ void emitVirtualCall(B fb, u8[] src, Lexed lexed, Env env, Expr obj, string ot, 
   }
 }
 
+/**
+ * A wrapper's call: the locals `args` — the receiver first, when there is one — passed to function
+ * `index`, or, for a virtual method `overs` override, to the implementation the receiver's runtime type
+ * has: a `ref.test` per overrider, deepest first, as `emitVirtualCall` chooses at a call site.
+ */
+void writeDispatch(B b, Env env, i32[] args, string ret, string[] overs, string mname, i32 index) {
+  bool none = ret == "void" || ret == "never" || ret == "";
+  for (i32 k = 0; k < overs.len(); k++) {
+    i32 impl = env.funcAt(overs[k] + "." + mname);
+    b.byte(32); b.u32leb(args[0]);
+    b.byte(251); b.u32leb(20); b.i32leb(env.structType(overs[k]));   // ref.test (ref $S)
+    b.byte(4);
+    if (none) { b.byte(64); } else { writeValType(b, env, ret); }
+    b.byte(32); b.u32leb(args[0]);
+    b.byte(251); b.u32leb(23); b.i32leb(env.structType(overs[k]));   // ref.cast
+    for (i32 i = 1; i < args.len(); i++) { b.byte(32); b.u32leb(args[i]); }
+    b.byte(16); b.u32leb(env.funcIndex[impl]);
+    b.byte(5);
+  }
+  for (i32 i = 0; i < args.len(); i++) { b.byte(32); b.u32leb(args[i]); }
+  b.byte(16); b.u32leb(index);
+  for (i32 k = 0; k < overs.len(); k++) { b.byte(11); }
+}
+
 /** Whether a file interpolates anything — whether it has a `+` the lexer wrote for `\{`. */
 bool hasInterpolation(u8[] src, Lexed lexed) {
   for (i32 t = 0; t < lexed.tokenCount; t++) {
@@ -13191,6 +13245,18 @@ bool hasAsync(u8[] src, Lexed lexed) {
     if (w == "gen" && t + 1 < lexed.tokenCount && lexed.tokens[(t + 1) * tokenStride()] == kLt()) { return true; }
   }
   return false;
+}
+
+/**
+ * The module static the name at `tok` reads, when it holds a function value in a global — so a call
+ * through it is a call through that value — or -1.
+ */
+i32 funcrefStatic(Env env, u8[] src, Lexed lexed, i32 tok) {
+  string nm = tokenTextOf(src, lexed, tok);
+  i32 ci = env.constAt(nm);
+  if (ci < 0) { ci = env.constAt(nameKeyOf(env, src, lexed, tok)); }
+  if (ci < 0 || !isFuncrefType(env.constTypes[ci]) || env.constGlobal[ci] < 0) { return 0 - 1; }
+  return ci;
 }
 
 /** Whether a `+` is the one the lexer wrote for `\{` in an interpolated literal. */
@@ -15899,13 +15965,25 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
   // It takes the env and drops it, then calls this function with everything else. A bound reference
   // will read the env rather than dropping it; this is the unbound case, where the pair carries null.
   env.wrapFuncs.u32leb(env.sigType(envSig(mine)));
+  // **A virtual method taken as a value dispatches as a call does** (spec ch12): both wrappers choose
+  // the implementation by the receiver's runtime type. They called this function directly, so
+  // `Base b = Kid(); fn<i32()> h = b.f;` ran `Base.f` — and so did `Base.f` passed unbound.
+  string[] overs = string[]();
+  string vname = "";
+  if (receiver != "") {
+    for (i32 fi = 0; fi < env.funcCount; fi++) {
+      if (env.funcIndex[fi] != index) { continue; }
+      i32 dot = env.funcs[fi].indexOf(".");
+      vname = dot < 0 ? "" : env.funcs[fi].slice(dot + 1, env.funcs[fi].len());
+      if (vname != "") { overs = overridersOf(env, receiver, vname, fi); }
+    }
+  }
   {
     B wb = B.create();
     wb.u32leb(0);                                       // no locals of its own
-    for (i32 wi = 0; wi < sigParamCount(mine); wi++) {
-      wb.byte(32); wb.u32leb(wi + 1);                   // local.get, skipping the env at 0
-    }
-    wb.byte(16); wb.u32leb(index);                      // call
+    i32[] wargs = i32[].filled(sigParamCount(mine), 0);
+    for (i32 wi = 0; wi < sigParamCount(mine); wi++) { wargs[wi] = wi + 1; }   // skipping the env at 0
+    writeDispatch(wb, env, wargs, ret, overs, vname, index);
     wb.byte(11);                                        // end
     env.wrapCode.u32leb(wb.len);
     env.wrapCode.bytes(wb);
@@ -15924,20 +16002,32 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
   env.boundFuncs.u32leb(env.sigType(envSig(bsig)));
   {
     B bb = B.create();
-    bb.u32leb(0);
-    if (receiver != "") {
-      bb.byte(32); bb.u32leb(0);                        // local.get env
-      bb.byte(251); bb.u32leb(23);                      // ref.cast (ref $Receiver)
-      bb.i32leb(env.structType(env.canonType(receiver)));
-    }
     // The parameters the signature has — one a `void` argument erased is not among them.
     i32 real = 0;
     for (i32 wi = 0; wi < params.len(); wi++) {
-      if (typeOfTyName(env, src, lexed, params[wi].type) == "void") { continue; }
-      real = real + 1;
-      bb.byte(32); bb.u32leb(real);
+      if (typeOfTyName(env, src, lexed, params[wi].type) != "void") { real = real + 1; }
     }
-    bb.byte(16); bb.u32leb(index);                      // call
+    if (overs.len() > 0) {
+      // The receiver, cast out of the env once into a local of its own, after the parameters.
+      bb.u32leb(1); bb.u32leb(1); writeValType(bb, env, receiver);
+      bb.byte(32); bb.u32leb(0);                        // local.get env
+      bb.byte(251); bb.u32leb(23);                      // ref.cast (ref $Receiver)
+      bb.i32leb(env.structType(env.canonType(receiver)));
+      bb.byte(33); bb.u32leb(real + 1);                 // local.set
+      i32[] bargs = i32[].filled(real + 1, 0);
+      bargs[0] = real + 1;
+      for (i32 wi = 0; wi < real; wi++) { bargs[wi + 1] = wi + 1; }
+      writeDispatch(bb, env, bargs, ret, overs, vname, index);
+    } else {
+      bb.u32leb(0);
+      if (receiver != "") {
+        bb.byte(32); bb.u32leb(0);                      // local.get env
+        bb.byte(251); bb.u32leb(23);                    // ref.cast (ref $Receiver)
+        bb.i32leb(env.structType(env.canonType(receiver)));
+      }
+      for (i32 wi = 0; wi < real; wi++) { bb.byte(32); bb.u32leb(wi + 1); }
+      bb.byte(16); bb.u32leb(index);                    // call
+    }
     bb.byte(11);
     env.boundCode.u32leb(bb.len);
     env.boundCode.bytes(bb);
@@ -17244,6 +17334,10 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         Named(tok, typeArgs): {
           string lraw2 = tokenTextOf(src, lexed, tok);
           string lty2 = env.localType(lraw2);
+          if (!isFuncrefType(lty2) && env.localAt(lraw2) < 0) {
+            i32 sc2 = funcrefStatic(env, src, lexed, tok);
+            if (sc2 >= 0) { lty2 = env.constTypes[sc2]; }
+          }
           if (isFuncrefType(lty2)) {
             if (named.len() > 0) { return "named arguments in a call"; }
             if (sigParamCount(lty2) != args.len()) { return "a call with the wrong count"; }

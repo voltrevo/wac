@@ -1,0 +1,9 @@
+// expect: f() = 10
+// why: an alias is another spelling of the same type, so it constructs where it is declared as it does
+//      where it is imported
+// from: spec/2-types/12-structs.md
+struct P { i32 x; }
+type Q = P;
+export struct Box<T> { T value; }
+export { Box<i32> as IntBox };
+export i32 f() { Q q = Q(3); IntBox b = IntBox { value: 7 }; return q.x + b.value; }

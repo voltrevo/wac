@@ -573,8 +573,44 @@ string[] lowerNamespacesIn(string[] paths, string[] sources, const Res res, bool
 
 /** Whether a source could hold anything this file lowers — a cheap test before any lexing. */
 bool mentionsNamespaces(string s) {
-  return s.indexOf("namespace") >= 0 || s.indexOf("* as") >= 0 || dottedSymbolName(s)
-      || dottedListItem(s) || (s.indexOf("struct") >= 0 && s.indexOf("  static ") >= 0);
+  return s.indexOf("namespace") >= 0 || starAs(s) || dottedSymbolName(s)
+      || dottedListItem(s) || (s.indexOf("struct") >= 0 && staticWord(s));
+}
+
+/** Whether a space, tab or line break — the separators a declaration may have between its words. */
+bool isGap(u8 c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+
+/**
+ * `*` and then `as`, with any whitespace between — `import * as lib`. This was `indexOf("* as")`, so
+ * `import *  as lib`, or `*` and `as` on two lines, was never lowered and failed to parse.
+ */
+bool starAs(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] != '*') { continue; }
+    i32 j = i + 1;
+    while (j < b.len() && isGap(b[j])) { j++; }
+    if (j > i + 1 && j + 2 < b.len() && b[j] == 'a' && b[j + 1] == 's' && isGap(b[j + 2])) { return true; }
+  }
+  return false;
+}
+
+/**
+ * The word `static` where a declaration can begin — after whitespace, `{`, `;` or `}`, and before
+ * whitespace. A struct's static field is lowered here; this asked for `"  static "`, two spaces of
+ * indentation, so one written on the struct's own line or indented with a tab was not.
+ */
+bool staticWord(string s) {
+  u8[] b = s.toBytes();
+  i32 at = s.indexOf("static");
+  while (at >= 0) {
+    bool before = at == 0 || isGap(b[at - 1]) || b[at - 1] == '{' || b[at - 1] == ';' || b[at - 1] == '}';
+    bool after = at + 6 < b.len() && isGap(b[at + 6]);
+    if (before && after) { return true; }
+    i32 next = s.slice(at + 6, s.len()).indexOf("static");
+    at = next < 0 ? 0 - 1 : at + 6 + next;
+  }
+  return false;
 }
 
 /**
@@ -634,6 +670,13 @@ NsExports exportsOfFlat(string[] paths, string[] flat, const Res res, i32 f) {
         t = t + 5;
         continue;
       }
+      // **A list exports its names too** — `export { area } from "./rect.wac"` and `export { a, b as c };`.
+      // Only declarations were recorded, so `import * as rl` of a module that re-exported `area` had
+      // no `rl.area`, and a namespace was undefined whenever every name it held came from elsewhere.
+      if (src.kind(t + 1) == kLbrace()) {
+        t = listedExports(src, t + 1, ex.names);
+        continue;
+      }
       i32 nameTok = src.declName(t);
       if (nameTok >= 0) { ex.names.push(src.text(nameTok)); }
     }
@@ -641,6 +684,37 @@ NsExports exportsOfFlat(string[] paths, string[] flat, const Res res, i32 f) {
     if (k == kRbrace() || k == kRparen() || k == kRbrack()) { depth = depth - 1; }
   }
   return ex;
+}
+
+/**
+ * The names an `export { … }` list starting at the `{` token `open` exports, into `into`: each item's
+ * name after `as`, or else its last name — `Box<i32> as IntBox` is `IntBox`, `area` is `area`. A comma
+ * inside a type's `<…>` does not end an item. Answers the token of the closing `}`.
+ */
+i32 listedExports(NsFile src, i32 open, NsStrs into) {
+  i32 angle = 0;
+  string last = "";
+  bool renamed = false;
+  i32 t = open + 1;
+  while (t < src.count() && src.kind(t) != kEof()) {
+    i32 k = src.kind(t);
+    if (k == kLt()) { angle = angle + 1; }
+    if (k == kGt()) { angle = angle - 1; }
+    if (k == kShr()) { angle = angle - 2; }
+    if (angle <= 0 && (k == kComma() || k == kRbrace())) {
+      if (last != "") { into.push(last); }
+      last = "";
+      renamed = false;
+      if (k == kRbrace()) { return t; }
+    } else if (angle <= 0 && k == kAs()) {
+      renamed = true;
+      last = "";
+    } else if (angle <= 0 && k == kIdent() && (renamed || last == "" || src.kind(t - 1) == kDot())) {
+      last = src.text(t);
+    }
+    t = t + 1;
+  }
+  return t;
 }
 
 /** Whether module `m` (or core, -2) exports a declaration called `name`. */
@@ -853,6 +927,14 @@ string rewriteUses(string[] paths, string[] flat, const Res res, NsExports[] exp
       if (!hit.ok) { break; }
       chain = chain + "." + src.text(last + 2);
       last = last + 2;
+      // **A struct with a static field is a declaration and a namespace at once** — `lib.P.K` steps
+      // through `P` to the static `@"P.K"` when it holds one, and stops at `P` otherwise.
+      if (hit.decl && src.kind(last + 1) == kDot() && src.kind(last + 2) == kIdent()
+          && stepInto(exports, hit.module, hit.name, src.text(last + 2)).decl) {
+        module = hit.module;
+        prefix = hit.name;
+        continue;
+      }
       if (hit.decl) { done = true; break; }
       module = hit.module;
       prefix = hit.name;
@@ -1013,6 +1095,11 @@ i32 rewriteImport(string[] paths, const Res res, NsExports[] exports, NsFile src
       wanted.want(hit.module, importItem(hit.name, local));
       removed = removed + 1;
     } else {
+      // **An imported struct with static fields is a namespace too**, so `P.K` reaches `@"P.K"`
+      // while `P` stays imported as the type it is (spec ch27 `§wac-static-field-we2jbmc`).
+      if (resolved && hit.decl && !chainItem && isNamespaceOf(exports, hit.module, hit.name)) {
+        binds.bind(local, hit.module, hit.name);
+      }
       kept = kept + 1;
     }
     i = next;

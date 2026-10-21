@@ -1,0 +1,13 @@
+// expect: f() = 13
+// why: an exported instantiation is the instantiation under any name an importer gives it
+// from: spec/2-types/19-generics.md
+// ---- lib.wac ----
+export struct Box<T> { T value; }
+export { Box<i32> as IntBox };
+// ---- main.wac ----
+import { Box, IntBox as IB } from "./lib.wac";
+export i32 f() {
+  IB a = Box<i32>(6);
+  IB b = IB { value: 7 };
+  return a.value + b.value;
+}

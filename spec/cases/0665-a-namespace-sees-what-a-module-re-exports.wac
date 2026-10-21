@@ -1,0 +1,11 @@
+// expect: f() = 11
+// why: `import * as ns` holds every name the module exports, those it re-exports included
+// from: spec/1-programs/03-namespaces.md
+// ---- rect.wac ----
+export i32 area(i32 w, i32 h) { return w * h; }
+// ---- rlib.wac ----
+export { area } from "./rect.wac";
+export i32 own() { return 5; }
+// ---- main.wac ----
+import * as rl from "./rlib.wac";
+export i32 f() { return rl.area(2, 3) + rl.own(); }

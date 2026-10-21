@@ -1,0 +1,9 @@
+// expect: f() = 66
+// why: a static holding a function value is called like any other function value
+// from: spec/4-static/27-static-declarations.md
+i32 triple(i32 x) { return x * 3; }
+static fn<i32(i32)> F = triple;
+export i32 f() {
+  static fn<i32(i32)> G = triple;
+  return F(2) * 10 + G(2);
+}

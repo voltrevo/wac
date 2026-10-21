@@ -1,0 +1,10 @@
+// expect: f() = 1
+// why: a static_trap in a static_if branch that is not selected has no effect, in a generic too
+// from: spec/4-static/31-static-control.md
+i32 g<T>() {
+  static_if (typeref(T) != typeref(i32)) {
+    static_trap "nope";
+  }
+  return 1;
+}
+export i32 f() { return g<i32>(); }

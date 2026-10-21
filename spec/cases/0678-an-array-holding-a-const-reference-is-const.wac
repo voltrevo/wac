@@ -1,0 +1,6 @@
+// expect: refused
+// why: a fresh array holding a const reference still holds it, so a plain array cannot take it
+// from: spec/2-types/17-const.md
+struct In { i32 v; }
+struct Box { In i; }
+export i32 f() { const In c = In(1); In[] xs = [c]; xs[0].v = 5; return c.v; }

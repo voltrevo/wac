@@ -1,0 +1,12 @@
+// expect: f() = 222
+// why: a virtual method runs the receiver's implementation however it is reached — called, bound to a
+//      receiver as a value, or taken unbound from the type
+// from: spec/2-types/12-structs.md
+struct Base { virtual i32 f(const this) { return 1; } }
+struct Kid : Base { override i32 f(const this) { return 2; } }
+export i32 f() {
+  Base b = Kid();
+  fn<i32()> bound = b.f;
+  fn<i32(Base)> unbound = Base.f;
+  return bound() * 100 + unbound(Kid()) * 10 + (Base.f)(b);
+}

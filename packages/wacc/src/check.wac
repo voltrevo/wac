@@ -35,7 +35,7 @@
 import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFinished, evLimit, evOk, evTrap,
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
          stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt, unfoldTypeName, intOf,
-         vNum, declsOfFiles, noneValue } from "./consteval.wac";
+         vNum, declsOfFiles, noneValue, tokText } from "./consteval.wac";
 import { P, parseProgram } from "./parse.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
@@ -53,7 +53,7 @@ import {
   kCaretEq, kInc, kDot,
 } from "./kinds.wac";
 import {
-  Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
+  Arm, Decl, DeclKind, Expr, ExprKind, Field, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
   Pattern, Stmt, StmtKind, Ty, TyKind, tyPrim, TupleBinding, safeCallReceiver, safeCallName,
 } from "./ast.wac";
 
@@ -1309,6 +1309,22 @@ export void buildStaticView(C c, ViewInputs v) {
 
 /** Whether some file of the graph `v` declares `export type <name>` — asked of the text, before parsing it. */
 bool exportsTypeNamed(ViewInputs v, string name) {
+  // **Or the name an import gives one** — `import { IntBox as IB }` makes `IB` an alias as much as
+  // `IntBox` is, and asked by its own name it matched no `export type` line, so `IB` stayed a name
+  // nothing declared and `IB a = Box<i32>(6)` was "expected IB, found Box<i32>".
+  for (i32 d = 0; d < v.eprog.decls.len(); d++) {
+    match (v.eprog.decls[d].kind) {
+      Import(pathTok, prefixTok, items): {
+        for (i32 i = 0; i < items.len(); i++) {
+          if (items[i].aliasTok == items[i].nameTok) { continue; }
+          if (tokText(v.esrc, v.elexed, items[i].aliasTok) != name) { continue; }
+          string orig = tokText(v.esrc, v.elexed, items[i].nameTok);
+          if (orig != name && exportsTypeNamed(v, orig)) { return true; }
+        }
+      }
+      default: { }
+    }
+  }
   string decl = "export type " + name;
   for (i32 i = 0; i < v.sources.len(); i++) {
     string rest = v.sources[i];
@@ -1417,6 +1433,12 @@ string soleAlternative(string t) {
 bool writableType(C c, string t) {
   string core = withoutNull(t);
   string base = core == "" ? t : core;
+  // A tuple holding a writable member can be written through that member — `t.0.v = 5`.
+  if (isTupleName(base)) {
+    string[] ms = tupleMembers(base);
+    for (i32 i = 0; i < ms.len(); i++) { if (!isConstTy(ms[i]) && writableType(c, ms[i])) { return true; } }
+    return false;
+  }
   return isArrayName(base) || c.isStruct(base);
 }
 
@@ -2176,6 +2198,20 @@ string privateFieldOwnerElsewhere(C c, string name) {
   return "";
 }
 
+/** As `privateFieldOwnerElsewhere`, counting only private fields that have no default. */
+string privateUndefaultedOwnerElsewhere(C c, string name) {
+  string at = templateOf(name);
+  for (i32 hop = 0; hop <= c.structCount; hop++) {
+    if (at == "") { return ""; }
+    for (i32 i = 0; i < c.fieldCount; i++) {
+      if (c.fieldOwners[i] == at && c.isPrivate(at, c.fieldNames[i]) && at != c.bodyOf
+          && !fieldHasDefault(c, i, substituteType(c, name, c.fieldTypes[i]))) { return at; }
+    }
+    at = c.parentOf(at);
+  }
+  return "";
+}
+
 /** `return`, a `defer`, or a `break`/`continue` with no loop of its own around it inside `s`, or null. */
 Stmt? deferLeaves(Stmt s, i32 loops) {
   match (s.kind) {
@@ -2293,6 +2329,10 @@ export i32 errAutoUnresolved() { return 246; }
  * quoted tag with no type to build at all (`design/lang/0017`).
  */
 export i32 errMarkupUnbuilt() { return 247; }
+/** `private virtual` — a method nothing outside its body may see cannot be overridden (spec ch12). */
+export i32 errPrivateVirtual() { return 248; }
+/** A subtype of a struct with a private field that has no default, which nothing could construct. */
+export i32 errUnconstructibleParent() { return 249; }
 /** Two declarations of one name at file scope. */
 export i32 errDuplicateName() { return 64; }
 /** Two fields, two methods, or a field and a method of one name in one struct. */
@@ -3805,6 +3845,11 @@ export struct C {
    * symbol — so a file interpolating one need not import it (`api.wac`, case 0576).
    */
   string coreTextTypes;
+  /**
+   * How many `static_if` branches deep this walk is that only an instantiation decides — both are
+   * checked at the definition, and a `static_trap` in one is not reached there (spec ch31).
+   */
+  i32 undecided;
 
   void noteMarkup(this, Expr e, string k) {
     if (this.markupAtN >= this.markupAtE.len()) {
@@ -3927,7 +3972,7 @@ export struct C {
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
              string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0, null, "|",
-             Expr[](), string[](), 0, "");
+             Expr[](), string[](), 0, "", 0);
   }
 
   /**
@@ -8197,7 +8242,21 @@ void checkExpr(C c, Expr e) {
       match (ctype.kind) {
         Named(tok, typeArgs): {
           string name = c.canon(tokenText(c, tok));
-          if (c.isStruct(name)) {
+          // **An alias constructs the type it names** (spec ch30 `§wac-type-alias-e4gvipb`): `Q(3)` for
+          // `type Q = P;` is `P(3)`, and `IntBox { value: 7 }` is a `Box<i32>`. Only a struct is
+          // constructed this way; anything else an alias names is not callable, as it was.
+          string aliased = "";
+          if (!c.isStruct(name) && typeArgs.len() == 0 && namesTypeDeclC(c, name)) {
+            string at = computedTypeC(c, ctype);
+            if (at != typeNone() && at != "" && c.isStruct(templateOf(at))) { aliased = at; }
+          }
+          if (aliased != "") {
+            checkConstruct(c, aliased, args, named, e);
+            string base = templateOf(aliased);
+            if (named.len() == 0 && args.len() != fieldArity(c, base) && !isBraceConstruct(c, tok)) {
+              c.report(errCtorArity(), e.line, e.col);
+            }
+          } else if (c.isStruct(name)) {
             // A **bare generic** takes its type arguments from wherever it is going. With a target
             // whose template is this one, the construction *is* that type and its arguments are
             // checked against the substituted fields; with no target at all there is nothing to infer
@@ -9563,7 +9622,9 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
   // **Positional construction supplies every field**, so it is refused wherever any of them is private
   // to a body other than this one — outside the struct, and in a subtype everywhere, since a subtype's
   // positional form takes its parent's fields first (`§wac-private-construction-4zbaya5`).
-  string privTo = privateFieldOwnerElsewhere(c, name);
+  // **No arguments fill no field**, so `A { }` and `A()` leave every field to its default and may do
+  // that past a private one that has one — what named construction allows, with nothing named.
+  string privTo = args.len() == 0 ? privateUndefaultedOwnerElsewhere(c, name) : privateFieldOwnerElsewhere(c, name);
   if (privTo != "") {
     c.reportWith(errPrivateConstruction(), at.line, at.col,
                  privTo + " has private fields — positional construction is for its own body");
@@ -10201,6 +10262,9 @@ i64 switchCaseValue(C c, Expr e) {
   return v & 4294967295;
 }
 
+/** Whether `e` is a const reference — const, and of a type something could be written through. */
+bool constRefExpr(C c, Expr e) { return constExpr(c, e) && writableType(c, typeOfExpr(c, e)); }
+
 bool constExpr(C c, Expr e) {
   match (e.kind) {
     // A converted literal is a static the compiler made (`lowerFromNumberLiterals`), standing for a
@@ -10215,6 +10279,18 @@ bool constExpr(C c, Expr e) {
     Member(obj, nameTok): { return constExpr(c, obj) || isConstTy(typeOfExpr(c, e)); }
     Index(arr, index): { return constExpr(c, arr); }
     Unwrap(operand): { return constExpr(c, operand); }
+    // **What holds a const reference is const** (spec ch17 `§wac-const-no-launder-t584c4n`): a ternary
+    // with a const arm, and a fresh array or tuple with a const element — `[c]` still holds `c`.
+    // Only a reference carries constness: `[T_BOOL]` of a static number is a fresh array of numbers.
+    Ternary(cond, then, els): { return constRefExpr(c, then) || constRefExpr(c, els); }
+    ArrLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) { if (constRefExpr(c, elements[i])) { return true; } }
+      return false;
+    }
+    TupleLit(elements): {
+      for (i32 i = 0; i < elements.len(); i++) { if (constRefExpr(c, elements[i])) { return true; } }
+      return false;
+    }
     // What a method hands back through a const receiver is itself const. `this.getInner().mutate()`
     // inside a `const this` method is refused, and the accessor is the whole point of the case: it
     // looks like a way to launder the constness and is not one. The receiver decides, not the return
@@ -12743,13 +12819,16 @@ void checkStmt(C c, Stmt s, Ty want) {
       checkExpr(c, cond);
       i32 live = liveBranch(c, cond);
       if (live == 0 - 1) { c.reportWith(errStaticCondition(), cond.line, cond.col, ""); }
+      if (live == 0 - 2) { c.undecided = c.undecided + 1; }
       if (live != 0) { checkScoped(c, then, want); }
       if (live != 1) { checkScoped(c, els, want); }
+      if (live == 0 - 2) { c.undecided = c.undecided - 1; }
     }
     // The program wrote the sentence; printing that `static_trap` was reached and dropping it would
-    // leave the reader with the one thing they already knew.
+    // leave the reader with the one thing they already knew. **Not in a branch only an instantiation
+    // decides**: at the definition both are checked, and the trap is reached — or not — per instance.
     StaticTrap(message): {
-      c.reportWith(errStaticTrap(), s.line, s.col, staticTrapText(c, message));
+      if (c.undecided == 0) { c.reportWith(errStaticTrap(), s.line, s.col, staticTrapText(c, message)); }
     }
     // Typed here; computed, with every other static of its block, where the block starts (`checkAll`).
     StaticLocal(type, nameTok, init): {
@@ -12893,6 +12972,20 @@ void checkStmt(C c, Stmt s, Ty want) {
       // A *local* is the exception and not an oversight: `S t = c;` propagates the constness onto
       // the new name instead (`markAliasOnly`), because a name is something this checker can track
       // and a field of some struct on the heap is not. `spec/cases/0079`, `0080`.
+      // **And into a plain local** — `m = c` with `In m` is the declaration `In m = c` written later, and
+      // a plain binding never holds a `const` (ch17); `(const In) m` is the one that may be rebound.
+      if (tokenKind(c, op) == kAssign() && !indirectLvalue(target)) {
+        string lt = typeOfLvalue(c, target);
+        bool constTarget = false;
+        match (target.kind) {
+          LIdent(ltok): { constTarget = c.isConstName(tokenText(c, ltok)) || c.isAliasOnlyName(tokenText(c, ltok)); }
+          default: { }
+        }
+        if (!constTarget && constIntoPlain(c, lt, rhs)) {
+          reportExprHinted(c, errNonConstThroughConst(), rhs, "a const " + lt + " cannot become a " + lt,
+                           "declare the local `(const " + lt + ")` to rebind it to const values");
+        }
+      }
       if (tokenKind(c, op) == kAssign() && indirectLvalue(target) && constName(c, rhs)) {
         string rt = typeOfExpr(c, rhs);
         string rcore = withoutNull(rt);
@@ -13343,7 +13436,11 @@ void checkStmt(C c, Stmt s, Ty want) {
         c.reportWith(errInitTypeMismatch(), elemTy!.line, elemTy!.col, expectedFound(vt, et));
       }
       c.pushScope(body);
+      // **An element of a const array is const** (spec ch17, deep const): the binding is, so a write
+      // through it is refused as one through the array would be.
       c.declare(tokenText(c, nameTok), vt);
+      // The declaring walk already has the name in this scope, so the flag is set on that binding.
+      if (constExpr(c, iterable) && writableType(c, vt)) { c.setConstFlags(tokenText(c, nameTok), true, false); }
       c.loopDepth = c.loopDepth + 1;
       checkAll(c, body, want);
       c.loopDepth = c.loopDepth - 1;
@@ -14787,6 +14884,59 @@ void setActiveParams(C c, i32[] typeParams) {
  * passes empty and the two questions answer *no* for it. The owner's type parameters are already
  * active when this is called; a method's own letters are added on top and taken off again.
  */
+/**
+ * What a struct's members may not do to the ones it inherits, and what `private` rules out — spec ch12.
+ *
+ * - **A subtype's member may not take an inherited member's name.** A field `n` over a parent's field
+ *   `n` made one object answer two ways depending on which static type reached it — `P p = q; p.n`
+ *   and `q.n` read different slots — and a field over a parent's method hid the method. Within one
+ *   struct the same thing was already "duplicate member"; across the hierarchy nothing asked.
+ * - **`private virtual` is a contradiction**: nothing outside the body can override what it cannot see.
+ * - **A subtype of a struct with a private field and no default for it cannot be constructed**, since
+ *   every construction of the subtype fills the parent's fields and none may fill that one — so the
+ *   declaration is refused rather than every use of it.
+ */
+void checkInheritedMembers(C c, string owner, i32 parentTok, Field[] fields, Method[] methods) {
+  for (i32 i = 0; i < methods.len(); i++) {
+    if (methods[i].isPrivate && methods[i].isVirtual) {
+      c.reportWith(errPrivateVirtual(), methods[i].returnType.line, methods[i].returnType.col,
+                   tokenText(c, methods[i].nameTok) + " is private, so nothing could override it");
+    }
+  }
+  string parent = c.parentOf(owner);
+  if (parent == "") { return; }
+  for (i32 f = 0; f < fields.len(); f++) {
+    string fname = tokenText(c, fields[f].nameTok);
+    i32 pm = c.methodAt(parent, fname);
+    if (c.hasField(parent, fname)) {
+      c.reportWith(errDuplicateMember(), fields[f].type.line, fields[f].type.col,
+                   fname + " is a field " + owner + " inherits from " + parent);
+    } else if (pm >= 0 && !c.methodStatics[pm]) {
+      c.reportWith(errDuplicateMember(), fields[f].type.line, fields[f].type.col,
+                   fname + " is a method " + owner + " inherits from " + parent);
+    }
+  }
+  for (i32 m = 0; m < methods.len(); m++) {
+    string mname = tokenText(c, methods[m].nameTok);
+    if (c.hasField(parent, mname)) {
+      c.reportWith(errDuplicateMember(), methods[m].returnType.line, methods[m].returnType.col,
+                   mname + " is a field " + owner + " inherits from " + parent);
+    }
+  }
+  string at = templateOf(parent);
+  for (i32 hop = 0; hop <= c.structCount; hop++) {
+    if (at == "") { return; }
+    for (i32 i = 0; i < c.fieldCount; i++) {
+      if (c.fieldOwners[i] != at || !c.isPrivate(at, c.fieldNames[i])) { continue; }
+      if (fieldHasDefault(c, i, c.fieldTypes[i])) { continue; }
+      c.reportTok(errUnconstructibleParent(), parentTok,
+                  at + "." + c.fieldNames[i] + " is private and has no default, so no " + owner + " can be made");
+      return;
+    }
+    at = c.parentOf(at);
+  }
+}
+
 void checkMethodBodies(C c, string owner, string parent, Method[] methods) {
   // **The body a private member is visible in.** Set for exactly as long as this type's methods are
   // being walked, and put back, so a lambda inside one is in the body too and the next type is not.
@@ -15129,6 +15279,7 @@ export void checkModule(C c, Program prog) {
             }
           }
         }
+        checkInheritedMembers(c, owner, parentTok, fields, methods);
         checkMethodBodies(c, owner, c.parentOf(owner), methods);
         c.activeParamCount = 0;
       }

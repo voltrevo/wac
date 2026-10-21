@@ -1,0 +1,6 @@
+// expect: refused
+// why: a ternary that may answer a const reference answers a const one
+// from: spec/2-types/17-const.md
+struct In { i32 v; }
+struct Box { In i; }
+export i32 f() { const In c = In(1); In m = true ? c : In(0); m.v = 5; return c.v; }

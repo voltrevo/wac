@@ -1,0 +1,10 @@
+// expect: refused
+// why: a subtype of a struct with a private field that has no default cannot be constructed, and
+//      declaring it is refused
+// from: spec/2-types/12-structs.md
+struct A {
+  private i32 c;
+  A mk(i32 c) { return A(c); }
+}
+export struct S : A { i32 r; }
+export i32 f() { return 0; }

@@ -1,0 +1,6 @@
+// expect: refused
+// why: a field and a method of one name is a collision whether or not they are declared in one struct
+// from: spec/2-types/12-structs.md
+struct P { i32 m(const this) { return 1; } }
+struct Q : P { i32 m; }
+export i32 f() { Q q = Q(2); return q.m; }

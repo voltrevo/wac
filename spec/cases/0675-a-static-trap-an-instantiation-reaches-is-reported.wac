@@ -1,0 +1,10 @@
+// expect: refused
+// why: a static_trap in the static_if branch an instantiation selects is reached, in a generic as anywhere
+// from: spec/4-static/31-static-control.md
+i32 g<T>() {
+  static_if (typeref(T) != typeref(i32)) {
+    static_trap "nope";
+  }
+  return 1;
+}
+export i32 f() { return g<string>(); }

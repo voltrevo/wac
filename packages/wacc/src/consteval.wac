@@ -3013,6 +3013,12 @@ export i32 typeDeclAt(Decls cx, string name, i32 fi) {
       default: { }
     }
   }
+  // **Through the name an import gave it** — `import { IntBox as IB }` makes `IB` that declaration in
+  // this file. Matched by spelling alone, a renamed alias named nothing, and `IB` was a type of its own.
+  for (i32 e = 0; e < cx.impCount; e++) {
+    if (cx.impFrom[e] != fi || cx.impName[e] != name || cx.impDecl[e] == name) { continue; }
+    return typeDeclAt(cx, cx.impDecl[e], cx.impTo[e]);
+  }
   return 0 - 1;
 }
 

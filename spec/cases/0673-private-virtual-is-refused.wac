@@ -1,0 +1,5 @@
+// expect: refused
+// why: a private method cannot be overridden, so `private virtual` is a contradiction
+// from: spec/2-types/12-structs.md
+export struct A { private virtual i32 f(const this) { return 1; } }
+export i32 f() { return 0; }

@@ -1,0 +1,6 @@
+// expect: refused
+// why: iterating a const array binds each element const, so writing through it is refused
+// from: spec/2-types/17-const.md
+struct In { i32 v; }
+struct Box { In i; }
+export i32 f() { const In[] cs = [In(1)]; for (In x in cs) { x.v = 5; } return cs[0].v; }

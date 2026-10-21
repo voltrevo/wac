@@ -1,0 +1,9 @@
+// expect: f() = 3
+// why: named construction outside the body may leave out a private field with a default, and naming
+//      nothing at all is still named construction
+// from: spec/2-types/12-structs.md
+struct A {
+  private i32 c = 3;
+  i32 get(const this) { return this.c; }
+}
+export i32 f() { A x = A { }; return x.get(); }

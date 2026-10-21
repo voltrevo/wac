@@ -1,0 +1,6 @@
+// expect: refused
+// why: a subtype's field with its parent's field's name would make one object answer two ways
+// from: spec/2-types/12-structs.md
+struct P { i32 n; }
+struct Q : P { string n; }
+export i32 f() { Q q = Q(1, "abc"); return q.n.len(); }

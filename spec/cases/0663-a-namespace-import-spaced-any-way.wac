@@ -1,0 +1,8 @@
+// expect: f() = 6
+// why: whitespace between `*` and `as` in a namespace import is whitespace
+// from: spec/1-programs/03-namespaces.md
+// ---- lib.wac ----
+export i32 six() { return 6; }
+// ---- main.wac ----
+import *	as lib from "./lib.wac";
+export i32 f() { return lib.six(); }

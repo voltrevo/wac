@@ -1,0 +1,6 @@
+// expect: refused
+// why: a plain binding never holds a const reference, whether at its declaration or assigned later
+// from: spec/2-types/17-const.md
+struct In { i32 v; }
+struct Box { In i; }
+export i32 f() { const In c = In(1); In m = In(0); m = c; m.v = 5; return c.v; }
