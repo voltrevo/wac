@@ -149,7 +149,7 @@ export Message parse(u8[] b) {
   if ((len & 3) != 0 || 20 + len > b.len()) { return Message(false, 0, u8[](), Attr[]()); }
 
   u8[] tid = u8[].filled(12, 0);
-  for (i32 i = 0; i < 12; i++) { tid[i] = b[8 + i]; }
+  tid.copyFrom(b, 8, 0, 12);
 
   // Counted first so the array is one allocation, then filled in the same walk — the bytes of an
   // attribute and its place in the list are written together rather than by two walks that have to
@@ -273,7 +273,7 @@ export u8[] xorMappedValue(i32 family, i32 port, u8[] ip, u8[] tid) {
  */
 u8[] withLengthFor(u8[] msg, i32 extra) {
   u8[] copy = u8[].filled(msg.len(), 0);
-  for (i32 i = 0; i < msg.len(); i++) { copy[i] = msg[i]; }
+  copy.copyFrom(msg, 0, 0, msg.len());
   i32 len = claimedLength(msg) + extra;
   copy[2] = ((len >> 8) & 0xFF) as@ u8;
   copy[3] = (len & 0xFF) as@ u8;
@@ -284,7 +284,7 @@ u8[] withLengthFor(u8[] msg, i32 extra) {
 u8[] appended(u8[] msg, i32 kind, u8[] value) {
   i32 pad = (value.len() + 3) & ~3;
   u8[] out = u8[].filled(msg.len() + 4 + pad, 0);
-  for (i32 i = 0; i < msg.len(); i++) { out[i] = msg[i]; }
+  out.copyFrom(msg, 0, 0, msg.len());
   i32 at = msg.len();
   out[at] = ((kind >> 8) & 0xFF) as@ u8;
   out[at + 1] = (kind & 0xFF) as@ u8;
@@ -313,7 +313,7 @@ export bool integrityOk(u8[] msg, u8[] key) {
   i32 at = integrityAt(msg);
   if (at < 0) { return false; }
   u8[] prefix = u8[].filled(at, 0);
-  for (i32 i = 0; i < at; i++) { prefix[i] = msg[i]; }
+  prefix.copyFrom(msg, 0, 0, at);
   // Everything from the start of the attribute to the end of the message is not covered; the length
   // is set as though MESSAGE-INTEGRITY were the last thing in it, which is how the sender computed it.
   i32 len = at + 24 - 20;
@@ -367,7 +367,7 @@ export bool fingerprintOk(u8[] msg) {
   if (((msg[at] as i32 << 8) | msg[at + 1] as i32) != attrFingerprint()) { return false; }
   if (((msg[at + 2] as i32 << 8) | msg[at + 3] as i32) != 4) { return false; }
   u8[] prefix = u8[].filled(at, 0);
-  for (i32 i = 0; i < at; i++) { prefix[i] = msg[i]; }
+  prefix.copyFrom(msg, 0, 0, at);
   i32 len = at + 8 - 20;
   prefix[2] = ((len >> 8) & 0xFF) as@ u8;
   prefix[3] = (len & 0xFF) as@ u8;

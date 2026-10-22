@@ -537,7 +537,7 @@ export Note[] heavyOthers(Core core, Cli cli, i32 mine) {
     n = n + 1;
   }
   Note[] out = Note[].filled(n, noNote());
-  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  out.copyFrom(found, 0, 0, n);
   return out;
 }
 

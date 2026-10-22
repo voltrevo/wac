@@ -18,7 +18,7 @@ bool holds(string[] xs, string want) {
 /** Insertion sort — the lists here are package names, tens of them at most. */
 string[] sorted(string[] xs) {
   string[] out = string[].filled(xs.len(), "");
-  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  out.copyFrom(xs, 0, 0, xs.len());
   for (i32 i = 1; i < out.len(); i++) {
     string k = out[i];
     i32 j = i - 1;
@@ -96,7 +96,7 @@ export string[] packagesOf(Mutant m) {
     if (!holds(seen, pkg)) { seen[n] = pkg; n = n + 1; }
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = seen[i]; }
+  exact.copyFrom(seen, 0, 0, n);
   return sorted(exact);
 }
 
@@ -119,7 +119,7 @@ export struct Applied {
 
 export Applied applyEdits(string[] paths, string[] texts, Mutant m) {
   string[] out = string[].filled(texts.len(), "");
-  for (i32 i = 0; i < texts.len(); i++) { out[i] = texts[i]; }
+  out.copyFrom(texts, 0, 0, texts.len());
 
   for (i32 f = 0; f < paths.len(); f++) {
     // The edits for this file, taken highest `start` first. Selection rather than a sort of a copy:
@@ -206,6 +206,6 @@ export string[] scopeFor(Mutant m, string[] hostless,
     }
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = all[i]; }
+  exact.copyFrom(all, 0, 0, n);
   return testDirsFor(own, exact);
 }

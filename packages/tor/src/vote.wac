@@ -60,7 +60,7 @@ export u8[] voteSignatureDigest256(u8[] document) {
 
 u8[] head(u8[] document, i32 n) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = document[i]; }
+  out.copyFrom(document, 0, 0, n);
   return out;
 }
 
@@ -100,7 +100,7 @@ export u8[][] sortedStatusEntries(u8[][] descriptors) {
 export u8[][] sortedDescriptors(u8[][] descriptors) {
   i32 n = descriptors.len();
   u8[][] order = u8[][].defaulted(n);
-  for (i32 i = 0; i < n; i++) { order[i] = descriptors[i]; }
+  order.copyFrom(descriptors, 0, 0, n);
 
   for (i32 i = 1; i < n; i++) {
     u8[] held = order[i];

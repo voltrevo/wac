@@ -212,7 +212,7 @@ export u8[] rsaRecoverPkcs1(u8[] n, u8[] e, u8[] sig) {
   at++;
 
   u8[] out = u8[].filled(em.len() - at, 0);
-  for (i32 i = 0; i < out.len(); i++) { out[i] = em[at + i]; }
+  out.copyFrom(em, at, 0, out.len());
   return out;
 }
 
@@ -227,7 +227,7 @@ u8[] mgf1(u8[] seed, i32 length, i32 hashLen) {
   i32 counter = 0;
   while (at < length) {
     u8[] input = u8[].filled(seed.len() + 4, 0);
-    for (i32 i = 0; i < seed.len(); i++) { input[i] = seed[i]; }
+    input.copyFrom(seed, 0, 0, seed.len());
     input[seed.len()] = ((counter >> 24) & 0xFF) as@ u8;
     input[seed.len() + 1] = ((counter >> 16) & 0xFF) as@ u8;
     input[seed.len() + 2] = ((counter >> 8) & 0xFF) as@ u8;
@@ -277,9 +277,9 @@ export bool rsaVerifyPss(u8[] n, u8[] e, const u8[] msg, const u8[] sig, i32 has
 
   i32 dbLen = emLen - hashLen - 1;
   u8[] maskedDb = u8[].filled(dbLen, 0);
-  for (i32 i = 0; i < dbLen; i++) { maskedDb[i] = em[i]; }
+  maskedDb.copyFrom(em, 0, 0, dbLen);
   u8[] hSeed = u8[].filled(hashLen, 0);
-  for (i32 i = 0; i < hashLen; i++) { hSeed[i] = em[dbLen + i]; }
+  hSeed.copyFrom(em, dbLen, 0, hashLen);
 
   // The unused leading bits of the first byte must be zero. Skipping this lets a
   // signature be malleable in those bits.
@@ -306,7 +306,7 @@ export bool rsaVerifyPss(u8[] n, u8[] e, const u8[] msg, const u8[] sig, i32 has
   // signature over a different structure.
   u8[] mHash = digest(msg, hashLen);
   u8[] mPrime = u8[].filled(8 + hashLen + saltLen, 0);
-  for (i32 i = 0; i < hashLen; i++) { mPrime[8 + i] = mHash[i]; }
+  mPrime.copyFrom(mHash, 0, 8, hashLen);
   for (i32 i = 0; i < saltLen; i++) { mPrime[8 + hashLen + i] = salt[i]; }
   u8[] hPrime = digest(mPrime, hashLen);
 
@@ -407,7 +407,7 @@ export u8[] rsaSignPkcs1(u8[] n, u8[] d, u8[] msg, i32 hashLen) {
   u8[] prefix = digestInfoPrefix(hashLen);
   u8[] h = digest(msg, hashLen);
   u8[] t = u8[].filled(prefix.len() + hashLen, 0);
-  for (i32 i = 0; i < prefix.len(); i++) { t[i] = prefix[i]; }
+  t.copyFrom(prefix, 0, 0, prefix.len());
   for (i32 i = 0; i < hashLen; i++) { t[prefix.len() + i] = h[i]; }
   return rawSign(n, d, padPkcs1(t, n.len()));
 }
@@ -462,7 +462,7 @@ export u8[] rsaSignPss(const u8[] n, const u8[] d, u8[] msg, i32 hashLen, u8[] s
   // with a hash.
   u8[] mHash = digest(msg, hashLen);
   u8[] mPrime = u8[].filled(8 + hashLen + saltLen, 0);
-  for (i32 i = 0; i < hashLen; i++) { mPrime[8 + i] = mHash[i]; }
+  mPrime.copyFrom(mHash, 0, 8, hashLen);
   for (i32 i = 0; i < saltLen; i++) { mPrime[8 + hashLen + i] = salt[i]; }
   u8[] h = digest(mPrime, hashLen);
 
@@ -475,7 +475,7 @@ export u8[] rsaSignPss(const u8[] n, const u8[] d, u8[] msg, i32 hashLen, u8[] s
 
   u8[] em = u8[].filled(emLen, 0);
   for (i32 i = 0; i < dbLen; i++) { em[i] = db[i] ^ dbMask[i]; }
-  for (i32 i = 0; i < hashLen; i++) { em[dbLen + i] = h[i]; }
+  em.copyFrom(h, 0, dbLen, hashLen);
   em[emLen - 1] = 0xBC;
 
   // Clear the bits the modulus does not have room for. Without this the encoded integer can exceed

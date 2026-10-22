@@ -60,7 +60,7 @@ u8[] u64be(i64 v) {
 }
 
 void put(u8[] dst, i32 at, u8[] src) {
-  for (i32 i = 0; i < src.len(); i++) { dst[at + i] = src[i]; }
+  dst.copyFrom(src, 0, at, src.len());
 }
 
 /**
@@ -208,7 +208,7 @@ export i32[] responsibleHsdirs(
 
   if (count == want) { return chosen; }
   i32[] out = i32[].filled(count, 0);
-  for (i32 i = 0; i < count; i++) { out[i] = chosen[i]; }
+  out.copyFrom(chosen, 0, 0, count);
   return out;
 }
 
@@ -317,7 +317,7 @@ export u8[] consensusSharedRandom(u8[] consensus, bool current) {
   i32 end = from;
   while (end < consensus.len() && consensus[end] != '\n' && consensus[end] != '\r') { end++; }
   u8[] value = u8[].filled(end - from, 0);
-  for (i32 i = 0; i < value.len(); i++) { value[i] = consensus[from + i]; }
+  value.copyFrom(consensus, from, 0, value.len());
   u8[]? decoded = b64decode(value);
   if (decoded is null) { return u8[](); }
   return (decoded!.len() == 32) ? decoded! : u8[]();

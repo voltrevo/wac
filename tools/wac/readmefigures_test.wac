@@ -290,7 +290,7 @@ string[] transcriptPairs(string block) {
     n = n + 1;
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 
@@ -519,7 +519,7 @@ string[] appletTokens(string line) {
     n = n + 1;
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 

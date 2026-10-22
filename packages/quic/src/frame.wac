@@ -508,7 +508,7 @@ export i32 writeCrypto(u8[] out, i32 at, i64 offset, const u8[] data) {
   p = p + 1;
   p = p + encode(out, p, offset);
   p = p + encode(out, p, data.len() as i64);
-  for (i32 i = 0; i < data.len(); i++) { out[p + i] = data[i]; }
+  out.copyFrom(data, 0, p, data.len());
   return (p + data.len()) - at;
 }
 
@@ -530,7 +530,7 @@ export i32 writeStream(u8[] out, i32 at, i64 id, i64 offset, u8[] data, bool fin
   p = p + encode(out, p, id);
   p = p + encode(out, p, offset);
   p = p + encode(out, p, data.len() as i64);
-  for (i32 i = 0; i < data.len(); i++) { out[p + i] = data[i]; }
+  out.copyFrom(data, 0, p, data.len());
   return (p + data.len()) - at;
 }
 

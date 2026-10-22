@@ -30,7 +30,7 @@ export u8[] derTlv(i32 tag, u8[] body) {
   u8[] length = derLength(body.len());
   u8[] out = u8[].filled(1 + length.len() + body.len(), 0);
   out[0] = tag as@ u8;
-  for (i32 i = 0; i < length.len(); i++) { out[1 + i] = length[i]; }
+  out.copyFrom(length, 0, 1, length.len());
   for (i32 i = 0; i < body.len(); i++) { out[1 + length.len() + i] = body[i]; }
   return out;
 }
@@ -88,7 +88,7 @@ export u8[] derInteger(u8[] magnitude) {
   }
   u8[] body = u8[].filled(n + (needsPad ? 1 : 0), 0);
   i32 at = needsPad ? 1 : 0;
-  for (i32 i = 0; i < n; i++) { body[at + i] = magnitude[from + i]; }
+  body.copyFrom(magnitude, from, at, n);
   return derTlv(tagInteger(), body);
 }
 
@@ -106,7 +106,7 @@ export u8[] derIntegerSmall(i64 value) {
 export u8[] derBitString(u8[] bits) {
   u8[] body = u8[].filled(1 + bits.len(), 0);
   body[0] = 0;                        // unused bits
-  for (i32 i = 0; i < bits.len(); i++) { body[1 + i] = bits[i]; }
+  body.copyFrom(bits, 0, 1, bits.len());
   return derTlv(tagBitString(), body);
 }
 

@@ -1,6 +1,6 @@
 # 0352a — 750 hand-written copy loops, and `copyFrom` has existed since August
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-09-05
@@ -70,3 +70,9 @@ question is unresolved by the regex and is the reason this is filed rather than 
 Fifth thing found by asking *what method was this loop standing in for*, after `issues/lang/0347a`,
 `0350a`, `0351a` and `issues/system/0349a`. It is the largest and the least interesting, which is
 worth saying: the instrument's yield is not correlated with how much it finds.
+
+## Fixed — 2026-10-22 (agent-a)
+
+683 one-line copy loops in 154 files under `packages/*/src` and `tools/` became `copyFrom` calls, by a pattern that rewrites only `for (i32 i = 0; i < n; i++) { d[a + i] = s[b + i]; }` with two different arrays; every rewritten file type-checked, and the suite ran over them. `packages/wacc/src` was left alone because the ladder rung compiles it. Found along the way: the emitter skipped a `copyFrom` whose source it could not type, emitting nothing — it declines now.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

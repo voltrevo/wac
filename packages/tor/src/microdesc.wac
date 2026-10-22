@@ -163,7 +163,7 @@ u8[] onionKeyBlock(u8[] descriptor) {
     if (!hit) { continue; }
     i32 stop = i + end.len();
     u8[] out = u8[].filled(stop - at, 0);
-    for (i32 k = 0; k < out.len(); k++) { out[k] = descriptor[at + k]; }
+    out.copyFrom(descriptor, at, 0, out.len());
     return out;
   }
   return u8[]();

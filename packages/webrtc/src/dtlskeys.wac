@@ -32,7 +32,7 @@ import { sha256 } from "../../crypto/src/sha256.wac";
 export u8[] prf(u8[] secret, string label, u8[] seed, i32 n) {
   u8[] lab = label.toBytes();
   u8[] full = u8[].filled(lab.len() + seed.len(), 0);
-  for (i32 i = 0; i < lab.len(); i++) { full[i] = lab[i]; }
+  full.copyFrom(lab, 0, 0, lab.len());
   for (i32 i = 0; i < seed.len(); i++) { full[lab.len() + i] = seed[i]; }
 
   u8[] out = u8[].filled(n, 0);
@@ -43,7 +43,7 @@ export u8[] prf(u8[] secret, string label, u8[] seed, i32 n) {
   for (i32 round = 0; round < 16 && done < n; round++) {
     a = hmacSha256(secret, a);                      // A(i)
     u8[] input = u8[].filled(a.len() + full.len(), 0);
-    for (i32 i = 0; i < a.len(); i++) { input[i] = a[i]; }
+    input.copyFrom(a, 0, 0, a.len());
     for (i32 i = 0; i < full.len(); i++) { input[a.len() + i] = full[i]; }
     u8[] block = hmacSha256(secret, input);
     for (i32 i = 0; i < block.len() && done < n; i++) {
@@ -57,7 +57,7 @@ export u8[] prf(u8[] secret, string label, u8[] seed, i32 n) {
 /** Two byte strings joined, which this file does often enough to name. */
 u8[] joined(u8[] a, u8[] b) {
   u8[] out = u8[].filled(a.len() + b.len(), 0);
-  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  out.copyFrom(a, 0, 0, a.len());
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
 }
@@ -140,8 +140,8 @@ export u8[] seal(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 
   u8[] ct = gcmEncrypt(key, n, plaintext);
   u8[] tag = gcmTag(key, n, a, ct);
   u8[] out = u8[].filled(8 + ct.len() + 16, 0);
-  for (i32 i = 0; i < 8; i++) { out[i] = explicitPart[i]; }
-  for (i32 i = 0; i < ct.len(); i++) { out[8 + i] = ct[i]; }
+  out.copyFrom(explicitPart, 0, 0, 8);
+  out.copyFrom(ct, 0, 8, ct.len());
   for (i32 i = 0; i < 16; i++) { out[8 + ct.len() + i] = tag[i]; }
   return out;
 }
@@ -158,10 +158,10 @@ export u8[] open(const u8[] key, const u8[] fixedIv, i32 epoch, i64 sequence, i3
                  u8[] fragment) {
   if (fragment.len() < 8 + 16) { return u8[](); }
   u8[] explicitPart = u8[].filled(8, 0);
-  for (i32 i = 0; i < 8; i++) { explicitPart[i] = fragment[i]; }
+  explicitPart.copyFrom(fragment, 0, 0, 8);
   i32 ctLen = fragment.len() - 8 - 16;
   u8[] ct = u8[].filled(ctLen, 0);
-  for (i32 i = 0; i < ctLen; i++) { ct[i] = fragment[8 + i]; }
+  ct.copyFrom(fragment, 8, 0, ctLen);
   u8[] tag = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { tag[i] = fragment[8 + ctLen + i]; }
   // The length in the AAD is the *plaintext's*, which for GCM is the ciphertext's — but it is worth

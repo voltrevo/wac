@@ -75,7 +75,7 @@ export bool isZero(Big a) { return a.n == 0; }
 
 export Big copy(Big a) {
   Big r = Big.withCap(a.n);
-  for (i32 i = 0; i < a.n; i++) { r.limbs[i] = a.limbs[i]; }
+  r.limbs.copyFrom(a.limbs, 0, 0, a.n);
   r.n = a.n;
   r.neg = a.neg;
   return r;
@@ -379,7 +379,7 @@ export DivMod divmod(Big a, Big b) {
 
   // The running remainder needs one limb of headroom above u.
   Big un = Big.withCap(u.n + 1);
-  for (i32 i = 0; i < u.n; i++) { un.limbs[i] = u.limbs[i]; }
+  un.limbs.copyFrom(u.limbs, 0, 0, u.n);
   un.limbs[u.n] = 0;
   un.n = u.n + 1;
 
@@ -455,7 +455,7 @@ export DivMod divmod(Big a, Big b) {
 
   // The remainder is the low n limbs of un, shifted back down.
   Big rmag = Big.withCap(n);
-  for (i32 i = 0; i < n; i++) { rmag.limbs[i] = un.limbs[i]; }
+  rmag.limbs.copyFrom(un.limbs, 0, 0, n);
   rmag.n = n;
   rmag.trim();
   Big r = shr(rmag, shift);

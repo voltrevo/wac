@@ -212,7 +212,7 @@ export i64[] scnMont(ScOrder o, i64[] a, i64[] b) {
   // 1 means the value is at least R, which is above n. So subtract when that bit is set or when
   // the subtraction does not borrow — the same condition `scnAdd` uses, for the same reason.
   i64[] h = i64[].filled(len, 0);
-  for (i32 i = 0; i < len; i++) { h[i] = t[i]; }
+  h.copyFrom(t, 0, 0, len);
   i64[] s = i64[].filled(len, 0);
   i64 borrow = subLimbs(s, h, o.n);
   selectLimbs(h, s, t[len] | (1 - borrow));
@@ -242,11 +242,11 @@ export i64[] scnLeave(ScOrder o, i64[] a) { return scnMont(o, a, plainOne(o.n.le
 export i64[] scnInvert(ScOrder o, i64[] a) {
   i32 len = o.n.len();
   i64[] e = i64[].filled(len, 0);
-  for (i32 i = 0; i < len; i++) { e[i] = o.n[i]; }
+  e.copyFrom(o.n, 0, 0, len);
   e[0] = e[0] - 2;
   i64[] result = scnOne(o);
   i64[] base = i64[].filled(len, 0);
-  for (i32 i = 0; i < len; i++) { base[i] = a[i]; }
+  base.copyFrom(a, 0, 0, len);
   for (i32 limb = 0; limb < len; limb++) {
     for (i32 bit = 0; bit < 32; bit++) {
       if (((e[limb] >> (bit as i64)) & 1) != 0) { result = scnMont(o, result, base); }
@@ -266,7 +266,7 @@ export i64[] scnInvert(ScOrder o, i64[] a) {
 export i64[] scnReduce(ScOrder o, i64[] a) {
   i32 len = o.n.len();
   i64[] h = i64[].filled(len, 0);
-  for (i32 i = 0; i < len; i++) { h[i] = a[i]; }
+  h.copyFrom(a, 0, 0, len);
   i64[] t = i64[].filled(len, 0);
   i64 borrow = subLimbs(t, h, o.n);
   selectLimbs(h, t, 1 - borrow);

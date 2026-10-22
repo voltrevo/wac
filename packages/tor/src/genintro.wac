@@ -32,7 +32,7 @@ export i32 main(Sys sys) {
   // reproducible and the MAC covers it.
   u8[] kh = seedFor(12);
   u8[] khShort = u8[].filled(20, 0);
-  for (i32 i = 0; i < 20; i++) { khShort[i] = kh[i]; }
+  khShort.copyFrom(kh, 0, 0, 20);
 
   u8[] cell = establishIntroCell(authPublic, authSeed, khShort);
   if (cell.len() == 0) {

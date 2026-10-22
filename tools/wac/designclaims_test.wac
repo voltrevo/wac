@@ -74,7 +74,7 @@ Claim[] numbersBefore(string text, string after) {
     }
   }
   Claim[] exact = Claim[].filled(n, Claim(0, 0));
-  for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 
@@ -102,7 +102,7 @@ i32[] boldNumbers(string text) {
     at = close + 2;
   }
   i32[] exact = i32[].filled(n, 0);
-  for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 
@@ -118,7 +118,7 @@ string[] designDocs(Core core, Cli cli) {
     n = n + 1;
   }
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = hit[i]; }
+  out.copyFrom(hit, 0, 0, n);
   return out;
 }
 

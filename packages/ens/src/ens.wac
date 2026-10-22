@@ -60,8 +60,8 @@ export u8[] namehash(u8[] name) {
 export u8[] hashInto(u8[] node, u8[] labelHash) {
   if (node.len() != 32 || labelHash.len() != 32) { trap; }
   u8[] joined = u8[].filled(64, 0);
-  for (i32 i = 0; i < 32; i++) { joined[i] = node[i]; }
-  for (i32 i = 0; i < 32; i++) { joined[32 + i] = labelHash[i]; }
+  joined.copyFrom(node, 0, 0, 32);
+  joined.copyFrom(labelHash, 0, 32, 32);
   return keccak256(joined);
 }
 
@@ -123,8 +123,8 @@ export u8[] contenthashCall(u8[] node) { return callWithNode([0xbc, 0x1c, 0x58, 
 u8[] callWithNode(u8[] selector, u8[] node) {
   if (node.len() != 32) { trap; }
   u8[] out = u8[].filled(36, 0);
-  for (i32 i = 0; i < 4; i++) { out[i] = selector[i]; }
-  for (i32 i = 0; i < 32; i++) { out[4 + i] = node[i]; }
+  out.copyFrom(selector, 0, 0, 4);
+  out.copyFrom(node, 0, 4, 32);
   return out;
 }
 
@@ -138,7 +138,7 @@ u8[] callWithNode(u8[] selector, u8[] node) {
 export u8[] selector(u8[] signature) {
   u8[] h = keccak256(signature);
   u8[] out = u8[].filled(4, 0);
-  for (i32 i = 0; i < 4; i++) { out[i] = h[i]; }
+  out.copyFrom(h, 0, 0, 4);
   return out;
 }
 
@@ -153,7 +153,7 @@ export u8[] addressFromWord(u8[] word) {
   if (word.len() != 32) { return u8[](); }
   for (i32 i = 0; i < 12; i++) { if (word[i] != 0) { return u8[](); } }
   u8[] out = u8[].filled(20, 0);
-  for (i32 i = 0; i < 20; i++) { out[i] = word[12 + i]; }
+  out.copyFrom(word, 12, 0, 20);
   return out;
 }
 

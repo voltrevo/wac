@@ -103,7 +103,7 @@ export Staged parseIndex(u8[] b) {
   // format offers. A truncated index otherwise reads as a shorter one.
   i32 bodyLen = b.len() - 20;
   u8[] body = u8[].filled(bodyLen, 0);
-  for (i32 i = 0; i < bodyLen; i++) { body[i] = b[i]; }
+  body.copyFrom(b, 0, 0, bodyLen);
   u8[] want = sha1(body);
   for (i32 i = 0; i < 20; i++) {
     if (want[i] != b[bodyLen + i]) { return Staged.Unreadable("the trailing SHA-1 does not match"); }

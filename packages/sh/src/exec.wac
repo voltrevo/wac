@@ -166,7 +166,7 @@ struct Tick {
 async i32 firstOf(Shell sh, TicketBase[] parts, Tick tick) {
   if (sh.askInterrupt is null) { return await Ticket.first(parts); }
   TicketBase[] all = TicketBase[].filled(parts.len() + 1, tick.now());
-  for (i32 i = 0; i < parts.len(); i++) { all[i] = parts[i]; }
+  all.copyFrom(parts, 0, 0, parts.len());
   i32 k = await Ticket.first(all);
   return k == parts.len() ? 0 - 1 : k;
 }
@@ -1933,7 +1933,7 @@ async Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
   }
   u8[][] args = u8[][].filled(argv.len(), u8[]());
   for (i32 i = 0; i < argv.len(); i++) { args[i] = argv.get(i).toBytes(); }
-  return await sh.cli.spawnSelf(args, grants, sh.cwd, inheritIn, serveFs).ticket();
+  return await sh.cli.spawnSelf(args, grants, sh.cwd, inheritIn ? INHERIT_IN : INHERIT_NONE, serveFs).ticket();
 }
 
 /** Stop one stage and stop reading it: it has nowhere to write, so it is finished whether or not it agrees. */
@@ -3817,7 +3817,7 @@ async Output trySelf(Shell sh, Vec<string> argv, bool mayInherit) {
   // process had the shell's whole authority implicitly; asking for it explicitly is the same
   // authority said out loud, and a shell granted nothing hands its children nothing.
   Child child = await sh.cli
-    .spawnSelf(args, stageGrants(sh), sh.cwd, mayInherit, serveFsFor(sh)).ticket();
+    .spawnSelf(args, stageGrants(sh), sh.cwd, mayInherit ? INHERIT_IN : INHERIT_NONE, serveFsFor(sh)).ticket();
   if (child.unavailable()) { return Output.missing(); }
   if (child.handle < 0) {
     return Output.fail("sh: \{name}: \{child.error}\n".toBytes(), 126);

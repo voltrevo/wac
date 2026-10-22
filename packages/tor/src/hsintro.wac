@@ -167,7 +167,7 @@ export IntroPoint[] parseIntroPoints(u8[] plaintext) {
   }
   if (kept == count) { return found; }
   IntroPoint[] out = IntroPoint[].defaulted(kept);
-  for (i32 i = 0; i < kept; i++) { out[i] = found[i]; }
+  out.copyFrom(found, 0, 0, kept);
   return out;
 }
 
@@ -189,7 +189,7 @@ export u8[] introduce1Plaintext(u8[] rendCookie, u8[] rendOnionKey, u8[] rendLin
   i32 n = 20 + 1 + 1 + 2 + 32 + rendLinkSpecifiers.len();
   u8[] out = u8[].filled(n, 0);
   i32 at = 0;
-  for (i32 i = 0; i < 20; i++) { out[at + i] = rendCookie[i]; }
+  out.copyFrom(rendCookie, 0, at, 20);
   at = 20;
   out[at] = 0;              // N_EXTENSIONS
   at = at + 1;
@@ -198,9 +198,9 @@ export u8[] introduce1Plaintext(u8[] rendCookie, u8[] rendOnionKey, u8[] rendLin
   out[at] = 0;              // ONION_KEY_LEN, big-endian
   out[at + 1] = 32;
   at = at + 2;
-  for (i32 i = 0; i < 32; i++) { out[at + i] = rendOnionKey[i]; }
+  out.copyFrom(rendOnionKey, 0, at, 32);
   at = at + 32;
-  for (i32 i = 0; i < rendLinkSpecifiers.len(); i++) { out[at + i] = rendLinkSpecifiers[i]; }
+  out.copyFrom(rendLinkSpecifiers, 0, at, rendLinkSpecifiers.len());
   return out;
 }
 
@@ -225,9 +225,9 @@ export u8[] introduce1Cell(u8[] authKey, u8[] encrypted) {
   out[20] = 2;              // AUTH_KEY_TYPE: ed25519
   out[21] = 0;              // AUTH_KEY_LEN, big-endian
   out[22] = 32;
-  for (i32 i = 0; i < 32; i++) { out[23 + i] = authKey[i]; }
+  out.copyFrom(authKey, 0, 23, 32);
   out[55] = 0;              // N_EXTENSIONS
-  for (i32 i = 0; i < encrypted.len(); i++) { out[56 + i] = encrypted[i]; }
+  out.copyFrom(encrypted, 0, 56, encrypted.len());
   return out;
 }
 
@@ -259,7 +259,7 @@ export u8[] introduce1MacInput(u8[] cellSoFar) {
 export u8[] establishRendezvousCell(u8[] cookie) {
   if (cookie.len() != 20) { return u8[](); }
   u8[] out = u8[].filled(20, 0);
-  for (i32 i = 0; i < 20; i++) { out[i] = cookie[i]; }
+  out.copyFrom(cookie, 0, 0, 20);
   return out;
 }
 
@@ -304,15 +304,15 @@ export u8[] buildIntroduce1(
 
   u8[] ciphertext = aesCtr(encKey, u8[].filled(16, 0), plaintext);
   u8[] withoutMac = u8[].filled(32 + ciphertext.len(), 0);
-  for (i32 i = 0; i < 32; i++) { withoutMac[i] = clientPublic[i]; }
-  for (i32 i = 0; i < ciphertext.len(); i++) { withoutMac[32 + i] = ciphertext[i]; }
+  withoutMac.copyFrom(clientPublic, 0, 0, 32);
+  withoutMac.copyFrom(ciphertext, 0, 32, ciphertext.len());
 
   u8[] draft = introduce1Cell(authKey, withoutMac);
   if (draft.len() == 0) { return u8[](); }
   u8[] mac = hsMac(macKey, introduce1MacInput(draft));
 
   u8[] encrypted = u8[].filled(withoutMac.len() + 32, 0);
-  for (i32 i = 0; i < withoutMac.len(); i++) { encrypted[i] = withoutMac[i]; }
+  encrypted.copyFrom(withoutMac, 0, 0, withoutMac.len());
   for (i32 i = 0; i < 32; i++) { encrypted[withoutMac.len() + i] = mac[i]; }
   return introduce1Cell(authKey, encrypted);
 }

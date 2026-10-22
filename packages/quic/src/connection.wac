@@ -119,7 +119,7 @@ export struct Connection {
     if (this.count == this.sent.len()) {
       i32 n = this.sent.len() == 0 ? 8 : this.sent.len() * 2;
       InFlight[] grown = InFlight[].defaulted(n);
-      for (i32 i = 0; i < this.count; i++) { grown[i] = this.sent[i]; }
+      grown.copyFrom(this.sent, 0, 0, this.count);
       this.sent = grown;
     }
   }

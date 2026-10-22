@@ -81,7 +81,7 @@ export u8[] relayHandshakeReply(u8[] certsCellBody, u8[] challenge, u8[] initiat
 export u8[] authChallengeBody(u8[] challenge) {
   if (challenge.len() != 32) { return u8[](); }
   u8[] body = u8[].filled(32 + 2 + 2, 0);
-  for (i32 i = 0; i < 32; i++) { body[i] = challenge[i]; }
+  body.copyFrom(challenge, 0, 0, 32);
   body[33] = 1;                                        // N_Methods, big-endian 1
   body[35] = AUTH_METHOD_ED25519_SHA256_RFC5705 as@ u8;       // big-endian, high byte zero
   return body;
@@ -108,12 +108,12 @@ export u8[] relayNetinfoAt(u8[] initiatorIpv4, u8[] myIpv4, i64 now) {
   }
   payload[4] = 4;                    // OTHERADDR type: IPv4
   payload[5] = 4;
-  for (i32 i = 0; i < 4; i++) { payload[6 + i] = initiatorIpv4[i]; }
+  payload.copyFrom(initiatorIpv4, 0, 6, 4);
   payload[10] = mine as@ u8;
   if (mine == 1) {
     payload[11] = 4;
     payload[12] = 4;
-    for (i32 i = 0; i < 4; i++) { payload[13 + i] = myIpv4[i]; }
+    payload.copyFrom(myIpv4, 0, 13, 4);
   }
   return encodeFixed(0, cmdNetinfo(), payload);
 }
@@ -156,7 +156,7 @@ export u8[] netinfoOtherAddress(u8[] cell) {
   if (payload[4] != 4 || payload[5] != 4) { return u8[](); }
   if (payload.len() < 10) { return u8[](); }
   u8[] out = u8[].filled(4, 0);
-  for (i32 i = 0; i < 4; i++) { out[i] = payload[6 + i]; }
+  out.copyFrom(payload, 6, 0, 4);
   return out;
 }
 
@@ -169,12 +169,12 @@ bool isZero(u8[] b) {
 u8[] concat4(u8[] a, u8[] b, u8[] c, u8[] d) {
   u8[] out = u8[].filled(a.len() + b.len() + c.len() + d.len(), 0);
   i32 at = 0;
-  for (i32 i = 0; i < a.len(); i++) { out[at + i] = a[i]; }
+  out.copyFrom(a, 0, at, a.len());
   at = at + a.len();
-  for (i32 i = 0; i < b.len(); i++) { out[at + i] = b[i]; }
+  out.copyFrom(b, 0, at, b.len());
   at = at + b.len();
-  for (i32 i = 0; i < c.len(); i++) { out[at + i] = c[i]; }
+  out.copyFrom(c, 0, at, c.len());
   at = at + c.len();
-  for (i32 i = 0; i < d.len(); i++) { out[at + i] = d[i]; }
+  out.copyFrom(d, 0, at, d.len());
   return out;
 }

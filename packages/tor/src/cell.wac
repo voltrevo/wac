@@ -94,7 +94,7 @@ export u8[] encodeFixed(i32 circId, i32 command, u8[] payload) {
   out[2] = ((circId >> 8) & 0xFF) as@ u8;
   out[3] = (circId & 0xFF) as@ u8;
   out[4] = command as@ u8;
-  for (i32 i = 0; i < payload.len(); i++) { out[5 + i] = payload[i]; }
+  out.copyFrom(payload, 0, 5, payload.len());
   return out;
 }
 
@@ -217,7 +217,7 @@ export u8[] encodeNetinfo(u8[] theirIpv4) {
   // TIME: zero. A client's clock is nobody's business.
   payload[4] = 4;                 // OTHERADDR type: IPv4
   payload[5] = 4;                 // length
-  for (i32 i = 0; i < 4; i++) { payload[6 + i] = theirIpv4[i]; }
+  payload.copyFrom(theirIpv4, 0, 6, 4);
   payload[10] = 0;                // NMYADDR: none
   return encodeFixed(0, cmdNetinfo(), payload);
 }
@@ -234,7 +234,7 @@ export u8[] encodeCreate2(i32 circId, i32 hType, u8[] handshake) {
   payload[1] = (hType & 0xFF) as@ u8;
   payload[2] = ((handshake.len() >> 8) & 0xFF) as@ u8;
   payload[3] = (handshake.len() & 0xFF) as@ u8;
-  for (i32 i = 0; i < handshake.len(); i++) { payload[4 + i] = handshake[i]; }
+  payload.copyFrom(handshake, 0, 4, handshake.len());
   return encodeFixed(circId, cmdCreate2(), payload);
 }
 
@@ -252,7 +252,7 @@ export u8[] decodeCreated2(u8[] payload) {
   // fails ntor's AUTH check, which is the right outcome and does not abort the process.
   if (2 + len > payload.len()) { return u8[](); }
   u8[] out = u8[].filled(len, 0);
-  for (i32 i = 0; i < len; i++) { out[i] = payload[2 + i]; }
+  out.copyFrom(payload, 2, 0, len);
   return out;
 }
 

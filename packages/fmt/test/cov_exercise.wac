@@ -29,6 +29,7 @@ import { Core, Cli, Sys } from "std";
 import {
   test_itoa_writes_the_sign_and_the_extremes as it__itoa_writes_the_sign_and_the_extremes,
   test_atoi_reads_the_sign_and_stops_at_the_first_non_digit as it__atoi_reads_the_sign_and_stops_at_the_first_non_digit,
+  test_atoi_span_scans_bytes_and_says_where_it_stopped as it__atoi_span_scans_bytes_and_says_where_it_stopped,
 } from "./wac/itoa_test.wac";
 import {
   test_atof_the_cases_that_break_naive_conversions as af__atof_the_cases_that_break_naive_conversions,
@@ -164,6 +165,10 @@ export i32 main(Sys sys) {
   }
   if (it__atoi_reads_the_sign_and_stops_at_the_first_non_digit().len() > 0) {
     core.warn("error: FAILED itoa_test test_atoi_reads_the_sign_and_stops_at_the_first_non_digit");
+    bad = bad + 1;
+  }
+  if (it__atoi_span_scans_bytes_and_says_where_it_stopped().len() > 0) {
+    core.warn("error: FAILED itoa_test test_atoi_span_scans_bytes_and_says_where_it_stopped");
     bad = bad + 1;
   }
   if (bi__fixedbig_add_in_place_agrees_with_the_three_operand_sum().len() > 0) {

@@ -366,7 +366,7 @@ export struct Client {
         p = p + 3;
         if (dlen <= 0 || p + dlen > c.len()) { return u8[](); }
         u8[] der = u8[].filled(dlen, 0);
-        for (i32 i = 0; i < dlen; i++) { der[i] = c[p + i]; }
+        der.copyFrom(c, p, 0, dlen);
         return der;
       }
       at = at + 4 + len;

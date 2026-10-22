@@ -59,7 +59,7 @@ u8[] tweak(string suffix) {
   u8[] p = protoid();
   u8[] s = suffix.toBytes();
   u8[] out = u8[].filled(p.len() + s.len(), 0);
-  for (i32 i = 0; i < p.len(); i++) { out[i] = p[i]; }
+  out.copyFrom(p, 0, 0, p.len());
   for (i32 i = 0; i < s.len(); i++) { out[p.len() + i] = s[i]; }
   return out;
 }

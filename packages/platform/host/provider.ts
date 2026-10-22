@@ -746,14 +746,16 @@ export function cliOf(
       args: Uint8Array[],
       grants: number,
       cwd: string,
-      inheritIn: boolean,
+      // The `INHERIT_*` mask, as `spawn` takes: `DETACHED` (4) is the program's own business — std's
+      // `Cli.of` keeps the ticket from stopping the child — so only the input bit is the host's.
+      inherit: number,
       serveFs: boolean,
     ) =>
       T.child(
         send(OP.SPAWN_SELF,
           headed(
             i32le(grants),
-            headed(argvBytes(args), prefixed(str(cwd), headed(flag(inheritIn), flag(serveFs)))),
+            headed(argvBytes(args), prefixed(str(cwd), headed(flag((inherit & 1) !== 0), flag(serveFs)))),
           ),
         ),
       ),

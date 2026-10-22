@@ -326,7 +326,7 @@ u8[] bytesAt(R r, i32 at, i32 n) {
     return u8[]();
   }
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = r.data[at + i]; }
+  out.copyFrom(r.data, at, 0, n);
   return out;
 }
 
@@ -457,8 +457,8 @@ u8[] encodeValue(Value v, i32[] schema, i32 s) {
     i32 padded = ((b.len() + 31) / 32) * 32;
     u8[] out = u8[].filled(32 + padded, 0);
     u8[] len = wordOf(b.len());
-    for (i32 i = 0; i < 32; i++) { out[i] = len[i]; }
-    for (i32 i = 0; i < b.len(); i++) { out[32 + i] = b[i]; }
+    out.copyFrom(len, 0, 0, 32);
+    out.copyFrom(b, 0, 32, b.len());
     return out;
   }
   if (t == T_ARRAY()) {
@@ -466,8 +466,8 @@ u8[] encodeValue(Value v, i32[] schema, i32 s) {
     u8[] body = encodeRepeat(xs, schema, s + 1);
     u8[] out = u8[].filled(32 + body.len(), 0);
     u8[] len = wordOf(xs.len());
-    for (i32 i = 0; i < 32; i++) { out[i] = len[i]; }
-    for (i32 i = 0; i < body.len(); i++) { out[32 + i] = body[i]; }
+    out.copyFrom(len, 0, 0, 32);
+    out.copyFrom(body, 0, 32, body.len());
     return out;
   }
   if (t == T_FIXED()) { return encodeRepeat(listOf(v), schema, s + 2); }

@@ -76,3 +76,9 @@ the number 8 MiB would then be a limit two runtimes share and neither owns.
 
 Neither cap nor growth: frames stream with backpressure, as an OS pipe does, so nothing needs a cap and
 `truncated` goes. A project — to be written up as a design note before it is built.
+
+## Design note — 2026-10-22 (agent-a)
+
+`design/system/0014-frames-stream-with-backpressure.md`. A spawned child already streams with backpressure on
+every host; the cap belongs to running a child on the caller's stack. Recommended: frames go and the in-process
+route spawns, after measuring what a per-stage instance costs the shell corpus.

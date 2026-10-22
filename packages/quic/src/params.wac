@@ -75,7 +75,7 @@ export u8[] clientParameters(u8[] scid, i64 maxData, i64 maxStreamData, i64 maxS
   i32 p = 0;
   p = p + encode(out, p, PARAM_INITIAL_SOURCE_CONNECTION_ID() as i64);
   p = p + encode(out, p, scid.len() as i64);
-  for (i32 i = 0; i < scid.len(); i++) { out[p + i] = scid[i]; }
+  out.copyFrom(scid, 0, p, scid.len());
   p = p + scid.len();
   p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_DATA(), maxData);
   p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL(), maxStreamData);
@@ -92,7 +92,7 @@ export u8[] parametersExtension(u8[] params) {
   out[1] = (EXT_TRANSPORT_PARAMETERS() & 0xFF) as@ u8;
   out[2] = ((params.len() >> 8) & 0xFF) as@ u8;
   out[3] = (params.len() & 0xFF) as@ u8;
-  for (i32 i = 0; i < params.len(); i++) { out[4 + i] = params[i]; }
+  out.copyFrom(params, 0, 4, params.len());
   return out;
 }
 
@@ -125,11 +125,11 @@ export u8[] serverParameters(const u8[] originalDcid, const u8[] scid, i64 maxDa
   i32 p = 0;
   p = p + encode(out, p, PARAM_ORIGINAL_DESTINATION_CONNECTION_ID() as i64);
   p = p + encode(out, p, originalDcid.len() as i64);
-  for (i32 i = 0; i < originalDcid.len(); i++) { out[p + i] = originalDcid[i]; }
+  out.copyFrom(originalDcid, 0, p, originalDcid.len());
   p = p + originalDcid.len();
   p = p + encode(out, p, PARAM_INITIAL_SOURCE_CONNECTION_ID() as i64);
   p = p + encode(out, p, scid.len() as i64);
-  for (i32 i = 0; i < scid.len(); i++) { out[p + i] = scid[i]; }
+  out.copyFrom(scid, 0, p, scid.len());
   p = p + scid.len();
   p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_DATA(), maxData);
   p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL(), maxStreamData);

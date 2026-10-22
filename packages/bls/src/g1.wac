@@ -266,7 +266,7 @@ export u8[] g1Compress(G1 p) {
   u32[]? ay = g1AffineY(p);
   if ((ax is null) || (ay is null)) { return out; }
   u8[] xb = fpToBytes(ax!);
-  for (i32 i = 0; i < 48; i++) { out[i] = xb[i]; }
+  out.copyFrom(xb, 0, 0, 48);
   i32 flags = 0x80;
   if (fpIsLexicographicallyLarger(ay!)) { flags = flags | 0x20; }
   out[0] = (out[0] as i32 | flags) as@ u8;
@@ -298,7 +298,7 @@ export G1? g1Decompress(u8[] s) {
   }
 
   u8[] xb = u8[].filled(48, 0);
-  for (i32 i = 0; i < 48; i++) { xb[i] = s[i]; }
+  xb.copyFrom(s, 0, 0, 48);
   xb[0] = xb[0] & 0x1F;                                // strip the flags before reading
   u32[]? x = fpFromBytes(xb);
   if (x is null) { return null; }                      // x was at or above p

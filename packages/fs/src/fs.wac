@@ -1183,7 +1183,7 @@ string[] withMountsUnder(Fs fs, string path, string[] own) {
     return own;
   }
   string[] all = string[].filled(own.len() + extra.len(), "");
-  for (i32 i = 0; i < own.len(); i++) { all[i] = own[i]; }
+  all.copyFrom(own, 0, 0, own.len());
   for (i32 i = 0; i < extra.len(); i++) { all[own.len() + i] = extra.get(i); }
   sortNames(all);
   return all;

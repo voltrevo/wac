@@ -44,7 +44,7 @@ export u8[] sliceOf(u8[] s, i32 from, i32 to) {
   i32 hi = to > s.len() ? s.len() : to;
   if (hi <= from) { return u8[](); }
   u8[] o = u8[].filled(hi - from, 0);
-  for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
+  o.copyFrom(s, from, 0, o.len());
   return o;
 }
 
@@ -52,7 +52,7 @@ export u8[] concat(u8[] a, u8[] b) {
   if (a.len() == 0) { return b; }
   if (b.len() == 0) { return a; }
   u8[] o = u8[].filled(a.len() + b.len(), 0);
-  for (i32 i = 0; i < a.len(); i++) { o[i] = a[i]; }
+  o.copyFrom(a, 0, 0, a.len());
   for (i32 i = 0; i < b.len(); i++) { o[a.len() + i] = b[i]; }
   return o;
 }
@@ -435,7 +435,7 @@ export u8[][] chunkRequest(u8[] request) {
     i32 take = request.len() - at;
     if (take > max) { take = max; }
     u8[] chunk = u8[].filled(take, 0);
-    for (i32 j = 0; j < take; j++) { chunk[j] = request[at + j]; }
+    chunk.copyFrom(request, at, 0, take);
     out[i] = chunk;
   }
   return out;

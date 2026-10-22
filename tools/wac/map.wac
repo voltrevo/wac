@@ -203,7 +203,7 @@ string[] walk(Cli cli, string dir) {
     }
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 
@@ -256,7 +256,7 @@ Package survey(Cli cli, string name) {
     }
   }
   string[] exact = string[].filled(used[0], "");
-  for (i32 i = 0; i < used[0]; i++) { exact[i] = uses[i]; }
+  exact.copyFrom(uses, 0, 0, used[0]);
   return Package(name, summarize(read(cli, dir + "/README.md")), wacLines, hostTests, wacTests,
                  sortedNames(exact));
 }
@@ -273,7 +273,7 @@ i32 startOfLineCount(string s, string needle) {
 
 string[] sortedNames(string[] names) {
   string[] out = string[].filled(names.len(), "");
-  for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
+  out.copyFrom(names, 0, 0, names.len());
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];
     i32 j = i - 1;
@@ -479,7 +479,7 @@ export i32 main(Sys sys) {
     n = n + 1;
   }
   Package[] exact = Package[].filled(n, pkgs[0]);
-  for (i32 i = 0; i < n; i++) { exact[i] = pkgs[i]; }
+  exact.copyFrom(pkgs, 0, 0, n);
 
   string text = render(cli, exact, findPrograms(cli));
 

@@ -99,12 +99,12 @@ export Joined rendezvous1(RendPoints m, u8[] body, bool circuitEndsHere) {
   if (body.len() < REND_COOKIE_LEN) { return refused(RV_REFUSED); }
 
   u8[] cookie = u8[].filled(REND_COOKIE_LEN, 0);
-  for (i32 i = 0; i < REND_COOKIE_LEN; i++) { cookie[i] = body[i]; }
+  cookie.copyFrom(body, 0, 0, REND_COOKIE_LEN);
   i32 at = indexOfCookie(m, cookie);
   if (at < 0) { return refused(RV_UNKNOWN_COOKIE); }
 
   u8[] rest = u8[].filled(body.len() - REND_COOKIE_LEN, 0);
-  for (i32 i = 0; i < rest.len(); i++) { rest[i] = body[REND_COOKIE_LEN + i]; }
+  rest.copyFrom(body, REND_COOKIE_LEN, 0, rest.len());
   Joined out = Joined(RV_OK, at, rest, m.connIds[at], m.circIds[at]);
   removeAt(m, at);
   return out;

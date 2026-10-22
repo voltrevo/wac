@@ -147,7 +147,7 @@ export struct Sha512 {
 
 Sha512 start(const u64[] iv) {
   u64[] h = u64[].filled(8, 0);
-  for (i32 i = 0; i < 8; i++) { h[i] = iv[i]; }
+  h.copyFrom(iv, 0, 0, 8);
   return Sha512(h, u8[].filled(128, 0), 0, 0, u64[].filled(80, 0));
 }
 

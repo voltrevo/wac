@@ -89,7 +89,7 @@ Got runWith(Cli cli, string cmd, string[] args, string stdinBytes, string dir, s
   argv[0] = "-c";
   argv[1] = "timeout 5 \"$0\" \"$@\" | head -c 200000";
   argv[2] = cmd;
-  for (i32 i = 0; i < args.len(); i++) { argv[3 + i] = args[i]; }
+  argv.copyFrom(args, 0, 3, args.len());
   Exec r = cli.execWithIn("sh", argv, stdinBytes.toBytes(), env, true, false, dir).wait();
   if (!r.ran()) { return Got("", "could not run sh: " + r.error, 0 - 1); }
   return Got(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status);

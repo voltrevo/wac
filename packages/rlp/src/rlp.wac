@@ -100,7 +100,7 @@ export u8[] encode(Item item) {
       }
       u8[] head = header(total, 0xC0, 0xF7);
       u8[] out = u8[].filled(head.len() + total, 0);
-      for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
+      out.copyFrom(head, 0, 0, head.len());
       i32 at = head.len();
       for (i32 i = 0; i < parts.len(); i++) {
         for (i32 j = 0; j < parts[i].len(); j++) { out[at] = parts[i][j]; at++; }
@@ -117,7 +117,7 @@ u8[] encodeBytes(u8[] v) {
   if (v.len() == 1 && v[0] < 0x80) { return v; }
   u8[] head = header(v.len(), 0x80, 0xB7);
   u8[] out = u8[].filled(head.len() + v.len(), 0);
-  for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
+  out.copyFrom(head, 0, 0, head.len());
   for (i32 i = 0; i < v.len(); i++) { out[head.len() + i] = v[i]; }
   return out;
 }
@@ -235,7 +235,7 @@ u8[] take(Cursor c, i32 n, bool short) {
     return u8[]();
   }
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = c.src[c.at + i]; }
+  out.copyFrom(c.src, c.at, 0, n);
   c.at = c.at + n;
   // `0x81 0x05` spells a byte that spells itself. Canonical RLP has one encoding per value and this is
   // the second one, so it is invalid input rather than a tolerated variant.
@@ -262,7 +262,7 @@ Item list(Cursor c, i32 payload) {
     if (c.error != "") { return empty; }
     if (n == items.len()) {
       Item[] bigger = Item[].filled(items.len() * 2, empty);
-      for (i32 i = 0; i < n; i++) { bigger[i] = items[i]; }
+      bigger.copyFrom(items, 0, 0, n);
       items = bigger;
     }
     items[n] = next;
@@ -275,7 +275,7 @@ Item list(Cursor c, i32 payload) {
     return empty;
   }
   Item[] exact = Item[].filled(n, empty);
-  for (i32 i = 0; i < n; i++) { exact[i] = items[i]; }
+  exact.copyFrom(items, 0, 0, n);
   return Item.List(exact);
 }
 

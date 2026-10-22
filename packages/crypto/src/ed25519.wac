@@ -234,7 +234,7 @@ export u8[] ptEncode(Point p) {
 export Point? ptDecode(u8[] s) {
   if (s.len() != 32) { return null; }
   u8[] yBytes = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { yBytes[i] = s[i]; }
+  yBytes.copyFrom(s, 0, 0, 32);
   i32 sign = (yBytes[31] as i32 >> 7) & 1;
   yBytes[31] = yBytes[31] & 127;
 
@@ -321,7 +321,7 @@ u8[] scReduce(u8[] wide) {
   // Work in a 64-byte accumulator, subtracting L shifted left by k bits for k from the
   // top down. `shifted` holds L << k as 64 bytes.
   u8[] r = u8[].filled(64, 0);
-  for (i32 i = 0; i < 64; i++) { r[i] = wide[i]; }
+  r.copyFrom(wide, 0, 0, 64);
 
   for (i32 k = 259; k >= 0; k--) {
     // shifted = L << k
@@ -364,7 +364,7 @@ u8[] scReduce(u8[] wide) {
   }
 
   u8[] out = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { out[i] = r[i]; }
+  out.copyFrom(r, 0, 0, 32);
   return out;
 }
 
@@ -430,7 +430,7 @@ u8[] expandSeed(u8[] seed) { return sha512(seed); }
 
 u8[] clampScalar(u8[] h) {
   u8[] a = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { a[i] = h[i]; }
+  a.copyFrom(h, 0, 0, 32);
   a[0] = a[0] & 248;
   a[31] = a[31] & 63;
   a[31] = a[31] | 64;
@@ -450,8 +450,8 @@ export u8[] ed25519ExpandedSecret(u8[] seed) {
   u8[] h = expandSeed(seed);
   u8[] a = clampScalar(h);
   u8[] out = u8[].filled(64, 0);
-  for (i32 i = 0; i < 32; i++) { out[i] = a[i]; }
-  for (i32 i = 0; i < 32; i++) { out[32 + i] = h[32 + i]; }
+  out.copyFrom(a, 0, 0, 32);
+  out.copyFrom(h, 32, 32, 32);
   return out;
 }
 
@@ -473,17 +473,17 @@ export u8[] ed25519PublicKey(u8[] seed) {
 u8[] signExpanded(u8[] a, u8[] prefix, u8[] pub, u8[] msg) {
   // r = H(prefix || msg) mod L
   u8[] prefixMsg = u8[].filled(32 + msg.len(), 0);
-  for (i32 i = 0; i < 32; i++) { prefixMsg[i] = prefix[i]; }
-  for (i32 i = 0; i < msg.len(); i++) { prefixMsg[32 + i] = msg[i]; }
+  prefixMsg.copyFrom(prefix, 0, 0, 32);
+  prefixMsg.copyFrom(msg, 0, 32, msg.len());
   u8[] r = scReduce(sha512(prefixMsg));
 
   u8[] rPoint = ptEncode(ptMul(r, ptBase()));
 
   // k = H(R || A || msg) mod L
   u8[] kInput = u8[].filled(64 + msg.len(), 0);
-  for (i32 i = 0; i < 32; i++) { kInput[i] = rPoint[i]; }
-  for (i32 i = 0; i < 32; i++) { kInput[32 + i] = pub[i]; }
-  for (i32 i = 0; i < msg.len(); i++) { kInput[64 + i] = msg[i]; }
+  kInput.copyFrom(rPoint, 0, 0, 32);
+  kInput.copyFrom(pub, 0, 32, 32);
+  kInput.copyFrom(msg, 0, 64, msg.len());
   u8[] k = scReduce(sha512(kInput));
 
   u8[] s = scMulAdd(k, a, r);
@@ -499,7 +499,7 @@ export u8[] ed25519Sign(u8[] seed, u8[] msg) {
   u8[] h = expandSeed(seed);
   u8[] a = clampScalar(h);
   u8[] prefix = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { prefix[i] = h[32 + i]; }
+  prefix.copyFrom(h, 32, 0, 32);
   return signExpanded(a, prefix, ptEncode(ptMul(a, ptBase())), msg);
 }
 
@@ -527,9 +527,9 @@ export bool ed25519Verify(u8[] pub, const u8[] msg, const u8[] sig) {
   Point rPoint = maybeR!;
 
   u8[] kInput = u8[].filled(64 + msg.len(), 0);
-  for (i32 i = 0; i < 32; i++) { kInput[i] = rBytes[i]; }
-  for (i32 i = 0; i < 32; i++) { kInput[32 + i] = pub[i]; }
-  for (i32 i = 0; i < msg.len(); i++) { kInput[64 + i] = msg[i]; }
+  kInput.copyFrom(rBytes, 0, 0, 32);
+  kInput.copyFrom(pub, 0, 32, 32);
+  kInput.copyFrom(msg, 0, 64, msg.len());
   u8[] k = scReduce(sha512(kInput));
 
   Point left = ptMul(s, ptBase());
@@ -571,8 +571,8 @@ export u8[] curve25519ToEd25519Secret(u8[] curveSecret) {
   if (curveSecret.len() != 32) { trap; }
   u8[] s = "Derive high part of ed25519 key from curve25519 key".toBytes();
   u8[] input = u8[].filled(32 + s.len() + 1, 0);
-  for (i32 i = 0; i < 32; i++) { input[i] = curveSecret[i]; }
-  for (i32 i = 0; i < s.len(); i++) { input[32 + i] = s[i]; }
+  input.copyFrom(curveSecret, 0, 0, 32);
+  input.copyFrom(s, 0, 32, s.len());
   u8[] high = sha512(input);                     // input[32 + s.len()] is the NUL
 
   u8[] out = u8[].filled(64, 0);
@@ -584,7 +584,7 @@ export u8[] curve25519ToEd25519Secret(u8[] curveSecret) {
 export u8[] ed25519PublicKeyExpanded(u8[] expanded) {
   if (expanded.len() != 64) { trap; }
   u8[] a = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { a[i] = expanded[i]; }
+  a.copyFrom(expanded, 0, 0, 32);
   return ptEncode(ptMul(a, ptBase()));
 }
 

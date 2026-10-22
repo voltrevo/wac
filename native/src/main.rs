@@ -1863,7 +1863,9 @@ fn dispatch(
                 _ => 0,
             };
             let cwd = read_string(caller, &params[3])?;
-            let inherit = matches!(arg(4), Val::I32(n) if n != 0);
+            // The `INHERIT_*` mask; only the input bit is the host's — `DETACHED` (4) is std's
+            // `Cli.of`'s business. `issues/system/0312b`.
+            let inherit = matches!(arg(4), Val::I32(n) if n & 1 != 0);
             // Whether this program promises to answer the child's filesystem questions — see
             // `spawnSelf` in platform.wac. Not a grant: it widens nothing.
             let serve_fs = matches!(arg(5), Val::I32(n) if n != 0);

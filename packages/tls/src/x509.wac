@@ -497,7 +497,7 @@ bool namesAllowed(Cert leaf, Cert ca) {
     if (i == names.len() || names[i] == 0) {
       if (i > s) {
         u8[] one = u8[].filled(i - s, 0);
-        for (i32 k = 0; k < one.len(); k++) { one[k] = names[s + k]; }
+        one.copyFrom(names, s, 0, one.len());
         if (ca.permittedDns.len() > 0 && !anyBaseCovers(ca.permittedDns, one)) { return false; }
         if (anyBaseCovers(ca.excludedDns, one)) { return false; }
       }
@@ -522,7 +522,7 @@ u8[] collectIpAddresses(u8[] value) {
       // dropped here rather than stored and silently never compared.
       if (addr.len() == 4) {
         u8[] joined = u8[].filled(acc.len() + 4, 0);
-        for (i32 i = 0; i < acc.len(); i++) { joined[i] = acc[i]; }
+        joined.copyFrom(acc, 0, 0, acc.len());
         for (i32 i = 0; i < 4; i++) { joined[acc.len() + i] = addr[i]; }
         acc = joined;
       }

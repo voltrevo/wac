@@ -87,7 +87,7 @@ export InitialKeys initialKeys(const u8[] clientDcid, bool isServer) {
 export u8[] headerMask(u8[] hp, u8[] packet, i32 sampleAt) {
   if (sampleAt < 0 || sampleAt + 16 > packet.len()) { return u8[](); }
   u8[] sample = u8[].filled(16, 0);
-  for (i32 i = 0; i < 16; i++) { sample[i] = packet[sampleAt + i]; }
+  sample.copyFrom(packet, sampleAt, 0, 16);
   u8[] w = aesExpandKey(hp);
   return aesEncryptBlock(w, sample, aesRounds(hp.len()));
 }
@@ -95,7 +95,7 @@ export u8[] headerMask(u8[] hp, u8[] packet, i32 sampleAt) {
 /** The 12-byte nonce: the iv with the packet number XORed into its last eight bytes. */
 export u8[] nonce(u8[] iv, i64 packetNumber) {
   u8[] out = u8[].filled(12, 0);
-  for (i32 i = 0; i < 12; i++) { out[i] = iv[i]; }
+  out.copyFrom(iv, 0, 0, 12);
   for (i32 i = 0; i < 8; i++) {
     i32 shift = 8 * (7 - i);
     i32 byte = ((packetNumber >> (shift as i64)) & (0xFF as i64)) as~ i32;
@@ -119,9 +119,9 @@ export u8[] unprotect(InitialKeys keys, u8[] aad, u8[] ciphertext, i64 packetNum
   if (ciphertext.len() < 16) { return u8[](); }
   i32 bodyLen = ciphertext.len() - 16;
   u8[] body = u8[].filled(bodyLen, 0);
-  for (i32 i = 0; i < bodyLen; i++) { body[i] = ciphertext[i]; }
+  body.copyFrom(ciphertext, 0, 0, bodyLen);
   u8[] tag = u8[].filled(16, 0);
-  for (i32 i = 0; i < 16; i++) { tag[i] = ciphertext[bodyLen + i]; }
+  tag.copyFrom(ciphertext, bodyLen, 0, 16);
 
   // **The tag is checked here rather than by `gcmDecrypt`, and that is the whole of this function.**
   //
@@ -302,7 +302,7 @@ export u8[] sealLong(i32 packetType, const u8[] dcid, const u8[] scid, u8[] fram
 
   // PADDING is zeros, so an array longer than the frames already is the padding.
   u8[] payload = u8[].filled(payloadLen, 0);
-  for (i32 i = 0; i < frames.len(); i++) { payload[i] = frames[i]; }
+  payload.copyFrom(frames, 0, 0, frames.len());
 
   u8[] header = u8[].filled(headerLen, 0);
   i32 p = 0;
@@ -315,11 +315,11 @@ export u8[] sealLong(i32 packetType, const u8[] dcid, const u8[] scid, u8[] fram
   p = p + 4;
   header[p] = dcid.len() as@ u8;
   p = p + 1;
-  for (i32 i = 0; i < dcid.len(); i++) { header[p + i] = dcid[i]; }
+  header.copyFrom(dcid, 0, p, dcid.len());
   p = p + dcid.len();
   header[p] = scid.len() as@ u8;
   p = p + 1;
-  for (i32 i = 0; i < scid.len(); i++) { header[p + i] = scid[i]; }
+  header.copyFrom(scid, 0, p, scid.len());
   p = p + scid.len();
   if (tokenBytes == 1) {
     header[p] = 0;                     // token length: a one-byte varint of zero
@@ -342,8 +342,8 @@ export u8[] sealLong(i32 packetType, const u8[] dcid, const u8[] scid, u8[] fram
   u8[] tag = gcmTag(keys.key, iv, header, ct);
 
   u8[] out = u8[].filled(headerLen + ct.len() + 16, 0);
-  for (i32 i = 0; i < headerLen; i++) { out[i] = header[i]; }
-  for (i32 i = 0; i < ct.len(); i++) { out[headerLen + i] = ct[i]; }
+  out.copyFrom(header, 0, 0, headerLen);
+  out.copyFrom(ct, 0, headerLen, ct.len());
   for (i32 i = 0; i < 16; i++) { out[headerLen + ct.len() + i] = tag[i]; }
 
   u8[] mask = headerMask(keys.hp, out, numberAt + 4);
@@ -468,12 +468,12 @@ export u8[] sealShort(const u8[] dcid, u8[] frames, i64 packetNumber, InitialKey
   if (payloadLen == 0) { return u8[](); }
 
   u8[] payload = u8[].filled(payloadLen, 0);
-  for (i32 i = 0; i < frames.len(); i++) { payload[i] = frames[i]; }
+  payload.copyFrom(frames, 0, 0, frames.len());
 
   u8[] header = u8[].filled(headerLen, 0);
   // Form bit clear, fixed bit set, spin 0, reserved 0, key phase 0, and the number length.
   header[0] = (FIXED_BIT() | (pnLen - 1)) as@ u8;
-  for (i32 i = 0; i < dcid.len(); i++) { header[1 + i] = dcid[i]; }
+  header.copyFrom(dcid, 0, 1, dcid.len());
   i32 numberAt = 1 + dcid.len();
   for (i32 i = 0; i < pnLen; i++) {
     i32 shift = 8 * (pnLen - 1 - i);
@@ -485,8 +485,8 @@ export u8[] sealShort(const u8[] dcid, u8[] frames, i64 packetNumber, InitialKey
   u8[] tag = gcmTag(keys.key, iv, header, ct);
 
   u8[] out = u8[].filled(headerLen + ct.len() + 16, 0);
-  for (i32 i = 0; i < headerLen; i++) { out[i] = header[i]; }
-  for (i32 i = 0; i < ct.len(); i++) { out[headerLen + i] = ct[i]; }
+  out.copyFrom(header, 0, 0, headerLen);
+  out.copyFrom(ct, 0, headerLen, ct.len());
   for (i32 i = 0; i < 16; i++) { out[headerLen + ct.len() + i] = tag[i]; }
 
   u8[] mask = headerMask(keys.hp, out, numberAt + 4);
@@ -562,7 +562,7 @@ export bool retryIntegrityOk(u8[] packet, u8[] originalDcid) {
   i32 bodyLen = packet.len() - 16;
   u8[] pseudo = u8[].filled(1 + originalDcid.len() + bodyLen, 0);
   pseudo[0] = originalDcid.len() as@ u8;
-  for (i32 i = 0; i < originalDcid.len(); i++) { pseudo[1 + i] = originalDcid[i]; }
+  pseudo.copyFrom(originalDcid, 0, 1, originalDcid.len());
   for (i32 i = 0; i < bodyLen; i++) { pseudo[1 + originalDcid.len() + i] = packet[i]; }
 
   // No plaintext: the tag authenticates the pseudo-packet and encrypts nothing.
@@ -591,6 +591,6 @@ export u8[] retryToken(u8[] packet) {
   i32 end = packet.len() - 16;
   if (end <= start) { return u8[](); }
   u8[] token = u8[].filled(end - start, 0);
-  for (i32 i = 0; i < end - start; i++) { token[i] = packet[start + i]; }
+  token.copyFrom(packet, start, 0, end - start);
   return token;
 }

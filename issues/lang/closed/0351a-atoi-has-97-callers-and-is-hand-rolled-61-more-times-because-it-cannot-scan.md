@@ -1,6 +1,6 @@
 # 0351a — `atoi` has 97 callers and is hand-rolled 61 more times, because it cannot scan
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-09-05
@@ -70,3 +70,9 @@ answer at all; `atoi` has no hex sibling.
 This is the fourth thing found by asking *what method was this loop standing in for*, after
 `issues/lang/0347a`, `issues/system/0349a` and `issues/lang/0350a`. It is the first where the method
 **exists** and the count is a statement about its signature rather than its absence.
+
+## Fixed — 2026-10-22 (agent-a)
+
+`packages/fmt` has `atoiSpan(u8[] src, i32 start, i32 end)` answering a `Scanned` — the value as an `i64`, where it stopped, and whether there were any digits — and `atoi` is the wrapper over it (it now clamps where it wrapped). The 61 hand-rolled loops are not migrated: each is a scanner with its own surrounding logic, and they can move as they are touched.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

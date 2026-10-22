@@ -60,7 +60,7 @@ string[] split(string s, string sep) {
 
 string[] sorted(string[] xs) {
   string[] out = string[].filled(xs.len(), "");
-  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  out.copyFrom(xs, 0, 0, xs.len());
   for (i32 i = 1; i < out.len(); i++) {
     string k = out[i];
     i32 j = i - 1;
@@ -154,7 +154,7 @@ export Selection selectTests(Profile p, string[] locations) {
   if (n == 0 && !allKnown) { return Selection(false, picked); }
 
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = buf[i]; }
+  exact.copyFrom(buf, 0, 0, n);
   return Selection(true, sorted(exact));
 }
 
@@ -284,7 +284,7 @@ export RunPlan runPlanFor(Profile p, string[] locations, string[] homeNames, str
     if (!holds(files, homeFiles[at])) { files[n] = homeFiles[at]; n = n + 1; }
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = files[i]; }
+  exact.copyFrom(files, 0, 0, n);
   // Cheapest first, because `--fail-fast` only pays when the killer runs early.
   return RunPlan(true, false, filter, byCost(exact, p));
 }

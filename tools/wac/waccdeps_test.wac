@@ -89,7 +89,7 @@ string[] graphOf(T t, Cli cli, string entry, i32 cap) {
     }
   }
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = paths[i]; }
+  out.copyFrom(paths, 0, 0, n);
   return out;
 }
 

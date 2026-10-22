@@ -95,7 +95,7 @@ export Index parseIdx(u8[] b) {
   if (bigAt + 40 > b.len()) { return Index.Rejected("truncated before the trailing checksums"); }
 
   u8[] names = u8[].filled(n * 20, 0);
-  for (i32 i = 0; i < n * 20; i++) { names[i] = b[namesAt + i]; }
+  names.copyFrom(b, namesAt, 0, n * 20);
 
   u32[] crcs = u32[].filled(n, 0);
   for (i32 i = 0; i < n; i++) { crcs[i] = be32(b, crcsAt + i * 4) as~ u32; }

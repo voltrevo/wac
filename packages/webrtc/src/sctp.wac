@@ -98,7 +98,7 @@ export u8[] chunk(i32 kind, i32 flags, u8[] value) {
   out[1] = flags as@ u8;
   out[2] = ((len >> 8) & 0xFF) as@ u8;
   out[3] = (len & 0xFF) as@ u8;
-  for (i32 i = 0; i < value.len(); i++) { out[4 + i] = value[i]; }
+  out.copyFrom(value, 0, 4, value.len());
   return out;
 }
 
@@ -130,7 +130,7 @@ export u8[] packet(i32 sourcePort, i32 destPort, i32 tag, u8[] chunks) {
   out[6] = ((tag >> 8) & 0xFF) as@ u8;
   out[7] = (tag & 0xFF) as@ u8;
   // Bytes 8..11 stay zero while the checksum is computed, which is what makes the value verifiable.
-  for (i32 i = 0; i < chunks.len(); i++) { out[12 + i] = chunks[i]; }
+  out.copyFrom(chunks, 0, 12, chunks.len());
   i32 c = crc32c(out);
   // **Little-endian**, alone among every other field in the protocol. RFC 4960 §6.8 says so and
   // gives no reason; a big-endian checksum is the mistake that makes a packet verify against your
@@ -146,7 +146,7 @@ export u8[] packet(i32 sourcePort, i32 destPort, i32 tag, u8[] chunks) {
 export bool checksumOk(u8[] b) {
   if (b.len() < 12) { return false; }
   u8[] copy = u8[].filled(b.len(), 0);
-  for (i32 i = 0; i < b.len(); i++) { copy[i] = b[i]; }
+  copy.copyFrom(b, 0, 0, b.len());
   copy[8] = 0; copy[9] = 0; copy[10] = 0; copy[11] = 0;
   i32 c = crc32c(copy);
   return (c & 0xFF) == b[8] as i32 && ((c >> 8) & 0xFF) == b[9] as i32
@@ -180,7 +180,7 @@ export u8[] initValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound, i3
   out[13] = ((initialTsn >> 16) & 0xFF) as@ u8;
   out[14] = ((initialTsn >> 8) & 0xFF) as@ u8;
   out[15] = (initialTsn & 0xFF) as@ u8;
-  for (i32 i = 0; i < params.len(); i++) { out[16 + i] = params[i]; }
+  out.copyFrom(params, 0, 16, params.len());
   return out;
 }
 
@@ -200,7 +200,7 @@ export u8[] initAckValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound,
   param[0] = 0x00; param[1] = 0x07;              // state cookie
   param[2] = ((paramLen >> 8) & 0xFF) as@ u8;
   param[3] = (paramLen & 0xFF) as@ u8;
-  for (i32 i = 0; i < cookie.len(); i++) { param[4 + i] = cookie[i]; }
+  param.copyFrom(cookie, 0, 4, cookie.len());
   return initValue(initiateTag, window, outbound, inbound, initialTsn, param);
 }
 
@@ -269,7 +269,7 @@ export u8[] dataValue(i32 tsn, i32 streamId, i32 streamSeq, i32 ppid, u8[] paylo
   out[9] = ((ppid >> 16) & 0xFF) as@ u8;
   out[10] = ((ppid >> 8) & 0xFF) as@ u8;
   out[11] = (ppid & 0xFF) as@ u8;
-  for (i32 i = 0; i < payload.len(); i++) { out[12 + i] = payload[i]; }
+  out.copyFrom(payload, 0, 12, payload.len());
   return out;
 }
 
@@ -295,7 +295,7 @@ export i32 dataPpid(u8[] value) {
 export u8[] dataPayload(u8[] value) {
   if (value.len() < 12) { return u8[](); }
   u8[] out = u8[].filled(value.len() - 12, 0);
-  for (i32 i = 0; i < out.len(); i++) { out[i] = value[12 + i]; }
+  out.copyFrom(value, 12, 0, out.len());
   return out;
 }
 
@@ -1011,7 +1011,7 @@ export struct Association {
       i32 n = payload.len() - from;
       if (n > maxChunk) { n = maxChunk; }
       u8[] part = u8[].filled(n, 0);
-      for (i32 j = 0; j < n; j++) { part[j] = payload[from + j]; }
+      part.copyFrom(payload, from, 0, n);
       i32 flags = 0;
       if (i == 0) { flags = flags | dataFlagBegin(); }
       if (i == pieces - 1) { flags = flags | dataFlagEnd(); }
@@ -1074,7 +1074,7 @@ export struct Association {
   u8[] append(this, i32 stream, i32 flags, u8[] piece) {
     u8[] have = this.partial[stream];
     u8[] both = u8[].filled(have.len() + piece.len(), 0);
-    for (i32 i = 0; i < have.len(); i++) { both[i] = have[i]; }
+    both.copyFrom(have, 0, 0, have.len());
     for (i32 i = 0; i < piece.len(); i++) { both[have.len() + i] = piece[i]; }
     this.expectTsn[stream] = this.expectTsn[stream] + 1;
     if ((flags & dataFlagEnd()) != 0) {
@@ -1131,7 +1131,7 @@ export struct Association {
   // A plain receiver: the packets handed back are the ones kept for retransmission, not copies.
   u8[][] resend(this) {
     u8[][] out = u8[][].defaulted(this.flightCount);
-    for (i32 i = 0; i < this.flightCount; i++) { out[i] = this.flightPacket[i]; }
+    out.copyFrom(this.flightPacket, 0, 0, this.flightCount);
     return out;
   }
 
@@ -1187,7 +1187,7 @@ export struct Association {
 /** Grow a list of packets by one. */
 u8[][] appendPacket(u8[][] list, u8[] one) {
   u8[][] out = u8[][].defaulted(list.len() + 1);
-  for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
+  out.copyFrom(list, 0, 0, list.len());
   out[list.len()] = one;
   return out;
 }
@@ -1224,7 +1224,7 @@ export u8[] dcepOpenMessage(i32 channelType, i32 priority, i32 reliability, stri
   out[9] = (lab.len() & 0xFF) as@ u8;
   out[10] = ((pro.len() >> 8) & 0xFF) as@ u8;
   out[11] = (pro.len() & 0xFF) as@ u8;
-  for (i32 i = 0; i < lab.len(); i++) { out[12 + i] = lab[i]; }
+  out.copyFrom(lab, 0, 12, lab.len());
   for (i32 i = 0; i < pro.len(); i++) { out[12 + lab.len() + i] = pro[i]; }
   return out;
 }
@@ -1242,7 +1242,7 @@ export string dcepLabel(u8[] msg) {
   i32 n = (msg[8] as i32 << 8) | msg[9] as i32;
   if (12 + n > msg.len()) { return ""; }
   u8[] lab = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { lab[i] = msg[12 + i]; }
+  lab.copyFrom(msg, 12, 0, n);
   return string.fromBytes(lab);
 }
 

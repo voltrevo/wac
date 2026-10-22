@@ -1592,6 +1592,14 @@ export static i32 INHERIT_IN = 1;
  * started, which is what `wac <prog.wasm>` is.
  */
 export static i32 INHERIT_OUT = 2;
+/**
+ * **Not a stream: the child outlives its ticket.** A `Pending<Child>` owns its child — dropping it
+ * uncollected stops the child, as `closeSocket` on the handle does — so a child nobody can reach is not
+ * something a program makes by accident. This flag asks for exactly that: fire-and-forget, a child that
+ * runs on with no one holding it. Shares the `inherit` mask because it is a choice about the child made
+ * at the same moment, and a capability may not grow a seventh parameter. `issues/system/0312b`.
+ */
+export static i32 DETACHED = 4;
 
 /**
  * How many host calls one worker may have outstanding at once.
@@ -2211,9 +2219,9 @@ export struct Cli {
    *
    * Grants are a ceiling of the parent's own, as with `spawn`: a shell that may read hands its
    * children reading, and a program granted nothing cannot widen itself by spawning. `cwd` is where
-   * the child's relative paths resolve from, empty for the host's own directory, and `inheritIn`
-   * hands over this program's own standard input rather than a queue — see `spawn` above for what
-   * that buys.
+   * the child's relative paths resolve from, empty for the host's own directory, and `inherit` is the
+   * mask `spawn` takes: `INHERIT_IN` hands over this program's own standard input rather than a queue,
+   * and `DETACHED` lets the child outlive its ticket — see `spawn` above for both.
    *
    * **`serveFs` is a promise to answer the child's filesystem questions**, on `Child.fsHandle`. It
    * is not a grant — it widens nothing, since what the child can reach is whatever this program's
@@ -2224,7 +2232,7 @@ export struct Cli {
    * exactly as it did. A parent that passes true and then does not serve parks its child, which is
    * the one failure this cannot make safe and the reason it is stated rather than assumed.
    */
-  fn<Pending<Child>(u8[][], i32, string, bool, bool)> spawnSelf;
+  fn<Pending<Child>(u8[][], i32, string, i32, bool)> spawnSelf;
 
   /**
    * End a spawned worker's standard input without stopping it.
@@ -2493,7 +2501,7 @@ export struct Cli {
     fn<Pending<Datagram>(i32)> receiveFrom,
     fn<Pending<bool>(i32, string, i32, u8[])> sendTo,
     fn<Pending<Child>(u8[], u8[][], i32, string, i32, bool)> spawn,
-    fn<Pending<Child>(u8[][], i32, string, bool, bool)> spawnSelf,
+    fn<Pending<Child>(u8[][], i32, string, i32, bool)> spawnSelf,
     fn<void(i32)> closeFeed,
     fn<Pending<i32>(i32)> exitCode,
     fn<Pending<string>()> cwd,
@@ -2523,8 +2531,10 @@ export struct Cli {
       closeSend, (string a0, i32 a1) => bindDatagram(a0, a1).on(sched),
       (i32 a0) => receiveFrom(a0).on(sched),
       (i32 a0, string a1, i32 a2, u8[] a3) => sendTo(a0, a1, a2, a3).on(sched),
-      (u8[] a0, u8[][] a1, i32 a2, string a3, i32 a4, bool a5) => spawn(a0, a1, a2, a3, a4, a5).on(sched),
-      (u8[][] a0, i32 a1, string a2, bool a3, bool a4) => spawnSelf(a0, a1, a2, a3, a4).on(sched),
+      (u8[] a0, u8[][] a1, i32 a2, string a3, i32 a4, bool a5) =>
+        owned(spawn(a0, a1, a2, a3, a4, a5).on(sched), (a4 & DETACHED) != 0, closeSocket),
+      (u8[][] a0, i32 a1, string a2, i32 a3, bool a4) =>
+        owned(spawnSelf(a0, a1, a2, a3, a4).on(sched), (a3 & DETACHED) != 0, closeSocket),
       closeFeed, (i32 a0) => exitCode(a0).on(sched), () => cwd().on(sched),
       (string[] a0, u8[] a1, string a2, bool a3) => pushChild(a0, a1, a2, a3).on(sched),
       () => popChild().on(sched),
@@ -2532,6 +2542,24 @@ export struct Cli {
       load, call, unload, validated, sched
     );
   }
+}
+
+/**
+ * A spawn's ticket, owning its child (spec ch44; `issues/system/0312b`): dropped while it still holds an
+ * uncollected child, it stops that child, as `closeSocket` on the handle does. `detached` leaves it be.
+ * A ticket already collected answers `settled` false and so stops nothing — the handle is the caller's
+ * by then. Done here, where every host's `Cli` is built, so no host has to know.
+ */
+Pending<Child> owned(Pending<Child> p, bool detached, fn<void(i32)> closeSocket) {
+  if (detached) { return p; }
+  fn<void(i32)> stop = (i32 id) => {
+    if (p.settled(id)) {
+      Child c = p.resolve(id);
+      if (c.handle >= 0) { closeSocket(c.handle); }
+    }
+    p.drop(id);
+  };
+  return Pending<Child>(p.id, p.resolve, p.settled, stop, p.sched, p.waitable);
 }
 
 // ── Sys ─────────────────────────────────────────────────────────────────────────────────────────

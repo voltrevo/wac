@@ -57,7 +57,7 @@ struct C {
     i32 cap = this.code.len() == 0 ? 96 : this.code.len() * 2;
     while (cap < want * 3) { cap = cap * 2; }
     i32[] next = i32[].filled(cap, 0);
-    for (i32 i = 0; i < this.len * 3; i++) { next[i] = this.code[i]; }
+    next.copyFrom(this.code, 0, 0, this.len * 3);
     this.code = next;
   }
 
@@ -711,7 +711,7 @@ void parseAlternation(C c) {
 
     if (nSplits >= splits.len()) {
       i32[] bigger = i32[].filled(splits.len() * 2, 0);
-      for (i32 i = 0; i < nSplits; i++) { bigger[i] = splits[i]; }
+      bigger.copyFrom(splits, 0, 0, nSplits);
       splits = bigger;
     }
     splits[nSplits] = splitAt;
@@ -719,7 +719,7 @@ void parseAlternation(C c) {
 
     if (nJmps >= jmps.len()) {
       i32[] bigger = i32[].filled(jmps.len() * 2, 0);
-      for (i32 i = 0; i < nJmps; i++) { bigger[i] = jmps[i]; }
+      bigger.copyFrom(jmps, 0, 0, nJmps);
       jmps = bigger;
     }
     jmps[nJmps] = jmpAt;

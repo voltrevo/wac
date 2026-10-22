@@ -18,7 +18,7 @@
 // float tests next door use a host because rounding genuinely is in doubt.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { itoa, itoa64, utoa64, atoi } from "../../src/itoa.wac";
+import { itoa, itoa64, utoa64, atoi, atoiSpan, Scanned } from "../../src/itoa.wac";
 
 /**
  * `itoa` and `itoa64` over the values where a sign or a width goes wrong.
@@ -113,5 +113,34 @@ export string test_atoi_reads_the_sign_and_stops_at_the_first_non_digit() {
   for (i32 i = 0; i < round.len(); i++) {
     t.eqI32(atoi(itoa(round[i])), round[i], "atoi(itoa(" + itoa(round[i]) + ")) is not itself");
   }
+  return t.report();
+}
+
+/**
+ * `atoiSpan` scans a number out of bytes and says where it stopped — the shape 61 hand-rolled loops
+ * wanted and `atoi` could not give (`issues/lang/0351a`): it takes bytes rather than a string, answers
+ * the position after the digits, and tells "no digits" apart from zero.
+ */
+export string test_atoi_span_scans_bytes_and_says_where_it_stopped() {
+  T t = T.create();
+  u8[] b = "x=-42;y=7z".toBytes();
+  Scanned a = atoiSpan(b, 2, b.len());
+  t.eqI32(a.value as! i32, 0 - 42, "the sign and the digits");
+  t.eqI32(a.end, 5, "stopped at the `;`");
+  t.isTrue(a.any, "and it found digits");
+  Scanned y = atoiSpan(b, 8, b.len());
+  t.eqI32(y.value as! i32, 7, "a second number, from where the caller chose");
+  t.eqI32(y.end, 9, "stopped at the `z`");
+  Scanned none = atoiSpan(b, 0, b.len());
+  t.isFalse(none.any, "no digits is not zero");
+  t.eqI32(none.end, 0, "and nothing was consumed");
+  Scanned bare = atoiSpan("-".toBytes(), 0, 1);
+  t.isFalse(bare.any, "a sign alone is not a number");
+  t.eqI32(bare.end, 0, "and is not consumed");
+  Scanned bounded = atoiSpan("12345".toBytes(), 0, 3);
+  t.eqI32(bounded.value as! i32, 123, "the span's end is respected");
+  Scanned wide = atoiSpan("9000000000".toBytes(), 0, 10);
+  t.isTrue(wide.value == 9000000000, "an i64, so ten digits fit");
+  t.eqI32(atoi("-7x"), 0 - 7, "and atoi is the wrapper over it");
   return t.report();
 }

@@ -734,7 +734,7 @@ export struct Parser {
     if (plain) {
       f64 value = atofSpan(this.src, start, this.pos);
       u8[] raw = u8[].filled(this.pos - start, 0);
-      for (i32 i = 0; i < raw.len(); i++) { raw[i] = this.src[start + i]; }
+      raw.copyFrom(this.src, start, 0, raw.len());
       return JsonValue.Number(value, raw);
     }
 

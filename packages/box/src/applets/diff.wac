@@ -130,7 +130,7 @@ i32[] script(u8[][] old, u8[][] new) {
   while (j < m) { ops[at] = 2; at++; j++; }
 
   i32[] out = i32[].filled(at, 0);
-  for (i32 k = 0; k < at; k++) { out[k] = ops[k]; }
+  out.copyFrom(ops, 0, 0, at);
   return out;
 }
 

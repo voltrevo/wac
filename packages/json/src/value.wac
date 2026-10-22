@@ -140,7 +140,7 @@ export struct JsonArray {
     if (this.n == this.items.len()) {
       i32 grown = this.items.len() == 0 ? 4 : this.items.len() * 2;
       JsonValue?[] next = JsonValue?[].defaulted(grown);
-      for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
+      next.copyFrom(this.items, 0, 0, this.n);
       this.items = next;
     }
     this.items[this.n] = v;
@@ -224,7 +224,7 @@ export struct JsonObject {
     if (this.count == this.slots.len()) {
       i32 grown = this.slots.len() == 0 ? 4 : this.slots.len() * 2;
       JsonMember?[] next = JsonMember?[].defaulted(grown);
-      for (i32 i = 0; i < this.count; i++) { next[i] = this.slots[i]; }
+      next.copyFrom(this.slots, 0, 0, this.count);
       this.slots = next;
     }
     this.slots[this.count] = JsonMember(key, v);

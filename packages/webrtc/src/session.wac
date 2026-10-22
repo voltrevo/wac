@@ -252,7 +252,7 @@ export struct Session {
 u8[] transactionOf(u8[] msg) {
   if (msg.len() < 20) { return u8[](); }
   u8[] out = u8[].filled(12, 0);
-  for (i32 i = 0; i < 12; i++) { out[i] = msg[8 + i]; }
+  out.copyFrom(msg, 8, 0, 12);
   return out;
 }
 
@@ -268,14 +268,14 @@ u8[] labelOf(u8[] msg) {
   i32 labelLen = (msg[8] as i32 << 8) | msg[9] as i32;
   if (msg.len() < 12 + labelLen) { return u8[](); }
   u8[] out = u8[].filled(labelLen, 0);
-  for (i32 i = 0; i < labelLen; i++) { out[i] = msg[12 + i]; }
+  out.copyFrom(msg, 12, 0, labelLen);
   return out;
 }
 
 /** Grow a list of datagrams by one. */
 u8[][] append(u8[][] list, u8[] one) {
   u8[][] out = u8[][].defaulted(list.len() + 1);
-  for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
+  out.copyFrom(list, 0, 0, list.len());
   out[list.len()] = one;
   return out;
 }

@@ -2348,7 +2348,9 @@ fn dispatch(
             let argv = read_bytes_array(scope, args.get(1));
             let grant_bits = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
             let cwd = read_string(scope, args.get(3));
-            let inherits = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+            // The `INHERIT_*` mask; only the input bit is the host's — `DETACHED` (4) is handled in
+            // std's `Cli.of`, where the ticket decides whether to stop the child. `issues/system/0312b`.
+            let inherits = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0) & 1 != 0;
             // The fifth and last wac argument. Read rather than dropped as it used to be, which is
             // the whole of 0157: a parent that offered to serve a filesystem was never asked to.
             let serve_fs = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;

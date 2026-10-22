@@ -60,7 +60,7 @@ export u8[] certificationDigest(u8[] document) {
   i32 end = pastLineStarting(document, certificationKeyword());
   if (end < 0) { return u8[](); }
   u8[] signed = u8[].filled(end, 0);
-  for (i32 i = 0; i < end; i++) { signed[i] = document[i]; }
+  signed.copyFrom(document, 0, 0, end);
   return sha1(signed);
 }
 

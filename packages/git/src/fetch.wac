@@ -241,7 +241,7 @@ export Reply findPack(u8[] b) {
     return Reply.NoPack("what follows the negotiation is not a packfile");
   }
   u8[] pack = u8[].filled(b.len() - at, 0);
-  for (i32 i = 0; i < pack.len(); i++) { pack[i] = b[at + i]; }
+  pack.copyFrom(b, at, 0, pack.len());
   return Reply.Packfile(pack);
 }
 

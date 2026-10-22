@@ -244,7 +244,7 @@ export u8[] curveEncode(Curve c, Jac p) {
   u8[] xy = jacToAffine(c, p);
   u8[] out = u8[].filled(1 + xy.len(), 0);
   out[0] = 4;
-  for (i32 i = 0; i < xy.len(); i++) { out[1 + i] = xy[i]; }
+  out.copyFrom(xy, 0, 1, xy.len());
   return out;
 }
 
@@ -317,7 +317,7 @@ export u8[] curveEcdh(Curve c, u8[] priv, u8[] peerPublic) {
   if (jacIsInfinity(shared)) { trap; }
   u8[] xy = jacToAffine(c, shared);
   u8[] out = u8[].filled(len, 0);
-  for (i32 i = 0; i < len; i++) { out[i] = xy[i]; }
+  out.copyFrom(xy, 0, 0, len);
   return out;
 }
 
@@ -335,10 +335,10 @@ export u8[] curveEcdh(Curve c, u8[] priv, u8[] peerPublic) {
 i64[] digestScalar(ScOrder o, i32 len, u8[] digest) {
   u8[] e = u8[].filled(len, 0);
   if (digest.len() >= len) {
-    for (i32 i = 0; i < len; i++) { e[i] = digest[i]; }
+    e.copyFrom(digest, 0, 0, len);
   } else {
     i32 pad = len - digest.len();
-    for (i32 i = 0; i < digest.len(); i++) { e[pad + i] = digest[i]; }
+    e.copyFrom(digest, 0, pad, digest.len());
   }
   return scnReduce(o, scnFromBytes(e));
 }
@@ -381,7 +381,7 @@ export bool ecdsaVerify(Curve c, u8[] publicKey, u8[] digest, u8[] sig) {
 
   u8[] xy = jacToAffine(c, point);
   u8[] x = u8[].filled(len, 0);
-  for (i32 i = 0; i < len; i++) { x[i] = xy[i]; }
+  x.copyFrom(xy, 0, 0, len);
   return cmpBE(scnToBytes(scnReduce(o, scnFromBytes(x))), r) == 0;
 }
 
@@ -403,7 +403,7 @@ export u8[] ecdsaSign(Curve c, const u8[] priv, u8[] digest, const u8[] k) {
   if (jacIsInfinity(point)) { return u8[](); }
   u8[] xy = jacToAffine(c, point);
   u8[] rx = u8[].filled(len, 0);
-  for (i32 i = 0; i < len; i++) { rx[i] = xy[i]; }
+  rx.copyFrom(xy, 0, 0, len);
   i64[] rN = scnReduce(o, scnFromBytes(rx));
   u8[] r = scnToBytes(rN);
   if (scnIsZero(rN)) { return u8[](); }

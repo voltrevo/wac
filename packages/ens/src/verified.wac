@@ -136,6 +136,6 @@ export Resolved addressOfSlot(u8[] value) {
   }
   u8[] out = u8[].filled(20, 0);
   i32 at = 20 - value.len();
-  for (i32 i = 0; i < value.len(); i++) { out[at + i] = value[i]; }
+  out.copyFrom(value, 0, at, value.len());
   return Resolved.of(true, true, out, "");
 }

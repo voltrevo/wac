@@ -300,7 +300,7 @@ u8[] readStream(Core core, Link l, Circuit c, i32 sid, i32 port) {
 
 u8[] join(u8[] a, u8[] b) {
   u8[] out = u8[].filled(a.len() + b.len(), 0);
-  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  out.copyFrom(a, 0, 0, a.len());
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
 }
@@ -387,7 +387,7 @@ string[] splitArrow(string s) {
 
 string sub(u8[] b, i32 from, i32 to) {
   u8[] o = u8[].filled(to - from, 0);
-  for (i32 i = 0; i < o.len(); i++) { o[i] = b[from + i]; }
+  o.copyFrom(b, from, 0, o.len());
   return string.fromBytes(o);
 }
 

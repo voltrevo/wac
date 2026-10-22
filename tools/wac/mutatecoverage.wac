@@ -74,7 +74,7 @@ export Share shareOf(Core core, Cli cli, string binary, string work, string entr
   string[] args = string[].filled(3 + grants.len(), "");
   args[0] = "test";
   args[1] = "--coverage";
-  for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
+  args.copyFrom(grants, 0, 2, grants.len());
   args[2 + grants.len()] = entry;
 
   Exec r = cli.execWithIn(binary, args, u8[](),

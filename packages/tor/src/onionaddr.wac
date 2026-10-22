@@ -42,7 +42,7 @@ export u8[] addressChecksum(u8[] pubkey) {
   if (pubkey.len() != ED25519_PUBKEY_LEN) { return u8[](); }
   u8[] pre = checksumPrefix();
   u8[] buf = u8[].filled(pre.len() + ED25519_PUBKEY_LEN + 1, 0);
-  for (i32 i = 0; i < pre.len(); i++) { buf[i] = pre[i]; }
+  buf.copyFrom(pre, 0, 0, pre.len());
   for (i32 i = 0; i < ED25519_PUBKEY_LEN; i++) { buf[pre.len() + i] = pubkey[i]; }
   buf[pre.len() + ED25519_PUBKEY_LEN] = VERSION as@ u8;
   u8[] h = sha3_256(buf);
@@ -62,7 +62,7 @@ export u8[] onionAddress(u8[] pubkey) {
   u8[] ck = addressChecksum(pubkey);
   if (ck.len() != 2) { return u8[](); }
   u8[] raw = u8[].filled(ED25519_PUBKEY_LEN + 3, 0);
-  for (i32 i = 0; i < ED25519_PUBKEY_LEN; i++) { raw[i] = pubkey[i]; }
+  raw.copyFrom(pubkey, 0, 0, ED25519_PUBKEY_LEN);
   raw[ED25519_PUBKEY_LEN] = ck[0];
   raw[ED25519_PUBKEY_LEN + 1] = ck[1];
   raw[ED25519_PUBKEY_LEN + 2] = VERSION as@ u8;
@@ -121,6 +121,6 @@ u8[] stripSuffix(u8[] address) {
     if (lower != suffix[i] as i32) { return address; }
   }
   u8[] out = u8[].filled(at, 0);
-  for (i32 i = 0; i < at; i++) { out[i] = address[i]; }
+  out.copyFrom(address, 0, 0, at);
   return out;
 }

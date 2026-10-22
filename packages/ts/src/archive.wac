@@ -63,9 +63,9 @@ export Archive read(u8[] b) {
       return Archive(Entry[].filled(0, Entry("", u8[]())), "the archive is truncated");
     }
     u8[] name = u8[].filled(nameLen, 0);
-    for (i32 i = 0; i < nameLen; i++) { name[i] = b[nameAt + i]; }
+    name.copyFrom(b, nameAt, 0, nameLen);
     u8[] data = u8[].filled(size, 0);
-    for (i32 i = 0; i < size; i++) { data[i] = b[dataAt + i]; }
+    data.copyFrom(b, dataAt, 0, size);
     out.push(Entry(string.fromBytes(name), data));
     at = dataAt + size;
   }

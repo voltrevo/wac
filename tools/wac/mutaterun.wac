@@ -393,7 +393,7 @@ export async i32 main(Sys sys) {
     // The control goes first, so a staged tree that cannot build is found before the run spends a
     // test run per mutant proving the same thing over and over.
     Mutant[] mutants = Mutant[].filled(generated.len() + 1, controlFor(files[fi], text.len()));
-    for (i32 i = 0; i < generated.len(); i++) { mutants[i + 1] = generated[i]; }
+    mutants.copyFrom(generated, 0, 1, generated.len());
 
     for (i32 m = 0; m < mutants.len(); m++) {
       Applied a = applyEdits([files[fi]], [text], mutants[m]);

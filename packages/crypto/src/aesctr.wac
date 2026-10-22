@@ -35,7 +35,7 @@ export u8[] aesCtr(u8[] key, u8[] iv, u8[] data) {
   i32 nr = aesRounds(key.len());
 
   u8[] ctr = u8[].filled(16, 0);
-  for (i32 i = 0; i < 16; i++) { ctr[i] = iv[i]; }
+  ctr.copyFrom(iv, 0, 0, 16);
 
   i32 n = data.len();
   u8[] out = u8[].filled(n, 0);
@@ -74,9 +74,9 @@ export struct CtrStream {
   CtrStream create(u8[] key, u8[] iv) {
     if (iv.len() != 16) { trap; }
     u8[] ctr = u8[].filled(16, 0);
-    for (i32 i = 0; i < 16; i++) { ctr[i] = iv[i]; }
+    ctr.copyFrom(iv, 0, 0, 16);
     u8[] k = u8[].filled(key.len(), 0);
-    for (i32 i = 0; i < key.len(); i++) { k[i] = key[i]; }
+    k.copyFrom(key, 0, 0, key.len());
     return CtrStream(k, aesExpandKey(key), aesRounds(key.len()), ctr, u8[].filled(16, 0), 16);
   }
 
@@ -96,11 +96,11 @@ export struct CtrStream {
     // before it reads, which is the state `saveState` writes at a block boundary.
     if (ctr.len() != 16 || block.len() != 16 || used < 0 || used > 16) { trap; }
     u8[] k = u8[].filled(key.len(), 0);
-    for (i32 i = 0; i < key.len(); i++) { k[i] = key[i]; }
+    k.copyFrom(key, 0, 0, key.len());
     u8[] c = u8[].filled(16, 0);
-    for (i32 i = 0; i < 16; i++) { c[i] = ctr[i]; }
+    c.copyFrom(ctr, 0, 0, 16);
     u8[] b = u8[].filled(16, 0);
-    for (i32 i = 0; i < 16; i++) { b[i] = block[i]; }
+    b.copyFrom(block, 0, 0, 16);
     return CtrStream(k, aesExpandKey(key), aesRounds(key.len()), c, b, used);
   }
 

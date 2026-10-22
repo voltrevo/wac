@@ -108,6 +108,6 @@ string[] countsHere(string text) {
     if (close > start && n < out.len()) { out[n] = line.slice(start, close); n = n + 1; }
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }

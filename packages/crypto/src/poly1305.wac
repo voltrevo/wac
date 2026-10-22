@@ -57,7 +57,7 @@ export u8[] poly1305(u8[] key, u8[] msg) {
     // A whole block carries an implicit 1 at bit 128; a short final block puts
     // that 1 straight after the data, so it is padded here rather than flagged.
     u8[] blk = u8[].filled(16, 0);
-    for (i32 i = 0; i < take; i++) { blk[i] = msg[pos + i]; }
+    blk.copyFrom(msg, pos, 0, take);
     u32 hibit = 0;
     if (take == 16) { hibit = 1 << 24; } else { blk[take] = 1; }
 

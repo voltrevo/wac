@@ -254,8 +254,8 @@ ParsedResponse readChunked(u8[] input, i32 start, Incoming res, i32 maxBody) {
     if (size > maxBody - total) { return ParsedResponse.Bad(ERR_TOO_LARGE()); }
     total = total + size;
     u8[] grown = u8[].filled(total, 0);
-    for (i32 k = 0; k < bodyLen; k++) { grown[k] = body[k]; }
-    for (i32 k = 0; k < size; k++) { grown[bodyLen + k] = input[at + k]; }
+    grown.copyFrom(body, 0, 0, bodyLen);
+    grown.copyFrom(input, at, bodyLen, size);
     body = grown;
     bodyLen = total;
     at = at + size + 2;

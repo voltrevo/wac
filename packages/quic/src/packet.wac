@@ -73,7 +73,7 @@ export bool isLong(u8[] b, i32 at) {
 u8[] slice(u8[] b, i32 at, i32 n) {
   if (n < 0 || at < 0 || at + n > b.len()) { return u8[](); }
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = b[at + i]; }
+  out.copyFrom(b, at, 0, n);
   return out;
 }
 

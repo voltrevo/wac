@@ -35,7 +35,7 @@ export async i32 upper(Sys sys) {
 
 /** Run `text` through a started copy, and show what came back and how it ended. */
 async void run(Sys sys, string text, State<string> out, State<string> status) {
-  Child c = await sys.cli.spawnSelf([] as u8[][], 0, "/", false, false).ticket();
+  Child c = await sys.cli.spawnSelf([] as u8[][], 0, "/", 0, false).ticket();
   if (c.handle < 0) {
     status.set("could not start: \{c.error}");
     return;

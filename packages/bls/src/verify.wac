@@ -43,7 +43,7 @@ export u8[] ethDst() {
                         0x52, 0x4f, 0x5f, 0x50, 0x4f, 0x50, 0x5f
   ];
   u8[] out = u8[].filled(DST.len(), 0);
-  for (i32 i = 0; i < DST.len(); i++) { out[i] = DST[i]; }
+  out.copyFrom(DST, 0, 0, DST.len());
   return out;
 }
 
@@ -254,7 +254,7 @@ export bool aggregateVerify(u8[][] pubkeys, u8[][] messages, u8[] signature) {
  */
 export u32[] batchScalar(u8[] transcript, i32 i) {
   u8[] tagged = u8[].filled(transcript.len() + 4, 0);
-  for (i32 j = 0; j < transcript.len(); j++) { tagged[j] = transcript[j]; }
+  tagged.copyFrom(transcript, 0, 0, transcript.len());
   tagged[transcript.len() + 0] = ((i >> 24) & 0xFF) as@ u8;
   tagged[transcript.len() + 1] = ((i >> 16) & 0xFF) as@ u8;
   tagged[transcript.len() + 2] = ((i >> 8) & 0xFF) as@ u8;

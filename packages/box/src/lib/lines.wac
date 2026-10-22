@@ -67,8 +67,8 @@ export u8[][] mergeSortWith(u8[][] xs, i32 n, fn<i32(u8[], u8[])> cmp) {
   i32 right = n - mid;
   u8[][] l = u8[][].filled(mid, u8[]());
   u8[][] r = u8[][].filled(right, u8[]());
-  for (i32 i = 0; i < mid; i++) { l[i] = xs[i]; }
-  for (i32 i = 0; i < right; i++) { r[i] = xs[mid + i]; }
+  l.copyFrom(xs, 0, 0, mid);
+  r.copyFrom(xs, mid, 0, right);
   u8[][] ls = mergeSortWith(l, mid, cmp);
   u8[][] rs = mergeSortWith(r, right, cmp);
 

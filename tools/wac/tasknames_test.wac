@@ -117,7 +117,7 @@ Named[] namesAfter(string text, string runner) {
     i = i + needle.len();
   }
   Named[] exact = Named[].filled(n, Named("", 0));
-  for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 

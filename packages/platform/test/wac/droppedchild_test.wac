@@ -1,0 +1,89 @@
+// A spawn's ticket owns its child: dropped uncollected, the child stops; `DETACHED` lets it run on.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/platform/test/wac/droppedchild_test.wac
+//
+// `issues/system/0312b`, ruled 2026-10-22. Dropping the only `Pending<Child>` left a process nothing
+// could reach, wait for or stop — the shape an abandoned `connect` had before `0310b` closed it. The
+// rule now lives in `std/platform.wac`'s `Cli.of`, where every host's `Cli` is built, so no host has to
+// know: a cancelled spawn ticket still holding its child closes the handle, as `closeSocket` does.
+//
+// ## The shape of the case
+//
+// One program. The child writes a line every 25ms for about a second and then leaves a marker file —
+// so a child that was stopped never writes the marker, because the stop is a write that fails (the
+// native host ends the child's queues; a JavaScript host ends the worker). The parent spawns it,
+// cancels the ticket without collecting it, waits past the child's second, and looks for the marker.
+//
+// **`DETACHED` is the control arm**, and it is what makes this able to fail: the same child, the same
+// cancel, and the marker must appear. Without it "no marker" has a dull explanation — a child that
+// never started — and the stopped arm would pass for that reason.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change } from "std";
+import { nativeHostWhyNot } from "../../../wactest/src/built.wac";
+import { binaryPath, nativeBinaryPath } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+
+static string PROGRAM =
+  "import { Core, Cli, Child, Pending, FileResult, GRANT_ALL, DETACHED, Sys } from \"std\";\n" +
+  "\n" +
+  "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
+  "  string mode = string.fromBytes(cli.arg(0).wait());\n" +
+  "  string marker = string.fromBytes(cli.arg(1).wait());\n" +
+  "  if (mode == \"child\") {\n" +
+  "    for (i32 i = 0; i < 40; i++) {\n" +
+  "      if (!cli.write(\"tick\\n\".toBytes())) { return 0; }\n" +
+  "      core.delay(25).wait();\n" +
+  "    }\n" +
+  "    cli.writeFile(marker, \"ran on\".toBytes()).wait();\n" +
+  "    return 0;\n" +
+  "  }\n" +
+  "  i32 flags = mode == \"detached\" ? DETACHED : 0;\n" +
+  "  Pending<Child> p = cli.spawnSelf([\"child\".toBytes(), marker.toBytes()], GRANT_ALL(), \".\", flags, false);\n" +
+  "  core.delay(100).wait();\n" +
+  "  p.cancel();\n" +
+  "  core.delay(2000).wait();\n" +
+  "  FileResult f = cli.readFile(marker).wait();\n" +
+  "  core.log(f.ok ? \"VERDICT ran-on\" : \"VERDICT stopped\");\n" +
+  "  return 0;\n" +
+  "}\n";
+
+/** Run the program in `mode` with a fresh marker path, both streams together. */
+string ran(Cli cli, string binary, string path, string mode, string marker) {
+  cli.remove(marker, false).wait();
+  Exec r = cli.exec(binary,
+                    ["run", "--allow-read", "--allow-write", "--allow-run", "--allow-env", path, mode, marker],
+                    u8[]()).wait();
+  if (!r.ran()) { return "the binary did not run — \{r.error}"; }
+  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+}
+
+void check(T t, Cli cli, string binary, string path, string dir, string host) {
+  string marker = "\{dir}/marker-\{host}";
+  string detached = ran(cli, binary, path, "detached", marker);
+  t.isTrue(contains(detached, "VERDICT ran-on"),
+           "\{host}: a detached child should outlive its ticket, so this case cannot fail — \{detached}");
+  string dropped = ran(cli, binary, path, "drop", marker);
+  t.isTrue(contains(dropped, "VERDICT stopped"), "\{host}: a dropped child ran on — \{dropped}");
+  cli.remove(marker, false).wait();
+}
+
+export string test_a_dropped_spawn_ticket_stops_its_child(Core core, Cli cli) {
+  T t = T.create();
+  string dir = "\{cli.cwd().wait()}/.cache/droppedchild";
+  cli.mkdir(dir, true).wait();
+  string path = "\{dir}/probe.wac";
+  Change wrote = cli.writeFile(path, PROGRAM.toBytes()).wait();
+  t.isTrue(wrote.fault == 0, "could not write the probe");
+  if (wrote.fault != 0) { return t.report(); }
+
+  check(t, cli, binaryPath(cli), path, dir, "v8");
+  string why = nativeHostWhyNot(cli);
+  if (why == "") {
+    check(t, cli, nativeBinaryPath(core, cli, "droppedchild"), path, dir, "wasmtime");
+  } else {
+    core.log("skipping the wasmtime arm: \{why}");
+  }
+  cli.remove(path, false).wait();
+  return t.report();
+}

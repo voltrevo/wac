@@ -1043,7 +1043,7 @@ export async i32 main(Sys sys) {
       n = n + 1;
     }
     Exercise[] asked = Exercise[].filled(n, Exercise("", 0 - 1));
-    for (i32 i = 0; i < n; i++) { asked[i] = also[i]; }
+    asked.copyFrom(also, 0, 0, n);
 
     Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()), asked, false);
     if (c.error != "") { core.warn("wac: \{c.error}"); return 1; }

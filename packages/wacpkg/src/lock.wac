@@ -340,7 +340,7 @@ string quoted(string s) {
 /** `entries` by name, byte-wise. Insertion sort: a manifest has tens of mappings, not thousands. */
 LockEntry[] sortedByName(LockEntry[] entries) {
   LockEntry[] out = LockEntry[].defaulted(entries.len());
-  for (i32 i = 0; i < entries.len(); i++) { out[i] = entries[i]; }
+  out.copyFrom(entries, 0, 0, entries.len());
   for (i32 i = 1; i < out.len(); i++) {
     LockEntry v = out[i];
     i32 j = i - 1;

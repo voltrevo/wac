@@ -295,7 +295,7 @@ export struct Sha3_256 {
     while (at < data.len()) {
       i32 take = 136 - this.pendingLen;
       if (take > data.len() - at) { take = data.len() - at; }
-      for (i32 i = 0; i < take; i++) { this.pending[this.pendingLen + i] = data[at + i]; }
+      this.pending.copyFrom(data, at, this.pendingLen, take);
       this.pendingLen = this.pendingLen + take;
       at = at + take;
       if (this.pendingLen == 136) {
@@ -308,9 +308,9 @@ export struct Sha3_256 {
   /** An independent copy, for taking a trial digest without disturbing this one. */
   Sha3_256 clone(const this) {
     u64[] state = u64[].filled(25, 0);
-    for (i32 i = 0; i < 25; i++) { state[i] = this.state[i]; }
+    state.copyFrom(this.state, 0, 0, 25);
     u8[] pending = u8[].filled(136, 0);
-    for (i32 i = 0; i < 136; i++) { pending[i] = this.pending[i]; }
+    pending.copyFrom(this.pending, 0, 0, 136);
     return Sha3_256(state, pending, this.pendingLen);
   }
 
@@ -323,9 +323,9 @@ export struct Sha3_256 {
    */
   u8[] peek(const this) {
     u64[] copy = u64[].filled(25, 0);
-    for (i32 i = 0; i < 25; i++) { copy[i] = this.state[i]; }
+    copy.copyFrom(this.state, 0, 0, 25);
     u8[] block = u8[].filled(136, 0);
-    for (i32 i = 0; i < this.pendingLen; i++) { block[i] = this.pending[i]; }
+    block.copyFrom(this.pending, 0, 0, this.pendingLen);
     block[this.pendingLen] = block[this.pendingLen] | 0x06;
     block[135] = block[135] | 0x80;
     absorb(copy, block, 0, 136);

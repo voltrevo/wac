@@ -301,7 +301,7 @@ Pending<Child> fakeSpawn(u8[] source, u8[][] argv, i32 grants, string cwd, i32 i
  * -2 is "there is no `spawn` here", the answer every world that cannot gives, and the one a caller is
  * expected to have another route for.
  */
-Pending<Child> fakeSpawnSelf(u8[][] argv, i32 grants, string cwd, bool inheritIn, bool serveFs) {
+Pending<Child> fakeSpawnSelf(u8[][] argv, i32 grants, string cwd, i32 inherit, bool serveFs) {
   return Pending.of(-2, resolveChild, alwaysSettled, ignoreDrop);
 }
 void fakeCloseFeed(i32 handle) {}

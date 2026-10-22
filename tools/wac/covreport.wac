@@ -85,9 +85,9 @@ export i32 main(Sys sys) {
   }
 
   string[] g = string[].filled(nGrants, "");
-  for (i32 i = 0; i < nGrants; i++) { g[i] = grants[i]; }
+  g.copyFrom(grants, 0, 0, nGrants);
   string[] e = string[].filled(nExports, "");
-  for (i32 i = 0; i < nExports; i++) { e[i] = exports[i]; }
+  e.copyFrom(exports, 0, 0, nExports);
   Measured m = measure(core, cli, entry, g, e);
   if (m.nPoints == 0) { return 1; }
 

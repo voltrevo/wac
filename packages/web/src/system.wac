@@ -223,7 +223,7 @@ u8[] argBytesOf(u8[][] args) {
   u8[] out = u8[].filled(n, 0);
   i32 at = 0;
   for (u8[] a in args) {
-    for (i32 i = 0; i < a.len(); i++) { out[at + i] = a[i]; }
+    out.copyFrom(a, 0, at, a.len());
     at = at + a.len() + 1;
   }
   return out;
@@ -406,7 +406,7 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
       ready(Child.of(0 - 2, 0 - 2, 0 - 2, "this page cannot start programs")),
     // **No grant, and none kept**, as on a command line: what is started is this program again, so
     // it reaches nothing new, and what it may do is what it is given — never more than this holds.
-    (u8[][] args, i32 want, string cwd, bool inheritIn, bool serveFs) => {
+    (u8[][] args, i32 want, string cwd, i32 inherit, bool serveFs) => {
       i32 req = answers.ask();
       system.spawnSelf(req, argBytesOf(args), want & grants, cwd, serveFs);
       return answers.pending<Child>(req, childOf);

@@ -243,9 +243,9 @@ export Args parseList(string[] argv, i32 first, string name) {
   }
 
   string[] rest = string[].filled(at, "");
-  for (i32 k = 0; k < at; k++) { rest[k] = scratch[k]; }
+  rest.copyFrom(scratch, 0, 0, at);
   string[] values = string[].filled(np, "");
-  for (i32 k = 0; k < np; k++) { values[k] = pairs[k]; }
+  values.copyFrom(pairs, 0, 0, np);
   string[] own = string[].filled(argv.len() - first > 0 ? argv.len() - first : 0, "");
   for (i32 k = first; k < argv.len(); k++) { own[k - first] = argv[k]; }
   return Args(name, flags, num, hasNum, numSign, badNum, rest, values, argv, own, missingValue, longOpt);

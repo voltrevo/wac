@@ -210,7 +210,7 @@ struct Names {
   void push(this, string s) {
     if (this.n == this.items.len()) {
       string[] bigger = string[].filled(this.items.len() * 2, "");
-      for (i32 i = 0; i < this.n; i++) { bigger[i] = this.items[i]; }
+      bigger.copyFrom(this.items, 0, 0, this.n);
       this.items = bigger;
     }
     this.items[this.n] = s;
@@ -227,7 +227,7 @@ struct Names {
   /** The list as an array of exactly its length, which is what every consumer wants. */
   string[] all(const this) {
     string[] out = string[].filled(this.n, "");
-    for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
+    out.copyFrom(this.items, 0, 0, this.n);
     return out;
   }
 }
@@ -235,7 +235,7 @@ struct Names {
 /** Sorted in place, insertion sort: the lists here are hundreds of entries, not millions. */
 string[] sorted(string[] all) {
   string[] out = string[].filled(all.len(), "");
-  for (i32 i = 0; i < all.len(); i++) { out[i] = all[i]; }
+  out.copyFrom(all, 0, 0, all.len());
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];
     i32 k = i - 1;

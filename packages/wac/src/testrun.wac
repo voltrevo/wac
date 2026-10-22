@@ -376,7 +376,7 @@ async void walkTests(Fs fs, string dir, Vec<string> out) {
 /** `names`, sorted — an insertion sort, because a directory is small and this runs per level. */
 string[] sortedNames(string[] names) {
   string[] out = string[].filled(names.len(), "");
-  for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
+  out.copyFrom(names, 0, 0, names.len());
   for (i32 i = 1; i < out.len(); i++) {
     string v = out[i];
     i32 j = i - 1;
@@ -660,7 +660,7 @@ string[] uniqLines(string[] lines) {
     if (!seen) { out[n] = lines[i]; n++; }
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 

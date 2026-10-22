@@ -83,3 +83,9 @@ and not a reason to decide this one either way.
 Every capability answers a result, and "this host does not provide it" is an error — a fault beside
 `FAULT_NOT_GRANTED`, never a trap. Capabilities with an ad-hoc absent answer (`LoadedModule.unavailable()`,
 `Cli.env`'s bare null) move to the same shape. This also settles `0261c`.
+
+## Design note — 2026-10-22 (agent-a)
+
+`design/system/0013-every-capability-answers-a-result.md` proposes the shape (`Result<T, Fault>`, a new
+`FAULT_UNAVAILABLE`) and four stages. Stage 1 — hosts answer the fault instead of trapping, for every capability
+whose answer already carries one — needs no further decision; stages 2–4 change what programs write.

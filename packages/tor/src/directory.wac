@@ -94,7 +94,7 @@ string[] fields(u8[] doc, i32 from, i32 to) {
     if (i == to || doc[i] == ' ') {
       if (i > start) {
         u8[] f = u8[].filled(i - start, 0);
-        for (i32 j = 0; j < f.len(); j++) { f[j] = doc[start + j]; }
+        f.copyFrom(doc, start, 0, f.len());
         out.push(string.fromBytes(f));
       }
       start = i + 1;
@@ -223,7 +223,7 @@ export ExitPolicy? parsePolicy(string line) {
         if (list[j] == '-' && dash < 0) { dash = j; }
       }
       u8[] part = u8[].filled(i - start, 0);
-      for (i32 j = 0; j < part.len(); j++) { part[j] = list[start + j]; }
+      part.copyFrom(list, start, 0, part.len());
       if (dash < 0) {
         i32 v = parseInt(string.fromBytes(part));
         if (v >= 0) { ranges.push(v); ranges.push(v); }
@@ -281,7 +281,7 @@ void applyOne(Relay[] relays, Map<string, i32> byDigest, u8[] text, i32 from, i3
     i32 end = lineEnd(text, at);
     if (end > at && text[at] != '@') {
       u8[] grown = u8[].filled(body.len() + (end - at) + 1, 0);
-      for (i32 i = 0; i < body.len(); i++) { grown[i] = body[i]; }
+      grown.copyFrom(body, 0, 0, body.len());
       for (i32 i = 0; i < end - at; i++) { grown[body.len() + i] = text[at + i]; }
       grown[grown.len() - 1] = '\n';
       body = grown;
@@ -309,7 +309,7 @@ void fillFrom(Relay r, u8[] body) {
       if (f.len() >= 3) { r.ed25519Identity = unpaddedBase64(f[2]); }
     } else if (lineStartsWith(body, at, end, "p ")) {
       u8[] line = u8[].filled(end - at, 0);
-      for (i32 i = 0; i < line.len(); i++) { line[i] = body[at + i]; }
+      line.copyFrom(body, at, 0, line.len());
       r.exitPolicy = parsePolicy(string.fromBytes(line));
     } else if (lineStartsWith(body, at, end, "family ")) {
       string[] f = fields(body, at, end);
@@ -333,7 +333,7 @@ export string base64NoPad(u8[] bytes) {
     i32 b2 = have > 2 ? bytes[i + 2] as i32 : 0;
     i32 n = have > 2 ? 4 : (have > 1 ? 3 : 2);
     u8[] grown = u8[].filled(out.len() + n, 0);
-    for (i32 j = 0; j < out.len(); j++) { grown[j] = out[j]; }
+    grown.copyFrom(out, 0, 0, out.len());
     grown[out.len()] = alphabet[(b0 >> 2) & 63];
     if (n > 1) { grown[out.len() + 1] = alphabet[((b0 << 4) | (b1 >> 4)) & 63]; }
     if (n > 2) { grown[out.len() + 2] = alphabet[((b1 << 2) | (b2 >> 6)) & 63]; }

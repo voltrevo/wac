@@ -129,7 +129,7 @@ string[] issuesNamed(Cli cli, string[] dirs, string n) {
     for (i32 k = 0; k < here.len(); k++) {
       if (!startsWith(here[k], n + "-")) { continue; }
       string[] grown = string[].filled(hits.len() + 1, "");
-      for (i32 j = 0; j < hits.len(); j++) { grown[j] = hits[j]; }
+      grown.copyFrom(hits, 0, 0, hits.len());
       grown[hits.len()] = dirs[i] + "/" + here[k];
       hits = grown;
     }
@@ -182,7 +182,7 @@ Tag[] taggedFiles(Core core, Cli cli) {
     string[] found = tagsIn(text);
     for (i32 k = 0; k < found.len(); k++) {
       Tag[] grown = Tag[].filled(out.len() + 1, Tag("", ""));
-      for (i32 j = 0; j < out.len(); j++) { grown[j] = out[j]; }
+      grown.copyFrom(out, 0, 0, out.len());
       grown[out.len()] = Tag(p, found[k]);
       out = grown;
     }

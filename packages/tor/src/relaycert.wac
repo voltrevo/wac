@@ -138,9 +138,9 @@ export u8[] ed25519CertBody(
   body[0] = 1;
   body[1] = certType as@ u8;
   u8[] exp = be32(expirationHours);
-  for (i32 i = 0; i < 4; i++) { body[2 + i] = exp[i]; }
+  body.copyFrom(exp, 0, 2, 4);
   body[6] = certKeyType as@ u8;
-  for (i32 i = 0; i < 32; i++) { body[7 + i] = certifiedKey[i]; }
+  body.copyFrom(certifiedKey, 0, 7, 32);
   if (!includeSigningKey) {
     body[39] = 0;                     // N_EXTENSIONS = 0
     return body;
@@ -150,7 +150,7 @@ export u8[] ed25519CertBody(
   body[41] = 32;
   body[42] = EXT_SIGNED_WITH_KEY as@ u8;
   body[43] = 0;                       // ExtFlags
-  for (i32 i = 0; i < 32; i++) { body[44 + i] = signingKey[i]; }
+  body.copyFrom(signingKey, 0, 44, 32);
   return body;
 }
 
@@ -213,8 +213,8 @@ export u8[] onionKeyCrosscert(
 ) {
   if (rsaIdentityDigest.len() != 20 || ed25519Identity.len() != 32) { return u8[](); }
   u8[] payload = u8[].filled(52, 0);
-  for (i32 i = 0; i < 20; i++) { payload[i] = rsaIdentityDigest[i]; }
-  for (i32 i = 0; i < 32; i++) { payload[20 + i] = ed25519Identity[i]; }
+  payload.copyFrom(rsaIdentityDigest, 0, 0, 20);
+  payload.copyFrom(ed25519Identity, 0, 20, 32);
   return rsaSignRawPkcs1(onionModulus, onionPrivate, payload);
 }
 
@@ -227,7 +227,7 @@ export u8[] onionKeyCrosscert(
 u8[] withSignature(u8[] body, u8[] sig) {
   if (sig.len() != 64) { return u8[](); }
   u8[] cert = u8[].filled(body.len() + 64, 0);
-  for (i32 i = 0; i < body.len(); i++) { cert[i] = body[i]; }
+  cert.copyFrom(body, 0, 0, body.len());
   for (i32 i = 0; i < 64; i++) { cert[body.len() + i] = sig[i]; }
   return cert;
 }
@@ -246,9 +246,9 @@ export bool verifyEd25519Cert(u8[] cert, u8[] signingKey) {
   if (cert[0] != 1) { return false; }
   i32 bodyLen = cert.len() - 64;
   u8[] body = u8[].filled(bodyLen, 0);
-  for (i32 i = 0; i < bodyLen; i++) { body[i] = cert[i]; }
+  body.copyFrom(cert, 0, 0, bodyLen);
   u8[] sig = u8[].filled(64, 0);
-  for (i32 i = 0; i < 64; i++) { sig[i] = cert[bodyLen + i]; }
+  sig.copyFrom(cert, bodyLen, 0, 64);
   return ed25519Verify(signingKey, body, sig);
 }
 
@@ -275,7 +275,7 @@ export u8[] rsaCrossCert(u8[] ed25519Identity, i64 expirationHours, u8[] rsaModu
 
   u8[] prefix = crossCertPrefix();
   u8[] signed = u8[].filled(prefix.len() + 36, 0);
-  for (i32 i = 0; i < prefix.len(); i++) { signed[i] = prefix[i]; }
+  signed.copyFrom(prefix, 0, 0, prefix.len());
   for (i32 i = 0; i < 32; i++) { signed[prefix.len() + i] = ed25519Identity[i]; }
   u8[] exp = be32(expirationHours);
   for (i32 i = 0; i < 4; i++) { signed[prefix.len() + 32 + i] = exp[i]; }
@@ -284,10 +284,10 @@ export u8[] rsaCrossCert(u8[] ed25519Identity, i64 expirationHours, u8[] rsaModu
   if (sig.len() == 0 || sig.len() > 255) { return u8[](); }
 
   u8[] cert = u8[].filled(32 + 4 + 1 + sig.len(), 0);
-  for (i32 i = 0; i < 32; i++) { cert[i] = ed25519Identity[i]; }
-  for (i32 i = 0; i < 4; i++) { cert[32 + i] = exp[i]; }
+  cert.copyFrom(ed25519Identity, 0, 0, 32);
+  cert.copyFrom(exp, 0, 32, 4);
   cert[36] = sig.len() as@ u8;
-  for (i32 i = 0; i < sig.len(); i++) { cert[37 + i] = sig[i]; }
+  cert.copyFrom(sig, 0, 37, sig.len());
   return cert;
 }
 

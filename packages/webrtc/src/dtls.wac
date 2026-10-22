@@ -131,7 +131,7 @@ export u8[] record(i32 kind, i32 version, i32 epoch, i64 sequence, u8[] fragment
   }
   out[11] = ((fragment.len() >> 8) & 0xFF) as@ u8;
   out[12] = (fragment.len() & 0xFF) as@ u8;
-  for (i32 i = 0; i < fragment.len(); i++) { out[13 + i] = fragment[i]; }
+  out.copyFrom(fragment, 0, 13, fragment.len());
   return out;
 }
 
@@ -151,7 +151,7 @@ export Handshake parseHandshake(u8[] f) {
   i32 flen = (f[9] as i32 << 16) | (f[10] as i32 << 8) | f[11] as i32;
   if (12 + flen > f.len()) { return Handshake(false, 0, 0, false, u8[]()); }
   u8[] body = u8[].filled(flen, 0);
-  for (i32 i = 0; i < flen; i++) { body[i] = f[12 + i]; }
+  body.copyFrom(f, 12, 0, flen);
   return Handshake(true, f[0] as i32, seq, off == 0 && flen == len, body);
 }
 
@@ -169,7 +169,7 @@ export u8[] handshake(i32 kind, i32 messageSeq, u8[] body) {
   out[9] = ((body.len() >> 16) & 0xFF) as@ u8;
   out[10] = ((body.len() >> 8) & 0xFF) as@ u8;
   out[11] = (body.len() & 0xFF) as@ u8;
-  for (i32 i = 0; i < body.len(); i++) { out[12 + i] = body[i]; }
+  out.copyFrom(body, 0, 12, body.len());
   return out;
 }
 
@@ -225,7 +225,7 @@ export u8[] clientHello(u8[] random, u8[] cookie) {
   at = at + 32;
   out[at] = 0; at = at + 1;                                        // session_id, empty
   out[at] = cookie.len() as@ u8; at = at + 1;
-  for (i32 i = 0; i < cookie.len(); i++) { out[at + i] = cookie[i]; }
+  out.copyFrom(cookie, 0, at, cookie.len());
   at = at + cookie.len();
   out[at] = 0x00; out[at + 1] = 0x04; at = at + 2;                 // cipher_suites, four bytes
   out[at] = ((suiteEcdheEcdsaAes128Gcm() >> 8) & 0xFF) as@ u8;
@@ -235,7 +235,7 @@ export u8[] clientHello(u8[] random, u8[] cookie) {
   at = at + 4;
   out[at] = 0x01; out[at + 1] = 0x00; at = at + 2;                 // compression: null only
   out[at] = ((e >> 8) & 0xFF) as@ u8; out[at + 1] = (e & 0xFF) as@ u8; at = at + 2;
-  for (i32 i = 0; i < e; i++) { out[at + i] = ext[i]; }
+  out.copyFrom(ext, 0, at, e);
   return out;
 }
 
@@ -251,7 +251,7 @@ export u8[] verifyCookie(u8[] body) {
   i32 len = body[2] as i32;
   if (3 + len > body.len()) { return u8[](); }
   u8[] c = u8[].filled(len, 0);
-  for (i32 i = 0; i < len; i++) { c[i] = body[3 + i]; }
+  c.copyFrom(body, 3, 0, len);
   return c;
 }
 
@@ -283,7 +283,7 @@ export u8[] serverPublic(u8[] body) {
   i32 n = body[3] as i32;
   if (4 + n > body.len()) { return u8[](); }
   u8[] p = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { p[i] = body[4 + i]; }
+  p.copyFrom(body, 4, 0, n);
   return p;
 }
 
@@ -291,7 +291,7 @@ export u8[] serverPublic(u8[] body) {
 export u8[] clientKeyExchange(u8[] publicKey) {
   u8[] out = u8[].filled(1 + publicKey.len(), 0);
   out[0] = publicKey.len() as@ u8;
-  for (i32 i = 0; i < publicKey.len(); i++) { out[1 + i] = publicKey[i]; }
+  out.copyFrom(publicKey, 0, 1, publicKey.len());
   return out;
 }
 
@@ -310,7 +310,7 @@ export u8[] leafCertificate(u8[] body) {
   i32 n = (body[3] as i32 << 16) | (body[4] as i32 << 8) | body[5] as i32;
   if (n <= 0 || 6 + n > body.len()) { return u8[](); }
   u8[] der = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { der[i] = body[6 + i]; }
+  der.copyFrom(body, 6, 0, n);
   return der;
 }
 
@@ -330,11 +330,11 @@ export u8[] serverKeyExchangeSigned(u8[] clientRandom, u8[] serverRandom, u8[] b
   if (paramsLen > body.len()) { return u8[](); }
   u8[] out = u8[].filled(clientRandom.len() + serverRandom.len() + paramsLen, 0);
   i32 at = 0;
-  for (i32 i = 0; i < clientRandom.len(); i++) { out[at + i] = clientRandom[i]; }
+  out.copyFrom(clientRandom, 0, at, clientRandom.len());
   at = at + clientRandom.len();
-  for (i32 i = 0; i < serverRandom.len(); i++) { out[at + i] = serverRandom[i]; }
+  out.copyFrom(serverRandom, 0, at, serverRandom.len());
   at = at + serverRandom.len();
-  for (i32 i = 0; i < paramsLen; i++) { out[at + i] = body[i]; }
+  out.copyFrom(body, 0, at, paramsLen);
   return out;
 }
 
@@ -381,7 +381,7 @@ export u8[] helloVerifyRequest(u8[] cookie) {
   out[0] = 0xFE;
   out[1] = 0xFF;
   out[2] = cookie.len() as@ u8;
-  for (i32 i = 0; i < cookie.len(); i++) { out[3 + i] = cookie[i]; }
+  out.copyFrom(cookie, 0, 3, cookie.len());
   return out;
 }
 
@@ -402,7 +402,7 @@ export u8[] helloCookie(u8[] body) {
 export u8[] helloRandom(u8[] body) {
   if (body.len() < 34) { return u8[](); }
   u8[] r = u8[].filled(32, 0);
-  for (i32 i = 0; i < 32; i++) { r[i] = body[2 + i]; }
+  r.copyFrom(body, 2, 0, 32);
   return r;
 }
 
@@ -512,7 +512,7 @@ export u8[] certificateMessage(u8[] der) {
   out[3] = ((der.len() >> 16) & 0xFF) as@ u8;
   out[4] = ((der.len() >> 8) & 0xFF) as@ u8;
   out[5] = (der.len() & 0xFF) as@ u8;
-  for (i32 i = 0; i < der.len(); i++) { out[6 + i] = der[i]; }
+  out.copyFrom(der, 0, 6, der.len());
   return out;
 }
 
@@ -529,14 +529,14 @@ export u8[] serverEcdhParams(i32 namedCurve, u8[] publicKey) {
   out[1] = ((namedCurve >> 8) & 0xFF) as@ u8;
   out[2] = (namedCurve & 0xFF) as@ u8;
   out[3] = publicKey.len() as@ u8;
-  for (i32 i = 0; i < publicKey.len(); i++) { out[4 + i] = publicKey[i]; }
+  out.copyFrom(publicKey, 0, 4, publicKey.len());
   return out;
 }
 
 /** A ServerKeyExchange: the parameters, the signature scheme, and the signature. */
 export u8[] serverKeyExchange(u8[] params, i32 scheme, u8[] signature) {
   u8[] out = u8[].filled(params.len() + 4 + signature.len(), 0);
-  for (i32 i = 0; i < params.len(); i++) { out[i] = params[i]; }
+  out.copyFrom(params, 0, 0, params.len());
   i32 at = params.len();
   out[at] = ((scheme >> 8) & 0xFF) as@ u8;
   out[at + 1] = (scheme & 0xFF) as@ u8;
@@ -555,7 +555,7 @@ export u8[] clientPublic(u8[] body) {
   i32 n = body[0] as i32;
   if (1 + n > body.len()) { return u8[](); }
   u8[] p = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { p[i] = body[1 + i]; }
+  p.copyFrom(body, 1, 0, n);
   return p;
 }
 

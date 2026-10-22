@@ -41,7 +41,7 @@ string tailText(const u8[] b, i32 max) {
   i32 from = b.len() - max;
   while (from < b.len() && (b[from] & 0xC0) == 0x80) { from++; }
   u8[] out = u8[].filled(b.len() - from, 0);
-  for (i32 i = 0; i < out.len(); i++) { out[i] = b[from + i]; }
+  out.copyFrom(b, from, 0, out.len());
   return string.fromBytes(out);
 }
 

@@ -212,7 +212,7 @@ u8[] failPlain(Conn c, i32 desc) {
 void addTranscript(Conn c, u8[] msg) {
   if (c.transcript.len() + msg.len() > maxTranscript()) { trap; }
   u8[] t = u8[].filled(c.transcript.len() + msg.len(), 0);
-  for (i32 i = 0; i < c.transcript.len(); i++) { t[i] = c.transcript[i]; }
+  t.copyFrom(c.transcript, 0, 0, c.transcript.len());
   for (i32 i = 0; i < msg.len(); i++) { t[c.transcript.len() + i] = msg[i]; }
   c.transcript = t;
 }
@@ -223,8 +223,8 @@ void sealInto(Writer out, Conn c, i32 contentType, u8[] content) {
   u8[] ki = trafficKeyIv(c.serverSecret, keyLen);
   u8[] key = u8[].filled(keyLen, 0);
   u8[] iv = u8[].filled(12, 0);
-  for (i32 i = 0; i < keyLen; i++) { key[i] = ki[i]; }
-  for (i32 i = 0; i < 12; i++) { iv[i] = ki[keyLen + i]; }
+  key.copyFrom(ki, 0, 0, keyLen);
+  iv.copyFrom(ki, keyLen, 0, 12);
   out.bytes(recordSeal(c.suite, key, iv, c.seqOut, contentType, content, 0));
   c.seqOut += 1;
 }
@@ -244,8 +244,8 @@ u8[]? openWith(Conn c, u8[] record) {
   u8[] ki = trafficKeyIv(c.clientSecret, keyLen);
   u8[] key = u8[].filled(keyLen, 0);
   u8[] iv = u8[].filled(12, 0);
-  for (i32 i = 0; i < keyLen; i++) { key[i] = ki[i]; }
-  for (i32 i = 0; i < 12; i++) { iv[i] = ki[keyLen + i]; }
+  key.copyFrom(ki, 0, 0, keyLen);
+  iv.copyFrom(ki, keyLen, 0, 12);
   u8[]? inner = recordTryOpen(c.suite, key, iv, c.seqIn, record);
   c.seqIn += 1;
   return inner;
@@ -284,7 +284,7 @@ u8[] serverFlight(Conn c, u8[] clientHelloMsg) {
   // The client's share arrives as group ++ key; answer in the same group.
   i32 group = (ch.keyShare[0] as i32 << 8) | ch.keyShare[1] as i32;
   u8[] peerKey = u8[].filled(ch.keyShare.len() - 2, 0);
-  for (i32 i = 0; i < peerKey.len(); i++) { peerKey[i] = ch.keyShare[2 + i]; }
+  peerKey.copyFrom(ch.keyShare, 2, 0, peerKey.len());
 
   // **A P-256 share has to be a point on P-256, and asking was a trap until 2026-08-24.**
   // `p256Ecdh` validates the peer's point — that is the defence against an invalid-curve attack —
@@ -329,7 +329,7 @@ u8[] serverFlight(Conn c, u8[] clientHelloMsg) {
     // Empty means the client's X25519 half was a small-order point — see `hybrid.wac`.
     if (accepted.len() == 0) { return failPlain(c, alertIllegalParameter()); }
     ourShare = u8[].filled(hybridServerShareLen(), 0);
-    for (i32 i = 0; i < hybridServerShareLen(); i++) { ourShare[i] = accepted[i]; }
+    ourShare.copyFrom(accepted, 0, 0, hybridServerShareLen());
     hybridSecret = u8[].filled(64, 0);
     for (i32 i = 0; i < hybridSecretLen(); i++) { hybridSecret[i] = accepted[hybridServerShareLen() + i]; }
   } else if (group == groupX25519()) {
@@ -402,7 +402,7 @@ u8[] serverFlight(Conn c, u8[] clientHelloMsg) {
     // reproducible and a test can compare against a recorded trace. A salt drawn here would have
     // ended that, and a salt added to `tlsServerInitRsa` would have made every caller carry it.
     u8[] saltSeed = u8[].filled(c.serverRandom.len() + 32, 0);
-    for (i32 i = 0; i < c.serverRandom.len(); i++) { saltSeed[i] = c.serverRandom[i]; }
+    saltSeed.copyFrom(c.serverRandom, 0, 0, c.serverRandom.len());
     u8[] th = sha256(c.transcript);
     for (i32 i = 0; i < 32; i++) { saltSeed[c.serverRandom.len() + i] = th[i]; }
     u8[] sig = rsaSignPss(c.rsaN, c.rsaD, toSign, 32, sha256(saltSeed));
@@ -494,7 +494,7 @@ export u8[] tlsServerFeed(u8[] state, u8[] input) {
     if (pos + 5 + recLen > input.len()) { trap; }
     i32 outerType = input[pos] as i32;
     u8[] record = u8[].filled(5 + recLen, 0);
-    for (i32 i = 0; i < 5 + recLen; i++) { record[i] = input[pos + i]; }
+    record.copyFrom(input, pos, 0, 5 + recLen);
     pos += 5 + recLen;
 
     // A ChangeCipherSpec after the ClientHello is compatibility noise and must be
@@ -505,7 +505,7 @@ export u8[] tlsServerFeed(u8[] state, u8[] input) {
     if (c.phase == phaseStart()) {
       if (outerType != typeHandshake()) { trap; }
       u8[] body = u8[].filled(recLen, 0);
-      for (i32 i = 0; i < recLen; i++) { body[i] = record[5 + i]; }
+      body.copyFrom(record, 5, 0, recLen);
       if (messageLength(body) != body.len()) { trap; }
       if (messageType(body) != 1) { trap; }
       toSend.bytes(serverFlight(c, body));
@@ -608,7 +608,7 @@ export u8[] tlsServerSend(u8[] state, u8[] data) {
     i32 n = data.len() - pos;
     if (n > maxPlaintext()) { n = maxPlaintext(); }
     u8[] chunk = u8[].filled(n, 0);
-    for (i32 i = 0; i < n; i++) { chunk[i] = data[pos + i]; }
+    chunk.copyFrom(data, pos, 0, n);
     sealInto(out, c, typeApplicationData(), chunk);
     pos += n;
     if (n == 0) { pos = data.len() + 1; }

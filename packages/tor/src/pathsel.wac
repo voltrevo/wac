@@ -292,7 +292,7 @@ export i64[] parseWeights(u8[] doc) {
       }
       if (eq > start) {
         u8[] name = u8[].filled(eq - start, 0);
-        for (i32 j = 0; j < name.len(); j++) { name[j] = doc[start + j]; }
+        name.copyFrom(doc, start, 0, name.len());
         u8[] value = u8[].filled(i - eq - 1, 0);
         for (i32 j = 0; j < value.len(); j++) { value[j] = doc[eq + 1 + j]; }
         string n = string.fromBytes(name);

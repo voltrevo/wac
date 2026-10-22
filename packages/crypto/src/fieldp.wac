@@ -86,7 +86,7 @@ export i64[] fpSmall(i32 n, i32 v) {
 
 export i64[] fpCopy(i64[] a) {
   i64[] h = i64[].filled(a.len(), 0);
-  for (i32 i = 0; i < a.len(); i++) { h[i] = a[i]; }
+  h.copyFrom(a, 0, 0, a.len());
   return h;
 }
 
@@ -309,7 +309,7 @@ i64[] reduceWide(i64[] c) {
   }
 
   i64[] h = i64[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { h[i] = c[i]; }
+  h.copyFrom(c, 0, 0, n);
 
   i64 k = normalise(h);
   for (i32 round = 0; round < FOLD_ROUNDS; round++) {

@@ -78,7 +78,7 @@ export u32[] fpZero() { return u32[].filled(LIMBS, 0); }
 
 export u32[] fpCopy(u32[] a) {
   u32[] out = u32[].filled(LIMBS, 0);
-  for (i32 i = 0; i < LIMBS; i++) { out[i] = a[i]; }
+  out.copyFrom(a, 0, 0, LIMBS);
   return out;
 }
 

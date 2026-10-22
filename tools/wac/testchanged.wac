@@ -181,7 +181,7 @@ export i32 main(Sys sys) {
   string[] args = string[].filled(targets.len() + 2, "");
   args[0] = "task";
   args[1] = "test";
-  for (i32 i = 0; i < targets.len(); i++) { args[i + 2] = targets[i]; }
+  args.copyFrom(targets, 0, 2, targets.len());
 
   // Inherited rather than captured: this is the loop you watch, and a runner that says nothing for
   // five minutes and then everything is the thing `issues/system/0231c` is about.

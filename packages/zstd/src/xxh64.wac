@@ -143,7 +143,7 @@ export struct Xxh64 {
     if (this.heldLen > 0) {
       i32 want = 32 - this.heldLen;
       i32 take = end - at < want ? end - at : want;
-      for (i32 i = 0; i < take; i++) { this.held[this.heldLen + i] = d[at + i]; }
+      this.held.copyFrom(d, at, this.heldLen, take);
       this.heldLen = this.heldLen + take;
       at = at + take;
       if (this.heldLen < 32) { return; }
@@ -157,7 +157,7 @@ export struct Xxh64 {
     }
 
     i32 rest = end - at;
-    for (i32 i = 0; i < rest; i++) { this.held[i] = d[at + i]; }
+    this.held.copyFrom(d, at, 0, rest);
     this.heldLen = rest;
   }
 

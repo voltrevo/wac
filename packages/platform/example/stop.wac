@@ -29,7 +29,7 @@ export i32 main(Sys sys) {
     return 0;
   }
 
-  Child kid = cli.spawnSelf(argvOf(["spin", "stop"]), GRANT_NONE, "", false, false).wait();
+  Child kid = cli.spawnSelf(argvOf(["spin", "stop"]), GRANT_NONE, "", 0, false).wait();
   if (kid.unavailable()) {
     core.warn("stop: this world cannot spawn: \{kid.error}");
     return 2;

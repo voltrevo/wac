@@ -66,4 +66,6 @@ which is worth more to the next reader than deleting it.
 | [0009](0009-a-typescript-to-javascript-bundler-written-in-wac.md) | a TypeScript-to-JavaScript bundler, written in wac | built and in use |
 | [0010](0010-a-handle-carries-its-own-methods.md) | a handle carries its own methods: `sock.recv()`, never `sys.recv(sock)` | decided, unbuilt |
 | [0011](0011-programs-in-a-page-without-shared-memory.md) | programs in a page without shared memory: the shell and the desktop as `packages/web` pages, stages as workers, nothing that waits | done |
-| [0012](0012-a-page-is-a-tree-of-handles.md) | a page is a tree of handles: `Elem` grants one element and its subtree, and diffing is a library over it | proposal |
+| [0012](0012-a-page-is-a-tree-of-handles.md) | a page is a tree of handles: `Elem` grants one element and its subtree, and diffing is a library over it | done |
+| [0013](0013-every-capability-answers-a-result.md) | every capability answers a result: one `Fault`, `FAULT_UNAVAILABLE` instead of a trap, staged from the hosts outward (`issues/system/0330a`) | proposal |
+| [0014](0014-frames-stream-with-backpressure.md) | a frame's output streams with backpressure: the in-process route becomes a spawned child, whose queue already waits, and `truncated` goes (`issues/system/0252a`) | proposal |

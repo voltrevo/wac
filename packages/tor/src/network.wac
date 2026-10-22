@@ -722,6 +722,6 @@ u8[] trim(u8[] s) {
 
 u8[] sub(u8[] s, i32 from, i32 to) {
   u8[] out = u8[].filled(to - from, 0);
-  for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
+  out.copyFrom(s, from, 0, out.len());
   return out;
 }

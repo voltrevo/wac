@@ -653,7 +653,7 @@ export async Sources gather(Fs fs, Cli cli, string entry, bool lazy) {
  */
 export string[] exactly(const string[] xs, i32 n) {
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = xs[i]; }
+  out.copyFrom(xs, 0, 0, n);
   return out;
 }
 

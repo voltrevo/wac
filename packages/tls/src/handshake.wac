@@ -213,15 +213,15 @@ export ClientHello parseClientHello(u8[] body, i32 preferredSuite) {
           if (group == groupHybrid() && key.len() == 1216) {
             hybridShare = u8[].filled(1218, 0);
             hybridShare[0] = 0x11; hybridShare[1] = 0xEC;
-            for (i32 i = 0; i < 1216; i++) { hybridShare[2 + i] = key[i]; }
+            hybridShare.copyFrom(key, 0, 2, 1216);
           } else if (group == groupX25519() && key.len() == 32) {
             x25519Share = u8[].filled(34, 0);
             x25519Share[0] = 0x00; x25519Share[1] = 0x1d;
-            for (i32 i = 0; i < 32; i++) { x25519Share[2 + i] = key[i]; }
+            x25519Share.copyFrom(key, 0, 2, 32);
           } else if (group == groupP256() && key.len() == 65) {
             p256Share = u8[].filled(67, 0);
             p256Share[0] = 0x00; p256Share[1] = 0x17;
-            for (i32 i = 0; i < 65; i++) { p256Share[2 + i] = key[i]; }
+            p256Share.copyFrom(key, 0, 2, 65);
           }
         }
         keyShare = hybridShare;
@@ -457,7 +457,7 @@ export u8[] messageBody(const u8[] msg) {
   i32 len = (msg[1] as i32 << 16) | (msg[2] as i32 << 8) | msg[3] as i32;
   if (4 + len != msg.len()) { trap; }
   u8[] out = u8[].filled(len, 0);
-  for (i32 i = 0; i < len; i++) { out[i] = msg[4 + i]; }
+  out.copyFrom(msg, 4, 0, len);
   return out;
 }
 

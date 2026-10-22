@@ -293,7 +293,7 @@ string nestedEntry(const Cli cli, string dir) {
 
 string[] grown(string[] xs, string x) {
   string[] out = string[].filled(xs.len() + 1, x);
-  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  out.copyFrom(xs, 0, 0, xs.len());
   return out;
 }
 
@@ -483,7 +483,7 @@ export string builtProgram(const Cli cli, string entry, string name, string[] gr
   args[1] = entry;
   args[2] = "-o";
   args[3] = stem;
-  for (i32 i = 0; i < grants.len(); i++) { args[4 + i] = grants[i]; }
+  args.copyFrom(grants, 0, 4, grants.len());
   // **A build that failed takes the old artefact with it.** The answer used to be dropped here, and a
   // stale `.wasm` is worse than none: the caller runs it, it runs — it is a real module, the one from
   // before the program broke — and the test passes against code that no longer compiles. That is
@@ -568,7 +568,7 @@ export string builtApp(Cli cli, string entry, string name, string[] grants) {
   args[1] = entry;
   args[2] = "-o";
   args[3] = out;
-  for (i32 i = 0; i < grants.len(); i++) { args[4 + i] = grants[i]; }
+  args.copyFrom(grants, 0, 4, grants.len());
   // The same rule as `builtProgram`: a failed build takes the artefact with it, because a stale one
   // still runs and the test then passes against code that no longer compiles.
   Exec built = cli.exec(wac, args, u8[]()).wait();

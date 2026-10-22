@@ -54,7 +54,7 @@ export u8[] signedDigest(u8[] doc, bool sha256Flavour) {
   i32 n = signedLength(doc);
   if (n < 0) { trap; }
   u8[] signed = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { signed[i] = doc[i]; }
+  signed.copyFrom(doc, 0, 0, n);
   return sha256Flavour ? sha256(signed) : sha1(signed);
 }
 
@@ -85,7 +85,7 @@ u8[] derInteger(u8[] der, i32 at, i32 len) {
     n--;
   }
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = der[from + i]; }
+  out.copyFrom(der, from, 0, n);
   return out;
 }
 
@@ -173,7 +173,7 @@ export bool verifyKeyCertification(u8[] cert, u8[] identityKeyDer, u8[] signatur
   if (end < 0) { return false; }
 
   u8[] signed = u8[].filled(end, 0);
-  for (i32 i = 0; i < end; i++) { signed[i] = cert[i]; }
+  signed.copyFrom(cert, 0, 0, end);
   return signatureMatches(rsaModulus(identityKeyDer), rsaExponent(identityKeyDer),
                           sha1(signed), signature);
 }
@@ -302,7 +302,7 @@ export AuthorityCert[] parseCertificates(u8[] doc, string[] trusted) {
       string fp = toHex(keyFingerprint(identityKey));
       if (identityKey.len() > 0 && isTrusted(fp, trusted)) {
         u8[] cert = u8[].filled(end - start, 0);
-        for (i32 i = 0; i < cert.len(); i++) { cert[i] = doc[start + i]; }
+        cert.copyFrom(doc, start, 0, cert.len());
         if (verifyKeyCertification(cert, identityKey, certSig)) {
           out.push(AuthorityCert(fp, signingKey, toHex(keyFingerprint(signingKey))));
         }
@@ -427,7 +427,7 @@ string[] splitSpaces(u8[] doc, i32 from, i32 to) {
     if (i == to || doc[i] == ' ') {
       if (i > start) {
         u8[] f = u8[].filled(i - start, 0);
-        for (i32 j = 0; j < f.len(); j++) { f[j] = doc[start + j]; }
+        f.copyFrom(doc, start, 0, f.len());
         out.push(string.fromBytes(f));
       }
       start = i + 1;

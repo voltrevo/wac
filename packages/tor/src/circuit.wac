@@ -94,7 +94,7 @@ export struct Stream {
 u8[] nonceOf(u8[] material) {
   if (material.len() < NTOR_KEY_MATERIAL) { return u8[](); }
   u8[] out = u8[].filled(NTOR_KEY_MATERIAL - HOP_KEY_MATERIAL, 0);
-  for (i32 i = 0; i < out.len(); i++) { out[i] = material[HOP_KEY_MATERIAL + i]; }
+  out.copyFrom(material, HOP_KEY_MATERIAL, 0, out.len());
   return out;
 }
 
@@ -372,7 +372,7 @@ u8[] join(u8[] a, u8[] b) {
   if (a.len() == 0) { return b; }
   if (b.len() == 0) { return a; }
   u8[] out = u8[].filled(a.len() + b.len(), 0);
-  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  out.copyFrom(a, 0, 0, a.len());
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
 }

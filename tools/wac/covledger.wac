@@ -269,7 +269,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   build[0] = "build";
   build[1] = entry;
   build[2] = "--coverage";
-  for (i32 i = 0; i < grants.len(); i++) { build[3 + i] = grants[i]; }
+  build.copyFrom(grants, 0, 3, grants.len());
   build[3 + grants.len()] = "-o";
   build[4 + grants.len()] = stem;
   build[5 + grants.len()] = "--quiet";
@@ -289,7 +289,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   string[] dump = string[].filled(2 + exports.len(), "");
   dump[0] = "covdump";
   dump[1] = stem + ".wasm";
-  for (i32 i = 0; i < exports.len(); i++) { dump[2 + i] = exports[i]; }
+  dump.copyFrom(exports, 0, 2, exports.len());
   Exec dumped = cli.exec(binary(cli), dump, u8[]()).wait();
   if (!dumped.ran() || dumped.status != 0) {
     core.warn("error: covdump — " + execReason(dumped));
@@ -488,7 +488,7 @@ export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string 
   core.log("| file | points | covered | % |");
   core.log("|---|---:|---:|---:|");
   string[] order = string[].filled(nFiles, "");
-  for (i32 i = 0; i < nFiles; i++) { order[i] = files[i]; }
+  order.copyFrom(files, 0, 0, nFiles);
   sortStrings(order, nFiles);
   for (i32 i = 0; i < nFiles; i++) {
     for (i32 k = 0; k < nFiles; k++) {

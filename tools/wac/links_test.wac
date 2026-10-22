@@ -233,7 +233,7 @@ string[] targets(string text, bool source) {
     n = n + 1;
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 
@@ -411,7 +411,7 @@ string[][] anchorsIn(string text) {
     n = n + 1;
   }
   string[][] exact = string[][].filled(n, string[]());
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 
@@ -556,7 +556,7 @@ string[] rootedPaths(string text) {
     n = n + 1;
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 
@@ -779,6 +779,6 @@ string[] backtickedAny(string text) {
     i = end;
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }

@@ -77,7 +77,7 @@ export u8[] padToChunks(u8[] data) {
   i32 n = chunkCount(data.len());
   if (n == 0) { n = 1; }
   u8[] out = u8[].filled(n * CHUNK, 0);
-  for (i32 i = 0; i < data.len(); i++) { out[i] = data[i]; }
+  out.copyFrom(data, 0, 0, data.len());
   return out;
 }
 
@@ -121,7 +121,7 @@ export u8[] merkleize(u8[] data, i32 limit) {
   }
   if (level.len() == 0) { return zeroHash(depth); }
   u8[] root = u8[].filled(CHUNK, 0);
-  for (i32 i = 0; i < CHUNK; i++) { root[i] = level[i]; }
+  root.copyFrom(level, 0, 0, CHUNK);
   return root;
 }
 
@@ -198,7 +198,7 @@ export u8[]? rootBitlist(u8[] serialized, i32 limit) {
   if (bits < 0 || bits > limit) { return null; }
   i32 bytes = (bits + 7) / 8;
   u8[] data = u8[].filled(bytes, 0);
-  for (i32 i = 0; i < bytes; i++) { data[i] = serialized[i]; }
+  data.copyFrom(serialized, 0, 0, bytes);
   // Clear anything above the last real bit, including the delimiter if it shared the final byte.
   i32 spare = bits & 7;
   if (spare != 0) {
@@ -247,7 +247,7 @@ export bool isValidMerkleBranch(u8[] leaf, u8[] branch, i32 depth, u64 index, u8
   if (leaf.len() != CHUNK || root.len() != CHUNK) { return false; }
   if (branch.len() != depth * CHUNK) { return false; }
   u8[] node = u8[].filled(CHUNK, 0);
-  for (i32 i = 0; i < CHUNK; i++) { node[i] = leaf[i]; }
+  node.copyFrom(leaf, 0, 0, CHUNK);
   for (i32 d = 0; d < depth; d++) {
     u8[] sib = u8[].filled(CHUNK, 0);
     for (i32 i = 0; i < CHUNK; i++) { sib[i] = branch[d * CHUNK + i]; }

@@ -178,7 +178,7 @@ export struct Peer {
   void remember(this, i32 kind, i32 seq, u8[] body) {
     u8[] msg = handshake(kind, seq, body);
     u8[] out = u8[].filled(this.transcript.len() + msg.len(), 0);
-    for (i32 i = 0; i < this.transcript.len(); i++) { out[i] = this.transcript[i]; }
+    out.copyFrom(this.transcript, 0, 0, this.transcript.len());
     for (i32 i = 0; i < msg.len(); i++) { out[this.transcript.len() + i] = msg[i]; }
     this.transcript = out;
   }
@@ -187,11 +187,11 @@ export struct Peer {
   u8[] signParams(const this, u8[] params) {
     u8[] signed = u8[].filled(this.clientRandom.len() + this.random.len() + params.len(), 0);
     i32 at = 0;
-    for (i32 i = 0; i < this.clientRandom.len(); i++) { signed[at + i] = this.clientRandom[i]; }
+    signed.copyFrom(this.clientRandom, 0, at, this.clientRandom.len());
     at = at + this.clientRandom.len();
-    for (i32 i = 0; i < this.random.len(); i++) { signed[at + i] = this.random[i]; }
+    signed.copyFrom(this.random, 0, at, this.random.len());
     at = at + this.random.len();
-    for (i32 i = 0; i < params.len(); i++) { signed[at + i] = params[i]; }
+    signed.copyFrom(params, 0, at, params.len());
 
     u8[] raw = p256Sign(this.signingKey, signed, this.signingNonce);
     if (raw.len() != 64) { return u8[](); }
@@ -201,7 +201,7 @@ export struct Peer {
     u8[] rd = derInteger(r);
     u8[] sd = derInteger(s);
     u8[] both = u8[].filled(rd.len() + sd.len(), 0);
-    for (i32 i = 0; i < rd.len(); i++) { both[i] = rd[i]; }
+    both.copyFrom(rd, 0, 0, rd.len());
     for (i32 i = 0; i < sd.len(); i++) { both[rd.len() + i] = sd[i]; }
     return derSequence(both);
   }
@@ -257,7 +257,7 @@ export struct Peer {
           // never presented a certificate or presented one they cannot sign for.
           if (same && this.peerVerified != 0) {
             u8[] full = u8[].filled(this.transcript.len() + plainMsg.len(), 0);
-            for (i32 i = 0; i < this.transcript.len(); i++) { full[i] = this.transcript[i]; }
+            full.copyFrom(this.transcript, 0, 0, this.transcript.len());
             for (i32 i = 0; i < plainMsg.len(); i++) { full[this.transcript.len() + i] = plainMsg[i]; }
             // **One past the flight, not the literal 5.** The server's messages are numbered
             // HelloVerifyRequest at 0 and then the flight, so the Finished is `lastFlight.len() + 1`
@@ -290,7 +290,7 @@ export struct Peer {
     i32 offset = (f[6] as i32 << 16) | (f[7] as i32 << 8) | f[8] as i32;
     i32 fragLen = (f[9] as i32 << 16) | (f[10] as i32 << 8) | f[11] as i32;
     u8[] piece = u8[].filled(f.len() - 12, 0);
-    for (i32 i = 0; i < piece.len(); i++) { piece[i] = f[12 + i]; }
+    piece.copyFrom(f, 12, 0, piece.len());
     u8[] body = this.reassemble(kind, seq, offset, fragLen, total, piece);
     if (body.len() == 0) { return out; }
 
@@ -433,7 +433,7 @@ export struct Peer {
     i32 sigLen = (body[2] as i32 << 8) | body[3] as i32;
     if (sigLen <= 0 || 4 + sigLen > body.len()) { return false; }
     u8[] sig = u8[].filled(sigLen, 0);
-    for (i32 i = 0; i < sigLen; i++) { sig[i] = body[4 + i]; }
+    sig.copyFrom(body, 4, 0, sigLen);
     Cert c = parseCert(this.peerCertDer);
     if (!c.wellFormed) { return false; }
     return certVerifySignature(c, scheme, this.transcript, sig);
@@ -458,7 +458,7 @@ export struct Peer {
 /** Grow a list of datagrams by one. */
 u8[][] appendOne(u8[][] list, u8[] one) {
   u8[][] out = u8[][].defaulted(list.len() + 1);
-  for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
+  out.copyFrom(list, 0, 0, list.len());
   out[list.len()] = one;
   return out;
 }
@@ -466,6 +466,6 @@ u8[][] appendOne(u8[][] list, u8[] one) {
 /** `b[from..to)`. */
 u8[] slice(u8[] b, i32 from, i32 to) {
   u8[] out = u8[].filled(to - from, 0);
-  for (i32 i = 0; i < out.len(); i++) { out[i] = b[from + i]; }
+  out.copyFrom(b, from, 0, out.len());
   return out;
 }

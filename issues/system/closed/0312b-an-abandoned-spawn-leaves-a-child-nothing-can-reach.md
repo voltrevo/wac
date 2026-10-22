@@ -1,6 +1,6 @@
 # 0312 — an abandoned `spawn` leaves a child nothing can reach, and that may be right
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody)
 - **Reported by:** agent-b
 - **Date:** 2026-08-31
@@ -82,3 +82,9 @@ invented against a use nobody has.
 
 Answer 1: the handle owns the child, and dropping an uncollected `Pending<Child>` stops it. A `detached`
 flag on spawn is how a caller asks for fire-and-forget.
+
+## Fixed — 2026-10-22 (agent-a)
+
+Answer 1, in `std/platform.wac`'s `Cli.of`, where every host's `Cli` is built: `owned` wraps a spawn ticket so that cancelling it while it still holds an uncollected child closes the child's handle, as `closeSocket` does. `DETACHED` (4) in the inherit mask opts out; `spawnSelf` takes that mask now instead of a bool, and the hosts read only the input bit. `packages/platform/test/wac/droppedchild_test.wac` cancels one ticket of each kind; the detached arm is the canary. A ticket dropped before its answer arrives cannot stop anything — on every host today the answer is immediate.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

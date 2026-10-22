@@ -125,6 +125,6 @@ export Store pemBundle(u8[] pem) {
   // Short: a block was refused, or the armour ran out mid-file. The trailing pairs would read as a
   // certificate of length zero at offset zero, which `verifyPath` would try.
   i32[] exact = i32[].filled(found * 2, 0);
-  for (i32 i = 0; i < found * 2; i++) { exact[i] = offsets[i]; }
+  exact.copyFrom(offsets, 0, 0, found * 2);
   return Store(der.take(), exact, refused);
 }

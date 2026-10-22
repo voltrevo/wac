@@ -48,7 +48,7 @@ export u8[] hkdfExpand(u8[] prk, u8[] info, i32 length) {
     // The final block is usually partial.
     i32 off = i * hl;
     i32 take = length - off < hl ? length - off : hl;
-    for (i32 j = 0; j < take; j++) { out[off + j] = prev[j]; }
+    out.copyFrom(prev, 0, off, take);
   }
   return out;
 }

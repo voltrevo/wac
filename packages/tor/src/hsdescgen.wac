@@ -282,7 +282,7 @@ export u8[] padToBlock(u8[] plaintext) {
   i32 want = ((plaintext.len() + block - 1) / block) * block;
   if (want == 0) { want = block; }
   u8[] out = u8[].filled(want, 0);
-  for (i32 i = 0; i < plaintext.len(); i++) { out[i] = plaintext[i]; }
+  out.copyFrom(plaintext, 0, 0, plaintext.len());
   return out;
 }
 

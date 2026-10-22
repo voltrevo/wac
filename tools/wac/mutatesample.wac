@@ -157,6 +157,6 @@ export Mutant[] sampleMutants(Mutant[] mutants, i32 n, i32 seed) {
   }
   if (taken == n) { return picked; }
   Mutant[] exact = Mutant[].filled(taken, mutants[0]);
-  for (i32 i = 0; i < taken; i++) { exact[i] = picked[i]; }
+  exact.copyFrom(picked, 0, 0, taken);
   return exact;
 }

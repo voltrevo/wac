@@ -63,7 +63,7 @@ static string PROGRAM =
   "    cli.write(\"PAYLOAD\".toBytes());\n" +
   "    return 0;\n" +
   "  }\n" +
-  "  Child kid = cli.spawnSelf([\"child\".toBytes()], GRANT_ALL(), \".\", false, false).wait();\n" +
+  "  Child kid = cli.spawnSelf([\"child\".toBytes()], GRANT_ALL(), \".\", 0, false).wait();\n" +
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "  if (mode != \"control\") {\n" +
   "    Pending<Read> first = cli.recv(kid.handle);\n" +
@@ -104,7 +104,7 @@ static string STDIN_PROGRAM =
   "  }\n" +
   "\n" +
   "  string kidArg = mode == \"control\" ? \"childcontrol\" : (mode == \"late\" ? \"childlate\" : \"child\");\n" +
-  "  Child kid = cli.spawnSelf([kidArg.toBytes()], GRANT_ALL(), \".\", false, false).wait();\n" +
+  "  Child kid = cli.spawnSelf([kidArg.toBytes()], GRANT_ALL(), \".\", 0, false).wait();\n" +
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "  core.delay(300).wait();\n" +
   "  cli.send(kid.handle, \"PAYLOAD\".toBytes()).wait();\n" +
@@ -154,7 +154,7 @@ static string ACCEPT_PROGRAM =
   "\n" +
   "  string port = itoa(listener.port);\n" +
   "  Child kid = cli.spawnSelf([\"child\".toBytes(), port.toBytes()],\n" +
-  "                            GRANT_ALL(), \".\", false, false).wait();\n" +
+  "                            GRANT_ALL(), \".\", 0, false).wait();\n" +
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "\n" +
   "  if (mode != \"control\") {\n" +

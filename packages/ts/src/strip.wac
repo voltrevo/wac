@@ -353,7 +353,7 @@ i32 endOf(Lexed l, i32 i) { return startAt(l, i) + lenAt(l, i); }
  */
 u8[] blank(u8[] src, Vec<i32> from, Vec<i32> to) {
   u8[] out = u8[].filled(src.len(), 0);
-  for (i32 i = 0; i < src.len(); i++) { out[i] = src[i]; }
+  out.copyFrom(src, 0, 0, src.len());
   for (i32 r = 0; r < from.len(); r++) {
     i32 a = from.get(r);
     i32 b = to.get(r);

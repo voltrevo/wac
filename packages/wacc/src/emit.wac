@@ -11932,7 +11932,10 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           if (isArrayType(ot) && mname == "copyFrom" && args.len() == 4) {
             string srcT = typeOfE(src, lexed, env, args[0]);
-            if (!isArrayType(srcT)) { return; }
+            // **Declined, not skipped.** Returning here emitted nothing for the call — a copy that
+            // silently did not happen, in a module the engine accepted — and the bytes after it were
+            // whatever the destination held before.
+            if (!isArrayType(srcT)) { env.declineFor("a copyFrom whose source type is not known here"); return; }
             emitExpr(fb, src, lexed, env, obj);
             emitAt(fb, src, lexed, env, args[2], "i32");
             emitExpr(fb, src, lexed, env, args[0]);

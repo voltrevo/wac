@@ -45,7 +45,7 @@ string tagAt(u8[] b, i32 at) {
   }
   if (end == at) { return ""; }
   u8[] out = u8[].filled(end - at, 0);
-  for (i32 i = 0; i < end - at; i++) { out[i] = b[at + i]; }
+  out.copyFrom(b, at, 0, end - at);
   return string.fromBytes(out);
 }
 

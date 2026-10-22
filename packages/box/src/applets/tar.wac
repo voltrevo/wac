@@ -133,7 +133,7 @@ u8[] header(string path, i32 size, i64 mtimeMillis, i32 kind) {
   // "ustar" and version "00", which is what makes it the POSIX format rather than the
   // older one every extractor still has to guess at.
   u8[] magic = "ustar".toBytes();
-  for (i32 i = 0; i < 5; i++) { h[257 + i] = magic[i]; }
+  h.copyFrom(magic, 0, 257, 5);
   h[263] = '0';
   h[264] = '0';
 

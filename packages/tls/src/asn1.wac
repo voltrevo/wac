@@ -176,7 +176,7 @@ export struct Der {
       return u8[]();
     }
     u8[] out = u8[].filled(this.pos - begin, 0);
-    for (i32 i = 0; i < out.len(); i++) { out[i] = this.buf[begin + i]; }
+    out.copyFrom(this.buf, begin, 0, out.len());
     return out;
   }
 
@@ -185,7 +185,7 @@ export struct Der {
     i32 hi = this.end > this.buf.len() ? this.buf.len() : this.end;
     if (this.pos >= hi) { return u8[](); }
     u8[] out = u8[].filled(hi - this.pos, 0);
-    for (i32 i = 0; i < out.len(); i++) { out[i] = this.buf[this.pos + i]; }
+    out.copyFrom(this.buf, this.pos, 0, out.len());
     return out;
   }
 
@@ -275,7 +275,7 @@ export u8[] unsignedInteger(u8[] der) {
   i32 at = 0;
   while (at + 1 < der.len() && der[at] == 0) { at++; }
   u8[] out = u8[].filled(der.len() - at, 0);
-  for (i32 i = 0; i < out.len(); i++) { out[i] = der[at + i]; }
+  out.copyFrom(der, at, 0, out.len());
   return out;
 }
 /** 2.5.29.15 — keyUsage. */

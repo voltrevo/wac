@@ -145,7 +145,7 @@ Answers askBytes(T t, Cli cli, string program, string[] args, u8[] payload, i32 
   if (last != "DONE \{n}") { return Answers(false, string[].filled(0, "")); }
 
   string[] answers = string[].filled(at - 1, "");
-  for (i32 i = 0; i < at - 1; i++) { answers[i] = all[i]; }
+  answers.copyFrom(all, 0, 0, at - 1);
   return Answers(true, answers);
 }
 
@@ -224,7 +224,7 @@ export string askArgvCached(T t, Cli cli, string program, string[] args, string 
   }
   string stamp = "\{(newest / (1000 as i64)) as! i32}";
   string[] parts = string[].filled(args.len() + inputs.len(), "");
-  for (i32 i = 0; i < args.len(); i++) { parts[i] = args[i]; }
+  parts.copyFrom(args, 0, 0, args.len());
   for (i32 i = 0; i < inputs.len(); i++) { parts[args.len() + i] = inputs[i]; }
   string key = "\{name}-\{sumOfStrings(parts)}-\{parts.len()}-\{stamp}";
   string path = ".cache/oracle/\{key}.out";

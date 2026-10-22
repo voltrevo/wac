@@ -76,7 +76,7 @@ export i32 pastLineStarting(u8[] text, u8[] needle) {
 /** The first `n` bytes of `text`. */
 u8[] head(u8[] text, i32 n) {
   u8[] out = u8[].filled(n, 0);
-  for (i32 i = 0; i < n; i++) { out[i] = text[i]; }
+  out.copyFrom(text, 0, 0, n);
   return out;
 }
 
@@ -91,7 +91,7 @@ export u8[] edDescriptorDigest(u8[] descriptor) {
   if (end < 0) { return u8[](); }
   u8[] prefix = edDescriptorPrefix();
   u8[] signed = u8[].filled(prefix.len() + end, 0);
-  for (i32 i = 0; i < prefix.len(); i++) { signed[i] = prefix[i]; }
+  signed.copyFrom(prefix, 0, 0, prefix.len());
   for (i32 i = 0; i < end; i++) { signed[prefix.len() + i] = descriptor[i]; }
   return sha256(signed);
 }
@@ -404,7 +404,7 @@ export u8[] lineValue(u8[] doc, string keyword) {
   i32 end = at;
   while (end < doc.len() && doc[end] != 10) { end = end + 1; }
   u8[] out = u8[].filled(end - at, 0);
-  for (i32 i = 0; i < end - at; i++) { out[i] = doc[at + i]; }
+  out.copyFrom(doc, at, 0, end - at);
   return out;
 }
 
@@ -427,7 +427,7 @@ u8[][] splitSpaces(u8[] s) {
     i32 from = i;
     while (i < s.len() && s[i] != 32) { i = i + 1; }
     u8[] part = u8[].filled(i - from, 0);
-    for (i32 j = 0; j < i - from; j++) { part[j] = s[from + j]; }
+    part.copyFrom(s, from, 0, i - from);
     out[n] = part;
     n = n + 1;
   }

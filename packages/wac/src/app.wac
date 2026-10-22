@@ -154,7 +154,7 @@ export string builtBy(string head) {
 export i32 writeApp(Core core, Cli cli, u8[] whole, string dest, string grantWords) {
   u8[] head = preamble(wacVersion(cli)).toBytes();
   u8[] out = u8[].filled(head.len() + whole.len(), 0);
-  for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
+  out.copyFrom(head, 0, 0, head.len());
   for (i32 i = 0; i < whole.len(); i++) { out[head.len() + i] = whole[i]; }
   Change wrote = cli.writeFile(dest, out).wait();
   if (!wrote.ok()) {
@@ -194,7 +194,7 @@ export i32 appRun(Core core, Cli cli, i32 argc, string path, u8[][] args) {
     return 1;
   }
   u8[] headBytes = u8[].filled(at, 0);
-  for (i32 i = 0; i < at; i++) { headBytes[i] = f.bytes[i]; }
+  headBytes.copyFrom(f.bytes, 0, 0, at);
   string head = string.fromBytes(headBytes);
   // **Presence, not content** — `hasAppMark` rather than `builtBy(head) == ""`, which was the same
   // test for a file nobody built with `wac app` and for one built by a host that publishes no

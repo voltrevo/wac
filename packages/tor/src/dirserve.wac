@@ -222,7 +222,7 @@ export u8[] stripDotZ(u8[] target) {
   i32 n = target.len();
   if (n >= 2 && target[n - 2] == 46 && target[n - 1] == 122) {
     u8[] out = u8[].filled(n - 2, 0);
-    for (i32 i = 0; i < n - 2; i++) { out[i] = target[i]; }
+    out.copyFrom(target, 0, 0, n - 2);
     return out;
   }
   return target;
@@ -297,7 +297,7 @@ bool equals(u8[] s, string text) {
 u8[] rest(u8[] s, string prefix) {
   i32 from = prefix.toBytes().len();
   u8[] out = u8[].filled(s.len() - from, 0);
-  for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
+  out.copyFrom(s, from, 0, out.len());
   return out;
 }
 

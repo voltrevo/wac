@@ -45,7 +45,7 @@ export struct Desk {
     Grid g = Grid.create(cols, rows, 200);
     Rect r = Rect(x, y, cols * cellWidth(), rows * cellHeight() + barHeight());
     Window[] next = Window[].filled(this.wins.len() + 1, Window(r, g, title));
-    for (i32 i = 0; i < this.wins.len(); i++) { next[i] = this.wins[i]; }
+    next.copyFrom(this.wins, 0, 0, this.wins.len());
     next[this.wins.len()] = Window(r, g, title);
     this.wins = next;
   }

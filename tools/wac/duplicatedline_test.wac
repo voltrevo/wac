@@ -107,7 +107,7 @@ export string test_no_line_is_one_thing_written_twice(Core core, Cli cli) {
         n = n + 1;
         if (n <= 20) {
           u8[] head = u8[].filled(unit < 60 ? unit : 60, 0);
-          for (i32 k = 0; k < head.len(); k++) { head[k] = b[from + k]; }
+          head.copyFrom(b, from, 0, head.len());
           found = found + "\n  " + files[f] + ":" + itoa(line) + "  " + string.fromBytes(head);
         }
       }

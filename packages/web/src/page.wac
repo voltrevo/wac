@@ -361,7 +361,7 @@ struct Slots<T> {
     }
     i32 id = this.held.len();
     Ticket<T>?[] more = Ticket<T>?[].defaulted(id + 1);
-    for (i32 i = 0; i < id; i++) { more[i] = this.held[i]; }
+    more.copyFrom(this.held, 0, 0, id);
     more[id] = t;
     this.held = more;
     return id;

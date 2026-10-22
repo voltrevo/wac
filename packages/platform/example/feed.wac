@@ -37,7 +37,7 @@ export i32 main(Sys sys) {
   if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "echo") { return echo(cli); }
   if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "flood") { return flood(core, cli); }
 
-  Child kid = cli.spawnSelf(argvOf(["echo", "feed"]), GRANT_NONE, "", false, false).wait();
+  Child kid = cli.spawnSelf(argvOf(["echo", "feed"]), GRANT_NONE, "", 0, false).wait();
   if (kid.unavailable()) {
     core.warn("feed: this world cannot spawn: \{kid.error}");
     return 2;
@@ -90,7 +90,7 @@ i32 BLOCK() { return 65536; }
 
 /** Spawn a child that writes more than the queue holds, and count every byte it sent. */
 bool flooded(Core core, Cli cli) {
-  Child kid = cli.spawnSelf(argvOf(["flood", "feed"]), GRANT_NONE, "", false, false).wait();
+  Child kid = cli.spawnSelf(argvOf(["flood", "feed"]), GRANT_NONE, "", 0, false).wait();
   if (kid.unavailable() || kid.handle < 0) {
     core.warn("feed: the flooding child would not start: \{kid.error}");
     return false;

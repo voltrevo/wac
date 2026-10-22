@@ -68,7 +68,7 @@ export Task[] tasksIn(u8[] src) {
         }
       }
       Task[] exact = Task[].filled(n, Task("", ""));
-      for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+      exact.copyFrom(out, 0, 0, n);
       return exact;
     }
     default: { return Task[](); }

@@ -128,7 +128,7 @@ export async i32 init(Core core, Cli cli, Fs fs, Args a) {
     // answered by whoever actually holds the image. Grants stay `GRANT_NONE`: a service needs no
     // capability of its own precisely because it asks.
     bool serve = !fs.isPlainHost();
-    Child kid = cli.spawnSelf(argvOf(argv), GRANT_NONE, "", false, serve).wait();
+    Child kid = cli.spawnSelf(argvOf(argv), GRANT_NONE, "", 0, serve).wait();
     if (kid.unavailable()) {
       core.warn("init: this world cannot spawn, so no service can start");
       return 1;

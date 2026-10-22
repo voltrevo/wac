@@ -104,7 +104,7 @@ Run runOne(Cli cli, string cmd, string[] extra, string script, string dir, strin
   string[] argv = string[].filled(extra.len() + 4, "");
   argv[0] = "10";
   argv[1] = cmd;
-  for (i32 i = 0; i < extra.len(); i++) { argv[2 + i] = extra[i]; }
+  argv.copyFrom(extra, 0, 2, extra.len());
   argv[extra.len() + 2] = "-c";
   argv[extra.len() + 3] = "mkdir -p /tmp; " + script;
   Exec r = cli.execWithIn("timeout", argv, u8[](), env, true, false, dir).wait();

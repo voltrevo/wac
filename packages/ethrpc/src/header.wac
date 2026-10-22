@@ -98,7 +98,7 @@ export Result<(u8[], i32), string> headerHash(JsonValue block) {
   }
 
   Item[] used = Item[].filled(n, Item.Bytes(u8[]()));
-  for (i32 i = 0; i < n; i++) { used[i] = parts[i]; }
+  used.copyFrom(parts, 0, 0, n);
   return Result.Ok((keccak256(encode(Item.List(used))), n));
 }
 

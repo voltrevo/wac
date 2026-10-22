@@ -116,7 +116,7 @@ string withoutSiblingImports(string text) {
     n = n + 1;
   }
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = kept[i]; }
+  out.copyFrom(kept, 0, 0, n);
   return joined(out, "\n");
 }
 
@@ -171,7 +171,7 @@ string[] exportsOf(string text) {
     }
   }
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  out.copyFrom(found, 0, 0, n);
   return out;
 }
 
@@ -191,7 +191,7 @@ string[] symbolsOf(string text) {
     n = n + 1;
   }
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  out.copyFrom(found, 0, 0, n);
   return out;
 }
 
@@ -204,7 +204,7 @@ string[] symbolsOf(string text) {
 Tree readTree(Cli cli) {
   string[] tree = coreTree();
   string[] paths = string[].filled(tree.len() + 1, "");
-  for (i32 i = 0; i < tree.len(); i++) { paths[i] = tree[i]; }
+  paths.copyFrom(tree, 0, 0, tree.len());
   paths[tree.len()] = stdPath();
 
   string[] texts = string[].filled(paths.len(), "");
@@ -331,7 +331,7 @@ string[] typeDefaultsTable(string text) {
     n++;
   }
   string[] exact = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  exact.copyFrom(out, 0, 0, n);
   return exact;
 }
 

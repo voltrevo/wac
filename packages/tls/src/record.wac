@@ -56,7 +56,7 @@ export i32 maxPlaintext() { return 16384; }
  */
 u8[] recordNonce(u8[] iv, i64 seq) {
   u8[] nonce = u8[].filled(12, 0);
-  for (i32 i = 0; i < 12; i++) { nonce[i] = iv[i]; }
+  nonce.copyFrom(iv, 0, 0, 12);
   for (i32 i = 0; i < 8; i++) {
     i32 shift = (7 - i) * 8;
     nonce[4 + i] = (nonce[4 + i] as i32 ^ (((seq >> (shift as i64)) & 255) as! i32)) as@ u8;
@@ -88,7 +88,7 @@ export u8[] recordSeal(i32 suite, u8[] key, u8[] iv, i64 seq, i32 contentType,
   if (padLen < 0) { trap; }
 
   u8[] inner = u8[].filled(content.len() + 1 + padLen, 0);
-  for (i32 i = 0; i < content.len(); i++) { inner[i] = content[i]; }
+  inner.copyFrom(content, 0, 0, content.len());
   inner[content.len()] = contentType as@ u8;
   // The padding is already zero.
 
@@ -110,8 +110,8 @@ export u8[] recordSeal(i32 suite, u8[] key, u8[] iv, i64 seq, i32 contentType,
   }
 
   u8[] out = u8[].filled(5 + ct.len() + 16, 0);
-  for (i32 i = 0; i < 5; i++) { out[i] = hdr[i]; }
-  for (i32 i = 0; i < ct.len(); i++) { out[5 + i] = ct[i]; }
+  out.copyFrom(hdr, 0, 0, 5);
+  out.copyFrom(ct, 0, 5, ct.len());
   for (i32 i = 0; i < 16; i++) { out[5 + ct.len() + i] = tag[i]; }
   return out;
 }
@@ -192,10 +192,10 @@ export u8[]? recordTryOpen(i32 suite, u8[] key, u8[] iv, i64 seq, u8[] record) {
   if (sealedLen > maxPlaintext() + 256) { return null; }
 
   u8[] hdr = u8[].filled(5, 0);
-  for (i32 i = 0; i < 5; i++) { hdr[i] = record[i]; }
+  hdr.copyFrom(record, 0, 0, 5);
   i32 ctLen = sealedLen - 16;
   u8[] ct = u8[].filled(ctLen, 0);
-  for (i32 i = 0; i < ctLen; i++) { ct[i] = record[5 + i]; }
+  ct.copyFrom(record, 5, 0, ctLen);
   u8[] tag = u8[].filled(16, 0);
   for (i32 i = 0; i < 16; i++) { tag[i] = record[5 + ctLen + i]; }
 
@@ -261,7 +261,7 @@ export u8[] recordContent(u8[] inner) {
   }
   if (end < 0) { trap; }
   u8[] out = u8[].filled(end, 0);
-  for (i32 i = 0; i < end; i++) { out[i] = inner[i]; }
+  out.copyFrom(inner, 0, 0, end);
   return out;
 }
 

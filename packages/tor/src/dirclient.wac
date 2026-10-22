@@ -41,7 +41,7 @@ export u8[] hsPublishRequest(u8[] descriptor, string host) {
                 "Content-Length: \{descriptor.len()}\r\n\r\n";
   u8[] h = head.toBytes();
   u8[] out = u8[].filled(h.len() + descriptor.len(), 0);
-  for (i32 i = 0; i < h.len(); i++) { out[i] = h[i]; }
+  out.copyFrom(h, 0, 0, h.len());
   for (i32 i = 0; i < descriptor.len(); i++) { out[h.len() + i] = descriptor[i]; }
   return out;
 }
@@ -94,7 +94,7 @@ export Response splitResponse(u8[] bytes) {
   i32 at = findFrom(bytes, "\r\n\r\n", 0);
   if (at < 0) { return Response(-1, "", u8[]()); }
   u8[] head = u8[].filled(at, 0);
-  for (i32 i = 0; i < at; i++) { head[i] = bytes[i]; }
+  head.copyFrom(bytes, 0, 0, at);
   u8[] body = u8[].filled(bytes.len() - at - 4, 0);
   for (i32 i = 0; i < body.len(); i++) { body[i] = bytes[at + 4 + i]; }
 
@@ -194,7 +194,7 @@ export string[][] microdescBatches(string[] digests) {
   while (at < digests.len()) {
     i32 n = digests.len() - at < 92 ? digests.len() - at : 92;
     string[] batch = string[].filled(n, "");
-    for (i32 i = 0; i < n; i++) { batch[i] = digests[at + i]; }
+    batch.copyFrom(digests, at, 0, n);
     out.push(batch);
     at += n;
   }
