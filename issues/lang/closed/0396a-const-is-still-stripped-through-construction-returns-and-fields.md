@@ -1,7 +1,7 @@
 # 0396a — A `const` reference stored into a plain field, returned through a plain function, or read from a `const` field is writable
 
 - **Status:** closed — a bug, not a decision: the spec already forbids every route (cases 0817–0822, 0084)
-- **Fixed in:** (this commit)
+- **Fixed in:** 6ebae0d1e
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-21

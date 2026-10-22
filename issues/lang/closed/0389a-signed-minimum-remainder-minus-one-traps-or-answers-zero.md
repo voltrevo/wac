@@ -1,7 +1,7 @@
 # 0389a — `i32.MIN % -1`: the spec says `%` traps on the signed minimum divided by `-1`; wasm and static evaluation answer 0
 
 - **Status:** closed — ruled 2026-10-21: `%` answers 0; the spec sentence covers `/` only
-- **Fixed in:** (this commit)
+- **Fixed in:** 6ebae0d1e
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-21

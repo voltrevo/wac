@@ -1,7 +1,7 @@
 # 0390a — `case K:` beside `case 3:` with `static i32 K = 3` is accepted — is a static a constant for duplicate cases?
 
 - **Status:** closed — ruled 2026-10-21: a static is a constant for duplicate cases (case 0816)
-- **Fixed in:** (this commit)
+- **Fixed in:** 6ebae0d1e
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-10-21
