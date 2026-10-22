@@ -93,9 +93,6 @@ Pin[] pins() {
         "encoding for those nineteen values, which is the kind of defect that shows up as an " +
         "interop failure years later. If someone proves it dead, delete it and this entry " +
         "together."),
-    Pin("packages/crypto/src/field25519.wac", 230, "for (i32 i = 0; i < 10; i++) { h[i] = t[i]; }", false,
-        "The copy inside that same conditional. Unreached for the one reason above, not a " +
-        "second one."),
     Pin("packages/crypto/src/field25519.wac", 242, "if (byteIdx < 32)", true,
         "The same shape as `ed25519.wac:259`: the ten limb widths sum to 255 bits, so the " +
         "last bit written is 254 and `byteIdx` is 31. The guard bounds a loop whose total is " +

@@ -195,10 +195,6 @@ Pin[] pins() {
         "doubling, and reaching the cap needs six consecutive timeouts — about two minutes of a peer " +
         "not answering. No test waits that long and none should; a test that wanted this would inject " +
         "the try count rather than the time, which `backoff` already takes as an argument."),
-    Pin("packages/webrtc/src/session.wac", 271, "for (i32 i = 0; i < labelLen; i++) { out[i] = msg[12 + i]; }", false,
-        "Copying a DCEP channel label out of an open message — reached whenever a label is non-empty, " +
-        "which is every real channel and no test channel. Through `Session.receive`, which the " +
-        "browser test drives."),
     Pin("packages/webrtc/src/stun.wac", 129, "if ((b[0] & 0xC0) != 0) { return false; }", false,
         "The two most significant bits of a STUN message must be zero, which is what lets a peer " +
         "demultiplex STUN from DTLS and from RTP on one port. **This is the check `Session` depends " +

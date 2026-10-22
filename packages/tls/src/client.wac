@@ -17,8 +17,8 @@
 //   Finished                 both sides saw the same handshake, so nothing was tampered
 //                            with in transit
 //
-// Like the server, the state is a byte string and the host owns the socket and the
-// randomness.
+// Like the server, the state is a byte string — a choice, not a bindgen limit; see the note
+// in `server.wac` — and the host owns the socket and the randomness.
 
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { x25519, x25519Base, x25519Shared } from "../../crypto/src/x25519.wac";

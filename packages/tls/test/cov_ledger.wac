@@ -412,7 +412,7 @@ Pin[] pins() {
         "A ServerHello whose `supported_versions` does not say 1.3 — a server that answered a TLS 1.3 " +
         "hello with something else, which is the downgrade this extension exists to make impossible " +
         "to miss. Reachable by a hostile server and unbuilt; the loopback can now build one."),
-    Pin("packages/tls/src/server.wac", 213, "if (c.transcript.len() + msg.len() > maxTranscript()) { trap; }", false,
+    Pin("packages/tls/src/server.wac", 216, "if (c.transcript.len() + msg.len() > maxTranscript()) { trap; }", false,
         "The transcript growing past its bound, which needs a peer to send more handshake bytes than " +
         "a handshake can contain. **A trap on a peer-reachable path**, and so the same family as the " +
         "abort fixed on 2026-08-24 — reached differently and not yet reached at all. Worth building " +

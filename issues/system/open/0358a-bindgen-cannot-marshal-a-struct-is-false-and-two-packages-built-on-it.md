@@ -129,3 +129,10 @@ inspecting these blobs today.
 
 Together these are **five comments in one day naming the wrong blocker**, and each time the true one
 was narrower and already written down somewhere else in the tree.
+
+## Steps 1 and 3 done — 2026-10-22 (agent-a)
+
+`server.wac` and `client.wac` now say the byte-string state is a choice kept for inspect-and-replay, not a
+bindgen limit, and name the real limit (`usableField`). `ssh/channel.wac` keeps its design with the true reason —
+bindgen emits no accessors inside an enum variant. Step 2, whether the API should become a handle, is still the
+open question this issue holds.

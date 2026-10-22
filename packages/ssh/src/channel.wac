@@ -139,8 +139,8 @@ export u8[] channelData(i32 channel, u8[] data) {
  * A parsed channel message.
  *
  * One struct for all of them, with the fields each kind happens to use. A tagged union per
- * message would be tidier and would not survive the bindgen boundary, where this has to arrive as
- * numbers and byte arrays anyway.
+ * message would be tidier and would not survive the bindgen boundary: bindgen emits accessors for a
+ * struct's fields and none inside an enum's variants, so a host could not read a variant's payload.
  */
 export struct Incoming {
   /** The message number, or 0 when this is not a channel message. */

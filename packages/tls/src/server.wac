@@ -11,11 +11,14 @@
 //
 // ## The state is a byte string
 //
-// bindgen cannot marshal a struct across the boundary, so a connection cannot be a
-// handle the host holds. The state is serialised instead, and `feed` takes the old state
-// and returns the new one alongside whatever should go on the wire. That is a constraint
-// rather than a design, but it has one real virtue: a connection's entire state is a
-// byte string that a test can inspect, corrupt, or replay.
+// The state is serialised, and `feed` takes the old state and returns the new one alongside
+// whatever should go on the wire. This used to be justified as a bindgen limit — "bindgen
+// cannot marshal a struct" — and that was never true: bindgen hands a struct to the host as
+// a class holding the reference, and what it cannot carry is a funcref field whose signature
+// the boundary cannot express (`usableField` in `packages/wacc/src/bindgen.wac`), which a TLS
+// connection would not have. So this is a choice, kept for its one real virtue: a
+// connection's entire state is a byte string that a test can inspect, corrupt, or replay.
+// Whether that is worth an encode and decode per call is open (`issues/system/0358a`).
 //
 // The transcript is kept as bytes rather than as a running hash, because `sha256` here
 // is one-shot. A handshake transcript is a few kilobytes, so this costs memory rather
