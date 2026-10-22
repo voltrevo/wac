@@ -1,0 +1,19 @@
+// expect: f() = -97
+// spec:  §wac-try-for-sgv8pq2
+// why: `try for` is a loop whose outcome is passed on as `try` passes one: an `Err` returns from the
+//      function, an `Ok` lets it continue
+// from: spec/6-concurrency/36-coroutines-and-generators.md
+import { Result } from "core";
+gen<i32> Result<i32, string> nums(i32 n) {
+  for (i32 i = 1; i <= n; i++) { yield i; }
+  if (n > 3) { return Result.Err("too many"); }
+  return Result.Ok(n);
+}
+Result<i32, string> total(i32 n) {
+  i32 t = 0;
+  try for (i32 x in nums(n)) { t += x; }
+  return Result.Ok(t);
+}
+export i32 f() {
+  return match (total(2)) { Ok(v): v, Err(e): -1 } + match (total(5)) { Ok(v): v, Err(e): -100 };
+}

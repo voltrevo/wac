@@ -1,12 +1,12 @@
 // expect: f() = 2
-// why: `is` narrows a struct local that a lambda captures and may write, testing and reading the value it
-//      holds
+// why: `matches` binds a struct local that a lambda captures and may write, testing and reading the value
+//      it holds
 // from: spec/2-types/12-structs.md
 struct P { i32 x; }
 struct Q : P { i32 y; }
 export i32 f() {
   P p = Q(1, 2);
   fn<void()> g = () => { p = P(5); };
-  if (p is Q) { return p.y; }
+  if (Q q matches p) { return q.y; }
   return -1;
 }

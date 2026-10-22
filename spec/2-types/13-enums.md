@@ -94,6 +94,32 @@ field supplied in order, or as `Enum.Variant` when it has no payload.
 refused, as is supplying the wrong number of them. There is no spelling that constructs a variant with
 missing payload.
 
+The enum may be left off when the variant's name says which enum it is — it is the variant of exactly one
+enum the file declares or imports. A generic enum then takes its instance from the slot, as
+`Result.Ok(x)` does:
+
+```wac
+// expect: unqualified(4) = 2
+// expect: unqualified(3) = -1
+import { Result } from "core";
+enum Shape { Point, Circle(f64 radius) }
+
+Result<i32, string> half(i32 n) {
+  if (n % 2 != 0) { return Err("odd"); }   // Result.Err
+  return Ok(n / 2);                        // Result.Ok
+}
+
+export i32 unqualified(i32 n) {
+  Shape p = Point;                         // Shape.Point
+  Shape c = Circle(1.0);                   // Shape.Circle
+  return match (half(n)) { Ok(v): v, Err(e): -1 };
+}
+```
+
+`[§enum-construct-unqualified-r8vn2kd]` A variant may be written without its enum where it is the variant of
+exactly one enum the file declares or imports; a name the file uses for something else — an imported
+struct, a type — is not read as a variant.
+
 ## Matching
 
 ```wac
@@ -425,7 +451,7 @@ work.
 the arm's scope.
 
 A `default` arm narrows nothing: its subject still has the enum type, which is the reason to be in it.
-Outside `match`, `if (x is V)` narrows in the same way ([12](12-structs.md)).
+Outside `match`, nothing narrows: `if (x is V)` only tests, and `if (V(…) matches x)` binds the payload ([25](../3-expressions/25-control-flow.md)).
 
 ## Matching a variant
 

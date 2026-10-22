@@ -1722,15 +1722,19 @@ export string test_rung3_narrowing_and_the_guards_that_do_not_count(Core core, C
     // Narrowing does not survive the branch it guards.
     e + "export f64 f(Shape s) { if (s is Circle) { } return s.radius; }",
     // Narrowed to the wrong variant: `Point` has no payload, and the complaint says so.
-    e + "export f64 f(Shape s) { if (s is Point) { return s.radius; } return 0.0; }"
-  ],
-  [
-    // The guard, alone and under a conjunction, and one level deeper.
+    e + "export f64 f(Shape s) { if (s is Point) { return s.radius; } return 0.0; }",
+    // **And a test that holds narrows nothing either** (`issues/lang/0321a`): alone, under a
+    // conjunction, one level deeper, and on a struct.
     e + "export f64 f(Shape s) { if (s is Circle) { return s.radius; } return 0.0; }",
     e + "export f64 f(Shape s) { if ((s is Circle) && true) { return s.radius; } return 0.0; }",
     e + "export f64 f(Shape s) { if (s is Circle) { if (true) { return s.radius; } } return 0.0; }",
-    // A struct downcast narrows the same way.
-    s + "export i32 f(Base b) { if (b is Sub) { return b.s; } return 0; }",
+    s + "export i32 f(Base b) { if (b is Sub) { return b.s; } return 0; }"
+  ],
+  [
+    // `matches` binds the narrower value, alone and under a conjunction, on an enum and a struct.
+    e + "export f64 f(Shape s) { if (Circle(r) matches s) { return r; } return 0.0; }",
+    e + "export f64 f(Shape s) { if (true && (Circle(r) matches s)) { return r; } return 0.0; }",
+    s + "export i32 f(Base b) { if (Sub k matches b) { return k.s; } return 0; }",
     // A `match` binds the payload by name and needs no narrowing at all.
     e + "export f64 f(Shape s) { match (s) { Circle(r): { return r; } " +
         "Point: { return 0.0; } } }",

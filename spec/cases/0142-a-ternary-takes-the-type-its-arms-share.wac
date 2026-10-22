@@ -24,9 +24,9 @@ export i32 run() {
   Shape e = false ? c : q;
   if (e.x != 3) { return 4; }
 
-  // And the narrowing still works on the result, which is the pair of rules meeting.
+  // And a test on the result still sees the child, which is the pair of rules meeting.
   if (!(d is Circle)) { return 5; }
-  if (d is Circle) { if (d.r != 5) { return 6; } }
+  if (Circle k matches d) { if (k.r != 5) { return 6; } }
 
   return 0;
 }

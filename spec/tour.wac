@@ -580,11 +580,9 @@ export string virtualDispatch() {
   return s.name();                        // -> "circle"
 }
 export string dynamicDispatch(Shape s) {
-  // `is` narrows `s` inside the block, so the cast that used to be written here is not only
-  // unnecessary but an error — an upcast to a type the value already has. The narrowing is the
-  // dispatch.
-  if (s is Circle) { return s.name(); }
-  if (s is Rect)   { return s.name(); }
+  // `virtual` already dispatches on the runtime type, so no test is needed for `name()`. A test
+  // only answers — `is` binds nothing — and `matches` is what names the narrower value.
+  if (Circle c matches s) { return c.name(); }
   return s.name();
 }
 
@@ -724,8 +722,8 @@ export string describe(Step s) {
 //        // arm would cover it, and every variant added later too, which is the
 //        // reason to leave it out when the cases are few
 
-// Each variant is also a TYPE, and a subtype of the enum — which is what makes
-// narrowing work and why a variant name is a file-scope name like a struct's.
+// Each variant is also a TYPE, and a subtype of the enum — which is what lets an
+// arm or a `matches` bind it, and why a variant name is a file-scope name like a struct's.
 // Two enums in one file therefore cannot share a variant name.
 
 // Enums take type parameters, which is what `Result<T, E>` is.

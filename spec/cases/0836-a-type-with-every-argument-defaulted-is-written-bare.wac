@@ -1,0 +1,16 @@
+// expect: f() = 9
+// spec:  §wac-generic-default-bare-h9wq4tc
+// why: when every type parameter has a default, the bare name is the type with all of them — in a
+//      declaration, a nullable, an array and a type argument alike
+// from: spec/2-types/19-generics.md
+struct Box<T = i32> { T v; }
+struct Pair<A = i32, B = string> { A a; B b; }
+i32 open(Box b) { return b.v; }
+export i32 f() {
+  Box b = Box(3);
+  Box? none = null;
+  Box[] two = [Box(1), Box(2)];
+  Pair p = Pair(1, "ab");
+  Box<string> s = Box("x");
+  return open(b) + (none is null ? 1 : 0) + two.len() + p.a + p.b.len() + s.v.len() - 1;
+}

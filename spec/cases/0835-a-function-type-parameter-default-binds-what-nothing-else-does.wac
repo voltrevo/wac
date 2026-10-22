@@ -1,0 +1,16 @@
+// expect: f() = 12
+// spec:  §wac-generic-default-fn-s3kd7vm
+// why: a function's type parameter declared `= D` is `D` where neither an argument nor the slot says
+//      what it is — and only there: an argument or a slot still decides
+// from: spec/2-types/19-generics.md
+T zero<T = i64>() { T z; return z; }
+i32 sizeOf<T = u8>(i32 n) { T[] xs = T[](); return xs.len() + n; }
+T same<T = i64>(T x) { return x; }
+export i32 f() {
+  auto z = zero();                         // i64, from the default
+  i64 w = z + 1;
+  i32 n = sizeOf(4);                       // T is u8, from the default
+  string s = same("abcdefg");              // string, from the argument
+  i32 slot = zero();                       // i32, from the slot
+  return (w as~ i32) + n + s.len() + slot; // 1 + 4 + 7 + 0
+}

@@ -36,7 +36,7 @@ import { Decls, Ev, Value, declsOfProgram, demandConst, evalExpr, evCycle, evFin
          evUnsupported, numValue, refOf, staticForCap, staticForName, staticForType, staticForValues,
          stringOf, truthy, StaticBind, bindStaticLocals, evTyName, evalTypeDecl, typeDeclAt, unfoldTypeName, intOf,
          vNum, declsOfFiles, noneValue, tokText } from "./consteval.wac";
-import { P, parseProgram } from "./parse.wac";
+import { P, parseProgram, parseType } from "./parse.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { f32Lit, floatIntegerText, floatLit, parseInt } from "./lit.wac";
 import { stringLiteralBytes } from "./strlit.wac";
@@ -2342,6 +2342,12 @@ export i32 errUnconstructibleParent() { return 249; }
  * against a run-time value. `issues/lang/0269a`.
  */
 export i32 errCaseNotConstant() { return 250; }
+
+/**
+ * A plain `for` over a generator whose outcome is a `Result`: the loop discards the outcome and with it
+ * the error. spec ch36; `issues/lang/0338a`.
+ */
+export i32 errDroppedOutcome() { return 251; }
 /** Two declarations of one name at file scope. */
 export i32 errDuplicateName() { return 64; }
 /** Two fields, two methods, or a field and a method of one name in one struct. */
@@ -3855,6 +3861,12 @@ export struct C {
    * checked at the definition, and a `static_trap` in one is not reached there (spec ch31).
    */
   i32 undecided;
+  /**
+   * Each generic function's type-parameter defaults, `|name#i=type|` — `T zero<T = i64>()` is
+   * `|zero#0=i64|` (spec ch19 `§wac-generic-default-arg-p6xzn68`). A letter nothing in a call binds takes
+   * its default here.
+   */
+  string funcTypeDefaults;
 
   void noteMarkup(this, Expr e, string k) {
     if (this.markupAtN >= this.markupAtE.len()) {
@@ -3977,7 +3989,7 @@ export struct C {
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
              string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0, null, "|",
-             Expr[](), string[](), 0, "", 0);
+             Expr[](), string[](), 0, "", 0, "|");
   }
 
   /**
@@ -9581,6 +9593,8 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], foundType(c, args[i]), names, fromNum, numClash);
     for (i32 t = 0; t < n; t++) { if (bound[t] == "" && fromNum[t] != "") { bound[t] = fromNum[t]; } }
   }
+  // **And last its default**, for a letter nothing in the call bound (spec ch19).
+  for (i32 t = 0; t < n; t++) { if (bound[t] == "") { bound[t] = funcTypeDefault(c, c.funcNames[at], t); } }
   // **A funcref parameter is judged like any other**, now that `bindTypeParams` reads a funcref's
   // shape: a named function binds what its type says, and a lambda binds nothing — it has no type of
   // its own to contribute (spec ch19). It was skipped wholesale while the binder could not decompose
@@ -12924,59 +12938,6 @@ void gatherUnionStmts(C c, Stmt[] body, string name, string[] ms, i32[] n) {
   }
 }
 
-/**
- * How many names a condition narrows, and to what — written into `outNames` / `outTypes`.
- *
- * Purely syntactic, which is what the reference does and is measured rather than assumed: `x is T`
- * narrows, `a && b` narrows with either side, and **`||` and `!` do not**. `(s is Circle) || true`
- * leaves `s` a `Shape`, because the other arm may be the one that held; `!(s is Circle)` guarding an
- * early return does not narrow what follows either, which is the reference declining to reason about
- * control flow it could have.
- *
- * The narrowing lasts for the **then** branch and no further. Nothing here survives the `if`.
- */
-i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
-  match (cond.kind) {
-    Is(left, target, other, negated): {
-      if (negated || (target is null) || n >= outNames.len()) { return n; }
-      match (left.kind) {
-        Ident(tok): {
-          string t = typeOfTy(c, target!);
-          if (t == typeNone()) { return n; }
-          // **`p is P` on a `P?` asks whether it is *there*, not what it is.** Recording it as a
-          // retyping to `P` makes the checker believe the name is no longer nullable, and the very
-          // next thing such code does is `p!.v` — which it then refuses, because there is nothing
-          // left to unwrap. The knowledge changes; the type does not. A target that is a genuinely
-          // different type still narrows, which is the case this exists for.
-          // **And an *ancestor* is the same non-answer**, which the exact name match above missed.
-          // `k is S` for a `K? k` where `K : S` tells you the value is there; it does not tell you
-          // anything about its type that was not already written down, because a `K` is an `S`
-          // already. Retyping to `S` dropped the `?` along with it, so wacc accepted `k.v` where the
-          // reference says *"cannot access field on nullable type 'K?' — unwrap with '!'"* — while
-          // refusing the identical `k is K` right beside it, which is the tell that this was a
-          // spelling the rule could not see rather than a decision.
-          //
-          // A genuinely different type still narrows, which is what this rule is for: `s is K` on an
-          // `S s` retypes, and so does `s is K` on an `S? s`, because neither is an ancestor of the
-          // target.
-          string cur = c.typeOfName(tokenText(c, tok));
-          string curCore = withoutNull(cur) == "" ? cur : withoutNull(cur);
-          if (curCore == t || descendsFrom(c, curCore, t)) { return n; }
-          outNames[n] = tokenText(c, tok);
-          outTypes[n] = t;
-          return n + 1;
-        }
-        default: { return n; }
-      }
-    }
-    Binary(op, l, r): {
-      if (tokenKind(c, op) != kAndAnd()) { return n; }
-      return narrowingsOf(c, r, outNames, outTypes, narrowingsOf(c, l, outNames, outTypes, n));
-    }
-    default: { return n; }
-  }
-}
-
 /** Whether an expression builds an enum variant: `Shape.Circle(1.0)`, or a bare `Circle(1.0)`. */
 /**
  * A variant construction whose enum is generic, which is the one that needs a slot to be known.
@@ -13628,33 +13589,12 @@ void checkStmt(C c, Stmt s, Ty want) {
     }
     If(cond, then, els): {
       checkCond(c, cond);
-      // `if (s is Circle) { s.radius }` — the guard is what makes the payload reachable, so the then
-      // branch is walked with `s` retyped and the old type put back afterwards. Saved and restored
-      // rather than scoped, because this checker's names are one flat table per function.
-      string[] nNames = string[].defaulted(8);
-      string[] nTypes = string[].defaulted(8);
-      i32 nCount = narrowingsOf(c, cond, nNames, nTypes, 0);
-      string[] saved = string[].defaulted(nCount);
-      bool[] savedConst = bool[].filled(nCount, false);
-      bool[] savedAlias = bool[].filled(nCount, false);
-      for (i32 i = 0; i < nCount; i++) {
-        saved[i] = c.typeOfName(nNames[i]);
-        // **A narrowed name is const for the branch**, exactly as a match arm's subject is: writing
-        // to it would leave the narrowing describing a value that has gone. `spec/cases/0071`.
-        savedConst[i] = c.isConstName(nNames[i]);
-        savedAlias[i] = c.isAliasOnlyName(nNames[i]);
-        c.setType(nNames[i], nTypes[i]);
-        c.setConstFlags(nNames[i], true, false);
-      }
-      // The narrowings are set and restored *outside* the arm's scope: they retype names that
-      // belong to an enclosing one, and a name is only reachable while its own scope is open.
+      // **A test narrows nothing** (`issues/lang/0321a`): inside `if (s is Circle)` the name `s` is
+      // still what it was declared. `if (Circle k matches s)` binds the narrower value, and its scope
+      // is the one `openMatchScope` opens.
       openMatchScope(c, cond);
       checkScoped(c, then, want);
       c.popScope();
-      for (i32 i = 0; i < nCount; i++) {
-        c.setType(nNames[i], saved[i]);
-        c.setConstFlags(nNames[i], savedConst[i], savedAlias[i]);
-      }
       checkScoped(c, els, want);
     }
     // `break` and `continue` need something to leave. Switches count for both — `break` obviously,
@@ -13754,6 +13694,15 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       if (et == typeNone() && it != typeNone() && it != "") {
         c.reportWith(errForInIterable(), iterable.line, iterable.col, it + " is not an array or a Vec");
+      }
+      // **A loop that would drop an error is refused** (spec ch36): a generator whose outcome is a
+      // `Result` is iterated with a `done` clause that binds it, or with `try for` — a plain loop
+      // discards the outcome, and with it the `Err`. `issues/lang/0338a`.
+      if (templateOf(it) == "Generator" || asyncGen) {
+        string[] ga = genericArgs(it);
+        if (ga.len() == 2 && templateOf(ga[1]) == "Result") {
+          c.reportWith(errDroppedOutcome(), iterable.line, iterable.col, "this generator's outcome is " + ga[1]);
+        }
       }
       string vt = elemTy is null ? et : typeOfTy(c, elemTy!);
       if (!(elemTy is null) && et != typeNone() && vt != typeNone() && !assignable(c, vt, et)) {
@@ -14823,7 +14772,13 @@ export void declareModule(C c, Program prog, string[] only) {
         string[] prims = string[].defaulted(params.len());
         for (i32 i = 0; i < params.len(); i++) { prims[i] = paramTypeOf(c, params[i], typeOfTy(c, params[i].type)); }
         string[] ftps = string[].defaulted(typeParams.len());
-        for (i32 i = 0; i < typeParams.len(); i++) { ftps[i] = tokenText(c, typeParams[i]); }
+        for (i32 i = 0; i < typeParams.len(); i++) {
+          ftps[i] = tokenText(c, typeParams[i]);
+          string dflt = typeParamDefault(c, typeParams[i]);
+          if (dflt != "") {
+            c.funcTypeDefaults = c.funcTypeDefaults + c.renamed(tokenText(c, nameTok)) + "#" + countText(i) + "=" + dflt + "|";
+          }
+        }
         // **D3, and it is one change here rather than one at every call.** `funcReturns` is the
         // signature a caller reads, so wrapping it is the whole of *the declaration states what the
         // body answers, and the caller receives a ticket for it*. The body is unaffected: it is
@@ -14842,6 +14797,29 @@ export void declareModule(C c, Program prog, string[] only) {
       default: { }
     }
   }
+}
+
+/**
+ * The default written for the type parameter whose name is token `tok` — the type after `= ` — or ""
+ * where there is none. Read by parsing the tokens again from there: the parser reads a default and
+ * keeps no node for it.
+ */
+string typeParamDefault(C c, i32 tok) {
+  if (tok + 2 >= c.toks.len() / tokenStride() || tokenKind(c, tok + 1) != kAssign()) { return ""; }
+  P p = P.create(c.src, Lexed(c.toks, c.toks.len() / tokenStride(), i32[](), 0, 0, true));
+  p.at = tok + 2;
+  Ty dt = parseType(p);
+  string t = typeOfTyQuiet(c, dt);
+  return t == typeNone() ? "" : t;
+}
+
+/** The default `typeParamDefault` recorded for function `name`'s `i`th type parameter, or "". */
+string funcTypeDefault(C c, string name, i32 i) {
+  string key = "|" + name + "#" + countText(i) + "=";
+  i32 at = c.funcTypeDefaults.indexOf(key);
+  if (at < 0) { return ""; }
+  string rest = c.funcTypeDefaults.slice(at + key.len(), c.funcTypeDefaults.len());
+  return rest.slice(0, rest.indexOf("|"));
 }
 
 /**

@@ -29,6 +29,57 @@ step runs it to its next `yield v` or its `return`.
 `[§wac-for-in-generator-yxdabjc]` `for (Y x in g)` steps a generator, binding each yielded value until it is done, and
 discards its return value.
 
+### Taking the outcome: `done` and `try for`
+
+A loop stays a statement, and what the generator returned is bound by a clause after it. `done (R r) { … }`
+runs when the generator finishes, with its outcome as `r`; a `break` or a `return` in the body leaves before it.
+`try for` is the clause that passes an error on — `try r;` — for a generator whose outcome is a `Result`:
+
+```wac
+// expect: summed(3) = 306
+// expect: checked(2) = 3
+// expect: checked(5) = -1
+import { Result } from "core";
+
+gen<i32> i32 upTo(i32 n) {
+  for (i32 i = 1; i <= n; i++) { yield i; }
+  return n * 100;
+}
+
+export i32 summed(i32 n) {
+  i32 t = 0;
+  for (i32 v in upTo(n)) { t += v; } done (i32 total) { t += total; }
+  return t;
+}
+
+gen<i32> Result<i32, string> limited(i32 n) {
+  for (i32 i = 1; i <= n; i++) { yield i; }
+  if (n > 3) { return Result.Err("too many"); }
+  return Result.Ok(n);
+}
+
+Result<i32, string> sum(i32 n) {
+  i32 t = 0;
+  try for (i32 v in limited(n)) { t += v; }
+
+  // ERROR: this loop drops the generator's outcome, and it can be an error
+  // for (i32 v in limited(n)) { t += v; }
+
+  return Result.Ok(t);
+}
+
+export i32 checked(i32 n) { return match (sum(n)) { Ok(v): v, Err(e): -1 }; }
+```
+
+`[§wac-for-done-outcome-z5km3wq]` `for (Y x in g) { … } done (R r) { … }` — and `for await` with the same clause —
+runs the clause with the generator's outcome when the generator finishes, and not when the loop is left by
+`break` or `return`.
+
+`[§wac-try-for-sgv8pq2]` `try for (Y x in g) { … }`, and `try for await`, is the loop with `done (R r) { try r; }`.
+
+`[§wac-for-dropped-outcome-c2wn6tb]` A `for` or `for await` over a generator whose outcome is a `Result`, with neither
+a `done` clause nor `try`, is refused.
+
 Writing an iterator is writing a loop:
 
 ```wac

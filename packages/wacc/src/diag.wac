@@ -159,6 +159,7 @@ export string checkMessage(i32 code) {
   if (code == 248) { return "a private method cannot be virtual"; }
   if (code == 249) { return "this struct's parent has a private field with no default, so it cannot be constructed"; }
   if (code == 250) { return "a case value must be a constant"; }
+  if (code == 251) { return "this loop drops the generator's outcome, and it can be an error"; }
   if (code == 224) { return "a local is read where not every path has assigned it"; }
   if (code == 225) { return "a lambda uses a local that is not yet assigned"; }
   if (code == 226) { return "a never function cannot return"; }
@@ -300,6 +301,7 @@ export string hintFor(i32 code) {
   if (code == 248) { return "drop `private` to let a subtype override it, or `virtual` to keep it to this body"; }
   if (code == 249) { return "give the private field a default, or make it not private"; }
   if (code == 250) { return "compare a run-time value with `if`, or make it a `static`"; }
+  if (code == 251) { return "bind it after the loop with `done (R r) { … }`, or pass an error on with `try for`"; }
   if (code == 224) { return "assign it on every path that reaches here, or initialise it where it is declared"; }
   if (code == 225) { return "a lambda can run at any time, so make it after the local is assigned"; }
   // Added where the help is real. A hint that only restates the message is worse than none: it

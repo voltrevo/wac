@@ -1,0 +1,11 @@
+// expect: f() = 3
+// why: `matches` binds the tested value at the narrower type, which is the spelling that replaces
+//      narrowing by `is`
+// from: spec/3-expressions/25-control-flow.md
+struct Shape { i32 x; }
+struct Circle : Shape { i32 radius; }
+i32 radiusOf(Shape s) {
+  if (Circle k matches s) { return k.radius; }
+  return 0;
+}
+export i32 f() { return radiusOf(Circle(1, 3)) + radiusOf(Shape(5)); }

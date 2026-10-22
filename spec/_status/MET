@@ -215,6 +215,7 @@ spec/2-types/13-enums.md#24
 spec/2-types/13-enums.md#25
 spec/2-types/13-enums.md#26
 spec/2-types/13-enums.md#27
+spec/2-types/13-enums.md#28
 spec/2-types/14-tuples.md#1
 spec/2-types/14-tuples.md#2
 spec/2-types/14-tuples.md#3
@@ -296,6 +297,7 @@ spec/2-types/19-generics.md#19
 spec/2-types/19-generics.md#20
 spec/2-types/19-generics.md#21
 spec/2-types/19-generics.md#22
+spec/2-types/19-generics.md#23
 spec/2-types/20-functions-and-funcrefs.md#1
 spec/2-types/20-functions-and-funcrefs.md#2
 spec/2-types/20-functions-and-funcrefs.md#3
@@ -453,6 +455,7 @@ spec/6-concurrency/36-coroutines-and-generators.md#7
 spec/6-concurrency/36-coroutines-and-generators.md#8
 spec/6-concurrency/36-coroutines-and-generators.md#9
 spec/6-concurrency/36-coroutines-and-generators.md#10
+spec/6-concurrency/36-coroutines-and-generators.md#11
 spec/7-library/37-core.md#1
 spec/7-library/38-vec.md#1
 spec/7-library/38-vec.md#2

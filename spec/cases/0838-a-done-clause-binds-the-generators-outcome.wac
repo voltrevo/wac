@@ -1,0 +1,20 @@
+// expect: f() = 1257
+// spec:  §wac-for-done-outcome-z5km3wq
+// why: `done (R r) { … }` after a loop over a generator runs when the generator finishes, with its
+//      outcome bound — and a `break` leaves the loop without running it
+// from: spec/6-concurrency/36-coroutines-and-generators.md
+gen<i32> i32 upTo(i32 n) {
+  for (i32 i = 1; i <= n; i++) { yield i; }
+  return n * 100;
+}
+i32 sum(i32 n, i32 stopAt) {
+  i32 t = 0;
+  for (i32 v in upTo(n)) {
+    if (v == stopAt) { break; }
+    t += v;
+  } done (i32 total) {
+    t += total;
+  }
+  return t;
+}
+export i32 f() { return sum(3, 0) + sum(5, 4) + sum(9, 99); }   // 306 + 6 (broken) + 945

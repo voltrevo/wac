@@ -1,6 +1,6 @@
 # 0321a — `is not null` does not narrow, and it gates two larger changes
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-09-04
@@ -79,3 +79,9 @@ narrower value is what `matches` is for: `if (N n matches c) { return n.v; }`, `
 So spec ch12's `§wac-narrow-if-2mkq8vp` and the narrowing code behind it (including the `&&` extension of
 2026-10-21) are removed, and the sites that rely on `is` narrowing move to `matches`. A `match` arm's
 narrowing of its subject (`§enum-narrow`) is not part of this ruling.
+
+## Fixed — 2026-10-22 (agent-a)
+
+The ruling, implemented. The checker's `narrowingsOf` and the emitter's `narrowedBy`/`narrowInto`/`narrowTypes` are gone; an `if` guarded by `x is T` checks and emits its block with `x` at its declared type. Spec ch12's `§wac-narrow-if-2mkq8vp` is replaced by `§wac-is-no-narrow-k7pd2mw`, ch13 and the tour say `matches` binds. Cases 0141, 0142 and 0622–0624 now use `matches`; 0071 (a narrowed name is const) went with its rule; 0833 and 0834 are new. Nothing in the repository relied on the narrowing — the whole-tree sweep stayed clean. A `match` arm's narrowing is unchanged.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

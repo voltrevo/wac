@@ -1,0 +1,10 @@
+// expect: refused
+// why: `is` tests and binds nothing — inside `if (s is Circle)` the name `s` is still a `Shape`, so
+//      `s.radius` is not a field it has; `if (Circle k matches s)` is how the narrower value is named
+// from: spec/2-types/12-structs.md
+struct Shape { f64 x; }
+struct Circle : Shape { f64 radius; }
+export f64 area(Shape s) {
+  if (s is Circle) { return s.radius; }
+  return 0.0;
+}

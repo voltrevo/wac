@@ -1,6 +1,6 @@
 # 0338a — the vision additions have measured lowerings, and implementing them is a decision
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-09-04
@@ -164,3 +164,9 @@ clause after it: `for (T x in g) { … } done (R outcome) { … }` (and `for awa
 when the generator finished — `break` and `return` skip it. `try for` / `try for await` is the statement
 variant: sugar for a `done` that returns the outcome's error. A plain `for` over a generator whose outcome
 is a `Result` is refused without `done` or `try`, since today it drops the error silently.
+
+## Fixed — 2026-10-22 (agent-a)
+
+All three adopted items are in. (1) Unqualified variants: `lowerUnqualifiedVariants` writes the enum in where the name is the variant of exactly one enum the file declares or imports, leaving patterns, types and names the file uses otherwise — spec ch13 `§enum-construct-unqualified-r8vn2kd`, case 0837. (2) Default type arguments already covered `Result<T, E = union>`; a bare all-defaulted type (`Box b`) and a function type parameter's default (taken only where no argument or slot binds it) are new — ch19, cases 0835 and 0836. (3) `done (R r) { … }` after `for` and `for await`, `try for` and `try for await`, lowered by `lowerDoneClauses` to a `while` over `step()`; a plain loop over a generator whose outcome is a `Result` is error 251 — ch36, cases 0838–0841.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

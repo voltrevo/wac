@@ -401,6 +401,29 @@ export i32 parsed(string s) {
 
 `[§wac-generic-default-arg-p6xzn68]` A type parameter declared `= D` takes `D` where the argument is omitted.
 
+A type whose every parameter has a default may be written bare, and a function's type parameter may have
+one too — taken only where neither an argument nor the slot says what it is:
+
+```wac
+// expect: defaults() = 13
+struct Box<T = i32> { T v; }
+T zero<T = i64>() { T z; return z; }
+
+export i32 defaults() {
+  Box b = Box(3);                          // Box<i32>
+  auto z = zero();                         // zero<i64>: nothing else says
+  i32 n = zero();                          // zero<i32>: the slot says
+  Box<string> s = Box("ninechars");
+  return b.v + (z as~ i32) + n + s.v.len() + 1;
+}
+```
+
+`[§wac-generic-default-bare-h9wq4tc]` A type whose every type parameter has a default, written without
+arguments, is that type with all of them.
+
+`[§wac-generic-default-fn-s3kd7vm]` A function's type parameter declared `= D` is `D` where no argument
+and no slot binds it.
+
 When the default is a placeholder, each use that omits it creates a fresh one at that use — `Result<i32>`
 in `parse`'s signature collects what `parse` returns ([33](../5-inference/33-placeholders.md)). `Result` has
 no special inference rule: this is what makes it an ordinary generic rather than a blessed form.

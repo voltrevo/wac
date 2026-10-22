@@ -1,5 +1,5 @@
 // expect: run() = 0
-// why: `if (s is Circle)` makes `s` a Circle inside the block, for its fields and for its methods
+// why: `if (Circle k matches s)` binds `k` as a Circle, for its fields and for its methods
 // from: issues/lang/0116
 
 struct Shape {
@@ -12,15 +12,15 @@ struct Circle : Shape {
   override i32 getTag(const this) { return 42; }
 }
 
-/** The method: an `override` is the narrowed type's, not the declared type's. */
+/** The method: an `override` is the bound type's, not the declared type's. */
 i32 tagOf(Shape s) {
-  if (s is Circle) { return s.getTag(); }
+  if (Circle k matches s) { return k.getTag(); }
   return s.getTag();
 }
 
 /** And the fields, which the narrowed type has and the declared one does not. */
 i32 radiusOf(Shape s) {
-  if (s is Circle) { return s.radius; }
+  if (Circle k matches s) { return k.radius; }
   return -1;
 }
 
@@ -36,6 +36,5 @@ export i32 run() {
   if (radiusOf(c) != 5) { return 3; }
   if (radiusOf(plain) != -1) { return 4; }
 
-  // The narrowing ends with the block: `s` is a `Shape` again on the line after it.
   return 0;
 }

@@ -1,11 +1,11 @@
 // expect: f() = 2
-// why: `&&` narrows from either operand, for a struct subtype as for a variant
+// why: a `matches` on the right of `&&` binds for the block, for a struct subtype as for a variant
 // from: spec/2-types/12-structs.md
 struct P { i32 x; }
 struct Q : P { i32 y; }
 export i32 f() {
   P p = Q(1, 2);
   bool c = true;
-  if (c && (p is Q)) { return p.y; }
+  if (c && (Q q matches p)) { return q.y; }
   return -1;
 }

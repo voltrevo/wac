@@ -676,9 +676,10 @@ export i32 typeTest() {
 
 `[§wac-is-undefined-type-6qbn3wr]` A type test naming a type that is not in scope is refused.
 
-### A test narrows
+### A test binds nothing
 
-Inside the block a test guards, the tested name has the narrower type, so no cast is needed:
+A test only answers. Inside the block it guards, the tested name keeps its declared type; the narrower value
+is named with `matches` ([25](../3-expressions/25-control-flow.md)), which tests and binds at once:
 
 ```wac
 // expect: rectArea() = 200.0
@@ -687,24 +688,23 @@ struct Rect : Shape { f64 w; f64 h; }
 struct Circle : Shape { f64 radius; }
 
 f64 area(Shape s) {
-  if (s is Circle) {
-    return 3.0 * s.radius * s.radius;      // s is a Circle here
-  } else if (s is Rect) {
-    return s.w * s.h;                      // and a Rect here
+  if (Circle c matches s) {
+    return 3.0 * c.radius * c.radius;
+  } else if (Rect r matches s) {
+    return r.w * r.h;
   }
+
+  // ERROR: Shape has no field radius
+  // if (s is Circle) { return s.radius; }
+
   return 0.0;
 }
 
 export f64 rectArea() { return area(Rect(0.0, 0.0, 10.0, 20.0)); }
 ```
 
-`[§wac-narrow-if-2mkq8vp]` `if (x is T)` narrows the name `x` to `T` within the block it guards, and in
-an `else if` arm. `&&` narrows from either operand; `||` and `is not` narrow nothing. Only a plain name
-narrows — not a field or an index — and the narrowed name is `const` within the block.
-
-It is a scope rule, not flow-sensitive typing: the name is shadowed for the block by a `const`
-binding at the narrower type, exactly as a match arm binds its payload. A test that also needs a new
-name is `matches` ([25](../3-expressions/25-control-flow.md)).
+`[§wac-is-no-narrow-k7pd2mw]` `if (x is T)` leaves `x` at its declared type within the block it guards; a
+member only `T` has is refused there.
 
 ## Identity
 

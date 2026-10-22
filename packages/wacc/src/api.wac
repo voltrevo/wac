@@ -7,8 +7,9 @@
 
 import { Lowered, lowerProgram, ticketSigsOf } from "./asynclower.wac";
 import { lex, Lexed, lexTokens, tokenStride } from "./lex.wac";
-import { kAs, kAssign, kAsync, kComma, kDot, kEnum, kExport, kGt, kIdent, kindName, kLbrace, kLbrack, kLparen,
-         kLt, kQuestion, kRbrace, kRbrack, kRparen, kSemi, kShr, kStatic, kStruct } from "./kinds.wac";
+import { kAs, kAsAt, kAsBang, kAssign, kAsTilde, kAsync, kAwait, kColon, kFor, kComma, kDot, kEnum, kExport, kGt, kIdent, kImport, kindName, kIs, kLbrace,
+         kLbrack, kLparen, kLt, kMatches, kQuestion, kRbrace, kRbrack, kRparen, kSemi, kShr, kStatic,
+         kStruct } from "./kinds.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor,
          displayTypes } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
@@ -2086,7 +2087,7 @@ export string[] lowerSourcesForChecking(string[] paths, string[] sources, const 
 }
 
 string[] lowerSourcesIn(string[] paths, string[] namespaced, const Res res) {
-  string[] s1 = lowerPrimFromNumber(lowerTypeDefaults(lowerVariadics(lowerStaticLocals(namespaced))));
+  string[] s1 = lowerPrimFromNumber(lowerTypeDefaults(lowerUnqualifiedVariants(lowerVariadics(lowerStaticLocals(lowerDoneClauses(namespaced))))));
   string[] s2 = lowerAutoReturns(paths, lowerResultPlaceholders(paths, lowerExportInstances(s1), res), res);
   return lowerFromNumberLiterals(paths, s2, res);
 }
@@ -2231,6 +2232,298 @@ string coreImportsOf(u8[] src) {
   return out;
 }
 
+// ---- A loop's `done` clause, and `try for` — spec ch36 ----
+
+/**
+ * `for (T x in g) { … } done (R r) { … }` and `try for (T x in g) { … }` — and both after `await` — as the
+ * steps they are: a `while` over `g.step()` whose `Done` arm runs the clause, so a `break` or a `return` in
+ * the body leaves before it, and `continue` takes the next step. `try for` is the clause `try r;`.
+ * Written on the lines the loop was on, so a diagnostic in it still points at the line it names.
+ * `issues/lang/0338a`.
+ */
+string[] lowerDoneClauses(string[] sources) {
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 i = 0; i < sources.len(); i++) {
+    string text = sources[i];
+    if (text.indexOf("done") >= 0 || text.indexOf("try") >= 0) {
+      // One loop a pass, innermost last: a clause inside a body is met again on the next pass.
+      i32 n = 0;
+      string next = withOneDoneClause(text, n);
+      while (next != text) {
+        text = next;
+        n++;
+        next = withOneDoneClause(text, n);
+      }
+    }
+    out[i] = text;
+  }
+  return out;
+}
+
+/** `text` with its first `done` clause or `try for` lowered, using `n` for the names it introduces. */
+string withOneDoneClause(string text, i32 n) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  i32 st = tokenStride();
+  i32 nt = lx.tokenCount;
+  for (i32 t = 0; t < nt; t++) {
+    if (lx.tokens[t * st] != kFor()) { continue; }
+    bool viaTry = t > 0 && lx.tokens[(t - 1) * st] == kIdent() && tokenTextOf(src, lx, t - 1) == "try";
+    i32 h = t + 1;
+    bool awaiting = h < nt && lx.tokens[h * st] == kAwait();
+    if (awaiting) { h++; }
+    if (h >= nt || lx.tokens[h * st] != kLparen()) { continue; }
+    i32 hclose = closingOf(lx, h, kLparen(), kRparen());
+    if (hclose < 0) { continue; }
+    // `T x in e`: the first `in` at the header's own depth.
+    i32 inAt = 0 - 1;
+    i32 depth = 0;
+    for (i32 u = h + 1; u < hclose; u++) {
+      i32 k = lx.tokens[u * st];
+      if (k == kLparen() || k == kLbrack() || k == kLbrace()) { depth++; }
+      if (k == kRparen() || k == kRbrack() || k == kRbrace()) { depth--; }
+      if (depth == 0 && k == kIdent() && tokenTextOf(src, lx, u) == "in") { inAt = u; break; }
+    }
+    if (inAt < h + 3) { continue; }
+    i32 b = hclose + 1;
+    if (b >= nt || lx.tokens[b * st] != kLbrace()) { continue; }
+    i32 bclose = closingOf(lx, b, kLbrace(), kRbrace());
+    if (bclose < 0) { continue; }
+    // `done (R r) { … }` after the body: a `(…)` and then a block, which a call statement is not.
+    bool hasDone = false;
+    i32 dOpen = bclose + 1;
+    i32 dClose = 0 - 1;
+    i32 dBody = 0 - 1;
+    i32 dEnd = 0 - 1;
+    if (dOpen + 1 < nt && lx.tokens[dOpen * st] == kIdent() && tokenTextOf(src, lx, dOpen) == "done"
+        && lx.tokens[(dOpen + 1) * st] == kLparen()) {
+      dClose = closingOf(lx, dOpen + 1, kLparen(), kRparen());
+      if (dClose > 0 && dClose + 1 < nt && lx.tokens[(dClose + 1) * st] == kLbrace()) {
+        dBody = dClose + 1;
+        dEnd = closingOf(lx, dBody, kLbrace(), kRbrace());
+        hasDone = dEnd > 0;
+      }
+    }
+    if (!hasDone && !viaTry) { continue; }
+    string num = numText(n);
+    string ty = bytesBetween(src, lx.tokens[(h + 1) * st + 1], lx.tokens[(inAt - 1) * st + 1]);
+    string name = tokenTextOf(src, lx, inAt - 1);
+    string iter = bytesBetween(src, lx.tokens[(inAt + 1) * st + 1], lx.tokens[hclose * st + 1]);
+    string body = bytesBetween(src, lx.tokens[b * st + 1], lx.tokens[bclose * st + 1] + 1);
+    string clause = "try __o" + num + ";";
+    if (hasDone) {
+      // `R r` binds the outcome at the type written, so a wrong one is a mismatch rather than a guess.
+      string binding = bytesBetween(src, lx.tokens[(dOpen + 2) * st + 1], lx.tokens[dClose * st + 1]);
+      clause = binding + " = __o" + num + "; " + bytesBetween(src, lx.tokens[dBody * st + 1], lx.tokens[dEnd * st + 1] + 1);
+    }
+    i32 from = lx.tokens[(viaTry ? t - 1 : t) * st + 1];
+    i32 to = hasDone ? lx.tokens[dEnd * st + 1] + 1 : lx.tokens[bclose * st + 1] + 1;
+    string lowered = "{ auto __for" + num + " = " + iter + "; while (true) { match ("
+        + (awaiting ? "await " : "") + "__for" + num + ".step()) { Yielded(__y" + num + "): { " + ty
+        + name + " = __y" + num + "; " + body + " } Done(__o" + num + "): { " + clause + " break; } } } }";
+    return bytesBetween(src, 0, from) + lowered + bytesBetween(src, to, src.len());
+  }
+  return text;
+}
+
+/** The token closing the bracket opened at token `open`, or -1. */
+i32 closingOf(Lexed lx, i32 open, i32 openKind, i32 closeKind) {
+  i32 st = tokenStride();
+  i32 depth = 0;
+  for (i32 u = open; u < lx.tokenCount; u++) {
+    i32 k = lx.tokens[u * st];
+    if (k == openKind) { depth++; }
+    if (k == closeKind) { depth--; if (depth == 0) { return u; } }
+  }
+  return 0 - 1;
+}
+
+// ---- Unqualified variants — spec ch13 ----
+
+/**
+ * `Ok(x)` for `Result.Ok(x)`, and `End` for `Read.End`: a variant written without its enum, where the
+ * enum is the one visible enum that has a variant of that name — declared in the file or imported by
+ * it. The qualifier is written in and the slot does the rest, as it does for `Result.Ok(x)` already: a
+ * generic enum takes its instance from what the value fills. `issues/lang/0338a`.
+ *
+ * Left alone: a pattern (an arm's `Ok(v):`, a `matches`), a type (`Circle c`), a name after `.` or
+ * `is`, a name that is itself a type here, a variant two visible enums share, and the enum
+ * declarations and import lists themselves.
+ */
+string[] lowerUnqualifiedVariants(string[] sources) {
+  string table = "";
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (sources[i].indexOf("enum ") >= 0) { table = table + enumVariantsOf(sources[i]); }
+  }
+  table = table + enumVariantsOf(coreSource()) + enumVariantsOf(stdSource());
+  if (table == "") { return sources; }
+  string[] out = string[].filled(sources.len(), "");
+  for (i32 i = 0; i < sources.len(); i++) { out[i] = withQualifiedVariants(sources[i], table); }
+  return out;
+}
+
+/** Each enum `text` declares, one `Name|V1|V2|` line each. */
+string enumVariantsOf(string text) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  Program prog = parseProgram(P.create(src, lx));
+  string out = "";
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        string row = tokenTextOf(src, lx, nameTok) + "|";
+        for (i32 v = 0; v < variants.len(); v++) { row = row + tokenTextOf(src, lx, variants[v].nameTok) + "|"; }
+        out = out + row + "\n";
+      }
+      default: { }
+    }
+  }
+  return out;
+}
+
+/** The variants `table` gives enum `name`, as `|V1|V2|`, or "". */
+string variantsOfEnum(string table, string name) {
+  i32 row = table.indexOf(name + "|");
+  while (row > 0 && table.slice(row - 1, row) != "\n") {
+    i32 next = table.slice(row + 1, table.len()).indexOf("\n" + name + "|");
+    if (next < 0) { return ""; }
+    row = row + 1 + next + 1;
+  }
+  if (row < 0) { return ""; }
+  string line = table.slice(row + name.len(), table.len());
+  return line.slice(0, line.indexOf("\n"));
+}
+
+/** `text` with each unqualified variant `lowerUnqualifiedVariants` describes given its enum. */
+string withQualifiedVariants(string text, string table) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  i32 st = tokenStride();
+  i32 nt = lx.tokenCount;
+  // The visible enums, as `|V=Qualifier|` pairs, and the names that are types here.
+  string pairs = "|";
+  string types = "|";
+  bool[] skip = bool[].filled(nt + 1, false);
+  for (i32 t = 0; t < nt; t++) {
+    i32 k = lx.tokens[t * st];
+    if ((k == kEnum() || k == kStruct()) && t + 1 < nt && lx.tokens[(t + 1) * st] == kIdent()) {
+      string nm = tokenTextOf(src, lx, t + 1);
+      types = types + nm + "|";
+      if (k == kEnum()) { pairs = pairs + qualifiedPairs(variantsOfEnum(table, nm), nm); }
+      // The declaration's body is its own: `enum E { A, B(i32 x) }` names variants, it does not build them.
+      if (k == kEnum()) {
+        i32 u = t + 2;
+        while (u < nt && lx.tokens[u * st] != kLbrace()) { u++; }
+        i32 depth = 0;
+        while (u < nt) {
+          i32 kk = lx.tokens[u * st];
+          skip[u] = true;
+          if (kk == kLbrace()) { depth++; }
+          if (kk == kRbrace()) { depth--; if (depth == 0) { break; } }
+          u++;
+        }
+      }
+    }
+    if (k == kImport()) {
+      // `import { A, B as C } from "…";` — each name, and the statement is not rewritten.
+      i32 u = t;
+      while (u < nt && lx.tokens[u * st] != kSemi()) {
+        skip[u] = true;
+        if (lx.tokens[u * st] == kIdent() && u + 1 < nt) {
+          string orig = tokenTextOf(src, lx, u);
+          string local = orig;
+          if (lx.tokens[(u + 1) * st] == kAs() && u + 2 < nt) { local = tokenTextOf(src, lx, u + 2); }
+          // Every imported name is this file's for that spelling — a struct `Element` beside another
+          // module's `Node.Element` (spec case 0591) — and an imported enum brings its variants.
+          types = types + local + "|";
+          string vs = variantsOfEnum(table, orig);
+          if (vs != "") { pairs = pairs + qualifiedPairs(vs, local); }
+        }
+        u++;
+      }
+    }
+  }
+  if (pairs == "|") { return text; }
+  i32[] at = i32[].filled(nt + 1, 0);
+  string[] what = string[].filled(nt + 1, "");
+  i32 n = 0;
+  i32 t = 0;
+  while (t < nt) {
+    if (skip[t] || lx.tokens[t * st] != kIdent()) { t++; continue; }
+    string v = tokenTextOf(src, lx, t);
+    string q = qualifierFor(pairs, v);
+    if (q == "" || types.indexOf("|" + v + "|") >= 0) { t++; continue; }
+    i32 prev = t > 0 ? lx.tokens[(t - 1) * st] : 0 - 1;
+    i32 next = t + 1 < nt ? lx.tokens[(t + 1) * st] : 0 - 1;
+    if (prev == kDot() || prev == kIs() || prev == kLt() || prev == kAs() || prev == kAsBang()
+        || prev == kAsTilde() || prev == kAsAt()) { t++; continue; }
+    // A name after a type is being declared — `i32 Circle() { … }` — unless the word before is one of
+    // the contextual keywords an expression can follow.
+    if (prev == kIdent() || prev == kGt() || prev == kRbrack()) {
+      string pw = prev == kIdent() ? tokenTextOf(src, lx, t - 1) : "";
+      if (pw != "yield" && pw != "try" && pw != "in") { t++; continue; }
+    }
+    if (next == kDot() || next == kIdent() || next == kLt() || next == kGt() || next == kLbrack()) { t++; continue; }
+    // The token after the variant and its payload, if it has one: a pattern ends in `:` or `matches`.
+    i32 after = t + 1;
+    if (next == kLparen()) {
+      i32 depth = 0;
+      while (after < nt) {
+        i32 kk = lx.tokens[after * st];
+        if (kk == kLparen()) { depth++; }
+        if (kk == kRparen()) { depth--; if (depth == 0) { break; } }
+        after++;
+      }
+      after++;
+    }
+    i32 ak = after < nt ? lx.tokens[after * st] : 0 - 1;
+    if (ak == kMatches() || (ak == kColon() && prev != kQuestion())) { t = after; continue; }
+    // `T? x` is a type; `c ? Dot : x` is not, and the `?` there comes before.
+    if (next == kQuestion() && t + 2 < nt && lx.tokens[(t + 2) * st] == kIdent()) { t++; continue; }
+    at[n] = lx.tokens[t * st + 1];
+    what[n] = q + ".";
+    n++;
+    t++;
+  }
+  if (n == 0) { return text; }
+  string res = "";
+  i32 from = 0;
+  for (i32 i = 0; i < n; i++) {
+    res = res + bytesBetween(src, from, at[i]) + what[i];
+    from = at[i];
+  }
+  return res + bytesBetween(src, from, src.len());
+}
+
+/** `|V=Q|` for each variant in `vs` (`|V1|V2|`), qualified by `q`. */
+string qualifiedPairs(string vs, string q) {
+  string out = "";
+  string rest = vs.slice(1, vs.len());
+  while (rest.indexOf("|") > 0) {
+    out = out + rest.slice(0, rest.indexOf("|")) + "=" + q + "|";
+    rest = rest.slice(rest.indexOf("|") + 1, rest.len());
+  }
+  return out;
+}
+
+/** The one qualifier `pairs` gives variant `v`, or "" for none or for two different ones. */
+string qualifierFor(string pairs, string v) {
+  string key = "|" + v + "=";
+  i32 a = pairs.indexOf(key);
+  if (a < 0) { return ""; }
+  string rest = pairs.slice(a + key.len(), pairs.len());
+  string q = rest.slice(0, rest.indexOf("|"));
+  string later = rest.slice(rest.indexOf("|"), rest.len());
+  i32 b = later.indexOf(key);
+  while (b >= 0) {
+    string r2 = later.slice(b + key.len(), later.len());
+    if (r2.slice(0, r2.indexOf("|")) != q) { return ""; }
+    later = r2.slice(r2.indexOf("|"), r2.len());
+    b = later.indexOf(key);
+  }
+  return q;
+}
+
 // ---- Default type arguments — spec ch19 ----
 
 /**
@@ -2278,6 +2571,8 @@ bool mentionsAnyOf(string text, string table) {
   while (rest.indexOf("|") >= 0) {
     string name = rest.slice(0, rest.indexOf("|"));
     if (text.indexOf(name + "<") >= 0) { return true; }
+    // A bare use names a type whose every parameter has a default.
+    if (text.indexOf(name) >= 0 && allDefaultsOf(table, name) != "") { return true; }
     if (rest.indexOf("\n") < 0) { return false; }
     rest = rest.slice(rest.indexOf("\n") + 1, rest.len());
   }
@@ -2327,6 +2622,23 @@ string typeDefaultsOf(string text) {
   return out;
 }
 
+/** Every default of `name` in `table`, `", "`-joined — or "" when it has none or any parameter lacks one. */
+string allDefaultsOf(string table, string name) {
+  i32 row = table.indexOf(name + "|");
+  if (row < 0 || (row > 0 && table.slice(row - 1, row) != "\n")) { return ""; }
+  string line = table.slice(row + name.len() + 1, table.len());
+  line = line.slice(0, line.indexOf("\n"));
+  string ds = line.slice(line.indexOf("|") + 1, line.len()) + ";";
+  string out = "";
+  while (ds.indexOf(";") >= 0) {
+    string d = ds.slice(0, ds.indexOf(";"));
+    ds = ds.slice(ds.indexOf(";") + 1, ds.len());
+    if (d == "") { return ""; }
+    out = out + (out == "" ? "" : ", ") + d;
+  }
+  return out;
+}
+
 /** `text` with each use of a type in `table` that omits trailing arguments given their defaults. */
 string withTypeDefaults(string text, string table) {
   u8[] src = text.toBytes();
@@ -2336,8 +2648,23 @@ string withTypeDefaults(string text, string table) {
   string[] what = string[].filled(lx.tokenCount + 1, "");
   i32 n = 0;
   for (i32 t = 0; t + 1 < lx.tokenCount; t++) {
-    if (lx.tokens[t * st] != kIdent() || lx.tokens[(t + 1) * st] != kLt()) { continue; }
+    if (lx.tokens[t * st] != kIdent()) { continue; }
     if (t > 0 && (lx.tokens[(t - 1) * st] == kStruct() || lx.tokens[(t - 1) * st] == kEnum())) { continue; }
+    // **A bare name whose every parameter has a default** is the type with all of them — `Box b` for
+    // `struct Box<T = i32>`. Only where a type is written: before a name, `?`, `[`, or the `,`/`>` of an
+    // enclosing argument list; `Box(…)`, `Box.of(…)` and `Box { … }` construct and are left to infer.
+    if (lx.tokens[(t + 1) * st] != kLt()) {
+      i32 nk = lx.tokens[(t + 1) * st];
+      if (nk != kIdent() && nk != kQuestion() && nk != kLbrack() && nk != kComma() && nk != kGt()) { continue; }
+      if (t > 0 && lx.tokens[(t - 1) * st] == kDot()) { continue; }
+      string all = allDefaultsOf(table, tokenTextOf(src, lx, t));
+      if (all == "") { continue; }
+      what[n] = "<" + all + ">";
+      // Before the next token, so `Box?` is `Box<i32>?` — whitespace after the name is kept after it.
+      at[n] = lx.tokens[t * st + 1] + tokenTextOf(src, lx, t).len();
+      n++;
+      continue;
+    }
     string name = tokenTextOf(src, lx, t);
     i32 row = table.indexOf(name + "|");
     if (row < 0 || (row > 0 && table.slice(row - 1, row) != "\n")) { continue; }

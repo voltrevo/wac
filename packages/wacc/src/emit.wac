@@ -35,7 +35,7 @@ import { methodUsesOwnerLetters } from "./ownerletters.wac";
 import { flattenUnion, isConstAlt, isUnionName, spellUnion, unionBoxes, unionMembers } from "./unions.wac";
 import { pruneCoreMembers } from "./reach.wac";
 import { f32Lit, floatIntegerText, floatLit, parseInt } from "./lit.wac";
-import { P, parseProgram } from "./parse.wac";
+import { P, parseProgram, parseType } from "./parse.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { endsWith, Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
 import {
@@ -843,6 +843,19 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
  * arguments, registered on sight and compiled once. The difference is only where the arguments come
  * from, and this is the function that answers that.
  */
+/**
+ * The default written for the type parameter named by token `tok` in the declaring file — the type after
+ * `= ` — or "" where there is none. The parser reads a default and keeps no node for it, so it is read
+ * again from the tokens.
+ */
+string typeParamDefaultE(Env env, u8[] src, Lexed lexed, i32 tok) {
+  i32 st = tokenStride();
+  if (tok + 2 >= lexed.tokenCount || lexed.tokens[(tok + 1) * st] != kAssign()) { return ""; }
+  P p = P.create(src, lexed);
+  p.at = tok + 2;
+  return typeOfTyName(env, src, lexed, parseType(p));
+}
+
 string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args) {
   if (env.prog is null) { return ""; }
   string raw = tokenTextOf(src, lexed, tok);
@@ -905,6 +918,10 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
             for (i32 j = 0; j < fromNum.len(); j++) { fromNum[j] = ""; }
             if (!matchTypeParams(env, cs, cl, params[i].type, naturalLiteralType(args[i]), typeParams, fromNum)) { continue; }
             for (i32 j = 0; j < bound.len(); j++) { if (bound[j] == "" && fromNum[j] != "") { bound[j] = fromNum[j]; } }
+          }
+          // And last a letter's default, for one nothing in the call bound (spec ch19).
+          for (i32 j = 0; j < bound.len(); j++) {
+            if (bound[j] == "") { bound[j] = typeParamDefaultE(env, cs, cl, typeParams[j]); }
           }
         }
         string inst = key + "<";
@@ -10348,18 +10365,7 @@ void emitStmtIn(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       fb.byte(64);   // blocktype: nothing
       env.depth = env.depth + 1;
       covPoint(fb, env, "then", s.line, s.col);
-      // **`if (s is Circle)` makes `s` a `Circle` inside the block**, which the checker does by
-      // shadowing the binding and this had no equivalent of at all. A field access was declined —
-      // `untyped member` — and a method call was worse: it resolved against the *declared* type, so
-      // an `override` was not called and the answer was silently the parent's. `issues/lang/0116`.
-      //
-      // The same shadow, in the emitter's own terms: a fresh local of the narrowed type, cast once
-      // at the top of the block, under the same name — and `localAt` searches backwards, so the
-      // inner one wins for exactly as long as it is alive.
-      i32 savedNarrow = env.localCount;
-      narrowInto(fb, src, lexed, env, cond);
       emitBody(fb, src, lexed, env, then);
-      retireFrom(env, savedNarrow);
       if (els.len() > 0) {
         fb.byte(5);  // else
         covPoint(fb, env, "else", s.line, s.col);
@@ -15131,112 +15137,6 @@ void emitPackedBitMethod(B fb, u8[] src, Lexed lexed, Env env, Expr obj, string 
 }
 
 /**
- * The names a condition narrows, and to what: `"p Q;s Circle"` — each `x is T` where `x` is a local and
- * `T` a struct below its type or a variant of its enum, found through `&&` from either side (spec ch12
- * `§wac-narrow-if-2mkq8vp`). Empty when it narrows nothing.
- *
- * **`&&` was not looked into**, so `if (c && (p is Q))` typed `p.y` for the checker and declined here
- * with *untyped member*; and **a variant was not narrowed at all**, so `if (s is Circle)` went on reading
- * the variable — a lambda's write to it between the test and the read changed what the block saw,
- * where the language makes the narrowed name a binding of its own.
- */
-string narrowedBy(u8[] src, Lexed lexed, Env env, Expr cond) {
-  match (cond.kind) {
-    Binary(op, left, right): {
-      if (lexed.tokens[op * tokenStride()] != kAndAnd()) { return ""; }
-      string a = narrowedBy(src, lexed, env, left);
-      string b = narrowedBy(src, lexed, env, right);
-      if (a == "") { return b; }
-      if (b == "") { return a; }
-      return a + ";" + b;
-    }
-    Is(left, target, other, negated): {
-      if (negated) { return ""; }
-      if (target is null) { return ""; }
-      match (left.kind) {
-        Ident(tok): {
-          string name = tokenTextOf(src, lexed, tok);
-          if (env.localAt(name) < 0) { return ""; }
-          string to = typeOfTyName(env, src, lexed, target!);
-          string declared = env.localType(name);
-          if (declared.len() > 1 && declared.slice(declared.len() - 1, declared.len()) == "?") {
-            declared = declared.slice(0, declared.len() - 1);
-          }
-          string from = env.canonType(declared);
-          if (env.variantAt(to) >= 0 && env.enumOf(to) == from) { return name + " " + to; }
-          if (!env.isStructName(env.canonType(to))) { return ""; }
-          if (!isDescendantStruct(env, env.canonType(to), from)) { return ""; }
-          return name + " " + to;
-        }
-        default: { return ""; }
-      }
-    }
-    default: { return ""; }
-  }
-}
-
-/**
- * Bind the narrowed names for a *walk*: the types, and no instructions.
- *
- * The emittability walk types every expression the way the emitter will, so it has to know the same
- * shadow — without it, `s.radius` inside `if (s is Circle)` is `untyped member` and the whole file is
- * declined. One rule (`narrowedBy`), asked by both.
- */
-void narrowTypes(u8[] src, Lexed lexed, Env env, Expr cond) {
-  string rest = narrowedBy(src, lexed, env, cond);
-  while (rest != "") {
-    i32 semi = rest.indexOf(";");
-    string pair = semi < 0 ? rest : rest.slice(0, semi);
-    rest = semi < 0 ? "" : rest.slice(semi + 1, rest.len());
-    i32 sp = pair.indexOf(" ");
-    env.addLocal(pair.slice(0, sp), pair.slice(sp + 1, pair.len()));
-  }
-}
-
-/**
- * Bind them for real, at the top of the guarded block: each name's value, read the way any read of it
- * is — through its cell when a lambda captured and writes it, which reading the local's slot directly
- * did not, and `ref.cast` it saw the cell and trapped — cast to the struct, and stored under the same
- * name in a fresh local. A variant is its enum's struct, so it needs no cast.
- */
-void narrowInto(B fb, u8[] src, Lexed lexed, Env env, Expr cond) {
-  string rest = narrowedBy(src, lexed, env, cond);
-  while (rest != "") {
-    i32 semi = rest.indexOf(";");
-    string pair = semi < 0 ? rest : rest.slice(0, semi);
-    rest = semi < 0 ? "" : rest.slice(semi + 1, rest.len());
-    i32 sp = pair.indexOf(" ");
-    string name = pair.slice(0, sp);
-    string to = pair.slice(sp + 1, pair.len());
-    emitLocalValue(fb, src, lexed, env, cond, name);
-    if (env.variantAt(to) < 0) {
-      fb.byte(251);
-      fb.u32leb(23);   // ref.cast (ref $T) — the `is` above has already answered
-      fb.i32leb(env.structType(env.canonType(to)));
-    }
-    env.addLocal(name, to);
-    fb.byte(33);
-    fb.u32leb(env.localCount - 1);
-  }
-}
-
-/** The value of the local `name`, read through the `x is T` in `cond` that names it. */
-void emitLocalValue(B fb, u8[] src, Lexed lexed, Env env, Expr cond, string name) {
-  match (cond.kind) {
-    Binary(op, left, right): {
-      if (narrowedBy(src, lexed, env, left).indexOf(name + " ") == 0
-          || narrowedBy(src, lexed, env, left).indexOf(";" + name + " ") >= 0) {
-        emitLocalValue(fb, src, lexed, env, left, name);
-      } else {
-        emitLocalValue(fb, src, lexed, env, right, name);
-      }
-    }
-    Is(left, target, other, negated): { emitExpr(fb, src, lexed, env, left); }
-    default: { }
-  }
-}
-
-/**
  * The nearest type both of these are, or `""` when they are not related.
  *
  * Walks one side's ancestry and asks whether the other fits under each in turn — so a parent and a
@@ -16660,11 +16560,7 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
       if (foldedU >= 0) { return unsupportedIn(src, lexed, env, foldedU == 1 ? then : els); }
       string c = unsupportedExpr(src, lexed, env, cond);
       if (c != "") { return c; }
-      // The guarded block sees the narrowed type, exactly as the emitter will.
-      i32 savedIf = env.localCount;
-      narrowTypes(src, lexed, env, cond);
       string t = unsupportedIn(src, lexed, env, then);
-      env.localCount = savedIf;
       if (t != "") { return t; }
       return unsupportedIn(src, lexed, env, els);
     }

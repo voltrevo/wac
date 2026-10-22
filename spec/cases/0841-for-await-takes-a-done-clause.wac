@@ -1,0 +1,21 @@
+// expect: f() = 23
+// spec:  §wac-for-done-outcome-z5km3wq
+// why: `for await … done (R r)` binds an async generator's outcome as the plain loop binds a
+//      generator's
+// from: spec/6-concurrency/36-coroutines-and-generators.md
+import { Ticket } from "core";
+async gen<i32> i32 counter(Ticket<i32> t) {
+  yield 1;
+  yield await t;
+  return 20;
+}
+async i32 total(Ticket<i32> t) {
+  i32 n = 0;
+  for await (i32 x in counter(t)) { n += x; } done (i32 r) { n += r; }
+  return n;
+}
+export i32 f() {
+  Ticket<i32> t;
+  t.resolve(2);
+  return total(t).wait()!;
+}
