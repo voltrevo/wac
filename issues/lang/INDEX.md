@@ -5,14 +5,14 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0396a](open/0396a-const-is-still-stripped-through-construction-returns-and-fields.md) | A `const` reference stored into a plain field, returned through a plain function, or read from a `const` field is writable | bug | wrong answer |
+| [0396a](closed/0396a-const-is-still-stripped-through-construction-returns-and-fields.md) | A `const` reference stored into a plain field, returned through a plain function, or read from a `const` field is writable | bug | wrong answer |
 | [0395a](open/0395a-a-duplicate-matches-binding-is-accepted.md) | `R p matches m && R p matches n` compiles and silently uses the second `p`; two wordings are wrong | bug | wrong answer |
 | [0394a](open/0394a-wac-build-says-o-keeps-a-rejected-module-and-does-not.md) | When the engine rejects a built module, `wac` says `wac build … -o out` keeps it, and no file is written | bug | wrong answer |
 | [0393a](open/0393a-generic-tag-functions-and-markup-in-static-initialisers.md) | A generic tag function (`T first<T>(T[] kids)`) and markup in a static initialiser are refused | missing feature | not implemented |
 | [0392a](open/0392a-a-bound-method-with-its-own-type-arguments-as-a-value.md) | `c.pick<i32>` as a value is refused; the parser drops the written type arguments | missing feature | not implemented |
 | [0391a](open/0391a-a-lambda-capturing-a-match-binding-in-an-async-function.md) | A lambda capturing a match-arm binding inside an `async` function declines with "a type was registered while a body was being emitted … i32[][]" | bug | compile error |
-| [0390a](open/0390a-a-static-and-a-literal-are-not-duplicate-switch-cases.md) | `case K:` beside `case 3:` with `static i32 K = 3` is accepted — is a static a constant for duplicate cases? | missing feature | not implemented |
-| [0389a](open/0389a-signed-minimum-remainder-minus-one-traps-or-answers-zero.md) | `i32.MIN % -1`: the spec says `%` traps on the signed minimum divided by `-1`; wasm and static evaluation answer 0 | missing feature | wrong answer |
+| [0390a](closed/0390a-a-static-and-a-literal-are-not-duplicate-switch-cases.md) | `case K:` beside `case 3:` with `static i32 K = 3` is accepted — is a static a constant for duplicate cases? | missing feature | not implemented |
+| [0389a](closed/0389a-signed-minimum-remainder-minus-one-traps-or-answers-zero.md) | `i32.MIN % -1`: the spec says `%` traps on the signed minimum divided by `-1`; wasm and static evaluation answer 0 | missing feature | wrong answer |
 | [0388a](open/0388a-two-symbols-spelled-alike-collide-as-members.md) | Two symbols with the same declared spelling name one member in the emitter: `p.[tag]` and `p.[other]` read the same field | bug | wrong answer |
 | [0379a](open/0379a-an-async-machine-is-attributed-to-its-struct-line-and-its-coroutine-to-line-one.md) | An `async` method's state machine is attributed to its struct's line and every coroutine's entry to line 1, so coverage keys all of a type's machines to one line | diagnostic | wrong answer |
 | [0378a](open/0378a-a-union-with-void-as-a-member-emits-invalid-wasm.md) | A union with `void` as a member — `Ticket.any` over a `Ticket<void>` — emits a module the engine refuses; the spec does not say what `union<A, void>` is, and the three answers differ | bug | invalid wasm |
@@ -115,7 +115,7 @@ has been fixed and why.
 
 ## Closed
 
-310 issues, 243 closed.
+310 issues, 246 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

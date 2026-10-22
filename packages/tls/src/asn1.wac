@@ -53,7 +53,8 @@ export i32 tagContextPrim(i32 n) { return 0x80 | n; }
  * and forgotten at one of them.
  */
 export struct Der {
-  u8[] buf;
+  /** What is parsed, never written: a cursor reads its buffer. */
+  const u8[] buf;
   i32 pos;
   i32 end;
   /**

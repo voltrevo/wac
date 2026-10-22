@@ -445,7 +445,7 @@ struct ExprList {
     this.n++;
   }
 
-  Expr[] take(const this) {
+  Expr[] take(this) {
     // `Expr[].defaulted(n)` would need `Expr` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -473,7 +473,7 @@ struct JsxAttrList {
     this.n++;
   }
 
-  JsxAttr[] take(const this) {
+  JsxAttr[] take(this) {
     if (this.n == 0) { return JsxAttr[](); }
     JsxAttr[] out = JsxAttr[].filled(this.n, this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
@@ -497,7 +497,7 @@ struct TyList {
     this.n++;
   }
 
-  Ty[] take(const this) {
+  Ty[] take(this) {
     // `Ty[].defaulted(n)` would need `Ty` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -525,7 +525,7 @@ struct IntList {
     this.n++;
   }
 
-  i32[] take(const this) {
+  i32[] take(this) {
     i32[] out = i32[].filled(this.n, 0);
     for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
     return out;
@@ -549,7 +549,7 @@ struct TyOptList {
     this.n++;
   }
 
-  Ty?[] take(const this) {
+  Ty?[] take(this) {
     Ty?[] out = Ty?[].defaulted(this.n);
     for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
     return out;
@@ -572,7 +572,7 @@ struct NamedArgList {
     this.n++;
   }
 
-  NamedArg[] take(const this) {
+  NamedArg[] take(this) {
     // `NamedArg[].defaulted(n)` would need `NamedArg` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -599,7 +599,7 @@ struct StmtList {
     this.n++;
   }
 
-  Stmt[] take(const this) {
+  Stmt[] take(this) {
     // `Stmt[].defaulted(n)` would need `Stmt` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -625,7 +625,7 @@ struct CaseList {
     this.n++;
   }
 
-  Case[] take(const this) {
+  Case[] take(this) {
     // `Case[].defaulted(n)` would need `Case` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -651,7 +651,7 @@ struct ArmList {
     this.n++;
   }
 
-  Arm[] take(const this) {
+  Arm[] take(this) {
     // `Arm[].defaulted(n)` would need `Arm` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -677,7 +677,7 @@ struct ParamList {
     this.n++;
   }
 
-  Param[] take(const this) {
+  Param[] take(this) {
     // `Param[].defaulted(n)` would need `Param` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -703,7 +703,7 @@ struct FieldList {
     this.n++;
   }
 
-  Field[] take(const this) {
+  Field[] take(this) {
     // `Field[].defaulted(n)` would need `Field` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -729,7 +729,7 @@ struct MethodList {
     this.n++;
   }
 
-  Method[] take(const this) {
+  Method[] take(this) {
     // `Method[].defaulted(n)` would need `Method` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -755,7 +755,7 @@ struct VariantList {
     this.n++;
   }
 
-  Variant[] take(const this) {
+  Variant[] take(this) {
     // `Variant[].defaulted(n)` would need `Variant` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -781,7 +781,7 @@ struct ImportItemList {
     this.n++;
   }
 
-  ImportItem[] take(const this) {
+  ImportItem[] take(this) {
     // `ImportItem[].defaulted(n)` would need `ImportItem` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -807,7 +807,7 @@ struct DeclList {
     this.n++;
   }
 
-  Decl[] take(const this) {
+  Decl[] take(this) {
     // `Decl[].defaulted(n)` would need `Decl` to have a default value, and anything reachable from an
     // enum has none. The first collected element serves as the fill; every slot is then
     // overwritten, so the sharing `fill:` implies is invisible here.
@@ -834,7 +834,7 @@ struct I32List {
     this.n++;
   }
 
-  i32[] take(const this) {
+  i32[] take(this) {
     i32[] out = i32[].filled(this.n, 0);
     for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
     return out;

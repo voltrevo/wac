@@ -1,0 +1,7 @@
+// expect: refused
+// why: `const` at the head of a declaration applies throughout — a field declared `const In i` cannot be
+//      reassigned, and what it holds cannot be written through
+// from: spec/2-types/17-const.md
+struct In { i32 v; }
+struct C { const In i; }
+export i32 f() { C k = C(In(1)); k.i.v = 7; return k.i.v; }

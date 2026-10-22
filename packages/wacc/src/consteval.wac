@@ -640,7 +640,8 @@ export i64 divide(Ev ev, string t, i64 a, i64 b) {
 export i64 remainder(Ev ev, string t, i64 a, i64 b) {
   if (b == (0 as i64)) { ev.raise("integer divide by zero"); return 0 as i64; }
   if (t == "u64") { return a - udiv64(a, b) * b; }
-  // `%` does not trap on the overflow pair — wasm answers zero, and so does this.
+  // `%` does not trap on the overflow pair: only the quotient overflows, and the remainder is 0 (spec ch22,
+  // ruled 2026-10-21 in issue 0389a) — which is also what wasm's `rem_s` answers at run time.
   if (!isUnsignedName(t) && b == (0 - 1 as i64) && a == minOf(t)) { return 0 as i64; }
   return a % b;
 }

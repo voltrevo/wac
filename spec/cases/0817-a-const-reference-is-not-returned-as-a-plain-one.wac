@@ -1,0 +1,7 @@
+// expect: refused
+// why: a const T does not convert to T — returning one from a function whose result is a plain T would
+//      hand the caller something to write through
+// from: spec/2-types/17-const.md
+struct In { i32 v; }
+In give(const In c) { return c; }
+export i32 f() { const In c = In(1); In m = give(c); m.v = 6; return c.v; }

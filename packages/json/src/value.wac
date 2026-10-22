@@ -159,8 +159,13 @@ export struct JsonArray {
 export JsonValue numberOf(f64 v) { return JsonValue.Number(v, u8[]()); }
 
 export struct JsonMember {
-  const u8[] key;
-  const JsonValue value;
+  // **Plain fields.** These were declared `const`, meaning "not reassigned"; since `const` at the head
+  // of a declaration is const throughout (spec ch17), that read as every value reached through a member
+  // being immutable — which would make JSON trees deeply const, every `JsonValue` method `const this`
+  // and every binding downstream `const`. That is a decision about this package's API, not one a field
+  // should make by accident; nothing here or in its users writes through a member.
+  u8[] key;
+  JsonValue value;
 
   string keyStr(const this) { return string.fromBytes(this.key); }
 }

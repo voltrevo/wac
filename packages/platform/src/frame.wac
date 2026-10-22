@@ -225,7 +225,8 @@ export struct Frame {
   string streamPath(const this, string p) { return p == "" ? "" : this.path(p); }
 
   /** What the child wrote, and whether it was cut short. */
-  Captured captured(const this) {
+  // A plain receiver: `Buf.bytes()` answers a copy, but through a `const this` the checker cannot see that.
+  Captured captured(this) {
     return Captured.of(this.out.bytes(), this.err.bytes(), this.overflowed);
   }
 }
@@ -280,7 +281,7 @@ Pending<u8[]?> readyBytesOpt(u8[]? v) { return ready(v); }
  * assignment is a position the compiler's walk does not type yet, and the module is declined with a
  * count rather than a line — `issues/lang/0303c`.
  */
-export Cli childCliGranted(Frame f, const Cli parent, Grants g) {
+export Cli childCliGranted(Frame f, Cli parent, Grants g) {
   Cli c = childCli(f, parent);
 
   if (!g.read) {
@@ -362,7 +363,8 @@ export Pending<T> ready<T>(T value) {
  * Everything else is the parent's own. A child's clock, randomness and scheduler are not part of what
  * a frame changes, and substituting them here would be a second decision hidden inside this one.
  */
-export Core childCore(Frame f, const Core parent) {
+// A plain `parent`: the child shares its scheduler, by design (below), which a `const` one could not lend.
+export Core childCore(Frame f, Core parent) {
   return Core(
     parent.nowMillis,
     parent.monotonicNanos,
@@ -402,7 +404,8 @@ export Core childCore(Frame f, const Core parent) {
  * `wget` each wrote an empty file in process and exited 0. The comment here used to claim the capture was
  * "the host's behaviour too", and that was simply false; measuring both routes is what settled it.
  */
-export Cli childCli(Frame f, const Cli parent) {
+// A plain `parent`, for the reason `childCore` gives: the child shares its scheduler.
+export Cli childCli(Frame f, Cli parent) {
   return Cli.of(
     () => ready(f.argv.len()),
     (i32 i) => ready(i >= 0 && i < f.argv.len() ? f.argv[i].toBytes() : u8[]()),

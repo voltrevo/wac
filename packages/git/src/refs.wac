@@ -118,7 +118,8 @@ export Vec<PackedRef> parsePackedRefs(u8[] file) {
 }
 
 /** The target of `name` in a parsed `packed-refs`, or null. */
-export u8[]? packedTarget(const Vec<PackedRef> refs, string name) {
+// Not `const refs`: what it answers is a ref's own target, which the caller may keep and write.
+export u8[]? packedTarget(Vec<PackedRef> refs, string name) {
   for (PackedRef ref in refs) {
     if (ref.name == name) { return ref.target; }
   }

@@ -1128,7 +1128,8 @@ export struct Association {
    * near a second and doubles; a caller with no clock at all can drive it off the peer's own
    * retransmissions, as `Peer` does for DTLS.
    */
-  u8[][] resend(const this) {
+  // A plain receiver: the packets handed back are the ones kept for retransmission, not copies.
+  u8[][] resend(this) {
     u8[][] out = u8[][].defaulted(this.flightCount);
     for (i32 i = 0; i < this.flightCount; i++) { out[i] = this.flightPacket[i]; }
     return out;

@@ -610,7 +610,7 @@ export struct Captured {
    */
   bool truncated;
 
-  Captured of(const u8[] out, const u8[] err, bool truncated) { return Captured(out, err, truncated); }
+  Captured of(u8[] out, u8[] err, bool truncated) { return Captured(out, err, truncated); }
 }
 
 
@@ -2504,7 +2504,7 @@ export struct Cli {
     fn<CallResult(i32, string, i32)> call,
     fn<void(i32)> unload,
     fn<string(u8[])> validated,
-    const Sched sched
+    Sched sched
   ) {
     return Cli(
       () => argCount().on(sched), (i32 a0) => arg(a0).on(sched),
@@ -2601,7 +2601,9 @@ export struct Sys {
   }
 
   /** Call `f` with a `Sys` holding at most `grants` — and never more than this one holds. */
-  i32 run(const this, fn<i32(Sys)> f, Grant[] grants) {
+  // A plain receiver: the narrower `Sys` shares this one's `core` and `cli`, which a `const this` could
+  // not hand out (spec ch17).
+  i32 run(this, fn<i32(Sys)> f, Grant[] grants) {
     i32 mask = 0;
     for (Grant g in grants) { mask = mask | grantBit(g); }
     return f(Sys(this.core, this.cli, mask & this.held));

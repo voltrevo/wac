@@ -1,6 +1,6 @@
-// expect: emits
-// why: the same hole seen from the other end — a return type has no place to write `const` either,
-// why: so the constness is lost on the way out and nothing can complain
+// expect: refused
+// why: a const reference is not handed back as a plain one — the result is declared `const S` to return
+// why: one (this case pinned the hole while a return type had no place for `const`; closed 2026-10-21)
 struct S { i32 v; }
 S h(const S c) { return c; }
 export i32 f(const S c) { return h(c).v; }

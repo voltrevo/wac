@@ -237,7 +237,8 @@ Pending<Exec> noExec(string path, string[] args, u8[] stdin, string[] env, bool 
  * What is passed on unconditionally is what is not a grant: the arguments, standard input and
  * output, the in-process frame stack, and the module loader.
  */
-export Cli narrowed(const Cli parent, Asked a) {
+// A plain `parent`: the narrowed `Cli` dispatches on its scheduler, which a `const` one could not lend.
+export Cli narrowed(Cli parent, Asked a) {
   return Cli.of(
     parent.argCount,
     parent.arg,

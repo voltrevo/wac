@@ -191,9 +191,9 @@ export struct CTable {
   i32 size;
   i32 maxSymbol;
   i32[] fromState;     // symbol * size + target -> state to encode from
-  i32[] nbBits;        // per state, as in the decoding table
-  i32[] newState;      // per state, as in the decoding table
-  i32[] counts;        // the normalised counts, to refuse a symbol with no states
+  const i32[] nbBits;  // per state, as in the decoding table — shared with it, never written
+  const i32[] newState; // per state, as in the decoding table — shared with it, never written
+  const i32[] counts;  // the normalised counts, to refuse a symbol with no states — never written
 }
 
 /** Build the encoding table from the same normalised counts a decoder would be given. */

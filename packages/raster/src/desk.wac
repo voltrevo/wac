@@ -70,7 +70,11 @@ export struct Desk {
   /** The frames, in stacking order, for hit-testing. */
   Rect[] frames(const this) {
     Rect[] out = Rect[].filled(this.wins.len(), Rect(0, 0, 0, 0));
-    for (i32 i = 0; i < this.wins.len(); i++) { out[i] = this.wins[i].frame; }
+    // Copies: a `const this` hands out no window's own frame to be moved through.
+    for (i32 i = 0; i < this.wins.len(); i++) {
+      const Rect f = this.wins[i].frame;
+      out[i] = Rect(f.x, f.y, f.w, f.h);
+    }
     return out;
   }
 

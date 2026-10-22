@@ -70,9 +70,9 @@ struct CConn {
   i32 group;
   u8[] clientRandom;
   u8[] host;
-  /** The trust store: DER certificates concatenated, with `rootOffsets` indexing them. */
-  u8[] rootDer;
-  i32[] rootOffsets;
+  /** The trust store: DER certificates concatenated, with `rootOffsets` indexing them. Read, never written. */
+  const u8[] rootDer;
+  const i32[] rootOffsets;
   i64 now;
   /** The server's chain, concatenated, held between Certificate and CertificateVerify. */
   u8[] serverCertDer;

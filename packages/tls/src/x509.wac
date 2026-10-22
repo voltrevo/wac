@@ -825,7 +825,7 @@ export bool certVerifySignature(Cert c, i32 scheme, const u8[] content, const u8
  * the two blobs, because wac has no array of byte arrays crossing a boundary and
  * flattening is cheaper than a struct nobody else needs.
  */
-export i32 verifyPath(const u8[] chain, const i32[] chainOffsets, u8[] roots, i32[] rootOffsets,
+export i32 verifyPath(const u8[] chain, const i32[] chainOffsets, const u8[] roots, const i32[] rootOffsets,
                       u8[] host, i64 now, i32 maxDepth) {
   i32 nChain = chainOffsets.len() / 2;
   i32 nRoots = rootOffsets.len() / 2;

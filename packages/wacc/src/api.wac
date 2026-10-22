@@ -3209,7 +3209,7 @@ i32 autoTokOf(u8[] src, Lexed lx, Ty t) {
 struct AutoRun {
   string[] paths;
   string[] sources;
-  Res res;
+  const Res res;
   i32 file;
   AutoFns fns;
   string[] memoKeys;

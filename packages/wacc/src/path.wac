@@ -215,10 +215,12 @@ export string normalisePath(string path) {
  * every program that uses no mappings, which is all of them until somebody writes a `wac.json5`.
  */
 export struct Res {
-  string[] roots;
-  string[] mapFrom;
-  string[] mapSpec;
-  string[] mapTo;
+  // **Read-only once built**, and declared so: a resolver is handed around as `const Res`, and a
+  // narrowed copy of one (`diagnoseFilesIn`) shares the mapping arrays rather than copying them.
+  const string[] roots;
+  const string[] mapFrom;
+  const string[] mapSpec;
+  const string[] mapTo;
   /**
    * The directory every relative key in this graph is measured from — the working directory.
    *

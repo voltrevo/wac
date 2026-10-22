@@ -444,6 +444,9 @@ i32 matchingParen(string s, i32 open) {
 
 /** Where the type starting at `k` ends: a function type, or a name with its arguments and suffixes. */
 i32 typeEnd(string s, i32 k) {
+  // `const T` is one type with a space in it: a funcref answering `const App` printed as
+  // `fn<const(…)> App` when the end was the first space.
+  if (k + 6 <= s.len() && s.slice(k, k + 6) == "const ") { return typeEnd(s, k + 6); }
   if (k + 3 <= s.len() && s.slice(k, k + 3) == "fn(") {
     i32 close = matchingParen(s, k + 2);
     if (close < 0) { return s.len(); }

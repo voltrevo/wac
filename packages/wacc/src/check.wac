@@ -967,7 +967,9 @@ struct DA {
               string[].defaulted(4), 0);
   }
 
-  DA copy(const this) {
+  // A plain receiver: the copy shares `outer` and `said` with this one — a capture reported through
+  // either is reported for both — so handing it out from a `const this` would launder the sharing.
+  DA copy(this) {
     string[] m = string[].defaulted(this.maybe.len());
     for (i32 i = 0; i < this.n; i++) { m[i] = this.maybe[i]; }
     string[] p = string[].defaulted(this.parts.len());
@@ -4504,6 +4506,21 @@ export struct C {
     i32 inherited = parent == "" ? 0 : this.constructArity(parent);
     if (i < inherited) { return this.constructFieldAt(parent, i); }
     return this.ownFieldAt(owner, i - inherited);
+  }
+
+  /** Whether the field a positional construction's `i`th argument fills is declared `const`. */
+  bool constructFieldConstAt(this, string owner, i32 i) {
+    owner = templateOf(owner);
+    string parent = this.parentOf(owner);
+    i32 inherited = parent == "" ? 0 : this.constructArity(parent);
+    if (i < inherited) { return this.constructFieldConstAt(parent, i); }
+    i32 n = 0;
+    for (i32 f = 0; f < this.fieldCount; f++) {
+      if (this.fieldOwners[f] != owner) { continue; }
+      if (n == i - inherited) { return this.fieldConsts[f]; }
+      n = n + 1;
+    }
+    return false;
   }
 
   /**
@@ -9038,7 +9055,9 @@ void checkLambda(C c, string slot, bool wantUnknown, Expr e, Param[] params, Stm
   // letter and the absence of one. The count is still compared, and every named type still is.
   bool agree = params.len() == funcrefParamCount(want);
   for (i32 i = 0; i < params.len(); i++) {
-    string pt = typeOfTy(c, params[i].type);
+    // A `const` parameter takes a `const` value — `(const App s) => …` is a `fn<…(const App)>` — exactly
+    // as a declared function's does (`paramTypeOf`); typed plain, it matched no slot that asked for one.
+    string pt = paramTypeOf(c, params[i], typeOfTy(c, params[i].type));
     if (i > 0) { got = got + ", "; }
     got = got + (pt == typeNone() ? writtenTy(c, params[i].type) : pt);
     if (agree && pt != typeNone() && pt != funcrefParamAt(want, i)) { agree = false; }
@@ -9758,6 +9777,8 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
       } else if (ngot != typeNone() && ngot != "" && !assignable(c, nwant, ngot)) {
         c.reportWith(errFieldMismatch(), named[i].value.line, named[i].value.col,
                      expectedFound(nwant, ngot));
+      } else if (constIntoPlain(c, nwant, named[i].value) && !c.isConstField(tmpl, tokenText(c, named[i].nameTok))) {
+        constIntoField(c, nwant, named[i].value);
       }
     }
     return;
@@ -9789,8 +9810,20 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, want, agot)) {
       c.report(errFieldMismatch(), args[i].line, args[i].col);
+    } else if (constIntoPlain(c, want, args[i]) && !c.constructFieldConstAt(name, i)) {
+      constIntoField(c, want, args[i]);
     }
   }
+}
+
+/**
+ * **A `const` reference does not fill a plain field** (spec ch17 `§wac-const-no-launder-t584c4n`):
+ * `Box(c)` put a `const In` where `b.i.v = 5` could write through it, which is the laundering every other
+ * route already refuses. A field declared `const` is the place one may be kept.
+ */
+void constIntoField(C c, string want, Expr value) {
+  reportExprHinted(c, errNonConstThroughConst(), value, "a const " + want + " cannot fill a plain " + want + " field",
+                   "declare the field `const " + want + "`, or pass a value that is not const");
 }
 
 /**
@@ -10016,7 +10049,14 @@ bool constPath(C c, Lvalue lv) {
     LIdent(tok): { return c.isConstName(tokenText(c, tok)); }
     // Or a path whose own type is `const T`: `t.0` for a `(const S, i32) t` (ch17), so `t.0.v = 5`
     // writes through a const reference.
-    LField(base, nameTok): { return constPath(c, base) || isConstTy(typeOfLvalue(c, lv)); }
+    // And a field declared `const`, which is const throughout (spec ch17): `k.i.v = 7` writes through
+    // `const In i` as surely as through a `const In` local.
+    LField(base, nameTok): {
+      if (constPath(c, base) || isConstTy(typeOfLvalue(c, lv))) { return true; }
+      string bt = typeOfLvalue(c, base);
+      string bc = withoutNull(bt);
+      return c.isConstField(bc == "" ? bt : bc, tokenText(c, nameTok));
+    }
     LIndex(base, index): { return constPath(c, base) || isConstTy(typeOfLvalue(c, lv)); }
     LUnwrap(base): { return constPath(c, base); }
   }
@@ -10405,6 +10445,91 @@ i64 switchCaseValue(C c, Expr e) {
   return v & 4294967295;
 }
 
+/**
+ * A case value as the 32-bit value it compares as, or -1 when it is not a constant this checker knows: a
+ * literal, or a name that is a static rather than a local — computed by the evaluator `static_if` uses.
+ * A masked value is never negative, so -1 cannot be one.
+ */
+i64 caseConstValue(C c, Expr e) {
+  if (litKindOf(e) != litNone()) { return switchCaseValue(c, e); }
+  match (e.kind) {
+    Ident(tok): {
+      // A local of the same name shadows the static, and its value is a run-time one.
+      i32 local = c.findName(tokenText(c, tok));
+      if (local >= 0 && c.depthOf(local) > 0) { return 0 - 1 as i64; }
+      if ((c.sEv is null) || (c.sCx is null)) { return 0 - 1 as i64; }
+      Ev ev = c.sEv!;
+      ev.status = evOk();
+      ev.message = "";
+      Value v = evalExpr(ev, c.sCx!, c.sFile, e, "i32");
+      if (!evFinished(ev.status) || v.kind != vNum()) {
+        ev.status = evOk();
+        return 0 - 1 as i64;
+      }
+      ev.status = evOk();
+      return intOf(v) & 4294967295;
+    }
+    default: { return 0 - 1 as i64; }
+  }
+}
+
+/** The first token of a written type — its name — or -1 for a shape that starts with punctuation. */
+i32 firstTokOfTy(Ty t) {
+  match (t.kind) {
+    Prim(tok): { return tok; }
+    Named(tok, typeArgs): { return tok; }
+    Arr(elem): { return firstTokOfTy(elem); }
+    Nullable(inner): { return firstTokOfTy(inner); }
+    default: { return 0 - 1; }
+  }
+}
+
+/**
+ * `t`, the result type written `ret`, as `const t` when `const` is written before it — `const Box
+ * shared()` (spec ch17). The parser reads that `const` and keeps no node for it, so it is found where it
+ * stands, the token before the type. Only a reference can be const; on a number it means nothing.
+ */
+string constResult(C c, Ty ret, string t) {
+  if (t == "" || t == typeNone() || isConstTy(t)) { return t; }
+  i32 first = firstTokOfTy(ret);
+  if (first <= 0 || tokenKind(c, first - 1) != kConst()) { return t; }
+  string core = withoutNull(t);
+  string base = core == "" ? t : core;
+  if (isPrimitiveName(base) || base == "string") { return t; }
+  return "const " + t;
+}
+
+/** Whether `e` is `this`, or a field, element or unwrap of something reached through it. */
+bool reachedThroughThis(C c, Expr e) {
+  match (e.kind) {
+    Ident(tok): { return tokenText(c, tok) == "this"; }
+    Ternary(cond, then, els): { return reachedThroughThis(c, then) && reachedThroughThis(c, els); }
+    // A fresh tuple or array whose const members are all reached through `this` — a snapshot's
+    // `(this, this.version)` — hands back what an accessor would, and is const at the caller the same way.
+    TupleLit(elements): { return constMembersThroughThis(c, elements); }
+    ArrLit(elements): { return constMembersThroughThis(c, elements); }
+    // A method called on something reached through `this` — `this.data.bytes()` — is the accessor
+    // pattern one step on: what it answers through a const receiver is const at the caller already.
+    Call(callee, args, typeArgs): {
+      match (callee.kind) {
+        Member(obj, nameTok): { return reachedThroughThis(c, obj); }
+        default: { return false; }
+      }
+    }
+    Member(obj, nameTok): { return reachedThroughThis(c, obj); }
+    Index(arr, index): { return reachedThroughThis(c, arr); }
+    Unwrap(operand): { return reachedThroughThis(c, operand); }
+    default: { return false; }
+  }
+}
+
+bool constMembersThroughThis(C c, Expr[] elements) {
+  for (i32 i = 0; i < elements.len(); i++) {
+    if (constRefExpr(c, elements[i]) && !reachedThroughThis(c, elements[i])) { return false; }
+  }
+  return true;
+}
+
 /** Whether `e` is a const reference — const, and of a type something could be written through. */
 bool constRefExpr(C c, Expr e) { return constExpr(c, e) && writableType(c, typeOfExpr(c, e)); }
 
@@ -10418,8 +10543,15 @@ bool constExpr(C c, Expr e) {
       if (startsWith(id, "$lit_")) { return false; }
       return c.isConstName(id);
     }
-    // A member whose *type* is `const T` — a tuple's `const` member — is const whatever holds it.
-    Member(obj, nameTok): { return constExpr(c, obj) || isConstTy(typeOfExpr(c, e)); }
+    // A member whose *type* is `const T` — a tuple's `const` member — is const whatever holds it. So is
+    // a field declared `const`: "`const` at the head of a declaration applies throughout" (spec ch17), so
+    // what `const In i` holds cannot be written through, where only reassigning `i` itself was refused.
+    Member(obj, nameTok): {
+      if (constExpr(c, obj) || isConstTy(typeOfExpr(c, e))) { return true; }
+      string ot = typeOfExpr(c, obj);
+      string oc = withoutNull(ot);
+      return c.isConstField(oc == "" ? ot : oc, tokenText(c, nameTok));
+    }
     Index(arr, index): { return constExpr(c, arr); }
     Unwrap(operand): { return constExpr(c, operand); }
     // **What holds a const reference is const** (spec ch17 `§wac-const-no-launder-t584c4n`): a ternary
@@ -12476,7 +12608,9 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
  */
 void checkParams(C c, Param[] params) {
   for (i32 i = 0; i < params.len(); i++) {
-    string pt = typeOfTy(c, params[i].type);
+    // A `const` parameter takes a `const` value — `(const App s) => …` is a `fn<…(const App)>` — exactly
+    // as a declared function's does (`paramTypeOf`); typed plain, it matched no slot that asked for one.
+    string pt = paramTypeOf(c, params[i], typeOfTy(c, params[i].type));
     // `void` is what a function returns, not a value anything can hold, so it is not a type a
     // parameter or a field can have.
     if (pt == "void") { c.report(errVoidType(), params[i].type.line, params[i].type.col); }
@@ -13138,7 +13272,7 @@ void checkStmt(C c, Stmt s, Ty want) {
                            "declare the local `(const " + lt + ")` to rebind it to const values");
         }
       }
-      if (tokenKind(c, op) == kAssign() && indirectLvalue(target) && constName(c, rhs)) {
+      if (tokenKind(c, op) == kAssign() && indirectLvalue(target) && constExpr(c, rhs)) {
         string rt = typeOfExpr(c, rhs);
         string rcore = withoutNull(rt);
         string rbase = rcore == "" ? rt : rcore;
@@ -13295,9 +13429,12 @@ void checkStmt(C c, Stmt s, Ty want) {
       // Checked against the type as written: `union<const Rect> b = a` is a conversion between unions,
       // even though the binding it makes is a `const Rect` (ch18).
       string wantCheck = wantFull != wantWritten ? wantWritten : wantVar;
-      if (nullableIntoNonNull(c, wantCheck, gotVar)) {
+      // A `const` binding holds a `const` value: `const App a = g(…)` with `g` answering `const App` is the
+      // one place that result may go, and comparing it with the bare `App` refused it.
+      string gotCheck = (isConst || wantConst) && isConstTy(gotVar) ? constBase(gotVar) : gotVar;
+      if (nullableIntoNonNull(c, wantCheck, gotCheck)) {
         c.report(errNullableToNonNull(), initE.line, initE.col);
-      } else if (!assignable(c, wantCheck, gotVar)) {
+      } else if (!assignable(c, wantCheck, gotCheck)) {
         // `i64 x = 1 << count;` is the idiom this catches, and the reason is not in the message
         // without help — `issues/lang/0233a`. Empty for everything else, which falls through to the
         // code's own hint exactly as before.
@@ -13346,7 +13483,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       // type and `want` is still the enclosing function's. `design/lang/0002` settles what `return`
       // means here: it returns from the lambda, which is the only available reading once the lambda
       // can outlive the frame it was written in.
-      string declared = c.lambdaReturn != "" ? c.lambdaReturn : typeOfTy(c, want);
+      string declared = c.lambdaReturn != "" ? c.lambdaReturn : constResult(c, want, typeOfTy(c, want));
       // **Whether a value belongs here is syntactic, and `typeOfTy` answers unknown for a type built
       // out of a type parameter.** `Box<T> of(T x) { return; }` inside the template: `Box<T>` has no
       // name in this checker's world, so `declared` was `""`, `returnsAValue("")` is false, and a bare
@@ -13439,6 +13576,14 @@ void checkStmt(C c, Stmt s, Ty want) {
                              "use `(" + wrote + ") as " + expected + "` to convert");
         }
         widenHint(c, hinted, got, expected);
+      } else if (constIntoPlain(c, expected, e) && !reachedThroughThis(c, e)) {
+        // **A `const` reference is not handed back as a plain one** (spec ch17
+        // `§wac-const-no-launder-t584c4n`): `In give(const In c) { return c; }` gave every caller a
+        // writable `In` for a promise it had made not to write. What a method reaches through its
+        // `const` receiver is the exception the spec makes on purpose — the call site's result is const
+        // instead (`§wac-deep-const-accessor-w3kf8nq`) — so an accessor keeps its plain return type.
+        reportExprHinted(c, errNonConstThroughConst(), e, "a const " + expected + " cannot be returned as a " + expected,
+                         "declare the result `const " + expected + "`");
       }
       c.expected = expected;
       checkExpr(c, e);
@@ -13654,14 +13799,17 @@ void checkStmt(C c, Stmt s, Ty want) {
       // only at run time are not refused, and that is `issues/lang/0269a`'s decision rather than a gap
       // here. `litKindOf` is the same test the type rule above uses, so the two agree about what a
       // literal is.
+      //
+      // **A static is a constant too** (ruled 2026-10-21, issue 0390a): `case K:` beside `case 3:` with
+      // `static i32 K = 3` leaves the second arm dead exactly as `case 3:` twice does. A static this
+      // checker cannot compute is not a constant it knows, and is skipped rather than reported here.
       for (i32 i = 0; i < cases.len(); i++) {
         if (cases[i].value is null) { continue; }
-        if (litKindOf(cases[i].value!) == litNone()) { continue; }
-        i64 vi = switchCaseValue(c, cases[i].value!);
+        i64 vi = caseConstValue(c, cases[i].value!);
+        if (vi < (0 as i64)) { continue; }
         for (i32 j = 0; j < i; j++) {
           if (cases[j].value is null) { continue; }
-          if (litKindOf(cases[j].value!) == litNone()) { continue; }
-          if (switchCaseValue(c, cases[j].value!) != vi) { continue; }
+          if (caseConstValue(c, cases[j].value!) != vi) { continue; }
           c.report(errDuplicateCaseValue(), cases[i].line, cases[i].col);
           // One report per arm: a value written three times is two mistakes, not three, and the
           // second report would name the same arm.
@@ -14548,8 +14696,9 @@ export void declareModule(C c, Program prog, string[] only) {
           bool gen = typeParams.len() > 0;
           c.declareMethod(ename, tokenText(c, methods[mi].nameTok),
                           !methods[mi].hasThis, methods[mi].thisConst,
-                          methodReturnFor(gen ? writtenTy(c, methods[mi].returnType)
-                                              : typeOfTy(c, methods[mi].returnType),
+                          methodReturnFor(constResult(c, methods[mi].returnType,
+                                                      gen ? writtenTy(c, methods[mi].returnType)
+                                                          : typeOfTy(c, methods[mi].returnType)),
                                           methods[mi].isAsync), emps,
                           methods[mi].body, ownParamNames(c, methods[mi].typeParams));
           if (methods[mi].isPrivate) { c.notePrivate(ename, tokenText(c, methods[mi].nameTok)); }
@@ -14608,8 +14757,9 @@ export void declareModule(C c, Program prog, string[] only) {
           }
           c.declareMethod(name, tokenText(c, methods[i].nameTok),
                           !methods[i].hasThis, methods[i].thisConst,
-                          methodReturnFor(ownLetters ? writtenTy(c, methods[i].returnType)
-                                                     : typeOfTy(c, methods[i].returnType),
+                          methodReturnFor(constResult(c, methods[i].returnType,
+                                                      ownLetters ? writtenTy(c, methods[i].returnType)
+                                                                 : typeOfTy(c, methods[i].returnType)),
                                           methods[i].isAsync), mps,
                           methods[i].body, ownParamNames(c, methods[i].typeParams));
           if (methods[i].isPrivate) { c.notePrivate(name, tokenText(c, methods[i].nameTok)); }
@@ -14651,7 +14801,7 @@ export void declareModule(C c, Program prog, string[] only) {
         // `""` is this checker's *unknown*, and wrapping it would make `Pending<>` — a type nobody
         // can name and every slot would then disagree with. Left alone, by the same rule the rest of
         // the file keeps.
-        string fret = typeOfTy(c, returnType);
+        string fret = constResult(c, returnType, typeOfTy(c, returnType));
         fret = callerReturn(fret, isAsync);
         string[] pnames = string[].defaulted(params.len());
         for (i32 i = 0; i < params.len(); i++) { pnames[i] = tokenText(c, params[i].nameTok); }

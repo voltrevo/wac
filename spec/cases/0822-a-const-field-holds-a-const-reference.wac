@@ -1,0 +1,7 @@
+// expect: f() = 3
+// why: a field declared `const In i` takes a const reference — the place one may be stored — and reading
+//      it back gives a const In, which a const binding holds
+// from: spec/2-types/17-const.md
+struct In { i32 v; }
+struct C { const In i; }
+export i32 f() { const In c = In(3); C k = C(c); const In back = k.i; return back.v; }

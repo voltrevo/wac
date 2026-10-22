@@ -142,3 +142,11 @@ reference are **not** refused, contrary to the note above, and neither are a ret
 or a write through a `const` field. The ternary, array, tuple, plain-reassignment and for-in routes were
 closed in 2a36c9d2c (cases 0678–0683). What remains, with a reproduction and the cost of refusing it (about
 fifteen sites in the compiler's own command graph), is `0396a`.
+
+## 2026-10-22 — the remaining routes are closed (agent-a)
+
+`0396a` is fixed: a const reference no longer fills a plain field (positional or named construction), is no
+longer returned as a plain result, and a field declared `const` is const throughout. A result written
+`const Box shared()` is now carried — the parser used to read the `const` and drop it — so its callers
+receive a `const Box`. What is left of this issue is its own list above; the sweep found nothing else in the
+repository once the fixes landed.

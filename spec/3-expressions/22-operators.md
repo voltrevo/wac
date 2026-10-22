@@ -34,7 +34,8 @@ export void mixed(i32 x, f64 y, bool flag) {
 `[§wac-bool-arith-f2nx8k3]` Arithmetic on `bool` is refused.
 
 Integer arithmetic wraps; float arithmetic follows IEEE 754 ([08](../2-types/08-primitives.md)). Integer `/`
-and `%` trap on a zero divisor, and on the signed minimum divided by `-1`.
+and `%` trap on a zero divisor. `/` also traps on the signed minimum divided by `-1`, whose quotient does not
+fit; the remainder of that division is `0`, which does, and `%` answers it.
 
 `%` is the remainder after truncating division, for floats as well as integers. Its sign is the left
 operand's, and it satisfies `a % b == a - trunc(a/b) * b` computed exactly — C's `fmod`, JavaScript's `%`:

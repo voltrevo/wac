@@ -1,0 +1,12 @@
+// expect: refused
+// why: two constant case values that are equal are refused, and a static is a constant: `case K:` beside
+//      `case 3:` with K == 3 leaves the second arm dead
+// from: spec/3-expressions/25-control-flow.md
+static i32 K = 3;
+export i32 f(i32 x) {
+  switch (x) {
+    case K: return 1;
+    case 3: return 2;
+    default: return 0;
+  }
+}

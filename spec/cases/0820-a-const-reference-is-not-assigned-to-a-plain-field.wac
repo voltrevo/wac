@@ -1,0 +1,7 @@
+// expect: refused
+// why: a const T does not convert to T, so assigning one to a plain field is refused as binding it to a
+//      plain local is
+// from: spec/2-types/17-const.md
+struct In { i32 v; }
+struct Box { In i; }
+export i32 f() { const In c = In(1); Box b = Box(In(0)); b.i = c; return c.v; }

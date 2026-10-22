@@ -1,0 +1,6 @@
+// expect: refused
+// why: a const T does not convert to T, so a named construction cannot put one in a plain field either
+// from: spec/2-types/17-const.md
+struct In { i32 v; }
+struct Box { In i; }
+export i32 f() { const In c = In(1); Box b = Box { i: c }; b.i.v = 5; return c.v; }

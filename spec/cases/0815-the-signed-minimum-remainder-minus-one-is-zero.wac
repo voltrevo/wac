@@ -1,0 +1,13 @@
+// expect: f() = 0
+// why: `/` traps on the signed minimum divided by -1 because the quotient does not fit; the remainder
+//      does — it is 0 — and `%` answers it, at every width and in a static initialiser as at run time
+// from: spec/3-expressions/22-operators.md
+i32 r32(i32 a, i32 b) { return a % b; }
+i64 r64(i64 a, i64 b) { return a % b; }
+i8 r8(i8 a, i8 b) { return a % b; }
+static i32 S = r32(-2147483648, -1);
+export i32 f() {
+  i64 m = r64(-9223372036854775807 - 1, -1);
+  i8 n = r8(-128, -1);
+  return r32(-2147483648, -1) + S + (m as~ i32) + (n as i32);
+}

@@ -1,0 +1,11 @@
+// expect: f() = 2
+// why: a result written `const App` is const at its callers, a lambda's `const App s` takes a const value,
+//      and a `const` binding holds what such a function value answers
+// from: spec/2-types/17-const.md
+struct App { i32 n; }
+const App bump(const App s) { return App { n: s.n + 1 }; }
+export i32 f() {
+  fn<(const App)(const App)> g = (const App s) => bump(s);
+  const App a = g(App { n: 1 });
+  return a.n;
+}
