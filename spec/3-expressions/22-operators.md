@@ -156,6 +156,19 @@ export u64 rotl(u64 v, i32 n) { return (v << n) | (v >> (64 - n)); }
 `[§wac-shift-amount-3wkq7np]` A shift amount may be any integer type. The left operand's type decides the
 result, and the amount is taken modulo its width: `shlByU8(1, 35)` shifts by `3`.
 
+A literal on the left has no type of its own, and the amount is not an operand, so the slot types the
+shift as it types any literal ([09](../2-types/09-numeric-literals.md)):
+
+```wac
+// expect: mask(40) = 1099511627775
+// expect: small(4) = 16
+export i64 mask(i32 n) { i64 m = (1 << n) - 1; return m; }   // a 64-bit shift
+export i32 small(i32 n) { return 1 << n; }
+```
+
+`[§wac-shift-literal-slot-q8vd3nt]` A shifted integer literal takes the slot's type: `(1 << 40) - 1` in an
+`i64` slot is `1099511627775`.
+
 `[§wac-shr-s-z073930]` `>>` on a signed integer is arithmetic: `-16 >> 1` is `-8`.
 
 `[§wac-shr-u-ft3yabj]` `>>>` is logical: `-16 >>> 1` is `2147483640`.

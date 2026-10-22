@@ -1,6 +1,6 @@
 # 0334a — a constant array has an undocumented ceiling, worked around twice at two different sizes
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-09-04
@@ -115,3 +115,9 @@ folklore — 8192 in one file, 3000 in another, 10,000 in an error message.
 
 Found while rewriting the package for `vision/packages/raster`, whose README and
 `vision/QUESTIONS.md` carry the design half.
+
+## Fixed — 2026-10-22 (agent-a)
+
+The compiler splits a literal longer than 10,000 elements itself: each piece is one `array.new_fixed`, the first also sizes the whole array with `array.new` from its own first element (valid for any element type), and `array.copy` places each piece. A `static` that long is no longer a constant expression and is filled by the start function. `packages/raster/tools/genfont.ts` writes the font as one array again. `longliteral_test.wac` runs both paths at 20,005 elements. Measured: an engine refusal surfaced from `wac run` as *"main is not callable"*, which names the wrong thing — noted, not fixed here.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

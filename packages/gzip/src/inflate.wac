@@ -37,16 +37,14 @@ struct BitReader {
   // shape. `drained` remembers that the source said "no more", so it is asked once.
   fn<Read()>? source;
   bool drained;
-  /** Empty unless a read failed: the host's message, so a caller can say why it stopped. */
-  string broken;
 
   BitReader create(u8[] data, i32 start) {
-    return BitReader(data, start, 0, 0, null, false, "");
+    return BitReader(data, start, 0, 0, null, false);
   }
 
   /** A reader fed by `source`, which says whether it ended or broke. */
   BitReader streaming(fn<Read()> source) {
-    return BitReader(u8[](), 0, 0, 0, source, false, "");
+    return BitReader(u8[](), 0, 0, 0, source, false);
   }
 
   /** Pull bytes in until at least `need` bits are buffered, or input runs out. */
@@ -57,13 +55,13 @@ struct BitReader {
         // pads with zeros, so this returns rather than trapping. Consuming those bits is
         // what traps, in `skip`.
         if ((this.source is null) || this.drained) { return; }
-        // A failed read is treated as the source being spent, and the *caller* is told through
-        // `broken` — trapping here would turn a disk error into an "invalid archive", which is a
-        // diagnosis of the wrong thing.
+        // A failed read is treated as the source being spent — trapping here would turn a disk error
+        // into an "invalid archive", which is a diagnosis of the wrong thing. Nothing tells a caller
+        // which happened yet: that is `issues/system/0102`.
         match (this.source!()) {
           Data(bytes): { this.data = bytes; this.pos = 0; }
           End: { this.drained = true; return; }
-          Failed(why): { this.drained = true; this.broken = why; return; }
+          Failed(why): { this.drained = true; return; }
         }
       }
       this.bitBuf |= (this.data[this.pos] as i32) << this.bitCount;
@@ -147,9 +145,9 @@ struct BitReader {
         match (this.source!()) {
           Data(bytes): { this.data = bytes; this.pos = 0; }
           // Running out mid-block is a truncated archive; a failed read is a failed read. Both stop,
-          // and `broken` is what tells them apart afterwards.
+          // and nothing yet tells them apart (`issues/system/0102`).
           End: { this.drained = true; trap; }
-          Failed(why): { this.drained = true; this.broken = why; trap; }
+          Failed(why): { this.drained = true; trap; }
         }
       }
       i32 n = this.data.len() - this.pos;

@@ -305,6 +305,29 @@ the second. A `switch` may have at most one `default`.
 
 A character literal is a natural case value: `case 'x':` reads better than `case 0x78:`.
 
+A case value is a constant — a literal, a `static`, or an operator over them — so a `switch` can be a jump
+table rather than a chain of comparisons. A value known only at run time is compared with `if`:
+
+```wac
+// expect: kind(3) = 1
+// expect: kind(5) = 2
+static i32 LIMIT = 4;
+export i32 kind(i32 n) {
+  i32 k = 3;
+  switch (n) {
+    case LIMIT + 1: { return 2; }
+
+    // ERROR: a case value must be a constant
+    // case k: { return 1; }
+
+    default: { return n == k ? 1 : 0; }
+  }
+}
+```
+
+`[§wac-switch-case-constant-m4tz8kq]` A case value that is not a constant — a local, a parameter, a call —
+is refused.
+
 ## The ternary
 
 `c ? a : b` answers `a` when `c` holds and `b` otherwise. Its type combines both branches: the greater nullable

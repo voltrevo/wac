@@ -45,7 +45,7 @@ import { INTRO2_OK, Introduction, handleIntroduce2 } from "./hsintroduce.wac";
 import { rendezvousCircuitKeys } from "./hsntor.wac";
 import { UPLOAD_OK, UPLOAD_REJECTED } from "./hsupload.wac";
 import { cookieReplayCache, introReplayCache, ReplayCache } from "./hsreplay.wac";
-import { IntroPoint, BUILD_OK, Built, buildDescriptor } from "./hsdescbuild.wac";
+import { IntroPointSecrets, BUILD_OK, Built, buildDescriptor } from "./hsdescbuild.wac";
 import { Publication, servicePlan, consensusTimePeriod } from "./hsdir.wac";
 import { timeOf } from "./dirclient.wac";
 import { blindedPublicKey, subcredential } from "./hsblind.wac";
@@ -137,7 +137,7 @@ export i32 main(Sys sys) {
     return 1;
   }
 
-  IntroPoint[] points = IntroPoint[].filled(1, IntroPoint(
+  IntroPointSecrets[] points = IntroPointSecrets[].filled(1, IntroPointSecrets(
     linkSpecifiersFor(net, introRelay), net.relays[introRelay].ntorOnionKey, authSeed, encSecret));
 
   Publication[] plan = servicePlan(net.consensus, net.relays, blindedKeysFor(identityPublic, period),

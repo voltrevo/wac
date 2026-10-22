@@ -1,7 +1,6 @@
 # 0243a — a `match` of literals went in any slot, and the spec answers the remainder twice
 
-- **Status:** open — the silent half is fixed; what is left is a decision the spec makes twice and
-  differently
+- **Status:** closed
 - **Fixed so far:** `litFamily` in `packages/wacc/src/check.wac` gained the `MatchExpr` arm, with five
   rows in `packages/wacc/test/wac/illtyped_test.wac` and five in
   `packages/wacc/test/wac/matcharms_test.wac`
@@ -103,3 +102,9 @@ counterparts are in `matcharms_test`'s `test_the_ordinary_matches_are_accepted` 
 this fix wrong is to refuse those. After it: `corpuscheck` green over the whole repository,
 `typecheck` rung 3 with 0 false alarms and 0 contradicted, `specsingle` 371 silent with 0 false alarms,
 `specmulti` 42 silent with 0 false alarms.
+
+## Fixed — 2026-10-22 (agent-a)
+
+The current spec has only ch09's rule (an integer spelling may denote a float); control.md's contrary sentence is gone. So an integer beside a float literal branch is a float literal in both constructs (`sharedLiteralFamily`), typed by the slot: `f64 d = b ? 1 : 2.5` is legal, and `i32 n = match (e) { A: 1, default: 2.5 }` is refused. Cases 0828, 0829.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

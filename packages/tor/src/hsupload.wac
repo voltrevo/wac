@@ -54,7 +54,7 @@ export i32 uploadOutcome(i32 status) {
 }
 
 /** What a round of uploads came to. */
-export struct Publication {
+export struct UploadOutcome {
   i32 uploaded;      // directories that took it
   i32 rejected;      // directories that read it and said no
   i32 unreachable;   // unexpected answers and silent circuits together — a directory problem
@@ -70,7 +70,7 @@ export struct Publication {
 }
 
 /** Tally a round of upload outcomes. */
-export Publication publicationState(i32[] outcomes) {
+export UploadOutcome publicationState(i32[] outcomes) {
   i32 ok = 0;
   i32 no = 0;
   i32 other = 0;
@@ -79,7 +79,7 @@ export Publication publicationState(i32[] outcomes) {
     else if (outcome == UPLOAD_REJECTED) { no = no + 1; }
     else { other = other + 1; }
   }
-  return Publication(ok, no, other, no > 0);
+  return UploadOutcome(ok, no, other, no > 0);
 }
 
 /**

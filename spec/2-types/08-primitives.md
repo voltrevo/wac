@@ -113,6 +113,19 @@ export bool addOverflows(i64 a, i64 b) {
 exactly when the unsigned addition wrapped, and `addOverflows` exactly when the signed one
 overflowed.
 
+**Shift back.** A left shift loses bits off the top rather than going backwards, so neither comparison
+sees it: `x << 32` on a `u64` of `2^32` is `0`. Shifting the result back and comparing asks whether
+anything was lost:
+
+```wac
+// expect: shlLoses(4294967296, 32) = true
+// expect: shlLoses(4294967295, 32) = false
+export bool shlLoses(u64 x, i32 s) { return (x << s) >> s != x; }
+```
+
+`[§wac-overflow-shift-r3hc6vb]` A left shift lost bits exactly when shifting the result back does not
+give the operand: `shlLoses(4294967296, 32)` is true and `shlLoses(4294967295, 32)` false.
+
 ## Floating point
 
 `f32` and `f64` follow IEEE 754: rounding to nearest, signed zeros, infinities and NaN. Division by

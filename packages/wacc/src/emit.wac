@@ -9026,7 +9026,7 @@ void emitJsxChild(B fb, u8[] src, Lexed lexed, Env env, Expr e, string k) {
     fb.byte(16); fb.u32leb(env.funcIndex[fm]);    // call
     return;
   }
-  if (t == "string" || textFunctionFor(t) != "" || isLiteral(e) || (t != k && env.methodAt(t, "[toString]") >= 0)) {
+  if (t == "string" || textFunctionFor(t) != "" || isLiteral(lexed, e) || (t != k && env.methodAt(t, "[toString]") >= 0)) {
     i32 tm = markupMethod(env, k, "text");
     if (tm < 0) { return; }
     emitToText(fb, src, lexed, env, e);
@@ -9051,7 +9051,7 @@ void emitJsxChild(B fb, u8[] src, Lexed lexed, Env env, Expr e, string k) {
  */
 string jsxChildWhy(u8[] src, Lexed lexed, Env env, Expr e, string k) {
   string t = typeOfE(src, lexed, env, e);
-  if (t == "" || k == "" || t == k || t == k + "[]" || isLiteral(e)) { return ""; }
+  if (t == "" || k == "" || t == k || t == k + "[]" || isLiteral(lexed, e)) { return ""; }
   if (t == "string" || textFunctionFor(t) != "" || env.methodAt(t, "[toString]") >= 0) { return ""; }
   if (isOrDescends(env, t, k) || env.enumOf(t) == k || env.canonType(env.enumOf(t)) == env.canonType(k)) { return ""; }
   return "a markup child of type " + t + ", which is not a " + k + ", a " + k + "[], or text";
@@ -11436,6 +11436,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         return;
       }
       string ot = operandType(src, lexed, env, left, right);
+      // **A shift is typed by its left operand alone**, and a literal there by the slot — `i64 x =
+      // 1 << n` shifts 64 bits. With no integer slot it keeps its own width, an `i32` (`issues/lang/0233a`).
+      if (k == kShl() || k == kShr() || k == kShrU()) {
+        ot = typeOfE(src, lexed, env, left);
+        if (ot == "") { ot = isIntType(want) || isPackedValue(want) ? want : "i32"; }
+      }
       // When **both** operands are literals there is no type to take from them, and the slot is the
       // only thing that knows: `0.0 / 0.0` in an `f64` return is an `f64` division. Without this the
       // operands went out as `f64` and the operator as `i32.div_s` — the two halves of one expression
@@ -11633,13 +11639,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       string et = typeOfTyName(env, src, lexed, elem);
       i32 ti = env.arrayType(et + "[]");
       if (elements.len() > 0) {
-        for (i32 i = 0; i < elements.len(); i++) {
-          emitExprAt(fb, src, lexed, env, elements[i], et);
-        }
-        fb.byte(251);
-        fb.u32leb(8);      // array.new_fixed
-        fb.u32leb(ti);
-        fb.u32leb(elements.len());
+        emitArrayLiteral(fb, src, lexed, env, elements, et + "[]");
         return;
       }
       if (!(fill is null)) {
@@ -12302,9 +12302,9 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         tt = k;
         et = k;
       }
-      else if (slotTyped(then) && slotTyped(els) && want != "") { tt = want; et = want; }
-      else if (slotTyped(then) && et != "") { tt = et; }
-      else if (slotTyped(els) && tt != "") { et = tt; }
+      else if (slotTyped(lexed, then) && slotTyped(lexed, els) && want != "") { tt = want; et = want; }
+      else if (slotTyped(lexed, then) && et != "") { tt = et; }
+      else if (slotTyped(lexed, els) && tt != "") { et = tt; }
       // **Two arms of related types need the type they share**, not the first one's. `flag ? c : s`
       // with a `Circle` and a `Shape` declared a block returning a `Circle` and then handed it a
       // `Shape`: `type error in fallthru[0]`. A parent and a child give the parent; two siblings give
@@ -12523,29 +12523,18 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       // width regardless"* — and records that this was once two short lists that disagreed, so
       // `u64 << i32` type-checked and then emitted `i64.shl` with an i32 on the stack. Asking the two
       // sides to agree here would put that back.
-      // The result is the left operand's type — **falling back to the amount's when the left is a
-      // bare literal**, which is what this answered before and is load-bearing:
-      // `this.bitBuf & ((1 << count) - 1)` in `BitReader.peek` types `1 << count` from `count`, and
-      // answering unknown there made the whole expression unknown, the method decline, and the seed's
-      // `sh` payload fail to build — through a seven-deep cascade that named every step, which is the
-      // reporting `issues/lang/0170a` landed for exactly this.
-      //
-      // Taking the amount's type is not obviously *right*, and it is measurable rather than a worry:
-      // `i64 x = 1 << count;` is **refused by both compilers** — `expected i64, found i32`, with the
-      // cast help — because the shift is typed from `count` and never from the slot. A clean refusal
-      // rather than 32-bit arithmetic in a 64-bit slot, so nothing is silently wrong; but the spec
-      // says a literal takes its type from what is expected of it, and a slot is an expectation.
-      // `issues/lang/0233a`, because a context-free `typeOfE` cannot see the slot and `emitExprAt` is
-      // the function that can.
-      if (k == kShl() || k == kShr() || k == kShrU()) { return lt != "" ? lt : rt; }
+      // The result is the left operand's type. **A literal left operand gives it none**, and the
+      // amount's is not the answer either: `1 << n` is typed by its slot, as any literal is, which is
+      // what `emitExprAt` does with it (`issues/lang/0233a`).
+      if (k == kShl() || k == kShr() || k == kShrU()) { return lt; }
       // **The other operand counts as an expectation**, in either order — `§wac-int-context-9wkq4mz`,
       // which compiles `f(i32 x) { return -2147483648 <= x; }` with that literal as an **i32** even
       // though its magnitude needs 64 bits. So this is keyed on `isLiteral` rather than on what the
       // literal *answers*: asking "did the literal side come back empty" gets `i64` for that case,
       // sees two types disagree, and refuses a program the spec pins. A literal keeps its notation's
       // width only when nothing is expected of it, and the other operand is something expected.
-      if (isLiteral(right) && !isLiteral(left) && lt != "") { return lt; }
-      if (isLiteral(left) && !isLiteral(right) && rt != "") { return rt; }
+      if (isLiteral(lexed, right) && !isLiteral(lexed, left) && lt != "") { return lt; }
+      if (isLiteral(lexed, left) && !isLiteral(lexed, right) && rt != "") { return rt; }
       // **Two literals still have a family, even with no type.** `(0.0 / 0.0) as@ i32` answered ""
       // here, so the cast took its own target as the operand's type and converted `i32` to `i32` —
       // nothing — over an `f64` the emitter had just produced. A float literal is an `f64` unless a
@@ -12606,7 +12595,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         bool floaty = false;
         for (i32 a = 0; a < arms.len(); a++) {
           if (arms[a].value is null) { continue; }
-          if (!isLiteral(arms[a].value!)) { return ""; }
+          if (!isLiteral(lexed, arms[a].value!)) { return ""; }
           allLit = true;
           if (isFloatLiteral(arms[a].value!)) { floaty = true; }
         }
@@ -12622,7 +12611,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     Ternary(cond, then, els): {
       // A branch that takes its type from the slot — `ok ? [x] : bytes` — says less than the other
       // one, so the other is asked first.
-      if (slotTyped(then) && !slotTyped(els)) {
+      if (slotTyped(lexed, then) && !slotTyped(lexed, els)) {
         string et = typeOfE(src, lexed, env, els);
         // `c ? null : x` on a number is the nullable number, as `c ? x : null` is below — answered
         // here because this branch returned the bare `i32` first, and the `null` went into it.
@@ -16569,7 +16558,7 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
       // Two known types that differ. wac has struct inheritance and this emitter has no notion of a
       // subtype, so `Base b = aSub;` is a `local.set` of the wrong reference type — and there is no
       // conversion to write, because the two are the same value and only the *checker* knows that.
-      string g0 = init is null || slotTyped(init!) ? "" : typeOfE(src, lexed, env, init!);
+      string g0 = init is null || slotTyped(lexed, init!) ? "" : typeOfE(src, lexed, env, init!);
       // A **variant and its enum are not related types here, they are the same one** — `Shape s =
       // Shape.Point;` differs only in the name, and the flat representation is what makes that true.
       // Canonicalising before the comparison is the whole of the difference between an enum this
@@ -16642,7 +16631,7 @@ string unsupportedStmtIn(u8[] src, Lexed lexed, Env env, Stmt s) {
       //
       // `returnType` is `""` for a void function, and `isStructName("")` is false, so this costs
       // nothing there.
-      string gr = slotTyped(value!) ? "" : typeOfE(src, lexed, env, value!);
+      string gr = slotTyped(lexed, value!) ? "" : typeOfE(src, lexed, env, value!);
       if (gr != "" && env.canonType(gr) != env.canonType(env.returnType) &&
           valType(gr) == valType(env.returnType) &&
           (isArrayType(env.returnType) || env.isStructName(env.returnType)) &&
@@ -17060,7 +17049,7 @@ string unsupportedValue(u8[] src, Lexed lexed, Env env, Expr e) {
   if (r != "") { return r; }
   // A literal has no type of its own and takes the slot's, which is the one thing that is *meant* to
   // come back empty here.
-  if (isLiteral(e)) { return ""; }
+  if (isLiteral(lexed, e)) { return ""; }
   if (typeOfE(src, lexed, env, e) == "") { return "untyped " + kindOfExpr(e) + operandNote(src, lexed, env, e); }
   return "";
 }
@@ -17111,6 +17100,9 @@ bool integerLiteralsFitI32(u8[] src, Lexed lexed, Expr e) {
     }
     Unary(op, operand): { return integerLiteralsFitI32(src, lexed, operand); }
     Binary(op, left, right): {
+      // A shift's amount is a count, not a literal of this expression.
+      i32 sk = lexed.tokens[op * tokenStride()];
+      if (sk == kShl() || sk == kShr() || sk == kShrU()) { return integerLiteralsFitI32(src, lexed, left); }
       return integerLiteralsFitI32(src, lexed, left) && integerLiteralsFitI32(src, lexed, right);
     }
     // **A ternary passes its arms' values out untouched, so their literals are this expression's.**
@@ -17148,6 +17140,7 @@ bool isFloatLiteral(Expr e) {
     FloatLit(tok): { return true; }
     Unary(op, operand): { return isFloatLiteral(operand); }
     Binary(op, left, right): { return isFloatLiteral(left) || isFloatLiteral(right); }
+    Ternary(cond, then, els): { return isFloatLiteral(then) || isFloatLiteral(els); }
     default: { return false; }
   }
 }
@@ -17194,15 +17187,15 @@ bool builtBySlot(Lexed lexed, Expr e) {
   }
 }
 
-bool slotTyped(Expr e) {
+bool slotTyped(Lexed lexed, Expr e) {
   match (e.kind) {
     ArrLit(elements): { return true; }
-    Ternary(cond, then, els): { return slotTyped(then) && slotTyped(els); }
-    default: { return isLiteral(e); }
+    Ternary(cond, then, els): { return slotTyped(lexed, then) && slotTyped(lexed, els); }
+    default: { return isLiteral(lexed, e); }
   }
 }
 
-bool isLiteral(Expr e) {
+bool isLiteral(Lexed lexed, Expr e) {
   match (e.kind) {
     IntLit(tok): { return true; }
     FloatLit(tok): { return true; }
@@ -17211,21 +17204,25 @@ bool isLiteral(Expr e) {
     // untyped, which is why the emitter can give it the wanted reference type and why the guard that
     // declines an expression of unknown type is not about it.
     NullLit: { return true; }
-    Unary(op, operand): { return isLiteral(operand); }
+    Unary(op, operand): { return isLiteral(lexed, operand); }
     // Both sides literal *and of the same family*. `1 / 2.0` is two literals and not one type: the
     // context cannot settle it, because whatever it says one of the two will be wrong. Treating it as
     // context-typed emitted an `f64.const` into an `i32` division.
+    // **A shift of an integer literal is one too**, whatever its amount: the amount is a count rather
+    // than an operand, so the value's type can only come from the slot (`issues/lang/0233a`).
     Binary(op, left, right): {
-      if (!isLiteral(left) || !isLiteral(right)) { return false; }
+      i32 bk = lexed.tokens[op * tokenStride()];
+      if (bk == kShl() || bk == kShr() || bk == kShrU()) { return isLiteral(lexed, left) && !isFloatLiteral(left); }
+      if (!isLiteral(lexed, left) || !isLiteral(lexed, right)) { return false; }
       return isFloatLiteral(left) == isFloatLiteral(right);
     }
     // `cond ? 1 : 2` has no type of its own for the same reason `1` does not: both branches are
     // literals and the slot is what settles them. The condition is not part of the question — it is
     // always a boolean and never the value.
-    Ternary(cond, then, els): {
-      if (!isLiteral(then) || !isLiteral(els)) { return false; }
-      return isFloatLiteral(then) == isFloatLiteral(els);
-    }
+    // **An integer beside a float is one too**: both take the slot's float type, so `b ? 1 : 2.5` is two
+    // `f64`s in an `f64` slot (spec ch09; the checker refuses it where the slot is an integer).
+    // `issues/lang/0243a`.
+    Ternary(cond, then, els): { return isLiteral(lexed, then) && isLiteral(lexed, els); }
     default: { return false; }
   }
 }
@@ -19619,7 +19616,11 @@ bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     // A string literal is `array.new_fixed` over its bytes, which *is* a constant expression — so a
     // `const string` can live in a global like any other array constant.
     StrLit(tok): { return true; }
+    // **An array past `fixedArrayLimit` is not**, being built in pieces through locals a constant
+    // expression does not have — so a long one is a mutable global the start function fills
+    // (`issues/lang/0334a`).
     ArrLit(elements): {
+      if (elements.len() > fixedArrayLimit()) { return false; }
       for (i32 i = 0; i < elements.len(); i++) {
         if (!isConstExpr(src, lexed, env, elements[i])) { return false; }
       }
@@ -19628,6 +19629,7 @@ bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     TupleLit(elements): { return false; }
     ArrNew(elem, size, fill, elements): {
       if (typeOfTyName(env, src, lexed, elem) == "") { return false; }
+      if (elements.len() > fixedArrayLimit()) { return false; }
       for (i32 i = 0; i < elements.len(); i++) {
         if (!isConstExpr(src, lexed, env, elements[i])) { return false; }
       }
@@ -22936,11 +22938,69 @@ void emitArrayLiteral(B fb, u8[] src, Lexed lexed, Env env, Expr[] elements, str
   }
   string et = arrayType.slice(0, arrayType.len() - 2);
   i32 ti = env.arrayType(arrayType);
-  for (i32 i = 0; i < elements.len(); i++) {
+  i32 n = elements.len();
+  if (n > fixedArrayLimit()) {
+    // A constant expression has no locals to build in, so there the limit is the program's to meet.
+    if (env.inConstExpr) {
+      env.declineFor("a constant array of more than " + numText(fixedArrayLimit()) + " elements");
+      return;
+    }
+    emitChunkedArrayLiteral(fb, src, lexed, env, elements, arrayType);
+    return;
+  }
+  for (i32 i = 0; i < n; i++) {
     emitExprAt(fb, src, lexed, env, elements[i], et);
   }
   fb.byte(251);
   fb.u32leb(8);      // array.new_fixed
   fb.u32leb(ti);
-  fb.u32leb(elements.len());
+  fb.u32leb(n);
+}
+
+/**
+ * The most elements one `array.new_fixed` may carry. V8 refuses more — *"Requested length 10001 for
+ * array.new_fixed too large, maximum is 10000"* — so a longer literal is built in pieces of at most this
+ * many, and a program never meets the engine's limit. `issues/lang/0334a`.
+ */
+i32 fixedArrayLimit() { return 10000; }
+
+/**
+ * A literal longer than `fixedArrayLimit`, built a piece at a time: each piece is one `array.new_fixed`,
+ * the first also sizes the whole array (`array.new`, filled from its own first element, which needs no
+ * default and so works for any element type), and `array.copy` puts each piece in place. Elements are
+ * still evaluated once each, in order.
+ */
+void emitChunkedArrayLiteral(B fb, u8[] src, Lexed lexed, Env env, Expr[] elements, string arrayType) {
+  string et = arrayType.slice(0, arrayType.len() - 2);
+  i32 ti = env.arrayType(arrayType);
+  i32 n = elements.len();
+  // Named by position: a literal among the elements of another would otherwise share these.
+  string tag = numText(elements[0].line) + ":" + numText(elements[0].col);
+  i32 whole = env.scratchNamed("long literal " + tag, arrayType);
+  i32 piece = env.scratchNamed("long literal piece " + tag, arrayType);
+  i32 at = 0;
+  while (at < n) {
+    i32 m = n - at < fixedArrayLimit() ? n - at : fixedArrayLimit();
+    for (i32 i = at; i < at + m; i++) {
+      emitExprAt(fb, src, lexed, env, elements[i], et);
+    }
+    fb.byte(251); fb.u32leb(8); fb.u32leb(ti); fb.u32leb(m);        // array.new_fixed
+    fb.byte(33); fb.u32leb(piece);                                  // local.set
+    if (at == 0) {
+      fb.byte(32); fb.u32leb(piece);                                // local.get
+      fb.byte(65); fb.i32leb(0);
+      fb.byte(251); fb.u32leb(bulkGet(et)); fb.u32leb(ti);          // array.get
+      fb.byte(65); fb.i32leb(n);
+      fb.byte(251); fb.u32leb(6); fb.u32leb(ti);                    // array.new
+      fb.byte(33); fb.u32leb(whole);
+    }
+    fb.byte(32); fb.u32leb(whole);
+    fb.byte(65); fb.i32leb(at);
+    fb.byte(32); fb.u32leb(piece);
+    fb.byte(65); fb.i32leb(0);
+    fb.byte(65); fb.i32leb(m);
+    fb.byte(251); fb.u32leb(17); fb.u32leb(ti); fb.u32leb(ti);      // array.copy
+    at = at + m;
+  }
+  fb.byte(32); fb.u32leb(whole);
 }

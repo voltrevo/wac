@@ -150,6 +150,18 @@ export string dumpFirstTypeHint(u8[] src) {
   return hints.len() > 0 ? hints[0] : "";
 }
 
+/** The **note** — the label under the caret — of the first checker diagnostic, as `dumpFirstTypeHint` gives its hint. */
+export string dumpFirstTypeNote(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed);
+  Program prog = parseProgram(p);
+  C c = C.create(src, lexed.tokens, lexed.tokenCount, lexed.tokenCount);
+  declareModule(c, prog, string[].filled(0, ""));
+  checkModule(c, prog);
+  string[] notes = notesOf(c);
+  return notes.len() > 0 ? notes[0] : "";
+}
+
 /**
  * Every static's value, as `NAME = value` or `NAME ! outcome: why` — spec ch28.
  *

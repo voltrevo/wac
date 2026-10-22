@@ -458,7 +458,7 @@ bool usableSig(G g, string ret, string params, bool nestedOk) {
 /**
  * Whether a *field* is something the glue can carry.
  *
- * **Struct fields had no such test, and that is what `issues/system/0265c` was.** `supported` guards an
+ * **Struct fields had no such test.** `supported` guards an
  * exported function's signature and `bindgenDeclined` walks the same list; a field whose type is a
  * callback the boundary cannot carry was emitted anyway, with the type `ann` gives it — and for
  * `fn[fn[i32(i32)](bool)]`, a callback *returning* a function, that type is `(a0: boolean) => number`.

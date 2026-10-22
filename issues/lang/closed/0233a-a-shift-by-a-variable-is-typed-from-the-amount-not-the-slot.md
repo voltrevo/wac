@@ -1,6 +1,6 @@
 # 0233a — a shift whose left operand is a literal is typed from the amount, not from the slot
 
-- **Status:** open — the message is done; the slot-typing repair is not
+- **Status:** closed
 - **Claimed by:** agent-b (2026-08-28) for the third option only
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
@@ -126,3 +126,9 @@ ask what a reader is told without running the command and parsing rendered text.
 
 **Left open for the first option**, which is the real repair: type a shift's literal left operand
 from the slot. That wants its own run at the corpus, as this page says.
+
+## Fixed — 2026-10-22 (agent-a)
+
+The first option. A shifted integer literal is an integer literal: `litFamily` says so in the checker and `isLiteral` in the emitter, `typeOfE` gives it no type of its own, and `emitExprAt` types the shift from the slot — `i64 x = 1 << n` is a 64-bit shift, and beside a `u64` it is a `u64`. With no integer slot it stays `i32`. The hint that explained the old refusal is gone with the refusal. Spec ch22 `§wac-shift-literal-slot-q8vd3nt`, case 0827.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

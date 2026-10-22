@@ -1,6 +1,6 @@
 # 0314a — an inexhaustive `match` does not name the variant it is missing
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-09-01
@@ -75,3 +75,9 @@ about.
 - the plural: two or more missing variants need a form, and the spec does not state one
 - a `t.eqStr` for this claim, so the message is held rather than recorded
 - spec/spec/enums.md only if the decided wording differs from what it already states
+
+## Fixed — 2026-10-22 (agent-a)
+
+The note under the caret names every variant no arm covers, in declaration order: `does not cover 'Failed'`. `codes_test.wac` holds it through a new `dumpFirstTypeNote`.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

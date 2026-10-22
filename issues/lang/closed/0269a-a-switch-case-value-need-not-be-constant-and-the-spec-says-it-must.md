@@ -1,6 +1,6 @@
 # 0269a — a switch case value need not be constant, and the spec's own reason says it must
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-08-26
 - **Kind:** decision — is a non-constant case value legal
@@ -70,3 +70,9 @@ evaluate, so while `case k:` is legal the rule is necessarily partial: two const
 equal are refused, and `case k: … case k:` is not. Under option 1 the rule becomes total. The partial
 version is still worth having and is what 0266c implements; this issue is why its header says
 *constant*.
+
+## Fixed — 2026-10-22 (agent-a)
+
+Option 1. A case value must be a constant — a literal, a static, or an operator over them (`isCaseConstant`); anything else is error 250, *"a case value must be a constant"*. Spec ch25 `§wac-switch-case-constant-m4tz8kq`, cases 0830 and 0831.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

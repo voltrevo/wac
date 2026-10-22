@@ -25,7 +25,7 @@
 // **Which files those are is derived from the consumers, not guessed:** `spec/**` (walked by
 // `specexamples_test.wac`) and `packages/*/README.md` (`docsignatures_test.wac`). A ```wac fence in an issue or a design note is quoted, not compiled —
 // this very file's predicate first called my own prose commit non-documentary because it quoted a
-// four-line reproduction into `issues/lang/open/0235a`, which nothing runs.
+// four-line reproduction into `issues/lang/closed/0235a`, which nothing runs.
 //
 // `tools/wac/docsonly_test.wac` pins that list by finding every consumer of the fence idiom, so a
 // fourth one cannot appear without failing and pointing here.

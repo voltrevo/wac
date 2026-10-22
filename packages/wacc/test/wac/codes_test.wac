@@ -42,7 +42,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { dumpErrors, dumpFirstTypeHint, dumpParseErrors, dumpTypeErrors } from "../../src/api.wac";
+import { dumpErrors, dumpFirstTypeHint, dumpFirstTypeNote, dumpParseErrors, dumpTypeErrors } from "../../src/api.wac";
 
 /** The code of the first diagnostic a dump reports, or -1 when it reported none. */
 i32 firstCode(i32[] out) { return out.len() >= 3 ? out[0] : -1; }
@@ -420,44 +420,19 @@ export string test_a_missing_quote_reports_at_the_line_it_is_missing_from() {
 }
 
 /**
- * `i64 x = 1 << count;` says why it is refused, rather than only that it is.
- *
- * `issues/lang/0233a`. A shift is typed from the value being shifted, and a literal there has no
- * type of its own — so `1` takes `count`'s `i32` and the `i64` slot is never consulted.
- * spec/spec/types.md says a literal takes its type from what is expected of it, *"including as an
- * operand of an operator … the other operand counts as an expectation"*, and for a shift the other
- * operand is an *amount* rather than a second value of the same type. Both compilers refused this
- * and agreed; what it lacked was a reason.
- *
- * The generic hint the code carries — *"use `as!` for a checked conversion"* — is right by accident:
- * a cast is the fix, and it says nothing about why the language wants one. That issue lists three
- * ways out and recommends this one first, leaving slot typing in `emitExprAt` for someone already
- * there.
- *
- * **The advice is checked as well as the sentence.** A hint that names a fix nobody can follow is
- * worse than none, so the program it recommends is compiled here too.
+ * `1 << count` in an `i64` slot is a 64-bit shift: a shifted literal takes the slot's type, as any
+ * literal does. `issues/lang/0233a` — it was refused with a hint explaining why, and the hint went
+ * when the rule did. A shift of a *variable* still takes that variable's type and gets the widening
+ * help, which is the line the old hint had to stay behind.
  */
-export string test_a_shift_typed_from_its_amount_says_so() {
+export string test_a_shifted_literal_takes_the_slots_type() {
   T t = T.create();
-  string src = "export i64 f(i32 count) { i64 x = 1 << count; return x; }";
-
-  t.eqI32(firstCode(dumpTypeErrors(src.toBytes())), 3, "still refused, as an initialiser mismatch");
-  string hint = dumpFirstTypeHint(src.toBytes());
-  t.isTrue(contains(hint, "takes its type from the value being shifted"),
-           "and the hint names the cause rather than the cure — got: " + hint);
-
-  // Following it compiles, which is what makes it advice rather than an observation.
-  t.eqI32(firstCode(dumpTypeErrors(
-            "export i64 f(i32 count) { i64 x = 1 as i64 << count; return x; }".toBytes())),
-          0 - 1, "the program the hint recommends is accepted");
-
-  // **Not every mismatch gets this**, or the sentence would be wrong wherever it appeared. A shift
-  // whose left operand is a *value* takes its type from that value and needs no explaining — it is an
-  // `i32` where an `i64` is wanted, which is a lossless widening and gets the help that says so.
+  t.eqI32(firstCode(dumpTypeErrors("export i64 f(i32 count) { i64 x = 1 << count; return x; }".toBytes())),
+          0 - 1, "a shifted literal in an i64 slot is accepted");
+  t.eqI32(firstCode(dumpTypeErrors("export string f(i32 n) { string s = 1 << n; return s; }".toBytes())),
+          3, "and in a string slot it is still an integer where a string is wanted");
   t.eqStr(dumpFirstTypeHint("export i64 f(i32 a, i32 b) { i64 x = a << b; return x; }".toBytes()),
           "widen with `as i64` — every i32 fits in i64", "a shift of a variable is an ordinary widening");
-  t.eqStr(dumpFirstTypeHint("export i64 f() { i64 x = \"s\"; return x; }".toBytes()),
-          "", "and so does an ordinary mismatch");
   return t.report();
 }
 
@@ -491,5 +466,22 @@ export string test_a_type_argument_list_on_a_function_says_which_rule_applies() 
   // function exists wherever a name is misspelled.
   t.eqStr(dumpFirstTypeHint("export i32 f() { Nope n = Nope(); return 0; }".toBytes()),
           "", "an unknown type that is not a function takes the code's own hint");
+  return t.report();
+}
+
+/**
+ * An inexhaustive `match` names what it is missing — spec ch13 `§enum-match-inexhaustive`: *"match does
+ * not cover 'Rect'"*. It said "every variant" and named nothing, which sends the reader to count.
+ * `issues/lang/0314a`.
+ */
+export string test_an_inexhaustive_match_names_the_missing_variants() {
+  T t = T.create();
+  string one = "enum Read { Data(u8[] b), End, Failed(string why) }\n"
+             + "export i32 f(Read r) { match (r) { Data(b): { return 1; } End: { return 0; } } }";
+  t.eqI32(firstCode(dumpTypeErrors(one.toBytes())), 58, "still refused as inexhaustive");
+  t.eqStr(dumpFirstTypeNote(one.toBytes()), "does not cover 'Failed'", "naming the variant left out");
+  string two = "enum Shape { Point, Circle(f64 r), Rect(f64 w, f64 h) }\n"
+             + "export i32 f(Shape s) { match (s) { Circle(r): { return 1; } } return 0; }";
+  t.eqStr(dumpFirstTypeNote(two.toBytes()), "does not cover 'Point', 'Rect'", "every one, in declaration order");
   return t.report();
 }

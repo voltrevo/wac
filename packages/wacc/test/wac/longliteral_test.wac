@@ -1,0 +1,65 @@
+// An array literal longer than one `array.new_fixed` may carry still builds and runs.
+//
+//     wac test --allow-read --allow-write --allow-run packages/wacc/test/wac/longliteral_test.wac
+//
+// `issues/lang/0334a`. V8 refuses `array.new_fixed` above 10,000 elements, so a literal one longer
+// emitted a module no engine would load, and two files in the tree split their arrays by hand at two
+// different sizes to stay under it. The emitter builds a long literal in pieces now; this runs one of
+// three pieces at each of three element kinds — a number, a packed byte and a reference — because the
+// first piece also sizes the whole array from its own first element, which is read differently for
+// each.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "std";
+import { Ran, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** `[f(0), f(1), …, f(n - 1)]` as source text, `f` spelled by `form`. */
+string literal(i32 n, string form) {
+  string out = "[";
+  for (i32 i = 0; i < n; i++) {
+    if (i > 0) { out = out + ","; }
+    if (form == "byte") { out = out + itoa(i % 256); }
+    else if (form == "string") { out = out + "\"" + itoa(i % 10) + "\""; }
+    else { out = out + itoa(i); }
+  }
+  return out + "]";
+}
+
+export string test_a_literal_past_the_engines_limit_runs(Core core, Cli cli) {
+  T t = T.create();
+  i32 n = 20005;
+  string source = "export i32 main() {\n" +
+      "  i32[] a = " + literal(n, "int") + ";\n" +
+      "  u8[] b = " + literal(10001, "byte") + ";\n" +
+      "  string[] s = " + literal(10001, "string") + ";\n" +
+      "  if (a.len() != 20005 || a[0] != 0 || a[9999] != 9999 || a[10000] != 10000 || a[20004] != 20004) { return 1; }\n" +
+      "  if (b.len() != 10001 || b[255] != 255 || b[10000] != 16) { return 2; }\n" +
+      "  if (s.len() != 10001 || s[10000] != \"0\" || s[9999] != \"9\") { return 3; }\n" +
+      "  return 7;\n" +
+      "}\n";
+  Ran r = runEmittedOne(cli, "/t/long.wac", source, scratchDir(cli), "longliteral.wasm");
+  t.isTrue(r.ok, "the module was built and started — " + r.error);
+  if (!r.ok) { return t.report(); }
+  t.isFalse(r.trapped, "it did not trap — " + r.stderr);
+  t.eqI32(r.status, 7, "every piece landed where it belongs");
+  return t.report();
+}
+
+/**
+ * A `static` holding a long literal: evaluated at compile time and emitted as a value, which is a
+ * different path from a literal in a function body — and the one `packages/raster/src/font16.wac`'s
+ * glyph table takes.
+ */
+export string test_a_long_static_array_runs(Core core, Cli cli) {
+  T t = T.create();
+  string source = "static i32[] BIG = " + literal(20005, "int") + ";\n" +
+      "export i32 main() { return BIG.len() == 20005 && BIG[10000] == 10000 && BIG[20004] == 20004 ? 7 : 1; }\n";
+  Ran r = runEmittedOne(cli, "/t/longstatic.wac", source, scratchDir(cli), "longstatic.wasm");
+  t.isTrue(r.ok, "the module was built and started — " + r.error);
+  if (!r.ok) { return t.report(); }
+  t.isFalse(r.trapped, "it did not trap — " + r.stderr);
+  t.eqI32(r.status, 7, "the static holds every element");
+  return t.report();
+}
+

@@ -604,7 +604,7 @@ string[][] gone() {
     // today and must not be rewritten to name a file that did not exist when it was written — or
     // one of the new files saying what it replaced. The alternative was editing seventeen records
     // to make a link checker green, which is the wrong direction.
-    ["issues/lang/open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md", "tools/runTests.ts"],
+    ["issues/lang/closed/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md", "tools/runTests.ts"],
     ["issues/system/closed/0069-tests-hand-out-ports-by-binding-and-releasing-them.md", "tools/runTests.ts"],
     ["issues/system/closed/0075-the-test-worker-cap-is-a-guess-and-needs-a-quiet-machine-to-set.md", "tools/runTests.ts"],
     ["issues/system/closed/0077-a-file-named-test-ts-is-run-by-the-suite-that-launches-it.md", "tools/runTests.ts"],

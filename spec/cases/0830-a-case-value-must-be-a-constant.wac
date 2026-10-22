@@ -1,0 +1,5 @@
+// expect: refused
+// spec:  §wac-switch-case-constant-m4tz8kq
+// why: a `switch` dispatches on constants; a parameter is a run-time value and is compared with `if`
+// from: spec/3-expressions/25-control-flow.md
+export i32 pick(i32 n, i32 k) { switch (n) { case k: { return 111; } default: { return 222; } } }

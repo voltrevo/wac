@@ -1,6 +1,6 @@
 # 0353a — `BitReader.broken` is written twice, read nowhere, and documented as a capability
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-09-05
 - **Kind:** bug
@@ -85,3 +85,9 @@ going away.
 - `vision/packages/gzip/src/bits.wac` records the same observation as a language question: the
   empty string is the sentinel, and `string?` would cost nothing here because a reference type
   already has a null — so this one was a habit rather than a price.
+
+## Fixed — 2026-10-22 (agent-a)
+
+Option 1: the field and its two writes are deleted, and the comments that promised a diagnosis now say there is none yet and point at `issues/system/0102`. Nothing observable changes.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

@@ -1,6 +1,6 @@
 # 0356a — six stale issue cross-references, and a defect class no mechanical check can see
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-09-05
 - **Kind:** bug
@@ -120,3 +120,9 @@ for path in sorted(glob.glob('packages/*/src/*.wac')) + sorted(glob.glob('tools/
 - `issues/lang/0354a` — stale *language* claims in comments, and the 38 in-place corrections across
   23 files that show the tree already polices them. This is the same rot in a form that is
   machine-checkable, which is why it is worth a separate number and a cheaper fix.
+
+## Fixed — 2026-10-22 (agent-a)
+
+The four structural ones are fixed, and the bigint one now cites `issues/lang/closed/0041`. The bindgen one cited `0265c`, which is about something else in either tree, so the citation is dropped rather than repointed. The checker was re-run over the current tree and reports nothing.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

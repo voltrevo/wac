@@ -1,0 +1,12 @@
+// expect: f() = 1
+// spec:  §wac-overflow-shift-r3hc6vb
+// why: `(x << s) >> s != x` holds exactly when the shift lost bits off the top — the 64-bit case the
+//      widen-and-narrow idiom cannot reach (issue 0332a, from packages/bignum's `rhat << 32`)
+// from: spec/2-types/08-primitives.md
+bool shlLoses(u64 x, i32 s) { return (x << s) >> s != x; }
+export i32 f() {
+  u64 base = 4294967296;
+  if (!shlLoses(base, 32)) { return -1; }
+  if (shlLoses(base - 1, 32)) { return -2; }
+  return 1;
+}

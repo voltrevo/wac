@@ -1,6 +1,6 @@
 # 0332a — the 64-bit reproduction `0033` was closed for want of
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-09-04
@@ -79,3 +79,9 @@ found it (runs of all-ones and all-zeros limbs) is in the suite and in `cov.ts`.
 because `0033` asked for the case before deciding, and because the case says something the request
 did not anticipate: the gap is not "64-bit addition", it is *any operation whose result leaves the
 widest type there is*, and shifts get there faster than sums.
+
+## Fixed — 2026-10-22 (agent-a)
+
+Documented the idiom the 64-bit gap was missing: a left shift lost bits exactly when shifting back does not give the operand, `(x << s) >> s != x`. Spec ch08 `§wac-overflow-shift-r3hc6vb`, case 0832. A checked build mode or checked operators stay undecided and unfiled; nothing here needs them.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

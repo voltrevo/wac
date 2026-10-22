@@ -1,0 +1,12 @@
+// expect: f() = 8
+// why: an integer spelling may denote a float, so a ternary or a `match` whose literal branches mix the
+//      two takes the slot's float type for both — `f32` as readily as `f64`
+// from: spec/2-types/09-numeric-literals.md
+enum E { A, B }
+f64 pick(bool b, E e) {
+  f64 d = b ? 1 : 2.5;
+  f64 g = match (e) { A: 1, default: 2.5 };
+  f32 h = b ? 2 : 0.5;
+  return d + g + (h as f64);
+}
+export f64 f() { return pick(true, E.A) + pick(false, E.B) - 1.5; }

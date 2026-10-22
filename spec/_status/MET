@@ -120,6 +120,7 @@ spec/2-types/08-primitives.md#16
 spec/2-types/08-primitives.md#17
 spec/2-types/08-primitives.md#18
 spec/2-types/08-primitives.md#19
+spec/2-types/08-primitives.md#20
 spec/2-types/09-numeric-literals.md#1
 spec/2-types/09-numeric-literals.md#2
 spec/2-types/09-numeric-literals.md#3
@@ -329,6 +330,7 @@ spec/3-expressions/22-operators.md#11
 spec/3-expressions/22-operators.md#12
 spec/3-expressions/22-operators.md#13
 spec/3-expressions/22-operators.md#14
+spec/3-expressions/22-operators.md#15
 spec/3-expressions/23-interpolation-and-markup.md#1
 spec/3-expressions/23-interpolation-and-markup.md#2
 spec/3-expressions/23-interpolation-and-markup.md#3
@@ -374,6 +376,7 @@ spec/3-expressions/25-control-flow.md#14
 spec/3-expressions/25-control-flow.md#15
 spec/3-expressions/25-control-flow.md#16
 spec/3-expressions/25-control-flow.md#17
+spec/3-expressions/25-control-flow.md#18
 spec/3-expressions/26-errors-and-results.md#1
 spec/3-expressions/26-errors-and-results.md#2
 spec/3-expressions/26-errors-and-results.md#3

@@ -1,0 +1,15 @@
+// expect: f() = 1
+// why: a literal takes its type from the slot, and a shift's literal left operand is no exception:
+//      `1 << n` in an `i64` slot is a 64-bit shift, and beside a `u64` it is a `u64`
+// spec:  §wac-shift-literal-slot-q8vd3nt
+// from: spec/3-expressions/22-operators.md
+export i32 f() {
+  i32 n = 40;
+  i64 x = 1 << n;
+  if (x != 1099511627776) { return -1; }
+  u64 m = 0xFFFFFFFFFFFF;
+  u64 low = m & ((1 << n) - 1);
+  if (low != 0xFFFFFFFFFF) { return -2; }
+  i32 small = 1 << 4;
+  return small == 16 ? 1 : -3;
+}

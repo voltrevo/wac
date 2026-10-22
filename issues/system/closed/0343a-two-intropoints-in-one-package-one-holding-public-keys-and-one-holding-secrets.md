@@ -1,6 +1,6 @@
 # 0343a — two `IntroPoint`s in one package, one holding public keys and one holding secrets
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-09-05
 - **Kind:** design decision
@@ -70,3 +70,9 @@ four) and are not this.
 The sweep is the shipped-tree half of the same check `vision/QUESTIONS.md` records for its own files
 under *Twenty-one type names are declared twice*, whose conclusion applies here unchanged: **a
 duplicate name is the cheapest signal that two files have solved one problem twice.**
+
+## Fixed — 2026-10-22 (agent-a)
+
+The service's type is `IntroPointSecrets` (hsdescbuild.wac and its three users), and its doc comment says why it is named apart from the client's `IntroPoint`. `hsupload.wac`'s outcome type is `UploadOutcome`.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

@@ -2335,6 +2335,13 @@ export i32 errMarkupUnbuilt() { return 247; }
 export i32 errPrivateVirtual() { return 248; }
 /** A subtype of a struct with a private field that has no default, which nothing could construct. */
 export i32 errUnconstructibleParent() { return 249; }
+
+/**
+ * A `switch` case value that is not a constant — a parameter, a local, a call. spec ch25: a switch
+ * dispatches like `br_table`, which needs its cases at compile time; an if-else chain is what compares
+ * against a run-time value. `issues/lang/0269a`.
+ */
+export i32 errCaseNotConstant() { return 250; }
 /** Two declarations of one name at file scope. */
 export i32 errDuplicateName() { return 64; }
 /** Two fields, two methods, or a field and a method of one name in one struct. */
@@ -5434,37 +5441,6 @@ void reportExpr(C c, i32 code, Expr e, string note) {
   c.reportWith(code, e.line, e.col, note);
 }
 
-/**
- * The sentence for `i64 x = 1 << count;`, or "" when that is not what happened.
- *
- * **A shift is typed from the value being shifted, and a literal there has no type of its own.**
- * spec/spec/types.md says a literal takes its type from what is expected of it, *"including as an
- * operand of an operator … the other operand counts as an expectation"* — and for a shift the other
- * operand is the *amount*, which is a count rather than a second value of the same type. So `1`
- * takes `count`'s `i32` and the `i64` slot is never consulted.
- *
- * `issues/lang/0233a` records three ways out and recommends this one first: the refusal is correct
- * and both compilers agreed on it, and what it lacked was a reason. The generic help — *"use `as!`
- * for a checked conversion"* — is right by accident and tells the reader to cast the literal without
- * saying why casting it is what the language wants. The deep fix is slot typing in `emitExprAt` and
- * wants its own run at the corpus.
- */
-string shiftLiteralHint(C c, Expr e) {
-  return match (e.kind) {
-    Binary(op, left, right): shiftHintFor(c, op, left),
-    default: ""
-  };
-}
-
-/** The half of `shiftLiteralHint` that needs the operator's kind, which is a token. */
-string shiftHintFor(C c, i32 op, Expr left) {
-  i32 k = tokenKind(c, op);
-  if (k != kShl() && k != kShr() && k != kShrU()) { return ""; }
-  if (litFamily(c, left) != litInteger()) { return ""; }
-  return "a shift takes its type from the value being shifted, and a literal there has none — "
-       + "write the width you mean, as in `1 as i64 << n`";
-}
-
 /** `reportExpr`, with a hint written for this diagnostic rather than for its code. */
 void reportExprHinted(C c, i32 code, Expr e, string note, string hint) {
   // The whole expression's width, which is what `reportExprSpan` measures — a shift has no single
@@ -5855,6 +5831,10 @@ i32 litFamily(C c, Expr e) {
         return litNone();
       }
       i32 l = litFamily(c, left);
+      // **A shift of an integer literal is an integer literal**, whatever its amount: the amount is a
+      // count rather than an operand, so the slot is the only thing that can type `1 << n`
+      // (`issues/lang/0233a`).
+      if (k == kShl() || k == kShr() || k == kShrU()) { return l == litInteger() ? l : litNone(); }
       i32 r = litFamily(c, right);
       // An integer beside a float is read as one (spec ch09), so the sum is a float literal.
       if ((l == litInteger() && r == litFloat()) || (l == litFloat() && r == litInteger())) { return litFloat(); }
@@ -5871,9 +5851,7 @@ i32 litFamily(C c, Expr e) {
     // sweep lost `Ternary-cond`. The callers walk the expression either way now, which is the half of
     // `issues/lang/0145` that had to come first.
     Ternary(tcond, tthen, tels): {
-      i32 tf = litFamily(c, tthen);
-      if (tf == litNone() || tf == litNull()) { return litNone(); }
-      return tf == litFamily(c, tels) ? tf : litNone();
+      return sharedLiteralFamily(litFamily(c, tthen), litFamily(c, tels));
     }
     /**
      * **And an expression `match` of literals, for the same reason and by the same rule.**
@@ -5904,13 +5882,26 @@ i32 litFamily(C c, Expr e) {
         // A statement arm carries a body and no value; one `Arm` serves both forms.
         if (arms[i].value is null) { return litNone(); }
         i32 af = litFamily(c, arms[i].value!);
-        if (af == litNone() || af == litNull()) { return litNone(); }
-        if (i == 0) { mf = af; } else if (af != mf) { return litNone(); }
+        mf = i == 0 ? sharedLiteralFamily(af, af) : sharedLiteralFamily(mf, af);
+        if (mf == litNone()) { return litNone(); }
       }
       return mf;
     }
     default: { return litNone(); }
   }
+}
+
+/**
+ * The family two branches of one value share — a ternary's two, or a `match`'s arms pairwise. The same
+ * family is itself; **an integer beside a float is a float**, as in arithmetic (spec ch09: an integer
+ * spelling may denote a float), so the slot types both (`issues/lang/0243a`). A `null` and anything
+ * unrelated share nothing here.
+ */
+i32 sharedLiteralFamily(i32 a, i32 b) {
+  if (a == litNone() || a == litNull() || b == litNone() || b == litNull()) { return litNone(); }
+  if (a == b) { return a; }
+  if ((a == litInteger() && b == litFloat()) || (a == litFloat() && b == litInteger())) { return litFloat(); }
+  return litNone();
 }
 
 /** The family a literal expression belongs to, or `litNone` when the expression is not one. */
@@ -6372,6 +6363,10 @@ export string typeOfExpr(C c, Expr e) {
       // the emitter, which knew better, noticed.
       if ((bk == kShl() || bk == kShr() || bk == kShrU()) && hasBitMethods(bl) && (rLit || hasBitMethods(br))) {
         return bl;
+      }
+      // And a literal shifted has no type of its own — the slot gives it one, as `litFamily` says.
+      if ((bk == kShl() || bk == kShr() || bk == kShrU()) && litFamily(c, left) == litInteger()) {
+        return typeNone();
       }
       // **Two known operands that disagree make the result unknown**, which is how the reference
       // behaves and why it reports `t.a + t.b + t.c` once rather than twice: the first `+` is an
@@ -8297,7 +8292,10 @@ void checkExpr(C c, Expr e) {
         // Two literals of different families — `c ? 1 : true` — have nothing to take a type from.
         // **Except a `null`**, which takes the other branch's type: `c ? 1 : null` in an `i32?` slot
         // is the shape the spec writes for a nullable primitive.
-        if (litFamily(c, then) != litFamily(c, els) &&
+        // **And an integer beside a float**, which is a float (spec ch09: an integer spelling may denote
+        // a float) — `b ? 1 : 2.5` is two `f64`s in an `f64` slot, and the slot's own check refuses it
+        // in an `i32` one, where `2.5` has no reading. `issues/lang/0243a`.
+        if (litFamily(c, then) != litFamily(c, els) && litFamily(c, e) != litFloat() &&
             litFamily(c, then) != litNull() && litFamily(c, els) != litNull()) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
@@ -10437,6 +10435,24 @@ i64 switchCaseValue(C c, Expr e) {
     default: { }
   }
   return v & 4294967295;
+}
+
+/**
+ * Whether a case value is a constant: a literal, a static (not a local of the same name), or an operator
+ * over constants. Its value need not be computable here — a static this checker cannot evaluate is still
+ * a constant — which is why this is separate from `caseConstValue`.
+ */
+bool isCaseConstant(C c, Expr e) {
+  if (litKindOf(e) != litNone()) { return true; }
+  match (e.kind) {
+    Ident(tok): {
+      i32 local = c.findName(tokenText(c, tok));
+      return local < 0 || c.depthOf(local) == 0;
+    }
+    Unary(op, operand): { return isCaseConstant(c, operand); }
+    Binary(op, left, right): { return isCaseConstant(c, left) && isCaseConstant(c, right); }
+    default: { return false; }
+  }
 }
 
 /**
@@ -13454,17 +13470,9 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (nullableIntoNonNull(c, wantCheck, gotCheck)) {
         c.report(errNullableToNonNull(), initE.line, initE.col);
       } else if (!assignable(c, wantCheck, gotCheck)) {
-        // `i64 x = 1 << count;` is the idiom this catches, and the reason is not in the message
-        // without help — `issues/lang/0233a`. Empty for everything else, which falls through to the
-        // code's own hint exactly as before.
-        string sh = shiftLiteralHint(c, initE);
-        if (sh == "") {
-          i32 hinted = c.errorCount;
-          reportExpr(c, errInitTypeMismatch(), initE, expectedFound(wantCheck, gotVar));
-          widenHint(c, hinted, gotVar, wantVar);
-        } else {
-          reportExprHinted(c, errInitTypeMismatch(), initE, expectedFound(wantCheck, gotVar), sh);
-        }
+        i32 hinted = c.errorCount;
+        reportExpr(c, errInitTypeMismatch(), initE, expectedFound(wantCheck, gotVar));
+        widenHint(c, hinted, gotVar, wantVar);
       }
       // **A `const` reference never becomes a plain one** (spec ch17 `§wac-const-no-launder-t584c4n`):
       // a binding written `S` would let it be written through. `const S x` and `(const S) x` hold one.
@@ -13813,15 +13821,19 @@ void checkStmt(C c, Stmt s, Ty want) {
       // token text accepts all three of those pairs — the ones most likely to be a real mistake — and
       // looks like it works, which is worse than no check because it would be believed.
       //
-      // **Constant on both sides.** A case value is not required to be one: `case k:` for a parameter
-      // compiles and compares at run time, because `emitSwitch` is an if-else chain. So two arms equal
-      // only at run time are not refused, and that is `issues/lang/0269a`'s decision rather than a gap
-      // here. `litKindOf` is the same test the type rule above uses, so the two agree about what a
-      // literal is.
+      // **Constant on both sides**, which every case value now is (`issues/lang/0269a`) — though a
+      // static this checker cannot compute is skipped rather than compared.
       //
       // **A static is a constant too** (ruled 2026-10-21, issue 0390a): `case K:` beside `case 3:` with
       // `static i32 K = 3` leaves the second arm dead exactly as `case 3:` twice does. A static this
       // checker cannot compute is not a constant it knows, and is skipped rather than reported here.
+      // **A case value is a constant** (spec ch25): `case k:` on a parameter compared at run time,
+      // because the emitter is an if-else chain — a capability the spec's own `br_table` reason forbids.
+      // At the value, which is what has to change. `issues/lang/0269a`.
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (cases[i].value is null) { continue; }
+        if (!isCaseConstant(c, cases[i].value!)) { reportExpr(c, errCaseNotConstant(), cases[i].value!, ""); }
+      }
       for (i32 i = 0; i < cases.len(); i++) {
         if (cases[i].value is null) { continue; }
         i64 vi = caseConstValue(c, cases[i].value!);
@@ -15028,6 +15040,9 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   // two modules' same-named variants no longer answer for each other.
   i32 total = 0;
   i32 covered = 0;
+  // The variants no arm names, in declaration order, for the message (spec ch13
+  // `§enum-match-inexhaustive`: *"match does not cover 'Rect'"*). `issues/lang/0314a`.
+  string missing = "";
   for (i32 k = 0; k < c.variantCount; k++) {
     if (c.variantOwners[k] != owner) { continue; }
     // **A variant with a `never` payload has no values**, so a `match` need not name it
@@ -15035,9 +15050,14 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
     // `Yielded`. Asked of the payload as this subject instantiates it.
     if (variantUninhabited(c, t, owner, c.variantNames[k], c.variantArities[k])) { continue; }
     total = total + 1;
+    bool named = false;
     for (i32 i = 0; i < seenCount; i++) {
-      if (seen[i] == c.variantNames[k]) { covered = covered + 1; }
+      if (seen[i] == c.variantNames[k]) { covered = covered + 1; named = true; }
     }
+    // The table can hold a variant twice — counted twice and covered twice, so the totals agree — but
+    // it is named once.
+    string q = "'" + c.variantNames[k] + "'";
+    if (!named && missing.indexOf(q) < 0) { missing = missing + (missing == "" ? "" : ", ") + q; }
   }
   // An enum whose variants this checker cannot see at all says nothing, by the same rule that keeps
   // it quiet about every other name it cannot resolve.
@@ -15072,7 +15092,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms, i32 mline, i32 mcol) {
   // At the `match`, because an inexhaustive one is the *statement* being incomplete — there is no arm
   // to point at, which is the whole complaint.
   if (!hasElse && covered < total) {
-    c.report(errMatchInexhaustive(), mline, mcol);
+    c.reportWith(errMatchInexhaustive(), mline, mcol, "does not cover " + missing);
   }
   // And the other way round: once every variant is named, an `else` is a branch nothing reaches — and
   // here there is an arm to point at, so it gets pointed at.

@@ -44,14 +44,14 @@ static string PREFIX = "packages/gzip/src/";
  */
 Pin[] pins() {
   return [
-        Pin("packages/gzip/src/inflate.wac", 136, "while (left > 0 && this.bitCount >= 8) {", true,
+        Pin("packages/gzip/src/inflate.wac", 134, "while (left > 0 && this.bitCount >= 8) {", true,
         "copyBytes is only ever called straight after alignByte and two readBits(16). alignByte " +
         "leaves a multiple of 8 bits, fill only ever adds whole bytes, and skip removes exactly 16 " +
         "— so the bit buffer is empty by the time this runs, and this loop drains nothing. Kept " +
         "because it is what makes copyBytes correct on its own terms rather than by the habits of " +
         "its one caller: a second caller that aligned differently would otherwise read the payload " +
         "from the wrong offset, silently."),
-    Pin("packages/gzip/src/inflate.wac", 583, "if (di >= 30) { trap; }", true,
+    Pin("packages/gzip/src/inflate.wac", 581, "if (di >= 30) { trap; }", true,
         "Both distance decoders are built with at most 30 symbols — the fixed one with exactly 30, " +
         "the dynamic one with hdist, already bounded at 30 — so decode cannot return 30. A stream " +
         "using distance code 30 or 31 traps inside decode for want of a matching code, which " +

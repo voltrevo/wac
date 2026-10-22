@@ -1,0 +1,6 @@
+// expect: refused
+// why: a `match` of literal arms takes the slot's type, and `2.5` has no reading as an `i32` — as the
+//      same arms written as a ternary are refused
+// from: spec/2-types/09-numeric-literals.md
+enum E { A, B }
+export i32 f(E e) { i32 n = match (e) { A: 1, default: 2.5 }; return n; }

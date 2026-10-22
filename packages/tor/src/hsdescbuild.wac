@@ -47,14 +47,15 @@ export static i32 BUILD_BAD_ENC_KEY = 5;    // an encryption key that does not c
 export static i32 BUILD_FAILED = 6;         // a layer, a certificate or the document would not build
 
 /**
- * One introduction point, as the service holds it.
+ * One introduction point, as the service holds it — the private halves of what a client reads as
+ * `hsintro.wac`'s `IntroPoint`, which is why the two are named apart.
  *
  * `ntorOnionKey` is the **relay's** — what a client extends to it with. `encSecret` is the
  * **service's**, and its public half is what a client runs hs-ntor against. Both are 32 bytes of
  * curve25519 and confusing them produces a descriptor that decodes perfectly and cannot be used, so
  * they are separate fields rather than two entries in an array.
  */
-export struct IntroPoint {
+export struct IntroPointSecrets {
   u8[] linkSpecifiers;   // where the introduction point is, as `hsintro.wac` validates them
   u8[] ntorOnionKey;     // the intro relay's ntor key, 32 bytes
   u8[] authSeed;         // ours: the seed for this circuit's auth key, 32 bytes
@@ -104,7 +105,7 @@ Built failed(i32 error) {
  * the outside.
  */
 export Built buildDescriptor(
-  u8[] identitySeed, u8[] signingSeed, IntroPoint[] intros, i64 periodNum, i64 periodLength,
+  u8[] identitySeed, u8[] signingSeed, IntroPointSecrets[] intros, i64 periodNum, i64 periodLength,
   i64 revision, i32 lifetimeMinutes, i64 certExpiryHours, u8[] ephemeral, u8[] innerSalt,
   u8[] outerSalt, u8[][] decoyClients
 ) {
@@ -133,7 +134,7 @@ export Built buildDescriptor(
   u8[][] authCerts = u8[][].defaulted(intros.len());
   u8[][] encCerts = u8[][].defaulted(intros.len());
   for (i32 i = 0; i < intros.len(); i++) {
-    IntroPoint ip = intros[i];
+    IntroPointSecrets ip = intros[i];
     if (ip.linkSpecifiers.len() == 0 || ip.ntorOnionKey.len() != 32 || ip.authSeed.len() != 32 ||
         ip.encSecret.len() != 32) {
       return failed(BUILD_BAD_INTRO);

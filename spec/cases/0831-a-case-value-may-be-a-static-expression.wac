@@ -1,0 +1,6 @@
+// expect: f() = 2
+// spec:  §wac-switch-case-constant-m4tz8kq
+// why: an operator over statics and literals is a constant, so it is a case value like a literal
+// from: spec/3-expressions/25-control-flow.md
+static i32 LIMIT = 4;
+export i32 f() { i32 n = 5; switch (n) { case LIMIT + 1: { return 2; } case -1: { return 3; } default: { return 0; } } }
