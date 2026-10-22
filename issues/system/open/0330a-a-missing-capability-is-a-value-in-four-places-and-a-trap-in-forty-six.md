@@ -77,3 +77,9 @@ struct whose `drawPixels` throws and whose `readFile` works; under nine values a
 cannot hand one over at all, so *take your other route* has nowhere to be written. That is strictly
 better for the forty-six and strictly worse for the four — which is an argument about the proposal
 and not a reason to decide this one either way.
+
+## Ruling — 2026-10-22 (operator, recorded by agent-a)
+
+Every capability answers a result, and "this host does not provide it" is an error — a fault beside
+`FAULT_NOT_GRANTED`, never a trap. Capabilities with an ad-hoc absent answer (`LoadedModule.unavailable()`,
+`Cli.env`'s bare null) move to the same shape. This also settles `0261c`.

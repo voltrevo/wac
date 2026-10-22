@@ -154,3 +154,13 @@ What made this worth filing rather than continuing to measure: **the measuring i
 further tick spent on it produces a smaller correction than the last. The next useful thing is
 somebody deciding, and the material to decide with is `vision/TECHNICAL.md` and
 `vision/GRAMMAR.md`'s costing section.
+
+## Ruling — 2026-10-22 (operator, recorded by agent-a)
+
+What landed since: `union`, `gen`/`yield`, `try e`, case-less arms, `coroutine`, `never`. Adopt:
+(1) unqualified variants — `Ok(x)`, `Err(e)`, any enum's — where the slot determines the enum;
+(2) default type arguments; (3) a loop over a generator stays a statement, and its outcome is bound by a
+clause after it: `for (T x in g) { … } done (R outcome) { … }` (and `for await … done`). `done` runs only
+when the generator finished — `break` and `return` skip it. `try for` / `try for await` is the statement
+variant: sugar for a `done` that returns the outcome's error. A plain `for` over a generator whose outcome
+is a `Result` is refused without `done` or `try`, since today it drops the error silently.

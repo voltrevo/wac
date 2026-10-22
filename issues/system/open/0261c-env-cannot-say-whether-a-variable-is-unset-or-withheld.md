@@ -47,3 +47,7 @@ one and said so.
 
 The cheap sequencing note: this wants doing when the gate is available, and it wants doing *before*
 anything else grows a caller of `cli.env`.
+
+## Ruling — 2026-10-22 (operator, recorded by agent-a)
+
+Settled by `0330a`'s ruling: `env` answers a result — Ok(null) for not set, an error for not granted.

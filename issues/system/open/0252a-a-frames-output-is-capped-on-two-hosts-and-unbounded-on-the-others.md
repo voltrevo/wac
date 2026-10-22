@@ -71,3 +71,8 @@ is not the answer.
 
 Filed rather than done because it changes what a correct program gets back on one host, and because
 the number 8 MiB would then be a limit two runtimes share and neither owns.
+
+## Ruling — 2026-10-22 (operator, recorded by agent-a)
+
+Neither cap nor growth: frames stream with backpressure, as an OS pipe does, so nothing needs a cap and
+`truncated` goes. A project — to be written up as a design note before it is built.

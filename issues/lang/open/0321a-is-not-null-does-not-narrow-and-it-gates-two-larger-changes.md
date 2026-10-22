@@ -71,3 +71,11 @@ Not general flow-sensitive typing, which `0029` considered and declined. Not nar
 field or an index, which has no name to shadow. Only `ident is not null` in a condition, narrowing
 `ident` to its non-null type for the then-block — the same lexical extent and the same shadowing
 mechanism that already exists.
+
+## Ruling — 2026-10-22 (operator, recorded by agent-a)
+
+`is` never narrows — not `is not null`, and not `is Circle` either. A test is a test; binding the
+narrower value is what `matches` is for: `if (N n matches c) { return n.v; }`, `if (Circle k matches s)`.
+So spec ch12's `§wac-narrow-if-2mkq8vp` and the narrowing code behind it (including the `&&` extension of
+2026-10-21) are removed, and the sites that rely on `is` narrowing move to `matches`. A `match` arm's
+narrowing of its subject (`§enum-narrow`) is not part of this ruling.

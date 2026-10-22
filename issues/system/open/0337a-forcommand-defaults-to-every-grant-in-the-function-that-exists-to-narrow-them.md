@@ -92,3 +92,8 @@ Found by sorting every mid-file doc comment of 150 words or more in the un-rewri
 reading the longest — the same search that found `issues/lang/0334a`. The correlation that search is
 built on is that a long justification marks a decision the type could have held; here the type is an
 enum, the check is exhaustiveness, and both already exist.
+
+## Ruling — 2026-10-22 (operator, recorded by agent-a)
+
+Not a decision — it follows from "no ambient capabilities". Do the fix as written: a `Command` enum, an
+exhaustive `match` with no `else`, and `commandOf(string)` at the argv boundary.

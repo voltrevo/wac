@@ -126,3 +126,10 @@ change rather than a doc edit, it touches 100 call sites in a shared tree, and t
 Sequencing, once it is agreed, so the tree is never uncompilable: add the float methods and
 `low32`/`high32` with their tags → migrate the 100 call sites → narrow `as@` and resolve
 `toBits` → rewrite `casts.md` and `types.md`. Four commits, each green.
+
+## Ruling — 2026-10-22 (operator, recorded by agent-a)
+
+`as@` is bit reinterpretation only, keeping the low bits when the target is narrower. Float↔int `as@`
+is refused (bits across that line are `f64.toBits`/`fromBits`). What `x as@ i32` computes today is spelled
+`x.trunc() as~ i32`: floats gain `trunc()`, `floor()`, `ceil()` and `round()` (ties to even), each one
+wasm instruction, and `as~` of NaN into an integer is specified as 0 so the two spellings agree.

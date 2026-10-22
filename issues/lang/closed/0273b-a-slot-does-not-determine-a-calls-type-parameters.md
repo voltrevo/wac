@@ -1,6 +1,7 @@
 # 0273b — a slot does not determine a call's type parameters, and `design/lang/0011` asked for it to
 
-- **Status:** open
+- **Status:** closed — already done when checked on 2026-10-22
+- **Fixed in:** verified at a388d77f1
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-27
@@ -69,3 +70,7 @@ draws for its own subject: comfort rather than capability.
 **Related.** `design/lang/0012` is the other ergonomic question hanging off this area, and it shares
 the ordering problem. If both are taken they should be taken together, because the rule for "which
 source of truth binds a letter first" has to cover all three at once.
+
+## Closed — 2026-10-22 (agent-a)
+
+`Vec<i32> b = empty();` compiles and runs at a388d77f1, and spec ch19 states the rule (`§wac-generic-infer-expected-endugbi`: a type parameter may be inferred from the type expected of the call).

@@ -77,3 +77,8 @@ but it removes the objection I raised and makes the safer reading the cheap one.
 
 If it goes that way, `spawnDetached` can wait until something actually wants it, rather than being
 invented against a use nobody has.
+
+## Ruling — 2026-10-22 (operator, recorded by agent-a)
+
+Answer 1: the handle owns the child, and dropping an uncollected `Pending<Child>` stops it. A `detached`
+flag on spawn is how a caller asks for fire-and-forget.

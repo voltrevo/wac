@@ -1,6 +1,7 @@
 # 0331a — a fresh return loses its freshness when it is named
 
-- **Status:** open
+- **Status:** closed — already done when checked on 2026-10-22
+- **Fixed in:** verified at a388d77f1
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-09-04
@@ -108,3 +109,7 @@ decided about the local, and the local is the design question.
 non-`const` parameter — reproduce from the same session's probes (`escape(this.inner)` from a
 `const this` mutates, zero type errors, and the same for a `const` *parameter*). Both already open;
 neither is what this asks about.
+
+## Closed — 2026-10-22 (agent-a)
+
+Both forms in the reproduction — `return C(this.n);` and `C r = C(this.n); return r;` inside a `const this` method — compile and answer 6 each at a388d77f1.

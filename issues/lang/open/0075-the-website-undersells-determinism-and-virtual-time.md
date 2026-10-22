@@ -74,3 +74,9 @@ JavaScript hosts: what can be owned there today is *partial*, and the document i
 which half. Overstating that would be the exact failure this issue exists to avoid — the site
 recently said "nothing in the dependency chain is constant-time" when the measurement said
 something better and narrower, and that cost more credibility than the sentence bought.
+
+## Ruling — 2026-10-22 (operator, recorded by agent-a)
+
+Option 3: state the present-tense half — no ambient authority, so every interaction is a capability the
+program was handed; the platform's transition functions walked over every interleaving — on the Stack
+page beside the capability world, and keep virtual time and replay on Roadmap, in the future tense.
