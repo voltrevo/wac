@@ -351,7 +351,7 @@ Pin[] pins() {
         "`loopback_test.wac` uses an empty store rather than trusting the certificate it generates. " +
         "Uncovered because this is `verifyOne`'s copy of the check and the loopback goes through " +
         "`verifyPath`, whose equivalent at `:850` is a `continue` rather than a return."),
-    Pin("packages/tls/src/asn1.wac", 87, "Der over(u8[] buf, i32 start, i32 end) {", false,
+    Pin("packages/tls/src/asn1.wac", 88, "Der over(u8[] buf, i32 start, i32 end) {", false,
         "**A sub-reader over an explicit byte range, with both ends clamped into the buffer.** " +
         "Nothing in the parser calls it: every nested structure is entered with `inner`, which takes " +
         "its bounds from a tag it just read and cannot be out of range. So this is the entry point " +
@@ -360,10 +360,10 @@ Pin[] pins() {
         "         An uncovered *entry* is the strongest form of lead a ledger has — not a branch " +
         "nobody took but a function nobody called. Kept because the clamp is the whole point of " +
         "offering it at all; if it goes, the reason it existed goes with it."),
-    Pin("packages/tls/src/asn1.wac", 103, "i32 remaining(const this) { return this.end - this.pos; }", false,
+    Pin("packages/tls/src/asn1.wac", 104, "i32 remaining(const this) { return this.end - this.pos; }", false,
         "An accessor nothing reads. Same family as `:87` — part of `Der`'s surface rather than of any " +
         "path through it."),
-    Pin("packages/tls/src/asn1.wac", 136, "if (v < 0) { this.reject(); return 0; }", false,
+    Pin("packages/tls/src/asn1.wac", 137, "if (v < 0) { this.reject(); return 0; }", false,
         "An ASN.1 INTEGER that is negative where the caller wanted a length or a version. Reachable " +
         "by a crafted certificate and unbuilt — `fuzz_test.wac` mutates real certificates, which " +
         "changes bytes rather than choosing a shape."),

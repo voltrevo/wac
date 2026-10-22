@@ -190,7 +190,7 @@ Pin[] pins() {
     Pin("packages/webrtc/src/sctp.wac", 86, "if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[]()); }", false,
         "A chunk header too short to hold its own length. The entry to every SCTP walk, and the one " +
         "malformation the corpus does not contain."),
-    Pin("packages/webrtc/src/sctp.wac", 1272, "return t > (60000 as i64) ? (60000 as i64) : t;", false,
+    Pin("packages/webrtc/src/sctp.wac", 1273, "return t > (60000 as i64) ? (60000 as i64) : t;", false,
         "**The retransmission backoff hitting its sixty-second ceiling.** RFC 4960 §6.3.3 caps RTO " +
         "doubling, and reaching the cap needs six consecutive timeouts — about two minutes of a peer " +
         "not answering. No test waits that long and none should; a test that wanted this would inject " +
