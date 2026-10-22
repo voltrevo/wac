@@ -495,8 +495,8 @@ export string test_a_bitwise_operator_on_mismatched_operands_reports_once() {
  * apart while a fix that reads the literal under a negation makes `-1` and `1` the same one. Both are
  * wrong answers rather than missed ones, so both need a row that fails when they happen.
  *
- * A non-constant case value is not covered, deliberately: `case k:` compiles and compares at run
- * time, and whether it should is `issues/lang/0269a`.
+ * A non-constant case value is refused outright now (`issues/lang/0269a`), so it is no longer a legal
+ * row here.
  */
 export string test_a_repeated_switch_case_value_is_refused_however_it_is_spelled() {
   T t = T.create();
@@ -525,11 +525,11 @@ export string test_a_repeated_switch_case_value_is_refused_however_it_is_spelled
 
   // **The other direction, and it needs to be here or the rows above are satisfied by refusing every
   // switch.** Two different values, a value that only looks like another under the wrong arithmetic,
-  // and a value that is not constant at all.
+  // and a static, which is a constant.
   string[] legal = [
     "export i32 f(i32 n) { switch (n) { case 1: { return 1; } case 2: { return 2; } } return 0; }\n",
     "export i32 f(i32 n) { switch (n) { case -1: { return 1; } case 1: { return 2; } } return 0; }\n",
-    "export i32 f(i32 n, i32 k) { switch (n) { case k: { return 1; } default: { return 2; } } }\n"
+    "static i32 K = 3;\nexport i32 f(i32 n) { switch (n) { case K: { return 1; } default: { return 2; } } }\n"
   ];
   for (i32 i = 0; i < legal.len(); i++) {
     i32 n = dumpTypeErrors(legal[i].toBytes()).len() / 3;

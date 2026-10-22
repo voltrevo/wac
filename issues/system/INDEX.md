@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0364a](open/0364a-a-deep-expression-overflows-the-native-hosts-stack-by-lottery.md) | A 560-deep `+` chain traps the compiler on the native host and not under Deno — the default V8 stack limit, and by lottery: a gate passed it and the next failed it. `manyfiles_test` no longer builds one | bug | trap |
 | [0363a](open/0363a-core-askinterrupt-has-no-host-left-that-can-answer-yes.md) | `Core.askInterrupt` has no host left that can answer yes: std's `Page` on the browser worker host was the one, and it is gone; a `packages/web` terminal interrupts its shell through `Shell.askInterrupt`. Whether the capability goes from every host | missing feature | not implemented |
 | [0362a](open/0362a-an-applet-in-wac-sh-says-nothing-until-it-exits.md) | An applet run by `wac sh` says nothing until it exits: its `Core` writes to the frame, which delivers when the frame ends, so `wac sh -c 'httpd -8080 dist'` serves without ever saying it is listening — `templates/webapp`'s `serve` task is that command | bug | output of a long-running applet never appears |
 | [0361a](closed/0361a-nativeshare-says-a-pure-wrapper-is-not-taken-natively.md) | `tools/mutate/nativeShare.test.ts`'s *a pure wrapper is actually taken natively* fails on `origin/master` with that commit's binary: either the binary is not where `buildProfile` looks or the file stopped qualifying, and which was not checked | bug | wrong answer |
@@ -127,7 +128,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-342 issues, 248 closed.
+343 issues, 248 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on

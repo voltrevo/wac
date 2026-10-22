@@ -68,13 +68,15 @@ export string test_more_files_than_the_linkers_tables_used_to_hold(Core core, Cl
   Buf calls = Buf.create();
   for (i32 i = 0; i < N; i++) {
     head.pushAll(("import { v" + itoa(i) + " } from \"./f" + itoa(i) + ".wac\";\n").toBytes());
-    if (i > 0) { calls.pushAll(" + ".toBytes()); }
-    calls.pushAll(("v" + itoa(i) + "(1)").toBytes());
+    // One statement a call rather than one `+` chain: a 560-deep expression is a recursion as deep in
+    // the compiler, and on the native host that sits near the stack limit and traps by lottery —
+    // `issues/system/0364a`. This test is about the linker's tables, not about expression depth.
+    calls.pushAll(("  s = s + v" + itoa(i) + "(1);\n").toBytes());
   }
   i32 want = (N - 1) * N / 2;
   paths[N] = ENTRY;
-  sources[N] = string.fromBytes(head.take()) + "\nexport i32 total() { return " +
-               string.fromBytes(calls.take()) + "; }\n" +
+  sources[N] = string.fromBytes(head.take()) + "\nexport i32 total() {\n  i32 s = 0;\n" +
+               string.fromBytes(calls.take()) + "  return s;\n}\n" +
                "export i32 main() { return total() == " + itoa(want) + " ? 7 : 0; }\n";
 
   t.eqStr(blockedFiles(paths, sources, ENTRY), "",
