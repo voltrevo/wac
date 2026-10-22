@@ -2509,20 +2509,14 @@ bool intSigned(string t) { return t == "i8" || t == "i16" || t == "i32" || t == 
 /**
  * Whether `as@` — reinterpret the bits — is available for this conversion.
  *
- * Also measured. It is close to "the target is an integer no wider than the source", and that rule
- * is wrong for `f64 -> i64`, which the reference refuses while allowing `f64 -> i32`. Rather than
- * carry a formula with an exception, this carries the pairs.
+ * Only between integers (spec ch24): narrowing keeps the low bits, and a same-width signedness change
+ * reads the same bits the other way — for the packed types as for any other. A float and an integer
+ * share no bits worth keeping, so a float goes through `trunc()` and `as~` instead (`issues/lang/0078`).
  */
 bool rawCast(string from, string to) {
-  // Integer narrowing keeps the low bits, and a same-width signedness change reads the same bits the
-  // other way (spec ch24) — for the packed types as for any other.
   i32 wf = intWidth(from);
   i32 wt = intWidth(to);
   if (wf > 0 && wt > 0) { return wt < wf || (wt == wf && intSigned(to) != intSigned(from)); }
-  // **A float truncates toward zero into an integer of any width** (spec ch24: "a float to an integer
-  // truncates toward zero", with no width in it). This stopped at 32 bits because the reference had no
-  // 64-bit form, which is a fact about the reference rather than the language.
-  if (from == "f32" || from == "f64") { return wt > 0; }
   return false;
 }
 
@@ -11631,6 +11625,7 @@ string builtinReturnType(string recv, string name) {
   // `i64.clz` is `[i64] -> [i64]`, not `[i64] -> [i32]`. Stating it here rather than assuming `i32`
   // is what keeps `i64 n = x.leadingZeros()` from being a mismatch on one side or the other.
   if (hasBitMethods(recv) && isIntBuiltin(name)) { return recv; }
+  if ((recv == "f32" || recv == "f64") && isFloatBuiltin(name)) { return recv; }
   // `fill` and `copyFrom` are deliberately absent: they answer nothing, and an expression with no
   // type is what `typeNone` already means everywhere else here.
   return "";
@@ -11684,6 +11679,16 @@ bool isIntBuiltin(string name) {
 /** How many arguments each takes: a rotation takes its count, the other three take nothing. */
 i32 intBuiltinArity(string name) {
   return name == "rotateLeft" || name == "rotateRight" ? 1 : 0;
+}
+
+/**
+ * The four rounding methods a float has, each answering its receiver's own type: `trunc` toward zero,
+ * `floor` and `ceil` toward the infinities, `round` to the nearest with a tie going to the even
+ * neighbour (spec ch08). One instruction each, and the float half of what `as@` used to do
+ * (`issues/lang/0078`).
+ */
+export bool isFloatBuiltin(string name) {
+  return name == "trunc" || name == "floor" || name == "ceil" || name == "round";
 }
 
 /** Whether a receiver is an integer, which is the one thing these five need of it. */
@@ -11958,6 +11963,15 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       if (got != typeNone() && !hasBitMethods(got)) {
         c.reportWith(errBuiltinArg(), args[i].line, args[i].col, expectedFound("an integer count", got));
       }
+    }
+    return;
+  }
+  // A float's four take nothing, and it has no other methods.
+  if (recv == "f32" || recv == "f64") {
+    if (!isFloatBuiltin(name)) {
+      c.reportWith(errNoMethod(), callee.line, callee.col, "no " + recv + "." + name);
+    } else if (args.len() != 0) {
+      c.report(errBuiltinArity(), call.line, call.col);
     }
     return;
   }
@@ -12595,6 +12609,11 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // Not lossless, so `as!` and `as~` are both fine. `as@` additionally needs a raw form to exist,
   // and *that* complaint is about the operator, so it is reported there.
   if (k == kAsAt() && !rawCast(from, to)) {
+    // The one refusal with a spelling to offer: what `as@` used to do from a float.
+    if ((from == "f32" || from == "f64") && intWidth(to) > 0) {
+      c.reportWith(errWrongCastOp(), e.line, e.col, "from " + from + " to " + to + " — `as@` reinterprets bits; to drop the fraction write `x.trunc() as~ " + to + "`");
+      return;
+    }
     c.reportWith(errWrongCastOp(), e.line, e.col, "from " + from + " to " + to);
   }
 }

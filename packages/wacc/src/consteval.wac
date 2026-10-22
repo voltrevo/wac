@@ -1395,18 +1395,16 @@ export Value castTo(Ev ev, i32 op, Value v, string to) {
   }
 
   if (fromFloat && !toFloat) {
-    // **`as~` rounds and `as@` truncates**, and the two differ on every value with a fraction. The
-    // emitter writes `f64.nearest` before `trunc_sat` for the first and a bare `trunc_sat` for the
-    // second, so `as~` is round-half-to-even — measured: `2.5 as~ i32` is 2 and `3.5 as~ i32` is 4.
-    // Truncating for both put this one apart from the emitted code on `-3.9`, which is what the
-    // differential is for.
+    // **`as~` and `as!` round half to even**, as the emitter's `f64.nearest` before `trunc_sat` does —
+    // measured: `2.5 as~ i32` is 2 and `3.5 as~ i32` is 4. Truncating put this one apart from the
+    // emitted code on `-3.9`, which is what the differential is for. (`as@` from a float is refused.)
     f64 x = f64Of(v);
     // NaN has no integer: `as!` traps on it and the saturating casts answer 0, as `trunc_sat` does.
     if (x != x) {
       if (op == kAsBang()) { ev.raise("`as!` of NaN, which has no integer"); return noneValue(); }
       return numValue(to, 0 as i64);
     }
-    f64 whole = op == kAsAt() ? towardZero(x) : nearestEven(x);
+    f64 whole = nearestEven(x);
     if (op == kAsBang() && whole != x) { ev.raise("`as!` lost a fraction"); return noneValue(); }
     // **The range is asked of exact float bounds**: 2^w (or 2^(w-1)) is the first whole number past the
     // top, and each is exact in an `f64`. Asking `maxOf(to) as~ f64` instead read `u64`'s maximum —
@@ -1502,7 +1500,7 @@ export f64 nearestEven(f64 x) {
   return (x - big) + big;
 }
 
-/** `x` with the fraction dropped, toward zero — what a bare `trunc_sat` does, and `as@`. */
+/** `x` with the fraction dropped, toward zero — what a bare `trunc_sat` does, and `trunc()`. */
 export f64 towardZero(f64 x) {
   f64 n = nearestEven(x);
   if (x >= 0.0 && n > x) { return n - 1.0; }
@@ -1511,18 +1509,30 @@ export f64 towardZero(f64 x) {
 }
 
 /**
+ * A float's rounding method by name: `trunc`, `floor`, `ceil` or `round`.
+ * A whole result of zero keeps the receiver's sign, as the instructions do: `(-0.5).ceil()` is `-0.0`.
+ */
+f64 roundedBy(string nm, f64 x) {
+  f64 r = towardZero(x);
+  if (nm == "round") { r = nearestEven(x); }
+  if (nm == "floor") { r = towardZero(x); if (r > x) { r = r - 1.0; } }
+  if (nm == "ceil") { r = towardZero(x); if (r < x) { r = r + 1.0; } }
+  if (r == 0.0 && (f64.toBits(x) >> (63 as u64)) == (1 as u64)) { return f64.fromBits((1 as u64) << (63 as u64)); }
+  return r;
+}
+
+/**
  * A whole `f64` as an `i64`.
  *
- * `as~` would do it in one, but this file is compiled by a rung that cannot, and `as@` from a float
- * to `i64` the real compiler refuses outright — though the old casts page's matrix (spec/spec/casts.md,
- * since replaced by `spec/3-expressions/24-casts.md`) listed the pair. Splitting at 2^31 keeps both halves inside the one narrowing that does work.
+ * `as~` from a float is a truncation on the ladder's rung — it traps where the real compiler
+ * saturates — so this splits at 2^31 and only ever narrows a value inside `i32`, where the two agree.
  */
 export i64 f64ToI64(f64 x) {
   f64 lim = 2147483648.0;
-  if (x < lim && x > 0.0 - lim) { return (x as@ i32) as i64; }
+  if (x < lim && x > 0.0 - lim) { return (x as~ i32) as i64; }
   f64 hi = towardZero(x / lim);
   f64 lo = x - hi * lim;
-  return ((hi as@ i32) as i64) * (lim as~ i64) + ((lo as@ i32) as i64);
+  return ((hi as~ i32) as i64) * (lim as~ i64) + ((lo as~ i32) as i64);
 }
 
 // ── Calls at an expression ────────────────────────────────────────────────────
@@ -1608,6 +1618,13 @@ export Value evalCall(Ev ev, Decls cx, i32 fi, Expr callee, Expr[] args) {
       }
       Value o = evalExpr(ev, cx, fi, obj, "");
       if (!evFinished(ev.status)) { return noneValue(); }
+      // A float's rounding methods (spec ch08).
+      if ((o.kind == vF64() || o.kind == vF32()) && args.len() == 0
+          && (nm == "trunc" || nm == "floor" || nm == "ceil" || nm == "round")) {
+        f64 r = roundedBy(nm, o.fval);
+        if (o.kind == vF32()) { return f32Value(r as~ f32); }
+        return f64Value(r);
+      }
       i32 id = refOf(o);
       if (o.kind == vType()) { return typerefMethod(ev, typeOfTyperef(ev, o), nm); }
       if (nm == "len" && id >= 0) { return numValue("i32", ev.heap[id].count as i64); }

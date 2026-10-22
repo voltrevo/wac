@@ -9,15 +9,16 @@ export i32 run() {
   // where an `i32` was promised. The spec documents all four of these answers (spec/spec/casts.md)
   // and none of them could run.
   if (1.5 as~ i32 != 2) { return 1; }              // `as~` rounds
-  if (1.5 as@ i32 != 1) { return 2; }              // `as@` truncates
-  if (-2.3 as@ i32 != -2) { return 3; }            // toward zero
-  if (1.0e300 as@ i32 != 2147483647) { return 4; } // saturates, never traps
-  if (3.7 as@ u32 != 3) { return 5; }
+  f64 a = 1.5; f64 b = -2.3; f64 big = 1.0e300; f64 c = 3.7;
+  if (a.trunc() as~ i32 != 1) { return 2; }        // `trunc()` drops the fraction
+  if (b.trunc() as~ i32 != -2) { return 3; }       // toward zero
+  if (big as~ i32 != 2147483647) { return 4; }     // saturates, never traps
+  if (c.trunc() as~ u32 != 3) { return 5; }
 
-  // `§wac-raw-truncf-nan-w9fk2xq`: NaN converts to zero and never traps. Two literals in an
+  // NaN converts to zero and never traps. Two literals in an
   // arithmetic expression have no type between them either, so this took `i32` from the cast and
   // divided two `f64` constants with `i32.div_s`.
-  if ((0.0 / 0.0) as@ i32 != 0) { return 6; }
+  if ((0.0 / 0.0) as~ i32 != 0) { return 6; }
   if ((1.5 + 2.0) as~ i32 != 4) { return 7; }
 
   // **The slot still chooses the width inside the family.** A float target keeps its own type, which

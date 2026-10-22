@@ -141,6 +141,32 @@ export bool zerosEqual() {
 `[§wac-float-ieee-sr8rjq6]` Float arithmetic follows IEEE 754, and float division by zero answers an
 infinity or NaN rather than trapping.
 
+### Rounding a float
+
+A float has four methods that round it to a whole number of its own type: `trunc()` toward zero,
+`floor()` and `ceil()` toward negative and positive infinity, and `round()` to the nearest, a tie going
+to the even neighbour. Each is one instruction. A NaN, an infinity or a zero answers itself, and a
+result of zero keeps the receiver's sign.
+
+```wac
+// expect: rounded(2.5) = 2.0
+// expect: rounded(3.5) = 4.0
+// expect: rounded(-2.5) = -2.0
+// expect: floored(-3.7) = -4.0
+// expect: ceiled(-3.7) = -3.0
+// expect: truncated(-3.7) = -3.0
+export f64 rounded(f64 x) { return x.round(); }
+export f64 floored(f64 x) { return x.floor(); }
+export f64 ceiled(f64 x) { return x.ceil(); }
+export f64 truncated(f64 x) { return x.trunc(); }
+```
+
+`[§wac-float-round-c5nf8qx]` `trunc`, `floor`, `ceil` and `round` answer the receiver's type; `round`
+takes a tie to the even neighbour, so `2.5.round()` is `2.0` and `3.5.round()` is `4.0`.
+
+Converting to an integer is then a cast: `x.trunc() as~ i32` truncates, and `x as~ i32` alone rounds
+([24](../3-expressions/24-casts.md)).
+
 ### A float's bits
 
 `f64.toBits(x)` is the IEEE 754 bit pattern of `x` as a `u64`, and `f64.fromBits(b)` is the reverse.

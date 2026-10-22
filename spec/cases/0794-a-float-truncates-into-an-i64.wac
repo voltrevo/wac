@@ -1,0 +1,4 @@
+// expect: f() = -3
+// why: `trunc()` drops a float's fraction toward zero, and `as~` then converts it at any width
+// from: spec/3-expressions/24-casts.md
+export i64 f() { f64 x = -3.7; return x.trunc() as~ i64; }

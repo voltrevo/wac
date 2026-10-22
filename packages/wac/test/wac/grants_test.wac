@@ -14,7 +14,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Core, FAULT_NOT_GRANTED, FAULT_NONE } from "std";
-import { Asked, Parsed, askedFrom, forCommand, narrowed } from "../../src/grants.wac";
+import { Asked, Command, Parsed, askedFrom, commandNamed, forCommand, narrowed } from "../../src/grants.wac";
 
 /** The flags are read in order and stop at the first word that is not one. */
 export string test_the_grant_flags_are_read_and_the_rest_is_the_shells() {
@@ -145,18 +145,38 @@ export string test_narrowing_a_narrowed_world_does_not_widen_it(Core core, Cli c
  */
 export string test_each_command_asks_for_what_it_needs() {
   T t = T.create();
-  t.eqBool(forCommand("check").net, false, "check cannot reach the network");
-  t.eqBool(forCommand("check").write, false, "check writes nothing — its whole output is a sentence");
-  t.eqBool(forCommand("check").read, true, "but it reads sources");
-  t.eqBool(forCommand("build").net, false, "build cannot reach the network");
-  t.eqBool(forCommand("build").run, false, "and cannot start a process");
-  t.eqBool(forCommand("build").write, true, "it writes a module");
-  t.eqBool(forCommand("compile").net, false, "nor compile");
-  t.eqBool(forCommand("bindgen").net, false, "nor bindgen");
-  t.eqBool(forCommand("update").net, true, "update is the one command that reaches the network");
+  t.eqBool(forCommand(Command.Check).net, false, "check cannot reach the network");
+  t.eqBool(forCommand(Command.Check).write, false, "check writes nothing — its whole output is a sentence");
+  t.eqBool(forCommand(Command.Check).read, true, "but it reads sources");
+  t.eqBool(forCommand(Command.Build).net, false, "build cannot reach the network");
+  t.eqBool(forCommand(Command.Build).run, false, "and cannot start a process");
+  t.eqBool(forCommand(Command.Build).write, true, "it writes a module");
+  t.eqBool(forCommand(Command.Compile).net, false, "nor compile");
+  t.eqBool(forCommand(Command.Bindgen).net, false, "nor bindgen");
+  t.eqBool(forCommand(Command.Update).net, true, "update is the one command that reaches the network");
   // `run` and `test` hold everything, because their flags are the narrowing for the child.
-  t.eqBool(forCommand("test").net, true, "test keeps net so `--allow-net` can grant it");
-  t.eqBool(forCommand("run").run, true, "and run keeps spawn for the program it starts");
+  t.eqBool(forCommand(Command.Test).net, true, "test keeps net so `--allow-net` can grant it");
+  t.eqBool(forCommand(Command.Run).run, true, "and run keeps spawn for the program it starts");
+  // `audit` answers what a program's dependencies can reach by reading their sources; it reaches nothing
+  // itself. It had no line and took the default, which was every grant.
+  t.eqBool(forCommand(Command.Audit).net, false, "audit cannot reach the network");
+  t.eqBool(forCommand(Command.Audit).run, false, "nor start a process");
+  t.eqBool(forCommand(Command.Audit).write, false, "nor write");
+  return t.report();
+}
+
+/**
+ * **A command word the table does not know is no command** (issue 0337a): there is no default to fall
+ * into, so a command added to the dispatcher without a line here is a compile error in `forCommand`'s
+ * `match`, and a word nobody added is refused where it is read.
+ */
+export string test_an_unknown_command_word_is_no_command() {
+  T t = T.create();
+  t.isTrue(commandNamed("fmt") is null, "`fmt` is no command");
+  t.isTrue(commandNamed("") is null, "nor is nothing");
+  string[] all = ["check", "compile", "bindgen", "build", "app", "audit", "validate", "app-run", "task", "update",
+                  "self", "run", "test"];
+  for (string w in all) { t.isTrue(commandNamed(w) is not null, w + " is a command"); }
   return t.report();
 }
 
@@ -171,7 +191,7 @@ export string test_each_command_asks_for_what_it_needs() {
  */
 export string test_a_build_cannot_open_a_socket(Core core, Cli cli) {
   T t = T.create();
-  Cli building = narrowed(cli, forCommand("build"));
+  Cli building = narrowed(cli, forCommand(Command.Build));
   t.eqI32(building.connect("127.0.0.1", 9).wait().fault, FAULT_NOT_GRANTED(),
           "a `wac build` is refused the network by the command's own policy");
 
@@ -181,7 +201,7 @@ export string test_a_build_cannot_open_a_socket(Core core, Cli cli) {
     // passed quietly: a refusal test whose canary could not run has measured less than it looks.
     return t.report();
   }
-  Cli updating = narrowed(cli, forCommand("update"));
+  Cli updating = narrowed(cli, forCommand(Command.Update));
   t.eqBool(updating.connect("127.0.0.1", 9).wait().fault != FAULT_NOT_GRANTED(), true,
            "`wac update` keeps the network this world has, so the refusal above is the policy");
   return t.report();

@@ -1,4 +1,4 @@
 // expect: f() = 510
-// why: `as~` clamps and `as@` saturates a float: the largest `u32` and 1e10 are both 255 as a `u8`
+// why: `as~` clamps an integer and saturates a float: the largest `u32` and 1e10 are both 255 as a `u8`
 // from: spec/3-expressions/24-casts.md
-export i32 f() { u32 x = 4294967295; f64 y = 1e10; return (x as~ u8) as i32 + (y as@ u8) as i32; }
+export i32 f() { u32 x = 4294967295; f64 y = 1e10; return (x as~ u8) as i32 + (y as~ u8) as i32; }

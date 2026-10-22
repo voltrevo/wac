@@ -1,6 +1,6 @@
 # 0337a — `forCommand` defaults to every grant, in the function that exists to narrow them
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-09-04
@@ -97,3 +97,9 @@ enum, the check is exhaustiveness, and both already exist.
 
 Not a decision — it follows from "no ambient capabilities". Do the fix as written: a `Command` enum, an
 exhaustive `match` with no `else`, and `commandOf(string)` at the argv boundary.
+
+## Fixed — 2026-10-22 (agent-a)
+
+`enum Command` plus a default-free `match` in `forCommand`. A forgotten command is now a compile error. An unknown word is refused before any grant is narrowed (`commandNamed` answers null, exit 2). `audit` now has its own row.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

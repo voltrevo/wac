@@ -11,7 +11,7 @@ costs. Exactly one applies to each pair of types, so the spelling is never a cho
 | `as` | lossless: always exact | no |
 | `as!` | checked: the exact value, or a trap | yes |
 | `as~` | nearest: round and clamp | no |
-| `as@` | raw: keep the bits, truncate toward zero | no |
+| `as@` | raw: keep the bits | no |
 
 If it can trap, its spelling contains `!`.
 
@@ -125,26 +125,14 @@ whatever the pair: `i64 -1 as~ u64` is `0`.
 
 ## `as@` — raw
 
-`as@` exists only where a raw operation differs from rounding: integer narrowing keeps the low bits, a float
-to an integer truncates toward zero, and a same-width signedness change reads the same bits the other way.
-It never traps:
+`as@` reinterprets bits, and exists only between integers where that differs from rounding: narrowing keeps
+the low bits, and a same-width signedness change reads the same bits the other way. It never traps:
 
 ```wac
 // expect: truncBits(1000000000000) = -727379968
-// expect: truncFloat(3.7) = 3
-// expect: truncFloat(-2.3) = -2
-// expect: truncNaN() = 0
-// expect: truncFloat(1.0e300) = 2147483647
 // expect: toUnsigned(-1) = 4294967295
 // expect: toSigned(4294967295) = -1
 export i32 truncBits(i64 big) { return big as@ i32; }
-export i32 truncFloat(f64 x) { return x as@ i32; }
-
-export i32 truncNaN() {
-  f64 zero = 0.0;
-  return truncFloat(zero / zero);
-}
-
 export u32 toUnsigned(i32 x) { return x as@ u32; }        // the same bits; emits nothing
 export i32 toSigned(u32 x) { return x as@ i32; }
 ```
@@ -152,12 +140,33 @@ export i32 toSigned(u32 x) { return x as@ i32; }
 `[§wac-raw-trunc64-p4jn2wq]` Integer narrowing with `as@` keeps the low bits: `1000000000000 as@ i32` is
 `-727379968`.
 
-`[§wac-raw-truncf-r8kf4mb]` A float to an integer truncates toward zero: `3.7` is `3`, `-2.3` is `-2`.
-
-`[§wac-raw-truncf-nan-w9fk2xq]` NaN gives `0`, and out-of-range values saturate.
-
 `[§wac-usign-raw-m2kf7wq]` A same-width signedness change keeps every bit: `-1 as@ u32` is `4294967295`, and
 back is `-1`.
+
+A float and an integer share no bits worth keeping, so there is no `as@` between them. Dropping a fraction is
+the float's own `trunc()` (ch08), and then `as~` converts what is left — NaN to `0`, out of range saturating:
+
+```wac
+// expect: truncFloat(3.7) = 3
+// expect: truncFloat(-2.3) = -2
+// expect: truncFloat(1.0e300) = 2147483647
+// expect: truncNaN() = 0
+export i32 truncFloat(f64 x) {
+  // ERROR: from f64 to i32 — `as@` reinterprets bits; to drop the fraction write `x.trunc() as~ i32`
+  // return x as@ i32;
+  return x.trunc() as~ i32;
+}
+
+export i32 truncNaN() {
+  f64 zero = 0.0;
+  return truncFloat(zero / zero);
+}
+```
+
+`[§wac-raw-nofloat-t6mw2kd]` `as@` from a float to an integer is refused; `x.trunc() as~ T` truncates toward
+zero.
+
+`[§wac-tilde-nan-v3pq8hz]` `as~` of NaN to an integer is `0`.
 
 Every other narrowing — `f64 -> f32`, an integer to a float, anything to `bool` — has no raw form distinct from
 rounding, so `as@` is refused there:

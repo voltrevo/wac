@@ -1,0 +1,7 @@
+// expect: f() = 1
+// why: the rounding methods are evaluated at compile time like any other method on a constant
+// from: spec/2-types/08-primitives.md
+static f64 HALF = 2.5;
+static i32 R = HALF.round() as~ i32;
+static i32 F = (0.0 - HALF).floor() as~ i32;
+export i32 f() { return R + F + 2; }

@@ -119,6 +119,7 @@ spec/2-types/08-primitives.md#15
 spec/2-types/08-primitives.md#16
 spec/2-types/08-primitives.md#17
 spec/2-types/08-primitives.md#18
+spec/2-types/08-primitives.md#19
 spec/2-types/09-numeric-literals.md#1
 spec/2-types/09-numeric-literals.md#2
 spec/2-types/09-numeric-literals.md#3
@@ -355,6 +356,7 @@ spec/3-expressions/24-casts.md#7
 spec/3-expressions/24-casts.md#8
 spec/3-expressions/24-casts.md#9
 spec/3-expressions/24-casts.md#10
+spec/3-expressions/24-casts.md#11
 spec/3-expressions/25-control-flow.md#1
 spec/3-expressions/25-control-flow.md#2
 spec/3-expressions/25-control-flow.md#3

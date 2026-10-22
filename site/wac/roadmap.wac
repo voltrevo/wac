@@ -232,7 +232,9 @@ export Node Roadmap(Figures F) {
         <em>caller’s</em> list rather than the first to finish, so a program’s
         behaviour does not depend on how threads were scheduled, and a wait’s deadline lives
         in the runtime’s own table rather than inside a worker’s memory, where a
-        scheduler can see it. The clock is still real; it is no longer invisible.
+        scheduler can see it. The clock is still real; it is no longer invisible. Why owning it
+        is reachable at all — a program reads no clock it was not handed — is{" "}
+        <A href="stack.html#replay">on the stack page</A>.
       </P>
     </Section>
 

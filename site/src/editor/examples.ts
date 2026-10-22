@@ -747,8 +747,7 @@ export i32 checked(i64 big) { return big as! i32; }
  *
  * Worth reading twice, because "lossy" invites the assumption that it chops: it rounds, and on
  * overflow it clamps to the range rather than wrapping. If you want the C behaviour — toward
- * zero — that is \`as@\` for a float, and there is a separate spelling precisely so the choice is
- * visible at the call site.
+ * zero — drop the fraction first with \`x.trunc()\`, so the choice is visible at the call site.
  */
 export i32 nearest(f64 x) { return x as~ i32; }
 
@@ -756,17 +755,16 @@ export i32 nearest(f64 x) { return x as~ i32; }
 export i32 clamped(i64 x) { return x as~ i32; }
 
 /**
- * \`as@\` — the bits, reinterpreted. No conversion happens at all.
+ * \`as@\` — the bits, reinterpreted, keeping the low ones when the target is narrower. It exists
+ * only between integers: 2^32 + 2 as an i32 is 2 here, where \`as~\` clamped it.
  *
- * This is the one that matters for byte work: \`1.0\` as an f32 is \`0x3f800000\`, and reading those
- * bits as an integer is how a float gets serialised. Writing \`as~\` here would give you 1, which
- * compiles and is wrong — four spellings exist so that mistake cannot be silent. For a float it
- * is also the cast that truncates toward zero, which \`as~\` does not.
- *
- * Note what is *not* here: there is no cast to a packed type. \`u8\` is an array element, never a
- * variable, and storing into a \`u8[]\` truncates on store — so byte work needs no cast at all.
+ * A float's bits are not a cast at all — \`f32.toBits(1.0)\` is \`0x3f800000\` — because reading a float's
+ * bits is a different question from converting its value.
  */
-export i32 bitsOfFloat(f32 f) { return f as@ i32; }
+export i32 lowBits(i64 x) { return x as@ i32; }
+
+/** And toward zero, the C behaviour: \`trunc()\` drops the fraction, then \`as~\` converts. */
+export i32 towardZero(f64 x) { return x.trunc() as~ i32; }
 `,
     },
   },

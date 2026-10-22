@@ -211,8 +211,8 @@ export i32 incr() {
 //   as    lossless — always exact; compile error if it could lose information
 //   as!   checked  — exact, or trap
 //   as~   nearest  — best approximation; rounds and clamps, never traps
-//   as@   raw      — minimum effort; never traps. Only exists where the
-//                    instruction set has a genuinely distinct raw form.
+//   as@   raw      — reinterpret the bits; never traps. Only between
+//                    integers, where keeping bits differs from rounding.
 //
 // Using the wrong one is a compile error, including using a stronger cast than
 // you need. This is the point: the spelling at the call site tells the reader
@@ -224,13 +224,14 @@ export i32 incr() {
 //         traps regardless of payload.
 //   as~:  every other numeric pair. Round-to-nearest (half to even), saturate
 //         on overflow, plus i32->bool (0 is false, nonzero true).
-//   as@:  i64->i32 (keep low 32 bits), f64->i32 and f32->i32 (truncate toward
-//         zero, saturate on overflow, 0 on NaN). Those three ONLY.
+//   as@:  integer narrowing (keep the low bits) and same-width signedness
+//         changes. Never from a float: `x.trunc() as~ i32` drops the fraction.
 
 export i64 widen(i32 x)     { return x as i64; }     // lossless
 export i32 checked(i64 x)   { return x as! i32; }    // traps outside i32 range
 export i32 nearest(f64 x)   { return x as~ i32; }    // 3.7 -> 4, 2.5 -> 2, 1e300 -> i32 max
-export i32 raw(f64 x)       { return x as@ i32; }    // 3.7 -> 3, NaN -> 0
+export i32 raw(i64 x)       { return x as@ i32; }    // keeps the low 32 bits
+export i32 toward0(f64 x)   { return x.trunc() as~ i32; } // 3.7 -> 3, NaN -> 0
 export bool truthy(i32 x)   { return x as~ bool; }   // 0 -> false, else true
 
 // ERROR: i64 a = x as~ i64;   // i32->i64 is lossless — must use `as`
@@ -1003,7 +1004,7 @@ export bool selfTest() {
       && incr() == 577
       && widen(42) == 42 as i64 && checked(42 as i64) == 42
       && nearest(3.7) == 4 && nearest(2.5) == 2
-      && raw(3.7) == 3 && raw(0.0 / 0.0) == 0
+      && toward0(3.7) == 3 && toward0(0.0 / 0.0) == 0
       && truthy(42) && !truthy(0)
       && strBasics() == 15
       && strEscapes() == 5 && strBlock() == 29 && strInterp() == 7

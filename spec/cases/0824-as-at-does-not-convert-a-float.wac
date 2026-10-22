@@ -1,0 +1,5 @@
+// expect: refused
+// why: `as@` reinterprets bits and keeps the low ones; a float and an integer share no bits worth
+//      keeping, so a float to an integer is `trunc()` and then `as~`
+// from: spec/3-expressions/24-casts.md
+export i32 f() { f64 x = 3.7; return x as@ i32; }

@@ -1,6 +1,6 @@
 # 0075 — the website undersells determinism and virtual time
 
-- **Status:** open
+- **Status:** closed
 - **Blocked on:** an operator decision, not an implementation
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
@@ -80,3 +80,9 @@ something better and narrower, and that cost more credibility than the sentence 
 Option 3: state the present-tense half — no ambient authority, so every interaction is a capability the
 program was handed; the platform's transition functions walked over every interleaving — on the Stack
 page beside the capability world, and keep virtual time and replay on Roadmap, in the future tense.
+
+## Fixed — 2026-10-22 (agent-a)
+
+Option 3: a *Nothing happens behind the program’s back* section on the Stack page (`stack.html#replay`) states the present-tense half — every contact with the world is a handed capability, and the platform's four transition functions are walked over every interleaving to a bounded depth. Virtual time and replay stay on Roadmap in the future tense, which now links back to it.
+
+- **Fixed in:** the commit that moved this file to `closed/`.

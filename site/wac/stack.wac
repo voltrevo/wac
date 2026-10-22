@@ -221,6 +221,33 @@ export Node Stack(Figures F) {
           authority only narrows.
         </P>
       </Sub>
+      <Sub id="replay" title="Nothing happens behind the program’s back">
+        <P>
+          The same fact, stated for someone who cares about tests rather than security. A program’s
+          every contact with the world is a value it was handed: the clock is{" "}
+          <m>core.nowMillis()</m> and <m>core.monotonicNanos()</m>,
+          randomness is <m>core.randomBytes(n)</m>, and a file, a socket or a child is
+          a capability it holds. <Lead>There is no clock to read that the host did not give it</Lead>,
+          no socket it was not handed and no thread it did not start — so whatever answers those
+          calls decides everything the program can observe. Systems that want a run they can replay
+          usually have to fight their language for that property; here it is how the language is
+          built.
+        </P>
+        <P>
+          Below the program, the platform’s own moving parts are written so they can be checked the
+          same way. The stream queue, a child’s lifecycle, the bridge’s slot protocol and its buffer
+          pool are each a <Lead>pure transition function</Lead>, and a test walks every interleaving
+          of their events to a bounded depth against the invariants each has already broken once —
+          a write that overwrote a cancellation, a pool that handed one buffer to two slots. Those
+          were found by a fuzzer, eventually; an enumeration finds that kind in about a second.
+        </P>
+        <P>
+          What is <em>not</em> here yet is the mode that uses all this: a host that owns the clock
+          and the schedule, so a run can be repeated exactly and an hour of protocol timers passes
+          in milliseconds. That is on the <A href="roadmap.html">roadmap</A>, and nothing on this page
+          depends on it.
+        </P>
+      </Sub>
     </Section>
 
     <Section id="shell" kicker="hard to fake, #1" title="A shell that agrees with bash">

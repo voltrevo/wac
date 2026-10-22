@@ -11960,6 +11960,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             fb.byte(intBuiltinOp(ot, mname));
             return;
           }
+          // A float's four rounding methods, one instruction each.
+          if (floatBuiltinOp(ot, mname) >= 0) {
+            emitExpr(fb, src, lexed, env, obj);
+            fb.byte(floatBuiltinOp(ot, mname));
+            return;
+          }
           if ((isArrayType(ot) || ot == "string") && mname == "len") {
             emitExpr(fb, src, lexed, env, obj);
             fb.byte(251);
@@ -12471,6 +12477,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
           // An integer's five answer in its own width: `i64.clz` is `[i64] -> [i64]`.
           if ((isIntType(ot) || isPackedValue(ot)) && intBuiltinOp(ot, mn) >= 0) { return ot; }
+          if (floatBuiltinOp(ot, mn) >= 0) { return ot; }
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(fft)) { return sigReturn(fft); }
           i32 mi = methodSlotForArgs(env, src, lexed, ot, mn, callTargs, args);
@@ -15071,6 +15078,17 @@ i32 intBuiltinOp(string t, string name) {
   return -1;
 }
 
+/** The opcode for a float's rounding method, or -1 when it is not one or the receiver is not a float. */
+i32 floatBuiltinOp(string t, string name) {
+  if (t != "f32" && t != "f64") { return -1; }
+  bool wide = t == "f64";
+  if (name == "ceil")  { return wide ? 155 : 141; }   // f64.ceil    / f32.ceil
+  if (name == "floor") { return wide ? 156 : 142; }   // f64.floor   / f32.floor
+  if (name == "trunc") { return wide ? 157 : 143; }   // f64.trunc   / f32.trunc
+  if (name == "round") { return wide ? 158 : 144; }   // f64.nearest / f32.nearest
+  return -1;
+}
+
 /**
  * An integer bit method on a packed receiver, at the receiver's own width (spec ch08: every integer
  * type has them). The instructions are 32-bit, so the value is taken to its own bits first — an `i8`
@@ -15471,7 +15489,7 @@ i32 packedMax(string t) { return t == "i8" ? 127 : t == "u8" ? 255 : t == "i16" 
  *
  * Out of a packed type, the value is already exact in its carrier, so the cast is the carrier's. Into
  * one, the value is first cast to the carrier with the same operator and then brought into range the way
- * that operator says: `as@` keeps the low bits (a float saturates, as it does into any integer), `as!`
+ * that operator says: `as@` keeps the low bits (only an integer reaches it), `as!`
  * traps on a value that has no reading in it, `as~` clamps, and plain `as` — which only a narrower
  * packed type reaches — has nothing to do.
  */
@@ -15484,8 +15502,7 @@ void emitPackedCast(B fb, Env env, string from, string to, i32 op) {
   string carrier = packedCarrier(to);
   if (src != carrier) { emitCast(fb, env, src, carrier, op == kAs() ? kAsAt() : op); }
   if (op == kAs()) { return; }
-  bool floatSource = isFloat(from);
-  if (op == kAsAt() && !floatSource) { emitNormalize(fb, to); return; }
+  if (op == kAsAt()) { emitNormalize(fb, to); return; }
   // **Compared in the carrier's own signedness.** A `u8` or `u16` is carried in a `u32`, and the
   // largest `u32` read as a signed number is -1 — below the range, so `4294967295 as~ u8` clamped to 0.
   bool uc = carrier == "u32";
@@ -15983,10 +16000,9 @@ void emitConversion(B fb, Env env, string from, string to, i32 op) {
     return;
   }
   if (isFloat(from) && !isFloat(to)) {
-    // **`as~` rounds; `as@` truncates.** Two spellings and two different answers — `1.5 as~ i32` is 2
-    // and `1.5 as@ i32` is 1 — which one instruction covered wrongly for both until the sweep put a
-    // `.5` through it.
-    if (op != kAsAt()) { fb.byte(from == "f32" ? 144 : 158); }   // f32.nearest / f64.nearest
+    // **`as~` rounds half to even**, so `1.5 as~ i32` is 2: nearest first, then the conversion.
+    // (`as@` from a float is refused — `trunc()` is the spelling for dropping the fraction.)
+    fb.byte(from == "f32" ? 144 : 158);   // f32.nearest / f64.nearest
     // And **saturating**, not trapping: `1e10 as~ i32` is `i32` max and `-2.25 as~ u32` is 0, where
     // the plain `trunc` family raises. That is the `trunc_sat` block, behind the `0xfc` prefix.
     fb.byte(252);
@@ -17698,6 +17714,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             return "";
           }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return ""; }
+          if (floatBuiltinOp(ot, mn) >= 0) { return ""; }
           // The five bit methods are instructions, not functions, so there is no method to find.
           if ((isIntType(ot) || isPackedValue(ot)) && intBuiltinOp(ot, mn) >= 0) {
             for (i32 i = 0; i < args.len(); i++) {

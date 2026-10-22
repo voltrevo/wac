@@ -102,42 +102,72 @@ export Parsed askedFrom(string[] argv, i32 from) {
  * narrowing here would silently make `wac test --allow-net` unable to grant net. The flags are already
  * the narrowing for those two; `runprog.wac` and `testrun.wac` own it.
  */
-export Asked forCommand(string cmd) {
-  // Reading sources, and `$WAC_HOME` to find a mapped import in the cache. `check` writes nothing —
-  // it is the one command whose whole output is a sentence.
-  if (cmd == "check") { return Asked(true, false, false, true, false); }
-  // ...and these three write a module, a manifest or a `.gen.ts` beside it.
-  if (cmd == "compile" || cmd == "bindgen" || cmd == "build") {
-    return Asked(true, true, false, true, false);
+export Asked forCommand(Command cmd) {
+  // **No default** (issue 0337a): every command is an arm, so a command added to the enum without a
+  // line here does not compile — where a fall-through gave it every grant, silently, and the only signal
+  // was that nothing went wrong.
+  match (cmd) {
+    // Reading sources, and `$WAC_HOME` to find a mapped import in the cache. `check` writes nothing —
+    // it is the one command whose whole output is a sentence.
+    Check: { return Asked(true, false, false, true, false); }
+    // `audit` reads the sources it reports on and writes nothing: the same as `check`. It had no line
+    // until 2026-10-22, and so held every grant through the default this table no longer has.
+    Audit: { return Asked(true, false, false, true, false); }
+    // ...and these three write a module, a manifest or a `.gen.ts` beside it.
+    Compile: { return Asked(true, true, false, true, false); }
+    Bindgen: { return Asked(true, true, false, true, false); }
+    Build: { return Asked(true, true, false, true, false); }
+    // `app` is a build that writes an executable instead of a module: the same three, and the
+    // executable bit is part of writing a file rather than a capability of its own.
+    App: { return Asked(true, true, false, true, false); }
+    // Reading the modules it is asked about, and nothing default: `Cli.validated` is the engine answering
+    // in this process, so there is no program to start and no file to write.
+    Validate: { return Asked(true, false, false, false, false); }
+    // `app-run` reads one file and starts what is inside it, and the grants the program gets are the
+    // ones its own manifest declares — `runBytes` reads them from the module rather than passing on
+    // what this command holds. It keeps everything for the same reason `run` does: a child cannot be
+    // handed what its parent does not hold, so narrowing here would cap what a built program declared.
+    AppRun: { return Asked(true, true, true, true, true); }
+    // **`task` keeps everything, for the same reason `run` and `test` do**: it starts a command line
+    // out of `tasks.json5`, and a child cannot be handed what its parent does not hold — so narrowing
+    // here would decide, on behalf of every task, what tasks are allowed to be. `packages/wac/src/tasks.wac`
+    // sets out why the grants are one set rather than one per task, and the narrowing that is real is
+    // the caller's: `wac task` intersects with what this process already holds and cannot widen it.
+    Task: { return Asked(true, true, true, true, true); }
+    // The one command that reaches the network, which `design/lang/0009` D10 makes deliberate. Not
+    // `run`: an ordinary build is offline by construction, and this is what keeps it that way even
+    // though the two now live in one program.
+    Update: { return Asked(true, true, true, true, false); }
+    // Installing and removing an installation both read a few files, write `$WAC_HOME` and the
+    // profiles, and ask where `$WAC_HOME` is. Neither reaches the network and neither starts a
+    // program, and saying so is the point of this table: `self install` copies a binary that has
+    // already been built, so it needs no compiler, no toolchain and no fetch.
+    Self: { return Asked(true, true, false, true, false); }
+    // `run` and `test`: their flags grant the program they start, which is the narrowing for them.
+    Run: { return Asked(true, true, true, true, true); }
+    Test: { return Asked(true, true, true, true, true); }
   }
-  // `app` is a build that writes an executable instead of a module: the same three, and the
-  // executable bit is part of writing a file rather than a capability of its own.
-  if (cmd == "app") { return Asked(true, true, false, true, false); }
-  // Reading the modules it is asked about, and nothing default: `Cli.validated` is the engine answering
-  // in this process, so there is no program to start and no file to write.
-  if (cmd == "validate") { return Asked(true, false, false, false, false); }
-  // `app-run` reads one file and starts what is inside it, and the grants the program gets are the
-  // ones its own manifest declares — `runBytes` reads them from the module rather than passing on
-  // what this command holds. It keeps everything for the same reason `run` does: a child cannot be
-  // handed what its parent does not hold, so narrowing here would cap what a built program declared.
-  if (cmd == "app-run") { return Asked(true, true, true, true, true); }
-  // **`task` keeps everything, for the same reason `run` and `test` do**: it starts a command line
-  // out of `tasks.json5`, and a child cannot be handed what its parent does not hold — so narrowing
-  // here would decide, on behalf of every task, what tasks are allowed to be. A repository's tasks
-  // compile, spawn, write and fetch; the ones here do all four. `packages/wac/src/tasks.wac` sets out
-  // why the grants are one set rather than one per task, and the narrowing that is real is the
-  // caller's: `wac task` intersects with what this process already holds and cannot widen it.
-  if (cmd == "task") { return Asked(true, true, true, true, true); }
-  // The one command that reaches the network, which `design/lang/0009` D10 makes deliberate. Not
-  // `run`: an ordinary build is offline by construction, and this is what keeps it that way even
-  // though the two now live in one program.
-  if (cmd == "update") { return Asked(true, true, true, true, false); }
-  // Installing and removing an installation both read a few files, write `$WAC_HOME` and the
-  // profiles, and ask where `$WAC_HOME` is. Neither reaches the network and neither starts a
-  // program, and saying so is the point of this table: `self install` copies a binary that has
-  // already been built, so it needs no compiler, no toolchain and no fetch.
-  if (cmd == "self") { return Asked(true, true, false, true, false); }
-  return Asked(true, true, true, true, true);
+}
+
+/** Every command `wac` answers, by the word that names it on the command line — `commandNamed`. */
+export enum Command { Check, Audit, Compile, Bindgen, Build, App, Validate, AppRun, Task, Update, Self, Run, Test }
+
+/** The command `word` names, or null for a word that names none — where a typo becomes "unknown command". */
+export Command? commandNamed(string word) {
+  if (word == "check") { return Command.Check; }
+  if (word == "audit") { return Command.Audit; }
+  if (word == "compile") { return Command.Compile; }
+  if (word == "bindgen") { return Command.Bindgen; }
+  if (word == "build") { return Command.Build; }
+  if (word == "app") { return Command.App; }
+  if (word == "validate") { return Command.Validate; }
+  if (word == "app-run") { return Command.AppRun; }
+  if (word == "task") { return Command.Task; }
+  if (word == "update") { return Command.Update; }
+  if (word == "self") { return Command.Self; }
+  if (word == "run") { return Command.Run; }
+  if (word == "test") { return Command.Test; }
+  return null;
 }
 
 // ── What a refused capability answers ─────────────────────────────────────────

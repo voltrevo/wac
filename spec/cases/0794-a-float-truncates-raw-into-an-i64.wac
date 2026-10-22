@@ -1,4 +1,0 @@
-// expect: f() = -3
-// why: `as@` from a float to an integer truncates toward zero, at any width
-// from: spec/3-expressions/24-casts.md
-export i64 f() { f64 x = -3.7; return x as@ i64; }

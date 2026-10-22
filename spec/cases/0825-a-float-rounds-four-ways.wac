@@ -1,0 +1,15 @@
+// expect: f() = 0
+// why: `trunc`, `floor`, `ceil` and `round` answer a float of the same type; `round` takes a tie to
+//      the even neighbour
+// from: spec/2-types/08-primitives.md
+export i32 f() {
+  f64 a = 2.5; f64 b = -2.5; f64 c = 3.5; f64 d = -3.7;
+  if (a.trunc() != 2.0 || d.trunc() != -3.0) { return 1; }
+  if (a.floor() != 2.0 || d.floor() != -4.0) { return 2; }
+  if (a.ceil() != 3.0 || d.ceil() != -3.0) { return 3; }
+  if (a.round() != 2.0 || b.round() != -2.0 || c.round() != 4.0 || d.round() != -4.0) { return 4; }
+  f32 n = 1.5;
+  f32 r = n.round();
+  if (r != 2.0 || n.floor() != 1.0) { return 5; }
+  return 0;
+}

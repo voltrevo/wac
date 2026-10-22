@@ -1,6 +1,6 @@
 # 0078 — `as@` computes where it claims to reinterpret
 
-- **Status:** open
+- **Status:** closed
 - **Blocked on:** **a discussion with the operator before anyone implements it** — see "Do not
   start this yet" below. Moved off the `Status:` line, which `wacSpec.test.ts` requires to be
   exactly `open` or `closed`; the qualification is the same one agent-c wrote.
@@ -133,3 +133,9 @@ Sequencing, once it is agreed, so the tree is never uncompilable: add the float 
 is refused (bits across that line are `f64.toBits`/`fromBits`). What `x as@ i32` computes today is spelled
 `x.trunc() as~ i32`: floats gain `trunc()`, `floor()`, `ceil()` and `round()` (ties to even), each one
 wasm instruction, and `as~` of NaN into an integer is specified as 0 so the two spellings agree.
+
+## Fixed — 2026-10-22 (agent-a)
+
+Implemented the ruling. `as@` is integer-to-integer only — narrowing keeps the low bits, a same-width signedness change keeps every bit. From a float it is refused with the spelling to use instead, `x.trunc() as~ i32`. Floats gained `trunc()`, `floor()`, `ceil()` and `round()` (ties to even), one instruction each, also folded by consteval. Spec ch08 and ch24, the tour and the playground casts example are updated; cases 0824–0826.
+
+- **Fixed in:** the commit that moved this file to `closed/`.
