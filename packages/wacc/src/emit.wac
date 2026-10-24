@@ -2742,36 +2742,13 @@ export struct Env {
   /**
    * Every name assigned anywhere in the function being walked, and which lambdas capture one.
    *
-   * **Capture is by value today, and by value is not what `design/lang/0002` decided.** The two agree
-   * exactly while nothing writes the captured name: read-only capture is identical either way, and a
-   * write is where they diverge — the lambda's write unseen outside, the enclosing function's unseen
-   * inside. Measured, not assumed: both writing shapes answered 1 where reference semantics wants 42.
-   *
-   * So a lambda capturing a name that is written, from either side, is declined rather than emitted
-   * with the wrong meaning. Reference semantics needs a cell per captured local, and the cell has to
-   * be threaded through the *enclosing* function's own reads and writes, which is the part that
-   * changes code the lambda is not in. Until that exists, this is the honest half.
+   * Capture is by reference (`design/lang/0002`): a lambda capturing a name that is written, from
+   * either side, is marked in `lambdaWrites`, and that name becomes a cell — a local at its `Var`, a
+   * parameter at function entry — which the lambda and the enclosing function both read and write.
    */
   string[] assignedNames;
   i32 assignedCount;
   bool[] lambdaWrites;
-  /**
-   * Which lambdas capture a **parameter**, which has no declaration to promote to a cell.
-   *
-   * A captured local becomes a cell at its `Var`; a parameter arrives already in its slot, so making
-   * it a cell means building one at function entry and rewriting every use — which is not done. Until
-   * it is, such a lambda is declined: the capture record's fields are cell types now, so handing one
-   * a raw parameter would be an invalid module rather than a wrong answer.
-   */
-  bool[] lambdaCapturesParam;
-  /**
-   * Captured **parameters**, keyed by the position of the function that declares them.
-   *
-   * A captured local becomes a cell at its `Var`; a parameter has no `Var`, so its cell is built at
-   * entry instead — and the emitter needs to know which of a function's parameters need one while it
-   * is emitting that function. The same position key the lambdas and the promoted declarations use,
-   * for the same reason: both walks read it from the same node.
-   */
   /**
    * Each generic struct's type-parameter names, comma-joined — `Slot` → `T`, `Map` → `K,V`.
    *
@@ -2780,16 +2757,6 @@ export struct Env {
    * that `T` is the first parameter. Recorded in the same pass that finds the lambdas, from the
    * declarations that pass already walks. `issues/lang/0141`.
    */
-  /**
-   * Whether a lambda was seen inside a **generic** declaration — `issues/lang/0142`.
-   *
-   * A generic is emitted once per instantiation, so a lambda inside one is *N* hoisted functions
-   * rather than one, and the position key this design rests on is the same for every instantiation.
-   * Until that is solved they are unsupported — and unsupported has to mean *declined*, not emitted:
-   * the walk skipped generic bodies, nothing asked whether they were emittable, and the module came
-   * back with a lambda's instructions missing and a short stack.
-   */
-  bool lambdaInGeneric;
   string[] genericOwner;
   string[] genericParams;
   i32 genericCount;
@@ -2814,6 +2781,14 @@ export struct Env {
     return "";
   }
 
+  /**
+   * Captured **parameters**, keyed by the position of the function that declares them.
+   *
+   * A captured local becomes a cell at its `Var`; a parameter has no `Var`, so its cell is built at
+   * entry instead — and the emitter needs to know which of a function's parameters need one while it
+   * is emitting that function. The same position key the lambdas and the promoted declarations use,
+   * for the same reason: both walks read it from the same node.
+   */
   i32[] paramCellLine;
   i32[] paramCellCol;
   /** And the file — see `Env.promotedFile`. */
@@ -3442,8 +3417,8 @@ export struct Env {
                i32[].filled(1024, 0), 0, 0,
                string[].filled(4096, ""), string[].filled(4096, ""), i32[].filled(4096, 0), i32[].filled(4096, 0), 0,
                string[][].filled(1024, string[]()), string[][].filled(1024, string[]()), i32[].filled(1024, 0),
-               0, 0, i32[].filled(64, 0), i32[].filled(64, 0), 0, -1, string[].filled(4096, ""), 0, bool[].filled(1024, false), bool[].filled(1024, false),
-               false, string[].filled(1024, ""), string[].filled(1024, ""), 0,
+               0, 0, i32[].filled(64, 0), i32[].filled(64, 0), 0, -1, string[].filled(4096, ""), 0, bool[].filled(1024, false),
+               string[].filled(1024, ""), string[].filled(1024, ""), 0,
                i32[].filled(4096, 0), i32[].filled(4096, 0), i32[].filled(4096, 0), string[].filled(4096, ""), 0,
                i32[].filled(4096, 0), i32[].filled(4096, 0), i32[].filled(4096, 0), 0,
                bool[].filled(4096, false), 0 - 1, B.create(), false, false, 0 - 1,
@@ -13821,7 +13796,6 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         findLambdasExpr(env, src, lexed, init, typeOfTyName(env, src, lexed, type));
       }
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
-        if (typeParams.len() > 0 && bodyHasLambda(src, lexed, body)) { env.lambdaInGeneric = true; }
         if (typeParams.len() == 0) {
           env.walkCount = 0;
           env.assignedCount = 0;
@@ -13837,11 +13811,6 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         }
       }
       StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-        if (typeParams.len() > 0) {
-          for (i32 m = 0; m < methods.len(); m++) {
-            if (bodyHasLambda(src, lexed, methods[m].body)) { env.lambdaInGeneric = true; }
-          }
-        }
         // A generic's parameter names, for reading its methods' types in a caller's world.
         if (typeParams.len() > 0 && env.genericCount < env.genericOwner.len()) {
           string ps = "";
@@ -13882,11 +13851,6 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         // methods are reached by the blocked walk, so this one already declined — but with the
         // ordinary message, which read "this module has 0" lambdas and pointed nowhere near the
         // cause. Naming it costs one line and is the difference between a limitation and a puzzle.
-        if (typeParams.len() > 0) {
-          for (i32 m = 0; m < methods.len(); m++) {
-            if (bodyHasLambda(src, lexed, methods[m].body)) { env.lambdaInGeneric = true; }
-          }
-        }
         if (typeParams.len() == 0) {
           for (i32 m = 0; m < methods.len(); m++) {
             // A method with letters of its own records its lambdas per instance, where they resolve.
@@ -17638,10 +17602,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (ma < 0) {
             return "no method " + ot + "." + mn + " on line " + numText(lexedLine(lexed, nameTok));
           }
-          // **A method with its own type parameters parses and cannot yet be called.** Nothing infers
-          // its type arguments and nothing monomorphises per argument, so the honest answer is to say
-          // which feature is missing: without this the reader got whichever mismatch fell out first —
-          // *"an assignment between related reference types"*, which names the symptom two steps away.
+          // **A method with its own type parameters is an instance per set of type arguments**,
+          // written at the call or inferred from its arguments (`design/lang/0010`).
           if (ma < env.funcMethodGeneric.len() && env.funcMethodGeneric[ma]) {
             // **Written type arguments name an instance, and naming it here is what creates it** —
             // `design/lang/0010` option C, the same shape `genericCallInstance` has for a free

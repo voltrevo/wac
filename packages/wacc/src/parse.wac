@@ -1083,9 +1083,8 @@ export Ty parseType(P p) {
     Ty ret = parseType(p);
     p.expect(kLparen());
     TyList params = TyList.create();
-    // **`fn<i32(const S)>`**: a parameter of a funcref type may be `const` (spec ch17). Read and
-    // not yet kept — the funcref's type says `S`, so the `const` refuses nothing here a declaration's
-    // own `const` parameter would.
+    // **`fn<i32(const S)>`**: a parameter of a funcref type may be `const` (spec ch17), and the type
+    // keeps it — a lambda assigned to one must take `const S` and is refused a write through it.
     if (!p.at1(kRparen())) {
       // `const T` is a type here — a function value carries its parameters' promises (spec ch17).
       params.push(parseTypeArg(p));
@@ -3467,10 +3466,10 @@ Decl parseFuncDecl(P p) {
   bool exported = p.eat(kExport());
   // `export async i32 f()`, in that order — `async` sits where `const` does in `export const struct`,
   // between the visibility and the thing. `design/lang/0014` D3: the type written is what the *body*
-  // answers, and the caller receives a `Pending<T>` of it.
+  // answers, and the caller receives a `Ticket<T>` of it.
   bool isAsync = p.eat(kAsync());
-  // `const Box shared()` — a result the caller may not mutate (spec ch17). Read; the permission
-  // on a returned reference is not yet carried, so the result is an ordinary one.
+  // `const Box shared()` — a result the caller may not mutate (spec ch17); binding it to a plain
+  // `Box` is refused.
   p.eat(kConst());
   Ty ret = parseReturnType(p);
   i32 nameTok = -1;
