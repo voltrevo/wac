@@ -34,7 +34,7 @@
 //   ...
 //   giving up after 600ms
 
-import { Cli, Core, Pending, Socket, Sys } from "std";
+import { Cli, Core, Pending, HostSocket, Sys } from "std";
 import { Read } from "core";
 
 static i32 ROUNDS = 6;   // more than SLOTS, so a leaked ticket would show up as a stall
@@ -52,7 +52,7 @@ export i32 main(Sys sys) {
 
   // Even connecting is bounded, and the shape is identical — which is the point of putting the
   // deadline on the waiter rather than on each capability.
-  Pending<Socket> pc = cli.connect(host, port);
+  Pending<HostSocket> pc = cli.connect(host, port);
   if (core.waitAny([pc.id], ms) < 0) {
     core.warn("patience: connect to \{host} did not answer within \{ms}ms");
     // **The dial may already have succeeded**, which is the case this comment used to deny. If
@@ -67,7 +67,7 @@ export i32 main(Sys sys) {
     pc.cancel();
     return 1;
   }
-  Socket s = pc.wait();
+  HostSocket s = pc.wait();
   if (s.handle < 0) {
     core.warn("patience: \{s.error}");
     return 1;

@@ -29,7 +29,7 @@ const GRANTS = { read: true, write: true, net: true, run: true, env: true };
 const ENTRY = ".cache/lostbytes/jsprobe.wac";
 
 /** The parent gives up on a read, then asks again; the child answers late either way. */
-const PROGRAM = `import { Core, Cli, Child, Pending, GRANT_ALL, Sys } from "std";
+const PROGRAM = `import { Core, Cli, HostChild, Pending, GRANT_ALL, Sys } from "std";
 import { Read } from "core";
 
 export i32 main(Sys sys) {
@@ -42,7 +42,7 @@ export i32 main(Sys sys) {
     cli.write("PAYLOAD".toBytes());
     return 0;
   }
-  Child kid = cli.spawnSelf(["child".toBytes()], GRANT_ALL(), ".", 0, false).wait();
+  HostChild kid = cli.spawnSelf(["child".toBytes()], GRANT_ALL(), ".", 0, false).wait();
   if (kid.handle < 0) { core.log("no child: " + kid.error); return 1; }
   if (mode != "control") {
     Pending<Read> first = cli.recv(kid.handle);

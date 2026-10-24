@@ -25,7 +25,7 @@
 // second of wall clock and makes one failure attributable to one case.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Socket } from "std";
+import { Core, Cli, HostSocket } from "std";
 import { decoded } from "../../../codec/src/hex.wac";
 import { applicationKeyPhase, clientFinishedPacket, firstNewCidShape, flight, frameCountIn,
          frameKinds, openApplication, receiveInto } from "./hello_probe.wac";
@@ -45,7 +45,7 @@ struct Completed {
 Completed completed(Cli cli, Core core, string name) {
   Server s = startServer(cli, name, false);
   if (!s.ok) { return Completed(false, s.error, u8[](), u8[]()); }
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
     stopServer(cli, s);
     return Completed(false, "our socket did not bind — \{sock.error}", u8[](), u8[]());

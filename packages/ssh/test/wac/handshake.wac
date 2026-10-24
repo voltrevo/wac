@@ -20,7 +20,7 @@
 // anything slower, because loopback usually delivers a small write whole.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Socket } from "std";
+import { Cli, HostSocket } from "std";
 import { Buf } from "core";
 import { Framed, Status, frame, minBlock, paddingFor, unframe } from "../../src/packet.wac";
 import { Opened, Plain, aeadPaddingFor, keyLength, open, seal } from "../../src/cipher.wac";
@@ -46,7 +46,7 @@ export struct Conn {
   string error;
 
   Conn dial(Cli cli, string host, i32 port) {
-    Socket s = cli.connect(host, port).wait();
+    HostSocket s = cli.connect(host, port).wait();
     if (s.handle < 0) {
       return Conn(-1, u8[](), 0, 0, u8[](), u8[](), false, "connect: \{s.error}");
     }

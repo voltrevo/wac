@@ -18,7 +18,7 @@
 // past before the log said `bytes=0`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Socket } from "std";
+import { Cli, Core, HostSocket } from "std";
 import { Read } from "core";
 
 /**
@@ -47,7 +47,7 @@ async void serve(Core core, Cli cli, i32 sock, i32[] served) {
 /** Take `n` connections, starting a server for each — eagerly, and deliberately not awaited. */
 async void accepting(Core core, Cli cli, i32 listener, i32 n, i32[] served) {
   for (i32 i = 0; i < n; i++) {
-    Socket s = await cli.accept(listener).ticket();
+    HostSocket s = await cli.accept(listener).ticket();
     if (s.handle < 0) { return; }
     serve(core, cli, s.handle, served);
   }
@@ -62,7 +62,7 @@ string readBack(Cli cli, i32 handle) {
 
 export string test_two_clients_are_accepted_and_served_under_one_drain(Core core, Cli cli) {
   T t = T.create();
-  Socket l = cli.listen("127.0.0.1", 0).wait();
+  HostSocket l = cli.listen("127.0.0.1", 0).wait();
   t.isTrue(l.handle >= 0, "bound a loopback listener");
 
   i32[] served = i32[].filled(1, 0);
@@ -70,8 +70,8 @@ export string test_two_clients_are_accepted_and_served_under_one_drain(Core core
 
   // Both connect before anything is drained, so the second is accepted while the first is open —
   // which is the property, and the reason `accepting` does not wait for `serve`.
-  Socket a = cli.connect("127.0.0.1", l.port).wait();
-  Socket b = cli.connect("127.0.0.1", l.port).wait();
+  HostSocket a = cli.connect("127.0.0.1", l.port).wait();
+  HostSocket b = cli.connect("127.0.0.1", l.port).wait();
   t.isTrue(a.handle >= 0 && b.handle >= 0, "both clients connected");
   cli.send(a.handle, "one".toBytes()).wait();
   cli.send(b.handle, "two".toBytes()).wait();

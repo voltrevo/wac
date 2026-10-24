@@ -1144,9 +1144,9 @@ fn prepare(
         (Kind::FileResult, "Pending<FileResult>"),
         (Kind::Stat, "Pending<Stat>"),
         (Kind::Names, "Pending<string[]?>"),
-        (Kind::Socket, "Pending<Socket>"),
+        (Kind::Socket, "Pending<HostSocket>"),
         (Kind::Datagram, "Pending<Datagram>"),
-        (Kind::Child, "Pending<Child>"),
+        (Kind::Child, "Pending<HostChild>"),
         (Kind::Read, "Pending<Read>"),
     ] {
         if let Some(hooks) = pending_hooks(&mut *store, &instance, m, kind, wac_name)? {
@@ -3485,9 +3485,9 @@ fn make_socket(
 ) -> Result<Val, wasmtime::Error> {
     let e = make_string(caller, error.as_bytes())?;
     let p = make_string(caller, peer.as_bytes())?;
-    let f = export_func(caller, "$bind$sm_Socket_of")?;
+    let f = export_func(caller, "$bind$sm_HostSocket_of")?;
     let built = call_dyn(caller, &f, &[Val::I32(handle), e, p, Val::I32(port), Val::I32(fault)])?;
-    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Socket.of answered nothing"))
+    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("HostSocket.of answered nothing"))
 }
 
 fn make_child(
@@ -3498,13 +3498,13 @@ fn make_child(
     error: &str,
 ) -> Result<Val, wasmtime::Error> {
     let e = make_string(caller, error.as_bytes())?;
-    let f = export_func(caller, "$bind$sm_Child_of")?;
+    let f = export_func(caller, "$bind$sm_HostChild_of")?;
     let built = call_dyn(
         caller,
         &f,
         &[Val::I32(handle), Val::I32(err_handle), Val::I32(fs_handle), e],
     )?;
-    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Child.of answered nothing"))
+    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("HostChild.of answered nothing"))
 }
 
 fn make_change(caller: &mut Caller<'_, Host>, fault: i32, message: &str) -> Result<Val, wasmtime::Error> {

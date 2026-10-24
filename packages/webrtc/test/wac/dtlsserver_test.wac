@@ -19,7 +19,7 @@
 // also where the note about `-ign_eof` and the 55 seconds it used to cost lives.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, Pending, Socket } from "std";
+import { Core, Cli, Datagram, Exec, Pending, HostSocket } from "std";
 import { Buf } from "core";
 import { contains } from "../../../wactest/src/strings.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
@@ -146,7 +146,7 @@ struct Got {
 }
 
 /** The next datagram, bounded. The deadline is on the wait — `issues/system/0206`. */
-Got receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
+Got receiveWithin(Core core, Cli cli, HostSocket sock, i32 ms) {
   Pending<Datagram> p = cli.receiveFrom(sock.handle);
   if (core.waitAny([p.id], ms) < 0) {
     p.drop(p.id);
@@ -164,7 +164,7 @@ export string test_openssl_s_client_completes_a_handshake_with_our_server_role(C
   if (!me.ok) { return t.report(); }
   t.eqI32(me.priv.len(), 32, "a P-256 private scalar is thirty-two bytes");
 
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
   if (sock.handle < 0) { return t.report(); }
   SClient client = startClient(cli, "serverrole", sock.port);
@@ -336,7 +336,7 @@ export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
   if (!me.ok) { return t.report(); }
 
   Peer peer = newPeer(me.der, me.priv, sigK(), serverScalar(), serverRandom(), cookie());
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
   if (sock.handle < 0) { return t.report(); }
   SClient client = startClient(cli, "resend", sock.port);
@@ -400,7 +400,7 @@ i32 distinct(string[] all, i32 n) {
   return count;
 }
 
-void finish(Cli cli, Socket sock, SClient client) {
+void finish(Cli cli, HostSocket sock, SClient client) {
   stopClient(cli, client);
   if (sock.handle >= 0) { cli.closeSocket(sock.handle); }
 }

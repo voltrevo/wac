@@ -95,7 +95,7 @@
 // to start a process. That is a real limitation of this program and worth stating rather than
 // discovering: what it does cover is a network with no C in it, which is exactly step 5's condition.
 
-import { Child, Cli, Core, FileResult, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_NONE, Pending, Sys } from "std";
+import { HostChild, Cli, Core, FileResult, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_NONE, Pending, Sys } from "std";
 import { Read } from "core";
 import { Buf } from "core";
 
@@ -289,7 +289,7 @@ Node? startNode(Core core, Cli cli, Directive d) {
     core.warn("network: \{d.name}: \{d.bundle}: \{prog.error}");
     return null;
   }
-  Child kid = cli.spawn(prog.bytes, d.args,
+  HostChild kid = cli.spawn(prog.bytes, d.args,
                         GRANT_READ | GRANT_WRITE | GRANT_NET, "", INHERIT_NONE, false).wait();
   if (kid.handle < 0) {
     core.warn("network: \{d.name}: \{kid.error}");
@@ -452,7 +452,7 @@ i32 runOnce(Core core, Cli cli, Directive d) {
     core.warn("network: \{d.name}: \{d.bundle}: \{prog.error}");
     return 1;
   }
-  Child kid = cli.spawn(prog.bytes, d.args,
+  HostChild kid = cli.spawn(prog.bytes, d.args,
                         GRANT_READ | GRANT_WRITE | GRANT_NET, "", INHERIT_NONE, false).wait();
   if (kid.handle < 0) {
     core.warn("network: \{d.name}: \{kid.error}");

@@ -22,8 +22,8 @@
 // answers in one shape, `Answer`; which fields mean what for which call, and which words describe a
 // fault, are decided here, where they are tested without a browser.
 
-import { CallResult, Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_NONE, FAULT_NOT_GRANTED,
-         FAULT_UNSUPPORTED, FileResult, GRANT_READ, GRANT_WRITE, LoadedModule, Pending, Sched, Socket,
+import { CallResult, Captured, Change, HostChild, Cli, Core, Datagram, Exec, FAULT_NONE, FAULT_NOT_GRANTED,
+         FAULT_UNSUPPORTED, FileResult, GRANT_READ, GRANT_WRITE, LoadedModule, Pending, Sched, HostSocket,
          Stat, Sys, faultWords } from "std";
 import { Map, Read, Ticket } from "core";
 import { Runner } from "./page.wac";
@@ -269,7 +269,7 @@ Pending<Change> refusedChange(string grant) { return ready(Change.of(FAULT_NOT_G
  * of its own on purpose: `cat: f: ` with nothing after it was this, for a file opened as a stream.
  */
 Pending<Change> unsupported(string what) { return ready(Change.of(FAULT_UNSUPPORTED(), what)); }
-Pending<Socket> noSocket() { return ready(Socket.of(0 - 1, "a page has no sockets", "", 0, FAULT_UNSUPPORTED())); }
+Pending<HostSocket> noSocket() { return ready(HostSocket.of(0 - 1, "a page has no sockets", "", 0, FAULT_UNSUPPORTED())); }
 
 /** A program's world in a page: the answers it waits for, and the `Sys` its `main` is handed. */
 export struct World {
@@ -403,13 +403,13 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
     (i32 h) => ready(Datagram.of(u8[](), "", 0, "a page has no sockets")),
     (i32 h, string host, i32 port, u8[] bytes) => ready(false),
     (u8[] wasm, u8[][] args, i32 want, string cwd, i32 inherit, bool serveFs) =>
-      ready(Child.of(0 - 2, 0 - 2, 0 - 2, "this page cannot start programs")),
+      ready(HostChild.of(0 - 2, 0 - 2, 0 - 2, "this page cannot start programs")),
     // **No grant, and none kept**, as on a command line: what is started is this program again, so
     // it reaches nothing new, and what it may do is what it is given — never more than this holds.
     (u8[][] args, i32 want, string cwd, i32 inherit, bool serveFs) => {
       i32 req = answers.ask();
       system.spawnSelf(req, argBytesOf(args), want & grants, cwd, serveFs);
-      return answers.pending<Child>(req, childOf);
+      return answers.pending<HostChild>(req, childOf);
     },
     system.closeFeed,
     (i32 h) => {
@@ -431,9 +431,9 @@ Cli cliOf(System system, Answers answers, Sched sched, i32 grants) {
 }
 
 /** A spawn's answer as the `Child` it is — or one that says why it did not start. */
-Child childOf(Answer a) {
-  if (a.fault != FAULT_NONE()) { return Child.of(0 - 1, 0 - 1, 0 - 1, wordsFor(a)); }
-  return Child.of(a.n as! i32, a.m as! i32, a.flags, "");
+HostChild childOf(Answer a) {
+  if (a.fault != FAULT_NONE()) { return HostChild.of(0 - 1, 0 - 1, 0 - 1, wordsFor(a)); }
+  return HostChild.of(a.n as! i32, a.m as! i32, a.flags, "");
 }
 
 Pending<Stat> statFor(System system, Answers answers, bool read, string p) {

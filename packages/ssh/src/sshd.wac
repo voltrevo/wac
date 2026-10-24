@@ -33,7 +33,7 @@
 // arrangement this serves.
 
 import { Buf } from "core";
-import { Cli, Core, FileResult, Socket, Sys } from "std";
+import { Cli, Core, FileResult, HostSocket, Sys } from "std";
 import { Conn, msgNewKeys } from "./conn.wac";
 import { clientVersion, clientVersionLine, Found, scanVersion, speaksV2, Version } from "./version.wac";
 import { keyLength } from "./cipher.wac";
@@ -142,7 +142,7 @@ export async i32 main(Sys sys) {
 
   // Every interface, as a real sshd does: a daemon nobody can reach is not a daemon. Said rather than
   // assumed — `listen` took a port alone until issue 0025.
-  Socket listener = cli.listen("", o.port).wait();
+  HostSocket listener = cli.listen("", o.port).wait();
   if (listener.handle < 0) {
     core.warn("sshd: listen: \{listener.error}");
     return 1;
@@ -150,7 +150,7 @@ export async i32 main(Sys sys) {
   core.warn("sshd: listening on port \{o.port}");
 
   while (true) {
-    Socket c = cli.accept(listener.handle).wait();
+    HostSocket c = cli.accept(listener.handle).wait();
     if (c.handle < 0) {
       core.warn("sshd: accept: \{c.error}");
       break;

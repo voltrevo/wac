@@ -24,7 +24,7 @@
 // smallest set that separates "cancel breaks it" from "any outstanding read breaks it".
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Socket, Pending } from "std";
+import { Core, Cli, HostSocket, Pending } from "std";
 import { Read } from "core";
 
 /**
@@ -76,13 +76,13 @@ Saw sawClose(Core core, Cli cli, i32 h) {
  * rather than in the shape of what ran.
  */
 Saw exchange(Core core, Cli cli, T t, i32 mode, string arm) {
-  Socket listener = cli.listen("127.0.0.1", 0).wait();
+  HostSocket listener = cli.listen("127.0.0.1", 0).wait();
   if (listener.handle < 0) {
     t.fail("\{arm}: could not listen — \{listener.error}");
     return Saw(false, false, "no listener");
   }
 
-  Pending<Socket> accepting = cli.accept(listener.handle);
+  Pending<HostSocket> accepting = cli.accept(listener.handle);
   i32 client = cli.connect("127.0.0.1", listener.port).wait().handle;
   if (client < 0) {
     t.fail("\{arm}: could not connect to 127.0.0.1:\{listener.port}");
@@ -90,7 +90,7 @@ Saw exchange(Core core, Cli cli, T t, i32 mode, string arm) {
     return Saw(false, false, "no client");
   }
 
-  Socket served = accepting.wait();
+  HostSocket served = accepting.wait();
   if (served.handle < 0) {
     t.fail("\{arm}: accept failed — \{served.error}");
     cli.closeSocket(client);
@@ -157,11 +157,11 @@ export string test_a_close_reaches_the_peer_whatever_is_outstanding(Core core, C
  */
 export string test_closing_a_listener_stops_it_accepting(Core core, Cli cli) {
   T t = T.create();
-  Socket l = cli.listen("127.0.0.1", 0).wait();
+  HostSocket l = cli.listen("127.0.0.1", 0).wait();
   t.isTrue(l.handle >= 0, "a listener was opened — \{l.error}");
   if (l.handle < 0) { return t.report(); }
 
-  Socket up = cli.connect("127.0.0.1", l.port).wait();
+  HostSocket up = cli.connect("127.0.0.1", l.port).wait();
   t.isTrue(up.handle >= 0,
            "the control arm: dialling it while it is open succeeds, so a refusal below is the close\n"
            + "  rather than a dial that never worked — \{up.error}");
@@ -169,7 +169,7 @@ export string test_closing_a_listener_stops_it_accepting(Core core, Cli cli) {
 
   cli.closeSocket(l.handle);
 
-  Socket down = cli.connect("127.0.0.1", l.port).wait();
+  HostSocket down = cli.connect("127.0.0.1", l.port).wait();
   if (down.handle >= 0) { cli.closeSocket(down.handle); }
   t.isTrue(down.handle < 0,
            "dialling port \{l.port} after closing its listener was accepted — the listener\n"

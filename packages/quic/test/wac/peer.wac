@@ -12,7 +12,7 @@
 // only file that needed it; six more do.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, FileResult, Pending, Socket }
+import { Core, Cli, Datagram, FileResult, Pending, HostSocket }
   from "std";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
@@ -74,7 +74,7 @@ export void stopServer(Cli cli, Server s) {
 }
 
 /** The next datagram, bounded. The deadline is on the wait — `issues/system/0206`. */
-export u8[] receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
+export u8[] receiveWithin(Core core, Cli cli, HostSocket sock, i32 ms) {
   Pending<Datagram> p = cli.receiveFrom(sock.handle);
   if (core.waitAny([p.id], ms) < 0) {
     p.drop(p.id);
@@ -98,7 +98,7 @@ export u8[] ask(T t, Core core, Cli cli, string name, u8[] datagram, i32 ms) {
     stopServer(cli, s);
     return u8[]();
   }
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
     t.fail("our socket did not bind — \{sock.error}");
     stopServer(cli, s);
@@ -117,7 +117,7 @@ export u8[] ask(T t, Core core, Cli cli, string name, u8[] datagram, i32 ms) {
  * Answers the server's reply datagram, which is what every later packet's keys come off — so empty
  * means the caller must stop rather than carry on with keys derived from nothing.
  */
-export u8[] handshake(Core core, Cli cli, Socket sock, Server s, u8[] dcid, u8[] scid,
+export u8[] handshake(Core core, Cli cli, HostSocket sock, Server s, u8[] dcid, u8[] scid,
                       string name) {
   cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid, scid, name)).wait();
   u8[] reply = receiveWithin(core, cli, sock, 5000);

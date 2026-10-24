@@ -26,7 +26,7 @@
 // picks an id from the path; `resolveFile` turns the id back into a `FileResult`. It reads
 // oddly and it is the only way to build a resolved ticket without state.
 
-import { CallResult, Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FAULT_NOT_GRANTED, FileResult, LoadedModule, Pending, Sched, Socket, Stat } from "std";
+import { CallResult, Captured, Change, HostChild, Cli, Core, Datagram, Exec, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FAULT_NOT_GRANTED, FileResult, LoadedModule, Pending, Sched, HostSocket, Stat } from "std";
 import { Read } from "core";
 import { Shell, builtinNames, isBuiltin, runScript } from "../../src/exec.wac";
 
@@ -216,14 +216,14 @@ Pending<Change> fakeOpenOutput(string path) {
   return Pending.of(0, resolveChange, alwaysSettled, ignoreDrop);
 }
 
-Socket resolveSocket(i32 id) { return Socket(-1, "no network", "", 0, FAULT_NOT_GRANTED()); }
-Pending<Socket> fakeConnect(string host, i32 port) {
+HostSocket resolveSocket(i32 id) { return HostSocket(-1, "no network", "", 0, FAULT_NOT_GRANTED()); }
+Pending<HostSocket> fakeConnect(string host, i32 port) {
   return Pending.of(0, resolveSocket, alwaysSettled, ignoreDrop);
 }
-Pending<Socket> fakeListen(string address, i32 port) {
+Pending<HostSocket> fakeListen(string address, i32 port) {
   return Pending.of(0, resolveSocket, alwaysSettled, ignoreDrop);
 }
-Pending<Socket> fakeAccept(i32 handle) {
+Pending<HostSocket> fakeAccept(i32 handle) {
   return Pending.of(0, resolveSocket, alwaysSettled, ignoreDrop);
 }
 Read resolveEnd(i32 id) { return Read.End; }
@@ -242,7 +242,7 @@ void fakeCloseSend(i32 handle) {}
 // world grows. That is the point: a hand-written world is the one place a new capability is *noticed*
 // rather than silently inherited, and this file is the only one in the repository that has to be
 // edited when `Cli` does. `design/system/0007` step 1 added the three below.
-Pending<Socket> fakeBindDatagram(string address, i32 port) {
+Pending<HostSocket> fakeBindDatagram(string address, i32 port) {
   return Pending.of(0, resolveSocket, alwaysSettled, ignoreDrop);
 }
 Datagram resolveNoDatagram(i32 id) { return Datagram.of(u8[](), "", 0, "no datagram here"); }
@@ -271,16 +271,16 @@ Pending<bool> fakeSendTo(i32 handle, string address, i32 port, u8[] data) {
  * about the program at all: the shell falls through to its own implementations, as it does in a
  * browser tab where a page cannot spawn.
  */
-Child resolveChild(i32 id) {
+HostChild resolveChild(i32 id) {
   // The error stream is a handle of its own; this fake answers end-of-input on every handle, so one
   // more of them changes nothing here and keeps the shape honest.
-  if (id > 0) { return Child(id, id + 100, id + 200, ""); }
-  if (id == -2) { return Child(-2, -2, -2, "no spawn in this world"); }
-  return Child(-1, -1, -1, "spawn not available");
+  if (id > 0) { return HostChild(id, id + 100, id + 200, ""); }
+  if (id == -2) { return HostChild(-2, -2, -2, "no spawn in this world"); }
+  return HostChild(-1, -1, -1, "spawn not available");
 }
 i32 resolveId(i32 id) { return id; }
 
-Pending<Child> fakeSpawn(u8[] source, u8[][] argv, i32 grants, string cwd, i32 inherit,
+Pending<HostChild> fakeSpawn(u8[] source, u8[][] argv, i32 grants, string cwd, i32 inherit,
                          bool serveFs) {
   i32 handle = -1;
   // **The bytes, read back as text.** `spawn` takes `u8[]` now — a program is not text, and every
@@ -301,7 +301,7 @@ Pending<Child> fakeSpawn(u8[] source, u8[][] argv, i32 grants, string cwd, i32 i
  * -2 is "there is no `spawn` here", the answer every world that cannot gives, and the one a caller is
  * expected to have another route for.
  */
-Pending<Child> fakeSpawnSelf(u8[][] argv, i32 grants, string cwd, i32 inherit, bool serveFs) {
+Pending<HostChild> fakeSpawnSelf(u8[][] argv, i32 grants, string cwd, i32 inherit, bool serveFs) {
   return Pending.of(-2, resolveChild, alwaysSettled, ignoreDrop);
 }
 void fakeCloseFeed(i32 handle) {}

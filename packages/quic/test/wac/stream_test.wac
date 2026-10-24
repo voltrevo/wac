@@ -26,7 +26,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Socket } from "std";
+import { Core, Cli, HostSocket } from "std";
 import { Server, ask, firstHeard, handshake, heardCount, receiveWithin, startServer,
          stopServer } from "./peer.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
@@ -49,7 +49,7 @@ export string test_a_real_quic_server_reads_a_stream_this_client_opened(Core cor
   Server s = startServer(cli, "stream-read", false);
   t.isTrue(s.ok, s.error);
   if (!s.ok) { stopServer(cli, s); return t.report(); }
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
 
   u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
@@ -88,7 +88,7 @@ export string test_and_answers_on_it_which_this_client_reads_back(Core core, Cli
   Server s = startServer(cli, "stream-echo", true);
   t.isTrue(s.ok, s.error);
   if (!s.ok) { stopServer(cli, s); return t.report(); }
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
 
   u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
@@ -133,7 +133,7 @@ export string test_an_acknowledgement_the_server_accepts(Core core, Cli cli) {
   Server s = startServer(cli, "stream-ack", false);
   t.isTrue(s.ok, s.error);
   if (!s.ok) { stopServer(cli, s); return t.report(); }
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
 
   u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
@@ -219,7 +219,7 @@ export string test_a_dropped_datagram_is_survived(Core core, Cli cli) {
   Server s = startServer(cli, "stream-drop", false);
   t.isTrue(s.ok, s.error);
   if (!s.ok) { stopServer(cli, s); return t.report(); }
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
 
   u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
@@ -278,7 +278,7 @@ export string test_an_ack_past_what_the_server_sent_is_refused(Core core, Cli cl
   Server s = startServer(cli, "stream-badack", false);
   t.isTrue(s.ok, s.error);
   if (!s.ok) { stopServer(cli, s); return t.report(); }
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
 
   u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
@@ -305,7 +305,7 @@ export string test_an_ack_past_what_the_server_sent_is_refused(Core core, Cli cl
 }
 
 /** The transport error in the first CONNECTION_CLOSE to arrive, or -1. */
-i64 closeSeen(Core core, Cli cli, Socket sock, u8[] reply, i32 tries) {
+i64 closeSeen(Core core, Cli cli, HostSocket sock, u8[] reply, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
     u8[] got = receiveWithin(core, cli, sock, 500);
     if (got.len() == 0) { continue; }
@@ -318,7 +318,7 @@ i64 closeSeen(Core core, Cli cli, Socket sock, u8[] reply, i32 tries) {
   return -1;
 }
 
-void done(Cli cli, Socket sock, Server s) {
+void done(Cli cli, HostSocket sock, Server s) {
   if (sock.handle >= 0) { cli.closeSocket(sock.handle); }
   stopServer(cli, s);
 }

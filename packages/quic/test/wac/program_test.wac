@@ -30,7 +30,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, Pending, Socket } from "std";
+import { Core, Cli, Datagram, Exec, Pending, HostSocket } from "std";
 import { builtByDeno, builtProgram, wacBinary } from "../../../wactest/src/built.wac";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
@@ -150,7 +150,7 @@ export string test_a_fresh_key_every_run(Core core, Cli cli) {
   // Two handshakes, and the two Initials must differ. They share a program, a server and a
   // destination, so the only thing left to differ is what the host's entropy gave them.
   T t = T.create();
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
   if (sock.handle < 0) { return t.report(); }
 

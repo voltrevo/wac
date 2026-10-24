@@ -22,7 +22,7 @@
 // serves an error rather than the file. The handler cannot exceed what this program hands it — and
 // what it hands over is the `GRANT_NONE` below, which is where to change that.
 
-import { Child, Cli, Core, FileResult, GRANT_NONE, INHERIT_NONE, Pending, Socket, Sys } from "std";
+import { HostChild, Cli, Core, FileResult, GRANT_NONE, INHERIT_NONE, Pending, HostSocket, Sys } from "std";
 import { argvOf } from "../src/stream.wac";
 import { Read } from "core";
 
@@ -50,7 +50,7 @@ export i32 main(Sys sys) {
 
   // Loopback: an example that runs a program for whoever connects should not be reachable from
   // anywhere else while somebody is reading it. Issue 0025.
-  Socket l = cli.listen("127.0.0.1", port).wait();
+  HostSocket l = cli.listen("127.0.0.1", port).wait();
   if (l.handle < 0) {
     core.warn("inetd: \{port}: \{l.error}");
     return 1;
@@ -60,7 +60,7 @@ export i32 main(Sys sys) {
   // One connection, then exit. A loop would need `accept` and the live child watched
   // together, which `waitAny` can do — but serving one is what makes this testable, and
   // concurrency across connections is a different design decision from this one.
-  Socket c = cli.accept(l.handle).wait();
+  HostSocket c = cli.accept(l.handle).wait();
   cli.closeSocket(l.handle);
   if (c.handle < 0) {
     core.warn("inetd: accept: \{c.error}");
@@ -70,7 +70,7 @@ export i32 main(Sys sys) {
   // Nothing granted: the handler gets the socket's bytes and no other authority. Passing
   // GRANT_READ here is what would make this an `inetd` that can serve a shell with one
   // readable directory, and is the parent's decision to make rather than the handler's.
-  Child kid = cli.spawn(source, argvOf(childArgs), GRANT_NONE, "", INHERIT_NONE, false).wait();
+  HostChild kid = cli.spawn(source, argvOf(childArgs), GRANT_NONE, "", INHERIT_NONE, false).wait();
   if (kid.handle < 0) {
     core.warn("inetd: \{kid.error}");
     cli.closeSocket(c.handle);

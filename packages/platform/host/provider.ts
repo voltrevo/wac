@@ -82,8 +82,8 @@ export type PendingClasses = {
   Pending_stringArrOpt: PendingClass;
   Pending_FileResult: PendingClass;
   Pending_Stat: PendingClass;
-  Pending_Socket: PendingClass;
-  Pending_Child: PendingClass;
+  Pending_HostSocket: PendingClass;
+  Pending_HostChild: PendingClass;
   Pending_Captured: PendingClass;
   Pending_Read: PendingClass;
   Pending_Change: PendingClass;
@@ -194,9 +194,9 @@ export function cliOf(
     Cli: PlatformClasses["Cli"];
     FileResult: { of(...a: unknown[]): unknown };
     Stat: { of(...a: unknown[]): unknown };
-    Socket: { of(...a: unknown[]): unknown };
+    HostSocket: { of(...a: unknown[]): unknown };
     Datagram: { of(...a: unknown[]): unknown };
-    Child: { of(...a: unknown[]): unknown };
+    HostChild: { of(...a: unknown[]): unknown };
     LoadedModule: { of(...a: unknown[]): unknown };
     CallResult: { of(...a: unknown[]): unknown };
     Captured: { of(...a: unknown[]): unknown };
@@ -405,9 +405,9 @@ export function cliOf(
       const handle = readI32le(out);
       const errHandle = readI32le(out.subarray(4));
       const fsHandle = readI32le(out.subarray(8));
-      return cls.Child.of(handle, errHandle, fsHandle, handle < 0 ? unstr(out.subarray(12)) : "");
+      return cls.HostChild.of(handle, errHandle, fsHandle, handle < 0 ? unstr(out.subarray(12)) : "");
     } catch (e) {
-      return cls.Child.of(-1, -1, -1, e instanceof Error ? e.message : String(e));
+      return cls.HostChild.of(-1, -1, -1, e instanceof Error ? e.message : String(e));
     }
   };
   /**
@@ -488,7 +488,7 @@ export function cliOf(
       // caller's own choice or nobody. The port is what makes `listen(…, 0)` usable: the kernel picks
       // a free one and the program is told which.
       const out = collect(b, unpack(id));
-      return cls.Socket.of(
+      return cls.HostSocket.of(
         readI32le(out), "", unstr(out.subarray(8)), readI32le(out.subarray(4)), FAULT_NONE);
     } catch (e) {
       // **The same line `Change` uses nine lines above**, and the reason is the one written there: a
@@ -496,7 +496,7 @@ export function cliOf(
       // `issues/system/0238c`; `probe.wac` is the program that had to match `"ot granted"` with the
       // first letter dropped because the hosts spell the refusal two ways.
       const fault = e instanceof HostCallError ? e.fault : FAULT_OTHER;
-      return cls.Socket.of(-1, e instanceof Error ? e.message : String(e), "", 0, fault);
+      return cls.HostSocket.of(-1, e instanceof Error ? e.message : String(e), "", 0, fault);
     }
   };
 
@@ -529,13 +529,13 @@ export function cliOf(
     file: (t: Ticket) => cls.Pending_FileResult.of(pack(t), fileResult, settled, drop),
     stat: (t: Ticket) => cls.Pending_Stat.of(pack(t), stat, settled, drop),
     dir: (t: Ticket) => cls.Pending_stringArrOpt.of(pack(t), dirNames, settled, drop),
-    socket: (t: Ticket) => cls.Pending_Socket.of(pack(t), socket, settled, drop),
+    socket: (t: Ticket) => cls.Pending_HostSocket.of(pack(t), socket, settled, drop),
     captured: (t: Ticket) => cls.Pending_Captured.of(pack(t), captured, settled, drop),
     exec: (t: Ticket) => cls.Pending_Exec.of(pack(t), execAnswer, settled, drop),
     read: (t: Ticket) => cls.Pending_Read.of(pack(t), read, settled, drop),
     change: (t: Ticket) => cls.Pending_Change.of(pack(t), change, settled, drop),
     datagram: (t: Ticket) => cls.Pending_Datagram.of(pack(t), datagram, settled, drop),
-    child: (t: Ticket) => cls.Pending_Child.of(pack(t), child, settled, drop),
+    child: (t: Ticket) => cls.Pending_HostChild.of(pack(t), child, settled, drop),
   };
 
   const twoPaths = (from: string, to: string): Uint8Array => {

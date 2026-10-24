@@ -52,7 +52,7 @@ import { contains } from "../../../wactest/src/strings.wac";
  * queue when it gives up — the case only exists when the reader has nothing yet and waits.
  */
 static string PROGRAM =
-  "import { Core, Cli, Child, Pending, GRANT_ALL, Sys } from \"std\";\n" +
+  "import { Core, Cli, HostChild, Pending, GRANT_ALL, Sys } from \"std\";\n" +
   "import { Read } from \"core\";\n" +
   "\n" +
   "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
@@ -63,7 +63,7 @@ static string PROGRAM =
   "    cli.write(\"PAYLOAD\".toBytes());\n" +
   "    return 0;\n" +
   "  }\n" +
-  "  Child kid = cli.spawnSelf([\"child\".toBytes()], GRANT_ALL(), \".\", 0, false).wait();\n" +
+  "  HostChild kid = cli.spawnSelf([\"child\".toBytes()], GRANT_ALL(), \".\", 0, false).wait();\n" +
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "  if (mode != \"control\") {\n" +
   "    Pending<Read> first = cli.recv(kid.handle);\n" +
@@ -86,7 +86,7 @@ static string PROGRAM =
 
 /** An abandoned `readStdin` used to take the whole of standard input with it — `0310b`. */
 static string STDIN_PROGRAM =
-  "import { Core, Cli, Child, Pending, GRANT_ALL, Sys } from \"std\";\n" +
+  "import { Core, Cli, HostChild, Pending, GRANT_ALL, Sys } from \"std\";\n" +
   "\n" +
   "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
   "  i32 n = cli.argCount().wait();\n" +
@@ -104,7 +104,7 @@ static string STDIN_PROGRAM =
   "  }\n" +
   "\n" +
   "  string kidArg = mode == \"control\" ? \"childcontrol\" : (mode == \"late\" ? \"childlate\" : \"child\");\n" +
-  "  Child kid = cli.spawnSelf([kidArg.toBytes()], GRANT_ALL(), \".\", 0, false).wait();\n" +
+  "  HostChild kid = cli.spawnSelf([kidArg.toBytes()], GRANT_ALL(), \".\", 0, false).wait();\n" +
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "  core.delay(300).wait();\n" +
   "  cli.send(kid.handle, \"PAYLOAD\".toBytes()).wait();\n" +
@@ -129,7 +129,7 @@ static string STDIN_PROGRAM =
 
 /** An abandoned `accept` used to orphan the connection it had taken — `0310b`. */
 static string ACCEPT_PROGRAM =
-  "import { Core, Cli, Child, Pending, Socket, GRANT_ALL, Sys } from \"std\";\n" +
+  "import { Core, Cli, HostChild, Pending, HostSocket, GRANT_ALL, Sys } from \"std\";\n" +
   "import { itoa } from \"../../packages/fmt/src/itoa.wac\";\n" +
   "\n" +
   "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
@@ -142,36 +142,36 @@ static string ACCEPT_PROGRAM =
   "    u8[] p = cli.arg(1).wait();\n" +
   "    for (i32 i = 0; i < p.len(); i++) { port = port * 10 + (p[i] as i32 - 48); }\n" +
   "    core.delay(300).wait();\n" +
-  "    Socket s = cli.connect(\"127.0.0.1\", port).wait();\n" +
+  "    HostSocket s = cli.connect(\"127.0.0.1\", port).wait();\n" +
   "    if (s.handle < 0) { return 1; }\n" +
   "    cli.send(s.handle, \"HELLO\".toBytes()).wait();\n" +
   "    core.delay(2000).wait();\n" +
   "    return 0;\n" +
   "  }\n" +
   "\n" +
-  "  Socket listener = cli.listen(\"127.0.0.1\", 0).wait();\n" +
+  "  HostSocket listener = cli.listen(\"127.0.0.1\", 0).wait();\n" +
   "  if (listener.handle < 0) { core.log(\"no listener: \" + listener.error); return 1; }\n" +
   "\n" +
   "  string port = itoa(listener.port);\n" +
-  "  Child kid = cli.spawnSelf([\"child\".toBytes(), port.toBytes()],\n" +
+  "  HostChild kid = cli.spawnSelf([\"child\".toBytes(), port.toBytes()],\n" +
   "                            GRANT_ALL(), \".\", 0, false).wait();\n" +
   "  if (kid.handle < 0) { core.log(\"no child: \" + kid.error); return 1; }\n" +
   "\n" +
   "  if (mode != \"control\") {\n" +
   "    // Parked on an empty backlog, then given up on — the client dials at 300ms.\n" +
-  "    Pending<Socket> first = cli.accept(listener.handle);\n" +
+  "    Pending<HostSocket> first = cli.accept(listener.handle);\n" +
   "    if (mode == \"late\") { core.delay(900).wait(); } else { core.waitAny([first.id], 50); }\n" +
   "    first.cancel();\n" +
   "    core.cancel(first.id);\n" +
   "  }\n" +
   "\n" +
   "  // The connection should still be there to accept.\n" +
-  "  Pending<Socket> second = cli.accept(listener.handle);\n" +
+  "  Pending<HostSocket> second = cli.accept(listener.handle);\n" +
   "  if (core.waitAny([second.id], 3000) < 0) {\n" +
   "    core.log(\"VERDICT lost — the second accept never saw the client\");\n" +
   "    return 1;\n" +
   "  }\n" +
-  "  Socket got = second.wait();\n" +
+  "  HostSocket got = second.wait();\n" +
   "  core.log(got.handle >= 0 ? \"VERDICT kept\" : \"VERDICT lost — \" + got.error);\n" +
   "  return 0;\n" +
   "}\n";
@@ -186,20 +186,20 @@ static string ACCEPT_PROGRAM =
  * to nobody — which this sees as a read that never ends.
  */
 static string CONNECT_PROGRAM =
-  "import { Core, Cli, Pending, Socket, GRANT_ALL, Sys } from \"std\";\n" +
+  "import { Core, Cli, Pending, HostSocket, GRANT_ALL, Sys } from \"std\";\n" +
   "import { Read } from \"core\";\n" +
   "\n" +
   "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
   "  i32 n = cli.argCount().wait();\n" +
   "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
   "\n" +
-  "  Socket listener = cli.listen(\"127.0.0.1\", 0).wait();\n" +
+  "  HostSocket listener = cli.listen(\"127.0.0.1\", 0).wait();\n" +
   "  if (listener.handle < 0) { core.log(\"no listener: \" + listener.error); return 1; }\n" +
   "\n" +
-  "  Pending<Socket> dialling = cli.connect(\"127.0.0.1\", listener.port);\n" +
+  "  Pending<HostSocket> dialling = cli.connect(\"127.0.0.1\", listener.port);\n" +
   "  if (mode == \"control\") {\n" +
   "    // Collected rather than abandoned, and closed properly — the peer must see the end either way.\n" +
-  "    Socket mine = dialling.wait();\n" +
+  "    HostSocket mine = dialling.wait();\n" +
   "    if (mine.handle >= 0) { cli.closeSocket(mine.handle); }\n" +
   "  } else {\n" +
   "    // Long enough that the connection is certainly made and the answer is in hand.\n" +
@@ -208,7 +208,7 @@ static string CONNECT_PROGRAM =
   "    core.cancel(dialling.id);\n" +
   "  }\n" +
   "\n" +
-  "  Socket served = cli.accept(listener.handle).wait();\n" +
+  "  HostSocket served = cli.accept(listener.handle).wait();\n" +
   "  if (served.handle < 0) { core.log(\"VERDICT lost — nothing arrived: \" + served.error); return 1; }\n" +
   "\n" +
   "  Pending<Read> r = cli.recv(served.handle);\n" +

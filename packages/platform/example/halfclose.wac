@@ -26,18 +26,18 @@
 // complete them in either order and a program that waits on `accept` first would deadlock against a
 // host that has not dialled yet.
 
-import { Core, Cli, Socket, Pending, Sys } from "std";
+import { Core, Cli, HostSocket, Pending, Sys } from "std";
 
 export i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
-  Socket srv = cli.listen("127.0.0.1", 0).wait();
+  HostSocket srv = cli.listen("127.0.0.1", 0).wait();
   if (srv.error != "") { core.warn("listen: \{srv.error}"); return 1; }
-  Pending<Socket> accepting = cli.accept(srv.handle);
+  Pending<HostSocket> accepting = cli.accept(srv.handle);
 
-  Socket c = cli.connect("127.0.0.1", srv.port).wait();
+  HostSocket c = cli.connect("127.0.0.1", srv.port).wait();
   if (c.error != "") { core.warn("connect: \{c.error}"); return 1; }
-  Socket a = accepting.wait();
+  HostSocket a = accepting.wait();
   if (a.error != "") { core.warn("accept: \{a.error}"); return 1; }
 
   cli.send(c.handle, "hello".toBytes()).wait();

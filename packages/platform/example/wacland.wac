@@ -20,7 +20,7 @@
 // resolved every ticket immediately would pass the types and fail stage 3, which is why the out-of-order
 // clause is in the criteria rather than a single request.
 
-import { Child, Cli, Core, FAULT_NOT_GRANTED, FileResult, GRANT_ENV, GRANT_NONE, GRANT_READ, Pending, Sys } from "std";
+import { HostChild, Cli, Core, FAULT_NOT_GRANTED, FileResult, GRANT_ENV, GRANT_NONE, GRANT_READ, Pending, Sys } from "std";
 import { Read } from "core";
 
 export i32 main(Sys sys) {
@@ -101,7 +101,7 @@ export i32 main(Sys sys) {
   // own, so asking for more than this program has would not widen it anyway.
   u8[][] childArgv = u8[][].filled(1, u8[]());
   childArgv[0] = "--child".toBytes();
-  Child kid = cli.spawnSelf(childArgv, GRANT_NONE, "", 0, false).wait();
+  HostChild kid = cli.spawnSelf(childArgv, GRANT_NONE, "", 0, false).wait();
   if (kid.unavailable()) {
     core.log("wacland: stage 5 no spawn in this world");
     core.log("wacland: reached the end of what is implemented");
@@ -161,7 +161,7 @@ string childSays(Core core, Cli cli, i32 grants) {
 
 /** The shared half: spawn, drain the child's output, and answer what followed its `=`. */
 string said(Core core, Cli cli, u8[][] argv, i32 grants) {
-  Child kid = cli.spawnSelf(argv, grants, "", 0, false).wait();
+  HostChild kid = cli.spawnSelf(argv, grants, "", 0, false).wait();
   if (kid.handle < 0) { return "no child"; }
   string said = "";
   while (true) {

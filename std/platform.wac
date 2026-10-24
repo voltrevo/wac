@@ -1423,7 +1423,7 @@ export struct Stat {
  * an `i32` in a struct has no such problem, and a server needs a listener and a
  * connection open at the same time, so a current-socket could not express it.
  */
-export struct Socket {
+export struct HostSocket {
   i32 handle;      // negative when `error` is set
   string error;
   /**
@@ -1457,8 +1457,8 @@ export struct Socket {
    * a generated identifier — so relying on it means the host reaches for a name no wac source
    * mentions. Two lines here and the capability world states its own construction API.
    */
-  Socket of(i32 handle, string error, string peer, i32 port, i32 fault) {
-    return Socket(handle, error, peer, port, fault);
+  HostSocket of(i32 handle, string error, string peer, i32 port, i32 fault) {
+    return HostSocket(handle, error, peer, port, fault);
   }
 
   /** Whether the peer is this machine — the check a server on every interface needs. */
@@ -1635,7 +1635,7 @@ export static i32 STDIN = 0;
  */
 export static i32 PARENT_FS = 1;
 
-export struct Child {
+export struct HostChild {
   /**
    * The child's handle, or a negative number and an `error`.
    *
@@ -1693,8 +1693,8 @@ export struct Child {
   string error;
 
   /** As `Socket.of`: the host builds these, so the constructor is declared rather than generated. */
-  Child of(i32 handle, i32 errHandle, i32 fsHandle, string error) {
-    return Child(handle, errHandle, fsHandle, error);
+  HostChild of(i32 handle, i32 errHandle, i32 fsHandle, string error) {
+    return HostChild(handle, errHandle, fsHandle, error);
   }
 
   /** Whether this world can spawn at all. False says nothing about the program. */
@@ -2048,9 +2048,9 @@ export struct Cli {
    * that is the shape to add" — it was left behind when the shape was added, twenty lines
    * further down, and contradicting it.
    */
-  fn<Pending<Socket>(string, i32)> connect;
-  fn<Pending<Socket>(string, i32)> listen;
-  fn<Pending<Socket>(i32)> accept;
+  fn<Pending<HostSocket>(string, i32)> connect;
+  fn<Pending<HostSocket>(string, i32)> listen;
+  fn<Pending<HostSocket>(i32)> accept;
   fn<Pending<Chunk>(i32)> recv;
   fn<Pending<bool>(i32, u8[])> send;
   fn<void(i32)> closeSocket;
@@ -2101,7 +2101,7 @@ export struct Cli {
    * There is no `connect` for datagrams and no `accept`. The peer is named on every `sendTo` and
    * arrives with every `receiveFrom`, which is what makes one socket serve many.
    */
-  fn<Pending<Socket>(string, i32)> bindDatagram;
+  fn<Pending<HostSocket>(string, i32)> bindDatagram;
   /** One datagram with its sender — see `Datagram` for why those are one answer and not two. */
   fn<Pending<Datagram>(i32)> receiveFrom;
   /** A datagram to a peer named in this call, which is the half that makes one socket serve many. */
@@ -2197,7 +2197,7 @@ export struct Cli {
    * relaying two queues cannot know which stream was written first, so `echo one; nope; echo two`
    * put the complaint after both lines. `issues/system/0282c`.
    */
-  fn<Pending<Child>(u8[], u8[][], i32, string, i32, bool)> spawn;
+  fn<Pending<HostChild>(u8[], u8[][], i32, string, i32, bool)> spawn;
 
   /**
    * **This same program again, as a child**, with these arguments and at most these grants.
@@ -2232,7 +2232,7 @@ export struct Cli {
    * exactly as it did. A parent that passes true and then does not serve parks its child, which is
    * the one failure this cannot make safe and the reason it is stated rather than assumed.
    */
-  fn<Pending<Child>(u8[][], i32, string, i32, bool)> spawnSelf;
+  fn<Pending<HostChild>(u8[][], i32, string, i32, bool)> spawnSelf;
 
   /**
    * End a spawned worker's standard input without stopping it.
@@ -2490,18 +2490,18 @@ export struct Cli {
     fn<Pending<Chunk>()> readChunk,
     fn<Pending<string>()> outputError,
     fn<Pending<Change>(string)> openOutput,
-    fn<Pending<Socket>(string, i32)> connect,
-    fn<Pending<Socket>(string, i32)> listen,
-    fn<Pending<Socket>(i32)> accept,
+    fn<Pending<HostSocket>(string, i32)> connect,
+    fn<Pending<HostSocket>(string, i32)> listen,
+    fn<Pending<HostSocket>(i32)> accept,
     fn<Pending<Chunk>(i32)> recv,
     fn<Pending<bool>(i32, u8[])> send,
     fn<void(i32)> closeSocket,
     fn<void(i32)> closeSend,
-    fn<Pending<Socket>(string, i32)> bindDatagram,
+    fn<Pending<HostSocket>(string, i32)> bindDatagram,
     fn<Pending<Datagram>(i32)> receiveFrom,
     fn<Pending<bool>(i32, string, i32, u8[])> sendTo,
-    fn<Pending<Child>(u8[], u8[][], i32, string, i32, bool)> spawn,
-    fn<Pending<Child>(u8[][], i32, string, i32, bool)> spawnSelf,
+    fn<Pending<HostChild>(u8[], u8[][], i32, string, i32, bool)> spawn,
+    fn<Pending<HostChild>(u8[][], i32, string, i32, bool)> spawnSelf,
     fn<void(i32)> closeFeed,
     fn<Pending<i32>(i32)> exitCode,
     fn<Pending<string>()> cwd,
@@ -2550,16 +2550,16 @@ export struct Cli {
  * A ticket already collected answers `settled` false and so stops nothing — the handle is the caller's
  * by then. Done here, where every host's `Cli` is built, so no host has to know.
  */
-Pending<Child> owned(Pending<Child> p, bool detached, fn<void(i32)> closeSocket) {
+Pending<HostChild> owned(Pending<HostChild> p, bool detached, fn<void(i32)> closeSocket) {
   if (detached) { return p; }
   fn<void(i32)> stop = (i32 id) => {
     if (p.settled(id)) {
-      Child c = p.resolve(id);
+      HostChild c = p.resolve(id);
       if (c.handle >= 0) { closeSocket(c.handle); }
     }
     p.drop(id);
   };
-  return Pending<Child>(p.id, p.resolve, p.settled, stop, p.sched, p.waitable);
+  return Pending<HostChild>(p.id, p.resolve, p.settled, stop, p.sched, p.waitable);
 }
 
 // ── Sys ─────────────────────────────────────────────────────────────────────────────────────────

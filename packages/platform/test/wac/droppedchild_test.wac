@@ -25,7 +25,7 @@ import { binaryPath, nativeBinaryPath } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 
 static string PROGRAM =
-  "import { Core, Cli, Child, Pending, FileResult, GRANT_ALL, DETACHED, Sys } from \"std\";\n" +
+  "import { Core, Cli, HostChild, Pending, FileResult, GRANT_ALL, DETACHED, Sys } from \"std\";\n" +
   "\n" +
   "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
   "  string mode = string.fromBytes(cli.arg(0).wait());\n" +
@@ -39,7 +39,7 @@ static string PROGRAM =
   "    return 0;\n" +
   "  }\n" +
   "  i32 flags = mode == \"detached\" ? DETACHED : 0;\n" +
-  "  Pending<Child> p = cli.spawnSelf([\"child\".toBytes(), marker.toBytes()], GRANT_ALL(), \".\", flags, false);\n" +
+  "  Pending<HostChild> p = cli.spawnSelf([\"child\".toBytes(), marker.toBytes()], GRANT_ALL(), \".\", flags, false);\n" +
   "  core.delay(100).wait();\n" +
   "  p.cancel();\n" +
   "  core.delay(2000).wait();\n" +

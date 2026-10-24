@@ -13,7 +13,7 @@
 // Ephemeral keys come from `randomBytes`, so the world's one unprivileged source of
 // entropy is what a handshake's secrecy rests on. Worth knowing.
 
-import { Cli, Core, FileResult, readReason, Socket } from "std";
+import { Cli, Core, FileResult, readReason, HostSocket } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { concat } from "../lib/bytes.wac";
@@ -54,7 +54,7 @@ export async i32 gets(Core core, Cli cli, Fs fs, Args a) {
     // bad_certificate alert and looks like a chain problem.
     core.nowMillis().wait() / 1000));
 
-  Socket sock = cli.connect(host, port).wait();
+  HostSocket sock = cli.connect(host, port).wait();
   if (sock.handle < 0) { core.warn("\{a.name}: \{host}: \{sock.error}"); return 1; }
   if (!cli.send(sock.handle, s.toSend).wait()) {
     core.warn("\{a.name}: cannot send the client hello");

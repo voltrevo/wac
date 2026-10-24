@@ -27,7 +27,7 @@
 // acknowledgements and no loss detection, so a dropped datagram ends this program rather than being
 // retransmitted — steps 5 and 6 of the design note.
 
-import { Cli, Core, Datagram, Socket, Sys } from "std";
+import { Cli, Core, Datagram, HostSocket, Sys } from "std";
 import { Client } from "../src/client.wac";
 
 export i32 main(Sys sys) {
@@ -58,7 +58,7 @@ export i32 main(Sys sys) {
 
   Client c = Client.of(scalar, random, dcid, scid, serverName);
 
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
     core.warn("handshake: cannot bind: \{sock.error}");
     return 1;

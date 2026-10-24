@@ -12,7 +12,7 @@
 // rather than resolved: resolving is where directory-traversal bugs live, and this program
 // has no need to be clever about it.
 
-import { Cli, Core, FileResult, Stat, Socket } from "std";
+import { Cli, Core, FileResult, Stat, HostSocket } from "std";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { concat } from "../lib/bytes.wac";
@@ -28,7 +28,7 @@ export async i32 httpd(Core core, Cli cli, Fs fs, Args a) {
   string root = a.rest.len() > 0 ? a.rest[0] : ".";
 
   // Every interface, which is what a web server people point a browser at is for. Issue 0025.
-  Socket l = cli.listen("", port).wait();
+  HostSocket l = cli.listen("", port).wait();
   if (l.handle < 0) { core.warn("\{a.name}: \{port}: \{l.error}"); return 1; }
   // The same phrase `serve` prints, deliberately: it is what a caller waits for to know
   // the port is up, and two spellings for it meant a test hung instead of failing.
@@ -40,7 +40,7 @@ export async i32 httpd(Core core, Cli cli, Fs fs, Args a) {
   // would be serving it — see `packages/platform`'s browser target.
   bool isolate = has(a, 'x');
   while (true) {
-    Socket c = cli.accept(l.handle).wait();
+    HostSocket c = cli.accept(l.handle).wait();
     if (c.handle < 0) { core.warn("\{a.name}: accept: \{c.error}"); break; }
     await connection(core, cli, fs, c.handle, root, isolate);
     cli.closeSocket(c.handle);

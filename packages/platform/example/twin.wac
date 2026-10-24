@@ -17,7 +17,7 @@
 // and nowhere to draw; `packages/box/example/term.wac` is both a terminal and the programs it runs
 // for exactly that reason.
 
-import { Child, Cli, Core, GRANT_NONE, Sys } from "std";
+import { HostChild, Cli, Core, GRANT_NONE, Sys } from "std";
 import { argvOf } from "../src/stream.wac";
 import { Read } from "core";
 
@@ -41,7 +41,7 @@ export i32 main(Sys sys) {
 
   // No source, no path, no grant: the same program, with different arguments. `GRANT_NONE` because
   // shouting needs nothing — and a child could not have more than this program has anyway.
-  Child kid = cli.spawnSelf(argvOf(["shout", "hello", "twin"]), GRANT_NONE, "", 0, false).wait();
+  HostChild kid = cli.spawnSelf(argvOf(["shout", "hello", "twin"]), GRANT_NONE, "", 0, false).wait();
   if (kid.unavailable()) {
     core.warn("twin: this world cannot spawn: \{kid.error}");
     return 2;

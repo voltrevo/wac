@@ -70,7 +70,7 @@
 // a comment saying a program is *less* capable than it is never fails a test. Three-hop circuits
 // through these relays are what `network_tor_test.wac` builds, which is the standing evidence.
 
-import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS,
+import { Core, Cli, HostSocket, FileResult, Change, Pending, CALL_SLOTS,
          FAULT_REFUSED, FAULT_TIMED_OUT, FAULT_UNREACHABLE, Sys } from "std";
 import { Read } from "core";
 import { Buf } from "core";
@@ -501,7 +501,7 @@ export i32 main(Sys sys) {
     return 1;
   }
 
-  Socket listener = cli.listen(bind, port).wait();
+  HostSocket listener = cli.listen(bind, port).wait();
   if (listener.handle < 0) {
     core.warn("relayd: listen: \{listener.error}");
     return 1;
@@ -686,7 +686,7 @@ struct Conn {
   /** A number for the log, so lines from connections handled at once can be told apart. */
   i32 id;
   i32 sock;
-  Socket sockObj;
+  HostSocket sockObj;
   u8[] tls;
   /**
    * Raw bytes that do not yet form whole TLS records.
@@ -857,9 +857,9 @@ void spliceBack(Conn?[] conns, i32 connCount, i32 connId, i32 circId, i32 toConn
  * listening, and a refusal that forgot to re-arm would make the cap permanent. A *failed* accept is
  * the one case that stops: re-arming after a refusal is what turns one error into a spin.
  */
-async void armAccept(Core core, Cli cli, Relay x, Socket listener) {
+async void armAccept(Core core, Cli cli, Relay x, HostSocket listener) {
   while (x.accepting) {
-    Socket fresh = await cli.accept(listener.handle).ticket();
+    HostSocket fresh = await cli.accept(listener.handle).ticket();
     if (fresh.handle < 0) {
       core.warn("relayd: accept: \{fresh.error} — no longer accepting");
       x.accepting = false;
@@ -964,7 +964,7 @@ void forget(Core core, Cli cli, Relay x, Conn c) {
 }
 
 /** A connection as it arrives: TLS begun, nothing else known yet. */
-Conn newConn(Core core, Cli cli, Socket sock, Identity id, i32 connId) {
+Conn newConn(Core core, Cli cli, HostSocket sock, Identity id, i32 connId) {
   u8[] tls = tlsServerInitRsa(id.tlsCertDer, id.linkModulus, id.linkExponent, id.linkPrivate,
                               clampScalar(tweak(id.tlsSeed, 6)), core.randomBytes(32).wait());
   Pending<Read> first = cli.recv(sock.handle);
@@ -1617,7 +1617,7 @@ void feedConn(Core core, Cli cli, Relay x, Conn c, i32 source, i32 slot, Read r)
           }
           // A leading colon means this relay's own address, which is how a rendezvous stream is opened.
           string host = want.ownAddress ? "127.0.0.1" : want.host;
-          Socket target = cli.connect(host, want.port).wait();
+          HostSocket target = cli.connect(host, want.port).wait();
           if (target.handle < 0) {
             core.log("relayd: [\{c.id}]  \{host}:\{want.port} refused: \{target.error}");
             // **The one END a client can act on.** `socks5.wac` turns CONNECTREFUSED into "connection
@@ -1921,7 +1921,7 @@ u8[] randomBytes20(Core core) {
 }
 
 /** Seal `cell` and write it, returning the advanced TLS state. */
-u8[] sendCell(Cli cli, Socket conn, u8[] tls, u8[] cell) {
+u8[] sendCell(Cli cli, HostSocket conn, u8[] tls, u8[] cell) {
   Fed out = unpackFeed(tlsServerSend(tls, cell));
   if (out.toSend.len() > 0) { cli.send(conn.handle, out.toSend).wait(); }
   return out.state;

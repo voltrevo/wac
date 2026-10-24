@@ -9,7 +9,7 @@
 // Connects to both, waits, and prints which index answered and what it said. Then does it
 // again for the other one, so the second answer is not lost.
 
-import { Cli, Core, Pending, Socket, Sys } from "std";
+import { Cli, Core, Pending, HostSocket, Sys } from "std";
 import { Read } from "core";
 
 export i32 main(Sys sys) {
@@ -19,8 +19,8 @@ export i32 main(Sys sys) {
     core.warn("usage: whichever <port> <port>");
     return 2;
   }
-  Socket a = cli.connect("127.0.0.1", atoi(string.fromBytes(cli.arg(0).wait()))).wait();
-  Socket b = cli.connect("127.0.0.1", atoi(string.fromBytes(cli.arg(1).wait()))).wait();
+  HostSocket a = cli.connect("127.0.0.1", atoi(string.fromBytes(cli.arg(0).wait()))).wait();
+  HostSocket b = cli.connect("127.0.0.1", atoi(string.fromBytes(cli.arg(1).wait()))).wait();
   if (a.handle < 0 || b.handle < 0) {
     core.warn("whichever: \{(a.handle < 0 ? a.error : b.error)}");
     return 1;

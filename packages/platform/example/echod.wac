@@ -19,7 +19,7 @@
 // The `--allow-net` grant is the same one `connect` and `listen` need. The authority is "speak to
 // something that is not this process", and UDP does not make that a different question.
 
-import { Cli, Core, Datagram, Socket, Sys } from "std";
+import { Cli, Core, Datagram, HostSocket, Sys } from "std";
 
 export i32 main(Sys sys) {
   Core core = sys.core;
@@ -34,7 +34,7 @@ export i32 main(Sys sys) {
   // reachable from the network is a reflector somebody else can point at a third party. `listen`'s
   // comment in platform.wac is about exactly this, and a datagram one is worse — the source address
   // of a UDP packet is not verified, so an open echo amplifies for free.
-  Socket sock = cli.bindDatagram("127.0.0.1", port).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", port).wait();
   if (sock.handle < 0) {
     core.warn("echod: cannot bind: \{sock.error}");
     return 1;

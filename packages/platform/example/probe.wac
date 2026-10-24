@@ -6,7 +6,7 @@
 //   probe                  ->  read=ok net=ok        (built with --allow-read --allow-net)
 //   runner probe.worker.js  ->  read=denied net=denied
 
-import { Cli, Core, FAULT_NOT_GRANTED, FileResult, Socket, Sys } from "std";
+import { Cli, Core, FAULT_NOT_GRANTED, FileResult, HostSocket, Sys } from "std";
 
 export i32 main(Sys sys) {
   Core core = sys.core;
@@ -29,7 +29,7 @@ export i32 main(Sys sys) {
   // `"ot granted"` -- the leading letter dropped so that "not granted" and "Not granted" both hit,
   // because the hosts spell one refusal two ways. `Socket` carries a category now, exactly as
   // `FileResult` and `Change` always have, and the two branches below are the same line.
-  Socket s = cli.connect("127.0.0.1", 1).wait();
+  HostSocket s = cli.connect("127.0.0.1", 1).wait();
   string net = s.handle < 0 ? (s.fault == FAULT_NOT_GRANTED() ? "denied" : "failed") : "ok";
   if (s.handle >= 0) { cli.closeSocket(s.handle); }
 

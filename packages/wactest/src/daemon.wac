@@ -30,7 +30,7 @@
 // **A caller must check `waitForPort`'s answer.** A server that never came up leaves every later
 // assertion measuring a refused connection, which is a different failure wearing the same clothes.
 
-import { Cli, Core, Exec, Socket } from "std";
+import { Cli, Core, Exec, HostSocket } from "std";
 import { quoted } from "./childenv.wac";
 
 /** A child that is still running. `pid` is negative when it did not start. */
@@ -65,7 +65,7 @@ export struct Port {
  * same fact and must not be the same answer.
  */
 export Port freePortOr(Cli cli) {
-  Socket s = cli.listen("127.0.0.1", 0).wait();
+  HostSocket s = cli.listen("127.0.0.1", 0).wait();
   if (s.handle < 0) {
     return Port(-1, s.error == "" ? "listen failed and said nothing" : s.error);
   }
@@ -95,7 +95,7 @@ export struct Held {
   i32 handle;
 
   Held take(Cli cli) {
-    Socket s = cli.listen("127.0.0.1", 0).wait();
+    HostSocket s = cli.listen("127.0.0.1", 0).wait();
     if (s.handle < 0) { return Held(-1, -1); }
     return Held(s.port, s.handle);
   }
@@ -158,7 +158,7 @@ export Daemon start(Cli cli, string line, string logPath) {
  */
 export bool waitForPort(Cli cli, string host, i32 port, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
-    Socket s = cli.connect(host, port).wait();
+    HostSocket s = cli.connect(host, port).wait();
     if (s.handle >= 0) {
       cli.closeSocket(s.handle);
       return true;
@@ -182,7 +182,7 @@ export bool waitForPort(Cli cli, string host, i32 port, i32 tries) {
 export bool waitForPortWithin(Core core, Cli cli, string host, i32 port, i32 millis) {
   i64 deadline = core.nowMillis().wait() + (millis as i64);
   for (i32 guard = 0; guard < 100000; guard++) {
-    Socket s = cli.connect(host, port).wait();
+    HostSocket s = cli.connect(host, port).wait();
     if (s.handle >= 0) {
       cli.closeSocket(s.handle);
       return true;

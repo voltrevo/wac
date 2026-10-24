@@ -10,7 +10,7 @@
 // side owns — there is no listener to speak QUIC back, and none is wanted.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Pending, Socket } from "std";
+import { Core, Cli, Datagram, Pending, HostSocket } from "std";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
@@ -28,7 +28,7 @@ export u8[] anInitial(T t, Core core, Cli cli, string name) {
   string whyDir = freshDir(cli, dir);
   t.isTrue(whyDir == "", whyDir);
 
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
     t.fail("our socket did not bind — \{sock.error}");
     return u8[]();

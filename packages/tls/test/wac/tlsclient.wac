@@ -11,7 +11,7 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { Core, Cli, Socket, Pending } from "std";
+import { Core, Cli, HostSocket, Pending } from "std";
 import { Read } from "core";
 import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
          tlsClientPhase, tlsClientFailure, clientStep, ClientStep } from "../../src/client.wac";
@@ -116,12 +116,12 @@ Chunk readOnce(Core core, Cli cli, i32 handle, i32 millis) {
  */
 export Reply request(Core core, Cli cli, string host, i32 port, string sni, Store roots,
                      string req, i64 now) {
-  Pending<Socket> dial = cli.connect(host, port);
+  Pending<HostSocket> dial = cli.connect(host, port);
   if (core.waitAny([dial.id], READ_TIMEOUT_MS) < 0) {
     dial.cancel();
     return Reply(-1, "", "\{host}:\{port} did not answer the dial");
   }
-  Socket s = dial.wait();
+  HostSocket s = dial.wait();
   if (s.handle < 0) { return Reply(-1, "", "connect: \{s.error}"); }
 
   ClientStep st = firstFlight(core, cli, sni, roots, now);

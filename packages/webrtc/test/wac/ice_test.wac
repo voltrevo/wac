@@ -26,7 +26,7 @@
 // all import it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, FileResult, Pending, Socket }
+import { Core, Cli, Datagram, Exec, FileResult, Pending, HostSocket }
   from "std";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
@@ -61,7 +61,7 @@ export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
   // host candidates from the container's real interface — not loopback — and a datagram from there
   // to a `127.0.0.1` candidate does not route. Advertising loopback made the agent send checks that
   // never arrived and time out, which reads exactly like a protocol bug and is not one.
-  Socket sock = cli.bindDatagram("0.0.0.0", 0).wait();
+  HostSocket sock = cli.bindDatagram("0.0.0.0", 0).wait();
   t.isTrue(sock.handle >= 0, "our socket did not bind — \{sock.error}");
   if (sock.handle < 0) { return t.report(); }
   i32 ourPort = sock.port;

@@ -25,7 +25,7 @@
 // the notes about its standard input and about readiness live.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, Pending, Socket } from "std";
+import { Core, Cli, Datagram, Exec, Pending, HostSocket } from "std";
 import { Buf } from "core";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { alertAt, blockFrom, ckeMessage, cookieAt, curveOfBody, finishedMessage, fingerprintOf,
@@ -73,7 +73,7 @@ u8[] recordOf(i32 kind, i32 epoch, i64 seq, u8[] fragment) {
 }
 
 /** The next datagram, or empty. The deadline is on the wait — `issues/system/0206`. */
-u8[] receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
+u8[] receiveWithin(Core core, Cli cli, HostSocket sock, i32 ms) {
   Pending<Datagram> p = cli.receiveFrom(sock.handle);
   if (core.waitAny([p.id], ms) < 0) {
     p.drop(p.id);
@@ -110,7 +110,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
 
   Dtls srv = startServer(t, cli, "handshake");
   if (!srv.ok) { t.fail("the DTLS server did not start — \{srv.error}"); return t.report(); }
-  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {
     t.fail("our socket did not bind — \{sock.error}");
     stopServer(cli, srv);
@@ -343,7 +343,7 @@ export string test_openssl_completes_a_dtls_handshake_with_us(Core core, Cli cli
   return t.report();
 }
 
-void done(Cli cli, Socket sock, Dtls srv) {
+void done(Cli cli, HostSocket sock, Dtls srv) {
   if (sock.handle >= 0) { cli.closeSocket(sock.handle); }
   stopServer(cli, srv);
 }

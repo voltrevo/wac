@@ -36,7 +36,7 @@ export type AppModule = {
   Cli: { of(...a: unknown[]): unknown };
   FileResult: { of(...a: unknown[]): unknown };
   Stat: { of(...a: unknown[]): unknown };
-  Socket: { of(...a: unknown[]): unknown };
+  HostSocket: { of(...a: unknown[]): unknown };
   /** Bytes and sender in one answer — `Cli.receiveFrom`, and `design/system/0007`. */
   Datagram: { of(...a: unknown[]): unknown };
   /** The monomorphised `Pending<T>`s — one per capability return type. */
@@ -51,10 +51,10 @@ export type AppModule = {
   Pending_stringArrOpt: { of(...a: unknown[]): unknown };
   Pending_FileResult: { of(...a: unknown[]): unknown };
   Pending_Stat: { of(...a: unknown[]): unknown };
-  Pending_Socket: { of(...a: unknown[]): unknown };
+  Pending_HostSocket: { of(...a: unknown[]): unknown };
   Pending_Datagram: { of(...a: unknown[]): unknown };
-  Pending_Child: { of(...a: unknown[]): unknown };
-  Child: { of(...a: unknown[]): unknown };
+  Pending_HostChild: { of(...a: unknown[]): unknown };
+  HostChild: { of(...a: unknown[]): unknown };
   Captured: { of(...a: unknown[]): unknown };
   Pending_Captured: { of(...a: unknown[]): unknown };
   /** `Cli.exec`'s answer — a host program run to completion. `issues/system/0165`. */

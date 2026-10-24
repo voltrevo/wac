@@ -23,7 +23,7 @@
 // transport confidentiality buys nothing a client relies on, which is exactly why tor's own DirPort is
 // unencrypted. `consensus.wac` is the reason — a client checks the documents, not the connection.
 
-import { Core, Cli, Socket, FileResult, Sys } from "std";
+import { Core, Cli, HostSocket, FileResult, Sys } from "std";
 import { Read } from "core";
 import { Buf } from "core";
 import { Parsed, parseRequest } from "../../http/src/request.wac";
@@ -120,7 +120,7 @@ export i32 main(Sys sys) {
   DirDocuments docs = DirDocuments(consensus, microCons, certificate, descriptors, digests,
                                    fingerprint, micros, microDigests, u8[][](), u8[][]());
 
-  Socket listener = cli.listen("127.0.0.1", port).wait();
+  HostSocket listener = cli.listen("127.0.0.1", port).wait();
   if (listener.handle < 0) {
     core.warn("dird: listen: \{listener.error}");
     return 1;
@@ -145,7 +145,7 @@ export i32 main(Sys sys) {
  */
 async void accepting(Core core, Cli cli, i32 listener, Held held) {
   while (true) {
-    Socket conn = await cli.accept(listener).ticket();
+    HostSocket conn = await cli.accept(listener).ticket();
     if (conn.handle < 0) {
       core.warn("dird: accept: \{conn.error}");
       return;
@@ -161,7 +161,7 @@ async void accepting(Core core, Cli cli, i32 listener, Held held) {
  * cap matters: without it a client that never finishes a request line holds this loop forever, and a
  * directory port is reachable by anyone who can route to it.
  */
-async void answer(Core core, Cli cli, Socket conn, Held held) {
+async void answer(Core core, Cli cli, HostSocket conn, Held held) {
   Buf pending = Buf.create();
   while (true) {
     // **Read and write with no suspension between them**, which is the whole of what concurrency

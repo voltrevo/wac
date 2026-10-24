@@ -18,7 +18,7 @@
 // Built by `client_test.wac`; kept beside it rather than in `src/` because the reply is a fixture's
 // reply — a fixed body the test matches on, not something a server should answer.
 
-import { Core, Cli, Socket, Sys } from "std";
+import { Core, Cli, HostSocket, Sys } from "std";
 import { Read } from "core";
 import { tlsServerInit, tlsServerInitRsa, tlsServerFeed, tlsServerSend, tlsServerClose,
          tlsPhase, tlsRecordNeeded } from "../../src/server.wac";
@@ -162,7 +162,7 @@ export i32 main(Sys sys) {
     }
   }
 
-  Socket listener = cli.listen("127.0.0.1", port).wait();
+  HostSocket listener = cli.listen("127.0.0.1", port).wait();
   if (listener.handle < 0) {
     core.warn("tlsserved: listen: \{listener.error}");
     return 1;
@@ -172,7 +172,7 @@ export i32 main(Sys sys) {
   core.log("tlsserved: listening on 127.0.0.1:\{listener.port}");
 
   for (i32 served = 0; served < 1000; served++) {
-    Socket conn = cli.accept(listener.handle).wait();
+    HostSocket conn = cli.accept(listener.handle).wait();
     if (conn.handle < 0) { core.warn("tlsserved: accept: \{conn.error}"); break; }
     serve(core, cli, conn.handle, id, body);
   }

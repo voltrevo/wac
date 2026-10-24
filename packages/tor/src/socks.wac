@@ -55,7 +55,7 @@
 // `FULL_POLL_MS` and looks again. The client still waits in the backlog rather than being refused,
 // which is the property that mattered.
 
-import { Core, Cli, Socket, Pending, FileResult, CALL_SLOTS, Sys } from "std";
+import { Core, Cli, HostSocket, Pending, FileResult, CALL_SLOTS, Sys } from "std";
 import { Vec, Read } from "core";
 import { Network, Guard, Building, bootstrap, connectGuard, startCircuit, advanceCircuit,
          circuitReady, circuitFailed } from "./bootstrap.wac";
@@ -404,7 +404,7 @@ async void pumpAccept(Core core, Cli cli, Proxy x) {
       i64 unused = await core.delay(FULL_POLL_MS).ticket();
       continue;
     }
-    Socket incoming = await cli.accept(x.listener).ticket();
+    HostSocket incoming = await cli.accept(x.listener).ticket();
     if (x.stopped) { return; }
     if (incoming.handle < 0) {
       core.warn("tor: accept failed: \{incoming.error}");
@@ -611,7 +611,7 @@ export i32 main(Sys sys) {
 
   // Loopback only: a SOCKS port reachable from the network launders anyone's traffic into the Tor
   // network under this client's exits. `listen` took a port alone until issue 0025.
-  Socket listener = cli.listen("127.0.0.1", port).wait();
+  HostSocket listener = cli.listen("127.0.0.1", port).wait();
   if (listener.handle < 0) {
     core.warn("tor: cannot listen on 127.0.0.1:\{port}: \{listener.error}");
     cli.closeSocket(guard.link.sock);

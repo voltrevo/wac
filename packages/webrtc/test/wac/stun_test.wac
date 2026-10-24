@@ -38,7 +38,7 @@
 // and a dropped datagram.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Pending, Socket } from "std";
+import { Core, Cli, Datagram, Pending, HostSocket } from "std";
 import { Lines, Answers, ask, check, hex, word } from "../../../wactest/src/oracle.wac";
 import { Daemon, Held, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
@@ -406,7 +406,7 @@ struct Exchange {
  */
 Exchange exchange(Core core, Cli cli, i32 port, u8[] msg) {
   for (i32 attempt = 0; attempt < 20; attempt++) {
-    Socket s = cli.bindDatagram("127.0.0.1", 0).wait();
+    HostSocket s = cli.bindDatagram("127.0.0.1", 0).wait();
     if (s.handle < 0) { return Exchange(false, "bindDatagram: \{s.error}", u8[](), -1); }
     i32 from = s.port;
     if (!cli.sendTo(s.handle, "127.0.0.1", port, msg).wait()) {

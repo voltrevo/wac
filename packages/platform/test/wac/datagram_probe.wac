@@ -13,12 +13,12 @@
 // Every line is a verdict rather than a measurement: the ports differ per run, so printing them would
 // make two hosts disagree about nothing.
 
-import { Core, Cli, Socket, Datagram, Sys } from "std";
+import { Core, Cli, HostSocket, Datagram, Sys } from "std";
 export i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
-  Socket a = cli.bindDatagram("127.0.0.1", 0).wait();
-  Socket b = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket a = cli.bindDatagram("127.0.0.1", 0).wait();
+  HostSocket b = cli.bindDatagram("127.0.0.1", 0).wait();
   cli.write(("bound: " + (a.handle >= 0 ? "yes" : "no") + " " + (b.handle >= 0 ? "yes" : "no")
              + " distinct-ports " + (a.port != b.port ? "yes" : "no") + "\n").toBytes());
   if (a.handle < 0 || b.handle < 0) { return 1; }

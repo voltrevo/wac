@@ -25,7 +25,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Socket } from "std";
+import { Core, Cli, Exec, HostSocket } from "std";
 import { trimmed } from "../../../wactest/src/strings.wac";
 import { Daemon, start, stop, freePort, waitForLogWithin, logOf } from "../../../wactest/src/daemon.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
@@ -128,7 +128,7 @@ export string test_a_child_serves_a_socket_it_cannot_see(Core core, Cli cli) {
   t.isTrue(up, "inetd never listened — \{logOf(cli, d)}");
   if (!up) { stop(cli, d); cli.remove(dir, true).wait(); return t.report(); }
 
-  Socket s = cli.connect("127.0.0.1", port).wait();
+  HostSocket s = cli.connect("127.0.0.1", port).wait();
   t.isTrue(s.error == "", "could not connect — \{s.error}");
   if (s.error != "") { stop(cli, d); cli.remove(dir, true).wait(); return t.report(); }
 

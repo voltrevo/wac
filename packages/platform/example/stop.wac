@@ -14,7 +14,7 @@
 //
 // The loop is `x >= 0` rather than `true` so that nothing has to decide whether code after an
 // endless loop is reachable. It ends after 2^63 additions, which is not a duration.
-import { Child, Cli, Core, GRANT_NONE, Sys } from "std";
+import { HostChild, Cli, Core, GRANT_NONE, Sys } from "std";
 import { Read } from "core";
 import { argvOf } from "../src/stream.wac";
 
@@ -29,7 +29,7 @@ export i32 main(Sys sys) {
     return 0;
   }
 
-  Child kid = cli.spawnSelf(argvOf(["spin", "stop"]), GRANT_NONE, "", 0, false).wait();
+  HostChild kid = cli.spawnSelf(argvOf(["spin", "stop"]), GRANT_NONE, "", 0, false).wait();
   if (kid.unavailable()) {
     core.warn("stop: this world cannot spawn: \{kid.error}");
     return 2;

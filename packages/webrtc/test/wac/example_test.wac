@@ -19,7 +19,7 @@
 // reader `src/sdp.wac` uses, which ignores anything that is not an `a=` line.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, FileResult, Pending, Socket }
+import { Core, Cli, Datagram, Exec, FileResult, Pending, HostSocket }
   from "std";
 import { Lines, check } from "../../../wactest/src/oracle.wac";
 import { Daemon, Held, start, stop } from "../../../wactest/src/daemon.wac";
@@ -122,7 +122,7 @@ export string test_the_example_runs_as_a_program(Core core, Cli cli) {
 
   u8[] answer = u8[]();
   for (i32 attempt = 0; attempt < 20 && answer.len() == 0; attempt++) {
-    Socket s = cli.bindDatagram("127.0.0.1", 0).wait();
+    HostSocket s = cli.bindDatagram("127.0.0.1", 0).wait();
     if (s.handle < 0) { break; }
     cli.sendTo(s.handle, "127.0.0.1", port, request).wait();
     Pending<Datagram> p = cli.receiveFrom(s.handle);

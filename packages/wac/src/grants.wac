@@ -34,7 +34,7 @@
 // JavaScript two — is `issues/system/0256c`, and it is why this file picks the answer the type
 // documents rather than the answer any particular host gives.
 
-import { Captured, Change, Child, Cli, Datagram, Exec, FileResult, Pending, Socket, Stat,
+import { Captured, Change, HostChild, Cli, Datagram, Exec, FileResult, Pending, HostSocket, Stat,
          FAULT_NOT_GRANTED } from "std";
 import { Read } from "core";
 import { ready } from "../../platform/src/frame.wac";
@@ -212,11 +212,11 @@ Pending<Change> noRename(string from, string to) {
   return ready(Change.of(FAULT_NOT_GRANTED(), DENIED));
 }
 
-Pending<Socket> noConnect(string host, i32 port) {
-  return ready(Socket.of(0 - 1, DENIED, "", 0, FAULT_NOT_GRANTED()));
+Pending<HostSocket> noConnect(string host, i32 port) {
+  return ready(HostSocket.of(0 - 1, DENIED, "", 0, FAULT_NOT_GRANTED()));
 }
-Pending<Socket> noAccept(i32 handle) {
-  return ready(Socket.of(0 - 1, DENIED, "", 0, FAULT_NOT_GRANTED()));
+Pending<HostSocket> noAccept(i32 handle) {
+  return ready(HostSocket.of(0 - 1, DENIED, "", 0, FAULT_NOT_GRANTED()));
 }
 /**
  * Not `ready(Read.End)`, and the difference is a compiler bug rather than a preference.
@@ -248,12 +248,12 @@ Pending<bool> noSendTo(i32 handle, string host, i32 port, u8[] bytes) { return r
 // The last one was called `inheritErr` and has always been `serveFs`; renamed while `inheritIn`
 // became the `inherit` flags, because a wrong name here is the whole difficulty of keeping them in
 // step.
-Pending<Child> noSpawn(u8[] path, u8[][] args, i32 stdio, string cwd, i32 inherit,
+Pending<HostChild> noSpawn(u8[] path, u8[][] args, i32 stdio, string cwd, i32 inherit,
                        bool serveFs) {
   // -1 rather than -2: `Child.unavailable()` means "this host cannot spawn at all", and this host
   // can — it was not granted to this program. A shell that could not tell those apart would report
   // a missing feature where the truth is a missing permission.
-  return ready(Child.of(0 - 1, 0 - 1, 0 - 1, DENIED));
+  return ready(HostChild.of(0 - 1, 0 - 1, 0 - 1, DENIED));
 }
 Pending<Exec> noExec(string path, string[] args, u8[] stdin, string[] env, bool clearEnv,
                      bool inherit, string cwd) {

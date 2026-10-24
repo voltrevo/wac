@@ -9,7 +9,7 @@
 // everything between the two crosses as a message, and a copy that never stops can be stopped.
 
 import { ElementEvent, Node, Page, State, Ui, html.button, html.div, html.input, html.p, html.span } from "../../web";
-import { Child, Sys } from "std";
+import { HostChild, Sys } from "std";
 import { Buf, Read } from "core";
 
 /** What a started copy runs: its input, upper-cased, to its output. Its status is the byte count. */
@@ -35,7 +35,7 @@ export async i32 upper(Sys sys) {
 
 /** Run `text` through a started copy, and show what came back and how it ended. */
 async void run(Sys sys, string text, State<string> out, State<string> status) {
-  Child c = await sys.cli.spawnSelf([] as u8[][], 0, "/", 0, false).ticket();
+  HostChild c = await sys.cli.spawnSelf([] as u8[][], 0, "/", 0, false).ticket();
   if (c.handle < 0) {
     status.set("could not start: \{c.error}");
     return;

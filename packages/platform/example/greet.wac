@@ -12,7 +12,7 @@
 // connected, rate-limit by source, or refuse a connection that did not come from this machine, which
 // is the check that makes binding every interface survivable. wac-mono issue 0025.
 
-import { Cli, Core, Socket, Sys } from "std";
+import { Cli, Core, HostSocket, Sys } from "std";
 
 export i32 main(Sys sys) {
   Core core = sys.core;
@@ -24,7 +24,7 @@ export i32 main(Sys sys) {
   string address = string.fromBytes(cli.arg(0).wait());
   i32 port = atoi(string.fromBytes(cli.arg(1).wait()));
 
-  Socket listener = cli.listen(address, port).wait();
+  HostSocket listener = cli.listen(address, port).wait();
   if (listener.handle < 0) {
     core.warn("greet: cannot listen: \{listener.error}");
     return 1;
@@ -35,7 +35,7 @@ export i32 main(Sys sys) {
   // how the program learns which, so the client reads it here instead of a number somebody guessed.
   core.log("greet: listening on \{listener.port}");
 
-  Socket peer = cli.accept(listener.handle).wait();
+  HostSocket peer = cli.accept(listener.handle).wait();
   if (peer.handle < 0) {
     core.warn("greet: cannot accept: \{peer.error}");
     cli.closeSocket(listener.handle);

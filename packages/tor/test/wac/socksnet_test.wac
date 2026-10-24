@@ -41,7 +41,7 @@
 // hands control back. A test that wants to *talk to* the proxy while it is up cannot use it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Pending, Socket } from "std";
+import { Core, Cli, Exec, Pending, HostSocket } from "std";
 import { Read } from "core";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { binaryPath, freshDir } from "../../../wactest/src/host.wac";
@@ -497,14 +497,14 @@ export string test_socks_bootstraps_through_relays_of_our_own(Core core, Cli cli
               // and left `streamArmed` true, so `armConn` could never start a reader for the next
               // stream on that circuit. Rounds 1 and 2 are the regression — they read 0 bytes
               // before the fix and the full answer after.
-              Socket mine = cli.listen("127.0.0.1", 0).wait();
+              HostSocket mine = cli.listen("127.0.0.1", 0).wait();
               t.isTrue(mine.handle >= 0, "the case's own target listened — \{mine.error}");
               for (i32 round = 0; round < 3 && mine.handle >= 0; round++) {
                 Opened o = opened(core, cli, got, mine.port);
                 t.isTrue(o.ok, "round \{round} connected through the proxy — \{o.why}");
                 if (!o.ok) { continue; }
                 cli.send(o.handle, "GET / HTTP/1.0\r\n\r\n".toBytes()).wait();
-                Socket from = cli.accept(mine.handle).wait();
+                HostSocket from = cli.accept(mine.handle).wait();
                 t.isTrue(from.handle >= 0, "round \{round}: the exit dialled the target");
                 if (from.handle < 0) { cli.closeSocket(o.handle); continue; }
                 u8[] arrived = readSome(core, cli, from.handle, 6);

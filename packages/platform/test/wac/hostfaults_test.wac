@@ -21,7 +21,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Change, Core, Cli, Exec, FAULT_DENIED, FAULT_NOT_GRANTED, FAULT_NOT_REPRESENTABLE, FAULT_REFUSED,
-         FileResult, Socket, Stat, faultWords } from "std";
+         FileResult, HostSocket, Stat, faultWords } from "std";
 import { has, isSpace, trimmed } from "../../../wactest/src/strings.wac";
 
 static string V8_HOST = "native/v8/src/main.rs";
@@ -185,7 +185,7 @@ string[] constantsOf(string source) {
  */
 export string test_a_refused_connection_is_refused_and_not_merely_failed(Core core, Cli cli) {
   T t = T.create();
-  Socket s = cli.connect("127.0.0.1", 1).wait();
+  HostSocket s = cli.connect("127.0.0.1", 1).wait();
   if (s.handle >= 0) {
     cli.closeSocket(s.handle);
     t.isTrue(false, "something is listening on 127.0.0.1:1, so this cannot test a refusal");

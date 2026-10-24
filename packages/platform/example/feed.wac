@@ -26,7 +26,7 @@
 // answered false and queued the bytes anyway would pass the middle line and fail this one. The
 // fourth needs more than `QUEUE_CAP` bytes to mean anything, which is why it sends nine megabytes
 // through a queue that holds eight: with fewer, every host passes by never filling anything.
-import { Child, Cli, Core, GRANT_NONE, Sys } from "std";
+import { HostChild, Cli, Core, GRANT_NONE, Sys } from "std";
 import { Read } from "core";
 import { argvOf } from "../src/stream.wac";
 
@@ -37,7 +37,7 @@ export i32 main(Sys sys) {
   if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "echo") { return echo(cli); }
   if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "flood") { return flood(core, cli); }
 
-  Child kid = cli.spawnSelf(argvOf(["echo", "feed"]), GRANT_NONE, "", 0, false).wait();
+  HostChild kid = cli.spawnSelf(argvOf(["echo", "feed"]), GRANT_NONE, "", 0, false).wait();
   if (kid.unavailable()) {
     core.warn("feed: this world cannot spawn: \{kid.error}");
     return 2;
@@ -90,7 +90,7 @@ i32 BLOCK() { return 65536; }
 
 /** Spawn a child that writes more than the queue holds, and count every byte it sent. */
 bool flooded(Core core, Cli cli) {
-  Child kid = cli.spawnSelf(argvOf(["flood", "feed"]), GRANT_NONE, "", 0, false).wait();
+  HostChild kid = cli.spawnSelf(argvOf(["flood", "feed"]), GRANT_NONE, "", 0, false).wait();
   if (kid.unavailable() || kid.handle < 0) {
     core.warn("feed: the flooding child would not start: \{kid.error}");
     return false;

@@ -398,9 +398,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // connecting needs no privilege — only binding does — so every host gets a refusal rather than a
     // hang. It prints the *category*, which is the thing three hosts had no reason to agree on.
     && put(t, cli, dir + "/src/dial.wac",
-           "import { Cli, Core, Socket, faultWords, Sys } from \"std\";\n"
+           "import { Cli, Core, HostSocket, faultWords, Sys } from \"std\";\n"
            + "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n"
-           + "  Socket s = cli.connect(\"127.0.0.1\", 1).wait();\n"
+           + "  HostSocket s = cli.connect(\"127.0.0.1\", 1).wait();\n"
            + "  core.log(s.handle < 0 ? \"dial: \" + faultWords(s.fault) : \"dial: connected\");\n"
            + "  return 0;\n}\n")
     // For `test`: one of each outcome the runner has to tell apart — a pass, a failing report, a
@@ -465,9 +465,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // `issues/system/0256c`. Moving this file back into `src/` is the regression test for that issue,
     // and is what turns those rows red today.
     && put(t, cli, dir + "/capsrc/net_test.wac",
-           "import { Cli, Core, FAULT_REFUSED, Socket, Sys } from \"std\";\n"
+           "import { Cli, Core, FAULT_REFUSED, HostSocket, Sys } from \"std\";\n"
            + "export string test_dials_a_closed_port(Core core, Cli cli) {\n"
-           + "  Socket s = cli.connect(\"127.0.0.1\", 1).wait();\n"
+           + "  HostSocket s = cli.connect(\"127.0.0.1\", 1).wait();\n"
            + "  if (s.handle >= 0) { cli.closeSocket(s.handle);\n"
            + "    return \"something is listening on 127.0.0.1:1\"; }\n"
            + "  return s.fault == FAULT_REFUSED() ? \"\" : \"the dial did not report a refusal\";\n}\n")

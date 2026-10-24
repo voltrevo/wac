@@ -28,7 +28,7 @@
 // that way, so what decides is whether the body arrived. `gets` reported "handshake failed" on every
 // successful fetch before that was understood.
 
-import { Cli, Core, FileResult, Socket } from "std";
+import { Cli, Core, FileResult, HostSocket } from "std";
 import { slice } from "../../bytes/src/slice.wac";
 import { Store, pemBundle } from "../../tls/src/roots.wac";
 import { recordsReady } from "../../tls/src/record.wac";
@@ -101,7 +101,7 @@ export Answer request(Core core, Cli cli, const Store store, string host, string
   u8[] buffered = u8[]();
   u8[]? proxyVar = cli.env("HTTP_PROXY").wait();
   if (proxyVar is null) {
-    Socket direct = cli.connect(host, 443).wait();
+    HostSocket direct = cli.connect(host, 443).wait();
     if (direct.handle < 0) { return Answer(false, 0, u8[](), "\{host}: \{direct.error}"); }
     handle = direct.handle;
   } else {

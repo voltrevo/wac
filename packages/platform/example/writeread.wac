@@ -29,7 +29,7 @@
 // Either answer is worth having in one place, which is why this is an example rather than a scratch
 // file: it is the smallest program that distinguishes them.
 
-import { Core, Cli, Socket, Pending, Sys } from "std";
+import { Core, Cli, HostSocket, Pending, Sys } from "std";
 import { Read } from "core";
 
 export i32 main(Sys sys) {
@@ -41,20 +41,20 @@ export i32 main(Sys sys) {
     return 2;
   }
 
-  Socket listener = cli.listen("127.0.0.1", port).wait();
+  HostSocket listener = cli.listen("127.0.0.1", port).wait();
   if (listener.handle < 0) {
     core.warn("writeread: listen: \{listener.error}");
     return 1;
   }
 
   // The accept has to be outstanding before the connect, or the connect has nobody to talk to.
-  Pending<Socket> incoming = cli.accept(listener.handle);
-  Socket client = cli.connect("127.0.0.1", listener.port).wait();
+  Pending<HostSocket> incoming = cli.accept(listener.handle);
+  HostSocket client = cli.connect("127.0.0.1", listener.port).wait();
   if (client.handle < 0) {
     core.warn("writeread: connect: \{client.error}");
     return 1;
   }
-  Socket server = incoming.wait();
+  HostSocket server = incoming.wait();
   if (server.handle < 0) {
     core.warn("writeread: accept: \{server.error}");
     return 1;

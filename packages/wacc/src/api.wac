@@ -3977,7 +3977,7 @@ string firstBearing(string held, string[] tyName, bool[] bearing, i32 tyCount) {
 /** The types a host reaches through directly — what every other bearing type holds, in the end. */
 bool isBearingRoot(string name) {
   return name == "Sys" || name == "Cli" || name == "Core" || name == "Listener" || name == "Socket"
-      || name == "Child";
+      || name == "Child" || name == "HostSocket" || name == "HostChild";
 }
 
 /** The first root bearing type a tab-delimited list names, `Sys` first, or "". */
@@ -3988,6 +3988,8 @@ string firstRoot(string held) {
   if (listMentions(held, "Listener")) { return "Listener"; }
   if (listMentions(held, "Socket")) { return "Socket"; }
   if (listMentions(held, "Child")) { return "Child"; }
+  if (listMentions(held, "HostSocket")) { return "HostSocket"; }
+  if (listMentions(held, "HostChild")) { return "HostChild"; }
   return "";
 }
 

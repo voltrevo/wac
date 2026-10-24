@@ -1153,13 +1153,13 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         ("Change", Cap::ResolveChange),
         ("Stat", Cap::ResolveStat),
         ("string[]", Cap::ResolveNames),
-        ("Socket", Cap::ResolveSocket),
+        ("HostSocket", Cap::ResolveSocket),
         ("Datagram", Cap::ResolveDatagram),
         ("Read", Cap::ResolveRead),
         ("bool", Cap::ResolveBool),
         ("Captured", Cap::ResolveCaptured),
         ("Exec", Cap::ResolveExec),
-        ("Child", Cap::ResolveChild),
+        ("HostChild", Cap::ResolveChild),
     ] {
         match pending_hooks(scope, exports, m, ty, resolve, &mut caps, &mut names) {
             Ok(h) => {
@@ -1211,7 +1211,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
             child_of: m
-                .find_struct("Child")
+                .find_struct("HostChild")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
             loaded: HashMap::new(),
@@ -1234,7 +1234,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                 .map(|mm| mm.export_name.clone()),
             frames: Vec::new(),
             socket_of: m
-                .find_struct("Socket")
+                .find_struct("HostSocket")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
             datagram_of: m
@@ -2456,9 +2456,9 @@ fn dispatch(
                 }
             });
             let a = Answer::Child(handle, err_handle, fs_handle, String::new());
-            match ticket_for(scope, "Child", a) {
+            match ticket_for(scope, "HostChild", a) {
                 Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Child> for spawn"),
+                None => throw(scope, "this program has no Pending<HostChild> for spawn"),
             }
         }
         Cap::CloseFeed => {
@@ -2491,9 +2491,9 @@ fn dispatch(
                     "this runtime starts wasm modules, and that is not one; spawnSelf works"
                 };
                 let a = Answer::Child(-1, -1, -1, why.into());
-                match ticket_for(scope, "Child", a) {
+                match ticket_for(scope, "HostChild", a) {
                     Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<Child> for spawn"),
+                    None => throw(scope, "this program has no Pending<HostChild> for spawn"),
                 }
                 return;
             };
@@ -2596,9 +2596,9 @@ fn dispatch(
                 }
             });
             let a = Answer::Child(handle, err_handle, fs_handle, String::new());
-            match ticket_for(scope, "Child", a) {
+            match ticket_for(scope, "HostChild", a) {
                 Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Child> for spawn"),
+                None => throw(scope, "this program has no Pending<HostChild> for spawn"),
             }
         }
         Cap::ExitCode => {
@@ -2813,9 +2813,9 @@ fn dispatch(
                     Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 }
             };
-            match ticket_for(scope, "Socket", answer) {
+            match ticket_for(scope, "HostSocket", answer) {
                 Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Socket> for bindDatagram"),
+                None => throw(scope, "this program has no Pending<HostSocket> for bindDatagram"),
             }
         }
         Cap::ReceiveFrom => {
@@ -2962,9 +2962,9 @@ fn dispatch(
                     Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 }
             };
-            match ticket_for(scope, "Socket", answer) {
+            match ticket_for(scope, "HostSocket", answer) {
                 Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Socket> for that"),
+                None => throw(scope, "this program has no Pending<HostSocket> for that"),
             }
         }
         Cap::Accept => {
@@ -2983,9 +2983,9 @@ fn dispatch(
             });
             let Some(listener) = listener else {
                 let a = Answer::Socket(-1, "no such listener".into(), String::new(), 0, FAULT_OTHER);
-                match ticket_for(scope, "Socket", a) {
+                match ticket_for(scope, "HostSocket", a) {
                     Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<Socket> for accept"),
+                    None => throw(scope, "this program has no Pending<HostSocket> for accept"),
                 }
                 return;
             };
@@ -2996,9 +2996,9 @@ fn dispatch(
                 })
             });
             if let Some(a) = already {
-                return match ticket_for(scope, "Socket", a) {
+                return match ticket_for(scope, "HostSocket", a) {
                     Some(p) => rv.set(p),
-                    None => throw(scope, "this program has no Pending<Socket> for accept"),
+                    None => throw(scope, "this program has no Pending<HostSocket> for accept"),
                 };
             }
             let Some(t) = table() else { return throw(scope, "no ticket table") };
@@ -3061,9 +3061,9 @@ fn dispatch(
                     }
                 }
             });
-            match ticket_pending(scope, "Socket", id) {
+            match ticket_pending(scope, "HostSocket", id) {
                 Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<Socket> to answer accept with"),
+                None => throw(scope, "this program has no Pending<HostSocket> to answer accept with"),
             }
         }
         Cap::Recv => {
@@ -4470,13 +4470,13 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32,
         ("Change", Cap::ResolveChange),
         ("Stat", Cap::ResolveStat),
         ("string[]", Cap::ResolveNames),
-        ("Socket", Cap::ResolveSocket),
+        ("HostSocket", Cap::ResolveSocket),
         ("Datagram", Cap::ResolveDatagram),
         ("Read", Cap::ResolveRead),
         ("bool", Cap::ResolveBool),
         ("Captured", Cap::ResolveCaptured),
         ("Exec", Cap::ResolveExec),
-        ("Child", Cap::ResolveChild),
+        ("HostChild", Cap::ResolveChild),
     ] {
         // A module that never asks for a `Pending<i32>` has none in its manifest, and that is not an
         // error until something asks for one — `pending_hooks` answers `Err` and this skips it, which

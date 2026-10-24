@@ -25,7 +25,7 @@
 // `write` for standard output as bytes but only `warn`, which is line-oriented, for the error
 // channel — so byte-exact interleaving is not expressible. Filed as wac-mono 0014.
 
-import { Change, Cli, Core, FileResult, Socket, Sys } from "std";
+import { Change, Cli, Core, FileResult, HostSocket, Sys } from "std";
 import { Client } from "./client.wac";
 import { KeyError, PrivateKey, readEd25519 } from "./privatekey.wac";
 import { Verdict, lookUp } from "./knownhosts.wac";
@@ -71,7 +71,7 @@ export i32 main(Sys sys) {
   }
 
   // ── Connect and hand over to the transport ──────────────────────────────────
-  Socket sock = cli.connect(o.host, o.port).wait();
+  HostSocket sock = cli.connect(o.host, o.port).wait();
   if (sock.handle < 0) {
     core.warn("ssh: \{o.host}: \{sock.error}");
     return 1;

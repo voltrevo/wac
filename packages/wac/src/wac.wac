@@ -31,7 +31,7 @@
 // is made of; and reading them is here, where the capabilities are. Each half is testable without
 // the other.
 
-import { CallResult, Change, Child, Cli, Core, Exec, FileResult, GRANT_ENV, GRANT_NET, GRANT_READ,
+import { CallResult, Change, HostChild, Cli, Core, Exec, FileResult, GRANT_ENV, GRANT_NET, GRANT_READ,
          GRANT_RUN, GRANT_WRITE, INHERIT_IN, INHERIT_OUT, LoadedModule, Pending, Stat, faultWords, Sys } from "std";
 import { Read, Vec } from "core";
 import { atoi } from "../../fmt/src/itoa.wac";
@@ -1466,7 +1466,7 @@ export async i32 main(Sys sys) {
                   + "it before \{entry}, or after `--` if the program wants the string");
         return 2;
       }
-      Child cached = cli.spawn(hit.bytes, programArgs(cli, argc, entry),
+      HostChild cached = cli.spawn(hit.bytes, programArgs(cli, argc, entry),
                                grantsBefore(cli, argc, entry), "", INHERIT_IN | INHERIT_OUT, false).wait();
       if (!cached.unavailable()) { return cli.exitCode(cached.handle).wait(); }
       // A host with no `spawn` falls through and compiles, which ends in the same refusal with the
@@ -1805,7 +1805,7 @@ export async i32 main(Sys sys) {
     // a hit.
     rememberBuild(cli, cachePath, whole, entry);
 
-    Child kid = cli.spawn(whole, programArgs(cli, argc, entry), grants, "", INHERIT_IN | INHERIT_OUT, false).wait();
+    HostChild kid = cli.spawn(whole, programArgs(cli, argc, entry), grants, "", INHERIT_IN | INHERIT_OUT, false).wait();
     if (kid.unavailable()) {
       core.warn("wac: this host cannot run a module — `wac run` needs `spawn`, which a page has no "
                 + "form of");

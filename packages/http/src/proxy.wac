@@ -39,7 +39,7 @@
 // and that is operational information rather than a network error: the fix is a line in a file on the
 // host. A caller reporting "connection failed" sends somebody to look at the wrong thing.
 
-import { Cli, Socket } from "std";
+import { Cli, HostSocket } from "std";
 import { Buf, Result } from "core";
 
 /** Where a proxy is. */
@@ -159,7 +159,7 @@ i32 replyCap() { return 1 << 16; }
  * its arguments. It is closed on every failure path, so a caller that gets an error owns nothing.
  */
 export Result<Tunnel, string> connectThrough(Cli cli, string proxyHost, i32 proxyPort, string host, i32 port) {
-  Socket s = cli.connect(proxyHost, proxyPort).wait();
+  HostSocket s = cli.connect(proxyHost, proxyPort).wait();
   if (s.handle < 0) {
     return Result.Err("the proxy at \{proxyHost}:\{proxyPort}"
       + " could not be reached: \{s.error}");

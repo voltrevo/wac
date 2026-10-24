@@ -23,7 +23,7 @@
 // it is the subject here rather than the harness.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Socket, Pending } from "std";
+import { Core, Cli, Exec, HostSocket, Pending } from "std";
 import { Read } from "core";
 import { Daemon, Held, start, stop, waitForLogWithin, logOf } from "../../../wactest/src/daemon.wac";
 import { contains, startsWith, splitLines, trimmed } from "../../../wactest/src/strings.wac";
@@ -122,7 +122,7 @@ i32 statusOf(string s, i32 n) {
  * the server rather than of the exchange being tested.
  */
 string exchange(Core core, Cli cli, i32 port, string request, i32 want) {
-  Socket s = cli.connect("127.0.0.1", port).wait();
+  HostSocket s = cli.connect("127.0.0.1", port).wait();
   if (s.handle < 0) { return "<connect failed: \{s.error}>"; }
   cli.send(s.handle, request.toBytes()).wait();
   string out = "";
@@ -251,7 +251,7 @@ export string test_keep_alive_two_requests_one_connection(Core core, Cli cli) {
   Server s = startServer(t, core, cli, "keepalive", "");
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
-  Socket sock = cli.connect("127.0.0.1", s.port).wait();
+  HostSocket sock = cli.connect("127.0.0.1", s.port).wait();
   t.isTrue(sock.handle >= 0, "connected — \{sock.error}");
   if (sock.handle >= 0) {
     cli.send(sock.handle, "GET / HTTP/1.1\r\nHost: a\r\n\r\n".toBytes()).wait();
@@ -292,7 +292,7 @@ export string test_a_request_split_across_packets_is_answered_once_it_is_whole(C
   Server s = startServer(t, core, cli, "split", "");
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
-  Socket sock = cli.connect("127.0.0.1", s.port).wait();
+  HostSocket sock = cli.connect("127.0.0.1", s.port).wait();
   t.isTrue(sock.handle >= 0, "connected — \{sock.error}");
   if (sock.handle >= 0) {
     const string FULL = "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}";
@@ -351,7 +351,7 @@ export string test_a_client_that_disappears_mid_request_does_not_take_the_server
   Server s = startServer(t, core, cli, "vanish", "");
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
-  Socket sock = cli.connect("127.0.0.1", s.port).wait();
+  HostSocket sock = cli.connect("127.0.0.1", s.port).wait();
   t.isTrue(sock.handle >= 0, "connected — \{sock.error}");
   if (sock.handle >= 0) {
     cli.send(sock.handle,
@@ -385,7 +385,7 @@ export string test_a_silent_client_is_dropped_rather_than_held_forever(Core core
   if (s.port < 0) { stop(cli, s.d); return t.report(); }
 
   // Connects, sends half a request, then stops. The server should give up and say why.
-  Socket half = cli.connect("127.0.0.1", s.port).wait();
+  HostSocket half = cli.connect("127.0.0.1", s.port).wait();
   t.isTrue(half.handle >= 0, "connected — \{half.error}");
   if (half.handle >= 0) {
     cli.send(half.handle, "GET / HTTP/1.1\r\nHost: a\r\n".toBytes()).wait();
@@ -395,7 +395,7 @@ export string test_a_silent_client_is_dropped_rather_than_held_forever(Core core
   }
 
   // And a connection that says nothing at all is simply dropped — there is no request to answer.
-  Socket quiet = cli.connect("127.0.0.1", s.port).wait();
+  HostSocket quiet = cli.connect("127.0.0.1", s.port).wait();
   t.isTrue(quiet.handle >= 0, "connected — \{quiet.error}");
   if (quiet.handle >= 0) {
     string out = readOnce(core, cli, quiet.handle, PATIENCE);

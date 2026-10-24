@@ -21,7 +21,7 @@
 // the only place the answer exists once the process is reaped.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult, Socket } from "std";
+import { Core, Cli, Exec, FileResult, HostSocket } from "std";
 import { Read } from "core";
 import { contains } from "../../../wactest/src/strings.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
@@ -151,7 +151,7 @@ i32 waitForPort(Core core, Cli cli, Server s, i32 millis) {
 
 /** Connect, read what the server sends, and close. */
 string greetedBy(Core core, Cli cli, i32 port) {
-  Socket s = cli.connect("127.0.0.1", port).wait();
+  HostSocket s = cli.connect("127.0.0.1", port).wait();
   if (s.handle < 0) { return "connect failed: \{s.error}"; }
   string said = "";
   match (cli.recv(s.handle).wait()) {

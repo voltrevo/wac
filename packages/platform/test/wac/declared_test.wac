@@ -111,12 +111,12 @@ export string test_a_program_handed_sys_is_described_by_the_world(Core core, Cli
   // and the boundary was what it asked for. With one `Sys` there is nothing smaller to ask for; what
   // stays smaller is a program that takes nothing, which is handed nothing.
   t.eqStr(joinedWith(sorted(m.structs), ", "),
-          "CallResult, Captured, Change, Child, Cli, Continuation, Core, Datagram, Exec, FileResult, "
-            + "LoadedModule, Pending<Captured>, Pending<Change>, Pending<Child>, Pending<Datagram>, "
-            + "Pending<Exec>, Pending<FileResult>, Pending<Read>, Pending<Socket>, Pending<Stat>, "
+          "CallResult, Captured, Change, Cli, Continuation, Core, Datagram, Exec, FileResult, HostChild, "
+            + "HostSocket, LoadedModule, Pending<Captured>, Pending<Change>, Pending<Datagram>, Pending<Exec>, "
+            + "Pending<FileResult>, Pending<HostChild>, Pending<HostSocket>, Pending<Read>, Pending<Stat>, "
             + "Pending<bool>, Pending<i32>, Pending<i64>, Pending<string>, Pending<string[]>, "
             + "Pending<string[]?>, Pending<u8[]>, Pending<u8[]?>, Queue<Continuation>, Read, Sched, "
-            + "Socket, Stat, TicketBase, Vec<Continuation>",
+            + "Stat, TicketBase, Vec<Continuation>",
           "hello.wac's declared boundary");
 
   // The callback signatures are the other half of the same boundary: each is a dispatcher the host

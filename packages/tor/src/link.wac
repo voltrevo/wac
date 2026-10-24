@@ -10,7 +10,7 @@
 // nothing is not hypothetical.
 
 import { NTOR_KEY_MATERIAL, relayDataLen } from "./relay.wac";
-import { Core, Cli, Socket, Pending } from "std";
+import { Core, Cli, HostSocket, Pending } from "std";
 import { Vec, Read } from "core";
 import { Relay } from "./directory.wac";
 import { Circuit, Received, gotData, gotEnd, gotConnected, gotExtended, gotBroken,
@@ -100,7 +100,7 @@ static i32 CONNECT_TIMEOUT_MS = 15000;
 static i32 READ_TIMEOUT_MS = 30000;
 
 export Link connectRelay(Core core, Cli cli, string host, i32 port) {
-  Pending<Socket> dial = cli.connect(host, port);
+  Pending<HostSocket> dial = cli.connect(host, port);
   if (core.waitAny([dial.id], CONNECT_TIMEOUT_MS) < 0) {
     // **This used to say there was nothing to close, and that was the assumption that hid a
     // leak.** If the connection completes just as the deadline passes, the answer *is* in hand:
@@ -116,7 +116,7 @@ export Link connectRelay(Core core, Cli cli, string host, i32 port) {
     core.warn("tor: \{host} did not answer within \{CONNECT_TIMEOUT_MS}ms");
     return Link(core, cli, "\{host}:\{port}", -1, u8[](), u8[](), true, u8[](), false);
   }
-  Socket s = dial.wait();
+  HostSocket s = dial.wait();
   if (s.handle < 0) {
     core.warn("tor: \{host}: \{s.error}");
     return Link(core, cli, "\{host}:\{port}", -1, u8[](), u8[](), true, u8[](), false);

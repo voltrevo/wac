@@ -14,7 +14,7 @@
 // Keep-alive, chunked request bodies and pipelining are **not implemented**. A caller that needs them
 // wants a connection object with state, which is a different shape from this function.
 
-import { Cli, Socket } from "std";
+import { Cli, HostSocket } from "std";
 import { Incoming, ParsedResponse, parseResponse } from "./incoming.wac";
 import { Result } from "core";
 
@@ -28,7 +28,7 @@ import { Result } from "core";
  */
 export Result<Incoming, string> request(Cli cli, u8[] method, string host, i32 port, string path,
                                          u8[] body, string contentType) {
-  Socket s = cli.connect(host, port).wait();
+  HostSocket s = cli.connect(host, port).wait();
   if (s.handle < 0) { return Result.Err("\{host}: \{s.error}"); }
 
   string head = "\{string.fromBytes(method)} \{path} HTTP/1.1\r\n"

@@ -18,7 +18,7 @@
 
 import { Vec, Map, hashString, stringEq, Read, Ticket, TicketBase } from "core";
 import { Buf } from "core";
-import { Change, Child, Cli, Core, FAULT_NONE, FAULT_UNSUPPORTED, faultWords, FileResult,
+import { Change, HostChild, Cli, Core, FAULT_NONE, FAULT_UNSUPPORTED, faultWords, FileResult,
   GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, INHERIT_IN, INHERIT_NONE, Pending, Stat, readReason, reasonOf }
   from "std";
 import { Part, PartKind, Token, lexQuotedText, tokenize } from "./lex.wac";
@@ -1126,7 +1126,7 @@ async void runBackground(Shell sh, AndOr list) {
     return;
   }
 
-  Child kid = await spawnStage(sh, argv, false);
+  HostChild kid = await spawnStage(sh, argv, false);
   if (kid.unavailable()) {
     // Not the command's fault and not a refusal of `&` as an idea: this world has no `spawn`. A
     // sealed session is the case, and it is 0116 rather than anything here.
@@ -1580,7 +1580,7 @@ async bool streamPipeline(Shell sh, Pipeline pipeline) {
     // reader — and when it does, the shell sends nothing, because the bytes are not the shell's to send.
     bool inheritIn = i == 0 && !sh.heldInput && sh.ownsStdin && !sh.triedStdin;
     if (i == 0) { inherited = inheritIn; }
-    Child kid = await spawnStage(sh, argv, inheritIn);
+    HostChild kid = await spawnStage(sh, argv, inheritIn);
     if (kid.unavailable()) {
       // No `spawn` in this world. Nothing has been started — this is the first stage, since every
       // stage asks the same world — so the caller can run the pipeline sequentially instead. Reporting
@@ -1898,7 +1898,7 @@ i32 stageGrants(Shell sh) {
     : GRANT_NET | GRANT_ENV;
 }
 
-async Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
+async HostChild spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
   bool serveFs = serveFsFor(sh);
   i32 grants = stageGrants(sh);
   // **`/bin/wc` is this build's `wc` here too.** `dispatched` rewrites it before looking at any bytes;
@@ -1921,14 +1921,14 @@ async Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
       // `spawnSelf` below keeps argv[0], because that is what tells this bundle which applet to be.
       u8[][] outer = u8[][].filled(argv.len() - 1, u8[]());
       for (i32 i = 1; i < argv.len(); i++) { outer[i - 1] = argv.get(i).toBytes(); }
-      Child external = await sh.cli
+      HostChild external = await sh.cli
         .spawn(prog.bytes, outer, grants, sh.cwd, inheritIn ? INHERIT_IN : INHERIT_NONE, serveFs).ticket();
       if (!external.unavailable()) { return external; }
       // **A path names a file, and a world that cannot start one says so.** Falling through to this
       // bundle's own applets ran `./shared` as an applet called `./shared`, which answered "command
       // not found" for a file `ls` lists. A page starts copies of itself and nothing else, so the file
       // is a program it cannot execute — 126, with the world's own sentence.
-      if (containsSlash(name)) { return Child.of(0 - 1, 0 - 1, 0 - 1, external.error); }
+      if (containsSlash(name)) { return HostChild.of(0 - 1, 0 - 1, 0 - 1, external.error); }
     }
   }
   u8[][] args = u8[][].filled(argv.len(), u8[]());
@@ -3597,7 +3597,7 @@ async Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   //
   // The shell's own directory, so `cd sub; prog f` opens `sub/f`. A spawned program used to inherit
   // the *host's* directory, which meant the shell's `cd` was invisible to everything it ran.
-  Child child = await sh.cli.spawn(
+  HostChild child = await sh.cli.spawn(
     prog.bytes, args,
     stageGrants(sh), sh.cwd, mayInherit ? INHERIT_IN : INHERIT_NONE, serveFsFor(sh)).ticket();
   // No `spawn` in this world at all: nothing was attempted, so this is not a failure of the program
@@ -3647,7 +3647,7 @@ async Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
  */
 i32 HELD_CAP() { return 8 * 1024 * 1024; }
 
-async Output collectChild(Shell sh, string name, Child child, bool inherited) {
+async Output collectChild(Shell sh, string name, HostChild child, bool inherited) {
   // A child given the real descriptor feeds itself; sending it anything would be sending it bytes the
   // shell does not have. Otherwise: the input in one go, then the *end* — `closeFeed`, not
   // `closeSocket`. A program that reads to the end before it answers, which is `wc` and `sort` and
@@ -3816,7 +3816,7 @@ async Output trySelf(Shell sh, Vec<string> argv, bool mayInherit) {
   // Everything this shell has, which the host narrows to what it actually holds. An applet run in
   // process had the shell's whole authority implicitly; asking for it explicitly is the same
   // authority said out loud, and a shell granted nothing hands its children nothing.
-  Child child = await sh.cli
+  HostChild child = await sh.cli
     .spawnSelf(args, stageGrants(sh), sh.cwd, mayInherit ? INHERIT_IN : INHERIT_NONE, serveFsFor(sh)).ticket();
   if (child.unavailable()) { return Output.missing(); }
   if (child.handle < 0) {
