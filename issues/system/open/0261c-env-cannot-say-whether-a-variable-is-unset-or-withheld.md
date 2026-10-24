@@ -51,3 +51,8 @@ anything else grows a caller of `cli.env`.
 ## Ruling — 2026-10-22 (operator, recorded by agent-a)
 
 Settled by `0330a`'s ruling: `env` answers a result — Ok(null) for not set, an error for not granted.
+
+## Settled by 0330a — 2026-10-24
+
+`Env.get` answers `Result<u8[]?, union<…>>`: `Ok(null)` is unset, and a withheld or unprovided environment is an
+`Err`. `design/system/0013`.

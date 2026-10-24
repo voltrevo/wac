@@ -1,7 +1,7 @@
 # 0014 — a frame's output streams with backpressure
 
-- **Status:** proposed — the operator's ruling on `issues/system/0252a` asked for this note before anything is
-  built
+- **Status:** option 1 chosen 2026-10-24, subject to the measurement — whose results go to the operator before
+  anything is moved
 - **Raised by:** agent-a, 2026-10-22. The ruling: *"Neither cap nor growth: frames stream with backpressure, as
   an OS pipe does, so nothing needs a cap and `truncated` goes."*
 - **Spans:** `std/platform.wac` (`pushChild`, `popChild`, `Captured`), `packages/platform/src/frame.wac`, the

@@ -1,111 +1,121 @@
-# 0013 — every capability answers a result
+# 0013 — `Sys` is the only capability, and every capability answers a result
 
-- **Status:** shape agreed 2026-10-24 (each fault its own type, a capability's error a union of them; `Pending`
-  goes in the same migration); three questions below still open
+- **Status:** agreed 2026-10-24 — every question below was put to the operator one at a time and answered
 - **Raised by:** agent-a, 2026-10-22, implementing the operator's ruling on `issues/system/0330a`: *"Every
   capability answers a result, and 'this host does not provide it' is an error — a fault beside
-  `FAULT_NOT_GRANTED`, never a trap. Capabilities with an ad-hoc absent answer (`LoadedModule.unavailable()`,
-  `Cli.env`'s bare null) move to the same shape."* It also settles `issues/system/0261c`, and finishes
-  `design/lang/0016`'s phase 2 (hosts hand out `Ticket`s; `Pending` is deleted).
-- **Spans:** `std/platform.wac`, all four hosts (`native/v8`, `native` (wasmtime), `packages/platform/host`
-  for Deno/Node and the browser), and every program that calls a capability
+  `FAULT_NOT_GRANTED`, never a trap."* It settles `issues/system/0261c` and `issues/system/0327a`, and does
+  what `design/lang/0016` already ruled and was not done: *"`std`'s root exports `Sys`, which replaces
+  `Cli`/`Core` as the capability."*
+- **Spans:** `std/platform.wac`, `core/ticket.wac`, `packages/wacc/src/program.wac`, all four hosts,
+  `packages/fs`, `packages/sh`, `packages/box`, spec ch07, ch35, ch40 and ch44, and every program
 
-## What there is today
+## Why this exists
 
-Fifty capabilities, `Cli` 42 and `Core` 8, the same set on every host, each answering std's `Pending<T>`. `Sys`
-wraps some of them into core's `Ticket` through `Pending.ticket()`, which `std/platform.wac` calls "a bridge, and
-a temporary one"; `Pending` is still named 97 times in `std/platform.wac` and in 109 files under `packages` and
-`tools`. Failure is said three ways:
-
-| group | capabilities | how failure is said |
-|---|---|---|
-| a struct with a `fault` | `readFile` (`FileResult`), the eight `Change`s, `stat`/`linkStat`, `connect`/`listen`/`accept`/`bindDatagram` (`Socket`), `exec` (`Exec`) | `fault` is one of seventeen `FAULT_*` integers |
-| an ad-hoc absence | `env` (`u8[]?`), `readDir` (`string[]?`), `load` (`LoadedModule.unavailable()`), `spawn`/`spawnSelf` (`Child`, handle -2), `recv`/`readChunk` (`Read.Failed`) | a sentinel, each its own |
-| a bare value | `argCount`, `arg`, `readStdin`, `write`, `writeErr`, `send`, `sendTo`, `outputError`, `exitCode`, `cwd`, `pushChild`, `nowMillis`, `monotonicNanos`, `sleepMillis`, `randomBytes`, `log`, `warn`, the `close*` and `unload` | none — a host without it throws |
-
-And the fourth axis, which is the issue: a host that has not built a capability **traps** on every one but
-`load`, `call`, `unload` and `validated`.
-
-Call sites, counted 2026-10-22 (method-name matches, so inflated): `readFile` ~550, `writeFile` ~490, `exec`
-~450, `arg` ~270, `cwd` ~250, `write` ~170, `readDir` 130, `argCount` 128, `send` 110, `recv` 96, `randomBytes`
-85, `nowMillis` 81, `env` 71. Several thousand edits.
+`Sys` was added on 2026-10-02 *over* `Core` and `Cli` instead of in place of them. It covers arguments, log,
+time, randomness, `readFile`, `writeFile` and grants; everything else — directories, metadata, processes, the
+environment, the terminal, datagrams — was written into ch44's "Open" section as *to be written down*, so
+programs reach past `Sys` to `sys.cli`. 760 files name `Cli` or `.cli.`. `Pending` survives behind a
+`.ticket()` its own comment calls *"a bridge, and a temporary one"*, and the adapter builds the program's
+`Sys` through a public `Sys.__wacOf` that holds everything. None of that structure has a reason: it is an
+unfinished replacement. This note is the replacement.
 
 ## The shape
 
-### Each fault is a type
+### `Sys` hands out handles; nothing else is a capability
 
-One struct per existing code, each carrying the host's own sentence:
+```wac
+Files fs  = sys.files();     // readFile, writeFile, readDir, stat, linkStat, the changes
+Procs ps  = sys.procs();     // spawn, spawnSelf, exec
+Net   net = sys.net();       // connect, listen, bindDatagram
+Env   env = sys.env();       // get, cwd, args
+// … the clock, randomness, the terminal and output, each a handle of its own
+
+void indexer(const Files fs) { … }   // the type says what authority a function holds
+indexer(fs.readOnly());              // narrowing is a method on the handle
+```
+
+Grants (`Grant`, `GRANT_*`, `Sys.run`'s mask, `held`) go: authority is the handle you hold. `Listener`,
+`Socket` and `Child` already have this shape.
+
+`Core`, `Cli` and `Pending` are deleted, not hidden. The host boundary stays where wasm puts it — imports —
+and is private to std; the adapter in `program.wac` is the only constructor of a `Sys`, and the compiler
+reserves `__wac` names so no program can call `__wacOf`, `__wacFailed` or `__wacSettle`.
+
+### A handle is a struct of closures
+
+`Files` is the model, and the mount table of `packages/fs` becomes it (`0327a`):
+
+```wac
+Files host  = sys.files();
+Files mem   = Files.memory();
+Files mixed = Files.mounted([("/", mem), ("/src", host.readOnly())]);   // a mount table is a Files
+```
+
+A new backing is a new constructor, not an edit to every operation. `Cli.capture` is deleted with `Cli`:
+running a program and keeping its output is spawning it and reading its stream (`design/system/0014`).
+
+### Each fault is a type, and an error is the union of them
 
 ```wac
 export struct NotFound    { string message; }
 export struct NotGranted  { string message; }
-export struct Unsupported { string message; }
-export struct Other       { string message; }
-// … Denied, Exists, NotEmpty, NotRepresentable, IsDir, NotADir, ReadOnly, NameTooLong, Loop, NoSpace,
-//   Refused, Unreachable, TimedOut — the seventeen FAULT_* codes less FAULT_NONE
+export struct Unsupported { string message; }   // this host does not provide it (FAULT_UNSUPPORTED today)
+export struct Other       { string message; }   // a host error no category names
+// … one per FAULT_* code, plus OutputClosed and PeerClosed below
 ```
-
-**`Unsupported` is "this host does not provide it".** `FAULT_UNSUPPORTED` already means *the request never
-reached a host* (wac-mono 0117), which is the ruling's fault; a second code would make programs tell apart two
-things nobody could act on differently.
-
-### A capability's error is the union of what it can raise
 
 ```wac
-async Result<u8[],  union<NotGranted, NotFound, Denied, IsDir, NotADir, NameTooLong, Loop, Unsupported, Other>> readFile(string path)
-async Result<u8[]?, union<NotGranted, Unsupported>>                                                            env(string name)   // Ok(null): not set (0261c)
-async Result<i64,   union<Unsupported>>                                                                        nowMillis()
+async Result<u8[],  union<NotFound, Denied, IsDir, NotADir, NameTooLong, Loop, Unsupported, Other>> readFile(string path)
+async Result<u8[]?, union<Unsupported>>                                                              get(string name)   // Env; Ok(null): not set
 ```
 
-So the signature says what can go wrong, and a `match` must cover it (`§wac-union-match-type-rj837up`):
+A `match` on the error must cover its members, and `try` widens a narrower union into a wider one — both
+probed 2026-10-24. `Unsupported` is in every signature; `Other` in every one that reaches an OS, and a code
+outside a capability's set maps to `Other`, never a trap. Hosts still answer an `i32` and a sentence; std turns
+the code into the struct in one place per capability. The `FAULT_*` integers stop being exported.
 
-```wac
-match (await sys.readFile(p)) {
-  Ok(b):  use(b),
-  Err(e): match (e) { NotFound: …, NotGranted: …, default: fail(e) },
-}
-```
+### Output
 
-and `try` widens a narrower union into the caller's wider one. Both were probed on 2026-10-24 and work today.
+- **`write`/`writeErr` answer `Result<void, union<OutputClosed, Unsupported, Other>>`.** The reader leaving is a
+  fault, in the type.
+- **An `OutputClosed` that reaches `main` exits quietly with status 0.** The adapter's `Err` arm, which already
+  matches per member of the union (`program.wac`), gains one arm. A program that wants to react matches it
+  itself; `unwrap()` on a write still traps, and a `main` that does not answer a `Result` must handle it. No
+  status imitates a signal: wac has none, and `sh` does not report 141.
+- **`send` on a socket answers `PeerClosed`**, an ordinary fault — a server must deal with a peer hanging up.
+- **`log` and `warn` are deleted as capabilities.** They become std helpers over the output handle's `write`,
+  answering its `Result`.
 
-`Unsupported` is in every signature, since any host may lack any capability. `Other` is in every signature that
-reaches an OS, for the error no category names — a host answering a code outside a capability's set is mapped to
-`Other` with its sentence, never trapped.
+### Tickets
 
-### Hosts are unchanged at the boundary
+Every capability answers core's `Ticket<Result<T, union<…>>>`. `await` gives the `Result`; a synchronous
+caller writes `wait()`, which keeps its own layer (ch35) because a ticket nothing can settle is a bug, not a
+fault. Two changes to core:
 
-A host still answers an `i32` code and a sentence. std turns the code into the struct, once per capability, in
-the function that builds the capability's `Ticket`. The `FAULT_*` integers stop being exported once nothing
-outside std reads them.
+- **`wait()` answers `Result<T, Stuck>`**, not `Result<T, string>`.
+- **`Result.flatten()`** turns `Result<Result<A, X>, Y>` into `Result<A, union<X, Y>>`, so a synchronous call
+  reads `try files.readFile(p).wait().flatten()` — a method if core can express the constraint on `T`, a core
+  function if not.
 
-### `Ticket`, not `Pending`
+### No `string` errors
 
-`Core` and `Cli` answer core's `Ticket<Result<T, union<…>>>` directly; `Pending`, `Pending.ticket()` and
-`waitAny`'s id plumbing behind it go. A host default arm stops throwing and answers
-`Err(Unsupported("<name> is not provided by <host>"))`.
+`core`, `std` and every package stop using `string` as an error type (55 mentions in 23 files on 2026-10-24),
+each error becoming a struct as faults do; spec examples change with them. The checker does not refuse it.
 
-## Staging
+## Order of work
 
-Each capability moves **once** — its `Pending<X>` becomes `Ticket<Result<T, union<…>>>` and its callers follow in
-the same commit — so no caller is edited twice.
+Each step is its own commit through the gate, with its breaking-change entry.
 
-1. **The fault types and the code-to-type mapping**, and hosts answer `FAULT_UNSUPPORTED` instead of trapping for
-   the capabilities that already carry a fault. No program changes.
-2. **`env`** (settles `0261c`), then the rest of `Core` (`nowMillis`, `monotonicNanos`, `sleepMillis`,
-   `randomBytes`), which have the fewest callers.
-3. **`Cli` by family**: process (`argCount`, `arg`, `cwd`, `readStdin`, `write`, `writeErr`, `exitCode`), files
-   (`readFile`, the `Change`s, `stat`, `readDir`), modules (`load`/`call`/`unload`), children
-   (`spawn`/`spawnSelf`, `recv`/`readChunk`), sockets.
-4. **Delete** `Pending`, `FileResult`, `Change`, `Socket`'s fault fields and the exported `FAULT_*`.
+1. **Core:** `Stuck`, `Result.flatten`, and the `string`-error sweep in `core` (`number.wac`'s literal
+   conversions), spec ch35 and ch40.
+2. **The `string`-error sweep** across std and the packages.
+3. **ch44 written whole**: the handles, their methods, the fault types, the output rules — the spec first, then
+   std.
+4. **std's handles over the host imports**, with the adapter as the only `Sys` constructor and `__wac` reserved;
+   `Files` built from closures and `packages/fs` folded into it.
+5. **Every caller moved** to the handles, family by family, each family's old `Cli` methods deleted in the same
+   commit.
+6. **Delete** `Core`, `Cli`, `Pending`, `Grant`, `FileResult`, `Change`, `Socket`'s fault fields and the exported
+   `FAULT_*`; hosts lose their `capture`, `log` and `warn` arms.
 
-Each stage is its own commit through the gate, with its breaking-change log entry.
-
-## Open questions
-
-1. **`write`/`writeErr`/`send` answer `false` for a closed peer**, which is not a fault but a fact `yes | head`
-   is written to notice. `Ok(false)`, or a `Closed` fault?
-2. **`log`/`warn`** are `void` and every host has them. Exempt, on the ground that a world with no way to say
-   anything has nothing to report a fault through?
-3. **Synchronous callers get two layers.** `Ticket.wait()` answers `Result<T, string>` (`Err` when nothing can
-   settle the ticket), so `cli.readFile(p).wait()` becomes `Result<Result<u8[], union<…>>, string>`. Fold the
-   ticket's own failure into the capability's union (as `Unsupported`, or a new `Stuck`), or keep the layers?
+Frames (`pushChild`/`popChild`) go under `design/system/0014`, after its measurement is shown to the operator.

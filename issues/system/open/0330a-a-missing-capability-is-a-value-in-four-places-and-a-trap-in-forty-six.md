@@ -89,3 +89,12 @@ Every capability answers a result, and "this host does not provide it" is an err
 `design/system/0013-every-capability-answers-a-result.md` proposes the shape (`Result<T, Fault>`, a new
 `FAULT_UNAVAILABLE`) and four stages. Stage 1 — hosts answer the fault instead of trapping, for every capability
 whose answer already carries one — needs no further decision; stages 2–4 change what programs write.
+
+## Agreed — 2026-10-24
+
+The operator answered every question in `design/system/0013`, which now holds the whole design: `Sys` is the
+only capability and hands out handles built from closures; `Core`, `Cli`, `Pending` and grants are deleted;
+each fault is its own type and a capability's error is the union of them, `Unsupported` in place of a trap; an
+`OutputClosed` reaching `main` exits quietly with status 0; `log`/`warn` become helpers over `write`; `wait()`
+answers `Result<T, Stuck>` and `Result.flatten()` joins the layers; no `string` errors anywhere in the repo.
+Order of work is in the note.

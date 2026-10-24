@@ -219,3 +219,9 @@ A stale claim about the **language** goes wrong when the language moves, which i
 `git log -S` finds it. A stale claim about **the file's own scope** goes wrong when the file moves,
 which is every commit. The second is the more common failure and nothing in this issue's method
 reaches it.
+
+## Ruling — 2026-10-24: option 3, as a consequence of 0330a
+
+`packages/fs`'s mount table becomes std's `Files` handle, a struct of closures (`Files.memory()`,
+`.readOnly()`, `Files.mounted(…)`), and `Cli.capture` is deleted with `Cli`; keeping a program's output is
+spawning it and reading its stream. `design/system/0013`.

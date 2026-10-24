@@ -82,3 +82,9 @@ Neither cap nor growth: frames stream with backpressure, as an OS pipe does, so 
 `design/system/0014-frames-stream-with-backpressure.md`. A spawned child already streams with backpressure on
 every host; the cap belongs to running a child on the caller's stack. Recommended: frames go and the in-process
 route spawns, after measuring what a per-stage instance costs the shell corpus.
+
+## Option 1 chosen — 2026-10-24
+
+Frames go and the in-process route becomes a spawned child (`design/system/0014`), **subject to the
+measurement**: the shell corpus and box's tests with the called route forced off, wall time and peak memory.
+The operator asked to see the results before anything is moved.

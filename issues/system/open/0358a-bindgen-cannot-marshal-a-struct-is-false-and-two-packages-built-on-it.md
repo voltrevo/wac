@@ -136,3 +136,9 @@ was narrower and already written down somewhere else in the tree.
 bindgen limit, and name the real limit (`usableField`). `ssh/channel.wac` keeps its design with the true reason —
 bindgen emits no accessors inside an enum variant. Step 2, whether the API should become a handle, is still the
 open question this issue holds.
+
+## Step 2 ruled — 2026-10-24: a handle
+
+`TlsClient`/`TlsServer` handles with `feed`, `send`, `close` and `phase`; the inspect-and-replay property is kept
+as explicit `snapshot()` / `restore(u8[])`, so tests keep it and production calls stop paying an encode and
+decode per call. `ssh/channel.wac` is left as it is.
