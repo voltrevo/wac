@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0397a](open/0397a-an-import-alias-inside-a-fields-nested-instance-emits-a-bogus-instance.md) | An import alias inside a struct field's nested generic instance (`Ticket<Result<Chunk, O>>`) leaves a bogus instance the emitter declines with "a null in a Result<Chunk,O> slot" | bug | compile error |
 | [0396a](closed/0396a-const-is-still-stripped-through-construction-returns-and-fields.md) | A `const` reference stored into a plain field, returned through a plain function, or read from a `const` field is writable | bug | wrong answer |
 | [0395a](open/0395a-a-duplicate-matches-binding-is-accepted.md) | `R p matches m && R p matches n` compiles and silently uses the second `p`; two wordings are wrong | bug | wrong answer |
 | [0394a](open/0394a-wac-build-says-o-keeps-a-rejected-module-and-does-not.md) | When the engine rejects a built module, `wac` says `wac build … -o out` keeps it, and no file is written | bug | wrong answer |
@@ -115,7 +116,7 @@ has been fixed and why.
 
 ## Closed
 
-310 issues, 259 closed.
+311 issues, 259 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

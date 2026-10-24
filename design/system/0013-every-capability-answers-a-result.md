@@ -109,9 +109,14 @@ Each step is its own commit through the gate, with its breaking-change entry.
 1. **Core** — done 2026-10-24: `Stuck`, `flatten`, the literal conversions' structs, ch09/35/40.
 2. **The spec's examples** off `string` errors — done 2026-10-24. The packages' `string` errors move in step 5
    with their capabilities, because their error types become unions of those capabilities' faults.
-3. **Std's answer structs renamed out of the way** (`Socket`, `Child`, `Listener` and the rest that a handle
+3. **Done 2026-10-24.** **Std's answer structs renamed out of the way** (`Socket`, `Child`, `Listener` and the rest that a handle
    takes the name of), a mechanical rename across their callers, so the handles can be added beside them.
-4. **Every handle in std**, with ch44 written whole beside it: `Sys`'s accessors, the fault types and their
+4. **Done 2026-10-24, with two pieces left to step 5:** `Procs` cannot hand a child a composed `Files` until
+   `packages/fs`'s serving moves into std, and `Files.openRead`/`openWrite` wait for the hosts to give a stream per
+   call (today's `openInput`/`openOutput` switch the program's one stream). `Grant` and `Sys.run` went with it, and
+   std is now pruned like any file. Found on the way: `sigNoPair` sized apart from the signature table (a runaway
+   past 16384 signatures), an `is` test against a type outside a union declined instead of `false`, and two import-
+   alias faults — one fixed (case 0847), one filed (`issues/lang/0397a`). **Every handle in std**, with ch44 written whole beside it: `Sys`'s accessors, the fault types and their
    mapping, `Output`/`Input`, `Clock`, `Random`, `Env`, `Files` (from closures, `packages/fs` folded in), `Net`,
    `Procs` with `self` spawning, `Modules`. Built over `Core` and `Cli` for as long as step 5 runs.
 5. **Callers, package by package** — each package's functions take the handles they use instead of `Core` and

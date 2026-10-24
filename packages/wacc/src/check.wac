@@ -1346,7 +1346,10 @@ bool namesTypeDeclC(C c, string name) {
       && (c.sCx is null || typeDeclAt(c.sCx!, name, c.sFile) < 0)) {
     ViewInputs later = c.viewLater!;
     c.viewLater = null;
+    // Building points `sFile` at the entry; a declaring file asking for its own `type` keeps its own.
+    i32 asking = c.sFile;
     buildStaticView(c, later);
+    c.sFile = asking;
   }
   if (c.typeDecls == 0 || c.sCx is null) { return false; }
   Decls tcx = c.sCx!;
@@ -9717,7 +9720,7 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
     } else if (nullableIntoNonNull(c, want, got)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, want, got)) {
-      c.report(errArgumentMismatch(), args[i].line, args[i].col);
+      c.reportWith(errArgumentMismatch(), args[i].line, args[i].col, expectedFound(want, got));
     }
     c.contextAt(before, args[i].line, call.line);
   }

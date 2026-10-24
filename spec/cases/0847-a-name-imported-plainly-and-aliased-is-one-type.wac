@@ -1,0 +1,19 @@
+// expect: f() = 3
+// spec:  §wac-generic-instantiation-identity-6pnq4wj
+// why: one declaration imported under its own name and under an alias is one type — a value built through either
+//      spelling fits a union the declaring file wrote with the plain name
+// from: spec/2-types/19-generics.md
+// ---- faults.wac ----
+export struct Closed { string message; }
+export struct Full { string message; }
+export type Fault = union<Closed, Full>;
+export i32 which(Fault f) { return match (f) { Closed: 1, Full: 2 }; }
+// ---- main.wac ----
+import { Closed, Fault, which } from "./faults.wac";
+import { Closed as Shut } from "./faults.wac";
+
+export i32 f() {
+  Fault a = Closed("plain");
+  Fault b = Shut("aliased");
+  return which(a) + which(b) + (b is Closed ? 1 : 0);
+}

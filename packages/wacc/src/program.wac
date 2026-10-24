@@ -121,7 +121,7 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
   else if (a == STATUS()) { body = body + "  return " + call + ";\n"; }
   else {
     string ok = a == OK_STATUS() ? "Ok(v): { return v; }" : "Ok(_): { return 0; }";
-    string err = errArm(ret);
+    string err = quietOnClosedOutput(ret, errArm(ret), closedNameFor(text));
     body = body + "  match (" + call + ") {\n    " + ok + "\n    " + err + "\n  }\n";
   }
 
@@ -129,6 +129,17 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
   string names = (haveCore ? "" : "Core, ") + (haveCli ? "" : "Cli, ") + (haveSys ? "" : "Sys, ");
   if (names != "") { imports = imports + "import { " + names.slice(0, names.len() - 2) + " } from \"std\";\n"; }
   if (isAsync && !haveTicket) { imports = imports + "import { Ticket } from \"core\";\n"; }
+  // `OutputClosed` by its own name unless the entry declares one of its own — a second spelling of std's would be
+  // a second type wherever std's `type` aliases are expanded (`issues/lang/0397a`).
+  string closedName = "OutputClosed";
+  if (a == OK_STATUS() || a == OK_NOTHING()) {
+    if (declaresTopLevel(text, "OutputClosed") || bindsFromElsewhere(text, "OutputClosed")) {
+      closedName = "@\"$wacOutputClosed\"";
+      imports = imports + "import { OutputClosed as @\"$wacOutputClosed\" } from \"std\";\n";
+    } else if (!importsName(text, "OutputClosed")) {
+      imports = imports + "import { OutputClosed } from \"std\";\n";
+    }
+  }
   out = out + "\n\n// wac:program — the entry as a host starts it (packages/wacc/src/program.wac).\n" + imports
       + "export i32 main(Core __wacCore, Cli __wacCli) {\n"
       + "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n" + body + "}\n";
@@ -169,6 +180,21 @@ string errArm(string ret) {
   if (e == "" || e == "union") { return "Err(e): { return __wacSys.__wacFailed(\"\\{e}\"); }"; }
   // A single written type: named, since this adapter cannot know whether it has a conversion.
   return "Err(e): { return __wacSys.__wacFailed(\"" + e + "\"); }";
+}
+
+/**
+ * `arm` with the quiet exit in front of it: an `OutputClosed` that reaches `main` ends the program with status 0
+ * and says nothing (spec ch44 `§wac-std-output-closed-c9dspr3`), as `yes | head` ends. A test of the type rather
+ * than of the spelling, because the error type is often an alias or a gathered union by now; for a type that
+ * cannot hold one the test is a constant `false`. A `string`, a number or `never` cannot, and is left untested.
+ */
+string quietOnClosedOutput(string ret, string arm, string closed) {
+  string e = errorTypeOf(ret);
+  if (e == "string" || e == "never" || isTextPrimitive(e)) { return arm; }
+  string quiet = "if (e is " + closed + ") { return 0; } ";
+  if (startsWith(arm, "Err(e): { ")) { return "Err(e): { " + quiet + arm.slice(10, arm.len()); }
+  if (startsWith(arm, "Err(_): { ")) { return "Err(e): { " + quiet + arm.slice(10, arm.len()); }
+  return arm;
 }
 
 /** The error type of `Result<T, E>` as written, or "" when there is none. */
@@ -462,4 +488,70 @@ export DeclaredTest[] declaredTests(string text0) {
     }
   }
   return out;
+}
+
+/** How the adapter names std's `OutputClosed` in `text`: by that name, unless the file declares its own. */
+string closedNameFor(string text) {
+  return declaresTopLevel(text, "OutputClosed") || bindsFromElsewhere(text, "OutputClosed") ? "@\"$wacOutputClosed\"" : "OutputClosed";
+}
+
+/** Whether `text` binds `name` by an import from anywhere but `std`. */
+bool bindsFromElsewhere(string text, string name) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  Program prog = parseProgram(P.create(src, lx));
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      Import(pathTok, prefixTok, items): {
+        if (pathTok >= 0 && progText(src, lx, pathTok) == "\"std\"") { continue; }
+        for (i32 i = 0; i < items.len(); i++) {
+          if (items[i].nameTok < 0) { continue; }
+          i32 bound = items[i].aliasTok >= 0 ? items[i].aliasTok : items[i].nameTok;
+          if (progText(src, lx, bound) == name) { return true; }
+        }
+      }
+      default: { }
+    }
+  }
+  return false;
+}
+
+/** Whether `text` declares a struct or an enum called `name` at the top level. */
+bool declaresTopLevel(string text, string name) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  Program prog = parseProgram(P.create(src, lx));
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (progText(src, lx, nameTok) == name) { return true; }
+      }
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (progText(src, lx, nameTok) == name) { return true; }
+      }
+      default: { }
+    }
+  }
+  return false;
+}
+
+/** Whether `text` imports `name` from `std` under that name. */
+bool importsName(string text, string name) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  Program prog = parseProgram(P.create(src, lx));
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      Import(pathTok, prefixTok, items): {
+        if (pathTok < 0 || progText(src, lx, pathTok) != "\"std\"") { continue; }
+        for (i32 i = 0; i < items.len(); i++) {
+          if (items[i].nameTok < 0) { continue; }
+          i32 bound = items[i].aliasTok >= 0 ? items[i].aliasTok : items[i].nameTok;
+          if (progText(src, lx, items[i].nameTok) == name && progText(src, lx, bound) == name) { return true; }
+        }
+      }
+      default: { }
+    }
+  }
+  return false;
 }

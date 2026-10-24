@@ -29,6 +29,7 @@ import { kAsync, kConst, kExport, kIdent, kString } from "./kinds.wac";
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { Decl, DeclKind, ImportItem } from "./ast.wac";
+import { stdSource } from "./coretext.wac";
 
 /** The build's view of a graph: the files it needs, dropped declarations blanked. */
 export struct Pruned {
@@ -164,10 +165,22 @@ Unit unitOf(string path, string source) {
               Names(string[].filled(64, ""), bool[].filled(64, false), 0));
 }
 
-/** Whether a specifier names one of the built-in trees rather than a file. */
+/**
+ * Whether a key names the built-in tree that is **kept whole**: `core`, which the compiler itself calls by name in
+ * ways no reference in the program shows (`pruneCoreMembers` trims what it can).
+ *
+ * **`std` is pruned like any file.** Everything a host or the compiler needs from it is named by the program by
+ * the time this runs — the program adapter (`program.wac`) is appended to the entry and names `Sys`, `Core` and
+ * `Cli`, and `Cli`'s fields name every answer type a host constructs — so what a program does not reach costs it
+ * nothing. Kept whole, every program carried every handle of design/system/0013: a hello-world went from 392 KB
+ * to 727 KB and `wac` itself outgrew the emitter's signature table.
+ */
 bool builtinKey(string key) {
-  return key == "core" || key == "std" || key == " core" || key == " std";
+  return key == "core" || key == " core";
 }
+
+/** Whether a key names `std`, served from the compiler like `core` but reached like a file. */
+bool stdKey(string key) { return key == "std" || key == " std"; }
 
 /** A quoted specifier naming a path below a built-in tree: `"core/x.wac"`, `"std/y.wac"`. */
 bool builtinSubpath(string quoted) {
@@ -199,6 +212,10 @@ struct Walk {
     if (quoted.len() < 2) { return -1; }
     string key = resolveVia(this.res, this.paths, this.paths[f], quoted.slice(1, quoted.len() - 1));
     if (builtinKey(key)) { return -1; }
+    if (stdKey(key)) {
+      i32 named = this.indexOf("std");
+      return named >= 0 ? named : this.indexOf(" std");
+    }
     return this.indexOf(key);
   }
 
@@ -287,14 +304,25 @@ struct Walk {
  * Answers the graph unchanged where it cannot do better — no entry among the paths, or a file that does
  * not parse, whose diagnostics belong to the checker downstream and which reachability must not hide.
  */
-export Pruned pruneFor(string[] paths, string[] sources, Res res, string entry) {
+export Pruned pruneFor(string[] givenPaths, string[] givenSources, Res res, string entry) {
+  // **`std` joins the walk even when the caller did not supply it** — it is carried — so it is pruned like the
+  // rest and what goes on is the part the program reaches (`builtinKey`). Unreached, it is not handed on at all.
+  string[] paths = givenPaths;
+  string[] sources = givenSources;
+  bool hasStd = false;
+  for (i32 i = 0; i < paths.len(); i++) { if (stdKey(paths[i])) { hasStd = true; } }
+  if (!hasStd) {
+    paths = string[].filled(givenPaths.len() + 1, "std");
+    sources = string[].filled(givenPaths.len() + 1, stdSource());
+    for (i32 i = 0; i < givenPaths.len(); i++) { paths[i] = givenPaths[i]; sources[i] = givenSources[i]; }
+  }
   i32 n = paths.len();
   Walk w = Walk(paths, sources, res, Unit?[].defaulted(n), bool[].filled(n, false));
   i32 e = w.indexOf(entry);
-  if (e < 0) { return Pruned(paths, sources, res); }
+  if (e < 0) { return Pruned(givenPaths, givenSources, res); }
   w.needed[e] = true;
   Unit eu = w.unit(e);
-  if (eu.fe.errorCount > 0 || eu.fe.lexed.errorCount > 0) { return Pruned(paths, sources, res); }
+  if (eu.fe.errorCount > 0 || eu.fe.lexed.errorCount > 0) { return Pruned(givenPaths, givenSources, res); }
 
   // The roots: every export of the entry module, `§wac-reach-export-type-root-svpqwtw`.
   Decl[] eds = eu.fe.prog.decls;
@@ -449,7 +477,11 @@ bool wantsTickets(string[] paths, string[] sources) {
     if (sources[f].indexOf("std") < 0 && sources[f].indexOf("async") < 0
         && sources[f].indexOf("schedule") < 0 && sources[f].indexOf("Ticket") < 0
         && sources[f].indexOf("Continuation") < 0 && sources[f].indexOf("Queue") < 0
-        && sources[f].indexOf("__wac") < 0 && sources[f].indexOf("gen") < 0 && sources[f].indexOf("yield") < 0) { continue; }
+        && sources[f].indexOf("__wac") < 0 && sources[f].indexOf("gen") < 0 && sources[f].indexOf("yield") < 0
+        // The family's other names, which the token test below knows and this filter skipped: a file naming only
+        // `Step` was carried by `std`'s presence until `std` began to be pruned.
+        && sources[f].indexOf("Step") < 0 && sources[f].indexOf("Coroutine") < 0
+        && sources[f].indexOf("Generator") < 0) { continue; }
     u8[] b = sources[f].toBytes();
     Lexed lx = lex(b);
     for (i32 t = 0; t < lx.tokenCount; t++) {

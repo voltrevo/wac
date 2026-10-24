@@ -1802,6 +1802,12 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
     }
   }
 
+  // **The static view is in hand before another file's signatures are declared**, so a parameter written with a
+  // `type` that file declares — `i32 which(Fault f)` — is that type and not its bare name. Declared after the view
+  // was attached, `Fault` stayed `"Fault"` while the importer's own `Fault a` was the union it names, and passing
+  // one to the other was a mismatch between two spellings of one type. Built only when something asks.
+  ViewInputs view = ViewInputs(paths, sources, lexes, progs, esrc, elexed, eprog, eat);
+  c.viewLater = view;
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == entry) { continue; }
     i32 want = 0;
@@ -1843,7 +1849,15 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
     c.renameCount = 0;
     for (i32 k = 0; k < n; k++) {
       if (wantFrom[k] != paths[i]) { continue; }
-      if (wantAlias[k] != wantName[k]) { c.addRename(wantName[k], wantAlias[k]); }
+      if (wantAlias[k] == wantName[k]) { continue; }
+      // **A name this file also imports plainly keeps its plain spelling**, which the canonical choice below
+      // promises: renamed to the alias, the declaration was registered as `Shut` while the declaring file's own
+      // `union<Closed, Full>` still said `Closed`, and a `Closed(…)` built either way fitted neither.
+      bool plain = false;
+      for (i32 j = 0; j < n; j++) {
+        if (wantFrom[j] == paths[i] && wantName[j] == wantName[k] && wantAlias[j] == wantName[j]) { plain = true; }
+      }
+      if (!plain) { c.addRename(wantName[k], wantAlias[k]); }
     }
     // **One declaration asked for under two spellings.** `renamed` above answers one local name per
     // declaring name, so `declareModule` registers the declaration once — and the other spelling was
@@ -2001,7 +2015,10 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
         default: { }
       }
     }
+    // Its own `type` declarations resolve in its own scope, not the entry's.
+    c.sFile = i;
     declareModule(c, iprog, reach);
+    c.sFile = eat;
     // The ones only a signature asked for are declared and not nameable, as a reached type is.
     for (i32 k = nExplicit; k < n; k++) {
       if (wantFrom[k] != paths[i]) { continue; }
@@ -2049,9 +2066,10 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   // **Every file, for the static evaluator** (spec ch28): up front for an entry that says `static`,
   // `typeref` or `type` itself, and otherwise only if the check meets a type another file declares.
   string etext = string.fromBytes(esrc);
-  ViewInputs view = ViewInputs(paths, sources, lexes, progs, esrc, elexed, eprog, eat);
-  if (etext.indexOf("static") >= 0 || etext.indexOf("typeref") >= 0 || etext.indexOf("type(") >= 0
+  if (c.sCx is not null) { c.viewLater = null; }
+  else if (etext.indexOf("static") >= 0 || etext.indexOf("typeref") >= 0 || etext.indexOf("type(") >= 0
       || etext.indexOf("\ntype ") >= 0 || etext.indexOf("export type ") >= 0 || startsWith(etext, "type ")) {
+    c.viewLater = null;
     buildStaticView(c, view);
   } else {
     // Built when the check meets a type only another file's `type` declaration explains.
@@ -2813,32 +2831,29 @@ void placeholderEditsFor(string[] paths, string[] sources, const Res res, i32 f,
 /**
  * The gathered union `text` with every member this file cannot name imported for it. A `try` reaches an
  * error type through the function it calls, not through an import, so the type may be declared in a file
- * this one never names — another of the program's, or `core` or `std`. Such a member is bound as
- * `@"$gathered_<name>"`, which nothing a program writes can collide with, and its import is queued on
- * `ed`. A name the file declares or imports, and one no file exports (a primitive, a type parameter), is
- * left as it is.
+ * this one never names — another of the program's, or `core` or `std`. Such a member is imported under
+ * its own name, and the import queued on `ed`. A name the file declares or imports, and one no file exports
+ * (a primitive, a type parameter), is left as it is.
  */
 string nameableGathered(string[] paths, string[] sources, i32 f, u8[] src, string text, PlaceholderEdits ed) {
   u8[] tb = text.toBytes();
   Lexed tl = lex(tb);
   i32 st = tokenStride();
   string visible = namesVisibleIn(src);
-  string out = "";
-  i32 from = 0;
   for (i32 t = 0; t < tl.tokenCount; t++) {
     if (tl.tokens[t * st] != kIdent()) { continue; }
     string name = tokenTextOf(tb, tl, t);
     if (visible.indexOf("|" + name + "|") >= 0) { continue; }
     string spec = moduleExportingType(paths, sources, f, name);
     if (spec == "") { continue; }
-    string alias = "@\"$gathered_" + name + "\"";
-    i32 start = tl.tokens[t * st + 1];
-    out = out + bytesBetween(tb, from, start) + alias;
-    from = start + tl.tokens[t * st + 2];
-    string line = "\nimport { " + name + " as " + alias + " } from \"" + spec + "\";";
+    // **Imported by its own name**, which nothing here can collide with — the file neither declares nor imports
+    // it. An alias would be a second spelling of the type, and the static evaluator expands a `type` the
+    // declaring file wrote (`OutputFault = union<NoSpace, …>`) in that file's spelling, so `$gathered_NoSpace`
+    // and `NoSpace` met as two types (`issues/lang/0397a`).
+    string line = "\nimport { " + name + " } from \"" + spec + "\";";
     if (ed.imports.indexOf(line) < 0) { ed.imports = ed.imports + line; }
   }
-  return out + bytesBetween(tb, from, tb.len());
+  return text;
 }
 
 /** The names file `src` declares at the top level or binds by an import, as `|a|b|`. Lexed afresh: parsing rewrites tokens. */

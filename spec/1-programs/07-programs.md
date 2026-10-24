@@ -147,23 +147,26 @@ capability reachable from them, can have no effect outside the program.
 ```wac
 // expect: prints
 // 0 matches
-import { Sys, Grant } from "std";
+import { Sys, Files } from "std";
+import { Result } from "core";
 
-export void main(Sys sys) {
-  i32 found = sys.run(scan, [Grant.Read]);
-  sys.log("\{found} matches");
+export async Result<void> main(Sys sys) {
+  i32 found = scan(sys.files().readOnly());
+  try await sys.stdout().line("\{found} matches");
+  return Result.Ok();
 }
 
-i32 scan(Sys sys) {
-  return 0;                  // reads; it cannot write, listen or spawn, whatever it asks for
+i32 scan(Files fs) {
+  return 0;                  // reads files; it cannot write them, listen or spawn — it holds nothing else
 }
 ```
 
-`scan` runs to completion inside the program, on its own scheduler, with nothing spawned. It holds the
-grants listed and no others.
+`scan` holds one handle, and a narrowed one: it can read files, and every change it asks for answers
+`NotGranted`. It runs inside the program, on its own scheduler, with nothing spawned.
 
-`[§wac-sys-run-narrows-zjku4nc]` `sys.run(f, grants)` calls `f` with a `Sys` holding at most `grants`.
-A subsystem that asks for more than its caller holds gets what its caller holds.
+`[§wac-authority-narrows-zjku4nc]` A function holds exactly the capabilities it is passed. A handle's
+narrowing methods — `Files.readOnly` among them ([44](../7-library/44-std.md)) — answer a handle that can
+do less, never more.
 
 The grants a program itself holds were fixed when it was built ([45](../8-tooling/45-cli.md)): the
 person running it cannot widen them.

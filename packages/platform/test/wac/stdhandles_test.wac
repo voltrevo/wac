@@ -1,0 +1,211 @@
+// std's handles — design/system/0013, spec ch44: what `Sys` hands out, and the faults they answer.
+//
+// Each check reaches the host through a handle and asserts the fault's *type*, because the type is the
+// contract: a caller matches on it. The messages are the host's and are not checked.
+
+import { Sys, Files, Mount, Stat, NotFound, NotADir, NotGranted, Exists, IsDir, Other, Refused, Net, Listener, Socket,
+         Launch, Exec } from "std";
+import { Result, flatten } from "core";
+import { T } from "../../../wactest/src/assert.wac";
+
+string failed(T t, string what) {
+  t.fail(what);
+  return t.report();
+}
+
+string base(Sys sys) {
+  string here = flatten(sys.env().cwd().wait()).unwrap();
+  return here + "/.cache/wac-handles";
+}
+
+export async string test_files_read_back_what_was_written(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string dir = base(sys) + "/rw";
+  await fs.remove(dir, true);
+  t.isTrue((await fs.mkdir(dir, true)).isOk(), "mkdir");
+  t.isTrue((await fs.writeFile(dir + "/a", "hello".toBytes())).isOk(), "writeFile");
+  match (await fs.readFile(dir + "/a")) {
+    Ok(b): { t.eqStr(string.fromBytes(b), "hello", "readFile answers what writeFile wrote"); }
+    Err(e): { t.fail("readFile failed"); }
+  }
+  match (await fs.stat(dir + "/a")) {
+    Ok(s): { t.isTrue(s.isFile && s.size == 5 as i64, "stat sees a five-byte file"); }
+    Err(e): { t.fail("stat failed"); }
+  }
+  match (await fs.readDir(dir)) {
+    Ok(names): { t.eqI32(names.len(), 1, "readDir lists the one file"); }
+    Err(e): { t.fail("readDir failed"); }
+  }
+  await fs.remove(dir, true);
+  return t.report();
+}
+
+export async string test_a_missing_file_is_not_found(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string gone = base(sys) + "/no-such-file";
+  match (await fs.readFile(gone)) {
+    Ok(b): { t.fail("a missing file was read"); }
+    Err(e): { t.isTrue(e is NotFound, "readFile of a missing file answers NotFound"); }
+  }
+  match (await fs.stat(gone)) {
+    Ok(s): { t.fail("a missing file has a stat"); }
+    Err(e): { t.isTrue(e is NotFound, "stat of a missing file answers NotFound"); }
+  }
+  match (await fs.readDir(gone)) {
+    Ok(n): { t.fail("a missing directory was listed"); }
+    Err(e): { t.isTrue(e is NotFound, "readDir of a missing directory answers NotFound"); }
+  }
+  return t.report();
+}
+
+export async string test_each_change_names_its_fault(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string dir = base(sys) + "/faults";
+  await fs.remove(dir, true);
+  await fs.mkdir(dir, true);
+  await fs.writeFile(dir + "/f", u8[]());
+  match (await fs.mkdir(dir + "/f", false)) {
+    Ok(_): { t.fail("mkdir over a file succeeded"); }
+    Err(e): { t.isTrue(e is Exists, "mkdir over a file answers Exists"); }
+  }
+  match (await fs.readDir(dir + "/f")) {
+    Ok(_): { t.fail("a file was listed as a directory"); }
+    Err(e): { t.isTrue(e is NotADir, "readDir of a file answers NotADir"); }
+  }
+  match (await fs.readFile(dir)) {
+    Ok(_): { t.fail("a directory was read as a file"); }
+    Err(e): { t.isTrue(e is IsDir || e is Other, "readFile of a directory answers IsDir, or Other where the host has no category"); }
+  }
+  await fs.remove(dir, true);
+  return t.report();
+}
+
+export async string test_read_only_refuses_every_change(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string dir = base(sys) + "/ro";
+  await fs.remove(dir, true);
+  await fs.mkdir(dir, true);
+  await fs.writeFile(dir + "/kept", "x".toBytes());
+  Files ro = fs.readOnly();
+  // A grant canary: the same write through the writable handle succeeds, so the refusal is the wrapper's.
+  t.isTrue((await fs.writeFile(dir + "/canary", "y".toBytes())).isOk(), "the writable handle can write");
+  match (await ro.writeFile(dir + "/new", "y".toBytes())) {
+    Ok(_): { t.fail("a read-only handle wrote"); }
+    Err(e): { t.isTrue(e is NotGranted, "writeFile through readOnly answers NotGranted"); }
+  }
+  match (await ro.remove(dir + "/kept", false)) {
+    Ok(_): { t.fail("a read-only handle removed"); }
+    Err(e): { t.isTrue(e is NotGranted, "remove through readOnly answers NotGranted"); }
+  }
+  t.isTrue((await ro.readFile(dir + "/kept")).isOk(), "and reading still works");
+  t.isTrue((await fs.stat(dir + "/new")).isErr(), "nothing was written behind the refusal");
+  await fs.remove(dir, true);
+  return t.report();
+}
+
+export async string test_mounted_routes_by_longest_prefix(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string root = base(sys) + "/mnt";
+  await fs.remove(root, true);
+  await fs.mkdir(root + "/one", true);
+  await fs.mkdir(root + "/two", true);
+  await fs.writeFile(root + "/one/f", "one".toBytes());
+  await fs.writeFile(root + "/two/f", "two".toBytes());
+  Files under = Files.mounted([Mount("/", fs), Mount("/x", Files.mounted([Mount("/", fs)]))]);
+  match (await under.readFile(root + "/one/f")) {
+    Ok(b): { t.eqStr(string.fromBytes(b), "one", "a path under / reaches the root mount"); }
+    Err(_): { t.fail("the root mount did not answer"); }
+  }
+  Files twoAsX = Files.mounted([Mount("/", fs), Mount(root + "/one", Files.mounted([Mount("/", fs)]))]);
+  t.isTrue((await twoAsX.readFile(root + "/two/f")).isOk(), "a path outside the longer mount reaches /");
+  match (await twoAsX.rename(root + "/one/f", root + "/two/g")) {
+    Ok(_): { t.fail("a rename across two mounts succeeded"); }
+    Err(e): { t.isTrue(e is Other, "a rename across two mounts answers Other"); }
+  }
+  await fs.remove(root, true);
+  return t.report();
+}
+
+export async string test_the_clock_and_randomness_answer(Sys sys) {
+  T t = T.create();
+  i64 a = (await sys.clock().monotonicNanos()).unwrap();
+  t.isTrue((await sys.clock().sleepMillis(1)).isOk(), "sleepMillis settles");
+  i64 b = (await sys.clock().monotonicNanos()).unwrap();
+  t.isTrue(b >= a, "monotonicNanos does not go backwards");
+  t.isTrue((await sys.clock().nowMillis()).unwrap() > 1700000000000 as i64, "nowMillis is wall-clock time");
+  t.eqI32((await sys.random().bytes(16)).unwrap().len(), 16, "bytes(16) answers sixteen");
+  return t.report();
+}
+
+export async string test_a_socket_carries_bytes_over_loopback(Sys sys) {
+  T t = T.create();
+  Net net = sys.net();
+  Listener l = match (await net.listen("127.0.0.1", 0)) {
+    Ok(v): v,
+    Err(e): return failed(t, "listen on loopback failed"),
+  };
+  t.isTrue(l.port > 0, "port 0 binds a real port");
+  Socket client = match (await net.connect("127.0.0.1", l.port)) {
+    Ok(v): v,
+    Err(e): return failed(t, "connect failed"),
+  };
+  Socket served = match (await l.accept()) {
+    Ok(v): v,
+    Err(e): return failed(t, "accept failed"),
+  };
+  t.isTrue((await client.send("ping".toBytes())).isOk(), "send");
+  client.closeSend();
+  u8[] got = u8[]();
+  bool more = true;
+  while (more) {
+    match (await served.recv()) {
+      Ok(r): {
+        match (r) {
+          Data(b): { got = b; }
+          End: { more = false; }
+          Failed(why): { more = false; }
+        }
+      }
+      Err(e): { t.fail("recv failed"); more = false; }
+    }
+  }
+  t.eqStr(string.fromBytes(got), "ping", "the accepted socket reads what the client sent");
+  served.close();
+  client.close();
+  l.close();
+  return t.report();
+}
+
+export async string test_connecting_to_nothing_is_refused(Sys sys) {
+  T t = T.create();
+  Net net = sys.net();
+  Listener l = (await net.listen("127.0.0.1", 0)).unwrap();
+  i32 port = l.port;
+  l.close();
+  match (await net.connect("127.0.0.1", port)) {
+    Ok(s): { s.close(); t.fail("a closed port answered"); }
+    Err(e): { t.isTrue(e is Refused, "connecting to a port nothing listens on answers Refused"); }
+  }
+  return t.report();
+}
+
+export async string test_exec_runs_a_host_program(Sys sys) {
+  T t = T.create();
+  match (await sys.procs().exec("echo", ["hi"], u8[](), string[](), Launch.plain())) {
+    Ok(r): {
+      t.eqI32(r.status, 0, "echo exits 0");
+      t.eqStr(string.fromBytes(r.stdout), "hi\n", "and its output comes back");
+    }
+    Err(e): { t.fail("exec of echo failed"); }
+  }
+  match (await sys.procs().exec("/no/such/program", string[](), u8[](), string[](), Launch.plain())) {
+    Ok(r): { t.isTrue(r.status != 0, "a missing program does not exit 0"); }
+    Err(e): { t.isTrue(e is Other || e is NotGranted, "or is refused before it runs"); }
+  }
+  return t.report();
+}

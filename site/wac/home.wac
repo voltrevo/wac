@@ -39,7 +39,7 @@ string bootstrapBlock(Tree tree) {
 }
 
 /** The seed's size, rounded — typed, and checked against `native/v8/seed/wacc.wasm` by `test/site_test.wac`. */
-export static string SEED_KB = "3,333 KB";
+export static string SEED_KB = "3,719 KB";
 
 /** A command the terminal shows, and what it prints. */
 struct Said {

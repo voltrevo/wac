@@ -477,6 +477,9 @@ spec/7-library/42-buf.md#4
 spec/7-library/44-std.md#1
 spec/7-library/44-std.md#2
 spec/7-library/44-std.md#3
+spec/7-library/44-std.md#4
+spec/7-library/44-std.md#5
+spec/7-library/44-std.md#6
 spec/8-tooling/48-bindgen.md#1
 spec/8-tooling/48-bindgen.md#2
 spec/8-tooling/48-bindgen.md#3

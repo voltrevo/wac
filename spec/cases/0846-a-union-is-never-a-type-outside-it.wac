@@ -1,0 +1,18 @@
+// expect: f() = 29
+// spec:  §wac-is-dz9jg1l
+// why: `x is T` is true exactly when x's runtime type is T or a subtype; a union's value is one of its
+//      members, so a test for a type outside the union is false rather than unemittable
+// from: spec/2-types/12-structs.md
+struct A { i32 x; }
+struct B { i32 y; }
+struct C { i32 z; }
+type AB = union<A, B>;
+
+i32 sort(AB e) {
+  if (e is C) { return 1; }
+  return match (e) { A: 2, B: 3 };
+}
+
+i32 notC(AB e) { return e is not C ? 9 : 0; }
+
+export i32 f() { return sort(A(1)) * 10 + notC(B(2)); }

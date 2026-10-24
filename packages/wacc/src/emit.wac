@@ -1435,6 +1435,19 @@ bool isNullableTy(Ty t) {
  * is about (`issues/lang/0170a`). Anything else still declines.
  */
 bool constantFalseIs(Env env, string target, string lty) {
+  // **A union is one of its members** (spec ch18), so a struct no member can be is never what a union holds
+  // — `§wac-is-dz9jg1l` is about the runtime type, and a union's is always a member's. Each member must be a
+  // known struct unrelated to the target, or a primitive no struct can be; anything else still declines.
+  if (env.isStructName(target) && isUnionName(lty)) {
+    string[] ms = unionMembers(lty);
+    if (ms.len() == 0) { return false; }
+    for (i32 i = 0; i < ms.len(); i++) {
+      string m = env.canonType(ms[i]);
+      bool primitive = m == "string" || m == "bool" || isNumericTy(m);
+      if (!primitive && !constantFalseIs(env, target, m)) { return false; }
+    }
+    return true;
+  }
   if (!env.isStructName(target) || !env.isStructName(lty)) { return false; }
   if (env.isSubtypeOf(target, lty) || env.isSubtypeOf(lty, target)) { return false; }
   return true;
@@ -3375,7 +3388,13 @@ export struct Env {
   }
 
   Env create() {
-    return Env(string[].defaulted(2048), string[].defaulted(2048), 0, 0, 0, -1, -1, string[].defaulted(1024), 0, string[].defaulted(16384), 0,
+    // **One capacity for the signature table and the two flags kept beside it.** `sigNoPair` and `sigValue` were
+    // sized apart from `sigTypes`, and `pairEverySignature` reads an index past a flag table's end as "not an env
+    // shape" — so once a program had more signatures than the flags had room for, every env shape was paired,
+    // its pair's env shape was paired in turn, and the table filled with `fn[…(anyref,anyref,anyref,…)]` until it
+    // ran out at any size. design/system/0013's handles took `wac` past 16384 and found it.
+    i32 sigs = 32768;
+    return Env(string[].defaulted(2048), string[].defaulted(2048), 0, 0, 0, -1, -1, string[].defaulted(1024), 0, string[].defaulted(sigs), 0,
                string[].defaulted(256), string[].defaulted(256), 0, "", "", string[].defaulted(64), 0, string[].defaulted(512), string[].defaulted(512), 0, false,
                "", "",
                string[].defaulted(512), i32[].filled(512, 0), string[].defaulted(512), Expr?[].defaulted(512), 0,
@@ -3411,7 +3430,7 @@ export struct Env {
                string[].defaulted(256), 0, Ty?[].defaulted(16384), string[].defaulted(1024), string[].defaulted(16384), "", false,
                false, 0, "", string[].defaulted(256), 0,
                string[].defaulted(256), string[].defaulted(256), 0, "", false, 0, -1,
-               bool[].filled(16384, false), bool[].filled(16384, false), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
+               bool[].filled(sigs, false), bool[].filled(sigs, false), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
                Param[][].filled(1024, Param[]()), Stmt[][].filled(1024, Stmt[]()),
                string[].filled(1024, ""), i32[].filled(1024, 0), i32[].filled(1024, 0), string[].filled(1024, ""),
                i32[].filled(1024, 0), 0, 0,
@@ -3876,10 +3895,11 @@ export string resolveImportIn(string from, string rel, string root) {
  * `design/lang/0009` D3. `core` is keyed `" core"` and handled where the queue is read.
  */
 export string sourceOf(string[] paths, string[] sources, string path) {
-  if (path == "std") { return stdSource(); }
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == path) { return sources[i]; }
   }
+  // **A supplied `std` is the built-in, pruned** (`reach.wac`'s `pruneFor`), so it is read before the whole one.
+  if (path == "std") { return stdSource(); }
   return "";
 }
 
