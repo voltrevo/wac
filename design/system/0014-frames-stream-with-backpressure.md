@@ -1,7 +1,7 @@
 # 0014 — a frame's output streams with backpressure
 
-- **Status:** option 1 chosen 2026-10-24, subject to the measurement — whose results go to the operator before
-  anything is moved
+- **Status:** option 1 chosen by the operator 2026-10-24 after the measurement below; the work is folded into
+  `design/system/0013` step 5 (programs) and step 6 (hosts)
 - **Raised by:** agent-a, 2026-10-22. The ruling: *"Neither cap nor growth: frames stream with backpressure, as
   an OS pipe does, so nothing needs a cap and `truncated` goes."*
 - **Spans:** `std/platform.wac` (`pushChild`, `popChild`, `Captured`), `packages/platform/src/frame.wac`, the
@@ -67,3 +67,18 @@ The order of work, if it is chosen:
 If the measurement makes per-stage instances unaffordable (a corpus that takes minutes longer, or memory that
 grows with pipeline length), option 3 for plain sinks plus option 1 for pipelines is the fallback — `$(…)`
 holding its output whole is not a cap, it is what the construct means.
+
+## The measurement — 2026-10-24
+
+The shell corpus, 946 scripts, through `boxsh` (called) and `wacsh` (spawned), the called route measured again
+last; load 1.4–3.8 from other agents.
+
+| route | total | median | p95 | peak RSS median / max |
+|---|---|---|---|---|
+| called | 67.2 s | 71 ms | 75 ms | 65 / 93 MB |
+| spawned | 71.0 s | 71 ms | 86 ms | 65 / 102 MB |
+| called, again | 67.5 s | 71 ms | 75 ms | 65 / 92 MB |
+
+Statuses identical. Most of the corpus is builtins; applet pipelines directly, median of seven: `seq 1 100 | sort -r |
+head -3 | wc -l` 76 ms called, 90 ms spawned; eight `echo | wc -c` in a loop 77 ms against 142 ms. About **8 ms per
+spawned stage**, 5.5% on the corpus, 10 MB of peak memory at worst. The operator chose option 1 on these numbers.

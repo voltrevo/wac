@@ -88,3 +88,8 @@ route spawns, after measuring what a per-stage instance costs the shell corpus.
 Frames go and the in-process route becomes a spawned child (`design/system/0014`), **subject to the
 measurement**: the shell corpus and box's tests with the called route forced off, wall time and peak memory.
 The operator asked to see the results before anything is moved.
+
+## Measured, and decided — 2026-10-24
+
+About 8 ms per spawned stage, 5.5% on the shell corpus (`design/system/0014`, "The measurement"). The operator:
+frames go. The work is `design/system/0013` steps 5 and 6. Spawning yourself needs the `procs` grant.

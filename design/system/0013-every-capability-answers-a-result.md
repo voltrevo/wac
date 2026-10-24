@@ -106,16 +106,20 @@ each error becoming a struct as faults do; spec examples change with them. The c
 
 Each step is its own commit through the gate, with its breaking-change entry.
 
-1. **Core:** `Stuck`, `Result.flatten`, and the `string`-error sweep in `core` (`number.wac`'s literal
-   conversions), spec ch35 and ch40.
-2. **The `string`-error sweep** across std and the packages.
-3. **ch44 written whole**: the handles, their methods, the fault types, the output rules — the spec first, then
-   std.
-4. **std's handles over the host imports**, with the adapter as the only `Sys` constructor and `__wac` reserved;
-   `Files` built from closures and `packages/fs` folded into it.
-5. **Every caller moved** to the handles, family by family, each family's old `Cli` methods deleted in the same
-   commit.
-6. **Delete** `Core`, `Cli`, `Pending`, `Grant`, `FileResult`, `Change`, `Socket`'s fault fields and the exported
-   `FAULT_*`; hosts lose their `capture`, `log` and `warn` arms.
+1. **Core** — done 2026-10-24: `Stuck`, `flatten`, the literal conversions' structs, ch09/35/40.
+2. **The spec's examples** off `string` errors — done 2026-10-24. The packages' `string` errors move in step 5
+   with their capabilities, because their error types become unions of those capabilities' faults.
+3. **Std's answer structs renamed out of the way** (`Socket`, `Child`, `Listener` and the rest that a handle
+   takes the name of), a mechanical rename across their callers, so the handles can be added beside them.
+4. **Every handle in std**, with ch44 written whole beside it: `Sys`'s accessors, the fault types and their
+   mapping, `Output`/`Input`, `Clock`, `Random`, `Env`, `Files` (from closures, `packages/fs` folded in), `Net`,
+   `Procs` with `self` spawning, `Modules`. Built over `Core` and `Cli` for as long as step 5 runs.
+5. **Callers, package by package** — each package's functions take the handles they use instead of `Core` and
+   `Cli`, in one edit per function. `async` where a function reasonably can be, `flatten(….wait())` where not
+   (operator, 2026-10-24). Frames go here: tests that ran a program in-process over `frame.wac` fake its
+   handles with closures instead, and the shell always spawns.
+6. **Delete** `Core`, `Cli`, `Pending`, `Grant`, the old answer structs and the exported `FAULT_*`; the hosts build
+   the handles' imports directly and lose `pushChild`, `popChild`, `capture`, `log` and `warn`.
 
-Frames (`pushChild`/`popChild`) go under `design/system/0014`, after its measurement is shown to the operator.
+**Spawning needs the `procs` grant, yourself included** (operator, 2026-10-24) — so a sealed session, `sshd` and
+the browser terminal are granted it to run applets, and without it an applet is `NotGranted`.
