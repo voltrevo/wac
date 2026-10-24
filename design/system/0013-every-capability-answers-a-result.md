@@ -139,6 +139,10 @@ the browser terminal are granted it to run applets, and without it an applet is 
   the same function, core calls it once over all their ids — so a deadline is a timer ticket in a race,
   `Ticket.anyWithIndex(sock.recv(), clock.sleepMillis(ms)).wait()`, and works the same synchronously and under
   `await`. No `__wac` hook: the function arrives as a value. This replaces `core.waitAny`.
+- **A deadline belongs to `Clock`:** `clock.within(t, ms)` answers `Ticket<Result<A, union<E, TimedOut>>>` for a
+  `Ticket<Result<A, E>>`, racing `t` against its own timer and cancelling the loser — so no caller can leak a slot.
+  `core.waitAny`'s header records why: a timer ticket in the list *"worked, and every caller had to remember to
+  cancel the loser or lose a slot for good"*. A negative `ms` sets no deadline.
 - **`cancel()` on any ticket.** On a host ticket it releases the host's slot and discards the answer; the ticket
   never settles and a later `wait()` answers `Stuck`. On any other ticket it detaches interest and does not stop the
   machine. This replaces `Pending.cancel` and `core.cancel`.
