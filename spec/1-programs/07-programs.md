@@ -188,8 +188,10 @@ forms settle first and then answer the same way.
 import { Sys } from "std";
 import { Result } from "core";
 
+struct NoInput { }
+
 export Result<i32> main(Sys sys) {
-  return Result.Err("no input");
+  return Result.Err(NoInput());
 }
 ```
 

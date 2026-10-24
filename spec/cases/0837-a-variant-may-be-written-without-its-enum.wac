@@ -5,8 +5,9 @@
 // from: spec/2-types/13-enums.md
 import { Result } from "core";
 enum Shape { Circle(i32 r), Dot }
-Result<i32, string> half(i32 n) {
-  if (n % 2 != 0) { return Err("odd"); }
+struct Odd { string what; }
+Result<i32, Odd> half(i32 n) {
+  if (n % 2 != 0) { return Err(Odd("odd")); }
   return Ok(n / 2);
 }
 i32 size(Shape s) { return match (s) { Circle(r): r, Dot: 1 }; }
@@ -14,8 +15,8 @@ export i32 f() {
   Shape a = Circle(3);
   Shape d = Dot;
   Shape pick = true ? Dot : Circle(9);
-  Result<i32, string> r = half(10);
+  Result<i32, Odd> r = half(10);
   i32 got = match (r) { Ok(v): v, Err(e): -1 };
-  i32 odd = match (half(3)) { Ok(v): v, Err(e): e.len() };   // "odd" is 3
+  i32 odd = match (half(3)) { Ok(v): v, Err(e): e.what.len() };   // "odd" is 3
   return size(a) + size(d) + size(pick) + got + odd - 1;
 }

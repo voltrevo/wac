@@ -35,7 +35,7 @@ export i32 fromCoreRoot() {
   Vec<i32> v;
   v.push(1);
   v.push(2);
-  Result<i32, string> r = Result.Ok(v.len());
+  Result<i32, bool> r = Result.Ok(v.len());
   return r.orElse(0);
 }
 ```

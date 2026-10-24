@@ -6,9 +6,10 @@
 import { Result } from "core";
 
 struct Malformed { string why; }
+struct NotFound { i32 k; }
 
-Result<i32, string> read(i32 k) {
-  if (k == 0) { return Result.Err("not found"); }
+Result<i32, NotFound> read(i32 k) {
+  if (k == 0) { return Result.Err(NotFound(k)); }
   return Result.Ok(k);
 }
 
@@ -28,7 +29,7 @@ export i32 f() {
   Result<i32> bad = load(1);
   i32 which = match (bad) {
     Ok(v): 0,
-    Err(e): match (e) { string: 1, Malformed: e.why.len() },
+    Err(e): match (e) { NotFound: 1, Malformed: e.why.len() },
   };
   return good.orElse(-1) + which;
 }

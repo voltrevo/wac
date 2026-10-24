@@ -4,12 +4,13 @@
 //      function, an `Ok` lets it continue
 // from: spec/6-concurrency/36-coroutines-and-generators.md
 import { Result } from "core";
-gen<i32> Result<i32, string> nums(i32 n) {
+struct TooMany { i32 n; }
+gen<i32> Result<i32, TooMany> nums(i32 n) {
   for (i32 i = 1; i <= n; i++) { yield i; }
-  if (n > 3) { return Result.Err("too many"); }
+  if (n > 3) { return Result.Err(TooMany(n)); }
   return Result.Ok(n);
 }
-Result<i32, string> total(i32 n) {
+Result<i32, TooMany> total(i32 n) {
   i32 t = 0;
   try for (i32 x in nums(n)) { t += x; }
   return Result.Ok(t);

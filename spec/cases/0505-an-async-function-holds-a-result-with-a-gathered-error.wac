@@ -6,9 +6,10 @@
 import { Result, Ticket } from "core";
 
 struct Malformed { string why; }
+struct NotFound { i32 k; }
 
-Result<i32, string> read(i32 k) {
-  if (k == 0) { return Result.Err("not found"); }
+Result<i32, NotFound> read(i32 k) {
+  if (k == 0) { return Result.Err(NotFound(k)); }
   return Result.Ok(k);
 }
 
@@ -35,7 +36,7 @@ async i32 use() {
   i32 which = 0;
   if (now.orElse(0) > 0) {
     Result<i32> bad = load(1);
-    which = match (bad) { Ok(v): 0, Err(e): match (e) { string: 1, Malformed: e.why.len() } };
+    which = match (bad) { Ok(v): 0, Err(e): match (e) { NotFound: 1, Malformed: e.why.len() } };
   }
   return now.orElse(-1) + later.orElse(-1) + which * 3;
 }

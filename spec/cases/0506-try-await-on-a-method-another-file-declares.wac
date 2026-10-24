@@ -6,10 +6,11 @@
 // ---- store.wac ----
 import { Result, Ticket } from "core";
 
+export struct Missing { i32 k; }
 export struct Store {
   i32 base;
-  async Result<i32, string> read(this, i32 k) {
-    if (k == 0) { return Result.Err("missing"); }
+  async Result<i32, Missing> read(this, i32 k) {
+    if (k == 0) { return Result.Err(Missing(k)); }
     return Result.Ok(this.base + k);
   }
 }

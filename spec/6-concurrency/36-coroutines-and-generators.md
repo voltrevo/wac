@@ -52,13 +52,15 @@ export i32 summed(i32 n) {
   return t;
 }
 
-gen<i32> Result<i32, string> limited(i32 n) {
+struct TooMany { i32 n; }
+
+gen<i32> Result<i32, TooMany> limited(i32 n) {
   for (i32 i = 1; i <= n; i++) { yield i; }
-  if (n > 3) { return Result.Err("too many"); }
+  if (n > 3) { return Result.Err(TooMany(n)); }
   return Result.Ok(n);
 }
 
-Result<i32, string> sum(i32 n) {
+Result<i32, TooMany> sum(i32 n) {
   i32 t = 0;
   try for (i32 v in limited(n)) { t += v; }
 

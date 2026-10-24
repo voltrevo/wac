@@ -66,10 +66,13 @@ A function that can fail returns one, and a caller takes it apart like any enum:
 // expect: orElseZero("x") = 0
 import { Result } from "core";
 
-Result<i32, string> parseDigit(string s) {
-  if (s.len() != 1) { return Result.Err("not one character"); }
+struct TooLong { i32 len; }
+struct NotADigit { string text; }
+
+Result<i32, union<TooLong, NotADigit>> parseDigit(string s) {
+  if (s.len() != 1) { return Result.Err(TooLong(s.len())); }
   i32 c = s.toBytes()[0] as i32;
-  if (c < '0' || c > '9') { return Result.Err("not a digit"); }
+  if (c < '0' || c > '9') { return Result.Err(NotADigit(s)); }
   return Result.Ok(c - '0');
 }
 
@@ -101,12 +104,14 @@ enclosing function:
 // expect: sumOr("", "b") = 0
 import { Result } from "core";
 
-Result<i32, string> digit(string s) {
-  if (s == "") { return Result.Err("empty"); }
+struct Empty { }
+
+Result<i32, Empty> digit(string s) {
+  if (s == "") { return Result.Err(Empty()); }
   return Result.Ok(s.len());
 }
 
-Result<i32, string> sum(string a, string b) {
+Result<i32, Empty> sum(string a, string b) {
   i32 x = try digit(a);
   i32 y = try digit(b);                    // not reached when digit(a) failed
   return Result.Ok(x + y);
@@ -126,7 +131,9 @@ enclosing function at once.
 // expect: emits
 import { Result } from "core";
 
-Result<i32, string> digit(string s) { return Result.Ok(1); }
+struct Empty { }
+
+Result<i32, Empty> digit(string s) { return Result.Ok(1); }
 
 export i32 viaOrElse() { return digit("1").orElse(0); }
 
@@ -200,12 +207,14 @@ A `Result` the function returns whole contributes its error type the same way:
 // expect: passedOn() = -1
 import { Result } from "core";
 
-Result<i32, string> parse(string s) {
-  if (s == "") { return Result.Err("empty"); }
+struct Empty { }
+
+Result<i32, Empty> parse(string s) {
+  if (s == "") { return Result.Err(Empty()); }
   return Result.Ok(s.len());
 }
 
-Result<i32> load(string s) { return parse(s); }   // the error type gathers string
+Result<i32> load(string s) { return parse(s); }   // the error type gathers Empty
 
 export i32 passedOn() { return load("").orElse(-1); }
 ```

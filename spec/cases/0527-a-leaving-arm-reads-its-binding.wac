@@ -3,16 +3,17 @@
 // why: an arm of a match expression that returns rather than giving a value may read what it binds
 // from: converting packages/ from `bool ok` structs to Result, 2026-10-15
 import { Result } from "core";
+struct Failed { string why; }
 
-Result<i32, string> get(i32 n) {
-  if (n < 0) { return Result.Err("no"); }
+Result<i32, Failed> get(i32 n) {
+  if (n < 0) { return Result.Err(Failed("no")); }
   return Result.Ok(n);
 }
 
-Result<i32, string> plusOne(i32 n) {
+Result<i32, Failed> plusOne(i32 n) {
   i32 v = match (get(n)) {
     Ok(x): x,
-    Err(e): return Result.Err("g: \{e}"),        // the binding, read in the arm that leaves
+    Err(e): return Result.Err(Failed("g: \{e.why}")),        // the binding, read in the arm that leaves
   };
   return Result.Ok(v + 1);
 }
@@ -20,7 +21,7 @@ Result<i32, string> plusOne(i32 n) {
 i32 answer(i32 n) {
   return match (plusOne(n)) {
     Ok(v): v,
-    Err(e): e.len() + 100,
+    Err(e): e.why.len() + 100,
   };
 }
 

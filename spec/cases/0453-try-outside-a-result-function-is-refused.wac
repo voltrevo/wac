@@ -4,6 +4,7 @@
 
 import { Result } from "core";
 
-Result<i32, string> digit(string s) { return Result.Ok(1); }
+struct Empty { }
+Result<i32, Empty> digit(string s) { return Result.Ok(1); }
 
 export i32 plain() { return try digit("1"); }

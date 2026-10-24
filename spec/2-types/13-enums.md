@@ -103,9 +103,10 @@ enum the file declares or imports. A generic enum then takes its instance from t
 // expect: unqualified(3) = -1
 import { Result } from "core";
 enum Shape { Point, Circle(f64 radius) }
+struct Odd { i32 n; }
 
-Result<i32, string> half(i32 n) {
-  if (n % 2 != 0) { return Err("odd"); }   // Result.Err
+Result<i32, Odd> half(i32 n) {
+  if (n % 2 != 0) { return Err(Odd(n)); }  // Result.Err
   return Ok(n / 2);                        // Result.Ok
 }
 

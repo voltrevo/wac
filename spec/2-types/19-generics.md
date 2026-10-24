@@ -385,9 +385,10 @@ A type parameter may have a default, used when the argument is omitted:
 enum Result<T, E = union> {
   Ok(T v), Err(E e)
 }
+struct Empty { }
 
 Result<i32> parse(string s) {              // Result<i32, union>: E is a fresh placeholder here
-  if (s == "") { return Result.Err("empty"); }
+  if (s == "") { return Result.Err(Empty()); }
   return Result.Ok(1);
 }
 

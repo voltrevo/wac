@@ -4,5 +4,6 @@
 //      error silently — the loop needs a `done` clause or `try for`
 // from: spec/6-concurrency/36-coroutines-and-generators.md
 import { Result } from "core";
-gen<i32> Result<i32, string> nums(i32 n) { yield 1; return Result.Ok(n); }
+struct TooMany { i32 n; }
+gen<i32> Result<i32, TooMany> nums(i32 n) { yield 1; return Result.Ok(n); }
 export i32 f() { i32 t = 0; for (i32 x in nums(3)) { t += x; } return t; }

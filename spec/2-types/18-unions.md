@@ -90,13 +90,15 @@ Everywhere else a union of one alternative is that alternative:
 // expect: sameType() = 4
 import { Result } from "core";
 
+struct Oops { }
+
 i32 count(string s) { return s.len(); }
 
 export i32 sameType() {
   union<string> u = "ab";
   string s = u;                            // no conversion: union<string> is string
-  Result<i32, string> r = Result.Ok(count(u));
-  Result<i32, union<string>> w = r;        // and at any depth
+  Result<i32, Oops> r = Result.Ok(count(u));
+  Result<i32, union<Oops>> w = r;          // and at any depth
   return w.orElse(0) + s.len();
 }
 ```

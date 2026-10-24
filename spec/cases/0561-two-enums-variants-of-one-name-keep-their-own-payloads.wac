@@ -16,7 +16,7 @@ i32 sizeOf(Outcome o) {
 }
 
 export i32 f() {
-  Result<i32, string> r = Result.Ok(2);
+  Result<i32, bool> r = Result.Ok(2);
   Outcome o = Outcome.Ok("abc", 4, u8[].filled(2, 0));
   i32 k = 0;
   match (r) {

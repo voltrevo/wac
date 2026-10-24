@@ -5,9 +5,10 @@
 // ---- store.wac ----
 import { Result, Ticket } from "core";
 
+export struct Missing { string what; }
 export struct Store {
-  async Result<i32, string> read(this, i32 k) {
-    if (k == 0) { return Result.Err("missing"); }
+  async Result<i32, Missing> read(this, i32 k) {
+    if (k == 0) { return Result.Err(Missing("missing")); }
     return Result.Ok(k);
   }
 }
@@ -24,7 +25,7 @@ async i32 run() {
   }
   match (await s.read(0)) {
     Ok(v):    { total += v; }
-    Err(why): { total += why.len() - 5; }
+    Err(why): { total += why.what.len() - 5; }
   }
   return total;
 }
