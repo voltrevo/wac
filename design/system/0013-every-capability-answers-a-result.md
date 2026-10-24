@@ -131,3 +131,19 @@ Each step is its own commit through the gate, with its breaking-change entry.
 
 **Spawning needs the `procs` grant, yourself included** (operator, 2026-10-24) — so a sealed session, `sshd` and
 the browser terminal are granted it to run applets, and without it an applet is `NotGranted`.
+
+### Settled before step 5 (operator, 2026-10-24)
+
+- **Host tickets can be waited on together.** A host ticket carries its host id and the host's wait-for-any
+  function, both set by std when it makes the ticket. When every part a `wait()` or `Ticket.any` must drive carries
+  the same function, core calls it once over all their ids — so a deadline is a timer ticket in a race,
+  `Ticket.anyWithIndex(sock.recv(), clock.sleepMillis(ms)).wait()`, and works the same synchronously and under
+  `await`. No `__wac` hook: the function arrives as a value. This replaces `core.waitAny`.
+- **`cancel()` on any ticket.** On a host ticket it releases the host's slot and discards the answer; the ticket
+  never settles and a later `wait()` answers `Stuck`. On any other ticket it detaches interest and does not stop the
+  machine. This replaces `Pending.cancel` and `core.cancel`.
+- **`Sys.drainFor(i32 millis)`** answers how many continuations ran before the queue emptied or the budget ran out —
+  tor's servers use it to tell idle. `dropAll` is deleted; `outstanding` stays internal to the adapter's exit check.
+- **Writes to stderr may be discarded; writes to stdout are handled.** A convention, not a rule — a warning for a
+  discarded `Result` is a possible later feature. So the ticket a write answers must be settled before the call
+  returns: the host gives the reason for a failed write in the same call, rather than through `outputError`.
