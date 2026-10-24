@@ -25,7 +25,9 @@ enum Result<T, E = union> {
 // expect: theError() = "no"
 import { Result } from "core";
 
-Result<i32, string> parsed(bool good) { return good ? Result.Ok(3) : Result.Err("no"); }
+struct Refused { string why; }
+
+Result<i32, Refused> parsed(bool good) { return good ? Result.Ok(3) : Result.Err(Refused("no")); }
 
 export bool isOkOf(bool good) { return parsed(good).isOk() && !parsed(good).isErr(); }
 
@@ -35,7 +37,7 @@ export i32 unwrapOf(bool good) { return parsed(good).unwrap(); }
 
 export bool okIsPresent(bool good) { return parsed(good).ok() is not null; }
 
-export string theError() { return parsed(false).err()!; }
+export string theError() { return parsed(false).err()!.why; }
 ```
 
 `[§wac-result-methods-t7523pd]` `isOk()`, `isErr()`, `orElse(d)`, `unwrap()` — the value, or a trap — `ok()` — the value as a
@@ -43,3 +45,36 @@ export string theError() { return parsed(false).err()!; }
 
 `unwrap` is for an error that means the program is wrong. An error that is the caller's to decide about is passed on with
 `try`, or matched.
+
+## `flatten`
+
+```wac
+// expect: joined(0) = 41
+// expect: joined(1) = 100
+// expect: joined(2) = 1000
+import { Result, flatten } from "core";
+
+struct NotFound { string message; }
+struct Gone { string message; }
+
+Result<Result<i32, NotFound>, Gone> layered(i32 k) {
+  if (k == 0) { return Result.Ok(Result.Ok(41)); }
+  if (k == 1) { return Result.Ok(Result.Err(NotFound("no such file"))); }
+  return Result.Err(Gone("nothing can settle it"));
+}
+
+export i32 joined(i32 k) {
+  return match (flatten(layered(k))) {
+    Ok(v):  v,
+    Err(e): match (e) { NotFound: 100, Gone: 1000 },
+  };
+}
+```
+
+`[§wac-result-flatten-p4w8n2c]` `flatten(r)` turns a `Result<Result<A, X>, Y>` into a `Result<A, union<X, Y>>`: the inner
+value, or whichever error there was. It is a function rather than a method, because a method would need its receiver's
+`T` to be a `Result`.
+
+A synchronous call to a capability is the case it is for: `wait()` has its own error outside the capability's
+([35](../6-concurrency/35-tickets-and-await.md)), and `flatten(files.readFile(p).wait())` gives one error to match or
+`try`.

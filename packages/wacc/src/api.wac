@@ -33,7 +33,7 @@ import { importSpecs, importSpecsOf } from "./files.wac";
 import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia, startsWith } from "./path.wac";
 import { Frontend, frontendOf } from "./frontend.wac";
 import { Pruned, pruneFor } from "./reach.wac";
-import { lowerNamespaces, lowerNamespacesForDeclarations } from "./namespaces.wac";
+import { lowerNamespaces, lowerNamespacesForDeclarations, relativeSpec } from "./namespaces.wac";
 import { trimSpaces } from "./unions.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
@@ -2745,7 +2745,7 @@ string[] lowerResultPlaceholders(string[] paths, string[] sources, const Res res
     Lexed lx = lex(src);
     Program prog = parseProgram(P.create(src, lx));
     // Each function's and method's result, with the name a collection asks for.
-    PlaceholderEdits ed = PlaceholderEdits(i32[].filled(256, 0), i32[].filled(256, 0), string[].filled(256, ""), 0);
+    PlaceholderEdits ed = PlaceholderEdits(i32[].filled(256, 0), i32[].filled(256, 0), string[].filled(256, ""), 0, "");
     for (i32 d = 0; d < prog.decls.len(); d++) {
       match (prog.decls[d].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
@@ -2766,7 +2766,8 @@ string[] lowerResultPlaceholders(string[] paths, string[] sources, const Res res
       text = text + bytesBetween(src, from, ed.starts[r]) + ed.texts[r];
       from = ed.starts[r] + ed.lens[r];
     }
-    if (from > 0) { out[f] = text + bytesBetween(src, from, src.len()); }
+    // The imports the gathered members need, on lines of their own at the end: no earlier line moves.
+    if (from > 0) { out[f] = text + bytesBetween(src, from, src.len()) + ed.imports + (ed.imports == "" ? "" : "\n"); }
   }
   return out;
 }
@@ -2777,6 +2778,8 @@ struct PlaceholderEdits {
   i32[] lens;
   string[] texts;
   i32 n;
+  /** `import` lines for the members this file could not name, each once. */
+  string imports;
 }
 
 /** The placeholders in one result type `ret` of function `fname`, gathered and queued as edits. */
@@ -2796,7 +2799,7 @@ void placeholderEditsFor(string[] paths, string[] sources, const Res res, i32 f,
             C c = checkFilesAutoIn(paths, sources, res, paths[f], counts, lexes, progs, "", fname, spec);
             ed.starts[ed.n] = lx.tokens[utok * tokenStride() + 1];
             ed.lens[ed.n] = lx.tokens[utok * tokenStride() + 2];
-            ed.texts[ed.n] = unionOfList(c.autoCollect);
+            ed.texts[ed.n] = nameableGathered(paths, sources, f, src, unionOfList(c.autoCollect), ed);
             ed.n = ed.n + 1;
           }
           default: { }
@@ -2805,6 +2808,93 @@ void placeholderEditsFor(string[] paths, string[] sources, const Res res, i32 f,
     }
     default: { }
   }
+}
+
+/**
+ * The gathered union `text` with every member this file cannot name imported for it. A `try` reaches an
+ * error type through the function it calls, not through an import, so the type may be declared in a file
+ * this one never names — another of the program's, or `core` or `std`. Such a member is bound as
+ * `@"$gathered_<name>"`, which nothing a program writes can collide with, and its import is queued on
+ * `ed`. A name the file declares or imports, and one no file exports (a primitive, a type parameter), is
+ * left as it is.
+ */
+string nameableGathered(string[] paths, string[] sources, i32 f, u8[] src, string text, PlaceholderEdits ed) {
+  u8[] tb = text.toBytes();
+  Lexed tl = lex(tb);
+  i32 st = tokenStride();
+  string visible = namesVisibleIn(src);
+  string out = "";
+  i32 from = 0;
+  for (i32 t = 0; t < tl.tokenCount; t++) {
+    if (tl.tokens[t * st] != kIdent()) { continue; }
+    string name = tokenTextOf(tb, tl, t);
+    if (visible.indexOf("|" + name + "|") >= 0) { continue; }
+    string spec = moduleExportingType(paths, sources, f, name);
+    if (spec == "") { continue; }
+    string alias = "@\"$gathered_" + name + "\"";
+    i32 start = tl.tokens[t * st + 1];
+    out = out + bytesBetween(tb, from, start) + alias;
+    from = start + tl.tokens[t * st + 2];
+    string line = "\nimport { " + name + " as " + alias + " } from \"" + spec + "\";";
+    if (ed.imports.indexOf(line) < 0) { ed.imports = ed.imports + line; }
+  }
+  return out + bytesBetween(tb, from, tb.len());
+}
+
+/** The names file `src` declares at the top level or binds by an import, as `|a|b|`. Lexed afresh: parsing rewrites tokens. */
+string namesVisibleIn(u8[] src) {
+  Lexed lx = lex(src);
+  Program prog = parseProgram(P.create(src, lx));
+  string out = "|";
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      Import(pathTok, prefixTok, items): {
+        for (i32 i = 0; i < items.len(); i++) {
+          if (items[i].nameTok < 0) { continue; }
+          out = out + tokenTextOf(src, lx, items[i].aliasTok >= 0 ? items[i].aliasTok : items[i].nameTok) + "|";
+        }
+      }
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): { out = out + tokenTextOf(src, lx, nameTok) + "|"; }
+      EnumDecl(nameTok, variants, exported, methods, typeParams): { out = out + tokenTextOf(src, lx, nameTok) + "|"; }
+      default: { }
+    }
+  }
+  return out;
+}
+
+/** The specifier file `f` imports type `name` by — another of `paths`, `core` or `std` — or `""` when none exports it. */
+string moduleExportingType(string[] paths, string[] sources, i32 f, string name) {
+  for (i32 m = 0; m < paths.len() && m < sources.len(); m++) {
+    if (m == f || !exportsType(sources[m], name)) { continue; }
+    // A built-in reached under its own key — `"core"` as the CLI supplies it, `corePath()` as this
+    // checker carries it — is imported by name, never by a path to it.
+    if (isBuiltinSpec(paths[m])) { return paths[m]; }
+    if (paths[m] == corePath()) { return "core"; }
+    return relativeSpec(paths[f], paths[m]);
+  }
+  if (exportsType(coreSource(), name)) { return "core"; }
+  if (exportsType(stdSource(), name)) { return "std"; }
+  return "";
+}
+
+/** Whether `text` declares an exported struct or enum called `name`. */
+bool exportsType(string text, string name) {
+  if (text.indexOf("struct " + name) < 0 && text.indexOf("enum " + name) < 0) { return false; }
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  Program prog = parseProgram(P.create(src, lx));
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (exported && tokenTextOf(src, lx, nameTok) == name) { return true; }
+      }
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (exported && tokenTextOf(src, lx, nameTok) == name) { return true; }
+      }
+      default: { }
+    }
+  }
+  return false;
 }
 
 /** `a|b|a|` as `union<a, b>`, or `never` for nothing. */

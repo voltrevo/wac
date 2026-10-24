@@ -353,12 +353,14 @@ formatting interface on the error type. An explicit `T.[fromNumber](value)` call
 // expect: refused
 import { NumberLiteral, fromNumber, Result } from "core";
 
+struct Odd { i64 value; }
+
 struct Even {
   i64 value;
 
-  Result<Even, string> [fromNumber](NumberLiteral literal) {
+  Result<Even> [fromNumber](NumberLiteral literal) {
     i64 v = try i64.[fromNumber](literal);
-    if (v % 2 != 0) { return Result.Err("odd"); }
+    if (v % 2 != 0) { return Result.Err(Odd(v)); }
     return Result.Ok(Even(v));
   }
 }

@@ -1,0 +1,19 @@
+// expect: four() = 4
+// spec: §wac-fromnumber-err-refused-e8w89yu
+// why: the companion of 0482 — the same conversion, with a literal it accepts, compiles and converts;
+//      without it a type error in the conversion would pass 0482 as a refusal
+// from: spec ch09
+import { NumberLiteral, fromNumber, Result } from "core";
+struct Odd { i64 value; }
+struct Even {
+  i64 value;
+  Result<Even> [fromNumber](NumberLiteral literal) {
+    i64 v = try i64.[fromNumber](literal);
+    if (v % 2 != 0) { return Result.Err(Odd(v)); }
+    return Result.Ok(Even(v));
+  }
+}
+export i64 four() {
+  Even e = 4;
+  return e.value;
+}

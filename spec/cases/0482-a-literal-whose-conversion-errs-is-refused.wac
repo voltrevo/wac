@@ -3,11 +3,12 @@
 // why: the conversion runs at compile time, so its `Err` is a compile error at the literal
 // from: spec ch09
 import { NumberLiteral, fromNumber, Result } from "core";
+struct Odd { i64 value; }
 struct Even {
   i64 value;
-  Result<Even, string> [fromNumber](NumberLiteral literal) {
+  Result<Even> [fromNumber](NumberLiteral literal) {
     i64 v = try i64.[fromNumber](literal);
-    if (v % 2 != 0) { return Result.Err("odd"); }
+    if (v % 2 != 0) { return Result.Err(Odd(v)); }
     return Result.Ok(Even(v));
   }
 }

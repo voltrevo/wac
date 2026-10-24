@@ -49,3 +49,18 @@ export enum Result<T, E = union> {
     };
   }
 }
+
+/**
+ * One result from two layers: `Result<Result<A, X>, Y>` as `Result<A, union<X, Y>>` (spec ch40). A synchronous
+ * capability call is the case it is for — `wait()`'s `Stuck` outside, the capability's faults inside — so the
+ * caller matches or `try`s one error.
+ *
+ * A function rather than a method, because a method would need `T` to be a `Result`, and a receiver's
+ * type parameters cannot be constrained.
+ */
+export Result<A, union<X, Y>> flatten<A, X, Y>(Result<Result<A, X>, Y> r) {
+  return match (r) {
+    Ok(inner): match (inner) { Ok(a): Result.Ok(a), Err(x): Result.Err(x) },
+    Err(y): Result.Err(y),
+  };
+}

@@ -463,7 +463,8 @@ export i32 orphanRefused() {
 and answers `Ok` with `t`'s value, without running unrelated queued work.
 
 `[§wac-wait-refuses-jj8u2ie]` `t.wait()` answers `Err` when nothing it may drive can advance `t`: a ticket nothing will
-resolve, or one a different driver owns.
+resolve, or one a different driver owns. The error is core's `Stuck`, whose `message` says so — a bug in the program,
+so its own type rather than one of the faults a capability answers.
 
 `x.wait()!` and `await x` answer the same value. What differs is what else got to run: under `await` the caller parks
 and its siblings advance; under `wait` the caller's frame is live and they do not. So the value is identical, the

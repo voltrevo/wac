@@ -26,7 +26,8 @@
 
 import { Core, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { test_result_basics as result__result_basics, test_result_error_type_varies as result__result_error_type_varies }
+import { test_result_basics as result__result_basics, test_result_error_type_varies as result__result_error_type_varies,
+         test_result_flatten as result__result_flatten }
   from "./result_test.wac";
 import { test_i32_hash_is_injective_over_a_sample as hash__i32_hash_is_injective_over_a_sample, test_aligned_keys_spread_across_buckets as hash__aligned_keys_spread_across_buckets, test_i32_hash_avalanches as hash__i32_hash_avalanches, test_i64_hash_is_injective_and_spreads as hash__i64_hash_is_injective_and_spreads, test_byte_hash_separates_near_neighbours as hash__byte_hash_separates_near_neighbours }
   from "./hash_test.wac";
@@ -46,6 +47,7 @@ export i32 main(Sys sys) {
   i32 bad = 0;
   if (result__result_basics().len() > 0) { core.warn("error: FAILED result_test test_result_basics"); bad = bad + 1; }
   if (result__result_error_type_varies().len() > 0) { core.warn("error: FAILED result_test test_result_error_type_varies"); bad = bad + 1; }
+  if (result__result_flatten().len() > 0) { core.warn("error: FAILED result_test test_result_flatten"); bad = bad + 1; }
   if (hash__i32_hash_is_injective_over_a_sample().len() > 0) { core.warn("error: FAILED hash_test test_i32_hash_is_injective_over_a_sample"); bad = bad + 1; }
   if (hash__aligned_keys_spread_across_buckets().len() > 0) { core.warn("error: FAILED hash_test test_aligned_keys_spread_across_buckets"); bad = bad + 1; }
   if (hash__i32_hash_avalanches().len() > 0) { core.warn("error: FAILED hash_test test_i32_hash_avalanches"); bad = bad + 1; }

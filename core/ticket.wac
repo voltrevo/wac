@@ -107,6 +107,12 @@ export struct TicketBase {
   }
 }
 
+/**
+ * Why a `wait` was refused: nothing it may drive can settle the ticket (`§wac-wait-refuses-jj8u2ie`). A bug in
+ * the program rather than a fault in the world, which is why it is its own type and not one of a capability's.
+ */
+export struct Stuck { string message; }
+
 /** A value that will answer a `T`. Settled once, by `resolve` or by the body of the `async` call that made it. */
 export struct Ticket<T> : TicketBase {
   /**
@@ -142,9 +148,9 @@ export struct Ticket<T> : TicketBase {
    * `wait` stops between continuations, never inside one, so everything up to a refusal ran and is
    * settled, and `await` on the same ticket afterwards picks up from the link that refused.
    */
-  Result<T, string> wait(this) {
+  Result<T, Stuck> wait(this) {
     while (!this.done) {
-      if (!this.advance()) { return Result.Err("nothing this wait may drive can settle the ticket"); }
+      if (!this.advance()) { return Result.Err(Stuck("nothing this wait may drive can settle the ticket")); }
     }
     return Result.Ok(this.answer!());
   }

@@ -9,6 +9,7 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { Vec, Result } from "core";
 
 struct P { i32 v; }
+struct Refused { string why; }
 
 export string test_growth_from_empty() {
   T t = T.create();
@@ -189,9 +190,9 @@ export string test_element_types() {
   for (i32 i = 0; i < 10; i++) { structs.push(P(i)); }
   t.eqI32(structs.get(7).v, 7, "a struct element type");
 
-  Vec<Result<i32, string>> rs = Vec.create();
+  Vec<Result<i32, Refused>> rs = Vec.create();
   rs.push(Result.Ok(3));
-  rs.push(Result.Err("no"));
+  rs.push(Result.Err(Refused("no")));
   t.eqI32(rs.get(0).orElse(-1), 3, "a generic enum element type");
   t.isTrue(rs.get(1).isErr(), "including its other variant");
 

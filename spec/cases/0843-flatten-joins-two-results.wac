@@ -1,0 +1,26 @@
+// expect: f() = 1141
+// spec:  §wac-result-flatten-p4w8n2c
+// why: `flatten` turns `Result<Result<A, X>, Y>` into `Result<A, union<X, Y>>`, so a synchronous
+//      capability call has one error to match
+// from: spec/7-library/40-result.md
+import { Result, flatten } from "core";
+
+struct NotFound { string message; }
+struct Gone { string message; }
+
+Result<Result<i32, NotFound>, Gone> two(i32 k) {
+  if (k == 0) { return Ok(Ok(41)); }
+  if (k == 1) { return Ok(Err(NotFound("no such file"))); }
+  return Err(Gone("nothing can settle it"));
+}
+
+export i32 f() {
+  i32 t = 0;
+  for (i32 k = 0; k < 3; k++) {
+    match (flatten(two(k))) {
+      Ok(v): { t += v; }
+      Err(e): { t += match (e) { NotFound: 100, Gone: 1000 }; }
+    }
+  }
+  return t;
+}

@@ -23,12 +23,26 @@ export struct NumberLiteral {
 /** What a type implements to be the target of a numeric literal (spec ch09). */
 export symbol fromNumber;
 
+/** A literal's text is not a number at all. */
+export struct NotANumber { string message; }
+
+/** A literal is a number, but an integer type was wanted and it has a fraction or an exponent. */
+export struct NotAnInteger { string message; }
+
+/** A literal is a number the wanted type cannot hold. */
+export struct OutOfRange { string message; }
+
 /** `f64.[fromNumber](n)`: the nearest `f64`. Refused only for text that is not a number. */
-export Result<f64, string> numberLiteralToF64(NumberLiteral n) {
+export Result<f64, union<NotANumber, OutOfRange>> numberLiteralToF64(NumberLiteral n) {
   string s = n.text;
   if (isHexLiteral(s)) {
-    Result<i64, string> whole = numberLiteralToI64(n);
-    return match (whole) { Ok(v): Result.Ok(v as~ f64), Err(e): Result.Err(e) };
+    return match (numberLiteralToI64(n)) {
+      Ok(v): Result.Ok(v as~ f64),
+      Err(e): match (e) {
+        NotAnInteger: Result.Err(NotANumber(e.message)),
+        OutOfRange: Result.Err(e),
+      },
+    };
   }
   i32 i = 0;
   bool negative = false;
@@ -61,17 +75,17 @@ export Result<f64, string> numberLiteralToF64(NumberLiteral n) {
     }
     for (i32 k = 0; k < exp; k++) { value = down ? value / 10.0 : value * 10.0; }
   }
-  if (!digits || i != s.len()) { return Result.Err("`" + s + "` is not a number"); }
+  if (!digits || i != s.len()) { return Result.Err(NotANumber("`" + s + "` is not a number")); }
   return Result.Ok(negative ? 0.0 - value : value);
 }
 
 /** `f32.[fromNumber](n)`: the nearest `f32`. */
-export Result<f32, string> numberLiteralToF32(NumberLiteral n) {
+export Result<f32, union<NotANumber, OutOfRange>> numberLiteralToF32(NumberLiteral n) {
   return match (numberLiteralToF64(n)) { Ok(v): Result.Ok(v as~ f32), Err(e): Result.Err(e) };
 }
 
 /** `i64.[fromNumber](n)`: the integer, refused when the text has a fraction or does not fit. */
-export Result<i64, string> numberLiteralToI64(NumberLiteral n) {
+export Result<i64, union<NotAnInteger, OutOfRange>> numberLiteralToI64(NumberLiteral n) {
   string s = n.text;
   i32 i = 0;
   bool negative = false;
@@ -88,22 +102,22 @@ export Result<i64, string> numberLiteralToI64(NumberLiteral n) {
     if (ch == "_") { i++; continue; }
     i32 d = hex ? hexDigitOf(ch) : (isDigitOrSeparator(ch) ? digitOf(ch) : 0 - 1);
     if (d < 0) { break; }
-    if (value < (limit + (d as i64)) / base) { return Result.Err("`" + s + "` does not fit in an i64"); }
+    if (value < (limit + (d as i64)) / base) { return Result.Err(OutOfRange("`" + s + "` does not fit in an i64")); }
     value = value * base - (d as i64);
     digits = true;
     i++;
   }
-  if (!digits || i != s.len()) { return Result.Err("`" + s + "` is not an integer"); }
+  if (!digits || i != s.len()) { return Result.Err(NotAnInteger("`" + s + "` is not an integer")); }
   if (negative) { return Result.Ok(value); }
   if (hex) { return Result.Ok(0 as i64 - value); }
   return Result.Ok(0 as i64 - value);
 }
 
 /** `i32.[fromNumber](n)`: the integer, refused when it does not fit; a hex literal names bits. */
-export Result<i32, string> numberLiteralToI32(NumberLiteral n) {
+export Result<i32, union<NotAnInteger, OutOfRange>> numberLiteralToI32(NumberLiteral n) {
   return match (numberLiteralToI64(n)) {
     Ok(v): fitsBits(n.text, v, 0 as i64 - 2147483648, 2147483647 as i64, 4294967295 as i64)
-             ? Result.Ok(v as@ i32) : Result.Err("`" + n.text + "` does not fit in an i32"),
+             ? Result.Ok(v as@ i32) : Result.Err(OutOfRange("`" + n.text + "` does not fit in an i32")),
     Err(e): Result.Err(e),
   };
 }

@@ -1,0 +1,19 @@
+// expect: f() = 42
+// spec:  §wac-union-placeholder-3fu73k3
+// why: a result whose error is left out gathers what each `try` passes on, and an error type declared in
+//      another file — one this file never imports — is still a member
+// from: spec/5-inference/33-placeholders.md
+// ---- lookup.wac ----
+import { Result } from "core";
+export struct Missing { i32 code; }
+export Result<i32, Missing> find(i32 k) { return k > 0 ? Result.Ok(k) : Result.Err(Missing(7)); }
+// ---- main.wac ----
+import { Result } from "core";
+import { find } from "./lookup.wac";
+
+Result<i32> twice(i32 k) {
+  i32 v = try find(k);
+  return Result.Ok(v * 2);
+}
+
+export i32 f() { return twice(21).orElse(0 - 1) + (twice(0).isErr() ? 0 : 1000); }

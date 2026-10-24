@@ -1,12 +1,15 @@
 // Result. Written in wac because the values never need to cross the wasm boundary.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Result } from "core";
+import { Result, flatten } from "core";
+
+struct Refused { string why; }
+struct Stale { i32 age; }
 
 export string test_result_basics() {
   T t = T.create();
-  Result<i32, string> ok = Result.Ok(3);
-  Result<i32, string> bad = Result.Err("nope");
+  Result<i32, Refused> ok = Result.Ok(3);
+  Result<i32, Refused> bad = Result.Err(Refused("nope"));
 
   t.isTrue(ok.isOk(), "Ok is ok");
   t.isTrue(!ok.isErr(), "Ok is not err");
@@ -18,7 +21,7 @@ export string test_result_basics() {
 
   t.isTrue(ok.ok() is not null, "ok() on Ok");
   t.isTrue(ok.err() is null, "err() on Ok");
-  t.eqStr(bad.err() ?? "", "nope", "err() carries the error");
+  t.eqStr(bad.err()!.why, "nope", "err() carries the error");
   t.isTrue(bad.ok() is null, "ok() on Err");
   return t.report();
 }
@@ -32,5 +35,16 @@ export string test_result_error_type_varies() {
   t.eqI32(coded.err() ?? 0, 404, "an i32 error code");
   t.isTrue(plain.isErr(), "a bool error, which is just the fact of failure");
   t.eqF64(coded.orElse(2.5), 2.5, "and the value type is independent of it");
+  return t.report();
+}
+
+export string test_result_flatten() {
+  T t = T.create();
+  Result<Result<i32, Refused>, Stale> ok = Result.Ok(Result.Ok(5));
+  Result<Result<i32, Refused>, Stale> inner = Result.Ok(Result.Err(Refused("inner")));
+  Result<Result<i32, Refused>, Stale> outer = Result.Err(Stale(9));
+  t.eqI32(flatten(ok).orElse(-1), 5, "Ok inside Ok is the value");
+  t.eqStr(match (flatten(inner).err()!) { Refused: "refused", Stale: "stale" }, "refused", "the inner error survives");
+  t.eqStr(match (flatten(outer).err()!) { Refused: "refused", Stale: "stale" }, "stale", "and so does the outer one");
   return t.report();
 }

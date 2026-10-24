@@ -1,0 +1,11 @@
+// expect: f() = 1
+// spec:  §wac-wait-refuses-jj8u2ie
+// why: a wait nothing can advance answers `Err` with a `Stuck`, whose message says so — not a bare string
+// from: spec/6-concurrency/35-tickets-and-await.md
+import { Stuck, Ticket } from "core";
+
+export i32 f() {
+  Ticket<i32> orphan;
+  Stuck s = orphan.wait().err()!;
+  return s.message.len() > 0 ? 1 : 0;
+}
