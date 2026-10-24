@@ -122,7 +122,10 @@ Each step is its own commit through the gate, with its breaking-change entry.
 5. **Callers, package by package** — each package's functions take the handles they use instead of `Core` and
    `Cli`, in one edit per function. `async` where a function reasonably can be, `flatten(….wait())` where not
    (operator, 2026-10-24). Frames go here: tests that ran a program in-process over `frame.wac` fake its
-   handles with closures instead, and the shell always spawns.
+   handles with closures instead, and the shell always spawns. Also here: dead-code elimination over the built
+   module (`issues/lang/0398a`), because `Sys` retained whole carries every handle into every program — a
+   hello-world went from 392 KB to 727 KB. Reachability stays as chapter 5 has it; what a build checks and what it
+   emits are separate (operator, 2026-10-24).
 6. **Delete** `Core`, `Cli`, `Pending`, `Grant`, the old answer structs and the exported `FAULT_*`; the hosts build
    the handles' imports directly and lose `pushChild`, `popChild`, `capture`, `log` and `warn`.
 
