@@ -7319,6 +7319,16 @@ void checkJsxChild(C c, Expr kid, string k) {
  */
 bool convertsToText(C c, string t) {
   if (t == "string" || t == "bool" || numericShape(t)) { return true; }
+  // **A union converts when every member does**, through the member it holds (`§wac-interp-union-member-m3vq8ke`)
+  // — so a capability's fault union reaches its message without a `match` per member.
+  if (isUnionName(t)) {
+    string[] ms = unionMembers(t);
+    if (ms.len() == 0) { return false; }
+    for (i32 i = 0; i < ms.len(); i++) {
+      if (!convertsToText(c, ms[i])) { return false; }
+    }
+    return true;
+  }
   string tt = templateOf(t);
   if (!c.isStruct(tt) && !c.isEnum(tt)) { return false; }
   i32 mi = -1;

@@ -11,6 +11,7 @@
 // lean on them with ordinary `try`.
 
 import { Result } from "./result.wac";
+import { toString } from "./text.wac";
 
 /**
  * A numeric literal's exact value, as written — before any rounding to a machine number. Only the
@@ -24,13 +25,25 @@ export struct NumberLiteral {
 export symbol fromNumber;
 
 /** A literal's text is not a number at all. */
-export struct NotANumber { string message; }
+export struct NotANumber {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 
 /** A literal is a number, but an integer type was wanted and it has a fraction or an exponent. */
-export struct NotAnInteger { string message; }
+export struct NotAnInteger {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 
 /** A literal is a number the wanted type cannot hold. */
-export struct OutOfRange { string message; }
+export struct OutOfRange {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 
 /** `f64.[fromNumber](n)`: the nearest `f64`. Refused only for text that is not a number. */
 export Result<f64, union<NotANumber, OutOfRange>> numberLiteralToF64(NumberLiteral n) {

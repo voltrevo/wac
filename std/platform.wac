@@ -86,7 +86,7 @@
 // never be converted into this one. See wac's `design/0001`. (That reason was written as "with no
 // closures in the language", which is both out of date and never the reason: two declarations of a
 // shape are two types whatever a funcref can capture.)
-import { Continuation, Queue, Read, Result, Ticket, TicketBase, __wacScheduleTarget, __wacSetScheduleTarget } from "core";
+import { Continuation, Queue, Read, Result, Ticket, TicketBase, toString, __wacScheduleTarget, __wacSetScheduleTarget } from "core";
 
 /** A handler slot that does nothing, so a table can be filled before anything is registered. */
 void schedIdle(i32 id) { }
@@ -2710,34 +2710,110 @@ export struct Sys {
 // carries the host's own sentence. The aliases below name the sets the handles share.
 
 /** No such file, directory or host. */
-export struct NotFound { string message; }
+export struct NotFound {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** The world refused: permissions, ownership. */
-export struct Denied { string message; }
-export struct Exists { string message; }
-export struct NotEmpty { string message; }
-export struct IsDir { string message; }
-export struct NotADir { string message; }
-export struct ReadOnly { string message; }
-export struct NameTooLong { string message; }
+export struct Denied {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct Exists {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct NotEmpty {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct IsDir {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct NotADir {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct ReadOnly {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct NameTooLong {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** Too many symbolic links. */
-export struct Loop { string message; }
-export struct NoSpace { string message; }
+export struct Loop {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct NoSpace {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** A name this host cannot spell. */
-export struct NotRepresentable { string message; }
+export struct NotRepresentable {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** Nothing is listening there. */
-export struct Refused { string message; }
-export struct Unreachable { string message; }
-export struct TimedOut { string message; }
+export struct Refused {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct Unreachable {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
+export struct TimedOut {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** The reader of this program's output or diagnostic output has gone — `yes | head`. */
-export struct OutputClosed { string message; }
+export struct OutputClosed {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** The other end of a socket has gone. */
-export struct PeerClosed { string message; }
+export struct PeerClosed {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** This program was not given that authority. */
-export struct NotGranted { string message; }
+export struct NotGranted {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** This host does not provide the capability. A capability it lacks answers this, and never traps. */
-export struct Unsupported { string message; }
+export struct Unsupported {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 /** A failure no category above names, with whatever the host said. */
-export struct Other { string message; }
+export struct Other {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 
 /** Reading a file or opening it to read. */
 export type ReadFault = union<NotFound, Denied, IsDir, NotADir, NameTooLong, Loop, NotRepresentable, NotGranted,

@@ -19,6 +19,7 @@
 
 import { hypothetical } from "./hypothetical.wac";
 import { Result } from "./result.wac";
+import { toString } from "./text.wac";
 import { Vec } from "./vec.wac";
 
 /** What a suspended machine is waiting on — `null` for a bare `await;` — and the call that resumes it. */
@@ -145,7 +146,11 @@ export struct TicketBase {
  * Why a `wait` was refused: nothing it may drive can settle the ticket (`§wac-wait-refuses-jj8u2ie`). A bug in
  * the program rather than a fault in the world, which is why it is its own type and not one of a capability's.
  */
-export struct Stuck { string message; }
+export struct Stuck {
+  string message;
+  /** The host's sentence (spec ch23 `§wac-interp-union-member-m3vq8ke`: a union of faults converts through this). */
+  string [toString](const this) { return this.message; }
+}
 
 /** A value that will answer a `T`. Settled once, by `resolve` or by the body of the `async` call that made it. */
 export struct Ticket<T> : TicketBase {
