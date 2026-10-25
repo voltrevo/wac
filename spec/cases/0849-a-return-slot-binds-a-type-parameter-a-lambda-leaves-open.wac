@@ -1,0 +1,23 @@
+// expect: f() = 4
+// spec:  §wac-generic-infer-expected-endugbi
+// why: a `return`'s slot binds a type parameter the arguments leave open — here `U`, which only an untyped
+//      lambda's result would say — in a method as in a function, and when another argument's type is a
+//      construction the emitter had not registered yet at the moment it first met the call
+// from: spec/2-types/19-generics.md
+struct Box<U> { U v; }
+
+Box<U> mk<T, U>(Box<T> x, fn<U(T)> g) { return Box<U>(g(x.v)); }
+
+string named(i32 n) { return "\{n}!"; }
+
+struct Host {
+  i32 k;
+  Box<string> get(this) {
+    i32 k = this.k;
+    return mk(Box<i32>(2), (i32 n) => named(n + k));
+  }
+}
+
+Box<string> viaFunction(i32 k) { return mk(Box<i32>(3), (i32 n) => named(n * k)); }
+
+export i32 f() { return Host(1).get().v.len() + viaFunction(1).v.len(); }

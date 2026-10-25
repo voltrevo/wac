@@ -1,0 +1,20 @@
+// expect: f() = 7
+// spec:  §wacc-method-type-args
+// why: a method with letters of its own whose signature names an instance of one of them — `Holder<Box<A>>`
+//      — is a template, compiled only as the instances its calls name; registering it must not make
+//      `Holder<Box<A>>` with `A` bound by nothing, which declined the module though nothing called it
+// from: spec/2-types/19-generics.md
+struct Box<U> { U v; }
+struct Holder<T> { T? held = null; }
+
+struct Shelf {
+  i32 k;
+  i32 count<A>(this, Holder<Box<A>> h) { return h.held is null ? 0 : this.k; }
+  Holder<Box<A>> empty<A>(this) { Holder<Box<A>> h; return h; }
+}
+
+export i32 f() {
+  Shelf s = Shelf(7);
+  Holder<Box<i32>> h = Holder<Box<i32>>(Box<i32>(1));
+  return s.count(h) + s.count(s.empty<string>());
+}

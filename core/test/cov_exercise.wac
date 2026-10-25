@@ -26,6 +26,8 @@
 
 import { Core, Sys } from "std";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { test_any_over_host_tickets_asks_the_host_once as ticket__any_over_host_tickets_asks_the_host_once, test_a_lone_host_ticket_is_driven_without_asking as ticket__a_lone_host_ticket_is_driven_without_asking, test_cancel_releases_the_host_slot_and_the_ticket_never_settles as ticket__cancel_releases_the_host_slot_and_the_ticket_never_settles, test_cancel_on_a_ticket_nobody_hosts_does_nothing as ticket__cancel_on_a_ticket_nobody_hosts_does_nothing, test_a_part_settled_by_driving_it_settles_any_once as ticket__a_part_settled_by_driving_it_settles_any_once }
+  from "./ticket_test.wac";
 import { test_result_basics as result__result_basics, test_result_error_type_varies as result__result_error_type_varies,
          test_result_flatten as result__result_flatten }
   from "./result_test.wac";
@@ -48,6 +50,11 @@ export i32 main(Sys sys) {
   if (result__result_basics().len() > 0) { core.warn("error: FAILED result_test test_result_basics"); bad = bad + 1; }
   if (result__result_error_type_varies().len() > 0) { core.warn("error: FAILED result_test test_result_error_type_varies"); bad = bad + 1; }
   if (result__result_flatten().len() > 0) { core.warn("error: FAILED result_test test_result_flatten"); bad = bad + 1; }
+  if (ticket__any_over_host_tickets_asks_the_host_once().len() > 0) { core.warn("error: FAILED ticket_test test_any_over_host_tickets_asks_the_host_once"); bad = bad + 1; }
+  if (ticket__a_lone_host_ticket_is_driven_without_asking().len() > 0) { core.warn("error: FAILED ticket_test test_a_lone_host_ticket_is_driven_without_asking"); bad = bad + 1; }
+  if (ticket__cancel_releases_the_host_slot_and_the_ticket_never_settles().len() > 0) { core.warn("error: FAILED ticket_test test_cancel_releases_the_host_slot_and_the_ticket_never_settles"); bad = bad + 1; }
+  if (ticket__cancel_on_a_ticket_nobody_hosts_does_nothing().len() > 0) { core.warn("error: FAILED ticket_test test_cancel_on_a_ticket_nobody_hosts_does_nothing"); bad = bad + 1; }
+  if (ticket__a_part_settled_by_driving_it_settles_any_once().len() > 0) { core.warn("error: FAILED ticket_test test_a_part_settled_by_driving_it_settles_any_once"); bad = bad + 1; }
   if (hash__i32_hash_is_injective_over_a_sample().len() > 0) { core.warn("error: FAILED hash_test test_i32_hash_is_injective_over_a_sample"); bad = bad + 1; }
   if (hash__aligned_keys_spread_across_buckets().len() > 0) { core.warn("error: FAILED hash_test test_aligned_keys_spread_across_buckets"); bad = bad + 1; }
   if (hash__i32_hash_avalanches().len() > 0) { core.warn("error: FAILED hash_test test_i32_hash_avalanches"); bad = bad + 1; }

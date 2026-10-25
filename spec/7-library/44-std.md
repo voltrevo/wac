@@ -41,6 +41,7 @@ struct Sys {
 
   never exit(const this, i32 code);
   async void drain(this);
+  i32 drainFor(this, i32 millis);
 }
 ```
 
@@ -240,6 +241,7 @@ struct Clock {
   async Result<i64, union<Unsupported>> nowMillis(const this);
   async Result<i64, union<Unsupported>> monotonicNanos(const this);
   async Result<void, union<Unsupported>> sleepMillis(const this, i32 ms);
+  async Result<A, union<E, TimedOut, Unsupported>> within<A, E>(this, Ticket<Result<A, E>> t, i32 millis);
 }
 
 struct Random {
@@ -249,6 +251,22 @@ struct Random {
 
 `[§wac-std-time-mzn6gvc]` `monotonicNanos` never decreases within a run; `nowMillis` is wall-clock time; `sleepMillis` settles
 after at least that long; `bytes(n)` answers `n` random bytes.
+
+A deadline belongs to the clock. `within` answers what a capability's ticket answers, or `TimedOut`:
+
+```wac
+// fragment
+match (await sys.clock().within(sock.recv(), 30000)) {
+  Ok(Data(bytes)): { … }
+  Ok(End): { … }
+  Err(TimedOut t): { sock.close(); }        // silent for thirty seconds
+  Err(e): { … }
+}
+```
+
+`[§wac-std-within-8mdio9r]` `clock.within(t, millis)` answers `t`'s answer, or `Err(TimedOut)` when `t` has not
+answered within `millis` milliseconds; a negative `millis` sets no deadline. Whichever of `t` and the deadline loses
+is cancelled (`§wac-ticket-cancel-6zeggqz`), so a deadline leaves nothing held at the host.
 
 ## The environment
 
@@ -451,6 +469,10 @@ returns when the export does.
 `sys.exit(n)` ends the program at once with status `n`. `sys.drain()` runs the continuations nobody awaited
 ([35](../6-concurrency/35-tickets-and-await.md)), and a program whose `main` returns while work remains exits 1
 ([07](../1-programs/07-programs.md)).
+
+`[§wac-std-drain-for-wr24p09]` `sys.drainFor(millis)` runs the continuations nobody awaited until none remain or
+`millis` milliseconds have passed, and answers how many it ran — none is how a server tells that nothing spoke. What
+it did not run is still outstanding.
 
 ## Not yet given a form
 

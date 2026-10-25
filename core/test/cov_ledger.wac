@@ -73,7 +73,7 @@ export i32 main(Sys sys) {
 }
 
 /**
- * **Four files `core/test` has no tests for, and why that is not a hole.** This ledger was written
+ * **Four files `core/test` barely tests, and why that is not a hole.** This ledger was written
  * when `core` was the five files its own tests cover. `buf.wac`, `text.wac` and `number.wac` came with
  * interpolation converting through `toString`, and `ticket.wac` with `async` — and each is the
  * language's machinery rather than a library: it is reached by every program that interpolates or
@@ -89,6 +89,8 @@ Rule[] rules() {
     Rule("core/buf.wac", "", "line", false, "Buf: " + why),
     Rule("core/text.wac", "", "line", false, "toString: " + why),
     Rule("core/number.wac", "", "line", false, "numeric literals: " + why),
-    Rule("core/ticket.wac", "", "line", false, "tickets and async: " + why)
+    // `ticket_test.wac` covers the host half — waiting on several together, `cancel` — and the rest is async's.
+    Rule("core/ticket.wac", "", "line", false, "tickets and async: the language's own machinery, tested by the "
+         + "spec corpus and the compiler's tests; core/test/ticket_test.wac covers only host tickets and cancel")
   ] as Rule[];
 }

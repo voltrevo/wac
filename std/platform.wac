@@ -2636,7 +2636,8 @@ export struct Sys {
   /** This program's input. Needs no grant. */
   Input stdin(this) {
     Cli cli = this.cli;
-    return Input(() => hostChunk(cli), () => hostReadAll(cli));
+    HostWait wait = this.core.waitAny;
+    return Input(() => hostChunk(cli, wait), () => hostReadAll(cli, wait));
   }
 
   /** The clocks. Needs no grant. */
@@ -2646,16 +2647,16 @@ export struct Sys {
   Random random(this) { return Random(this.core); }
 
   /** The environment. Each operation answers `NotGranted` when the host withheld it. */
-  Env env(this) { return Env(this.cli); }
+  Env env(this) { return Env(this.cli, this.core.waitAny); }
 
   /** The host's files. Each operation answers `NotGranted` when the host withheld it. */
-  Files files(this) { return Files.host(this.cli); }
+  Files files(this) { return Files.host(this.cli, this.core.waitAny); }
 
   /** The network. Each operation answers `NotGranted` when the host withheld it. */
-  Net net(this) { return Net(this.cli); }
+  Net net(this) { return Net(this.cli, this.core.waitAny); }
 
   /** Starting other programs, this one included. Each operation answers `NotGranted` when the host withheld it. */
-  Procs procs(this) { return Procs(this.cli); }
+  Procs procs(this) { return Procs(this.cli, this.core.waitAny); }
 
   /** Loading wasm modules into this instance. */
   Modules modules(this) { return Modules(this.cli); }
@@ -2670,6 +2671,12 @@ export struct Sys {
    * Run the continuations nobody awaited. Work that can never run — a continuation waiting on a ticket
    * nothing will settle — leaves this waiting too, and a program waiting on nothing that can move is hung.
    */
+  /**
+   * `drain` for at most `millis`, answering how many continuations ran — none is how a server tells it was
+   * idle. What is left over stays outstanding.
+   */
+  i32 drainFor(this, i32 millis) { return this.core.drainFor(millis); }
+
   async void drain(this) {
     this.core.drain();
     if (this.core.outstanding() > 0) {
@@ -2816,6 +2823,38 @@ HostFault hostFault(string m) { return Other(m); }
  * A write whose reader has gone answers `OutputClosed`, and an `OutputClosed` that reaches `main` unhandled ends
  * the program quietly with status 0 — `yes | head` (spec ch44 `§wac-std-output-closed-c9dspr3`).
  */
+/** The host's wait-for-any: block until one of `ids` answers, for at most `millis`; its index, or -1. */
+export type HostWait = fn<i32(i32[], i32)>;
+
+/**
+ * The host's answer `p` as a ticket core can wait on beside others and cancel (design/system/0013): it
+ * carries the host's id, `wait` and a release, so `Ticket.any` over several asks the host once and `cancel`
+ * gives the host its slot back. `f` turns what the host answers into what the handle answers, so a handle's
+ * operation is this ticket itself and not a machine parked on it. **Temporary with `Pending`**: step 6 has
+ * the host's imports make these directly.
+ */
+Ticket<U> hostTicket<T, U>(Pending<T> p, HostWait wait, fn<U(T)> f) {
+  Ticket<U> t;
+  i32 id = p.id;
+  if (p.settled(id)) {
+    t.resolve(f(p.resolve(id)));
+    return t;
+  }
+  Sched? s = p.sched;
+  if (s is not null) { s!.on(id, (i32 k) => { if (!t.done) { t.resolve(f(p.resolve(k))); } }, p.drop); }
+  t.hostId = id;
+  t.waitHost = wait;
+  t.release = () => {
+    if (s is not null) { s!.off(id); } else { p.drop(id); }
+  };
+  t.drive = () => {
+    if (s is not null) { s!.detach(id); }
+    if (!t.done) { t.resolve(f(p.wait())); }
+    return true;
+  };
+  return t;
+}
+
 export struct Output {
   fn<Ticket<Result<void, OutputFault>>(u8[])> write;
 
@@ -2840,15 +2879,18 @@ async Result<void, OutputFault> hostWrite(Cli cli, bool toErr, u8[] bytes) {
   return Result.Err(Other(why));
 }
 
-async Result<Read, HostFault> hostChunk(Cli cli) {
-  Read c = await cli.readChunk().ticket();
+Result<Read, HostFault> readOf(Read c) {
   match (c) {
     Failed(why): { return Result.Err(Other(why)); }
     default: { return Result.Ok(c); }
   }
 }
 
-async Result<u8[], HostFault> hostReadAll(Cli cli) { return Result.Ok(await cli.readStdin().ticket()); }
+Ticket<Result<Read, HostFault>> hostChunk(Cli cli, HostWait wait) { return hostTicket(cli.readChunk(), wait, readOf); }
+
+Result<u8[], HostFault> allOf(u8[] b) { return Result.Ok(b); }
+
+Ticket<Result<u8[], HostFault>> hostReadAll(Cli cli, HostWait wait) { return hostTicket(cli.readStdin(), wait, allOf); }
 
 // ── Time, randomness, the environment ────────────────────────────────────────────────────────────
 
@@ -2857,28 +2899,76 @@ export struct Clock {
   Core core;
 
   /** Wall-clock time, in milliseconds since the epoch. */
-  async Result<i64, union<Unsupported>> nowMillis(const this) { return Result.Ok(await this.core.nowMillis().ticket()); }
+  Ticket<Result<i64, union<Unsupported>>> nowMillis(const this) { return hostTicket(this.core.nowMillis(), this.core.waitAny, timeOf); }
   /** Nanoseconds from an arbitrary origin, never decreasing within a run. */
-  async Result<i64, union<Unsupported>> monotonicNanos(const this) {
-    return Result.Ok(await this.core.monotonicNanos().ticket());
+  Ticket<Result<i64, union<Unsupported>>> monotonicNanos(const this) {
+    return hostTicket(this.core.monotonicNanos(), this.core.waitAny, timeOf);
   }
   /** Settles after at least `ms` milliseconds. */
-  async Result<void, union<Unsupported>> sleepMillis(const this, i32 ms) {
-    await this.core.sleepMillis(ms).ticket();
-    return Result.Ok();
+  Ticket<Result<void, union<Unsupported>>> sleepMillis(const this, i32 ms) {
+    return hostTicket(this.core.sleepMillis(ms), this.core.waitAny, sleptOf);
   }
+
+  /**
+   * What `t` answers, or `TimedOut` when it has not answered within `millis` (spec ch44
+   * `§wac-std-within-8mdio9r`) — a negative `millis` sets no deadline. Whichever loses is cancelled here, so a
+   * deadline never leaves the host holding a slot. `Unsupported` is a capability's already, so the error is
+   * `t`'s with `TimedOut` beside it.
+   */
+  Ticket<Result<A, union<E, TimedOut, Unsupported>>> within<A, E>(this, Ticket<Result<A, E>> t, i32 millis) {
+    // **Driven, not `async`**, as `Ticket.any` is: settled from `Ticket.first` over `t` and the timer, so it
+    // builds no machine — and `parts` lets a `wait` find the host work beneath it, so a `within` inside a
+    // `Ticket.any` is waited on together with the rest.
+    Ticket<Result<A, union<E, TimedOut, Unsupported>>> out;
+    Ticket<Result<void, union<Unsupported>>>? timer = null;
+    TicketBase[] racing = [t];
+    if (millis >= 0) {
+      timer = this.sleepMillis(millis);
+      racing = [t, timer!];
+    }
+    Ticket<i32> w = Ticket.first(racing);
+    fn<void()> settle = () => {
+      if (out.done || !w.done) { return; }
+      if (w.value() == 1) {
+        t.cancel();
+        if (timer!.value().isErr()) { out.resolve(Result.Err(Unsupported("this host has no timer to bound a wait by"))); }
+        else { out.resolve(Result.Err(TimedOut("no answer within \{millis}ms"))); }
+        return;
+      }
+      if (timer is not null) { timer!.cancel(); }
+      Result<A, union<E, TimedOut, Unsupported>> r = match (t.value()) { Ok(a): Result.Ok(a), Err(e): Result.Err(e) };
+      out.resolve(r);
+    };
+    w.whenSettled(settle);
+    TicketBase[] under = [w];
+    out.parts = under;
+    out.drive = () => {
+      bool moved = w.advance();
+      settle();
+      return moved;
+    };
+    settle();
+    return out;
+  }
+
 }
+
+Result<i64, union<Unsupported>> timeOf(i64 v) { return Result.Ok(v); }
+Result<void, union<Unsupported>> sleptOf(i64 v) { return Result.Ok(); }
 
 /** Random bytes. Needs no grant. */
 export struct Random {
   Core core;
 
-  async Result<u8[], union<Unsupported>> bytes(const this, i32 n) { return Result.Ok(await this.core.randomBytes(n).ticket()); }
+  Ticket<Result<u8[], union<Unsupported>>> bytes(const this, i32 n) { return hostTicket(this.core.randomBytes(n), this.core.waitAny, bytesOk); }
 }
+
+Result<u8[], union<Unsupported>> bytesOk(u8[] b) { return Result.Ok(b); }
 
 /** The environment's variables and the directory relative paths resolve from. */
 export struct Env {
   Cli cli;
+  HostWait wait;
 
   /**
    * A variable's value, `Ok(null)` when it is not set (`§wac-std-env-unset-r4c8tqb`).
@@ -2886,11 +2976,14 @@ export struct Env {
    * **Not yet able to say `NotGranted`**: the hosts answer a withheld environment as an unset variable, and
    * which it was is `issues/system/0261c`, which the host half of design/system/0013 settles.
    */
-  async Result<u8[]?, GrantedFault> get(const this, string name) { return Result.Ok(await this.cli.env(name).ticket()); }
+  Ticket<Result<u8[]?, GrantedFault>> get(const this, string name) { return hostTicket(this.cli.env(name), this.wait, envOf); }
 
   /** Where relative paths resolve from. */
-  async Result<string, HostFault> cwd(const this) { return Result.Ok(await this.cli.cwd().ticket()); }
+  Ticket<Result<string, HostFault>> cwd(const this) { return hostTicket(this.cli.cwd(), this.wait, cwdOf); }
 }
+
+Result<u8[]?, GrantedFault> envOf(u8[]? v) { return Result.Ok(v); }
+Result<string, HostFault> cwdOf(string v) { return Result.Ok(v); }
 
 // ── Files ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -2921,18 +3014,18 @@ export struct Files {
   i32 hostGrants;
 
   /** The host's filesystem, under whatever grants the host gave this program. */
-  Files host(Cli cli) {
+  Files host(Cli cli, HostWait wait) {
     return Files(
-      (string p) => hostReadFile(cli, p),
-      (string p, u8[] b) => hostWriteFile(cli, p, b),
-      (string p) => hostStat(cli, p, false),
-      (string p) => hostStat(cli, p, true),
-      (string p) => hostReadDir(cli, p),
-      (string p, bool parents) => hostMkdir(cli, p, parents),
-      (string p, bool recursive) => hostRemove(cli, p, recursive),
-      (string from, string to) => hostRename(cli, from, to),
-      (string p, i32 mode) => hostChmod(cli, p, mode),
-      (string p, bool on) => hostSetExecutable(cli, p, on),
+      (string p) => hostTicket(cli.readFile(p), wait, readOfFile),
+      (string p, u8[] b) => hostTicket(cli.writeFile(p, b), wait, writtenOf),
+      (string p) => hostTicket(cli.stat(p), wait, (Stat s) => statOf(s, p)),
+      (string p) => hostTicket(cli.linkStat(p), wait, (Stat s) => statOf(s, p)),
+      (string p) => hostReadDir(cli, wait, p),
+      (string p, bool parents) => hostTicket(cli.mkdir(p, parents), wait, madeOf),
+      (string p, bool recursive) => hostTicket(cli.remove(p, recursive), wait, movedOf),
+      (string from, string to) => hostTicket(cli.rename(from, to), wait, movedOf),
+      (string p, i32 mode) => hostTicket(cli.chmod(p, mode), wait, modeOf),
+      (string p, bool on) => hostTicket(cli.setExecutable(p, on), wait, modeOf),
       GRANT_READ | GRANT_WRITE);
   }
 
@@ -3002,29 +3095,29 @@ async Result<void, MkdirFault> refusedMkdir(string p) { return Result.Err(NotGra
 async Result<void, MoveFault> refusedMove(string p) { return Result.Err(NotGranted(p + ": read-only")); }
 async Result<void, ModeFault> refusedMode(string p) { return Result.Err(NotGranted(p + ": read-only")); }
 
-async Result<u8[], ReadFault> hostReadFile(Cli cli, string p) {
-  FileResult f = await cli.readFile(p).ticket();
+Result<u8[], ReadFault> readOfFile(FileResult f) {
   if (!f.ok) { return Result.Err(readFault(f.fault, f.error)); }
   return Result.Ok(f.bytes);
 }
 
-async Result<void, WriteFault> hostWriteFile(Cli cli, string p, u8[] b) {
-  Change c = await cli.writeFile(p, b).ticket();
+Result<void, WriteFault> writtenOf(Change c) {
   if (!c.ok()) { return Result.Err(writeFault(c.fault, c.message)); }
   return Result.Ok();
 }
 
-async Result<Stat, LookFault> hostStat(Cli cli, string p, bool link) {
-  Stat s = link ? await cli.linkStat(p).ticket() : await cli.stat(p).ticket();
+Result<Stat, LookFault> statOf(Stat s, string p) {
   if (s.fault != FAULT_NONE()) { return Result.Err(lookFault(s.fault, s.words(p))); }
   if (!s.exists) { return Result.Err(NotFound(p + ": No such file or directory")); }
   return Result.Ok(s);
 }
 
-async Result<string[], LookFault> hostReadDir(Cli cli, string p) {
+/**
+ * **A machine rather than a host ticket**, because a failure takes a second call: `readDir` answers null for
+ * every failure and `stat` says which. So cancelling one leaves the host its slot until it answers.
+ */
+async Result<string[], LookFault> hostReadDir(Cli cli, HostWait wait, string p) {
   string[]? names = await cli.readDir(p).ticket();
   if (names is null) {
-    // `readDir` answers null for every failure; `stat` says which.
     Stat s = await cli.stat(p).ticket();
     if (s.fault != FAULT_NONE()) { return Result.Err(lookFault(s.fault, s.words(p))); }
     if (!s.exists) { return Result.Err(NotFound(p + ": No such file or directory")); }
@@ -3034,32 +3127,17 @@ async Result<string[], LookFault> hostReadDir(Cli cli, string p) {
   return Result.Ok(names!);
 }
 
-async Result<void, MkdirFault> hostMkdir(Cli cli, string p, bool parents) {
-  Change c = await cli.mkdir(p, parents).ticket();
+Result<void, MkdirFault> madeOf(Change c) {
   if (!c.ok()) { return Result.Err(mkdirFault(c.fault, c.message)); }
   return Result.Ok();
 }
 
-async Result<void, MoveFault> hostRemove(Cli cli, string p, bool recursive) {
-  Change c = await cli.remove(p, recursive).ticket();
+Result<void, MoveFault> movedOf(Change c) {
   if (!c.ok()) { return Result.Err(moveFault(c.fault, c.message)); }
   return Result.Ok();
 }
 
-async Result<void, MoveFault> hostRename(Cli cli, string from, string to) {
-  Change c = await cli.rename(from, to).ticket();
-  if (!c.ok()) { return Result.Err(moveFault(c.fault, c.message)); }
-  return Result.Ok();
-}
-
-async Result<void, ModeFault> hostChmod(Cli cli, string p, i32 mode) {
-  Change c = await cli.chmod(p, mode).ticket();
-  if (!c.ok()) { return Result.Err(modeFault(c.fault, c.message)); }
-  return Result.Ok();
-}
-
-async Result<void, ModeFault> hostSetExecutable(Cli cli, string p, bool on) {
-  Change c = await cli.setExecutable(p, on).ticket();
+Result<void, ModeFault> modeOf(Change c) {
   if (!c.ok()) { return Result.Err(modeFault(c.fault, c.message)); }
   return Result.Ok();
 }
@@ -3094,35 +3172,64 @@ BindFault bindFault(i32 code, string m) {
 /** The network (spec ch44). Each operation answers `NotGranted` when the host withheld it. */
 export struct Net {
   Cli cli;
+  HostWait wait;
 
   /** A connection to `host:port`. */
-  async Result<Socket, ConnectFault> connect(this, string host, i32 port) {
-    HostSocket s = await this.cli.connect(host, port).ticket();
-    if (s.handle < 0) { return Result.Err(connectFault(s.fault, s.error)); }
-    return Result.Ok(Socket(this.cli, s.handle, s.peer, s.port));
+  Ticket<Result<Socket, ConnectFault>> connect(this, string host, i32 port) {
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    return hostTicket(cli.connect(host, port), wait, (HostSocket s) => connectedOf(cli, wait, s));
   }
 
   /**
    * Listen on `addr:port` — `"127.0.0.1"` for loopback, `"0.0.0.0"` for every interface; the address is not
    * optional, so the surprising one is something somebody typed. Port 0 asks the host for any free one.
    */
-  async Result<Listener, BindFault> listen(this, string addr, i32 port) {
-    HostSocket s = await this.cli.listen(addr, port).ticket();
-    if (s.handle < 0) { return Result.Err(bindFault(s.fault, s.error)); }
-    return Result.Ok(Listener(this.cli, s.handle, addr + ":" + "\{s.port}", s.port));
+  Ticket<Result<Listener, BindFault>> listen(this, string addr, i32 port) {
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    return hostTicket(cli.listen(addr, port), wait, (HostSocket s) => listeningOf(cli, wait, addr, s));
   }
 
   /** A datagram socket on `addr:port`, which one socket uses to talk to many peers. */
-  async Result<Datagrams, BindFault> bindDatagram(this, string addr, i32 port) {
-    HostSocket s = await this.cli.bindDatagram(addr, port).ticket();
-    if (s.handle < 0) { return Result.Err(bindFault(s.fault, s.error)); }
-    return Result.Ok(Datagrams(this.cli, s.handle, s.port));
+  Ticket<Result<Datagrams, BindFault>> bindDatagram(this, string addr, i32 port) {
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    return hostTicket(cli.bindDatagram(addr, port), wait, (HostSocket s) => boundOf(cli, wait, s));
+  }
+}
+
+Result<Socket, ConnectFault> connectedOf(Cli cli, HostWait wait, HostSocket s) {
+  if (s.handle < 0) { return Result.Err(connectFault(s.fault, s.error)); }
+  return Result.Ok(Socket(cli, wait, s.handle, s.peer, s.port));
+}
+
+Result<Listener, BindFault> listeningOf(Cli cli, HostWait wait, string addr, HostSocket s) {
+  if (s.handle < 0) { return Result.Err(bindFault(s.fault, s.error)); }
+  return Result.Ok(Listener(cli, wait, s.handle, addr + ":" + "\{s.port}", s.port));
+}
+
+Result<Datagrams, BindFault> boundOf(Cli cli, HostWait wait, HostSocket s) {
+  if (s.handle < 0) { return Result.Err(bindFault(s.fault, s.error)); }
+  return Result.Ok(Datagrams(cli, wait, s.handle, s.port));
+}
+
+Result<Socket, HostFault> acceptedOf(Cli cli, HostWait wait, HostSocket s) {
+  if (s.handle < 0) { return Result.Err(Other(s.error)); }
+  return Result.Ok(Socket(cli, wait, s.handle, s.peer, s.port));
+}
+
+Result<Read, SocketFault> recvOf(Read c) {
+  match (c) {
+    Failed(why): { return Result.Err(Other(why)); }
+    default: { return Result.Ok(c); }
   }
 }
 
 /** A listening socket. */
 export struct Listener {
   Cli cli;
+  HostWait wait;
   i32 handle;
   /** `"0.0.0.0:8080"`. */
   string addr;
@@ -3133,10 +3240,10 @@ export struct Listener {
    * The next connection. `Err` only when the listener itself cannot go on (spec ch44 `§wac-std-accept-tkafecv`):
    * a connection that ends before it is accepted is never reported.
    */
-  async Result<Socket, HostFault> accept(this) {
-    HostSocket s = await this.cli.accept(this.handle).ticket();
-    if (s.handle < 0) { return Result.Err(Other(s.error)); }
-    return Result.Ok(Socket(this.cli, s.handle, s.peer, s.port));
+  Ticket<Result<Socket, HostFault>> accept(this) {
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    return hostTicket(cli.accept(this.handle), wait, (HostSocket s) => acceptedOf(cli, wait, s));
   }
 
   void close(this) { this.cli.closeSocket(this.handle); }
@@ -3145,25 +3252,19 @@ export struct Listener {
 /** One connection (spec ch44 `§wac-std-socket-gs9parx`). */
 export struct Socket {
   Cli cli;
+  HostWait wait;
   i32 handle;
   /** The other end's address, and its port. */
   string peer;
   i32 port;
 
   /** The next bytes, or the end. */
-  async Result<Read, SocketFault> recv(this) {
-    Read c = await this.cli.recv(this.handle).ticket();
-    match (c) {
-      Failed(why): { return Result.Err(Other(why)); }
-      default: { return Result.Ok(c); }
-    }
-  }
+  Ticket<Result<Read, SocketFault>> recv(this) { return hostTicket(this.cli.recv(this.handle), this.wait, recvOf); }
 
   /** Send `bytes`; a peer that has gone is `PeerClosed`, an ordinary fault a server handles. */
-  async Result<void, SocketFault> send(this, u8[] bytes) {
-    bool went = await this.cli.send(this.handle, bytes).ticket();
-    if (!went) { return Result.Err(PeerClosed(this.peer + ": the connection has closed")); }
-    return Result.Ok();
+  Ticket<Result<void, SocketFault>> send(this, u8[] bytes) {
+    string peer = this.peer;
+    return hostTicket(this.cli.send(this.handle, bytes), this.wait, (bool went) => sentOf(went, peer));
   }
 
   /** No more from this side; reading goes on. */
@@ -3175,25 +3276,35 @@ export struct Socket {
   bool fromLoopback(const this) { return this.peer == "127.0.0.1" || this.peer == "::1" || this.peer == "localhost"; }
 }
 
+Result<void, SocketFault> sentOf(bool went, string peer) {
+  if (!went) { return Result.Err(PeerClosed(peer + ": the connection has closed")); }
+  return Result.Ok();
+}
+
 /** A datagram socket: no connection, the peer named on every send and arriving with every receive. */
 export struct Datagrams {
   Cli cli;
+  HostWait wait;
   i32 handle;
   i32 port;
 
-  async Result<Datagram, HostFault> receive(this) {
-    Datagram d = await this.cli.receiveFrom(this.handle).ticket();
-    if (d.error != "") { return Result.Err(Other(d.error)); }
-    return Result.Ok(d);
-  }
+  Ticket<Result<Datagram, HostFault>> receive(this) { return hostTicket(this.cli.receiveFrom(this.handle), this.wait, datagramOf); }
 
-  async Result<void, union<Unreachable, Unsupported, Other>> sendTo(this, string host, i32 port, u8[] bytes) {
-    bool went = await this.cli.sendTo(this.handle, host, port, bytes).ticket();
-    if (!went) { return Result.Err(Unreachable(host + ":" + "\{port}: the datagram was not sent")); }
-    return Result.Ok();
+  Ticket<Result<void, union<Unreachable, Unsupported, Other>>> sendTo(this, string host, i32 port, u8[] bytes) {
+    return hostTicket(this.cli.sendTo(this.handle, host, port, bytes), this.wait, (bool went) => sentToOf(went, host, port));
   }
 
   void close(this) { this.cli.closeSocket(this.handle); }
+}
+
+Result<Datagram, HostFault> datagramOf(Datagram d) {
+  if (d.error != "") { return Result.Err(Other(d.error)); }
+  return Result.Ok(d);
+}
+
+Result<void, union<Unreachable, Unsupported, Other>> sentToOf(bool went, string host, i32 port) {
+  if (!went) { return Result.Err(Unreachable(host + ":" + "\{port}: the datagram was not sent")); }
+  return Result.Ok();
 }
 
 // ── Processes and modules ────────────────────────────────────────────────────────────────────────
@@ -3255,32 +3366,49 @@ export struct Launch {
 /** Starting other programs (spec ch44). */
 export struct Procs {
   Cli cli;
+  HostWait wait;
 
   /** Start the compiled module `wasm` with `args`, holding `given`. */
-  async Result<Child, SpawnFault> spawn(this, u8[] wasm, string[] args, Authority given, Launch how) {
-    if (given.composedFiles()) { return Result.Err(composedRefused()); }
-    HostChild k = await this.cli.spawn(wasm, bytesOf(args), given.grants(), how.cwd, how.flags(), false).ticket();
-    if (k.handle < 0) { return Result.Err(spawnFault(k.handle, k.error)); }
-    return Result.Ok(Child(this.cli, k.handle, k.errHandle));
+  Ticket<Result<Child, SpawnFault>> spawn(this, u8[] wasm, string[] args, Authority given, Launch how) {
+    if (given.composedFiles()) { return refusedSpawn(); }
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    return hostTicket(cli.spawn(wasm, bytesOf(args), given.grants(), how.cwd, how.flags(), false), wait,
+                      (HostChild k) => childOf(cli, wait, k));
   }
 
   /** Start another instance of this program — its `main`, with `args` — holding `given`. Needs the grant as `spawn` does. */
-  async Result<Child, SpawnFault> spawnSelf(this, string[] args, Authority given, Launch how) {
-    if (given.composedFiles()) { return Result.Err(composedRefused()); }
-    HostChild k = await this.cli.spawnSelf(bytesOf(args), given.grants(), how.cwd, how.flags(), false).ticket();
-    if (k.handle < 0) { return Result.Err(spawnFault(k.handle, k.error)); }
-    return Result.Ok(Child(this.cli, k.handle, k.errHandle));
+  Ticket<Result<Child, SpawnFault>> spawnSelf(this, string[] args, Authority given, Launch how) {
+    if (given.composedFiles()) { return refusedSpawn(); }
+    Cli cli = this.cli;
+    HostWait wait = this.wait;
+    return hostTicket(cli.spawnSelf(bytesOf(args), given.grants(), how.cwd, how.flags(), false), wait,
+                      (HostChild k) => childOf(cli, wait, k));
   }
 
   /**
    * Run a program of the host's — `program` found on its path — to the end, with `input` as its standard input.
    * Its output comes back whole unless `how.inheritOut`, when it went to this program's own.
    */
-  async Result<Exec, SpawnFault> exec(this, string program, string[] args, u8[] input, string[] env, Launch how) {
-    Exec r = await this.cli.execWithIn(program, args, input, env, env.len() > 0, how.inheritOut, how.cwd).ticket();
-    if (!r.ran()) { return Result.Err(r.error == faultWords(FAULT_NOT_GRANTED()) ? NotGranted(r.error) : Other(r.error)); }
-    return Result.Ok(r);
+  Ticket<Result<Exec, SpawnFault>> exec(this, string program, string[] args, u8[] input, string[] env, Launch how) {
+    return hostTicket(this.cli.execWithIn(program, args, input, env, env.len() > 0, how.inheritOut, how.cwd), this.wait, ranOf);
   }
+}
+
+Result<Child, SpawnFault> childOf(Cli cli, HostWait wait, HostChild k) {
+  if (k.handle < 0) { return Result.Err(spawnFault(k.handle, k.error)); }
+  return Result.Ok(Child(cli, wait, k.handle, k.errHandle));
+}
+
+Result<Exec, SpawnFault> ranOf(Exec r) {
+  if (!r.ran()) { return Result.Err(r.error == faultWords(FAULT_NOT_GRANTED()) ? NotGranted(r.error) : Other(r.error)); }
+  return Result.Ok(r);
+}
+
+Ticket<Result<Child, SpawnFault>> refusedSpawn() {
+  Ticket<Result<Child, SpawnFault>> t;
+  t.resolve(Result.Err(composedRefused()));
+  return t;
 }
 
 /** Why a composed `Files` cannot be handed to a child yet. */
@@ -3298,50 +3426,47 @@ u8[][] bytesOf(string[] args) {
 /** A running child (spec ch44). */
 export struct Child {
   Cli cli;
+  HostWait wait;
   i32 handle;
   i32 errHandle;
 
   /** What it writes to its output, unless that was inherited. */
   Input output(this) {
     Cli cli = this.cli;
+    HostWait wait = this.wait;
     i32 h = this.handle;
-    return Input(() => streamChunk(cli, h), () => streamAll(cli, h));
+    return Input(() => hostTicket(cli.recv(h), wait, readOf), () => streamAll(cli, h));
   }
 
   /** What it writes to its diagnostic output, unless that was inherited. */
   Input errors(this) {
     Cli cli = this.cli;
+    HostWait wait = this.wait;
     i32 h = this.errHandle;
-    return Input(() => streamChunk(cli, h), () => streamAll(cli, h));
+    return Input(() => hostTicket(cli.recv(h), wait, readOf), () => streamAll(cli, h));
   }
 
   /** Its input, unless inherited. `endInput` ends it without stopping the child. */
   Output input(this) {
     Cli cli = this.cli;
+    HostWait wait = this.wait;
     i32 h = this.handle;
-    return Output((u8[] b) => feed(cli, h, b));
+    return Output((u8[] b) => hostTicket(cli.send(h, b), wait, fedOf));
   }
 
   /** No more input: the child sees the end and goes on running. */
   void endInput(this) { this.cli.closeFeed(this.handle); }
 
   /** Its status when it ends. */
-  async Result<i32, HostFault> exit(this) {
-    i32 code = await this.cli.exitCode(this.handle).ticket();
-    if (code < 0) { return Result.Err(Other("the child did not run to an end")); }
-    return Result.Ok(code);
-  }
+  Ticket<Result<i32, HostFault>> exit(this) { return hostTicket(this.cli.exitCode(this.handle), this.wait, exitedOf); }
 
   /** Stop it now. */
   void stop(this) { this.cli.closeSocket(this.handle); }
 }
 
-async Result<Read, HostFault> streamChunk(Cli cli, i32 h) {
-  Read c = await cli.recv(h).ticket();
-  match (c) {
-    Failed(why): { return Result.Err(Other(why)); }
-    default: { return Result.Ok(c); }
-  }
+Result<i32, HostFault> exitedOf(i32 code) {
+  if (code < 0) { return Result.Err(Other("the child did not run to an end")); }
+  return Result.Ok(code);
 }
 
 async Result<u8[], HostFault> streamAll(Cli cli, i32 h) {
@@ -3361,8 +3486,7 @@ async Result<u8[], HostFault> streamAll(Cli cli, i32 h) {
   }
 }
 
-async Result<void, OutputFault> feed(Cli cli, i32 h, u8[] bytes) {
-  bool went = await cli.send(h, bytes).ticket();
+Result<void, OutputFault> fedOf(bool went) {
   if (!went) { return Result.Err(OutputClosed("the child's input has closed")); }
   return Result.Ok();
 }

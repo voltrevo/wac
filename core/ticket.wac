@@ -43,6 +43,23 @@ export struct TicketBase {
   fn<void()>? onSettle = null;
 
   /**
+   * **For a ticket the host answers**, the host's id for the work, or -1 for any other ticket. Set beside
+   * `waitHost` and `release` by whoever made the ticket from the host's answer — std — so core needs no way
+   * to reach the host of its own: the functions arrive as values (design/system/0013).
+   */
+  i32 hostId = -1;
+  /**
+   * Block until one of `ids` has an answer, for at most `millis` (-1: as long as it takes), and answer its
+   * index, -1 when none did. How a `wait` on `Ticket.any` of several host tickets blocks on all of them at
+   * once rather than on the first.
+   */
+  fn<i32(i32[], i32)>? waitHost = null;
+  /** Tell the host its answer is no longer wanted, releasing what holds it. What `cancel` calls. */
+  fn<void()>? release = null;
+  /** For `Ticket.all` and `Ticket.any`, what they wait on — so a `wait` can find the host work beneath. */
+  TicketBase[]? parts = null;
+
+  /**
    * Have `f` called when this ticket settles, beside whatever else is watching it. How `Ticket.any`
    * knows which of its tickets settled first, which driving them later cannot tell.
    */
@@ -57,6 +74,22 @@ export struct TicketBase {
   bool settled(const this) { return this.done; }
 
   /**
+   * Stop caring about the answer. **On a ticket the host answers** it releases the host's slot and the
+   * answer is discarded: the ticket never settles, and a `wait` on it answers `Stuck`. On any other ticket
+   * it does nothing — wac cannot stop a machine part-way through its body, and a ticket made directly is
+   * settled by whoever holds it.
+   */
+  void cancel(this) {
+    if (this.done || this.hostId < 0) { return; }
+    fn<void()>? r = this.release;
+    this.hostId = -1;
+    this.waitHost = null;
+    this.release = null;
+    this.drive = null;
+    if (r is not null) { r!(); }
+  }
+
+  /**
    * Advance this ticket — `Ticket.all` or `Ticket.any` of `parts` — as soon as `parts` allow: every one
    * of them settled, or with `every` false any one. Not only when something drives it
    * (`§wac-ticket-any-v8nr3r9` says it *settles with* the first).
@@ -67,6 +100,7 @@ export struct TicketBase {
    * then has nothing left to step: the parts it needs are settled.
    */
   void settleWhenParts(this, TicketBase[] parts, bool every) {
+    this.parts = parts;
     for (i32 k = 0; k < parts.len(); k++) { this.advanceOnSettle(parts, parts[k], every); }
     if (canSettle(parts, every)) { this.advance(); }
   }
@@ -171,7 +205,9 @@ export struct Ticket<T> : TicketBase {
     out.drive = () => {
       i32 s = stepEvery(parts);
       if (s < 0) { return false; }
-      if (s == 0) { return true; }
+      // A part settling while it was stepped runs its watchers, and one of them is this ticket's own
+      // `settleWhenParts` — which may already have settled it. It answers once.
+      if (s == 0 || out.done) { return true; }
       Values<Ts> v;
       static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) { v.[i] = tickets.[i].value(); }
       out.resolve(v);
@@ -194,7 +230,7 @@ export struct Ticket<T> : TicketBase {
     out.drive = () => {
       i32 k = stepFirst(parts, first);
       if (k == -2) { return false; }
-      if (k == -1) { return true; }
+      if (k == -1 || out.done) { return true; }
       static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
         if (i == k) {
           AnyValue<Ts> v = tickets.[i].value();
@@ -219,7 +255,7 @@ export struct Ticket<T> : TicketBase {
     out.drive = () => {
       i32 k = stepFirst(parts, firstAt);
       if (k == -2) { return false; }
-      if (k == -1) { return true; }
+      if (k == -1 || out.done) { return true; }
       out.resolve(k);
       return true;
     };
@@ -239,7 +275,7 @@ export struct Ticket<T> : TicketBase {
     out.drive = () => {
       i32 k = stepFirst(parts, first);
       if (k == -2) { return false; }
-      if (k == -1) { return true; }
+      if (k == -1 || out.done) { return true; }
       static_for (i32 i = 0; i < typeref(Ts).tupleMembers().len(); i++) {
         if (i == k) {
           AnyValue<Ts> v = tickets.[i].value();
@@ -326,13 +362,57 @@ void watchOne(TicketBase t, i32[] first, i32 k) {
  */
 i32 stepFirst(TicketBase[] parts, i32[] first) {
   if (first[0] >= 0) { return first[0]; }
+  // **Driving a host ticket blocks until the host answers it**, so stepping the parts in turn would sit
+  // on the first one's host work while the second's had long answered. So step only the parts that can
+  // move without the host, and when every part left is waiting on host work, ask the host once which of
+  // all of it answers first.
   bool moved = false;
+  Vec<TicketBase> leaves = Vec<TicketBase>.create();
   for (i32 k = 0; k < parts.len(); k++) {
     if (parts[k].done) { continue; }
+    i32 before = leaves.len();
+    hostLeaves(parts[k], leaves);
+    if (leaves.len() > before) { continue; }
     if (parts[k].advance()) { moved = true; }
     if (first[0] >= 0) { return first[0]; }
   }
-  return moved ? -1 : -2;
+  if (moved) { return -1; }
+  if (leaves.len() == 0) { return -2; }
+  TicketBase answered = leaves.get(0);
+  fn<i32(i32[], i32)>? ask = answered.waitHost;
+  if (leaves.len() > 1 && ask is not null) {
+    i32[] ids = i32[].filled(leaves.len(), 0);
+    for (i32 i = 0; i < leaves.len(); i++) { ids[i] = leaves.get(i).hostId; }
+    i32 w = ask!(ids, -1);
+    if (w < 0) { return -2; }
+    answered = leaves.get(w);
+  }
+  if (!answered.advance()) { return -2; }
+  return first[0] >= 0 ? first[0] : -1;
+}
+
+/**
+ * The host tickets `t` is waiting on, added to `out`: `t` itself, what its machine is parked on, or the parts
+ * of a `Ticket.all` or `Ticket.any` — none when `t` can move without the host.
+ */
+void hostLeaves(TicketBase t, Vec<TicketBase> out) {
+  // `following` is set on a ticket already being followed — an `advance` further up this chain, or this
+  // walk itself — which is a ticket that depends on itself: it moves by looping (`advance`), not by the host.
+  if (t.done || t.following) { return; }
+  if (t.hostId >= 0) {
+    out.push(t);
+    return;
+  }
+  t.following = true;
+  Continuation? p = t.parked;
+  TicketBase[]? ps = t.parts;
+  if (p is not null) {
+    TicketBase? up = p!.t;
+    if (up is not null) { hostLeaves(up!, out); }
+  } else if (ps is not null) {
+    for (i32 k = 0; k < ps!.len(); k++) { hostLeaves(ps![k], out); }
+  }
+  t.following = false;
 }
 
 /** First in, first out — what a program's pending continuations are kept in. */

@@ -4,8 +4,8 @@
 // contract: a caller matches on it. The messages are the host's and are not checked.
 
 import { Sys, Files, Mount, Stat, NotFound, NotADir, NotGranted, Exists, IsDir, Other, Refused, Net, Listener, Socket,
-         Launch, Exec } from "std";
-import { Result, flatten } from "core";
+         Launch, Exec, Clock, TimedOut, Unsupported } from "std";
+import { Result, Ticket, flatten } from "core";
 import { T } from "../../../wactest/src/assert.wac";
 
 string failed(T t, string what) {
@@ -139,6 +139,39 @@ export async string test_the_clock_and_randomness_answer(Sys sys) {
   t.isTrue(b >= a, "monotonicNanos does not go backwards");
   t.isTrue((await sys.clock().nowMillis()).unwrap() > 1700000000000 as i64, "nowMillis is wall-clock time");
   t.eqI32((await sys.random().bytes(16)).unwrap().len(), 16, "bytes(16) answers sixteen");
+  return t.report();
+}
+
+/** Milliseconds by the monotonic clock since `from`. */
+i64 millisSince(Clock c, i64 from) { return (flatten(c.monotonicNanos().wait()).unwrap() - from) / (1000000 as i64); }
+
+export string test_a_synchronous_wait_on_two_host_tickets_takes_the_first_to_answer(Sys sys) {
+  T t = T.create();
+  Clock c = sys.clock();
+  i64 from = flatten(c.monotonicNanos().wait()).unwrap();
+  // Driven in turn, the wait would sit on the slow one first and take two seconds.
+  Ticket<Result<void, union<Unsupported>>> slow = c.sleepMillis(2000);
+  Ticket<Result<void, union<Unsupported>>> quick = c.sleepMillis(1);
+  match (Ticket.first([slow, quick]).wait()) {
+    Ok(k): { t.eqI32(k, 1, "the quick one answers first"); }
+    Err(e): { t.fail("the wait refused: " + e.message); }
+  }
+  t.isTrue(millisSince(c, from) < 1000 as i64, "and the wait did not sit on the slow one");
+  slow.cancel();
+  return t.report();
+}
+
+export string test_within_answers_timed_out_and_passes_an_answer_through(Sys sys) {
+  T t = T.create();
+  Clock c = sys.clock();
+  i64 from = flatten(c.monotonicNanos().wait()).unwrap();
+  match (flatten(c.within(c.sleepMillis(2000), 20).wait())) {
+    Ok(v): { t.fail("a two-second sleep answered within 20ms"); }
+    Err(e): { t.isTrue(e is TimedOut, "a sleep past the deadline is TimedOut"); }
+  }
+  t.isTrue(millisSince(c, from) < 1000 as i64, "and the deadline did not wait for it");
+  t.isTrue(flatten(c.within(c.nowMillis(), 5000).wait()).unwrap() > 1700000000000 as i64, "an answer in time passes through");
+  t.isTrue(flatten(c.within(c.nowMillis(), -1).wait()).isOk(), "a negative deadline sets none");
   return t.report();
 }
 

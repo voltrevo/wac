@@ -5,6 +5,8 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0402a](open/0402a-a-private-name-in-one-file-collides-with-the-same-name-in-another.md) | A private function or struct in one file collides with one of the same name in another: `wrap` beside a library's private generic `wrap` declines the library's caller | bug | compile error |
+| [0401a](closed/0401a-a-lambda-assigned-to-a-field-in-a-method-instance-declines.md) | Inside a method instance (`make<A>`), `out.drive = () => true` declines when `out`'s type is an instance the method names first — its fields are not registered yet when the lambda is typed | bug | compile error |
 | [0400a](open/0400a-compiler-internals-named-wac-are-visible-to-programs.md) | The compiler's internals named `__wac…` (core's lowering helpers, the schedule target, `Sys.__wacOf`) are ordinary exports a program can import and call | bug | wrong answer |
 | [0399a](open/0399a-wac-build-reports-a-try-mismatch-where-check-reports-the-missing-import.md) | `wac build` reports a `try` mismatch (error type `never`) where `wac check` reports the missing `import { Sys }`; an unimported `Result` is reported in the adapter's generated text | diagnostic | compile error |
 | [0398a](open/0398a-a-built-module-keeps-every-retained-function-called-or-not.md) | A built module keeps every function reachability retained, called or not — hello-world taking a `Sys` is 727 KB; the fix is dead-code elimination after emitting, not a reachability change | performance | wrong answer |
@@ -119,7 +121,7 @@ has been fixed and why.
 
 ## Closed
 
-314 issues, 259 closed.
+316 issues, 260 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

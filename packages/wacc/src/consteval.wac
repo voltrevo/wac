@@ -2913,6 +2913,23 @@ export string evTyName(Ev ev, Decls cx, i32 fi, Ty t) {
       ev.guards = ev.guards - 1;
       return tupleName(ms);
     }
+    // Spelled as the checker spells a funcref — `fn(i32, bool) -> i32`, a `void` parameter erased — so an
+    // alias naming one is the same type as the function type written out (`§wac-type-alias-e4gvipb`).
+    Funcref(ret, params): {
+      string out = "fn(";
+      i32 wrote = 0;
+      for (i32 i = 0; i < params.len(); i++) {
+        string pt = evTyName(ev, cx, fi, params[i]);
+        if (!evFinished(ev.status)) { return ""; }
+        if (pt == "void") { continue; }
+        if (wrote > 0) { out = out + ", "; }
+        out = out + pt;
+        wrote = wrote + 1;
+      }
+      string rt = evTyName(ev, cx, fi, ret);
+      if (!evFinished(ev.status)) { return ""; }
+      return out + ") -> " + rt;
+    }
     TypeOf(e): {
       Value v = evalExpr(ev, cx, fi, e, "typeref");
       if (!evFinished(ev.status)) { return ""; }
@@ -2920,10 +2937,6 @@ export string evTyName(Ev ev, Decls cx, i32 fi, Ty t) {
       return typeOfTyperef(ev, v);
     }
     TypeofExpr(e): { return evTypeOfExpr(ev, cx, fi, e); }
-    default: {
-      ev.unsupported("this kind of type inside a computed type");
-      return "";
-    }
   }
 }
 
