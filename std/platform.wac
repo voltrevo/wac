@@ -3439,6 +3439,43 @@ export struct Launch {
   }
 }
 
+/**
+ * The environment a host program gets from `Procs.exec`: a base — this program's own, or none — with variables set over
+ * it (spec ch44 `§wac-std-child-env-k3w8tqa`).
+ */
+export struct ChildEnv {
+  /** The base is empty rather than this program's own environment. */
+  bool clean;
+  /** `NAME=value`, each name once. */
+  string[] pairs;
+
+  /** This program's own environment, unchanged. */
+  ChildEnv inherited() { return ChildEnv(false, string[]()); }
+  /** No variables at all. */
+  ChildEnv empty() { return ChildEnv(true, string[]()); }
+
+  /** This environment with `name` set to `value`, replacing any value it had. */
+  ChildEnv set(const this, string name, string value) {
+    string prefix = name + "=";
+    i32 kept = 0;
+    for (i32 i = 0; i < this.pairs.len(); i++) {
+      if (!namedBy(this.pairs[i], prefix)) { kept++; }
+    }
+    string[] next = string[].filled(kept + 1, "");
+    i32 at = 0;
+    for (i32 i = 0; i < this.pairs.len(); i++) {
+      if (!namedBy(this.pairs[i], prefix)) { next[at] = this.pairs[i]; at++; }
+    }
+    next[kept] = prefix + value;
+    return ChildEnv(this.clean, next);
+  }
+}
+
+/** Whether `pair` is `NAME=…` for the `NAME=` that is `prefix`. */
+bool namedBy(string pair, string prefix) {
+  return pair.len() >= prefix.len() && pair.slice(0, prefix.len()) == prefix;
+}
+
 /** Starting other programs (spec ch44). */
 export struct Procs {
   Cli cli;
@@ -3466,8 +3503,8 @@ export struct Procs {
    * Run a program of the host's — `program` found on its path — to the end, with `input` as its standard input.
    * Its output comes back whole unless `how.inheritOut`, when it went to this program's own.
    */
-  Ticket<Result<Exec, SpawnFault>> exec(this, string program, string[] args, u8[] input, string[] env, Launch how) {
-    return hostTicket(this.cli.execWithIn(program, args, input, env, env.len() > 0, how.inheritOut, how.cwd), this.wait, ranOf);
+  Ticket<Result<Exec, SpawnFault>> exec(this, string program, string[] args, u8[] input, ChildEnv env, Launch how) {
+    return hostTicket(this.cli.execWithIn(program, args, input, env.pairs, env.clean, how.inheritOut, how.cwd), this.wait, ranOf);
   }
 }
 

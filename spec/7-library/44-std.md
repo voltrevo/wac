@@ -402,7 +402,7 @@ at all is different, and `try` is right there.
 struct Procs {
   async Result<Child, SpawnFault> spawn(this, u8[] wasm, string[] args, Authority given, Launch how);
   async Result<Child, SpawnFault> spawnSelf(this, string[] args, Authority given, Launch how);
-  async Result<Exec, SpawnFault> exec(this, string program, string[] args, u8[] input, string[] env, Launch how);
+  async Result<Exec, SpawnFault> exec(this, string program, string[] args, u8[] input, ChildEnv env, Launch how);
 }
 
 struct Authority {             // what a child holds: each the parent's own or narrowed from it
@@ -410,6 +410,12 @@ struct Authority {             // what a child holds: each the parent's own or n
   Net? net;
   Env? env;
   Procs? procs;
+}
+
+struct ChildEnv {               // the environment exec gives a host program
+  ChildEnv inherited();        // this program's own
+  ChildEnv empty();            // none at all
+  ChildEnv set(const this, string name, string value);   // with name set over it
 }
 
 struct Launch {
@@ -431,6 +437,15 @@ struct Child {
 
 `[§wac-std-spawn-grants-ykmq5tw]` A spawned child holds exactly the handles in its `Authority`, so it never holds more than
 its parent. Spawning needs the program's own `procs` authority — another instance of itself included.
+
+`[§wac-std-child-env-k3w8tqa]` A host program started by `exec` gets the environment its `ChildEnv` describes: a base,
+this program's own environment or an empty one, with each name `set` over it holding the last value it was set to. Nothing
+else reaches the child's environment.
+
+```wac
+// fragment — git sees this program's PATH and HOME, and GIT_DIR as set here
+Exec r = try await procs.exec("git", ["status"], u8[](), ChildEnv.inherited().set("GIT_DIR", dir), Launch.plain());
+```
 
 `[§wac-std-child-drop-n2r5vxe]` Dropping a `Child` that has not been waited for stops it, unless it was launched `detached`.
 

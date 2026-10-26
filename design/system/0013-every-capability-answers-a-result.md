@@ -151,3 +151,23 @@ the browser terminal are granted it to run applets, and without it an applet is 
 - **Writes to stderr may be discarded; writes to stdout are handled.** A convention, not a rule — a warning for a
   discarded `Result` is a possible later feature. So the ticket a write answers must be settled before the call
   returns: the host gives the reason for a failed write in the same call, rather than through `outputError`.
+
+### Settled during step 5 (operator, 2026-10-25)
+
+- **`Procs.exec` takes a `ChildEnv`**: `ChildEnv.inherited()` or `ChildEnv.empty()`, with `.set(name, value)` over it
+  (ch44 `§wac-std-child-env-k3w8tqa`). Removing one name stays a shell's `unset` (`packages/wactest`'s `withoutEnv`).
+- **`packages/fs` folds into `Files` now**, not after step 6. Box and sh take `Files`; each `Fs` backing is a `Files`
+  constructor. What `Fs` held that is not a filesystem goes to the shell session: the current directory (a view,
+  `files.relativeTo(cwd)`), the process table, the clock reading, and who is acting.
+- **Users are a view of a memory store**: `MemoryStore.create(clock)`, `store.as(user)` a `Files` that creates files
+  owned by `user` and checks against it, `"root"` exempt. `Files` gains `chown` (the host: `Unsupported`) and `Stat`
+  gains `owner` and `mode`. `whoami` and `id` read the session's user and refuse where there is none.
+- **Streams close**: `files.openWrite(path)` answers an `Output` and `files.openRead(path)` an `Input`, and both
+  types gain `close`. `Child.endInput()` is `child.input().close()`; closing `stdout` ends the program's output. The
+  host gives a stream per call, which retires `openInput`/`openOutput` switching the program's one stream and the
+  `isHostPath` split in box (every path streams).
+- **A composed `Files` handed to a child is served by std** over the parent channel while the parent drives its
+  scheduler; the child's `sys.files()` is that remote `Files`. The wire protocol and serving move into std.
+- **`packages/fs` keeps what is ours rather than general**: the image format, over `store.entries()` and
+  `MemoryStore.restore(clock, entries)`; `passwd`; the process table, renamed `ProcTable`; and `/dev`, `/proc` and
+  `/bin` as `Files` constructors (`devFiles`, `procFiles`, `binFiles`).

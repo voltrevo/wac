@@ -4,7 +4,7 @@
 // contract: a caller matches on it. The messages are the host's and are not checked.
 
 import { Sys, Files, Mount, Stat, NotFound, NotADir, NotGranted, Exists, IsDir, Other, Refused, Net, Listener, Socket,
-         Launch, Exec, Clock, TimedOut, Unsupported } from "std";
+         Launch, ChildEnv, Exec, Clock, TimedOut, Unsupported } from "std";
 import { Result, Ticket, flatten } from "core";
 import { T } from "../../../wactest/src/assert.wac";
 
@@ -227,16 +227,36 @@ export async string test_connecting_to_nothing_is_refused(Sys sys) {
   return t.report();
 }
 
+// The child's environment is a base — this program's own, or none — with variables set over it; setting a name
+// twice keeps the last. `env` prints what it got: over the inherited base there is more than the one line set here
+// (this program has some environment wherever it runs), and over the empty base there is exactly that line.
+export async string test_exec_sets_variables_over_an_inherited_or_an_empty_environment(Sys sys) {
+  T t = T.create();
+  match (await sys.procs().exec("env", string[](), u8[](), ChildEnv.inherited().set("WAC_CHILD_ENV", "1").set("WAC_CHILD_ENV", "2"), Launch.plain())) {
+    Ok(r): {
+      string got = string.fromBytes(r.stdout);
+      t.isTrue(got.indexOf("WAC_CHILD_ENV=2\n") >= 0 && got.indexOf("WAC_CHILD_ENV=1") < 0, "set over the inherited environment, last one kept: \{got}");
+      t.isTrue(got.len() > "WAC_CHILD_ENV=2\n".len(), "and the inherited variables are there too");
+    }
+    Err(e): { t.fail("exec over the inherited environment failed: \{e}"); }
+  }
+  match (await sys.procs().exec("/usr/bin/env", string[](), u8[](), ChildEnv.empty().set("WAC_CHILD_ENV", "1"), Launch.plain())) {
+    Ok(r): { t.eqStr(string.fromBytes(r.stdout), "WAC_CHILD_ENV=1\n", "set over an empty environment, nothing inherited"); }
+    Err(e): { t.fail("exec over an empty environment failed: \{e}"); }
+  }
+  return t.report();
+}
+
 export async string test_exec_runs_a_host_program(Sys sys) {
   T t = T.create();
-  match (await sys.procs().exec("echo", ["hi"], u8[](), string[](), Launch.plain())) {
+  match (await sys.procs().exec("echo", ["hi"], u8[](), ChildEnv.inherited(), Launch.plain())) {
     Ok(r): {
       t.eqI32(r.status, 0, "echo exits 0");
       t.eqStr(string.fromBytes(r.stdout), "hi\n", "and its output comes back");
     }
     Err(e): { t.fail("exec of echo failed"); }
   }
-  match (await sys.procs().exec("/no/such/program", string[](), u8[](), string[](), Launch.plain())) {
+  match (await sys.procs().exec("/no/such/program", string[](), u8[](), ChildEnv.inherited(), Launch.plain())) {
     Ok(r): { t.isTrue(r.status != 0, "a missing program does not exit 0"); }
     Err(e): { t.isTrue(e is Other || e is NotGranted, "or is refused before it runs"); }
   }
