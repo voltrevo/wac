@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0398b](open/0398b-the-compiler-is-an-order-of-magnitude-slower-than-on-2026-09-01.md) | The compiler is 11–16× slower than on 2026-09-01 at every input size — `check` of a one-line file 30 → 405 ms, box's shell 6.0 → 66 s, `./bootstrap.sh` 36 s → 10 min | performance | no error |
 | [0397a](open/0397a-an-import-alias-inside-a-fields-nested-instance-emits-a-bogus-instance.md) | An import alias inside a struct field's nested generic instance (`Ticket<Result<Chunk, O>>`) leaves a bogus instance the emitter declines with "a null in a Result<Chunk,O> slot" | bug | compile error |
 | [0396a](closed/0396a-const-is-still-stripped-through-construction-returns-and-fields.md) | A `const` reference stored into a plain field, returned through a plain function, or read from a `const` field is writable | bug | wrong answer |
 | [0395a](open/0395a-a-duplicate-matches-binding-is-accepted.md) | `R p matches m && R p matches n` compiles and silently uses the second `p`; two wordings are wrong | bug | wrong answer |
@@ -116,7 +117,7 @@ has been fixed and why.
 
 ## Closed
 
-311 issues, 259 closed.
+312 issues, 259 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
