@@ -1639,8 +1639,9 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   string[] wantAlias = string[].defaulted(4096);
   // Where the *import* is written, taken here because the loop below retargets `c` at each imported
   // file in turn: a diagnostic about `main.wac`'s import must not carry `b.wac`'s line numbers.
-  i32[] wantLine = i32[].filled(512, 0);
-  i32[] wantCol = i32[].filled(512, 0);
+  // As long as the tables beside them: at 512 the 513th imported name trapped the compiler.
+  i32[] wantLine = i32[].filled(wantName.len(), 0);
+  i32[] wantCol = i32[].filled(wantName.len(), 0);
   i32 n = 0;
   for (i32 d = 0; d < eprog.decls.len(); d++) {
     match (eprog.decls[d].kind) {
@@ -1721,7 +1722,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   // size };`, or naming it with no `as`) is exported by that list whether or not the declaration says
   // `export`, so the check below is skipped for it; a name forwarded to another module is checked
   // there, as any import is.
-  bool[] wantForwarded = bool[].filled(512, false);
+  bool[] wantForwarded = bool[].filled(wantName.len(), false);
   for (i32 k = 0; k < n; k++) {
     string[] got = followExport(paths, sources, lexes, progs, res, wantFrom[k], wantName[k]);
     wantFrom[k] = got[0];

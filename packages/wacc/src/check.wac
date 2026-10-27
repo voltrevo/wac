@@ -14424,8 +14424,9 @@ string lineText(i32 v) {
 }
 
 void checkDuplicates(C c, Program prog) {
-  string[] names = string[].defaulted(512);
-  i32[] nameLines = i32[].filled(512, 0);
+  // One per declaration: at a fixed 512, a name declared twice past the 512th went unreported.
+  string[] names = string[].defaulted(prog.decls.len());
+  i32[] nameLines = i32[].filled(prog.decls.len(), 0);
   i32 n = 0;
   // A variant is reachable as a bare name — `Circle(1.0)` with no `Shape.` in front of it — so two
   // enums declaring one leave the file with a name that means two things. Kept across the whole walk

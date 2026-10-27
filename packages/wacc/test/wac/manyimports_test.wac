@@ -1,0 +1,48 @@
+// A file may import more than 512 names.
+//
+// The checker keeps what a file asks for in parallel tables, four of them sized for 4,096 names and the
+// two that hold where each was written sized for 512 — so the 513th name trapped the compiler with an
+// out-of-bounds access, and `wac check` printed only `RuntimeError: array element access out of bounds`.
+// Found while timing the checker for `issues/lang/0398b`. The duplicate-name check had the same 512 and
+// stopped recording names there instead of trapping, so a name declared twice past it went unreported.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { diagnoseFiles } from "../../src/api.wac";
+import { Core } from "std";
+
+/** `n` names imported from `/t/lib.wac`, one per line from line 2, of which the lib declares `declared`. */
+string[] graph(i32 n, i32 declared) {
+  string entry = "import {\n";
+  string lib = "";
+  for (i32 i = 0; i < n; i++) {
+    entry = entry + "  f" + itoa(i) + (i + 1 < n ? ",\n" : "\n");
+    if (i < declared) { lib = lib + "export i32 f" + itoa(i) + "() { return " + itoa(i) + "; }\n"; }
+  }
+  return [entry + "} from \"./lib.wac\";\nexport i32 main() { return f0(); }\n", lib] as string[];
+}
+
+export string test_six_hundred_imported_names_check(Core core) {
+  T t = T.create();
+  string said = diagnoseFiles(["/t/m.wac", "/t/lib.wac"], graph(600, 600), "/t/m.wac");
+  t.eqStr(said, "", "every name exists");
+  return t.report();
+}
+
+export string test_the_six_hundredth_is_reported_where_it_is_written(Core core) {
+  T t = T.create();
+  string said = diagnoseFiles(["/t/m.wac", "/t/lib.wac"], graph(600, 599), "/t/m.wac");
+  t.isTrue(contains(said, "/t/m.wac\t601\t"), "`f599`, on line 601, is not exported — " + said);
+  return t.report();
+}
+
+export string test_a_name_declared_twice_past_the_512th_declaration_is_reported(Core core) {
+  T t = T.create();
+  string lib = "";
+  for (i32 i = 0; i < 600; i++) { lib = lib + "export i32 f" + itoa(i) + "() { return 0; }\n"; }
+  lib = lib + "export i32 f599() { return 1; }\n";
+  string said = diagnoseFiles(["/t/lib.wac"], [lib], "/t/lib.wac");
+  t.isTrue(contains(said, "/t/lib.wac\t601\t") && contains(said, "f599"), "the second `f599`, on line 601 — " + said);
+  return t.report();
+}
