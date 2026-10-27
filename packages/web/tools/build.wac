@@ -706,10 +706,27 @@ export string documentSide() {
             more();
           }
         };
-        // The entries are taken during the event: a drop's items are unreadable once it returns. A
-        // browser without them, or a drop of something that is not a file, falls back to `files`.
+        // **A handle where the browser has one** (Chrome, Edge): the entry API's `readEntries` fails with
+        // an EncodingError on a page opened from a `file://` URL, and a built page is often opened that way.
+        const walkHandle = async (h, path) => {
+          if (h.kind === "file") {
+            try { send(await h.getFile(), path); } catch (e) { failed(path, e); }
+            return;
+          }
+          try { for await (const kid of h.values()) await walkHandle(kid, path + "/" + kid.name); }
+          catch (e) { failed(path, e); }
+        };
+        // Handles and entries are taken during the event: a drop's items are unreadable once it returns.
+        // A browser with neither, or a drop of something that is not a file, falls back to `files`.
         const dropped = (dt) => {
           const items = [...(dt?.items ?? [])].filter((it) => it.kind === "file");
+          const files = [...(dt?.files ?? [])];
+          if (items.length > 0 && items.every((it) => it.getAsFileSystemHandle)) {
+            items.map((it) => it.getAsFileSystemHandle()).forEach((pending, i) => pending.then(
+              (h) => h ? walkHandle(h, h.name) : take([files[i]]),
+              () => take([files[i]])));
+            return;
+          }
           const entries = items.map((it) => it.webkitGetAsEntry?.() ?? null);
           if (entries.length > 0 && entries.every((x) => x !== null)) entries.forEach(walk);
           else take(dt?.files);
