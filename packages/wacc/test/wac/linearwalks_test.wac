@@ -5,9 +5,8 @@
 // variant once per field once per named instance. Each was linear on its own and the product was the
 // cost. Neither changes an answer, so nothing else here can see them come back.
 //
-// A wall-clock bound would flake on a loaded machine, so each test is a ratio of two runs of the same
-// size made back to back, differing only in the thing the walk multiplies by: with the walk linear the
-// two are close, and before the fix they were 9× and 30× apart.
+// A wall-clock bound would flake on a loaded machine, so each test is a ratio of two runs made back to
+// back, differing only in the thing the walk multiplies by: with the walk linear the two are close.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -30,15 +29,15 @@ string joinedParts(string[] parts, i32 n) {
 
 i32 millis(i64 nanos) { return (nanos / (1000000 as i64)) as! i32; }
 
-/** An entry naming 300 struct types in signatures, importing one name from `/t/lib.wac`. */
-string namingEntry() {
-  string[] parts = string[].filled(601, "");
+/** An entry naming `n` struct types in signatures, importing one name from `/t/lib.wac`. */
+string namingEntry(i32 n) {
+  string[] parts = string[].filled(2 * n + 1, "");
   parts[0] = "import { Lib } from \"./lib.wac\";\n";
-  for (i32 i = 0; i < 300; i++) {
+  for (i32 i = 0; i < n; i++) {
     parts[1 + 2 * i] = "struct S" + itoa(i) + " { i32 v; }\n";
     parts[2 + 2 * i] = "i32 f" + itoa(i) + "(S" + itoa(i) + " a, Lib l) { return a.v; }\n";
   }
-  return joinedParts(parts, 601);
+  return joinedParts(parts, 2 * n + 1);
 }
 
 /** `/t/lib.wac`: its one declaration, then `kb` kilobytes of comment. */
@@ -58,19 +57,23 @@ i64 timeCheck(Core core, string entry, string lib) {
 
 // **The checker reads the graph's `export type` names once, not once per type name.** Until the view of
 // every file is built, each named type asks whether some file declares it as a `type`, and that was a
-// search of every source's whole text. Here the imported file grows from one line to a megabyte: read
-// once, that is a few milliseconds; read once per name, it was 3,478 ms against 371.
+// search of every source's whole text. Beside a 1 MB file, doubling the names checked from 300 to 600
+// costs about 1.3× when the file is read once — reading a megabyte is a cost both runs pay — and
+// about 2× when it is read once per name, which is what it was: 6.2 s against 3.1.
+//
+// Not a megabyte against one line, which is what this compared first: once the rest of the compiler
+// got faster, merely lexing the megabyte outweighed checking the names, and a correct checker failed.
 export string test_a_large_imported_file_is_not_rescanned_per_type_name(Core core) {
   T t = T.create();
-  string entry = namingEntry();
-  string small = libWithComment(0);
   string big = libWithComment(1024);
-  timeCheck(core, entry, small);
-  i64 a = timeCheck(core, entry, small);
-  i64 b = timeCheck(core, entry, big);
-  t.isTrue(b < a * (3 as i64),
-           "300 named types: " + itoa(millis(a)) + " ms beside a one-line file, "
-           + itoa(millis(b)) + " ms beside a 1 MB one");
+  string fewer = namingEntry(300);
+  string more = namingEntry(600);
+  timeCheck(core, fewer, big);
+  i64 a = timeCheck(core, fewer, big);
+  i64 b = timeCheck(core, more, big);
+  t.isTrue(b * (5 as i64) < a * (8 as i64),
+           "beside a 1 MB file: " + itoa(millis(a)) + " ms checking 300 named types, "
+           + itoa(millis(b)) + " ms checking 600");
   return t.report();
 }
 
@@ -115,5 +118,53 @@ export string test_naming_an_instance_does_not_walk_every_variant_per_field(Core
   t.isTrue(b < a * (3 as i64),
            "200 functions beside 2,000 variants and 400 fields: " + itoa(millis(a))
            + " ms with `i32`, " + itoa(millis(b)) + " ms with `Box<i32>`");
+  return t.report();
+}
+
+/** `/t/lib.wac`: `export struct P`, then `decls` functions. */
+string declsLib(i32 decls) {
+  string[] parts = string[].filled(decls + 1, "");
+  parts[0] = "export struct P { i32 v; }\n";
+  for (i32 i = 0; i < decls; i++) {
+    parts[1 + i] = "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n";
+  }
+  return joinedParts(parts, decls + 1);
+}
+
+/** 300 functions naming the imported `P` four times each, or when `named` is false `i32` instead. */
+string importingEntry(bool named) {
+  string[] parts = string[].filled(301, "");
+  parts[0] = "import { P, g1 } from \"./lib.wac\";\nexport i32 h() { return g1(); }\n";
+  for (i32 i = 0; i < 300; i++) {
+    parts[1 + i] = named
+        ? "export i32 f" + itoa(i) + "(P a, P b) { P c = P(1); P d = a; return c.v + d.v + b.v; }\n"
+        : "export i32 f" + itoa(i) + "(i32 a, i32 b) { i32 c = 1; i32 d = a; return c + d + b; }\n";
+  }
+  return joinedParts(parts, 301);
+}
+
+i64 timeEmitTwo(Core core, string entry, string lib) {
+  i64 t0 = core.monotonicNanos().wait();
+  emitFiles(["/t/m.wac", "/t/lib.wac"], [entry, lib], "/t/m.wac");
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **Resolving a name does not walk every declaration.** The emitter found a name's key by walking
+// every declaration of the module, up to four times when the name came from another file, and every new
+// declaration walked them all again to see whether its key was taken. So the same entry cost twice as
+// much beside a file of 8,000 functions as beside one of 4,000, though the entry calls one of them and
+// the rest are pruned: 231 ms against 111. Found through an index, the two are the same.
+export string test_resolving_a_name_does_not_walk_every_declaration(Core core) {
+  T t = T.create();
+  string fewer = declsLib(4000);
+  string more = declsLib(8000);
+  string entry = importingEntry(false);
+  timeEmitTwo(core, entry, fewer);
+  timeEmitTwo(core, entry, more);
+  i64 a = timeEmitTwo(core, entry, fewer);
+  i64 b = timeEmitTwo(core, entry, more);
+  t.isTrue(b * (2 as i64) < a * (3 as i64),
+           "the same entry: " + itoa(millis(a)) + " ms beside 4,000 declarations, " + itoa(millis(b))
+           + " ms beside 8,000");
   return t.report();
 }

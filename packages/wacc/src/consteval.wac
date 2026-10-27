@@ -474,6 +474,9 @@ export struct Decls {
   string[] impDecl;
   i32 impCount;
 
+  /** The indices of `decls` that are `type` declarations, in order — found once, by `typeDeclAt`. */
+  i32[]? typeDecls;
+
   u8[] srcOf(const this, i32 fi) {
     return fi >= 0 && fi < this.srcs.len() ? this.srcs[fi] : this.blobSrc;
   }
@@ -2256,7 +2259,7 @@ export Decls declsOfProgram(u8[] src, Lexed lexed, Decl[] decls) {
                Expr?[].filled(nc < 1 ? 1 : nc, null), i32[].filled(nc < 1 ? 1 : nc, 0), 0,
                string[].filled(nd, ""), string[].filled(nd, ""), bool[].filled(nd, false),
                i32[].filled(nc < 1 ? 1 : nc, 0),
-               i32[].filled(1, 0), string[].filled(1, ""), i32[].filled(1, 0), string[].filled(1, ""), 0);
+               i32[].filled(1, 0), string[].filled(1, ""), i32[].filled(1, 0), string[].filled(1, ""), 0, null);
   for (i32 d = 0; d < decls.len(); d++) { cx.declFiles[d] = 0 - 1; }
   // **Before the tables, because the tables are keyed on what it decides.** A struct's fields are
   // filed under the struct's identity, not under the spelling one file gave it.
@@ -2342,7 +2345,7 @@ export Decls declsOfFiles(string[] paths, string[] sources, Lexed?[] lexes, Prog
                    Expr?[].filled(nc < 1 ? 1 : nc, null), i32[].filled(nc < 1 ? 1 : nc, 0), 0,
                    string[].filled(nd2, ""), string[].filled(nd2, ""), bool[].filled(nd2, false),
                    i32[].filled(nc < 1 ? 1 : nc, 0),
-                   i32[].filled(1, 0), string[].filled(1, ""), i32[].filled(1, 0), string[].filled(1, ""), 0);
+                   i32[].filled(1, 0), string[].filled(1, ""), i32[].filled(1, 0), string[].filled(1, ""), 0, null);
   keyDecls(cx);
 
   // **The import edges, from the files' own `import` lines.** Without them a name a file spells
@@ -3080,9 +3083,35 @@ bool isNullTy(u8[] src, Lexed lx, Ty t) {
   }
 }
 
+/** The indices of the `type` declarations among `decls`, in order. */
+i32[] typeDeclIndices(Decl[] decls) {
+  i32 n = 0;
+  for (i32 d = 0; d < decls.len(); d++) {
+    match (decls[d].kind) {
+      TypeDecl(nameTok, typeParams, alias, body, exported): { n = n + 1; }
+      default: { }
+    }
+  }
+  i32[] out = i32[].filled(n, 0);
+  i32 k = 0;
+  for (i32 d = 0; d < decls.len(); d++) {
+    match (decls[d].kind) {
+      TypeDecl(nameTok, typeParams, alias, body, exported): { out[k] = d; k = k + 1; }
+      default: { }
+    }
+  }
+  return out;
+}
+
 /** The declaration index of a `type` declaration named `name` as file `fi` sees it, or -1. */
 export i32 typeDeclAt(Decls cx, string name, i32 fi) {
-  for (i32 d = 0; d < cx.decls.len(); d++) {
+  // **Only the `type` declarations**, found once: this is asked of every type name the emitter
+  // resolves, and walking every declaration of the module for the few that are `type` was the largest
+  // single cost of building box's shell once the others had gone (`issues/lang/0398b`).
+  if (cx.typeDecls is null) { cx.typeDecls = typeDeclIndices(cx.decls); }
+  i32[] tds = cx.typeDecls!;
+  for (i32 k = 0; k < tds.len(); k++) {
+    i32 d = tds[k];
     match (cx.decls[d].kind) {
       TypeDecl(nameTok, typeParams, alias, body, exported): {
         i32 dfi = d < cx.declFiles.len() ? cx.declFiles[d] : 0 - 1;

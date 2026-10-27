@@ -544,10 +544,10 @@ void registerNamed(Env env, string t) {
     // **`t`'s variants found once, not once per field.** Asking `enumOf` — a walk of every variant —
     // about every field of the program, for every instance an expression names, was a fifth of
     // building box's shell (`issues/lang/0398b`).
-    string mine = variantsOwnedBy(env, t);
+    string[] mine = variantsOwnedBy(env, t);
     for (i32 f = 0; f < env.fieldCount; f++) {
       string owner = env.fieldOwners[f];
-      if (owner != t && (mine.len() == 1 || mine.indexOf("\n" + owner + "\n") < 0)) { continue; }
+      if (owner != t && !anyIs(mine, owner)) { continue; }
       string ft = env.fieldTypes[f];
       if ((isArrayType(ft) && !hasArrayType(env, ft)) || isBoxedName(ft)) { registerNamed(env, ft); }
     }
@@ -555,18 +555,29 @@ void registerNamed(Env env, string t) {
 }
 
 /**
- * The variants `env.enumOf` answers `t` for, each between newlines: those `t` owns, less any whose name
- * an earlier variant already has, since `enumOf` answers with the first.
+ * The variants `env.enumOf` answers `t` for: those `t` owns, less any whose name an earlier variant
+ * already has, since `enumOf` answers with the first.
  */
-string variantsOwnedBy(Env env, string t) {
-  string out = "\n";
+string[] variantsOwnedBy(Env env, string t) {
+  i32 n = 0;
+  for (i32 v = 0; v < env.variantCount; v++) { if (env.variantOwners[v] == t) { n = n + 1; } }
+  string[] out = string[].filled(n, "");
+  i32 k = 0;
   for (i32 v = 0; v < env.variantCount; v++) {
     if (env.variantOwners[v] != t) { continue; }
     bool first = true;
     for (i32 j = 0; j < v; j++) { if (env.variantNames[j] == env.variantNames[v]) { first = false; } }
-    if (first) { out = out + env.variantNames[v] + "\n"; }
+    if (first) { out[k] = env.variantNames[v]; k = k + 1; }
   }
-  return out;
+  string[] exact = string[].filled(k, "");
+  exact.copyFrom(out, 0, 0, k);
+  return exact;
+}
+
+/** Whether some element of `xs` is `x`. */
+bool anyIs(string[] xs, string x) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == x) { return true; } }
+  return false;
 }
 
 /** Whether array type `t` has its type-section entry already. */
@@ -3119,6 +3130,18 @@ export struct Env {
   string[] thunkRecvs;
   B[] thunkBodies;
 
+  /**
+   * **`declNames` by name**, so finding a declaration does not walk all of them: a bucket per hash of
+   * the name, holding the indices whose name hashes there, in the order they were declared. Walking a
+   * bucket and skipping other names visits what a walk of every declaration would have matched, in the
+   * same order, so every answer is the one the full walk gave. `keyAt` was such a walk, up to four
+   * times over, for every type name the emitter resolved (`issues/lang/0398b`). Empty until the first
+   * `declare`, which sizes them.
+   */
+  i32[] nameHeads;
+  i32[] nameTails;
+  i32[] nameNext;
+
   /** The component tag recorded at this position, in this file and instance, or -1. */
   i32 markupSiteAt(const this, i32 line, i32 col) {
     for (i32 i = 0; i < this.markupCount; i++) {
@@ -3467,7 +3490,8 @@ export struct Env {
                i32[].filled(1024, 0), i32[].filled(1024, 0), i32[].filled(1024, 0), string[].filled(1024, ""),
                i32[].filled(1024, 0), 0,
                0, 0, string[].filled(2048, ""), string[].filled(2048, ""), string[].filled(2048, ""),
-               B[].filled(2048, B.create()));
+               B[].filled(2048, B.create()),
+               i32[](), i32[](), i32[]());
   }
 
   
@@ -3488,8 +3512,9 @@ export struct Env {
   string declareKeyed(this, string name, i32 f, bool exported, bool stepAside) {
     bool taken = stepAside;
     // **The bare key**, not the bare name: a variant that yielded holds `Read@n`, which leaves `Read`
-    // to the type declared after it.
-    for (i32 i = 0; i < this.declCount; i++) {
+    // to the type declared after it. A key is its name or its name and an `@`, so only a declaration
+    // of this name can hold this key.
+    for (i32 i = this.firstNamed(name); i >= 0; i = this.nameNext[i]) {
       if (this.declKeys[i] == name) { taken = true; }
     }
     string key = name;
@@ -3500,9 +3525,36 @@ export struct Env {
       this.declFiles[this.declCount] = f;
       this.declKeys[this.declCount] = key;
       this.declExported[this.declCount] = exported;
+      this.indexName(name, this.declCount);
       this.declCount = this.declCount + 1;
     }
     return key;
+  }
+
+  /** The bucket `name` hashes to in `nameHeads`. */
+  i32 nameBucket(const this, string name) {
+    u8[] b = name.toBytes();
+    i32 h = 5381;
+    for (i32 i = 0; i < b.len(); i++) { h = h * 33 + b[i] as i32; }
+    return (h & 2147483647) % this.nameHeads.len();
+  }
+
+  /** The first declaration in `name`'s bucket, or -1 — follow `nameNext`, and skip other names. */
+  i32 firstNamed(const this, string name) {
+    if (this.nameHeads.len() == 0) { return 0 - 1; }
+    return this.nameHeads[this.nameBucket(name)];
+  }
+
+  /** Append declaration `d`, called `name`, to its bucket. */
+  void indexName(this, string name, i32 d) {
+    if (this.nameHeads.len() == 0) {
+      this.nameHeads = i32[].filled(4096, 0 - 1);
+      this.nameTails = i32[].filled(4096, 0 - 1);
+      this.nameNext = i32[].filled(this.declNames.len(), 0 - 1);
+    }
+    i32 b = this.nameBucket(name);
+    if (this.nameTails[b] < 0) { this.nameHeads[b] = d; } else { this.nameNext[this.nameTails[b]] = d; }
+    this.nameTails[b] = d;
   }
 
   /**
@@ -3537,7 +3589,7 @@ export struct Env {
     // — and a speculative question whose answer is discarded must not leave the module unemittable.
     if (this.localAt(name) >= 0) { return name; }
     // This file's own declaration first — shadowing, as the language has it.
-    for (i32 i = 0; i < this.declCount; i++) {
+    for (i32 i = this.firstNamed(name); i >= 0; i = this.nameNext[i]) {
       if (this.declNames[i] == name && this.declFiles[i] == f) { return this.declKeys[i]; }
     }
     // Then **the import that names it**. `import { p } from "./a.wac"` says where `p` comes from,
@@ -3545,7 +3597,7 @@ export struct Env {
     // the language's own rule rather than an approximation of it.
     for (i32 e = 0; e < this.importCount; e++) {
       if (this.importFrom[e] != f || this.importNames[e] != name) { continue; }
-      for (i32 i = 0; i < this.declCount; i++) {
+      for (i32 i = this.firstNamed(this.importDecls[e]); i >= 0; i = this.nameNext[i]) {
         if (this.declNames[i] == this.importDecls[e] && this.declFiles[i] == this.importTo[e]) {
           return this.declKeys[i];
         }
@@ -3556,7 +3608,7 @@ export struct Env {
     // answer is a guess whenever two of them do.
     string imported = "";
     i32 importedCandidates = 0;
-    for (i32 i = 0; i < this.declCount; i++) {
+    for (i32 i = this.firstNamed(name); i >= 0; i = this.nameNext[i]) {
       if (this.declNames[i] != name) { continue; }
       // **A file's private declaration is not a candidate for anyone else.** This file's own came
       // first, above, and returned; what is left here belongs to another file, and only what that
@@ -3581,7 +3633,7 @@ export struct Env {
     // shows up as *"expected (ref null 1), got (ref null 7)"* in a third file that mentions neither.
     string found = "";
     i32 candidates = 0;
-    for (i32 i = 0; i < this.declCount; i++) {
+    for (i32 i = this.firstNamed(name); i >= 0; i = this.nameNext[i]) {
       if (this.declNames[i] != name) { continue; }
       // The same rule, and here it decides whether the name is *ambiguous* rather than which
       // declaration wins: a private one in a file this one never mentions used to make a
@@ -19626,7 +19678,7 @@ Ev staticEvalOf(Env env, u8[] src, Lexed lexed) {
                        string[].filled(nd, ""), string[].filled(nd, ""), bool[].filled(nd, false),
                        i32[].filled(env.constCount < 1 ? 1 : env.constCount, 0),
                        i32[].filled(ni, 0), string[].filled(ni, ""), i32[].filled(ni, 0), string[].filled(ni, ""),
-                       env.importCount);
+                       env.importCount, null);
   // Bound to a local first: an assignment through an unwrap does not parse on wac-L5.
   Decls scx = env.staticCx!;
   for (i32 e = 0; e < env.importCount; e++) {
