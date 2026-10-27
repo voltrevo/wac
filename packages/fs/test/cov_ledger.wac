@@ -175,11 +175,11 @@ Pin[] pins() {
         "`packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which " +
         "is a better oracle than this probe could be — so this is where the measurement " +
         "stops, not where the testing does."),
-    Pin("packages/fs/src/image.wac", 120, "default: { skipped.push(mountName(fs.mounts.get(i).at)); }", false,
+    Pin("packages/fs/src/image.wac", 122, "default: { skipped.push(mountName(fs.mounts.get(i).at)); }", false,
         "The writer's host-mount path: naming a mount it did not save. Same reason as the " +
         "fs.wac entries above — it needs a `Cli`. `test/image.test.ts` drives it through a " +
         "built program."),
-    Pin("packages/fs/src/image.wac", 137, "for (i32 i = 0; i < skipped.len(); i++) { names[i] = skipped.get(i); }", false,
+    Pin("packages/fs/src/image.wac", 139, "for (i32 i = 0; i < skipped.len(); i++) { names[i] = skipped.get(i); }", false,
         "The writer's host-mount path: naming a mount it did not save. Same reason as the " +
         "fs.wac entries above — it needs a `Cli`. `test/image.test.ts` drives it through a " +
         "built program."),

@@ -59,7 +59,9 @@ import { Map, Vec, hashString, stringEq } from "core";
 import { Buf } from "core";
 import { crc32 } from "../../gzip/src/crc32.wac";
 import { Reader, putI64, putString } from "./wire.wac";
-import { Cli, Core, FAULT_NOT_FOUND, FileResult } from "std";
+import { Cli, Clock, Core, FAULT_NOT_FOUND, FileResult, Files, MemoryStore, MoveFault, NotFound, Other, ReadFault, StoreEntry,
+         WriteFault } from "std";
+import { Result } from "core";
 import { Backing, Fs, Inode, Mount, mountSystem, sortNames } from "./fs.wac";
 
 /** The version this build writes. A reader refuses anything else, by number, rather than guessing. */
@@ -384,4 +386,116 @@ string octal(i32 mode) {
   string out = "";
   for (i32 i = 3; i >= 0; i--) { out = out + "\{(mode >> (i * 3)) & 7}"; }
   return out;
+}
+
+// ── Version 2: one store's entries ────────────────────────────────────────────
+
+/*
+ * A `MemoryStore` saved whole: the magic, version 2, the number of entries, then each entry as `store.entries()`
+ * lists it — path, kind, mode, owner, mtime, and a file's bytes — and a CRC-32 of everything before it. One store
+ * per image: a session with several mounts saves the store it keeps, and `/dev`, `/proc` and `/bin` are made up
+ * again when it boots.
+ */
+
+static i32 IMAGE_V2 = 2;
+
+/** `entries` as an image. */
+export u8[] imageOf(StoreEntry[] entries) {
+  Buf out = Buf.create();
+  out.pushAll("wacimg\0".toBytes());
+  out.push(IMAGE_V2 as@ u8);
+  out.pushU32(entries.len() as@ u32);
+  for (StoreEntry e in entries) {
+    putString(out, e.path);
+    out.push((e.isDir ? KIND_DIR() : KIND_FILE()) as@ u8);
+    out.pushU32(e.mode as@ u32);
+    putString(out, e.owner);
+    putI64(out, e.modifiedMillis);
+    if (!e.isDir) {
+      out.pushU32(e.data.len() as@ u32);
+      out.pushAll(e.data);
+    }
+  }
+  out.pushU32(crc32(out.bytes()));
+  return out.take();
+}
+
+/** An image's entries, or what is wrong with it. */
+export Result<StoreEntry[], Other> entriesOf(u8[] data) {
+  u8[] magic = "wacimg\0".toBytes();
+  if (data.len() < magic.len() + 9) { return Result.Err(Other("too short to be an image")); }
+  for (i32 i = 0; i < magic.len(); i++) {
+    if (data[i] != magic[i]) { return Result.Err(Other("not an image: the magic does not match")); }
+  }
+  i32 version = data[magic.len()] as i32;
+  if (version != IMAGE_V2) { return Result.Err(Other("this build reads image version \{IMAGE_V2}, not \{version}")); }
+  i32 end = data.len() - 4;
+  u8[] body = u8[].filled(end, 0);
+  body.copyFrom(data, 0, 0, end);
+  u32 want = (data[end] as i32 | (data[end + 1] as i32 << 8) | (data[end + 2] as i32 << 16) | (data[end + 3] as i32 << 24)) as@ u32;
+  if (crc32(body) != want) { return Result.Err(Other("the checksum does not match: the image is damaged")); }
+
+  Reader r = Reader(data, end, magic.len() + 1, false, "");
+  i32 count = r.u32();
+  Vec<StoreEntry> out = Vec.create();
+  for (i32 i = 0; i < count && !r.bad; i++) {
+    string path = r.string();
+    i32 kind = r.byte();
+    i32 mode = r.u32();
+    string owner = r.string();
+    i64 mtime = r.i64();
+    if (!r.bad && kind != KIND_FILE() && kind != KIND_DIR()) { r.wrong("an entry that is neither a file nor a directory"); }
+    u8[] bytes = kind == KIND_FILE() ? r.bytes(r.u32()) : u8[]();
+    if (!r.bad) { out.push(StoreEntry(path, kind == KIND_DIR(), bytes, mode, owner, mtime)); }
+  }
+  if (r.bad) { return Result.Err(Other(r.why == "" ? "the image ends inside an entry" : r.why)); }
+  if (r.at != end) { return Result.Err(Other("trailing bytes after the last entry")); }
+  StoreEntry[] all = StoreEntry[].filled(out.len(), StoreEntry("", false, u8[](), 0, "", 0 as i64));
+  for (i32 i = 0; i < out.len(); i++) { all[i] = out.get(i); }
+  return Result.Ok(all);
+}
+
+/** An image as a person reads it: one line per entry, its kind and mode, owner, size and path. */
+export string dumpImage(u8[] data) {
+  match (entriesOf(data)) {
+    Ok(entries): {
+      Buf out = Buf.create();
+      for (StoreEntry e in entries) {
+        string size = e.isDir ? "" : " \{e.data.len()}" + (e.data.len() == 1 ? " byte" : " bytes");
+        out.pushAll("\{e.isDir ? "d" : "-"} \{octal(e.mode)} \{e.owner}\{size} \{e.path}\n".toBytes());
+      }
+      return string.fromBytes(out.take());
+    }
+    Err(e): { return "cannot read this image: \{e.message}\n"; }
+  }
+}
+
+/** The store saved at `path` on `host`, or an empty one when nothing is there yet. */
+export async Result<MemoryStore, ReadFault> bootStore(Files host, Clock clock, string path) {
+  match (await host.readFile(path)) {
+    Ok(bytes): {
+      match (entriesOf(bytes)) {
+        Ok(entries): {
+          match (MemoryStore.restore(clock, entries)) {
+            Ok(store): { return Result.Ok(store); }
+            Err(e): { return Result.Err(Other(path + ": " + e.message)); }
+          }
+        }
+        Err(e): { return Result.Err(Other(path + ": " + e.message)); }
+      }
+    }
+    Err(e): {
+      if (e is NotFound) { return Result.Ok(MemoryStore.create(clock)); }
+      return Result.Err(e);
+    }
+  }
+}
+
+/** Save `store` at `path` on `host`: written beside it and renamed over it, so a failed save leaves the last one. */
+export async Result<void, MoveFault> saveStore(Files host, MemoryStore store, string path) {
+  string beside = path + ".new";
+  Result<void, WriteFault> written = await host.writeFile(beside, imageOf(store.entries()));
+  WriteFault? failed = written.err();
+  if (failed is not null) { return Result.Err(failed!); }
+  return await host.rename(beside, path);
 }

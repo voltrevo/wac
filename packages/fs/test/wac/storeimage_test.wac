@@ -1,0 +1,121 @@
+// An image of one `MemoryStore` — version 2, over `store.entries()` and `MemoryStore.restore` (design/system/0013
+// step 5). A second store stands in for the disk an image is booted from and saved to.
+
+import { Sys, Files, Stat, MemoryStore, StoreEntry, NotFound, Other } from "std";
+import { Buf, Result } from "core";
+import { imageOf, entriesOf, dumpImage, bootStore, saveStore } from "../../src/image.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { crc32 } from "../../../gzip/src/crc32.wac";
+
+/** `image` with its checksum dropped, `body` put in place of its entries, and a checksum made for the result. */
+u8[] resealed(u8[] image, u8[] body) {
+  Buf out = Buf.create();
+  out.pushAll("wacimg\0".toBytes());
+  out.push(2);
+  out.pushAll(body);
+  out.pushU32(crc32(out.bytes()));
+  return out.take();
+}
+
+async MemoryStore sample(Sys sys) {
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  await root.mkdir("/home/ada", true);
+  await root.chown("/home/ada", "ada");
+  await store.asUser("ada").writeFile("/home/ada/notes", "hi".toBytes());
+  await root.chmod("/home/ada/notes", 384);
+  await root.writeFile("/one", "x".toBytes());
+  return store;
+}
+
+string why(Result<StoreEntry[], Other> r) {
+  match (r) {
+    Ok(e): { return "read"; }
+    Err(e): { return e.message; }
+  }
+}
+
+export async string test_an_image_holds_every_entry_with_its_owner_and_mode(Sys sys) {
+  T t = T.create();
+  MemoryStore store = await sample(sys);
+  u8[] image = imageOf(store.entries());
+  match (entriesOf(image)) {
+    Ok(entries): {
+      t.eqI32(entries.len(), 5, "five entries");
+      t.eqStr(entries[3].path, "/home/ada/notes", "in order");
+      t.eqStr(entries[3].owner, "ada", "the owner");
+      t.eqI32(entries[3].mode, 384, "the mode");
+      t.eqStr(string.fromBytes(entries[3].data), "hi", "the bytes");
+      t.isTrue(entries[2].isDir && entries[2].owner == "ada", "a directory and its owner");
+    }
+    Err(e): { t.fail("entriesOf: " + e.message); }
+  }
+  t.eqStr(dumpImage(image),
+          "d 0755 root /\nd 0755 root /home\nd 0755 ada /home/ada\n- 0600 ada 2 bytes /home/ada/notes\n"
+            + "- 0644 root 1 byte /one\n",
+          "one line per entry");
+  return t.report();
+}
+
+export async string test_a_damaged_image_says_what_is_wrong(Sys sys) {
+  T t = T.create();
+  u8[] image = imageOf((await sample(sys)).entries());
+  t.eqStr(why(entriesOf("wac".toBytes())), "too short to be an image", "short");
+  u8[] wrong = u8[].filled(image.len(), 0);
+  wrong.copyFrom(image, 0, 0, image.len());
+  wrong[0] = 'x';
+  t.eqStr(why(entriesOf(wrong)), "not an image: the magic does not match", "the magic");
+  wrong[0] = image[0];
+  wrong[7] = 1;
+  t.eqStr(why(entriesOf(wrong)), "this build reads image version 2, not 1", "an old version");
+  wrong[7] = image[7];
+  wrong[20] = wrong[20] ^ 255;
+  t.eqStr(why(entriesOf(wrong)), "the checksum does not match: the image is damaged", "a flipped byte");
+  t.isTrue(dumpImage(wrong).len() > 0 && why(entriesOf(wrong)) != "read", "dump says it cannot read it");
+  // count 1, path "/", kind 7: sealed, so only the kind is wrong
+  u8[] oddKind = resealed(image, [1, 0, 0, 0, 1, 0, 0, 0, '/', 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  t.eqStr(why(entriesOf(oddKind)), "an entry that is neither a file nor a directory", "a kind nothing means");
+  // count 2, one whole directory entry: the second is missing
+  u8[] rootDir = [1, 0, 0, 0, '/', 1, 237, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  u8[] short = u8[].filled(rootDir.len() + 4, 0);
+  short[0] = 2;
+  short.copyFrom(rootDir, 0, 4, rootDir.len());
+  t.eqStr(why(entriesOf(resealed(image, short))), "the image ends inside an entry", "an entry missing");
+  u8[] extra = u8[].filled(rootDir.len() + 5, 9);
+  extra[0] = 1;
+  extra[1] = 0;
+  extra[2] = 0;
+  extra[3] = 0;
+  extra.copyFrom(rootDir, 0, 4, rootDir.len());
+  t.eqStr(why(entriesOf(resealed(image, extra))), "trailing bytes after the last entry", "bytes after the last");
+  return t.report();
+}
+
+export async string test_a_store_is_booted_from_and_saved_to_another(Sys sys) {
+  T t = T.create();
+  Files disk = MemoryStore.create(sys.clock()).asUser("root");
+  match (await bootStore(disk, sys.clock(), "/session.img")) {
+    Ok(fresh): { t.eqI32(fresh.entries().len(), 1, "nothing saved yet boots an empty store"); }
+    Err(e): { t.fail("boot with nothing there: \{e}"); }
+  }
+  MemoryStore store = await sample(sys);
+  t.isTrue((await saveStore(disk, store, "/session.img")).isOk(), "saved");
+  t.isTrue((await disk.stat("/session.img.new")).isErr(), "by renaming over the old one");
+  match (await bootStore(disk, sys.clock(), "/session.img")) {
+    Ok(again): {
+      match (await again.asUser("root").readFile("/home/ada/notes")) {
+        Ok(b): { t.eqStr(string.fromBytes(b), "hi", "booted with what was saved"); }
+        Err(e): { t.fail("read after boot"); }
+      }
+    }
+    Err(e): { t.fail("boot: \{e}"); }
+  }
+  await disk.writeFile("/bad.img", "not an image at all".toBytes());
+  t.isTrue((await bootStore(disk, sys.clock(), "/bad.img")).isErr(), "a damaged image does not boot");
+  await disk.mkdir("/dir.img", false);
+  t.isTrue((await bootStore(disk, sys.clock(), "/dir.img")).isErr(), "nor does a directory");
+  t.isTrue((await saveStore(disk, store, "/no/such/dir/s.img")).isErr(), "saving where there is no directory fails");
+  await disk.writeFile("/rootless.img", imageOf([StoreEntry("/a", false, u8[](), 420, "root", 0 as i64)]));
+  t.isTrue((await bootStore(disk, sys.clock(), "/rootless.img")).isErr(), "an image that does not start at the root");
+  return t.report();
+}

@@ -27,6 +27,8 @@ import { memoryOps, synthOps, imageOps, imageBadOps, renameOps, rootlessOps, mou
          pathOps, procOps, streamOps, wireOps, permissionOps } from "./wac/cov_probe.wac";
 import { test_dev_has_a_sink_and_two_endless_streams, test_proc_lists_each_process_and_self,
          test_bin_lists_the_programs_as_executables } from "./wac/trees_test.wac";
+import { test_an_image_holds_every_entry_with_its_owner_and_mode, test_a_damaged_image_says_what_is_wrong,
+         test_a_store_is_booted_from_and_saved_to_another } from "./wac/storeimage_test.wac";
 
 /** Every transcript, in the order the TypeScript called them, with what each one is for. */
 export async i32 main(Sys sys) {
@@ -65,15 +67,18 @@ export async i32 main(Sys sys) {
       return 1;
     }
   }
-  // `/dev`, `/proc` and `/bin` as `Files`: their tests are the exercise, and a failure is one here too.
+  // `/dev`, `/proc`, `/bin` and the version 2 image: their tests are the exercise, and a failure is one here too.
   string[] trees = [
     (await test_dev_has_a_sink_and_two_endless_streams(sys)),
     (await test_proc_lists_each_process_and_self(sys)),
-    (await test_bin_lists_the_programs_as_executables(sys))
+    (await test_bin_lists_the_programs_as_executables(sys)),
+    (await test_an_image_holds_every_entry_with_its_owner_and_mode(sys)),
+    (await test_a_damaged_image_says_what_is_wrong(sys)),
+    (await test_a_store_is_booted_from_and_saved_to_another(sys))
   ];
   for (i32 i = 0; i < trees.len(); i++) {
     if (trees[i] != "") {
-      core.warn("error: a trees test failed: \{trees[i]}");
+      core.warn("error: a test failed: \{trees[i]}");
       return 1;
     }
   }
