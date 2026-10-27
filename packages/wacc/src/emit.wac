@@ -837,7 +837,7 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
       // file that writes the call.** Both are in play in one iteration, which is why this cannot use
       // the walk preamble the pass-level loops use: only the name comparison moves.
       Decl[] gd = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
-      i32 named = genericFuncFor(env, raw, env.curFile);
+      i32 named = genericFuncFor(env, src, lexed, raw, env.curFile);
       for (i32 d = 0; d < gd.len(); d++) {
         if (named >= 0 && d != named) { continue; }
         u8[] gs = srcFor(env.fileSrcs, src, env.declFile(d));
@@ -893,8 +893,8 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
   Program pg = env.prog!;
   // The name and the parameter types belong to the declaring file; the arguments to this one.
   Decl[] cd = env.mergedDecls.len() > 0 ? env.mergedDecls : pg.decls;
-  i32 named = genericFuncFor(env, raw, env.curFile);
-  for (i32 d = 0; d < cd.len(); d++) {
+  i32 named = genericFuncFor(env, src, lexed, raw, env.curFile);
+  for (i32 d = treeDeclFirst(env, src, lexed, raw); d >= 0; d = env.treeIx.next[d]) {
     if (named >= 0 && d != named) { continue; }
     u8[] cs = srcFor(env.fileSrcs, src, env.declFile(d));
     Lexed cl = lexFor(env.fileLexeds, lexed, env.declFile(d));
@@ -2190,7 +2190,7 @@ export struct Env {
    * declares them both is written.
    */
   i32 sigType(this, string t) {
-    for (i32 i = 0; i < this.sigCount; i++) {
+    for (i32 i = keyFirst(this.sigIx, t); i >= 0; i = this.sigIx.next[i]) {
       if (this.sigTypes[i] == t) { return this.arrayCount + this.structCount + i; }
     }
     if (this.sigCount >= this.sigTypes.len()) {
@@ -2198,6 +2198,7 @@ export struct Env {
       return 0;
     }
     this.sigTypes[this.sigCount] = t;
+    keyAdd(this.sigIx, t, this.sigCount);
     this.sigCount = this.sigCount + 1;
     i32 mine = this.sigCount - 1;
     if (isTupleEntry(t)) { return this.arrayCount + this.structCount + mine; }
@@ -3157,6 +3158,9 @@ export struct Env {
   KeyIndex treeIx;
   bool treeIxBuilt;
 
+  /** `sigTypes` by spelling, kept as `sigType` appends — it was a walk of every signature per one asked. */
+  KeyIndex sigIx;
+
   /** The component tag recorded at this position, in this file and instance, or -1. */
   i32 markupSiteAt(const this, i32 line, i32 col) {
     for (i32 i = 0; i < this.markupCount; i++) {
@@ -3507,7 +3511,7 @@ export struct Env {
                0, 0, string[].filled(2048, ""), string[].filled(2048, ""), string[].filled(2048, ""),
                B[].filled(2048, B.create()),
                KeyIndex.create(), KeyIndex.create(), KeyIndex.create(), KeyIndex.create(),
-               KeyIndex.create(), false);
+               KeyIndex.create(), false, KeyIndex.create());
   }
 
   
@@ -18754,11 +18758,11 @@ string genericFuncKey(Env env, i32 d, string text) {
  * Which generic function `raw` a call in file `f` names — its own file's, then the one its imports
  * name, then the first — or -1 for a program of one file, where there is only one.
  */
-i32 genericFuncFor(Env env, string raw, i32 f) {
+i32 genericFuncFor(Env env, u8[] src, Lexed lexed, string raw, i32 f) {
   if (env.mergedDecls.len() == 0) { return 0 - 1; }
   i32 first = 0 - 1;
   i32 imported = 0 - 1;
-  for (i32 d = 0; d < env.mergedDecls.len(); d++) {
+  for (i32 d = treeDeclFirst(env, src, lexed, raw); d >= 0; d = env.treeIx.next[d]) {
     if (genericDeclName(env, d) != raw) { continue; }
     i32 df = env.declFile(d);
     if (df == f) { return d; }

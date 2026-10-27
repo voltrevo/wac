@@ -265,6 +265,26 @@ tree by template name (`ownerTemplateOf` callers) could use the same index, but 
 
 Same shell bytes.
 
+**Eleventh round (agent-b, 2026-10-27): signatures and generic calls.** `Env.sigType` looked for each
+signature in every one registered (12% of the shell build, mostly through `pairType` for each `fn<…>`
+default), and every call asked `genericCallInstance` and `genericFuncFor` whether a generic function of
+its name exists by reading the name of every declaration. `sigType` now keeps `sigIx` as it appends;
+the other two use round 10's `treeDeclFirst`. `test_a_signature_is_not_looked_for_in_every_signature`
+fails without them: 1,000 against 2,000 structs each with a `fn<…>` field took 940 against 3,030 ms.
+It asserts that both programs are emitted, because past about 2,048 structs a table runs out and the
+module is declined quickly, which the ratio would read as fast. `genericFuncInstance` (written type
+arguments) and `genericFuncKey` still walk every declaration and have no test.
+
+| | round 10 | round 11 |
+|---|---:|---:|
+| `wac build` of box's shell | 6.13–6.27 s | 4.78–4.91 s |
+| `./bootstrap.sh --no-install` | 126 s | 88 s |
+
+Same shell bytes.
+
+**Profiling note.** Wasm inlining folds a callee's walk into its caller's self time: `genericCallInstance`
+showed 99% self until `WAC_V8_FLAGS="--prof --no-wasm-inlining"` named `genericFuncFor`.
+
 A lead that did not reproduce in isolation and so was not changed: `Env.sigType` walks every
 signature for each one asked (12% of the shell build after round 10, via `pairEverySignature`). A V8 code cache for
 the seed would need the `v8` crate to expose `CompiledWasmModule` serialization, which 152.1 does not.

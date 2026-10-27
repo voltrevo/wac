@@ -476,3 +476,45 @@ export string test_inferring_a_method_instance_does_not_walk_every_declaration(C
            + " ms");
   return t.report();
 }
+
+/** `n` structs, each with a field of its own `fn<…>` type, and a local of it. */
+string funcrefStructs(i32 n) {
+  string[] parts = string[].filled(3 * n, "");
+  for (i32 i = 0; i < n; i++) {
+    string s = "S" + itoa(i);
+    string k = "k" + itoa(i);
+    parts[3 * i] = "i32 " + k + "(" + s + " s) { return s.v; }\n";
+    parts[3 * i + 1] = "struct " + s + " { i32 v; fn<i32(" + s + ")> cb; }\n";
+    string f = "fn<i32(" + s + ")>";
+    parts[3 * i + 2] = "export i32 f" + itoa(i) + "(i32 x) { " + s + " s = " + s + "(x, " + k + "); "
+        + f + " h = " + k + "; " + f + " g = h; " + f + " e = g; " + f + " d = e; "
+        + "return s.v + h(s) + g(s) + e(s) + d(s) + s.cb(s); }\n";
+  }
+  return joinedParts(parts, 3 * n);
+}
+
+// **Finding a signature or a called function's declaration does not walk them all.** Each `fn<…>` type
+// the emitter met was looked for in every signature registered so far, and each call looked for a
+// generic declaration of its name by reading every declaration's name, so twice the structs cost three
+// times as much.
+export string test_a_signature_is_not_looked_for_in_every_signature(Core core) {
+  T t = T.create();
+  string fewer = funcrefStructs(1000);
+  string more = funcrefStructs(2000);
+  // **Both must be emitted**, or the ratio measures a refusal: past about 2,048 structs a table runs
+  // out and the module is declined in a fraction of the time.
+  t.isTrue(emitFiles(["/t/m.wac"], [fewer], "/t/m.wac").len() > 1000, "1,000 structs emitted");
+  t.isTrue(emitFiles(["/t/m.wac"], [more], "/t/m.wac").len() > 1000, "2,000 structs emitted");
+  i64 a = timeEmit(core, fewer);
+  i64 b = timeEmit(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmit(core, fewer);
+    i64 b2 = timeEmit(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b * (2 as i64) < a * (5 as i64),
+           "1,000 structs with a `fn<…>` field: " + itoa(millis(a)) + " ms; 2,000: " + itoa(millis(b))
+           + " ms");
+  return t.report();
+}
