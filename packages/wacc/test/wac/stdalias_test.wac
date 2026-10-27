@@ -1,0 +1,27 @@
+// A std fault alias imported alone converts to text — through `wac check`, the route a program takes.
+//
+// `type SpawnFault = union<NotGranted, Unsupported, Other>`: a file that imported the alias and none of the three
+// had none of them declared, because `closeOverSignatures` followed fields, methods, functions and statics and not
+// an alias's body — so `"\{e}"` on a `SpawnFault` was *no conversion to text*. In process the corpus harness does
+// not expand std's aliases at all, which is why this is a test of the command rather than a case.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { Cli, Exec, Sys } from "std";
+
+export string test_a_std_fault_alias_imported_alone_converts_to_text(Sys sys) {
+  Cli cli = sys.cli;
+  T t = T.create();
+  string dir = scratch(cli, "stdalias");
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
+  if (why != "") { return t.report(); }
+  cli.writeFile(dir + "/main.wac",
+                ("import { SpawnFault } from \"std\";\n" +
+                 "string said(SpawnFault e) { return \"\\{e}\"; }\n" +
+                 "export i32 main() { return 0; }\n").toBytes()).wait();
+  Exec r = cli.exec(binaryPath(cli), ["check", dir + "/main.wac"], u8[]()).wait();
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.isTrue(r.ran() && r.status == 0 && said.indexOf("no diagnostics") >= 0, "the alias converts: " + said);
+  return t.report();
+}

@@ -1321,6 +1321,11 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
         mine[mn] = tokenTextOf(src, lx, nameTok);
         mn = mn + 1;
       }
+      // An alias too: `Files.readFile` answers a `ReadFault`, and the union it names is reached through it.
+      TypeDecl(nameTok, typeParams, alias, body, exported): {
+        mine[mn] = tokenTextOf(src, lx, nameTok);
+        mn = mn + 1;
+      }
       default: { }
     }
   }
@@ -1378,6 +1383,12 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
         StaticDecl(nameTok, type, init, exported): {
           if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
           tyNames(src, lx, type, found, seen);
+        }
+        // **An alias reaches what it names**: `SpawnFault` is `union<NotGranted, Unsupported, Other>`, and a file
+        // that imported the alias alone had none of the three, so the union converted to no text (case 0855).
+        TypeDecl(nameTok, typeParams, alias, body, exported): {
+          if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
+          if (alias is not null) { tyNames(src, lx, alias!, found, seen); }
         }
         default: { continue; }
       }
