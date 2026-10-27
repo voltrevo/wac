@@ -33,7 +33,7 @@ import { enumVariantsIn } from "./scans.wac";
 import { KeyIndex, keyAdd, keyFirst } from "./keyindex.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
-import { importSpecs, importSpecsLexed, importSpecsOf } from "./files.wac";
+import { importSpecs, importSpecsLexed } from "./files.wac";
 import { isProjectSpec, Res, resolveFrom, resolveFromAt, resolveFromIn, resolveVia, startsWith } from "./path.wac";
 import { Frontend, frontendOf, readLexed, readOf, readParsedLexed, readProgram, Reads, readSrc } from "./frontend.wac";
 import { Pruned, pruneFor } from "./reach.wac";
@@ -626,7 +626,7 @@ export string tokenKindName(i32 kind) { return kindName(kind); }
  * The import specifiers in `src`, the file at `path`.
  */
 export string[] importSpecsFor(string path, u8[] src) {
-  return importSpecsOf(path, src);
+  return importSpecs(src);
 }
 
 /** Whether `spec` names something the linker carries rather than a file to read. */
@@ -818,6 +818,11 @@ export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res
   Edges edges = edgesOfIn(paths, sources, res, lexes);
   i32[] seen = i32[].filled(paths.len(), 0);
   for (i32 i = 0; i < paths.len(); i++) {
+    // **Not the built-ins.** `std` and `core` are read for what a file imports from them, but checking
+    // their own bodies here was more than checking the program that imports them, on every check; what
+    // they say is fixed when the compiler is built, and `lexcost_test.wac` keeps it empty
+    // (`issues/lang/0398b`).
+    if (isBuiltinSpec(paths[i])) { continue; }
     // **Each file is checked against its own closure, not against the whole list.** Handing
     // `checkFilesWith` 179 files to check one that imports three is the whole of why the naive
     // loop costs `n ×` a full parse. Nothing is lost: a file cannot be affected by a file it does
@@ -871,7 +876,7 @@ export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res
   for (i32 i = 0; i < sources.len(); i++) { srcBytes[i] = sources[i].toBytes(); }
   string sigs = ticketSigsOf(progs, srcBytes, lexes);
   for (i32 i = 0; i < paths.len(); i++) {
-    if (i >= progs.len() || (progs[i] is null) || (lexes[i] is null)) { continue; }
+    if (i >= progs.len() || (progs[i] is null) || (lexes[i] is null) || isBuiltinSpec(paths[i])) { continue; }
     Lowered lo = lowerProgram(progs[i]!, (i < sources.len() ? sources[i] : "").toBytes(), lexes[i]!, sigs);
     if (lo.why == "") { continue; }
     string why = lo.why;
@@ -971,8 +976,7 @@ Edges edgesOfIn(string[] paths, string[] sources, const Res res, Lexed?[] lexes)
     // **Read off the tokens the caller already has**, rather than lexing and parsing the file again
     // for its import list (`issues/lang/0398b`).
     Lexed? have = i < lexes.len() ? lexes[i] : null;
-    specsOf[i] = have is null ? importSpecsOf(i < paths.len() ? paths[i] : "", src.toBytes())
-                              : importSpecsLexed(src.toBytes(), have!);
+    specsOf[i] = have is null ? importSpecs(src.toBytes()) : importSpecsLexed(src.toBytes(), have!);
     upper = upper + specsOf[i].len();
   }
   // **Sized at the upper bound and filled once.** The count pass existed to size `to` exactly; a

@@ -180,6 +180,22 @@ string, built and searched once per type, and 24,000 structs took 606 ms to lowe
 Same shell bytes. About 35 ms of a bare check is starting the binary, so the compiler's own share is
 now about 30 ms.
 
+**Fifth round (agent-b, 2026-10-27): a program that imports `std`.** `check` gave every file of the
+graph a turn as the entry, `std` and `core` included, so a one-line program paid for checking all of
+`std`'s bodies and lowering its `async` ones, which was more than checking `std` on its own. The
+built-ins are now read for what a file imports from them and not checked as entries; what they would
+say is fixed when the compiler is built, and `lexcost_test.wac` checks that it is empty. Separately,
+`importSpecs` parsed a file to find its imports, and `wac` reads every file for them before compiling;
+it now only lexes.
+
+| | round 4 | round 5 |
+|---|---:|---:|
+| `wac check`, one line importing `std` | 211 ms | 141 ms |
+| `wac check` in `packages/box` (179 files) | 6,658 ms | 5,061 ms |
+
+Same shell bytes. V8 flags did not help: lazy compilation is already the default, a larger young
+generation saved 5% on a small check and nothing on the shell, and earlier tier-up cost more.
+
 Two leads that did not reproduce in isolation and so were not changed: `Env.sigType` walks every
 signature for each one asked (7% of the shell build, via `pairEverySignature`), and
 `methodInstanceInferred` walks every declaration per generic method call (10%). A V8 code cache for

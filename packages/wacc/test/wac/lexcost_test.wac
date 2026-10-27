@@ -15,6 +15,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { diagnoseGraph, lowerSources } from "../../src/api.wac";
 import { lex, Lexed } from "../../src/lex.wac";
+import { importSpecs } from "../../src/files.wac";
 import { builtinEnumVariants, builtinVariadicCallees, coreSource, stdSource } from "../../src/coretext.wac";
 import { enumVariantsOfText, variadicCalleesIn } from "../../src/scans.wac";
 import { Res } from "../../src/path.wac";
@@ -170,5 +171,61 @@ export string test_the_built_tables_are_what_the_text_says(Core core) {
           "the enums of core and std");
   t.eqStr(builtinVariadicCallees(), variadicCalleesIn(coreSource()), "core's variadic functions");
   t.isTrue(builtinVariadicCallees().indexOf("|all|") >= 0, "Ticket.all is among them");
+  return t.report();
+}
+
+// **A file's import list costs a lex, not a parse.** `wac` reads every file of a program for its imports
+// before compiling any, `std` included, and that went through the whole frontend: a lex and a parse of
+// 173 KB to find one `import` line. The list is read off the tokens.
+export string test_reading_a_files_imports_does_not_parse_it(Core core) {
+  T t = T.create();
+  u8[] s = stdSource().toBytes();
+  importSpecs(s);
+  i64 lexing = 0 as i64;
+  i64 reading = 0 as i64;
+  for (i32 r = 0; r < 5; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    lex(s);
+    i64 t1 = core.monotonicNanos().wait();
+    importSpecs(s);
+    i64 t2 = core.monotonicNanos().wait();
+    if (r == 0 || t1 - t0 < lexing) { lexing = t1 - t0; }
+    if (r == 0 || t2 - t1 < reading) { reading = t2 - t1; }
+  }
+  t.isTrue(reading < lexing * (2 as i64),
+           "std's imports took " + itoa((reading / (1000 as i64)) as! i32) + " µs to read, and lexing it "
+           + itoa((lexing / (1000 as i64)) as! i32) + " µs");
+  return t.report();
+}
+
+/** The best of three checks of `paths`, entered at `entry`. */
+i64 timeCheck(Core core, string[] paths, string[] texts, string entry) {
+  i64 best = 0 as i64;
+  for (i32 r = 0; r < 3; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    diagnoseGraph(paths, texts, entry);
+    i64 d = core.monotonicNanos().wait() - t0;
+    if (r == 0 || d < best) { best = d; }
+  }
+  return best;
+}
+
+// **Checking a program does not check `std`.** Every file of the graph took a turn as the entry, the
+// built-ins included, so a one-line program that imports `std` paid for checking all of `std`'s bodies
+// and lowering its `async` ones — more than checking `std` alone. Their diagnostics are fixed when the
+// compiler is built, and the first assertion here is what keeps them empty.
+export string test_checking_a_program_does_not_check_std(Core core) {
+  T t = T.create();
+  string[] alone = ["/t/std.wac", "core"] as string[];
+  string[] aloneTexts = [stdSource(), coreSource()] as string[];
+  t.eqStr(diagnoseGraph(alone, aloneTexts, "/t/std.wac"), "", "std, checked as an ordinary file");
+  string[] paths = ["/t/m.wac", "std", "core"] as string[];
+  string[] texts = ["import { Sys } from \"std\";\nexport i32 main(Sys sys) { return 0; }\n", stdSource(), coreSource()] as string[];
+  t.eqStr(diagnoseGraph(paths, texts, "/t/m.wac"), "", "a program that imports it");
+  i64 program = timeCheck(core, paths, texts, "/t/m.wac");
+  i64 std = timeCheck(core, alone, aloneTexts, "/t/std.wac");
+  t.isTrue(program * (4 as i64) < std * (3 as i64),
+           "checking one line that imports std took " + itoa((program / (1000000 as i64)) as! i32)
+           + " ms, and checking std " + itoa((std / (1000000 as i64)) as! i32) + " ms");
   return t.report();
 }

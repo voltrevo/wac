@@ -18,7 +18,6 @@
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { kExport, kIdent, kImport, kLbrace, kSemi, kStar, kString } from "./kinds.wac";
 import { stringLiteralBytes } from "./strlit.wac";
-import { Frontend, frontendOf } from "./frontend.wac";
 
 // **What is no longer here: five forwarders.** `resolveFrom`, `resolveFromIn`, `resolveFromAt` and
 // `normalisePath` were re-exported from `path.wac`, and `isBuiltinSpec` from `coretext.wac`, each as
@@ -37,13 +36,9 @@ import { Frontend, frontendOf } from "./frontend.wac";
  * nothing, and deliberately: `core` is carried by the linker, so there is no file to read.
  */
 export string[] importSpecs(u8[] src) {
-  return importSpecsOf("x.wac", src);
-}
-
-/** The same, read by whichever frontend `path` names — see `frontend.wac`. */
-export string[] importSpecsOf(string path, u8[] src) {
-  Frontend fe = frontendOf(path, src);
-  return importSpecsLexed(fe.src, fe.lexed);
+  // **Lexed, not parsed**: the list is read off the tokens, and parsing `std` to find its one import
+  // was most of what reading it cost (`issues/lang/0398b`).
+  return importSpecsLexed(src, lex(src));
 }
 
 /** The same, from tokens already read — `src` must be the bytes `lexed` was read from. */
