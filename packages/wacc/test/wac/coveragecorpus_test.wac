@@ -1,0 +1,157 @@
+// Instrumenting the corpus: opt-in, and every instrumented module still validates.
+//
+// test-lane: heavy — 218s alone and 1,604s in a loaded gate, measured 2026-10-27: one entry per package, each emitted twice with the whole corpus as input
+//
+// Split out of `coverage_test.wac`, whose counter test is what a coverage reader relies on and is
+// cheap. This one is a sweep: for one entry per package it emits the module plain and instrumented,
+// requires the two to differ, and asks the engine to validate every instrumented one. It earns its
+// place before a change to the instrumentation, not on every push.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { Core, Cli } from "std";
+import { emitFiles, emitFilesCovered } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { Validated, validateAll, scratchDir } from "./artifacts_probe.wac";
+
+/** How many `from "…"` clauses a source has — the cheap stand-in for how deep its closure is. */
+i32 importCount(string src) {
+  i32 n = 0;
+  for (i32 i = 0; i + 6 <= src.len(); i++) {
+    if (src.slice(i, i + 6) == "from \"") { n = n + 1; }
+  }
+  return n;
+}
+
+/** `packages/<name>/…` → `<name>`; anything else is its own group, which `spec/tour.wac` wants. */
+string packageOf(string path) {
+  i32 first = -1;
+  for (i32 i = 0; i < path.len(); i++) {
+    if (path.slice(i, i + 1) != "/") { continue; }
+    if (first < 0) { first = i; continue; }
+    return path.slice(0, i);
+  }
+  return path;
+}
+
+export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_it(
+    Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "coveragecorpus_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  string dir = scratchDir(cli);
+  i32 compared = 0;
+  i32 instrumented = 0;
+  string[] same = string[].filled(16, "");
+  i32 nSame = 0;
+  string[] wrote = string[].filled(c.paths.len(), "");
+  i32 nWrote = 0;
+
+  // **One entry per package, and the middle-sized one.** Both halves of each pair are used — the plain
+  // build is the *control* for "instrumenting changed something", and without it a build that
+  // instrumented nothing would pass every assertion here.
+  //
+  // The sweep used to take the **first forty** entries of a name-sorted corpus, which is a window on
+  // whichever packages sort first. As the corpus doubled — every file ported in `issues/system/0161`
+  // joins it — that window slid until it held **four packages, twenty of its forty entries from `bls`
+  // alone**, and the sweep went from 5s to 25s without anybody touching it. Heavier entries, not more
+  // scope.
+  //
+  // Four samples were measured. The window: 4 packages, 25s. A stride of `n / 40`: 23 packages, **58s**
+  // — better evidence at twice the price. One per package by median source length: 39 packages, **46s**,
+  // because a package's median file often sits on a deep import graph. One per package by fewest
+  // imports, which is this: **39 packages and 15.8s**, above a 5.8s floor for compiling this file and
+  // running nothing — so the sweep itself went from 24.8s to 10s. File *bytes* predicted none of
+  // this and closure bytes predicted it roughly — the entry is cheap or expensive according to what it
+  // pulls in, not according to its own length.
+  //
+  // **The deep end is not lost by choosing shallow entries**: `corpusemit_test.wac` emits *every* file
+  // in the tree with its full closure, which is why it is in the heavy lane. What is asked here is
+  // whether instrumenting is opt-in and leaves a real module valid, and 39 packages answer that better
+  // than four did.
+  //
+  // Sampling by package also stops the cost drifting with unrelated additions, which the window could
+  // not: a new package moves this by one entry, where a hundred new files at the front of the sort used
+  // to move it by forty.
+  //
+  // **The whole corpus is still handed to each emit, and that was re-checked rather than assumed.** The
+  // note here used to say passing each entry its own closure "does not help", measured 2026-08-18 at
+  // 367 files; at 729 the entries reach a mean of 12 files each, so it looked like a missed 60× win. It
+  // is not: `emitFiles` walks the closure from the entry, so extra paths cost lookups rather than
+  // compiles, and with closures passed the sweep measured **31.2s against 31.5s**. What made the first
+  // attempt look like a 4× win was that it was *wrong* — keys have to be `/`-prefixed for `closureOf`,
+  // and without that every closure held only the entry, so 36 of 40 emitted nothing. The `>= 20`
+  // assertion below is what caught it.
+  i32 n = c.paths.len();
+  i32[] picked = i32[].filled(n, 0);
+  i32 nPicked = 0;
+  i32 cursor = 0;
+  while (cursor < n) {
+    // The corpus is name-sorted, so a package's files are contiguous: `packages/<name>/…`.
+    string owner = packageOf(c.paths[cursor]);
+    i32 upto = cursor;
+    while (upto < n && packageOf(c.paths[upto]) == owner) { upto = upto + 1; }
+
+    // **The file with the fewest imports of its own, and the largest source among those.** What this
+    // sweep costs per entry is the entry's *closure*, not the entry — and a local count is the only
+    // cheap proxy for it: computing 729 closures here would cost more than the emits it saves.
+    // Measured over the corpus, closure work in source bytes: the old window 6426 KiB, a stride sample
+    // 6537, the median file per package 6506, and this rule **2144**. The tie-break is what keeps the
+    // entries substantial — a median own source of 9 KiB rather than the 2 KiB that picking the
+    // smallest file per package would give, and a program with almost no branch points is thin
+    // evidence that instrumenting a real module leaves it valid.
+    i32 best = cursor;
+    for (i32 i = cursor; i < upto; i++) {
+      i32 mine = importCount(c.sources[i]);
+      i32 theirs = importCount(c.sources[best]);
+      if (mine < theirs || (mine == theirs && c.sources[i].len() > c.sources[best].len())) {
+        best = i;
+      }
+    }
+    picked[nPicked] = best;
+    nPicked = nPicked + 1;
+    cursor = upto;
+  }
+
+  // **The sample itself is asserted**, because a `packageOf` that answered the whole path would pick
+  // every file — 729 emits rather than 39, which reads as "slower" and not as "broken" — and one that
+  // answered a constant would pick a single file and sail through every assertion below.
+  t.isTrue(nPicked >= 30 && nPicked <= 80,
+           "the sample is one entry per package and there are " + itoa(nPicked) + " of them");
+
+  for (i32 k = 0; k < nPicked; k++) {
+    i32 f = picked[k];
+    u8[] plain = emitFiles(c.paths, c.sources, c.paths[f]);
+    u8[] cov = emitFilesCovered(c.paths, c.sources, c.paths[f]);
+    compared = compared + 1;
+    if (plain.len() <= 8) { continue; }
+    instrumented = instrumented + 1;
+    string at = dir + "/covfile" + itoa(f) + ".wasm";
+    cli.writeFile(at, cov).wait();
+    wrote[nWrote] = at;
+    nWrote = nWrote + 1;
+    // The instrumented build must differ — a build that instruments nothing would pass every
+    // assertion above by accident.
+    if (cov.len() == plain.len() && nSame < same.len()) {
+      same[nSame] = c.paths[f];
+      nSame = nSame + 1;
+    }
+  }
+
+  string[] toCheck = string[].filled(nWrote, "");
+  for (i32 i = 0; i < nWrote; i++) { toCheck[i] = wrote[i]; }
+  Validated v = validateAll(cli, toCheck);
+  t.isTrue(v.ok, "the engine was asked about the instrumented modules — " + v.error);
+  t.eqI32(v.rejected.len(), 0,
+          itoa(v.rejected.len()) + " instrumented module(s) do not validate: " +
+          joined(v.rejected, ", "));
+
+  t.isTrue(instrumented >= 20, "only " + itoa(instrumented) + " modules were instrumented");
+  string[] said = string[].filled(nSame, "");
+  for (i32 i = 0; i < nSame; i++) { said[i] = same[i]; }
+  t.eqI32(nSame, 0, "instrumenting changed nothing in: " + joined(said, ", "));
+  return t.report();
+}

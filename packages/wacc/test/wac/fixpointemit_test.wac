@@ -1,4 +1,6 @@
 // Rung 5, the half that makes it a bootstrap: does `wacc`-compiled-by-`wacc` *emit* what
+//
+// test-lane: heavy — 54s in a loaded gate, measured 2026-10-27; two compiler stages emitting wacc's own source, which `bootstrap.sh` already does
 // `wacc`-compiled-by-`wac` emits?
 //
 // `test/wac/bootstrapemit_test.wac` shows the emitted compiler can read — it lexes, parses, prints

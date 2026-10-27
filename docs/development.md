@@ -181,6 +181,15 @@ a foreground run dies with the shell that started it, and do not edit the tree w
 it builds from the working directory rather than from a snapshot, so an edit half-way through fails
 the run.
 
+**The gate is the suite and nothing else.** Since 2026-10-27 it does not run the heavy lane, the doc
+checks, the coverage ratchets or the site's checks. Run whichever ones your change reaches before you
+push:
+
+    wac task test:heavy        files marked `// test-lane: heavy`, including wacc's bootstrap stages
+    wac task docs              tools/ guards: links, issue counts, task names
+    wac task coverage:all      the per-package coverage floors
+    cd site && npx tsc -b      the site's type-check
+
 **A push can be rejected after a green suite**, and on a busy day it can happen three times in a row —
 that is what "still being beaten to the push after three tries" means. The suite takes minutes and
 another agent's push takes none, so the race is lost in the gap between the last test and the push.

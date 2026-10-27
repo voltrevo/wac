@@ -328,3 +328,22 @@ v8::V8::set_flags_from_string(&f); }` before `new_default_platform` in `native/v
 `start_v8`. Then run `WAC_V8_FLAGS=--prof wac …` in an empty directory and process the large
 `isolate-*.log` with `node --prof-process`. `build` does its work in a second isolate, so a single
 `--logfile` comes out empty. This change was not committed.
+
+## 2026-10-27: three timing bars were too tight, and one lead
+
+Three timing tests in `linearwalks_test.wac` failed a 4-worker suite on correct code. Each was
+re-measured on an idle machine against the source from before its own fix, and given a bar between
+the two:
+- **Signature lookup:** 3.2× before, 2.63× now. The bar moves from 2.5× to 2.9×.
+- **Type-name lookup:** 1.74× before, 1.30× now. The bar moves from 1.25× to 1.5×.
+- **Imported file:** the 300-against-600-names ratio no longer separates the two sources, so the test
+  now asks whether the costs add or multiply. Before the fix: 6,145 ms against 709 + 74. Today: well
+  inside 3× the sum.
+
+**The lead is the 2.63×.** At 2,000 structs, `fn<…>` fields cost 911 ms against 538 ms for plain `i32`
+fields of the same shape. That gap grows 3.8× when the struct count doubles, so the `fn` type path
+still has a quadratic walk after the signature index.
+
+**`linearwalks_test.wac` is in the heavy lane as of 2026-10-27.** A 4-worker suite failed five of its
+ratios on correct code that passes alone, so the gate no longer runs it. Run the file directly when
+working on this issue.

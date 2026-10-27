@@ -1,5 +1,7 @@
 // The `wac` command through three hosts, compared on stdout, stderr and exit code.
 //
+// test-lane: heavy — 101s alone and 1,244s in a loaded gate, measured 2026-10-27: builds the whole `wac` program for Deno and for Node through build.ts, then runs every row on three hosts
+//
 // **The first thing `issues/system/0230a` asks for, and the reason it asks for it first.** The
 // operator ruled option 2 on 2026-08-21: the shared thing is the *wac program*, and Deno, Node and
 // the native binary are hosts that hand it argv and capabilities. Under that ruling the two hosts

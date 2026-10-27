@@ -113,15 +113,19 @@ i64 timeCheck(Core core, Cli cli, string dir) {
 export string test_a_project_check_reads_a_shared_file_once(Core core, Cli cli) {
   T t = T.create();
   string few = importers(cli, "checkproject-few", 10, 14000);
-  string many = importers(cli, "checkproject-many", 40, 14000);
+  string many = importers(cli, "checkproject-many", 80, 14000);
   string fewSmall = importers(cli, "checkproject-few-small", 10, 0);
-  string manySmall = importers(cli, "checkproject-many-small", 40, 0);
+  string manySmall = importers(cli, "checkproject-many-small", 80, 0);
   Exec ok = checkIn(cli, many, "");
-  t.isTrue(contains(said(ok), ".: 41 file(s), no diagnostics"), "the project checks — \{said(ok)}");
+  t.isTrue(contains(said(ok), ".: 81 file(s), no diagnostics"), "the project checks — \{said(ok)}");
   i64 addedFew = timeCheck(core, cli, few) - timeCheck(core, cli, fewSmall);
   i64 addedMany = timeCheck(core, cli, many) - timeCheck(core, cli, manySmall);
-  t.isTrue(addedMany * (2 as i64) < addedFew * (3 as i64),
-           "a megabyte imported by 10 files added \{itoa(addedFew as! i32)} ms to the check, and by 40 "
+  // **Eighty importers against ten, and a 3× bar, since 2026-10-27.** It was forty against ten with a
+  // 1.5× bar, and a 4-worker suite measured 83 ms against 196 on correct code: 2.36×. That is a
+  // difference of two timings, so load lands in it twice. Reading the file per importer now costs 8×,
+  // and reading it once still costs about 1×, so 3× sits well clear of both.
+  t.isTrue(addedMany < addedFew * (3 as i64),
+           "a megabyte imported by 10 files added \{itoa(addedFew as! i32)} ms to the check, and by 80 "
            + "\{itoa(addedMany as! i32)} ms");
   cli.remove(few, true).wait();
   cli.remove(many, true).wait();

@@ -1,5 +1,7 @@
 // Two walks in the compiler that must not multiply by the size of the program.
 //
+// test-lane: heavy — 27s in a 4-worker suite, measured 2026-10-27; its doubling ratios read the machine's load as well as the compiler, and five of them failed a 4-worker suite on correct code that passes alone
+//
 // `issues/lang/0398b`: building box's shell took 66 s against 6 s in August, and a third of it was the
 // checker scanning every source of the graph once per type name, a fifth the emitter walking every
 // variant once per field once per named instance. Each was linear on its own and the product was the
@@ -66,25 +68,36 @@ i64 timeCheck(Core core, string entry, string lib) {
 //
 // Not a megabyte against one line, which is what this compared first: once the rest of the compiler
 // got faster, merely lexing the megabyte outweighed checking the names, and a correct checker failed.
+//
+// **Nor 300 names against 600, which is what it compared second.** By 2026-10-27 checking the names
+// had become the larger cost, so doubling them doubled the time even with the file read once. That
+// was 50 ms against 96 in a loaded gate, the same 2× the broken checker showed. So this now asks
+// whether the two costs *add* or *multiply*: 600 names beside the megabyte, against 600 names beside
+// nothing plus one name beside the megabyte. Reading the file per name is 600 megabytes, seconds
+// where the sum is milliseconds, and no loaded machine closes a gap that wide.
 export string test_a_large_imported_file_is_not_rescanned_per_type_name(Core core) {
   T t = T.create();
   string big = libWithComment(1024);
-  string fewer = namingEntry(300);
-  string more = namingEntry(600);
-  timeCheck(core, fewer, big);
-  i64 a = timeCheck(core, fewer, big);
-  i64 b = timeCheck(core, more, big);
+  string small = libWithComment(0);
+  string one = namingEntry(1);
+  string many = namingEntry(600);
+  timeCheck(core, many, big);
+  i64 both = timeCheck(core, many, big);
+  i64 names = timeCheck(core, many, small);
+  i64 file = timeCheck(core, one, big);
   // **The best of three**, because a loaded machine only ever adds time: one slow run of either
   // side was enough to read as a ratio the code does not have.
   for (i32 k = 0; k < 2; k++) {
-    i64 a2 = timeCheck(core, fewer, big);
-    i64 b2 = timeCheck(core, more, big);
-    if (a2 < a) { a = a2; }
-    if (b2 < b) { b = b2; }
+    i64 b2 = timeCheck(core, many, big);
+    i64 n2 = timeCheck(core, many, small);
+    i64 f2 = timeCheck(core, one, big);
+    if (b2 < both) { both = b2; }
+    if (n2 < names) { names = n2; }
+    if (f2 < file) { file = f2; }
   }
-  t.isTrue(b * (5 as i64) < a * (8 as i64),
-           "beside a 1 MB file: " + itoa(millis(a)) + " ms checking 300 named types, "
-           + itoa(millis(b)) + " ms checking 600");
+  t.isTrue(both < (names + file) * (3 as i64),
+           "600 named types beside a 1 MB file: " + itoa(millis(both)) + " ms; beside nothing: "
+           + itoa(millis(names)) + " ms; one name beside it: " + itoa(millis(file)) + " ms");
   return t.report();
 }
 
@@ -283,7 +296,10 @@ export string test_asking_whether_a_name_is_a_type_does_not_walk_every_import(Co
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
-  t.isTrue(b * (4 as i64) < a * (5 as i64),
+  // **1.5×, between the two sources, measured 2026-10-27 on an idle machine.** The source before the
+  // fix took 226 ms and 394 ms, which is 1.74×. Today's takes 77 ms and 100 ms, which is 1.30×, so the
+  // 1.25× this asserted first failed on correct code.
+  t.isTrue(b * (2 as i64) < a * (3 as i64),
            "naming `P` 2,400 times: " + itoa(millis(a)) + " ms importing 1,000 names, " + itoa(millis(b))
            + " ms importing 3,000");
   return t.report();
@@ -513,7 +529,10 @@ export string test_a_signature_is_not_looked_for_in_every_signature(Core core) {
     if (a2 < a) { a = a2; }
     if (b2 < b) { b = b2; }
   }
-  t.isTrue(b * (2 as i64) < a * (5 as i64),
+  // **2.9×, between the two sources, measured 2026-10-27 on an idle machine.** The source before the
+  // fix took 1,244 ms and 3,990 ms, which is 3.2×. Today's takes 347 ms and 911 ms, which is 2.63×,
+  // because a superlinear part remains. So the 2.5× this asserted first failed a gate on correct code.
+  t.isTrue(b * (10 as i64) < a * (29 as i64),
            "1,000 structs with a `fn<…>` field: " + itoa(millis(a)) + " ms; 2,000: " + itoa(millis(b))
            + " ms");
   return t.report();
