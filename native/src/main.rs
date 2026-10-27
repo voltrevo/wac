@@ -2554,7 +2554,7 @@ fn dispatch(
                 return settle_now(
                     caller,
                     Kind::Stat,
-                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED),
+                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED, 0),
                     results,
                 );
             }
@@ -2589,14 +2589,18 @@ fn dispatch(
                             m.permissions().mode() & 0o100 != 0
                         },
                         FAULT_NONE,
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            (m.permissions().mode() & 0o7777) as i32
+                        },
                     )
                 }
                 // **Absent is not a failure.** `exists: false` with no fault is what "there is nothing
                 // here" means; a fault would make every caller that merely asked treat it as an error.
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NONE)
+                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NONE, 0)
                 }
-                Err(e) => Outcome::Stat(false, false, false, 0, 0, false, false, stat_fault(&e)),
+                Err(e) => Outcome::Stat(false, false, false, 0, 0, false, false, stat_fault(&e), 0),
             };
             return settle_now(caller, Kind::Stat, outcome, results);
         }
@@ -2875,8 +2879,8 @@ fn dispatch(
                 (Kind::FileResult, Outcome::FileResult(ok, bytes, err, fault)) => {
                     make_file_result(caller, ok, &bytes, &err, fault)?
                 }
-                (Kind::Stat, Outcome::Stat(e, f, d, size, m, link, exec, fault)) => {
-                    make_stat(caller, e, f, d, size, m, link, exec, fault)?
+                (Kind::Stat, Outcome::Stat(e, f, d, size, m, link, exec, fault, mode)) => {
+                    make_stat(caller, e, f, d, size, m, link, exec, fault, mode)?
                 }
                 (Kind::Names, Outcome::Names(None)) => Val::AnyRef(None),
                 (Kind::Names, Outcome::Names(Some(names))) => make_string_array(caller, &names)?,
@@ -3202,6 +3206,7 @@ fn make_stat(
     is_symlink: bool,
     is_executable: bool,
     fault: i32,
+    mode: i32,
 ) -> Result<Val, wasmtime::Error> {
     let f = export_func(caller, "$bind$sm_Stat_of")?;
     let built = call_dyn(
@@ -3216,6 +3221,7 @@ fn make_stat(
             Val::I32(is_symlink as i32),
             Val::I32(is_executable as i32),
             Val::I32(fault),
+            Val::I32(mode),
         ],
     )?;
     built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Stat.of answered nothing"))

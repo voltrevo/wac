@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0406a](open/0406a-a-method-call-on-a-union-value-is-not-checked.md) | `e.nothing()` on a `union<A, B>` passes the checker and fails in the emitter — found as `e.toString()` on a fault union, where `"\{e}"` works | diagnostic | compile error |
 | [0405a](open/0405a-an-await-in-the-ok-arm-of-a-match-on-result-void-emits-invalid-wasm.md) | An `await` inside the `Ok(v)` arm of a match on a `Result<void, E>` in an `async` function emits a module the engine refuses (`array.set` short an operand) | bug | invalid wasm |
 | [0404a](open/0404a-a-generic-call-in-a-lambdas-ternary-or-a-local-lambda-is-not-instantiated.md) | A generic call taking a lambda, inside a lambda, is not instantiated when it is a ternary's branch or the lambda is held by a local: "a call to `make` … which is not in the program" | bug | compile error |
 | [0403a](open/0403a-a-match-scrutinee-calling-a-missing-method-is-not-diagnosed.md) | `match (p.nope())` — a match scrutinee calling a method that does not exist — passes the checker and fails in the emitter; under `await` it says only "local of an unspelled type" | diagnostic | compile error |
@@ -124,7 +125,7 @@ has been fixed and why.
 
 ## Closed
 
-319 issues, 260 closed.
+320 issues, 260 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

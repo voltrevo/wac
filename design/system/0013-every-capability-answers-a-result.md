@@ -159,7 +159,7 @@ the browser terminal are granted it to run applets, and without it an applet is 
 - **`packages/fs` folds into `Files` now**, not after step 6. Box and sh take `Files`; each `Fs` backing is a `Files`
   constructor. What `Fs` held that is not a filesystem goes to the shell session: the current directory (a view,
   `files.relativeTo(cwd)`), the process table, the clock reading, and who is acting.
-- **Users are a view of a memory store**: `MemoryStore.create(clock)`, `store.as(user)` a `Files` that creates files
+- **Users are a view of a memory store**: `MemoryStore.create(clock)`, `store.asUser(user)` a `Files` that creates files
   owned by `user` and checks against it, `"root"` exempt. `Files` gains `chown` (the host: `Unsupported`) and `Stat`
   gains `owner` and `mode`. `whoami` and `id` read the session's user and refuse where there is none.
 - **Streams close**: `files.openWrite(path)` answers an `Output`, `files.openAppend(path)` an `Output`

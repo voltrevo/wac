@@ -377,17 +377,19 @@ function isInstance(e: unknown, ctor: unknown): boolean {
  * disagreement about a wire format, which is the shape that made `spawn`'s argv wrong for a week.
  *
  * Layout: exists, isFile, isDir, size (i64 LE at 3), mtime (i64 LE at 11), isSymlink at 19, fault at 20,
- * isExecutable at 21.
+ * isExecutable at 21, and the mode bits (u32 LE at 22) — 0 where the host has none, as a browser's OPFS does.
  *
  * **`isExecutable` was appended, not inserted**, which is the rule this comment already implies and the
  * reason `STAT_FAULT` is still 20: a field placed in the middle would move the fault byte for every host
  * that writes it, and the two that write it in a different language would not fail to compile. It answers
  * the owner-execute bit and nothing else — see `Cli.setExecutable` for why one bit rather than a mode.
  */
-export const STAT_BYTES = 22;
+export const STAT_BYTES = 26;
 export const STAT_FAULT = 20;
 /** Where the owner-execute bit sits in a `stat` reply. */
 export const STAT_EXEC = 21;
+/** Where the mode bits sit in a `stat` reply: `Stat.mode`, appended for the same reason as `STAT_EXEC`. */
+export const STAT_MODE = 22;
 
 /**
  * The fault a failed `stat` should report — `FAULT_NONE` when the answer is simply "nothing here".

@@ -36,6 +36,7 @@ import {
   STAT_BYTES,
   STAT_EXEC,
   STAT_FAULT,
+  STAT_MODE,
   changeBytes,
   execBytes,
   changed,
@@ -718,6 +719,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         // `stat` follows, so what it describes is never itself a link. `linkStat` is the one that
         // answers that, and the symlink flag is the only field these two handlers disagree about.
         out[STAT_EXEC] = ((st.mode ?? 0) & 0o100) !== 0 ? 1 : 0;
+        dv.setUint32(STAT_MODE, (st.mode ?? 0) & 0o7777, true);
       } catch (e) {
         // Absence stays absence — zeroes and `FAULT_NONE`. Anything else says which way it failed, so a
         // name this runtime cannot express is not reported as a file that is not there.
@@ -744,6 +746,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         // Owner-execute, `0o100`. `mode` is null on a platform without POSIX bits, which reads as not
         // executable — the same answer the browser gives, and a true one rather than a stand-in.
         out[STAT_EXEC] = ((st.mode ?? 0) & 0o100) !== 0 ? 1 : 0;
+        dv.setUint32(STAT_MODE, (st.mode ?? 0) & 0o7777, true);
       } catch (e) {
         out[STAT_FAULT] = statFault(e, path);
       }

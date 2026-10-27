@@ -475,6 +475,8 @@ export void encodeStat(Buf out, Stat s) {
   // compile — but a child staged from one commit talks to a parent from another, and a record that
   // changed shape in the middle would be read as a valid record of different values.
   out.push(s.isExecutable ? 1 : 0);
+  out.pushU32(s.mode as@ u32);
+  putString(out, s.owner);
 }
 
 export Stat decodeStat(Reader r) {
@@ -486,8 +488,10 @@ export Stat decodeStat(Reader r) {
   i64 mtime = r.i64();
   i32 fault = r.u32();
   bool isExecutable = r.byte() == 1;
-  if (r.bad) { return Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_OTHER()); }
-  return Stat.of(exists, isFile, isDir, size, mtime, isSymlink, isExecutable, fault);
+  i32 mode = r.u32();
+  string owner = r.string();
+  if (r.bad) { return Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_OTHER(), 0); }
+  return Stat(exists, isFile, isDir, size, mtime, isSymlink, isExecutable, fault, mode, owner);
 }
 
 export void encodeChange(Buf out, Change c) {

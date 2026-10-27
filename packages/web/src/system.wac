@@ -206,7 +206,7 @@ Change changeOf(Answer a) { return Change.of(a.fault, a.fault == FAULT_NONE() ? 
 
 Stat statOf(Answer a) {
   return Stat.of((a.flags & STAT_EXISTS) != 0, (a.flags & STAT_FILE) != 0, (a.flags & STAT_DIR) != 0, a.n, a.m,
-                 false, false, a.fault);
+                 false, false, a.fault, 0);
 }
 
 /** A read's answer as the `Read` it is. */
@@ -457,7 +457,7 @@ HostChild childOf(Answer a) {
 }
 
 Pending<Stat> statFor(System system, Answers answers, bool read, string p) {
-  if (!read) { return ready(Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_NOT_GRANTED())); }
+  if (!read) { return ready(Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_NOT_GRANTED(), 0)); }
   i32 req = answers.ask();
   system.stat(req, p);
   return answers.pending<Stat>(req, statOf);

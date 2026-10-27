@@ -44,6 +44,7 @@ import {
   STAT_BYTES,
   STAT_EXEC,
   STAT_FAULT,
+  STAT_MODE,
   changeBytes,
   execBytes,
   changed,
@@ -607,6 +608,7 @@ export function nodeWorld(
         dv.setBigInt64(3, BigInt(st.size), true);
         dv.setBigInt64(11, BigInt(st.mtimeMillis ?? 0), true);
         out[STAT_EXEC] = ((st.mode ?? 0) & 0o100) !== 0 ? 1 : 0;
+        dv.setUint32(STAT_MODE, (st.mode ?? 0) & 0o7777, true);
       } catch (e) {
         out[STAT_FAULT] = statFault(e, path);
       }
@@ -631,6 +633,7 @@ export function nodeWorld(
         dv.setBigInt64(11, BigInt(st.mtimeMillis ?? 0), true);
         out[19] = st.isSymlink ? 1 : 0;
         out[STAT_EXEC] = ((st.mode ?? 0) & 0o100) !== 0 ? 1 : 0;
+        dv.setUint32(STAT_MODE, (st.mode ?? 0) & 0o7777, true);
       } catch (e) {
         out[STAT_FAULT] = statFault(e, path);
       }

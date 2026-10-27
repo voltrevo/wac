@@ -485,7 +485,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     return dir;
   };
 
-  /** What `stat` and `linkStat` both answer with: the twenty bytes `provider.ts` decodes. */
+  /** What `stat` and `linkStat` both answer with: the `STAT_BYTES` that `provider.ts` decodes. */
   const statBytes = async (path: string): Promise<Uint8Array> => {
     const out = new Uint8Array(STAT_BYTES);
     const dv = new DataView(out.buffer);
@@ -680,9 +680,9 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     // stays false. That is true rather than a stand-in — and it is why `tar` can refuse links in a
     // page as well, without knowing which host it is on.
     //
-    // `isExecutable` stays false for the same kind of reason and is left at its zero rather than
-    // written: OPFS has no mode bits, so nothing in a page is executable and saying so is the answer
-    // rather than a gap. Writing it is the half that has to refuse — see `SET_EXECUTABLE` below.
+    // `isExecutable` and the mode stay zero for the same kind of reason rather than being written:
+    // OPFS has no mode bits, so nothing in a page is executable and saying so is the answer rather
+    // than a gap. Writing it is the half that has to refuse — see `SET_EXECUTABLE` below.
     [OP.LINK_STAT]: (p) => statBytes(unstr(p)),
 
     [OP.READ_DIR]: async (p) => {

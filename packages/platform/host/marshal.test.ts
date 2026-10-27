@@ -372,15 +372,15 @@ Deno.test("a struct is built and read through the manifest, not through generate
     const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
     const { invoke, invokeOn } = structBridge(b, manifest.structs);
 
-    // `Stat.of(bool, bool, bool, i64, i64, bool, bool, i32)` — a static constructor whose arguments
+    // `Stat.of(bool, bool, bool, i64, i64, bool, bool, i32, i32)` — a static constructor whose arguments
     // span three shapes, so a conversion mistake in any of them shows up in what comes back out.
     //
-    // The **last** argument is what is read back: `answered()` returns whether `fault` is `NONE` (0)
+    // The **fault** argument is what is read back: `answered()` returns whether `fault` is `NONE` (0)
     // or `NOT_A_DIR` (10), not anything about the leading booleans. I asserted the first field first
     // and it failed — the bridge was right and my guess about the method was not, which is why the
     // two calls below differ only in that argument.
     const mk = (fault: number) =>
-      invoke("Stat", "of", true, false, true, 1234n, 5678n, false, true, fault);
+      invoke("Stat", "of", true, false, true, 1234n, 5678n, false, true, fault, 0o644);
 
     const ok = mk(0);
     assertEquals(ok !== null && ok !== undefined, true, "Stat.of built nothing");

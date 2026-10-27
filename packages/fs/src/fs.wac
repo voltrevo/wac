@@ -596,7 +596,7 @@ export struct Fs {
     path = this.at(path);
     i32 mi = this.mountOf(path);
     // Absence rather than a fault, as below: a path under no mount is nothing, and that is an answer.
-    if (mi < 0) { return Stat.of(false, false, false, 0, 0, false, false, FAULT_NONE()); }
+    if (mi < 0) { return Stat.of(false, false, false, 0, 0, false, false, FAULT_NONE(), 0); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       Host(cli): { return await cli.stat(path).ticket(); }
@@ -611,13 +611,13 @@ export struct Fs {
     // which kind of nothing. `Stat.answered` stays true for it, so `test -e` is unaffected.
     if (node < 0) {
       return Stat.of(false, false, false, 0, 0, false, false,
-                     node == NODE_NOT_A_DIR() ? FAULT_NOT_A_DIR() : FAULT_NONE());
+                     node == NODE_NOT_A_DIR() ? FAULT_NOT_A_DIR() : FAULT_NONE(), 0);
     }
     Inode n = this.nodes.get(node);
     // **Answered from the recorded mode**, which an image mount has and a host mount cannot get at:
     // `chmod` writes it here, so reading it back is the round trip that makes the field testable.
-    return Stat.of(true, !n.isDir, n.isDir, n.data.len as i64, n.mtime, false,
-                   (n.mode & 64) != 0, FAULT_NONE());
+    return Stat(true, !n.isDir, n.isDir, n.data.len as i64, n.mtime, false,
+                (n.mode & 64) != 0, FAULT_NONE(), n.mode, n.owner);
   }
 
   /**
@@ -1381,8 +1381,8 @@ u8[] procBytes(Fs fs, Mount m, string path, i32 kind) {
 
 Stat synthStat(Fs fs, Mount m, string path) {
   i32 kind = synthKind(fs, m, path);
-  if (kind == SYNTH_NONE()) { return Stat.of(false, false, false, 0, 0, false, false, FAULT_NONE()); }
-  if (kind == SYNTH_DIR()) { return Stat.of(true, false, true, 0, fs.now, false, false, FAULT_NONE()); }
+  if (kind == SYNTH_NONE()) { return Stat.of(false, false, false, 0, 0, false, false, FAULT_NONE(), 0); }
+  if (kind == SYNTH_DIR()) { return Stat.of(true, false, true, 0, fs.now, false, false, FAULT_NONE(), 0); }
   // Size zero for the endless two, which is what Linux reports for them as well: a character device has
   // no length, and zero is how that is spelled. The `/proc` files have real ones.
   i64 size = 0 as i64;
@@ -1392,7 +1392,7 @@ Stat synthStat(Fs fs, Mount m, string path) {
   if (kind == SYNTH_PROGRAM()) {
     size = programBytes(path.slice(m.at.len() + 1, path.len())).len() as i64;
   }
-  return Stat.of(true, true, false, size, fs.now, false, false, FAULT_NONE());
+  return Stat.of(true, true, false, size, fs.now, false, false, FAULT_NONE(), 0);
 }
 
 string[]? synthDir(Fs fs, Mount m, string path) {

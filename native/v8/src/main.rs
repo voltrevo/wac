@@ -3721,6 +3721,10 @@ fn dispatch(
                             md.permissions().mode() & 0o100 != 0
                         },
                         fault: FAULT_NONE,
+                        mode: {
+                            use std::os::unix::fs::PermissionsExt;
+                            (md.permissions().mode() & 0o7777) as i32
+                        },
                     },
                     // **Except when the name is one this host mangled.** `issues/system/0295c`:
                     // a `NotFound` for a path carrying U+FFFD is this runtime being unable to
@@ -4459,6 +4463,7 @@ fn build_stat<'s>(
     let is_symlink = v8::Integer::new(scope, i32::from(st.is_symlink));
     let is_executable = v8::Integer::new(scope, i32::from(st.is_executable));
     let fault = v8::Integer::new(scope, st.fault);
+    let mode = v8::Integer::new(scope, st.mode);
     let ctor = get_export(scope, exports, &ctor_name)?;
     ctor.call(
         scope,
@@ -4472,6 +4477,7 @@ fn build_stat<'s>(
             is_symlink.into(),
             is_executable.into(),
             fault.into(),
+            mode.into(),
         ],
     )
 }

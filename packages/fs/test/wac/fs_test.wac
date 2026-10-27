@@ -357,7 +357,7 @@ export string test_the_remote_wire_survives_a_round_trip() {
   // Every field of a `Stat`, because each one is a permission or a listing somewhere and a partial
   // encoding is a wrong answer with no error attached.
   Buf c = Buf.create();
-  encodeStat(c, Stat.of(true, true, false, 4096 as i64, 1786096061 as i64, false, true, FAULT_NONE()));
+  encodeStat(c, Stat.of(true, true, false, 4096 as i64, 1786096061 as i64, false, true, FAULT_NONE(), 0));
   Stat st = decodeStat(readerOver(c.take()));
   t.isTrue(st.exists && st.isFile && !st.isDir, "the three kinds cross");
   t.isTrue(st.isExecutable && !st.isSymlink, "and the two bits");

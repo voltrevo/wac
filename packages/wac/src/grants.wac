@@ -191,7 +191,7 @@ Pending<Stat> noStat(string path) {
   // `exists: false` with a fault set, which `Stat.sound()` reads as "the question could not be
   // answered" rather than as "the file is not there". A sealed shell must not be able to probe for
   // a path's existence, and answering a confident false would let it.
-  return ready(Stat.of(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED()));
+  return ready(Stat.of(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED(), 0));
 }
 Pending<string[]?> noReadDir(string path) {
   string[]? none = null;

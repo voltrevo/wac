@@ -141,7 +141,7 @@ void probeSaid(T t, string host, Result<Exec, SpawnFault> ran) {
     Ok(r): {
       t.eqI32(r.status, 0, host + ": the probe ran: " + string.fromBytes(r.stderr));
       t.eqStr(string.fromBytes(r.stdout), "a", host + ": only what was written before close");
-      t.eqStr(string.fromBytes(r.stderr), "file xy\nrefused\nclosed\n",
+      t.eqStr(string.fromBytes(r.stderr), "file xy\nmode 416\nrefused\nclosed\n",
               host + ": the file written, appended to and read; a write after close is OutputClosed; closing twice is fine");
     }
     Err(e): { t.fail(host + ": did not run"); }

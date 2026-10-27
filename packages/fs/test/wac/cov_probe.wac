@@ -693,7 +693,7 @@ export string wireOps() {
   // A `Stat` carries seven fields and a fault, and every one of them is a permission or a listing
   // somewhere: a mode that crossed and a fault that did not is a wrong answer with no error.
   Buf c = Buf.create();
-  Stat s = Stat.of(true, true, false, 4096 as i64, 1786096061 as i64, false, true, FAULT_NONE());
+  Stat s = Stat.of(true, true, false, 4096 as i64, 1786096061 as i64, false, true, FAULT_NONE(), 0);
   encodeStat(c, s);
   Stat st = decodeStat(readerOver(c.take()));
   say(out, "stat " + (st.exists ? "e" : "-") + (st.isFile ? "f" : "-") + (st.isDir ? "d" : "-") +
@@ -744,12 +744,12 @@ export string wireOps() {
   // A `Stat` with every flag *false*, because `s.exists ? 1 : 0` has two sides and a probe that only
   // ever encodes a file that exists measures one of them.
   Buf h = Buf.create();
-  encodeStat(h, Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_NOT_FOUND()));
+  encodeStat(h, Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_NOT_FOUND(), 0));
   Stat none = decodeStat(readerOver(h.take()));
   say(out, "absent stat " + (none.exists ? "e" : "-") + (none.isDir ? "d" : "-") + " \{none.fault}");
 
   Buf i = Buf.create();
-  encodeStat(i, Stat.of(true, false, true, 4096 as i64, 1 as i64, true, false, FAULT_NONE()));
+  encodeStat(i, Stat.of(true, false, true, 4096 as i64, 1 as i64, true, false, FAULT_NONE(), 0));
   Stat dir = decodeStat(readerOver(i.take()));
   say(out, "dir stat " + (dir.isDir ? "d" : "-") + (dir.isSymlink ? "l" : "-"));
 

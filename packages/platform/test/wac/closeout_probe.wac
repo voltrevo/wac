@@ -1,6 +1,7 @@
 // A file streamed and `sys.stdout().close()` — spec ch44 `§wac-std-file-stream-m6t2wqe`, `§wac-std-close-r4v8ndq`. Run by
 // `stdhandles_test.wac` on each host. It writes, appends to and reads back `.cache/wac-handles/closeout/f`; then it writes
-// `a`, closes its output twice, tries to write again, and says on its diagnostic output what happened at each step.
+// `a`, closes its output twice, tries to write again, and says on its diagnostic output what happened at each step. The
+// file's mode after `chmod 0640` is said too, since each host reads it from its own `stat`.
 
 import { Sys, Files, Input, Output, OutputClosed } from "std";
 
@@ -18,6 +19,9 @@ export async i32 main(Sys sys) {
   string got = string.fromBytes((await r.readAll()).unwrap());
   await r.close();
   await sys.stderr().line("file " + got);
+  await fs.chmod(f, 416);
+  i32 mode = (await fs.stat(f)).unwrap().mode & 511;
+  await sys.stderr().line("mode \{mode}");
 
   Output out = sys.stdout();
   await out.write("a".toBytes());

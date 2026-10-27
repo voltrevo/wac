@@ -1,0 +1,258 @@
+// `MemoryStore`, `Files.chown`, `Stat.owner`/`mode` and `Files.relativeTo` — design/system/0013 step 5, spec ch44.
+//
+// A store is one tree; `store.asUser(user)` is a `Files` acting as that user, so two views of one store are two
+// people on one machine. The checks assert the fault's type, which is what a caller matches on.
+
+import { Sys, Files, Stat, MemoryStore, StoreEntry, Input, Output, NotFound, NotADir, Denied, Exists, IsDir, NotEmpty,
+         Unsupported } from "std";
+import { Result, Read, flatten } from "core";
+import { T } from "../../../wactest/src/assert.wac";
+
+string failed(T t, string what) {
+  t.fail(what);
+  return t.report();
+}
+
+async string text(Files fs, string p) {
+  match (await fs.readFile(p)) {
+    Ok(b): { return string.fromBytes(b); }
+    Err(e): { return "<\{e}>"; }
+  }
+}
+
+async Stat statOr(T t, Files fs, string p) {
+  match (await fs.stat(p)) {
+    Ok(s): { return s; }
+    Err(e): {
+      t.fail("stat " + p + ": \{e}");
+      return Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, 0, 0);
+    }
+  }
+}
+
+export async string test_a_store_starts_as_an_empty_root_directory(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  match (await root.readDir("/")) {
+    Ok(names): { t.eqI32(names.len(), 0, "nothing in it"); }
+    Err(e): { return failed(t, "readDir / failed"); }
+  }
+  Stat s = await statOr(t, root, "/");
+  t.isTrue(s.isDir, "the root is a directory");
+  t.eqStr(s.owner, "root", "owned by root");
+  t.eqI32(s.mode, 493, "0755");
+  return t.report();
+}
+
+export async string test_a_file_is_owned_by_whoever_made_it_and_read_back(Sys sys) {
+  T t = T.create();
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  t.isTrue((await root.mkdir("/home/ada", true)).isOk(), "mkdir -p");
+  t.isTrue((await root.chown("/home/ada", "ada")).isOk(), "root gives ada her directory");
+  Files ada = store.asUser("ada");
+  t.isTrue((await ada.writeFile("/home/ada/notes", "hi".toBytes())).isOk(), "ada writes in her own directory");
+  t.eqStr(await text(root, "/home/ada/notes"), "hi", "root reads what ada wrote");
+  Stat s = await statOr(t, root, "/home/ada/notes");
+  t.isTrue(s.isFile && s.size == 2 as i64, "a two-byte file");
+  t.eqStr(s.owner, "ada", "owned by ada");
+  t.eqI32(s.mode, 420, "0644");
+  t.isTrue(s.modifiedMillis > 0 as i64, "stamped from the clock");
+  return t.report();
+}
+
+export async string test_the_mode_decides_what_another_user_may_do(Sys sys) {
+  T t = T.create();
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  await root.writeFile("/motd", "welcome".toBytes());
+  Files ada = store.asUser("ada");
+  t.eqStr(await text(ada, "/motd"), "welcome", "0644 lets anybody read");
+  match (await ada.writeFile("/motd", "mine".toBytes())) {
+    Ok(v): { t.fail("ada overwrote root's file"); }
+    Err(e): { t.isTrue(e is Denied, "a write to somebody else's 0644 file is Denied"); }
+  }
+  match (await ada.writeFile("/new", "x".toBytes())) {
+    Ok(v): { t.fail("ada wrote into root's directory"); }
+    Err(e): { t.isTrue(e is Denied, "creating in somebody else's 0755 directory is Denied"); }
+  }
+  await root.chmod("/motd", 384);
+  match (await ada.readFile("/motd")) {
+    Ok(b): { t.fail("ada read a 0600 file"); }
+    Err(e): { t.isTrue(e is Denied, "0600 keeps everybody else out"); }
+  }
+  match (await ada.chmod("/motd", 511)) {
+    Ok(v): { t.fail("ada widened root's file"); }
+    Err(e): { t.isTrue(e is Denied, "chmod is the owner's"); }
+  }
+  match (await ada.chown("/motd", "ada")) {
+    Ok(v): { t.fail("ada took root's file"); }
+    Err(e): { t.isTrue(e is Denied, "chown is root's"); }
+  }
+  t.eqStr(await text(root, "/motd"), "welcome", "root is exempt");
+  return t.report();
+}
+
+export async string test_setting_executable_moves_the_execute_bits_with_read(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  await root.writeFile("/run", u8[]());
+  await root.chmod("/run", 416);
+  t.isTrue((await root.setExecutable("/run", true)).isOk(), "setExecutable");
+  Stat s = await statOr(t, root, "/run");
+  t.eqI32(s.mode, 488, "0640 becomes 0750");
+  t.isTrue(s.isExecutable, "and says so");
+  await root.setExecutable("/run", false);
+  t.eqI32((await statOr(t, root, "/run")).mode, 416, "and back");
+  return t.report();
+}
+
+export async string test_a_store_answers_the_faults_a_host_does(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  await root.writeFile("/f", "x".toBytes());
+  await root.mkdir("/d", false);
+  await root.writeFile("/d/g", "y".toBytes());
+  match (await root.readFile("/nope")) {
+    Ok(b): { t.fail("read a missing file"); }
+    Err(e): { t.isTrue(e is NotFound, "a missing file is NotFound"); }
+  }
+  match (await root.readFile("/f/g")) {
+    Ok(b): { t.fail("read under a file"); }
+    Err(e): { t.isTrue(e is NotADir, "under a file is NotADir"); }
+  }
+  match (await root.readFile("/d")) {
+    Ok(b): { t.fail("read a directory"); }
+    Err(e): { t.isTrue(e is IsDir, "a directory is IsDir"); }
+  }
+  match (await root.mkdir("/d", false)) {
+    Ok(v): { t.fail("made a directory twice"); }
+    Err(e): { t.isTrue(e is Exists, "a second mkdir is Exists"); }
+  }
+  t.isTrue((await root.mkdir("/d", true)).isOk(), "mkdir -p of what is there is fine");
+  match (await root.remove("/d", false)) {
+    Ok(v): { t.fail("removed a full directory"); }
+    Err(e): { t.isTrue(e is NotEmpty, "a full directory is NotEmpty"); }
+  }
+  match (await root.stat("/nope")) {
+    Ok(s): { t.fail("stat of nothing answered"); }
+    Err(e): { t.isTrue(e is NotFound, "stat of nothing is NotFound"); }
+  }
+  match (await root.readDir("/f")) {
+    Ok(n): { t.fail("listed a file"); }
+    Err(e): { t.isTrue(e is NotADir, "listing a file is NotADir"); }
+  }
+  t.isTrue((await root.rename("/d/g", "/g")).isOk(), "rename");
+  t.eqStr(await text(root, "/g"), "y", "the file moved");
+  t.isTrue((await root.remove("/d", false)).isOk(), "now it is empty");
+  t.isTrue((await root.remove("/g", false)).isOk(), "remove a file");
+  match (await root.readDir("/")) {
+    Ok(names): {
+      t.eqI32(names.len(), 1, "one name left");
+      t.eqStr(names[0], "f", "the file");
+    }
+    Err(e): { t.fail("readDir /"); }
+  }
+  return t.report();
+}
+
+export async string test_a_store_file_streams_in_and_out(Sys sys) {
+  T t = T.create();
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  match (await root.openWrite("/s")) {
+    Ok(out): {
+      await out.write("ab".toBytes());
+      await out.line("c");
+      t.isTrue((await out.close()).isOk(), "close");
+      t.isTrue((await out.write("z".toBytes())).isErr(), "a write after close is refused");
+    }
+    Err(e): { return failed(t, "openWrite"); }
+  }
+  match (await root.openAppend("/s")) {
+    Ok(out): {
+      await out.write("d".toBytes());
+      await out.close();
+    }
+    Err(e): { return failed(t, "openAppend"); }
+  }
+  match (await root.openRead("/s")) {
+    Ok(in): {
+      match (await in.readAll()) {
+        Ok(b): { t.eqStr(string.fromBytes(b), "abc\nd", "everything written, in order"); }
+        Err(e): { t.fail("readAll"); }
+      }
+      await in.close();
+    }
+    Err(e): { return failed(t, "openRead"); }
+  }
+  match (await store.asUser("ada").openWrite("/s")) {
+    Ok(out): { t.fail("ada opened root's file to write"); }
+    Err(e): { t.isTrue(e is Denied, "opening checks the mode as writeFile does"); }
+  }
+  return t.report();
+}
+
+export async string test_a_store_is_saved_as_entries_and_restored(Sys sys) {
+  T t = T.create();
+  MemoryStore store = MemoryStore.create(sys.clock());
+  Files root = store.asUser("root");
+  await root.mkdir("/home/ada", true);
+  await root.chown("/home/ada", "ada");
+  await store.asUser("ada").writeFile("/home/ada/notes", "hi".toBytes());
+  await root.chmod("/home/ada/notes", 384);
+  StoreEntry[] saved = store.entries();
+  t.eqI32(saved.len(), 4, "the root, two directories and a file");
+  t.eqStr(saved[0].path, "/", "the root first");
+  t.eqStr(saved[3].path, "/home/ada/notes", "parents before children");
+  match (MemoryStore.restore(sys.clock(), saved)) {
+    Ok(again): {
+      Files back = again.asUser("root");
+      t.eqStr(await text(back, "/home/ada/notes"), "hi", "the bytes");
+      Stat s = await statOr(t, back, "/home/ada/notes");
+      t.eqStr(s.owner, "ada", "the owner");
+      t.eqI32(s.mode, 384, "the mode");
+      t.isTrue(s.modifiedMillis == saved[3].modifiedMillis, "the time");
+    }
+    Err(e): { return failed(t, "restore: " + e.message); }
+  }
+  StoreEntry[] orphan = [saved[0], saved[2]];
+  t.isTrue(MemoryStore.restore(sys.clock(), orphan).isErr(), "an entry before its directory is refused");
+  return t.report();
+}
+
+export async string test_a_relative_view_resolves_against_its_directory(Sys sys) {
+  T t = T.create();
+  Files root = MemoryStore.create(sys.clock()).asUser("root");
+  await root.mkdir("/home/ada", true);
+  await root.writeFile("/etc", "conf".toBytes());
+  Files here = root.relativeTo("/home/ada");
+  t.isTrue((await here.writeFile("a", "1".toBytes())).isOk(), "a relative write");
+  t.eqStr(await text(root, "/home/ada/a"), "1", "lands under the directory");
+  t.eqStr(await text(here, "../../etc"), "conf", "`..` climbs");
+  t.eqStr(await text(here, "./a"), "1", "`.` stays");
+  t.eqStr(await text(here, "/etc"), "conf", "an absolute path is left alone");
+  t.isTrue((await here.rename("a", "b")).isOk(), "both of rename's paths resolve");
+  t.eqStr(await text(root, "/home/ada/b"), "1", "renamed under the directory");
+  t.eqStr(await text(here.relativeTo(".."), "ada/b"), "1", "a relative view of a relative view");
+  return t.report();
+}
+
+export async string test_the_host_has_modes_and_no_owners_to_change(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string dir = flatten(sys.env().cwd().wait()).unwrap() + "/.cache/wac-memstore";
+  await fs.remove(dir, true);
+  await fs.mkdir(dir, true);
+  await fs.writeFile(dir + "/f", "x".toBytes());
+  await fs.chmod(dir + "/f", 416);
+  Stat s = await statOr(t, fs, dir + "/f");
+  t.eqI32(s.mode & 511, 416, "the host's mode bits");
+  t.eqStr(s.owner, "", "an owner the host does not track here");
+  match (await fs.chown(dir + "/f", "ada")) {
+    Ok(v): { t.fail("chown on the host answered Ok"); }
+    Err(e): { t.isTrue(e is Unsupported, "chown on the host is Unsupported"); }
+  }
+  await fs.remove(dir, true);
+  return t.report();
+}

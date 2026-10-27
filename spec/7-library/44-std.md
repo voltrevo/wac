@@ -307,12 +307,23 @@ struct Files {
   fn<Ticket<Result<void, MoveFault>>(string, string)> rename;
   fn<Ticket<Result<void, ModeFault>>(string, i32)> chmod;
   fn<Ticket<Result<void, ModeFault>>(string, bool)> setExecutable;
+  fn<Ticket<Result<void, ModeFault>>(string, string)> chown;     // root's to do; Unsupported on the host
 
   Files readOnly(this);                    // the same files, every change answering NotGranted
+  Files relativeTo(this, string dir);      // a relative path starts at dir
   Files mounted(Mount[] mounts);           // each path to the longest mount that prefixes it
 }
 
 struct Mount { string at; Files files; }
+
+struct MemoryStore {
+  MemoryStore create(Clock clock);
+  Files asUser(this, string user);         // the store as user sees it
+  StoreEntry[] entries(this);              // each directory before what is in it
+  Result<MemoryStore, Other> restore(Clock clock, StoreEntry[] entries);
+}
+
+struct StoreEntry { string path; bool isDir; u8[] data; i32 mode; string owner; i64 modifiedMillis; }
 ```
 
 `[§wac-std-file-result-z28bp2x]` A missing file, a directory, or a change through a read-only `Files` is an `Err`, not a
@@ -321,6 +332,30 @@ trap.
 `[§wac-std-files-compose-h6vq3ne]` `Files` is a value built from functions, so a backing is a constructor and nothing
 branches on which backing it is: `sys.files()` is the host's, `readOnly` wraps any `Files`, and `mounted` routes each path
 to the mount that owns it. A rename across two mounts is `Other`, as a rename across two devices is.
+
+`[§wac-std-relative-files-c3n9vka]` `relativeTo(dir)` gives the same files with a relative path starting at `dir`, as a
+shell's current directory does. `.` and `..` are taken out before a path reaches the files beneath, `..` at the root
+stays there, and an absolute path is left alone.
+
+`[§wac-std-memory-store-p4k7wzn]` A `MemoryStore` is one tree in the program's memory, and `asUser(user)` is a `Files`
+acting as one person on it: what it creates is theirs — a file `0644`, a directory `0755` — and each operation is checked
+against the mode of what it touches, the owner bits for its owner and the last three for anybody else. There are no
+groups, the directories on the way are not checked, and `"root"` is exempt. `chmod` is the owner's or root's and `chown`
+is root's; refusing is `Denied`. `Stat.owner` and `Stat.mode` answer what the store recorded. The host answers its own
+mode bits, an owner of `""`, and `Unsupported` for `chown`, because its owners are numbers in a table that is not the
+program's. `entries` and `restore` save a store and bring it back.
+
+```wac
+// fragment — two people on one store
+async Result<void> share(Clock clock) {
+  MemoryStore store = MemoryStore.create(clock);
+  Files root = store.asUser("root");
+  try await root.mkdir("/home/ada", true);
+  try await root.chown("/home/ada", "ada");
+  try await store.asUser("ada").writeFile("/home/ada/notes", "hi".toBytes());
+  return Result.Ok();
+}
+```
 
 ```wac
 // fragment — a program built with read and write grants

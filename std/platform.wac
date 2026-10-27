@@ -86,7 +86,8 @@
 // never be converted into this one. See wac's `design/0001`. (That reason was written as "with no
 // closures in the language", which is both out of date and never the reason: two declarations of a
 // shape are two types whatever a funcref can capture.)
-import { Continuation, Queue, Read, Result, Ticket, TicketBase, toString, __wacScheduleTarget, __wacSetScheduleTarget } from "core";
+import { Buf, Continuation, Map, Queue, Read, Result, Ticket, TicketBase, Vec, hashString, stringEq, toString, __wacScheduleTarget,
+         __wacSetScheduleTarget } from "core";
 
 /** A handler slot that does nothing, so a table can be filled before anything is registered. */
 void schedIdle(i32 id) { }
@@ -1365,9 +1366,19 @@ export struct Stat {
    */
   i32 fault;
 
+  /** The permission bits, `0644` and the like, with set-id and sticky above them — 0 where the host has none. */
+  i32 mode;
+
+  /**
+   * Who owns it, by name, in a store that keeps owners (`MemoryStore`) — and `""` from the host, which does not
+   * track owners for a program: its owners are numbers in somebody else's user table.
+   */
+  string owner;
+
+  /** A host's answer, which carries no owner. */
   Stat of(bool exists, bool isFile, bool isDir, i64 size, i64 modifiedMillis, bool isSymlink,
-          bool isExecutable, i32 fault) {
-    return Stat(exists, isFile, isDir, size, modifiedMillis, isSymlink, isExecutable, fault);
+          bool isExecutable, i32 fault, i32 mode) {
+    return Stat(exists, isFile, isDir, size, modifiedMillis, isSymlink, isExecutable, fault, mode, "");
   }
 
   /**
@@ -3130,6 +3141,8 @@ export struct Files {
   fn<Ticket<Result<void, MoveFault>>(string, string)> rename;
   fn<Ticket<Result<void, ModeFault>>(string, i32)> chmod;
   fn<Ticket<Result<void, ModeFault>>(string, bool)> setExecutable;
+  /** Give a file to another owner, which is root's to do — `Unsupported` on the host, whose owners are not names. */
+  fn<Ticket<Result<void, ModeFault>>(string, string)> chown;
   /**
    * The `GRANT_*` bits a spawned child can be handed instead of these files: `GRANT_READ | GRANT_WRITE` for the
    * host's own, `GRANT_READ` read-only, and 0 for anything composed, which the parent has to serve.
@@ -3152,6 +3165,7 @@ export struct Files {
       (string from, string to) => hostTicket(cli.rename(from, to), wait, movedOf),
       (string p, i32 mode) => hostTicket(cli.chmod(p, mode), wait, modeOf),
       (string p, bool on) => hostTicket(cli.setExecutable(p, on), wait, modeOf),
+      (string p, string owner) => hostChown(p),
       GRANT_READ | GRANT_WRITE);
   }
 
@@ -3161,7 +3175,33 @@ export struct Files {
                  (string p) => refusedOpen(p), (string p) => refusedOpen(p), this.stat, this.linkStat, this.readDir,
                  (string p, bool parents) => refusedMkdir(p), (string p, bool r) => refusedMove(p),
                  (string from, string to) => refusedMove(from), (string p, i32 mode) => refusedMode(p),
-                 (string p, bool on) => refusedMode(p), this.hostGrants & GRANT_READ);
+                 (string p, bool on) => refusedMode(p), (string p, string owner) => refusedMode(p),
+                 this.hostGrants & GRANT_READ);
+  }
+
+  /**
+   * The same files, a relative path starting at `dir` — a shell's current directory. `.` and `..` are taken out
+   * before the path goes on, and an absolute path goes on as it is. A child handed this is told `dir` when it is
+   * spawned, so the host's grants carry over.
+   */
+  Files relativeTo(this, string dir) {
+    Files f = this;
+    return Files(
+      (string p) => f.readFile(pathFrom(dir, p)),
+      (string p, u8[] b) => f.writeFile(pathFrom(dir, p), b),
+      (string p) => f.openRead(pathFrom(dir, p)),
+      (string p) => f.openWrite(pathFrom(dir, p)),
+      (string p) => f.openAppend(pathFrom(dir, p)),
+      (string p) => f.stat(pathFrom(dir, p)),
+      (string p) => f.linkStat(pathFrom(dir, p)),
+      (string p) => f.readDir(pathFrom(dir, p)),
+      (string p, bool parents) => f.mkdir(pathFrom(dir, p), parents),
+      (string p, bool r) => f.remove(pathFrom(dir, p), r),
+      (string from, string to) => f.rename(pathFrom(dir, from), pathFrom(dir, to)),
+      (string p, i32 mode) => f.chmod(pathFrom(dir, p), mode),
+      (string p, bool on) => f.setExecutable(pathFrom(dir, p), on),
+      (string p, string owner) => f.chown(pathFrom(dir, p), owner),
+      f.hostGrants);
   }
 
   /**
@@ -3183,6 +3223,7 @@ export struct Files {
       (string from, string to) => mountedRename(mounts, from, to),
       (string p, i32 mode) => mountOf(mounts, p).files.chmod(innerOf(mounts, p), mode),
       (string p, bool on) => mountOf(mounts, p).files.setExecutable(innerOf(mounts, p), on),
+      (string p, string owner) => mountOf(mounts, p).files.chown(innerOf(mounts, p), owner),
       0);
   }
 }
@@ -3191,6 +3232,520 @@ export struct Files {
 export struct Mount {
   string at;
   Files files;
+}
+
+/** `p` from `dir`: as it is when absolute, else after `dir`, with `.` and `..` taken out either way. */
+string pathFrom(string dir, string p) {
+  if (p.len() > 0 && p.slice(0, 1) == "/") { return normalPath(p); }
+  if (p == "") { return normalPath(dir); }
+  return normalPath(dir + "/" + p);
+}
+
+/**
+ * `p` without `.`, `..` or repeated slashes. An absolute path stays absolute and `..` stops at its root; a relative
+ * one keeps the `..`s it starts with, so the view beneath can resolve them.
+ */
+string normalPath(string p) {
+  bool absolute = p.len() > 0 && p.slice(0, 1) == "/";
+  string[] parts = pathParts(p);
+  string[] kept = string[].filled(parts.len(), "");
+  i32 n = 0;
+  for (i32 i = 0; i < parts.len(); i++) {
+    string part = parts[i];
+    if (part == ".") { continue; }
+    if (part == "..") {
+      if (n > 0 && kept[n - 1] != "..") { n = n - 1; continue; }
+      if (absolute) { continue; }
+    }
+    kept[n] = part;
+    n = n + 1;
+  }
+  string out = absolute ? "/" : "";
+  for (i32 i = 0; i < n; i++) { out = out + (i > 0 ? "/" : "") + kept[i]; }
+  return out == "" ? "." : out;
+}
+
+/** The non-empty components of a path. */
+string[] pathParts(string p) {
+  i32 count = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= p.len(); i++) {
+    if (i < p.len() && p.slice(i, i + 1) != "/") { continue; }
+    if (i > from) { count = count + 1; }
+    from = i + 1;
+  }
+  string[] out = string[].filled(count, "");
+  i32 k = 0;
+  from = 0;
+  for (i32 i = 0; i <= p.len(); i++) {
+    if (i < p.len() && p.slice(i, i + 1) != "/") { continue; }
+    if (i > from) {
+      out[k] = p.slice(from, i);
+      k = k + 1;
+    }
+    from = i + 1;
+  }
+  return out;
+}
+
+// ── A store in memory ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One file or directory in a `MemoryStore`, as `entries` lists it and `restore` takes it back — a directory's
+ * entry comes before anything in it.
+ */
+export struct StoreEntry {
+  /** Absolute; the root is `/`. */
+  string path;
+  bool isDir;
+  /** A file's bytes; empty for a directory. */
+  u8[] data;
+  i32 mode;
+  string owner;
+  i64 modifiedMillis;
+}
+
+/** A node of the store: a directory's names, or a file's bytes, and who may do what to it. */
+struct StoreNode {
+  bool isDir;
+  Map<string, i32> names;
+  Buf data;
+  i32 mode;
+  string owner;
+  i64 mtime;
+
+  void setMode(this, i32 mode) { this.mode = mode; }
+  void setOwner(this, string owner) { this.owner = owner; }
+  void replace(this, u8[] b, i64 now) {
+    this.data = Buf.create();
+    this.data.pushAll(b);
+    this.mtime = now;
+  }
+  void append(this, u8[] b, i64 now) {
+    this.data.pushAll(b);
+    this.mtime = now;
+  }
+  void touch(this, i64 now) { this.mtime = now; }
+}
+
+/**
+ * **Files that live in this program's memory, with owners** (spec ch44 `§wac-std-memory-store-p4k7wzn`).
+ *
+ * One tree, and `asUser` a `Files` acting as one person on it: what that view creates is theirs, and every
+ * operation is checked against the mode for them — owner bits for the owner, the last three for everybody
+ * else, and no groups, because there is no group table. `"root"` is exempt. What is checked is the file or
+ * directory touched, not the directories on the way to it.
+ *
+ * The clock stamps each change, and a host with no clock stamps 0.
+ */
+export struct MemoryStore {
+  /** Every node ever made, the root first; a removed one is left unreachable rather than moved. */
+  Vec<StoreNode> nodes;
+  Clock clock;
+
+  /** An empty store: a root directory, `0755`, owned by root. */
+  MemoryStore create(Clock clock) {
+    Vec<StoreNode> nodes = Vec.create();
+    nodes.push(storeDir("root", 0 as i64));
+    return MemoryStore(nodes, clock);
+  }
+
+  /**
+   * A store holding `entries` — what `entries` gave, or the same shape from an image. `Err` when an entry's
+   * directory is not before it, when a path comes twice, or when the first entry is not the root directory.
+   */
+  Result<MemoryStore, Other> restore(Clock clock, StoreEntry[] entries) {
+    if (entries.len() == 0 || normalPath(entries[0].path) != "/" || !entries[0].isDir) {
+      return Result.Err(Other("the first entry must be the root directory"));
+    }
+    Vec<StoreNode> nodes = Vec.create();
+    MemoryStore store = MemoryStore(nodes, clock);
+    nodes.push(StoreNode(true, Map.create(hashString, stringEq), Buf.create(), entries[0].mode, entries[0].owner,
+                         entries[0].modifiedMillis));
+    for (i32 i = 1; i < entries.len(); i++) {
+      StoreEntry e = entries[i];
+      string p = normalPath(e.path);
+      i32 parent = store.find(storeParent(p));
+      if (parent < 0 || !nodes.get(parent).isDir) {
+        return Result.Err(Other(p + ": its directory is not before it"));
+      }
+      if (nodes.get(parent).names.has(storeBase(p))) { return Result.Err(Other(p + ": listed twice")); }
+      Buf held = Buf.create();
+      if (!e.isDir) { held.pushAll(e.data); }
+      nodes.push(StoreNode(e.isDir, Map.create(hashString, stringEq), held, e.mode, e.owner, e.modifiedMillis));
+      nodes.get(parent).names.set(storeBase(p), nodes.len() - 1);
+    }
+    return Result.Ok(store);
+  }
+
+  /** Every file and directory, each directory before what is in it and names in byte order — what `restore` takes. */
+  StoreEntry[] entries(this) {
+    Vec<StoreEntry> out = Vec.create();
+    this.listInto(out, 0, "/");
+    StoreEntry[] all = StoreEntry[].filled(out.len(), StoreEntry("", false, u8[](), 0, "", 0 as i64));
+    for (i32 i = 0; i < out.len(); i++) { all[i] = out.get(i); }
+    return all;
+  }
+
+  void listInto(this, Vec<StoreEntry> out, i32 node, string path) {
+    StoreNode n = this.nodes.get(node);
+    out.push(StoreEntry(path, n.isDir, n.isDir ? u8[]() : n.data.bytes(), n.mode, n.owner, n.mtime));
+    if (!n.isDir) { return; }
+    string[] names = sortedNames(n.names.keys());
+    for (i32 i = 0; i < names.len(); i++) {
+      this.listInto(out, n.names.getOr(names[i], 0), (path == "/" ? "/" : path + "/") + names[i]);
+    }
+  }
+
+  /** This store as `user` sees it. A relative path is from the root; `relativeTo` gives it somewhere else to start. */
+  Files asUser(this, string user) {
+    MemoryStore st = this;
+    return Files(
+      (string p) => memRead(st, user, p),
+      (string p, u8[] b) => memWrite(st, user, p, b),
+      (string p) => memOpenRead(st, user, p),
+      (string p) => memOpenWrite(st, user, p, true),
+      (string p) => memOpenWrite(st, user, p, false),
+      (string p) => memStat(st, p),
+      (string p) => memStat(st, p),
+      (string p) => memReadDir(st, user, p),
+      (string p, bool parents) => memMkdir(st, user, p, parents),
+      (string p, bool r) => memRemove(st, user, p, r),
+      (string from, string to) => memRename(st, user, from, to),
+      (string p, i32 mode) => memChmod(st, user, p, mode),
+      (string p, bool on) => memSetExecutable(st, user, p, on),
+      (string p, string owner) => memChown(st, user, p, owner),
+      0);
+  }
+
+  /** The node at an absolute normal path, or `STORE_NONE` / `STORE_NOT_A_DIR`. */
+  i32 find(const this, string p) {
+    string[] parts = pathParts(p);
+    i32 at = 0;
+    for (i32 i = 0; i < parts.len(); i++) {
+      if (!this.nodes.get(at).isDir) { return STORE_NOT_A_DIR; }
+      i32 next = this.nodes.get(at).names.getOr(parts[i], 0 - 1);
+      if (next < 0) { return STORE_NONE; }
+      at = next;
+    }
+    return at;
+  }
+
+  /** Whether `user` may do `want` — 4 read, 2 write, 1 execute — to a node. */
+  bool may(const this, string user, i32 node, i32 want) {
+    if (user == "root") { return true; }
+    const StoreNode n = this.nodes.get(node);
+    i32 bits = n.owner == user ? (n.mode >> 6) & 7 : n.mode & 7;
+    return (bits & want) == want;
+  }
+}
+
+static i32 STORE_NONE = 0 - 1;
+static i32 STORE_NOT_A_DIR = 0 - 2;
+
+StoreNode storeDir(string owner, i64 now) {
+  return StoreNode(true, Map.create(hashString, stringEq), Buf.create(), 493, owner, now);   // 0755
+}
+
+StoreNode storeFile(string owner, i64 now) {
+  return StoreNode(false, Map.create(hashString, stringEq), Buf.create(), 420, owner, now);  // 0644
+}
+
+/** The directory above an absolute normal path: `/a/b` gives `/a`, and `/a` gives `/`. */
+string storeParent(string p) {
+  i32 cut = 0;
+  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
+  return cut == 0 ? "/" : p.slice(0, cut);
+}
+
+/** The last component: `/a/b` gives `b`, and `/` gives `""`. */
+string storeBase(string p) {
+  i32 cut = 0;
+  for (i32 i = 0; i < p.len(); i++) { if (p.slice(i, i + 1) == "/") { cut = i; } }
+  return p.slice(cut + 1, p.len());
+}
+
+/** The names, sorted by their bytes. */
+string[] sortedNames(string[] names) {
+  for (i32 i = 1; i < names.len(); i++) {
+    string v = names[i];
+    i32 j = i - 1;
+    while (j >= 0 && bytesAfter(names[j], v)) {
+      names[j + 1] = names[j];
+      j = j - 1;
+    }
+    names[j + 1] = v;
+  }
+  return names;
+}
+
+bool bytesAfter(string a, string b) {
+  u8[] x = a.toBytes();
+  u8[] y = b.toBytes();
+  i32 n = x.len() < y.len() ? x.len() : y.len();
+  for (i32 i = 0; i < n; i++) {
+    if (x[i] != y[i]) { return x[i] > y[i]; }
+  }
+  return x.len() > y.len();
+}
+
+async i64 storeNow(Clock clock) {
+  match (await clock.nowMillis()) {
+    Ok(t): { return t; }
+    Err(e): { return 0 as i64; }
+  }
+}
+
+string noSuchFile(string p) { return p + ": No such file or directory"; }
+string notADirectory(string p) { return p + ": Not a directory"; }
+string permissionDenied(string p) { return p + ": Permission denied"; }
+string notPermitted(string p) { return p + ": Operation not permitted"; }
+
+async Result<u8[], ReadFault> memRead(MemoryStore st, string user, string path) {
+  string p = normalPath("/" + path);
+  i32 node = st.find(p);
+  if (node == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (st.nodes.get(node).isDir) { return Result.Err(IsDir(p + ": Is a directory")); }
+  if (!st.may(user, node, 4)) { return Result.Err(Denied(permissionDenied(p))); }
+  return Result.Ok(st.nodes.get(node).data.bytes());
+}
+
+/**
+ * The file a write goes to — made, owned by `user`, when it is not there — or why not. `empty` truncates an
+ * existing one, as `writeFile` and `openWrite` do and `openAppend` does not.
+ */
+async Result<i32, WriteFault> memFileToWrite(MemoryStore st, string user, string p, bool empty) {
+  i32 parent = st.find(storeParent(p));
+  if (parent == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (parent < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (!st.nodes.get(parent).isDir) { return Result.Err(NotADir(notADirectory(p))); }
+  i64 now = await storeNow(st.clock);
+  i32 existing = p == "/" ? 0 : st.nodes.get(parent).names.getOr(storeBase(p), 0 - 1);
+  if (existing >= 0) {
+    if (st.nodes.get(existing).isDir) { return Result.Err(IsDir(p + ": Is a directory")); }
+    if (!st.may(user, existing, 2)) { return Result.Err(Denied(permissionDenied(p))); }
+    if (empty) { st.nodes.get(existing).replace(u8[](), now); }
+    return Result.Ok(existing);
+  }
+  if (!st.may(user, parent, 2)) { return Result.Err(Denied(permissionDenied(p))); }
+  st.nodes.push(storeFile(user, now));
+  st.nodes.get(parent).names.set(storeBase(p), st.nodes.len() - 1);
+  st.nodes.get(parent).touch(now);
+  return Result.Ok(st.nodes.len() - 1);
+}
+
+async Result<void, WriteFault> memWrite(MemoryStore st, string user, string path, u8[] b) {
+  string p = normalPath("/" + path);
+  match (await memFileToWrite(st, user, p, true)) {
+    Ok(node): {
+      st.nodes.get(node).append(b, st.nodes.get(node).mtime);
+      return Result.Ok();
+    }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+async Result<Output, WriteFault> memOpenWrite(MemoryStore st, string user, string path, bool empty) {
+  string p = normalPath("/" + path);
+  match (await memFileToWrite(st, user, p, empty)) {
+    Ok(node): {
+      bool[] shut = bool[].filled(1, false);
+      return Result.Ok(Output((u8[] b) => memAppend(st, node, p, shut, b), () => memShut(shut)));
+    }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+/** A write through an open file goes to the node it opened, wherever its name has gone since, as on a host. */
+async Result<void, OutputFault> memAppend(MemoryStore st, i32 node, string p, bool[] shut, u8[] b) {
+  if (shut[0]) { return Result.Err(OutputClosed(p + ": closed")); }
+  i64 now = await storeNow(st.clock);
+  st.nodes.get(node).append(b, now);
+  return Result.Ok();
+}
+
+async Result<void, OutputFault> memShut(bool[] shut) {
+  shut[0] = true;
+  return Result.Ok();
+}
+
+async Result<Input, ReadFault> memOpenRead(MemoryStore st, string user, string path) {
+  match (await memRead(st, user, path)) {
+    Ok(b): {
+      bool[] state = bool[].filled(2, false);
+      return Result.Ok(Input(() => memChunk(b, state), () => memRest(b, state), () => memShutRead(state)));
+    }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+/**
+ * What was in the file when it was opened, in one piece and then the end. `state` is whether that piece has gone
+ * and whether the file was closed.
+ */
+async Result<Read, HostFault> memChunk(u8[] b, bool[] state) {
+  if (state[1]) { return Result.Err(Other("read after close")); }
+  if (state[0] || b.len() == 0) { return Result.Ok(Read.End); }
+  state[0] = true;
+  return Result.Ok(Read.Data(b));
+}
+
+async Result<u8[], HostFault> memRest(u8[] b, bool[] state) {
+  if (state[1]) { return Result.Err(Other("read after close")); }
+  bool gone = state[0];
+  state[0] = true;
+  return Result.Ok(gone ? u8[]() : b);
+}
+
+async Result<void, HostFault> memShutRead(bool[] state) {
+  state[1] = true;
+  return Result.Ok();
+}
+
+async Result<Stat, LookFault> memStat(MemoryStore st, string path) {
+  string p = normalPath("/" + path);
+  i32 node = st.find(p);
+  if (node == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  StoreNode n = st.nodes.get(node);
+  return Result.Ok(Stat(true, !n.isDir, n.isDir, n.data.len as i64, n.mtime, false, (n.mode & 64) != 0, FAULT_NONE(),
+                        n.mode, n.owner));
+}
+
+async Result<string[], LookFault> memReadDir(MemoryStore st, string user, string path) {
+  string p = normalPath("/" + path);
+  i32 node = st.find(p);
+  if (node == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (!st.nodes.get(node).isDir) { return Result.Err(NotADir(notADirectory(p))); }
+  if (!st.may(user, node, 4)) { return Result.Err(Denied(permissionDenied(p))); }
+  return Result.Ok(sortedNames(st.nodes.get(node).names.keys()));
+}
+
+async Result<void, MkdirFault> memMkdir(MemoryStore st, string user, string path, bool parents) {
+  string p = normalPath("/" + path);
+  i64 now = await storeNow(st.clock);
+  string[] parts = pathParts(p);
+  i32 at = 0;
+  for (i32 i = 0; i < parts.len(); i++) {
+    bool last = i == parts.len() - 1;
+    i32 next = st.nodes.get(at).names.getOr(parts[i], 0 - 1);
+    if (next >= 0) {
+      if (!st.nodes.get(next).isDir) {
+        if (last) { return Result.Err(Exists(p + ": File exists")); }
+        return Result.Err(NotADir(notADirectory(p)));
+      }
+      if (last && !parents) { return Result.Err(Exists(p + ": File exists")); }
+      at = next;
+      continue;
+    }
+    if (!last && !parents) { return Result.Err(NotFound(noSuchFile(p))); }
+    if (!st.may(user, at, 2)) { return Result.Err(Denied(permissionDenied(p))); }
+    st.nodes.push(storeDir(user, now));
+    st.nodes.get(at).names.set(parts[i], st.nodes.len() - 1);
+    st.nodes.get(at).touch(now);
+    at = st.nodes.len() - 1;
+  }
+  if (parts.len() == 0 && !parents) { return Result.Err(Exists("/: File exists")); }
+  return Result.Ok();
+}
+
+async Result<void, MoveFault> memRemove(MemoryStore st, string user, string path, bool recursive) {
+  string p = normalPath("/" + path);
+  if (p == "/") { return Result.Err(Denied("/: the root cannot be removed")); }
+  i32 parent = st.find(storeParent(p));
+  if (parent == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (parent < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (!st.nodes.get(parent).isDir) { return Result.Err(NotADir(notADirectory(p))); }
+  i32 node = st.nodes.get(parent).names.getOr(storeBase(p), 0 - 1);
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (st.nodes.get(node).isDir && st.nodes.get(node).names.len() > 0 && !recursive) {
+    return Result.Err(NotEmpty(p + ": Directory not empty"));
+  }
+  if (!st.may(user, parent, 2)) { return Result.Err(Denied(permissionDenied(p))); }
+  i64 now = await storeNow(st.clock);
+  st.nodes.get(parent).names.remove(storeBase(p));
+  st.nodes.get(parent).touch(now);
+  return Result.Ok();
+}
+
+async Result<void, MoveFault> memRename(MemoryStore st, string user, string fromPath, string toPath) {
+  string from = normalPath("/" + fromPath);
+  string to = normalPath("/" + toPath);
+  if (from == "/" || to == "/") { return Result.Err(Denied("/: the root cannot be moved")); }
+  i32 fromParent = st.find(storeParent(from));
+  if (fromParent < 0 || !st.nodes.get(fromParent).isDir) {
+    return fromParent == STORE_NONE ? Result.Err(NotFound(noSuchFile(from))) : Result.Err(NotADir(notADirectory(from)));
+  }
+  i32 node = st.nodes.get(fromParent).names.getOr(storeBase(from), 0 - 1);
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(from))); }
+  i32 toParent = st.find(storeParent(to));
+  if (toParent < 0 || !st.nodes.get(toParent).isDir) {
+    return toParent == STORE_NONE ? Result.Err(NotFound(noSuchFile(to))) : Result.Err(NotADir(notADirectory(to)));
+  }
+  if (to.len() > from.len() && to.slice(0, from.len() + 1) == from + "/") {
+    return Result.Err(Other(to + ": a directory cannot move inside itself"));
+  }
+  i32 existing = st.nodes.get(toParent).names.getOr(storeBase(to), 0 - 1);
+  if (existing >= 0 && existing != node) {
+    bool fromDir = st.nodes.get(node).isDir;
+    bool toDir = st.nodes.get(existing).isDir;
+    if (!fromDir && toDir) { return Result.Err(IsDir(to + ": Is a directory")); }
+    if (fromDir && !toDir) { return Result.Err(NotADir(notADirectory(to))); }
+    if (toDir && st.nodes.get(existing).names.len() > 0) { return Result.Err(NotEmpty(to + ": Directory not empty")); }
+  }
+  if (!st.may(user, fromParent, 2) || !st.may(user, toParent, 2)) { return Result.Err(Denied(permissionDenied(from))); }
+  i64 now = await storeNow(st.clock);
+  st.nodes.get(fromParent).names.remove(storeBase(from));
+  st.nodes.get(toParent).names.set(storeBase(to), node);
+  st.nodes.get(fromParent).touch(now);
+  st.nodes.get(toParent).touch(now);
+  return Result.Ok();
+}
+
+/** The node whose mode or owner is changing, when `user` may change it: its owner, or root. */
+Result<i32, ModeFault> memOwned(MemoryStore st, string user, string p) {
+  i32 node = st.find(p);
+  if (node == STORE_NOT_A_DIR) { return Result.Err(NotADir(notADirectory(p))); }
+  if (node < 0) { return Result.Err(NotFound(noSuchFile(p))); }
+  if (user != "root" && st.nodes.get(node).owner != user) { return Result.Err(Denied(notPermitted(p))); }
+  return Result.Ok(node);
+}
+
+async Result<void, ModeFault> memChmod(MemoryStore st, string user, string path, i32 mode) {
+  match (memOwned(st, user, normalPath("/" + path))) {
+    Ok(node): {
+      st.nodes.get(node).setMode(mode & 4095);
+      return Result.Ok();
+    }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+/** The three execute bits move together, following read as `chmod +x` does: `0640` becomes `0750`. */
+async Result<void, ModeFault> memSetExecutable(MemoryStore st, string user, string path, bool on) {
+  match (memOwned(st, user, normalPath("/" + path))) {
+    Ok(node): {
+      i32 mode = st.nodes.get(node).mode;
+      st.nodes.get(node).setMode(on ? mode | ((mode & 292) >> 2) : mode & ~73);
+      return Result.Ok();
+    }
+    Err(e): { return Result.Err(e); }
+  }
+}
+
+/** Root's alone: a user who could give files away could hide one behind somebody else's name. */
+async Result<void, ModeFault> memChown(MemoryStore st, string user, string path, string owner) {
+  string p = normalPath("/" + path);
+  if (user != "root") { return Result.Err(Denied(notPermitted(p))); }
+  match (memOwned(st, user, p)) {
+    Ok(node): {
+      st.nodes.get(node).setOwner(owner);
+      return Result.Ok();
+    }
+    Err(e): { return Result.Err(e); }
+  }
 }
 
 /** The mount owning `p`: the longest `at` that prefixes it at a path boundary. A table with no `/` and no match traps. */
@@ -3225,6 +3780,9 @@ async Result<Output, WriteFault> refusedOpen(string p) { return Result.Err(NotGr
 async Result<void, MkdirFault> refusedMkdir(string p) { return Result.Err(NotGranted(p + ": read-only")); }
 async Result<void, MoveFault> refusedMove(string p) { return Result.Err(NotGranted(p + ": read-only")); }
 async Result<void, ModeFault> refusedMode(string p) { return Result.Err(NotGranted(p + ": read-only")); }
+async Result<void, ModeFault> hostChown(string p) {
+  return Result.Err(Unsupported(p + ": the host's owners are not names, so a file cannot be given to one"));
+}
 
 Result<u8[], ReadFault> readOfFile(FileResult f) {
   if (!f.ok) { return Result.Err(readFault(f.fault, f.error)); }

@@ -292,7 +292,7 @@ export Cli childCliGranted(Frame f, Cli parent, Grants g) {
     // that "there is nothing here" and "I could not look" stay different answers — which is the whole
     // distinction a withheld capability is about.
     fn<Pending<Stat>(string)> noStat =
-      (string p) => readyStat(Stat(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED()));
+      (string p) => readyStat(Stat.of(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED(), 0));
     c.stat = noStat;
     c.linkStat = noStat;
     string[]? nothingListed = null;

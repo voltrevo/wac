@@ -42,7 +42,7 @@ import { asAppModule, drive, manifestIn } from "./driver.ts";
 import type { Driven } from "./driver.ts";
 /** One export's wac signature, as the manifest records it — `Manifest.exports` in `native.ts`. */
 type ExportSig = { name: string; params: string[]; ret: string };
-import { FAULT_NONE, FAULT_NOT_GRANTED, FAULT_OTHER, STAT_EXEC } from "./faults.ts";
+import { FAULT_NONE, FAULT_NOT_GRANTED, FAULT_OTHER, STAT_EXEC, STAT_MODE } from "./faults.ts";
 
 const EMPTY = new Uint8Array(0);
 const SLOT_BITS = Math.ceil(Math.log2(SLOTS));
@@ -334,17 +334,17 @@ export function cliOf(
     try {
       const out = collect(b, unpack(id));
       // exists, isFile, isDir as bytes, then size and mtime as little-endian i64s, then isSymlink, the
-      // fault, and isExecutable — each appended rather than inserted, so the offsets above never had to
+      // fault, isExecutable and the mode — each appended rather than inserted, so the offsets above never had to
       // move. That is why the newest field sits past the fault rather than beside the flag it belongs with.
       const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
       return cls.Stat.of(
         out[0] === 1, out[1] === 1, out[2] === 1,
         dv.getBigInt64(3, true), dv.getBigInt64(11, true),
-        out[19] === 1, out[STAT_EXEC] === 1, out[20] ?? 0,
+        out[19] === 1, out[STAT_EXEC] === 1, out[20] ?? 0, dv.getUint32(STAT_MODE, true),
       );
     } catch {
       // The bridge itself failed, which is not absence — `FAULT_OTHER`, because nothing said better.
-      return cls.Stat.of(false, false, false, 0n, 0n, false, false, FAULT_OTHER);
+      return cls.Stat.of(false, false, false, 0n, 0n, false, false, FAULT_OTHER, 0);
     }
   };
   const dirNames = (id: number) => {
