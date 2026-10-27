@@ -518,3 +518,42 @@ export string test_a_signature_is_not_looked_for_in_every_signature(Core core) {
            + " ms");
   return t.report();
 }
+
+/** `n` enums of three variants, each built and matched by four exported functions. */
+string manyEnums(i32 n) {
+  string[] parts = string[].filled(5 * n, "");
+  for (i32 i = 0; i < n; i++) {
+    string e = "E" + itoa(i);
+    string a = "A" + itoa(i);
+    string b = "B" + itoa(i);
+    parts[5 * i] = "enum " + e + " { " + a + ", " + b + "(i32 x), C" + itoa(i) + " }\n";
+    for (i32 k = 1; k < 5; k++) {
+      parts[5 * i + k] = "export i32 f" + itoa(i) + "_" + itoa(k) + "(i32 x) { " + e + " p = " + e + "."
+          + b + "(x); " + e + " q = " + e + "." + a + "; match (p) { " + b
+          + "(y): { return y; } default: { return 0; } } }\n";
+    }
+  }
+  return joinedParts(parts, 5 * n);
+}
+// **Asking which enum a variant belongs to does not walk every variant.** Every type name the emitter
+// canonicalised was looked for among all the program's variants, so twice the enums cost nearly four
+// times as much: 444 ms for 320 of them against 1,650 for 640.
+export string test_canonicalising_a_type_does_not_walk_every_variant(Core core) {
+  T t = T.create();
+  string fewer = manyEnums(320);
+  string more = manyEnums(640);
+  // **Both must be emitted**: past about 2,048 variants a table runs out and the module is declined.
+  t.isTrue(emitFiles(["/t/m.wac"], [fewer], "/t/m.wac").len() > 1000, "320 enums emitted");
+  t.isTrue(emitFiles(["/t/m.wac"], [more], "/t/m.wac").len() > 1000, "640 enums emitted");
+  i64 a = timeEmit(core, fewer);
+  i64 b = timeEmit(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmit(core, fewer);
+    i64 b2 = timeEmit(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b * (2 as i64) < a * (5 as i64),
+           "320 enums: " + itoa(millis(a)) + " ms; 640: " + itoa(millis(b)) + " ms");
+  return t.report();
+}

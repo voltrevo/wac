@@ -2517,10 +2517,10 @@ string withQualifiedVariants(Reads reads, string text, string table) {
   Lexed lx = readLexed(reads, srcRead);
   i32 st = tokenStride();
   i32 nt = lx.tokenCount;
-  // The visible enums, as `|V=Qualifier|` pairs, and the names that are types here — in a list with
-  // an index rather than a `|`-joined string, which cost the square of a file's types to build and
-  // again to search (`issues/lang/0398b`).
-  string pairs = "|";
+  // The visible enums' variants with their qualifiers, and the names that are types here — each in a
+  // list with an index rather than a `|`-joined string, which cost the square of a file's types, and
+  // its identifiers times its variants, to build and search (`issues/lang/0398b`).
+  Qualifiers pairs = Qualifiers(string[](), string[](), 0, KeyIndex.create());
   TypeNames types = TypeNames(string[](), 0, KeyIndex.create());
   bool[] skip = bool[].filled(nt + 1, false);
   for (i32 t = 0; t < nt; t++) {
@@ -2528,7 +2528,7 @@ string withQualifiedVariants(Reads reads, string text, string table) {
     if ((k == kEnum() || k == kStruct()) && t + 1 < nt && lx.tokens[(t + 1) * st] == kIdent()) {
       string nm = tokenTextOf(src, lx, t + 1);
       addTypeName(types, nm);
-      if (k == kEnum()) { pairs = pairs + qualifiedPairs(variantsOfEnum(table, nm), nm); }
+      if (k == kEnum()) { addQualified(pairs, variantsOfEnum(table, nm), nm); }
       // The declaration's body is its own: `enum E { A, B(i32 x) }` names variants, it does not build them.
       if (k == kEnum()) {
         i32 u = t + 2;
@@ -2556,13 +2556,13 @@ string withQualifiedVariants(Reads reads, string text, string table) {
           // module's `Node.Element` (spec case 0591) — and an imported enum brings its variants.
           addTypeName(types, local);
           string vs = variantsOfEnum(table, orig);
-          if (vs != "") { pairs = pairs + qualifiedPairs(vs, local); }
+          if (vs != "") { addQualified(pairs, vs, local); }
         }
         u++;
       }
     }
   }
-  if (pairs == "|") { return text; }
+  if (pairs.n == 0) { return text; }
   i32[] at = i32[].filled(nt + 1, 0);
   string[] what = string[].filled(nt + 1, "");
   i32 n = 0;
@@ -2570,7 +2570,7 @@ string withQualifiedVariants(Reads reads, string text, string table) {
   while (t < nt) {
     if (skip[t] || lx.tokens[t * st] != kIdent()) { t++; continue; }
     string v = tokenTextOf(src, lx, t);
-    string q = qualifierFor(pairs, v);
+    string q = qualifierOf(pairs, v);
     if (q == "" || isTypeName(types, v)) { t++; continue; }
     i32 prev = t > 0 ? lx.tokens[(t - 1) * st] : 0 - 1;
     i32 next = t + 1 < nt ? lx.tokens[(t + 1) * st] : 0 - 1;
@@ -2614,31 +2614,41 @@ string withQualifiedVariants(Reads reads, string text, string table) {
   return res + bytesBetween(src, from, src.len());
 }
 
-/** `|V=Q|` for each variant in `vs` (`|V1|V2|`), qualified by `q`. */
-string qualifiedPairs(string vs, string q) {
-  string out = "";
-  string rest = vs.slice(1, vs.len());
-  while (rest.indexOf("|") > 0) {
-    out = out + rest.slice(0, rest.indexOf("|")) + "=" + q + "|";
-    rest = rest.slice(rest.indexOf("|") + 1, rest.len());
-  }
-  return out;
+/** Variants a file can name unqualified, each with the qualifier that names its enum, by variant. */
+struct Qualifiers {
+  string[] variants;
+  string[] quals;
+  i32 n;
+  KeyIndex ix;
 }
 
-/** The one qualifier `pairs` gives variant `v`, or "" for none or for two different ones. */
-string qualifierFor(string pairs, string v) {
-  string key = "|" + v + "=";
-  i32 a = pairs.indexOf(key);
-  if (a < 0) { return ""; }
-  string rest = pairs.slice(a + key.len(), pairs.len());
-  string q = rest.slice(0, rest.indexOf("|"));
-  string later = rest.slice(rest.indexOf("|"), rest.len());
-  i32 b = later.indexOf(key);
-  while (b >= 0) {
-    string r2 = later.slice(b + key.len(), later.len());
-    if (r2.slice(0, r2.indexOf("|")) != q) { return ""; }
-    later = r2.slice(r2.indexOf("|"), r2.len());
-    b = later.indexOf(key);
+/** Each variant in `vs` (`|V1|V2|`), qualified by `q`. */
+void addQualified(Qualifiers qs, string vs, string q) {
+  string rest = vs.slice(1, vs.len());
+  while (rest.indexOf("|") > 0) {
+    if (qs.n >= qs.variants.len()) {
+      string[] bv = string[].filled(qs.variants.len() * 2 + 16, "");
+      string[] bq = string[].filled(qs.variants.len() * 2 + 16, "");
+      for (i32 i = 0; i < qs.n; i++) { bv[i] = qs.variants[i]; bq[i] = qs.quals[i]; }
+      qs.variants = bv;
+      qs.quals = bq;
+    }
+    string v = rest.slice(0, rest.indexOf("|"));
+    qs.variants[qs.n] = v;
+    qs.quals[qs.n] = q;
+    keyAdd(qs.ix, v, qs.n);
+    qs.n = qs.n + 1;
+    rest = rest.slice(rest.indexOf("|") + 1, rest.len());
+  }
+}
+
+/** The one qualifier `qs` gives variant `v`, or "" for none or for two different ones. */
+string qualifierOf(Qualifiers qs, string v) {
+  string q = "";
+  bool seen = false;
+  for (i32 i = keyFirst(qs.ix, v); i >= 0; i = qs.ix.next[i]) {
+    if (qs.variants[i] != v) { continue; }
+    if (!seen) { q = qs.quals[i]; seen = true; } else if (qs.quals[i] != q) { return ""; }
   }
   return q;
 }

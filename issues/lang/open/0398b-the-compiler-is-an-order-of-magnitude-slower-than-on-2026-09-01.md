@@ -282,6 +282,23 @@ arguments) and `genericFuncKey` still walk every declaration and have no test.
 
 Same shell bytes.
 
+**Twelfth round (agent-b, 2026-10-27): enum variants.** Three walks, each times the program's variants:
+`Env.enumOf` (12% of the shell build, through `canonType` on every type name) and the other
+variant-table lookups by name or owner, now `variantIx` and `variantOwnerIx`, kept by `variantAdded`;
+`withQualifiedVariants`, which searched a `|V=Q|` string grown by concatenation once per identifier
+(now `Qualifiers`, rows with an index); and `typeNamedAnywhere`, once per variant over every
+declaration (now the tree index). `test_canonicalising_a_type_does_not_walk_every_variant` fails without
+them: 320 against 640 enums took 437 against 1,685 ms, now 93 against 235. It asserts that both are
+emitted: past about 2,048 variants the module is declined.
+
+| | round 11 | round 12 |
+|---|---:|---:|
+| `wac build` of box's shell | 4.74–4.86 s | 4.05–4.19 s |
+| `./bootstrap.sh --no-install` | 88 s | 74 s |
+| `wac check` in `packages/box` | 2,460–2,568 ms | 2,454–2,537 ms |
+
+Same shell bytes. `variantsOfEnum` still searches the table text once per enum; it did not show.
+
 **Profiling note.** Wasm inlining folds a callee's walk into its caller's self time: `genericCallInstance`
 showed 99% self until `WAC_V8_FLAGS="--prof --no-wasm-inlining"` named `genericFuncFor`.
 
