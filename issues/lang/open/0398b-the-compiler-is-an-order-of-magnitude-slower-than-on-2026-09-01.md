@@ -227,6 +227,12 @@ Same shell bytes. Found on the way and fixed with it: the checker's import table
 their positions only 512, so the 513th imported name trapped the compiler; and the duplicate-name check
 stopped recording at 512 declarations, so a duplicate past that went unreported (`manyimports_test.wac`).
 
+**Eighth round (agent-b, 2026-10-27).** `keyDecls` decided whether each declaration of a static view
+shares its name by comparing it with every other, once per view: now a name index. `wac check` in
+`packages/box` 2,574 → 2,415 ms, same shell bytes. Not changed: caching each import's boundary check
+across a project's gathers measured nothing (a second gather over 60 cached imports took 1.9 ms either
+way), so it was reverted. Writing that test found `issues/lang/0399b`.
+
 Two leads that did not reproduce in isolation and so were not changed: `Env.sigType` walks every
 signature for each one asked (7% of the shell build, via `pairEverySignature`), and
 `methodInstanceInferred` walks every declaration per generic method call (10%). A V8 code cache for

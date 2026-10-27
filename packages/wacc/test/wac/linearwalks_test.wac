@@ -364,3 +364,40 @@ export string test_a_reached_type_is_not_looked_for_in_every_file(Core core) {
            "200 reached types: " + itoa(millis(a)) + " ms; 400: " + itoa(millis(b)) + " ms");
   return t.report();
 }
+
+/** An entry that declares a `static`, importing one of `n` functions from `/t/lib.wac`. */
+string[] staticEntry(i32 n) {
+  string[] lib = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) { lib[i] = "export i32 f" + itoa(i) + "() { return " + itoa(i) + "; }\n"; }
+  return ["import { f0 } from \"./lib.wac\";\nstatic i32 S = 1;\nexport i32 main() { return f0() + S; }\n",
+          joinedParts(lib, n)] as string[];
+}
+
+i64 timeStatic(Core core, string[] texts) {
+  i64 t0 = core.monotonicNanos().wait();
+  diagnoseFiles(["/t/m.wac", "/t/lib.wac"], texts, "/t/m.wac");
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **The static evaluator keys its declarations in one pass.** Each declaration's key is its name, or
+// its name and file when another declaration shares the name — and whether one does was asked by
+// comparing it with every other declaration of the closure. A file that says `static` builds that view
+// up front, so importing a large library cost the square of its size: 9% of checking `packages/box`.
+export string test_keying_the_static_view_does_not_compare_every_pair(Core core) {
+  T t = T.create();
+  string[] fewer = staticEntry(3000);
+  string[] more = staticEntry(6000);
+  timeStatic(core, fewer);
+  timeStatic(core, more);
+  i64 a = timeStatic(core, fewer);
+  i64 b = timeStatic(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeStatic(core, fewer);
+    i64 b2 = timeStatic(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b * (2 as i64) < a * (5 as i64),
+           "3,000 declarations: " + itoa(millis(a)) + " ms; 6,000: " + itoa(millis(b)) + " ms");
+  return t.report();
+}

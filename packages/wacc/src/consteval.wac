@@ -2195,10 +2195,16 @@ export void keyDecls(Decls cx) {
     cx.names[d] = declNameOf(cx, d);
     cx.exported[d] = declExportedOf(cx.decls[d]);
   }
+  // **Whether another declaration shares the name, through an index** — this compared every pair,
+  // the square of the closure, once per static view (`issues/lang/0398b`).
+  KeyIndex byName = KeyIndex.create();
+  for (i32 d = 0; d < cx.decls.len(); d++) {
+    if (cx.names[d] != "") { keyAdd(byName, cx.names[d], d); }
+  }
   for (i32 d = 0; d < cx.decls.len(); d++) {
     if (cx.names[d] == "") { cx.keys[d] = ""; continue; }
     bool twice = false;
-    for (i32 e = 0; e < cx.decls.len(); e++) {
+    for (i32 e = keyFirst(byName, cx.names[d]); e >= 0; e = byName.next[e]) {
       if (e != d && cx.names[e] == cx.names[d]) { twice = true; }
     }
     cx.keys[d] = twice ? cx.names[d] + "@" + decimalText(cx.declFiles[d]) : cx.names[d];
