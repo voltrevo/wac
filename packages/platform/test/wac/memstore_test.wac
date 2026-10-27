@@ -3,7 +3,8 @@
 // A store is one tree; `store.asUser(user)` is a `Files` acting as that user, so two views of one store are two
 // people on one machine. The checks assert the fault's type, which is what a caller matches on.
 
-import { Sys, Files, Stat, MemoryStore, StoreEntry, Input, Output, NotFound, NotADir, Denied, Exists, IsDir, NotEmpty,
+import { Sys, Files, Stat, MemoryStore, StoreEntry, Input, Output, NotFound, NotADir, Denied, Exists, IsDir, NotEmpty, Procs,
+         Exec, SpawnFault, ChildEnv, Launch,
          Unsupported } from "std";
 import { Result, Read, flatten } from "core";
 import { T } from "../../../wactest/src/assert.wac";
@@ -254,5 +255,38 @@ export async string test_the_host_has_modes_and_no_owners_to_change(Sys sys) {
     Err(e): { t.isTrue(e is Unsupported, "chown on the host is Unsupported"); }
   }
   await fs.remove(dir, true);
+  return t.report();
+}
+
+/** The served probe's answer on one host. */
+void servedSaid(T t, string host, Result<Exec, SpawnFault> ran) {
+  match (ran) {
+    Ok(r): {
+      t.eqI32(r.status, 0, host + ": the probe ran: " + string.fromBytes(r.stderr));
+      t.eqStr(string.fromBytes(r.stdout),
+              "read hello\nowner root\nroot's directory refused\nlisted in report\ngrandchild exit 0\n"
+                + "deep deep owned by ada\nchild exit 0\n",
+              host + ": the child and its child worked on the parent's store, as ada");
+    }
+    Err(e): { t.fail(host + ": did not run"); }
+  }
+}
+
+export async string test_a_composed_files_is_served_to_a_child_on_every_host(Sys sys) {
+  T t = T.create();
+  Procs procs = sys.procs();
+  string probe = "packages/platform/test/wac/served_probe.wac";
+  string dir = flatten(sys.env().cwd().wait()).unwrap() + "/.cache/wac-served";
+  await sys.files().mkdir(dir, true);
+  servedSaid(t, "v8", await procs.exec("native/v8/target/release/wac", ["run", "--allow-run", probe],
+                                       u8[](), ChildEnv.inherited(), Launch.plain()));
+  string denoOut = dir + "/probe-deno.js";
+  await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-run",
+                            "--target", "deno", "-o", denoOut], u8[](), ChildEnv.inherited(), Launch.plain());
+  servedSaid(t, "deno", await procs.exec("deno", ["run", "-A", denoOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  string nodeOut = dir + "/probe-node.js";
+  await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-run",
+                            "--target", "node", "-o", nodeOut], u8[](), ChildEnv.inherited(), Launch.plain());
+  servedSaid(t, "node", await procs.exec("node", [nodeOut], u8[](), ChildEnv.inherited(), Launch.plain()));
   return t.report();
 }

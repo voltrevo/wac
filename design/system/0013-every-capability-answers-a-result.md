@@ -169,7 +169,9 @@ the browser terminal are granted it to run applets, and without it an applet is 
   host gives a stream per call, which retires `openInput`/`openOutput` switching the program's one stream and the
   `isHostPath` split in box (every path streams).
 - **A composed `Files` handed to a child is served by std** over the parent channel while the parent drives its
-  scheduler; the child's `sys.files()` is that remote `Files`. The wire protocol and serving move into std.
+  scheduler; the child's `sys.files()` is that remote `Files`. The wire protocol and serving move into std. Done: the
+  child asks once, the first time it calls `sys.files()`, whether its parent serves it, and `Child.exit()` answers
+  after the serving has ended, so a parent's `main` does not return with its serving still waiting.
 - **`packages/fs` keeps what is ours rather than general**: the image format, over `store.entries()` and
   `MemoryStore.restore(clock, entries)`; `passwd`; the process table, renamed `ProcTable`; and `/dev`, `/proc` and
   `/bin` as `Files` constructors (`devFiles`, `procFiles`, `binFiles`).

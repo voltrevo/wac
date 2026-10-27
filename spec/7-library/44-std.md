@@ -507,6 +507,14 @@ struct Child {
 `[§wac-std-spawn-grants-ykmq5tw]` A spawned child holds exactly the handles in its `Authority`, so it never holds more than
 its parent. Spawning needs the program's own `procs` authority — another instance of itself included.
 
+`[§wac-std-files-served-t5h2mzr]` A child handed a `Files` built in this program — a `MemoryStore` view, a `mounted` table,
+a `relativeTo` over either — is served it: the child's `sys.files()` asks this program, which answers out of that
+`Files` while it runs its scheduler, until the child ends, and the child's `exit` answers once the serving has ended
+too. So the child's writes are this program's and it may do what that `Files` allows and nothing more; it is given no
+host files. A child hands its served `Files` on to its own children in the same way. `sys.files()` and its `readOnly`
+are granted to the child by the host instead, and a loaded module, which runs on this thread and so cannot be served,
+is refused a composed `Files` with `Unsupported`.
+
 `[§wac-std-child-env-k3w8tqa]` A host program started by `exec` gets the environment its `ChildEnv` describes: a base,
 this program's own environment or an empty one, with each name `set` over it holding the last value it was set to. Nothing
 else reaches the child's environment.
