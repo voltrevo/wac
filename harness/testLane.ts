@@ -10,8 +10,9 @@
 // **Why a lane rather than another workaround.** Three ssh files each start a real sshd on a real port,
 // and under five parallel workers one of them resets during the handshake about once in eight suite runs
 // (wac-mono 0082's seventh member). Around that we had already accumulated `harness/port.ts` holding a
-// listener until the bind, `harness/reap.ts` killing sshds orphaned by a killed run, a deliberately
-// unanchored pattern because sshd rewrites its argv, and a `MaxStartups` hypothesis waiting to be tried.
+// listener until the bind, a reaper killing sshds orphaned by a killed run (deleted on 2026-10-27, once
+// its callers were gone), a deliberately unanchored pattern because sshd rewrites its argv, and a
+// `MaxStartups` hypothesis waiting to be tried.
 // Four workarounds for one decision: running tests that want exclusive resources concurrently with
 // everything else. The lane removes the decision.
 //
