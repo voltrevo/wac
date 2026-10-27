@@ -530,7 +530,6 @@ for attempt in 1 2 3; do
   fi
 
   echo "== suite passed in ${elapsed}s (load now $(cut -d' ' -f1-3 /proc/loadavg)) =="
-  tSuite=$SECONDS
   # **The threshold has to move when the suite does, and it has moved twice.** It said "several times
   # the usual ~50s" above 180s until 2026-08-18, when the wac lane became the largest and every green
   # run tripped it — a warning that cannot warn. It was re-measured then at 208s (78s Deno, 29s alone,
@@ -554,142 +553,30 @@ for attempt in 1 2 3; do
     [ -n "$slow" ] && { echo "-- tests that ran unusually long --"; echo "$slow"; }
   fi
 
-  # **The doc checks, which the suite does not run.** `wac task docs` is `wac test tools/` followed by
-  # two Deno files, and the wac half is ten test files nothing else reaches: the lane in `runTests.ts`
-  # walks `packages/` only. So `tools/wac/links_test.wac`, `map_test.wac`, `programs_test.wac`,
-  # `testIgnore_test.wac` and six more — every one of them a guard on this repository's own tooling —
-  # ran only when somebody typed the command. A whole suite log from 2026-08-18 mentions `tools/wac/`
-  # exactly zero times.
+  # **The suite and nothing after it, since 2026-10-27.** This gate also ran the doc checks
+  # (`wac task docs`), the site's Deno test with `npx tsc -b`, and the coverage ratchets
+  # (`wac task coverage:all`). The operator cut all three: the gate had grown to about forty minutes, and
+  # three agents wait on it. Each is still a task, to run when a change is in its territory:
   #
-  # Here rather than in the suite, because two of them read `git ls-files`: in a working tree with a new
-  # file not yet added, a link to it does not resolve and the check is right to say so — which is a
-  # sensible thing to fail a *push* on and a poor thing to fail a mid-edit `wac task test` on. The tree
-  # is clean by the time this runs; the script refuses a dirty one.
+  #     wac task docs              tools/ guards — links, issue counts, task names
+  #     wac task coverage:all      the per-package coverage floors
+  #     cd site && npx tsc -b      the site's type-check
   #
-  # 8s, measured, and it blocks: these are deterministic checks over files in the repository, so a red
-  # one is a red one for everybody rather than a machine having a bad day.
-  if ! "$WAC" task docs > "$log.docs" 2>&1; then
-    echo "== the doc checks are red — not pushing =="
-    echo "   \`wac task docs\` runs them. The failures:"
-    grep -E "FAIL|error:|failed" "$log.docs" | head -20
-    echo "-- full output: $log.docs --"
-    exit 1
-  fi
-  echo "== doc checks passed =="
-  tDocs=$SECONDS
-
-  # **The site, which the suite does not look at at all.** `site/` is in `deno.json`'s `exclude` and named
-  # again in the parallel pass's `--ignore`, for a real reason: its sources are vite-resolved TypeScript
-  # that Deno's resolver refuses. So `site/tools/site.test.ts` needs two flags, and its TypeScript needs
-  # the checker that agrees with the bundler — `npx tsc -b`, in `site/`. Neither ran anywhere automatic.
-  #
-  # **It was red when this was added.** The page said "372 of its claims carry a tag" and `spec/` had 375,
-  # in a section titled "A specification that cannot drift". Nothing had noticed because nothing looked,
-  # and the site deploys on every push — which is what `issues/system/0146` already cost once, when the
-  # published playground quietly compiled with the reference for a while.
-  #
-  # 6s for both.
-  if ! deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts > "$log.site" 2>&1; then
-    echo "== the site's own tests are red — not pushing =="
-    echo "   \`deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts\` runs them:"
-    grep -E "FAILED|error:" "$log.site" | head -10
-    echo "-- full output: $log.site --"
-    exit 1
-  fi
-  if ! (cd site && npx tsc -b) >> "$log.site" 2>&1; then
-    echo "== the site does not type-check — not pushing =="
-    echo "   \`cd site && npx tsc -b\` is the checker that agrees with the bundler:"
-    tail -20 "$log.site"
-    exit 1
-  fi
-  echo "== the site passes its own tests and type-checks =="
-  tSite=$SECONDS
-
-  # **The coverage ratchets, after the suite and before the push.** Thirty-seven drivers, **633s of
-  # work at 4 workers and 216s of wall** as measured on 2026-08-29. This comment said "nineteen
-  # packages, 38 seconds, twelve when they run four at a time" until then, which was true when it was
-  # written and had been wrong for long enough that `issues/system/0275b` was written to find out —
-  # so the gate now prints its own budget below rather than relying on a comment to stay true.
-  #
-  # `coverage:platform` alone is 137s of the 216, which is above the perfect-balance figure, so no
-  # scheduling change can help; that one driver is `issues/system/0197`. The cost is worth it for the
-  # thing the suite cannot
-  # see: an uncovered branch is not a failing test, it is code nothing asked about. issues/system 0101
-  # is the whole argument — `coverage:crypto` had been red long enough for the reason to be forgotten,
-  # and `rsa.wac` grew eighteen unmeasured branch points while the issue describing that was open,
-  # because nothing ran the task.
-  #
-  # It was held out of here until every one passed, on the rule that a red check in the gate blocks
-  # every other agent for something they did not do. All nineteen have passed since 2026-08-12.
-  # **Reported, not enforced, from 2026-08-12 21:55 to 2026-08-19.** It blocked for ten hours and then
-  # stopped being fair: `packages/zstd` used `leadingZeros`, which `wacc` had and the reference
-  # compiler did not, so `coverage:zstd` could not build while every test of it passed. That is
-  # nobody's fault who is pushing, and a check that blocks every agent for something they did not do
-  # is the exact line 0101 said not to cross — including when the person who crossed it is the one
-  # who put the check here.
-  #
-  # **Blocking again since 2026-08-19**, which is what that paragraph promised: `issues/lang/0111` is
-  # the gap it named, and it closed on 2026-08-13 — the condition was met for six days and nothing
-  # acted on it, because "put it back when that closes" is a sentence in a shell script and no check
-  # reads it. There are now 21 packages rather than 19 and all 21 have been green on every gate run
-  # since. If this blocks you for something you did not do, the fair answer is the same as it was:
-  # say so here and turn it back into a report, rather than pushing past it silently.
-  #
-  # **Asked first, because a markdown edit cannot move a branch count.** `tools/docsOnly.wac` answers
-  # whether `origin/master..$tested` is markdown with no ```wac fence changed in a file whose fences
-  # something executes — the range this push would actually add, rather than the working tree. It is
-  # deliberately narrow: a fence in `spec/**` or a `packages/*/README.md` is a program three consumers
-  # compile, so editing one is editing code and the ratchets run.
-  #
-  # **And it is not worth narrowing further, which was measured before being believed.** The obvious
-  # next step is to run only the drivers a change can reach — every exercise's import closure is one
-  # `wacFiles` walk away, and `issues/system/0241b` proved the reach crosses packages, so the
-  # predicate would have to be that closure rather than the package name. Over the last forty
-  # commits: eleven were documentation and already skip; **nineteen touched `packages/wacc`, the
-  # host, `tools/` or `harness/`**, where every driver's number can move and everything must run
-  # anyway; five were confined to packages. So the work would buy a skip on one push in eight, on the
-  # gate's safety path, and a push is a batch of commits — which makes it rarer still.
-  #
-  # It skips **this check and nothing else**. The suite has already run by the time we get here, and it
-  # must: a pure prose edit routinely breaks it on purpose, because
-  # `tools/wac/issuecounts_test.wac` asserts `N issues, M closed.` against the files in `issues/*/`.
-  # Skipping the suite on this predicate would
-  # be wrong; skipping a branch-coverage measurement of code nobody touched is not.
-  if "$WAC" run --allow-read --allow-run tools/docsOnly.wac -- origin/master "$tested" 2>&1; then
-    echo "== skipping the coverage ratchets: documentation only =="
-  elif ! "$WAC" task coverage:all; then
-    echo "== the coverage ratchets are red — not pushing =="
-    echo "   A package above is below its recorded coverage, or an exemption in its cov.ts no longer"
-    echo "   matches the line it names, or it will not build. Run:"
-    echo "       wac task coverage:<pkg> --verbose"
-    echo "   A branch you cannot reach is not a failure — record it in that package's cov.ts with the"
-    echo "   argument for why, which is what every entry there already carries."
-  # **Escaped, because bash runs backticks inside double quotes.** Printing this message spawned a
-  # whole second gate — a full suite, inside the failure handler of the first — and the only
-  # reason nobody met it is that the coverage ratchets are almost never red. Found on 2026-08-27
-  # when they were, and the gate took forty minutes to report a failure it had already decided.
-    echo '   If this is a gap you did not open and cannot close, tools/push.sh says how this check'
-    echo "   went from blocking to reporting once before, and on what argument."
-    exit 1
-  fi
-  tCov=$SECONDS
+  # `issues/system/0275b` has the numbers that drove the cut.
 
   # **The budget, printed on the run that produced it.** Every number here used to be reconstructed
   # afterwards from separate measurements, which is how the ratchets spent a fortnight described as
   # 38 seconds. `pull+seed` covers everything from the lock to the first attempt, so on a retry it is
-  # the original figure rather than this attempt's; the other four are this attempt's own.
+  # the original figure rather than this attempt's; the suite row is this attempt's own.
   #
   # **`lock wait` is time this gate did not spend**, and it is printed so that the lines below it can
   # be read as work. It measures how many other agents were ahead of you, so it is the one row no
-  # change to the suite, the docs or the ratchets can move.
+  # change to the suite can move.
   echo "== where this gate's time went =="
   printf '   %-11s %4ss\n' \
     'lock wait' "$tLock" \
     'pull+seed' "$((tPre - tLock))" \
     'suite'     "$elapsed" \
-    'docs'      "$((tDocs - tSuite))" \
-    'site'      "$((tSite - tDocs))" \
-    'ratchets'  "$((tCov - tSite))" \
     'total'     "$SECONDS"
 
   # `$tested:master`, not `HEAD:master`: pushing the revision the suite ran against. If HEAD has
