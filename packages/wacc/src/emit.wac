@@ -9098,7 +9098,13 @@ void emitRawString(B fb, Env env, string text) { emitStringBytes(fb, env, text.t
  * way everywhere, so a run of more than ten thousand bytes was an `array.new_fixed` the engine refuses.
  */
 void emitStringBytes(B fb, Env env, u8[] bytes) {
-  if (env.inConstExpr) {
+  // **A short literal is built in place, too.** `array.new_data` is a call into the engine's runtime
+  // that takes a lock, and `array.new_fixed` is an allocation optimised code makes inline — so a
+  // literal compared against once per character, `if (c == "[")`, ran a scanning loop about 20× slower
+  // than the same loop over variables (`issues/lang/0398b`, `literalcost_test.wac`). Up to eight bytes
+  // the code is at most a few bytes longer than the segment form; past that the segment keeps what
+  // `issues/lang/0162` measured.
+  if (env.inConstExpr || bytes.len() <= 8) {
     for (i32 i = 0; i < bytes.len(); i++) { fb.byte(65); fb.i32leb(bytes[i] as i32); }
     fb.byte(251);
     fb.u32leb(8);   // array.new_fixed
