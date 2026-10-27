@@ -1,5 +1,7 @@
 // Two walks in the compiler that must not multiply by the size of the program.
 //
+// test-lane: heavy — 27s in a 4-worker suite, measured 2026-10-27; its doubling ratios read the machine's load as well as the compiler, and five of them failed a 4-worker suite on correct code that passes alone
+//
 // `issues/lang/0398b`: building box's shell took 66 s against 6 s in August, and a third of it was the
 // checker scanning every source of the graph once per type name, a fifth the emitter walking every
 // variant once per field once per named instance. Each was linear on its own and the product was the

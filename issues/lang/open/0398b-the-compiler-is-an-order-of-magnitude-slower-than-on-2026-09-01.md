@@ -340,3 +340,7 @@ the two:
 **The lead is the 2.63×.** At 2,000 structs, `fn<…>` fields cost 911 ms against 538 ms for plain `i32`
 fields of the same shape. That gap grows 3.8× when the struct count doubles, so the `fn` type path
 still has a quadratic walk after the signature index.
+
+**`linearwalks_test.wac` is in the heavy lane as of 2026-10-27.** A 4-worker suite failed five of its
+ratios on correct code that passes alone, so the gate no longer runs it. Run the file directly when
+working on this issue.
