@@ -299,6 +299,20 @@ emitted: past about 2,048 variants the module is declined.
 
 Same shell bytes. `variantsOfEnum` still searches the table text once per enum; it did not show.
 
+**Thirteenth round (agent-b, 2026-10-27): a generic function's key.** In a program of more than one
+file, `genericFuncKey` asked whether another file declares a generic function of the same name by
+reading every declaration, and the instance walks call it for every generic declaration they pass. It
+now walks the tree index. `test_keying_a_generic_function_does_not_walk_every_declaration` fails without
+it: beside 8,000 declarations, 100 generic callees took 2,639 ms against 35 for 100 plain ones. The
+shell build does not move (4.09–4.22 s before, 3.98–4.23 after): it has few generic instances.
+Bootstrap 69 s. Same shell bytes.
+
+Still quadratic: the six walks that register, count and emit instances (`emit.wac`, the
+`genericFuncKey(…) != env.instOf[ii]` sites) pair every instance with every declaration. 200 generic
+functions in two files take 23 ms and 400 take 68 after this round, against 211 and 1,549 before.
+Restricting them to a name's declarations has to keep the `curFile`/`src`/`lexed` each iteration sets,
+and the struct and enum arms do not stop at the first match, so it was left for its own round.
+
 **Profiling note.** Wasm inlining folds a callee's walk into its caller's self time: `genericCallInstance`
 showed 99% self until `WAC_V8_FLAGS="--prof --no-wasm-inlining"` named `genericFuncFor`.
 

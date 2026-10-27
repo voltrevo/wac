@@ -557,3 +557,41 @@ export string test_canonicalising_a_type_does_not_walk_every_variant(Core core) 
            "320 enums: " + itoa(millis(a)) + " ms; 640: " + itoa(millis(b)) + " ms");
   return t.report();
 }
+
+/** 100 functions each called once — generic, or when `generic` is false plain — importing `P`. */
+string hundredCallees(bool generic) {
+  string[] parts = string[].filled(201, "");
+  parts[0] = "import { P } from \"./lib.wac\";\nexport i32 h(P p) { return p.v; }\n";
+  for (i32 i = 0; i < 100; i++) {
+    parts[1 + 2 * i] = generic ? "T id" + itoa(i) + "<T>(T x) { return x; }\n"
+                               : "i32 id" + itoa(i) + "(i32 x) { return x; }\n";
+    parts[2 + 2 * i] = "export i32 f" + itoa(i) + "(i32 x) { return id" + itoa(i) + "(x); }\n";
+  }
+  return joinedParts(parts, 201);
+}
+
+// **Naming a generic function's instance does not walk every declaration.** In a program of more than
+// one file, an instance's key asks whether another file declares a generic function of its name, and
+// that read the name of every declaration — for every generic declaration each instance walk passed.
+// Beside a file of 8,000 functions, 100 generic callees took 2,710 ms against 95 for 100 plain ones.
+// Still quadratic and not tested here: those walks pair every instance with every declaration.
+export string test_keying_a_generic_function_does_not_walk_every_declaration(Core core) {
+  T t = T.create();
+  string lib = declsLib(8000);
+  string plain = hundredCallees(false);
+  string generic = hundredCallees(true);
+  t.isTrue(emitFiles(["/t/m.wac", "/t/lib.wac"], [generic, lib], "/t/m.wac").len() > 1000,
+           "the generic callees emitted");
+  i64 a = timeEmitTwo(core, plain, lib);
+  i64 b = timeEmitTwo(core, generic, lib);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmitTwo(core, plain, lib);
+    i64 b2 = timeEmitTwo(core, generic, lib);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "beside 8,000 declarations: " + itoa(millis(a)) + " ms for 100 plain callees, " + itoa(millis(b))
+           + " ms for 100 generic ones");
+  return t.report();
+}

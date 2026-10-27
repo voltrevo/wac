@@ -846,7 +846,7 @@ string genericFuncInstance(Env env, u8[] src, Lexed lexed, Ty qual) {
           Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
             if (typeParams.len() != targs.len()) { continue; }
             if (tokenTextOf(gs, gl, nameTok) != raw) { continue; }
-            string key = genericFuncKey(env, d, raw);
+            string key = genericFuncKey(env, src, lexed, d, raw);
             string inst = key + "<";
             for (i32 i = 0; i < targs.len(); i++) {
               string a = env.canonType(typeOfTyName(env, src, lexed, targs[i]));
@@ -902,7 +902,7 @@ string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args)
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() == 0) { continue; }
         if (tokenTextOf(cs, cl, nameTok) != raw) { continue; }
-        string key = genericFuncKey(env, d, raw);
+        string key = genericFuncKey(env, src, lexed, d, raw);
         if (params.len() != args.len()) { return ""; }
         string[] bound = string[].defaulted(typeParams.len());
         for (i32 i = 0; i < args.len(); i++) {
@@ -6622,7 +6622,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         // One function per instance, in the same place in the order its registration put it.
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (genericFuncKey(env, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, src, lexed, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           if (env.funcIndex[countAt] >= 0) { count = count + 1; }
           countAt = countAt + 1;
           // **The first declaration of that name, and no other**, as registration took — see the
@@ -6803,7 +6803,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       match (pd5[di].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (genericFuncKey(env, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, src, lexed, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           i32 fpushed2 = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
                                           env.instOf[ii]);
           registerFuncTypes(env, src, lexed, returnType, params, "");
@@ -7260,7 +7260,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         // happened to infer the same one would collide on it.
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (genericFuncKey(env, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, src, lexed, di, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           // **The first declaration of that name, and no other.** A function instance is named by its
           // template's bare name, so `ready<Stat>` matched both `platform/frame.wac`'s `ready<T>` and
           // `web/system.wac`'s. Registration registered one — the first, then `funcAt` said it was
@@ -14069,7 +14069,7 @@ string[] genericParamTypes(Env env, u8[] src, Lexed lexed, string raw, string in
     match (gd[d].kind) {
       Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
         if (typeParams.len() == 0 || tokenTextOf(ds, dl, nameTok) != raw) { continue; }
-        if (inst.indexOf("<") > 0 && genericFuncKey(env, d, raw) != inst.slice(0, inst.indexOf("<"))) { continue; }
+        if (inst.indexOf("<") > 0 && genericFuncKey(env, src, lexed, d, raw) != inst.slice(0, inst.indexOf("<"))) { continue; }
         env.curFile = fi;
         i32 pushed = pushSubstitution(env, ds, dl, typeParams, inst, raw);
         string[] out = string[].filled(params.len(), "");
@@ -14100,7 +14100,7 @@ i32 pushInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, string in
       match (w3d[d].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (genericFuncKey(env, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, src, lexed, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
           env.curFile = w3f;
           return pushed;
@@ -14206,7 +14206,7 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
       match (w5d[d].kind) {
         Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
           if (typeParams.len() == 0) { continue; }
-          if (genericFuncKey(env, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
+          if (genericFuncKey(env, src, lexed, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[ii]) { continue; }
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
           env.walkCount = 0;
           env.assignedCount = 0;
@@ -18495,7 +18495,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           // with its parameters and return type resolved under the substitution the name carries.
           Func(nameTok, returnType, params, body, exported, typeParams, isAsync): {
             if (typeParams.len() == 0) { continue; }
-            if (genericFuncKey(env, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[i]) { continue; }
+            if (genericFuncKey(env, src, lexed, d, tokenTextOf(src, lexed, nameTok)) != env.instOf[i]) { continue; }
             if (env.funcAt(inst) >= 0) { continue; }
             i32 fpushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
             string[] fpts = string[].defaulted(params.len());
@@ -18748,10 +18748,10 @@ string genericDeclName(Env env, i32 d) {
  * function after it took its neighbour's index (`spec/cases/0568`). `text` is the name as written,
  * which is the answer for a program of one file.
  */
-string genericFuncKey(Env env, i32 d, string text) {
+string genericFuncKey(Env env, u8[] src, Lexed lexed, i32 d, string text) {
   if (env.mergedDecls.len() == 0) { return text; }
   i32 f = env.declFile(d);
-  for (i32 e = 0; e < env.mergedDecls.len(); e++) {
+  for (i32 e = treeDeclFirst(env, src, lexed, text); e >= 0; e = env.treeIx.next[e]) {
     if (e == d || env.declFile(e) == f) { continue; }
     if (genericDeclName(env, e) == text) { return text + "@" + numText(f); }
   }
