@@ -68,6 +68,11 @@ static string PREFIX = "packages/fs/src/";
 /** Points that cannot be reached from a probe, each named on its own line. */
 Pin[] pins() {
   return [
+    Pin("packages/fs/src/trees.wac", 41, "async Result<Read, HostFault> noMore() { return Result.Ok(Read.End); }", true,
+        "The `more` every node that is not endless carries, because a function field needs a value; only an endless " +
+        "node's `more` is ever called."),
+    Pin("packages/fs/src/trees.wac", 154, "Err(e): { return Result.Err(Unsupported(\"\\{e}\")); }", false,
+        "A host with no random source, which every host the tests run on has."),
         Pin("packages/fs/src/fs.wac", 154, "export struct Fs {", false,
         "Not a line of code: every `async` method of `Fs` has its state machine attributed to the " +
         "struct's line, so this is the union of all their states, and a state any of them leaves " +

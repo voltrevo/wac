@@ -46,7 +46,7 @@ import { Chan, parentUser, remoteChmod, remoteChown, remoteSetExecutable, remote
   remoteOpenOut, remoteReadDir, remoteReadFile, remoteReadSome, remoteRemove, remoteRename,
   remoteLinkStat, remoteStat, remoteWriteFile, remoteWriteOut } from "./remote.wac";
 import { resolvePath } from "./path.wac";
-import { PROC_RUN, Proc, Procs } from "./proc.wac";
+import { PROC_RUN, Proc, ProcTable } from "./proc.wac";
 
 /** Where a mount's bytes actually live. */
 export enum Backing {
@@ -174,7 +174,7 @@ export struct Fs {
    * are the same fact written twice, and the table is the one that can also answer who the parent is
    * and whether it is still running.
    */
-  Procs procs;
+  ProcTable procs;
   /**
    * The programs this build has, which `/bin` lists — design/0001's "a `/bin` full of programs".
    *
@@ -200,7 +200,7 @@ export struct Fs {
     Vec<Inode> nodes = Vec.create();
     nodes.push(dirNode("root", now));
     mounts.push(Mount("", Backing.Memory, 0));
-    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(), "/", "", -1);
+    return Fs(mounts, nodes, "root", now, ProcTable.create(), Vec.create(), "/", "", -1);
   }
 
   /**
@@ -216,7 +216,7 @@ export struct Fs {
     // **The host's own directory**, because that is what a relative path means to a program standing on
     // it: `box cat f` run from `/tmp` is asking about `/tmp/f`, and answering `/f` would be a different
     // file. A memory filesystem starts at its own root, where there is nowhere else to be.
-    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(), cli.cwd().wait(), "", -1);
+    return Fs(mounts, nodes, "root", now, ProcTable.create(), Vec.create(), cli.cwd().wait(), "", -1);
   }
 
   /**
@@ -251,7 +251,7 @@ export struct Fs {
     // against that name, so holding a different one here is a field that lies to whoever reads it —
     // `whoami` in a session logged in as `ada` answered `root`, which is also the one name the checks
     // exempt. See `parentUser`.
-    return Fs(mounts, nodes, user, now, Procs.create(), Vec.create(),
+    return Fs(mounts, nodes, user, now, ProcTable.create(), Vec.create(),
               cli.cwd().wait(), "", -1);
   }
 

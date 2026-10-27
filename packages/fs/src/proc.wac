@@ -196,7 +196,7 @@ export struct Proc {
  * `/proc/sys/kernel/pid_max` — and is the right trade here: reuse exists to keep pids small enough to
  * type, and nothing in a session that lives for one ssh connection will run out of i32.
  */
-export struct Procs {
+export struct ProcTable {
   Vec<Proc> rows;
   i32 nextPid;
   /**
@@ -209,7 +209,7 @@ export struct Procs {
   i32 current;
 
   /** An empty table. Nothing is running, including whoever asked. */
-  Procs create() { return Procs(Vec.create(), 1, 0); }
+  ProcTable create() { return ProcTable(Vec.create(), 1, 0); }
 
   /** Start a process under `ppid`, and answer its pid. */
   i32 start(this, i32 ppid, Vec<string> argv, i64 now) {

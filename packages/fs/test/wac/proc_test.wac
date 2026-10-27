@@ -14,7 +14,7 @@
 //
 // ## What the move changed
 //
-// The oracle is now read with `Cli.readFile`, which is the same file by a different door, and `Procs`
+// The oracle is now read with `Cli.readFile`, which is the same file by a different door, and `ProcTable`
 // and `Fs` are ordinary structs rather than bindgen handles — so `find(pid)` returns a `Proc` and its
 // state is a field rather than a number pulled out of an object literal.
 //
@@ -27,7 +27,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult, Pending } from "std";
 import { Vec } from "core";
-import { Proc, Procs } from "../../src/proc.wac";
+import { Proc, ProcTable } from "../../src/proc.wac";
 import { Fs } from "../../src/fs.wac";
 import { has } from "../../../wactest/src/strings.wac";
 
@@ -39,7 +39,7 @@ Vec<string> words(string[] xs) {
 
 export string test_a_pid_is_never_reused() {
   T t = T.create();
-  Procs procs = Procs.create();
+  ProcTable procs = ProcTable.create();
   i32 first = procs.start(0, words(["sh"]), 0);
   t.eqI32(first, 1, "the first pid");
   procs.exited(first, 0);
@@ -53,7 +53,7 @@ export string test_a_pid_is_never_reused() {
 
 export string test_a_row_outlives_the_process_until_reaped() {
   T t = T.create();
-  Procs procs = Procs.create();
+  ProcTable procs = ProcTable.create();
   i32 pid = procs.start(1, words(["false"]), 0);
   t.isTrue(procs.exited(pid, 3), "the exit is recorded");
   // Still there — this is the zombie, and it is the only reason `$?` can be asked for later.
@@ -69,7 +69,7 @@ export string test_a_row_outlives_the_process_until_reaped() {
 
 export string test_a_signal_to_something_that_has_exited_is_refused() {
   T t = T.create();
-  Procs procs = Procs.create();
+  ProcTable procs = ProcTable.create();
   i32 pid = procs.start(1, words(["yes"]), 0);
   t.isTrue(procs.signal(pid, 2), "a signal to a running process is accepted");
   t.eqI32(procs.takeSignal(pid), 2, "and collected");

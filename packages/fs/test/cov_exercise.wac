@@ -25,6 +25,8 @@
 import { Core, Sys } from "std";
 import { memoryOps, synthOps, imageOps, imageBadOps, renameOps, rootlessOps, mountOps, edgeOps,
          pathOps, procOps, streamOps, wireOps, permissionOps } from "./wac/cov_probe.wac";
+import { test_dev_has_a_sink_and_two_endless_streams, test_proc_lists_each_process_and_self,
+         test_bin_lists_the_programs_as_executables } from "./wac/trees_test.wac";
 
 /** Every transcript, in the order the TypeScript called them, with what each one is for. */
 export async i32 main(Sys sys) {
@@ -60,6 +62,18 @@ export async i32 main(Sys sys) {
   for (i32 i = 0; i < said.len(); i++) {
     if (said[i].len() == 0) {
       core.warn("error: \{names[i]} returned an empty transcript, so it measured nothing");
+      return 1;
+    }
+  }
+  // `/dev`, `/proc` and `/bin` as `Files`: their tests are the exercise, and a failure is one here too.
+  string[] trees = [
+    (await test_dev_has_a_sink_and_two_endless_streams(sys)),
+    (await test_proc_lists_each_process_and_self(sys)),
+    (await test_bin_lists_the_programs_as_executables(sys))
+  ];
+  for (i32 i = 0; i < trees.len(); i++) {
+    if (trees[i] != "") {
+      core.warn("error: a trees test failed: \{trees[i]}");
       return 1;
     }
   }

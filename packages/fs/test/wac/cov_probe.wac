@@ -36,7 +36,7 @@ import { Reader } from "../../src/wire.wac";
 Reader readerOver(u8[] bytes) { return Reader(bytes, bytes.len(), 0, false, ""); }
 
 import { crc32 } from "../../../gzip/src/crc32.wac";
-import { Proc, Procs, SIGINT, SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber,
+import { Proc, ProcTable, SIGINT, SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber,
          signalStops } from "../../src/proc.wac";
 
 // ── A deterministic stand-in for the host's CSPRNG ────────────────────────────
@@ -529,14 +529,14 @@ string joined(string[]? names) {
 // ── The process table ───────────────────────────────────────────────────────
 //
 // `proc.wac` read 24.5% and it is the easiest quarter in this package to reach: signals are a name
-// table and a number table, and `Procs` is a `Vec` with a lookup. None of it needs a capability, a
+// table and a number table, and `ProcTable` is a `Vec` with a lookup. None of it needs a capability, a
 // mount or a host — it was uncovered because nothing had asked, which is what wac-mono 0134 is about.
 //
 // Driven the way `ps`, `kill` and the shell drive it: start a couple of processes, look them up, send
 // a signal, collect it, exit, reap, and ask about the names on the way past.
 export string procOps() {
   Buf out = Buf.create();
-  Procs t = Procs.create();
+  ProcTable t = ProcTable.create();
 
   Vec<string> shArgv = Vec.create();
   shArgv.push("sh");
