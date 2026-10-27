@@ -5496,6 +5496,19 @@ export string builtinTypeDefaults() {
 }
 
 /**
+ * The enums `core` and then `std` declare, as `Name|V1|V2|` lines — `enumVariantsIn` from `scans.wac`,
+ * run here once, so `lowerUnqualifiedVariants` need not parse both on every compile.
+ */
+export string builtinEnumVariants() {
+  return "Read|Data|End|Failed|\nResult|Ok|Err|\nStep|Waiting|Yielded|Done|\n";
+}
+
+/** The names of `core`'s variadic functions and methods, as `|a|b|` — `variadicCalleesIn` from `scans.wac`. */
+export string builtinVariadicCallees() {
+  return "|all|any|anyWithIndex|";
+}
+
+/**
  * Does this specifier name a module inside the compiler rather than a file on disk? Only the two
  * names do: a path below either is refused, since a package is named whole (`§wac-no-subpath-wqatc72`).
  */

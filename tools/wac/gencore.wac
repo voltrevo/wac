@@ -28,6 +28,7 @@
 import { Core, Cli, FileResult, Sys } from "std";
 import { joined, splitKeepingEmpty, trimmed } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { enumVariantsOfText, variadicCalleesIn } from "../../packages/wacc/src/scans.wac";
 
 /** Every file of `core`, in the order the module carries them. */
 string[] coreTree() {
@@ -313,6 +314,22 @@ string quotedList(string[] paths) {
 
 string blk(string[] ls) { return joined(ls, "\n"); }
 
+/** `s` as one string literal, its line breaks written `\n` — a table, without a `+` per row. */
+string oneLiteral(string s) {
+  string q = quoted(s);
+  u8[] b = q.toBytes();
+  i32 breaks = 0;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == 10) { breaks++; } }
+  u8[] out = u8[].filled(b.len() + breaks, 0);
+  i32 at = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == 10) { out[at] = 92; out[at + 1] = 110; at = at + 2; continue; }
+    out[at] = b[i];
+    at = at + 1;
+  }
+  return string.fromBytes(out);
+}
+
 /**
  * `Name|count|d0;d1;…` for each `struct` or `enum` header in `text` with a default type argument — the
  * same table `lowerTypeDefaults` reads off a program's own files. A header is one line in core and std.
@@ -426,6 +443,19 @@ string waccFile(Tree tree) {
     " */",
     "export string builtinTypeDefaults() {",
     "  return " + typeDefaultsWac(typeDefaultsTable(core + "\n" + tree.stdText())) + ";",
+    "}",
+    "",
+    "/**",
+    " * The enums `core` and then `std` declare, as `Name|V1|V2|` lines — `enumVariantsIn` from `scans.wac`,",
+    " * run here once, so `lowerUnqualifiedVariants` need not parse both on every compile.",
+    " */",
+    "export string builtinEnumVariants() {",
+    "  return " + oneLiteral(enumVariantsOfText(core) + enumVariantsOfText(tree.stdText())) + ";",
+    "}",
+    "",
+    "/** The names of `core`'s variadic functions and methods, as `|a|b|` — `variadicCalleesIn` from `scans.wac`. */",
+    "export string builtinVariadicCallees() {",
+    "  return " + oneLiteral(variadicCalleesIn(core)) + ";",
     "}",
     "",
     "/**",

@@ -1,0 +1,96 @@
+// Tables read off a source's text, which `gen:core` also reads off `core` and `std`.
+//
+// The lowering reads these off every file of a program. For the two built-ins the answer is fixed when
+// the compiler is built, so `tools/wac/gencore.wac` calls the same functions once and writes the result
+// into `coretext.wac`: parsing `std` and `core` on every compile to find their enum variants was two
+// thirds of checking a one-line file that imports nothing (`issues/lang/0398b`).
+//
+// **One reader for both**, so the table written at build time cannot drift from the one the lowering
+// computes for a program's own files. Nothing here may import `coretext.wac`, which is generated from it.
+
+import { Program } from "./ast.wac";
+import { lex, Lexed, tokenStride } from "./lex.wac";
+import { P, parseProgram } from "./parse.wac";
+
+/** Each enum a parsed source declares, one `Name|V1|V2|` line each, in declaration order. */
+export string enumVariantsIn(u8[] src, Lexed lx, Program prog) {
+  string out = "";
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        string row = spelled(src, lx, nameTok) + "|";
+        for (i32 v = 0; v < variants.len(); v++) { row = row + spelled(src, lx, variants[v].nameTok) + "|"; }
+        out = out + row + "\n";
+      }
+      default: { }
+    }
+  }
+  return out;
+}
+
+/** `enumVariantsIn` for a text not yet read. */
+export string enumVariantsOfText(string text) {
+  u8[] src = text.toBytes();
+  Lexed lx = lex(src);
+  return enumVariantsIn(src, lx, parseProgram(P.create(src, lx)));
+}
+
+/** A name token's spelling. Enum and variant names are identifiers, so no symbol brackets. */
+string spelled(u8[] src, Lexed lx, i32 t) {
+  if (t < 0) { return ""; }
+  i32 start = lx.tokens[t * tokenStride() + 1];
+  i32 len = lx.tokens[t * tokenStride() + 2];
+  u8[] out = u8[].filled(len, 0);
+  out.copyFrom(src, start, 0, len);
+  return string.fromBytes(out);
+}
+
+/**
+ * The functions and methods whose parameter list holds a ` ...` in `text`, as `|name|name|` — read
+ * backwards from each marker to the name before its `(`. A call `.name(` in a program is what makes
+ * the variadic lowering read `core` at all.
+ */
+export string variadicCalleesIn(string text) {
+  u8[] b = text.toBytes();
+  string out = "|";
+  for (i32 at = 0; at + 4 <= b.len(); at++) {
+    if (b[at] != ' ' || b[at + 1] != '.' || b[at + 2] != '.' || b[at + 3] != '.') { continue; }
+    string nm = calleeBefore(text, b, at);
+    if (nm != "") { out = out + nm + "|"; }
+  }
+  return out;
+}
+
+/** The name of the function whose parameter list holds offset `at` of `text`, read backwards, or "". */
+string calleeBefore(string text, u8[] b, i32 at) {
+  i32 i = at;
+  i32 depth = 0;
+  while (i > 0) {
+    i = i - 1;
+    if (b[i] == ')') { depth = depth + 1; }
+    if (b[i] == '(') {
+      if (depth == 0) { break; }
+      depth = depth - 1;
+    }
+    if (b[i] == ';' || b[i] == '{' || b[i] == '}') { return ""; }
+  }
+  // Past the method's own `<…>`, if it has one.
+  if (i > 0 && b[i - 1] == '>') {
+    i32 angle = 0;
+    while (i > 0) {
+      i = i - 1;
+      if (b[i] == '>') { angle = angle + 1; }
+      if (b[i] == '<') {
+        angle = angle - 1;
+        if (angle == 0) { break; }
+      }
+    }
+  }
+  i32 end = i;
+  while (i > 0 && nameByte(b[i - 1] as i32)) { i = i - 1; }
+  return end > i ? text.slice(i, end) : "";
+}
+
+bool nameByte(i32 b) {
+  return (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
+}

@@ -160,8 +160,25 @@ time (`--prof-process --preprocess` and a script summing each tick's stack; the 
 | box's shell, `--no-cache` | 5,994 ms | 65,706 ms | 11,878 ms | 9,215 ms |
 | `./bootstrap.sh` | 36 s | 593 s | 257 s | 189 s |
 
-The shell builds to the same bytes as round 2. A bare check is still about 3× August's, and about 35
-ms of it is starting the binary.
+The shell builds to the same bytes as round 2.
+
+**Fourth round (agent-b, 2026-10-27): a file that imports nothing.** Two thirds of checking one was
+`lowerUnqualifiedVariants` parsing `std` and `core` whole to list their enums' variants, and
+`callsCoreVariadic` searching `core`, on every compile. Both lists are fixed when the compiler is built,
+so `gen:core` now writes them into `coretext.wac` (`builtinEnumVariants`, `builtinVariadicCallees`),
+read by the same functions the lowering uses on a program's own files (`scans.wac`). That uncovered a
+square that the parse had hidden: `withQualifiedVariants` kept the file's type names in a `|`-joined
+string, built and searched once per type, and 24,000 structs took 606 ms to lower; now 58.
+
+| | round 3 | round 4 |
+|---|---:|---:|
+| `wac check` one-line file, no imports | 96 ms | 66 ms |
+| `wac compile fib.wac` | 140 ms | 103 ms |
+| `wac check`, one line importing `std` | 215 ms | 218 ms |
+| box's shell, `--no-cache` | 9,215 ms | 9,347 ms |
+
+Same shell bytes. About 35 ms of a bare check is starting the binary, so the compiler's own share is
+now about 30 ms.
 
 Two leads that did not reproduce in isolation and so were not changed: `Env.sigType` walks every
 signature for each one asked (7% of the shell build, via `pairEverySignature`), and

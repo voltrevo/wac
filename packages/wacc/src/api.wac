@@ -18,7 +18,7 @@ import { Method, Param, Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
          warningsOf, widthsOf, errNoSuchExport, errStaleBuiltinEmbedding, isBuiltinSubpath,
-         widenAutoContributions, ViewInputs, buildStaticView, isNameByte } from "./check.wac";
+         widenAutoContributions, ViewInputs, buildStaticView } from "./check.wac";
 import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, emitLinked, emitLinkedIn, missingImportParts, emitLinkedChecked, emitLinkedCovered,
   emitLinkedCoveredIn,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
@@ -26,7 +26,11 @@ import { emitModule, emitBlocked, emitDeclineRaw, typesGrewCatchAll, emitNames, 
          describeLinked, describeSep, buildLinked, Built,
          sourceOf, tokenTextOf, resolveImport, numText,
          emitDeclineLinked, lambdaReportLinked, exportForwards, splitTabs } from "./emit.wac";
-import { builtinTypeDefaults, coreSource, isBuiltinSpec, stdSource } from "./coretext.wac";
+import {
+  builtinEnumVariants, builtinTypeDefaults, builtinVariadicCallees, coreSource, isBuiltinSpec, stdSource,
+} from "./coretext.wac";
+import { enumVariantsIn } from "./scans.wac";
+import { KeyIndex, keyAdd, keyFirst } from "./keyindex.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, importSpecsLexed, importSpecsOf } from "./files.wac";
@@ -2405,7 +2409,8 @@ string[] lowerUnqualifiedVariants(Reads reads, string[] sources) {
   for (i32 i = 0; i < sources.len(); i++) {
     if (sources[i].indexOf("enum ") >= 0) { table = table + enumVariantsOf(reads, sources[i]); }
   }
-  table = table + enumVariantsOf(reads, coreSource()) + enumVariantsOf(reads, stdSource());
+  // `core`'s and `std`'s, read when the compiler was built — parsing both here was most of a small check.
+  table = table + builtinEnumVariants();
   if (table == "") { return sources; }
   string[] out = string[].filled(sources.len(), "");
   for (i32 i = 0; i < sources.len(); i++) { out[i] = withQualifiedVariants(reads, sources[i], table); }
@@ -2417,19 +2422,7 @@ string enumVariantsOf(Reads reads, string text) {
   i32 srcRead = readOf(reads, text);
   u8[] src = readSrc(reads, srcRead);
   Lexed lx = readParsedLexed(reads, srcRead);
-  Program prog = readProgram(reads, srcRead);
-  string out = "";
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
-      EnumDecl(nameTok, variants, exported, methods, typeParams): {
-        string row = tokenTextOf(src, lx, nameTok) + "|";
-        for (i32 v = 0; v < variants.len(); v++) { row = row + tokenTextOf(src, lx, variants[v].nameTok) + "|"; }
-        out = out + row + "\n";
-      }
-      default: { }
-    }
-  }
-  return out;
+  return enumVariantsIn(src, lx, readProgram(reads, srcRead));
 }
 
 /** The variants `table` gives enum `name`, as `|V1|V2|`, or "". */
@@ -2446,21 +2439,48 @@ string variantsOfEnum(string table, string name) {
 }
 
 /** `text` with each unqualified variant `lowerUnqualifiedVariants` describes given its enum. */
+/** The names a file uses as types, in the order met, indexed by name. */
+struct TypeNames {
+  string[] names;
+  i32 n;
+  KeyIndex ix;
+}
+
+void addTypeName(TypeNames t, string name) {
+  if (t.n >= t.names.len()) {
+    string[] bigger = string[].filled(t.names.len() * 2 + 16, "");
+    for (i32 i = 0; i < t.n; i++) { bigger[i] = t.names[i]; }
+    t.names = bigger;
+  }
+  t.names[t.n] = name;
+  keyAdd(t.ix, name, t.n);
+  t.n = t.n + 1;
+}
+
+bool isTypeName(TypeNames t, string name) {
+  for (i32 i = keyFirst(t.ix, name); i >= 0; i = t.ix.next[i]) {
+    if (t.names[i] == name) { return true; }
+  }
+  return false;
+}
+
 string withQualifiedVariants(Reads reads, string text, string table) {
   i32 srcRead = readOf(reads, text);
   u8[] src = readSrc(reads, srcRead);
   Lexed lx = readLexed(reads, srcRead);
   i32 st = tokenStride();
   i32 nt = lx.tokenCount;
-  // The visible enums, as `|V=Qualifier|` pairs, and the names that are types here.
+  // The visible enums, as `|V=Qualifier|` pairs, and the names that are types here — in a list with
+  // an index rather than a `|`-joined string, which cost the square of a file's types to build and
+  // again to search (`issues/lang/0398b`).
   string pairs = "|";
-  string types = "|";
+  TypeNames types = TypeNames(string[](), 0, KeyIndex.create());
   bool[] skip = bool[].filled(nt + 1, false);
   for (i32 t = 0; t < nt; t++) {
     i32 k = lx.tokens[t * st];
     if ((k == kEnum() || k == kStruct()) && t + 1 < nt && lx.tokens[(t + 1) * st] == kIdent()) {
       string nm = tokenTextOf(src, lx, t + 1);
-      types = types + nm + "|";
+      addTypeName(types, nm);
       if (k == kEnum()) { pairs = pairs + qualifiedPairs(variantsOfEnum(table, nm), nm); }
       // The declaration's body is its own: `enum E { A, B(i32 x) }` names variants, it does not build them.
       if (k == kEnum()) {
@@ -2487,7 +2507,7 @@ string withQualifiedVariants(Reads reads, string text, string table) {
           if (lx.tokens[(u + 1) * st] == kAs() && u + 2 < nt) { local = tokenTextOf(src, lx, u + 2); }
           // Every imported name is this file's for that spelling — a struct `Element` beside another
           // module's `Node.Element` (spec case 0591) — and an imported enum brings its variants.
-          types = types + local + "|";
+          addTypeName(types, local);
           string vs = variantsOfEnum(table, orig);
           if (vs != "") { pairs = pairs + qualifiedPairs(vs, local); }
         }
@@ -2504,7 +2524,7 @@ string withQualifiedVariants(Reads reads, string text, string table) {
     if (skip[t] || lx.tokens[t * st] != kIdent()) { t++; continue; }
     string v = tokenTextOf(src, lx, t);
     string q = qualifierFor(pairs, v);
-    if (q == "" || types.indexOf("|" + v + "|") >= 0) { t++; continue; }
+    if (q == "" || isTypeName(types, v)) { t++; continue; }
     i32 prev = t > 0 ? lx.tokens[(t - 1) * st] : 0 - 1;
     i32 next = t + 1 < nt ? lx.tokens[(t + 1) * st] : 0 - 1;
     if (prev == kDot() || prev == kIs() || prev == kLt() || prev == kAs() || prev == kAsBang()
@@ -3244,51 +3264,17 @@ i32 decimalOfApi(string s) {
  * ` ...name` — which is a scan rather than a parse, so a program that calls none pays almost nothing.
  */
 bool callsCoreVariadic(string[] sources) {
-  string core = coreSource();
-  string rest = core;
-  i32 base = 0;
-  while (rest.indexOf(" ...") >= 0) {
-    i32 at = base + rest.indexOf(" ...");
-    rest = rest.slice(rest.indexOf(" ...") + 4, rest.len());
-    base = at + 4;
-    string nm = calleeBefore(core, at);
+  // Read off `core` when the compiler was built (`variadicCalleesIn`, in `scans.wac`).
+  string rest = builtinVariadicCallees();
+  while (rest.indexOf("|") >= 0) {
+    string nm = rest.slice(0, rest.indexOf("|"));
+    rest = rest.slice(rest.indexOf("|") + 1, rest.len());
     if (nm == "") { continue; }
     for (i32 i = 0; i < sources.len(); i++) {
       if (sources[i].indexOf("." + nm + "(") >= 0) { return true; }
     }
   }
   return false;
-}
-
-/** The name of the function whose parameter list holds offset `at` of `text`, read backwards, or "". */
-string calleeBefore(string text, i32 at) {
-  u8[] b = text.toBytes();
-  i32 i = at;
-  i32 depth = 0;
-  while (i > 0) {
-    i = i - 1;
-    if (b[i] == ')') { depth = depth + 1; }
-    if (b[i] == '(') {
-      if (depth == 0) { break; }
-      depth = depth - 1;
-    }
-    if (b[i] == ';' || b[i] == '{' || b[i] == '}') { return ""; }
-  }
-  // Past the method's own `<…>`, if it has one.
-  if (i > 0 && b[i - 1] == '>') {
-    i32 angle = 0;
-    while (i > 0) {
-      i = i - 1;
-      if (b[i] == '>') { angle = angle + 1; }
-      if (b[i] == '<') {
-        angle = angle - 1;
-        if (angle == 0) { break; }
-      }
-    }
-  }
-  i32 end = i;
-  while (i > 0 && isNameByte(b[i - 1] as i32)) { i = i - 1; }
-  return end > i ? text.slice(i, end) : "";
 }
 
 /** Whether `text` has a ` ...name` — a variadic parameter's marker, not prose's ellipsis. */

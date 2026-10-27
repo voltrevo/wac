@@ -15,7 +15,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { diagnoseGraph, lowerSources } from "../../src/api.wac";
 import { lex, Lexed } from "../../src/lex.wac";
-import { coreSource, stdSource } from "../../src/coretext.wac";
+import { builtinEnumVariants, builtinVariadicCallees, coreSource, stdSource } from "../../src/coretext.wac";
+import { enumVariantsOfText, variadicCalleesIn } from "../../src/scans.wac";
 import { Res } from "../../src/path.wac";
 import { Core } from "std";
 
@@ -132,5 +133,42 @@ export string test_lowering_a_program_that_imports_std_lexes_std_about_once(Core
   t.isTrue(lexes <= (22 as i64),
            "lowering took " + itoa((lowering / (1000000 as i64)) as! i32) + " ms, " + itoa(lexes as! i32)
            + " times the " + itoa((lexing / (1000 as i64)) as! i32) + " µs of lexing std and core once");
+  return t.report();
+}
+
+// **Lowering a file that imports nothing reads neither `std` nor `core`.** The variant pass parsed both
+// whole on every compile to list their enums' variants, and the variadic pass searched `core` for its
+// variadic methods: two thirds of checking a one-line file with no imports. Both lists are fixed when
+// the compiler is built, so `gen:core` writes them into `coretext.wac` beside the type defaults.
+export string test_lowering_a_file_that_imports_nothing_reads_no_builtin(Core core) {
+  T t = T.create();
+  string[] paths = ["/t/m.wac"] as string[];
+  string[] texts = ["export i32 f(i32 n) { return n; }\n"] as string[];
+  u8[] c = coreSource().toBytes();
+  lowerSources(paths, texts, Res.empty());
+  i64 lexing = 0 as i64;
+  i64 lowering = 0 as i64;
+  for (i32 r = 0; r < 5; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    lex(c);
+    i64 t1 = core.monotonicNanos().wait();
+    lowerSources(paths, texts, Res.empty());
+    i64 t2 = core.monotonicNanos().wait();
+    if (r == 0 || t1 - t0 < lexing) { lexing = t1 - t0; }
+    if (r == 0 || t2 - t1 < lowering) { lowering = t2 - t1; }
+  }
+  t.isTrue(lowering < lexing,
+           "lowering one line took " + itoa((lowering / (1000 as i64)) as! i32) + " µs, and lexing core once "
+           + itoa((lexing / (1000 as i64)) as! i32) + " µs");
+  return t.report();
+}
+
+/** The tables `gen:core` wrote are what the lowering would have read off the embedded text. */
+export string test_the_built_tables_are_what_the_text_says(Core core) {
+  T t = T.create();
+  t.eqStr(builtinEnumVariants(), enumVariantsOfText(coreSource()) + enumVariantsOfText(stdSource()),
+          "the enums of core and std");
+  t.eqStr(builtinVariadicCallees(), variadicCalleesIn(coreSource()), "core's variadic functions");
+  t.isTrue(builtinVariadicCallees().indexOf("|all|") >= 0, "Ticket.all is among them");
   return t.report();
 }
