@@ -2568,19 +2568,33 @@ string[] lowerTypeDefaults(string[] sources) {
 
 /** Whether `text` may declare a type with a default argument: a `struct` or `enum` header with `=` in its `<…>`. */
 bool mayDeclareTypeDefault(string text) {
-  string rest = text;
-  while (true) {
-    i32 a = rest.indexOf("struct ");
-    i32 b = rest.indexOf("enum ");
-    i32 at = a < 0 ? b : b < 0 ? a : (a < b ? a : b);
-    if (at < 0) { return false; }
-    rest = rest.slice(at + 5, rest.len());
-    i32 brace = rest.indexOf("{");
-    string head = brace < 0 ? rest : rest.slice(0, brace);
-    i32 lt = head.indexOf("<");
-    if (lt >= 0 && head.slice(lt, head.len()).indexOf("=") >= 0) { return true; }
+  // **One pass over the bytes.** This found each header by slicing off the text before it and searching
+  // the rest again, for `enum ` as well as `struct `, so a source of many structs cost the square of its
+  // length — and `std`, lowered on every build, is one (`issues/lang/0398b`). The rule is unchanged:
+  // from each `struct ` or `enum `, the head runs to the next `{`, and an `=` after a `<` in it counts.
+  u8[] b = text.toBytes();
+  i32 n = b.len();
+  for (i32 at = 0; at < n; at++) {
+    i32 c = b[at] as i32;
+    if (c != 115 && c != 101) { continue; }   // `s`, `e`: the rest is only asked where one could start
+    if (!bytesAt(b, at, "struct ") && !bytesAt(b, at, "enum ")) { continue; }
+    i32 from = at + 5;
+    bool angled = false;
+    for (i32 j = from; j < n && b[j] as i32 != 123; j++) {   // `{`
+      if (b[j] as i32 == 60) { angled = true; }                // `<`
+      if (angled && b[j] as i32 == 61) { return true; }        // `=`
+    }
+    at = from - 1;
   }
   return false;
+}
+
+/** Whether `b` holds `word`'s bytes starting at `at`. */
+bool bytesAt(u8[] b, i32 at, string word) {
+  u8[] w = word.toBytes();
+  if (at + w.len() > b.len()) { return false; }
+  for (i32 i = 0; i < w.len(); i++) { if (b[at + i] != w[i]) { return false; } }
+  return true;
 }
 
 /** Whether `text` writes `Name<` for any name the defaults table holds. */

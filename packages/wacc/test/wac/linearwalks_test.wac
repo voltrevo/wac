@@ -10,7 +10,8 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { diagnoseFiles, emitFiles } from "../../src/api.wac";
+import { diagnoseFiles, emitFiles, lowerSources } from "../../src/api.wac";
+import { Res } from "../../src/path.wac";
 import { Core } from "std";
 
 /** `parts` as one string, copied once — `out = out + part` would be the cost being measured. */
@@ -166,5 +167,80 @@ export string test_resolving_a_name_does_not_walk_every_declaration(Core core) {
   t.isTrue(b * (2 as i64) < a * (3 as i64),
            "the same entry: " + itoa(millis(a)) + " ms beside 4,000 declarations, " + itoa(millis(b))
            + " ms beside 8,000");
+  return t.report();
+}
+
+/** `n` structs, each with a method using another — no type defaults anywhere. */
+string manyStructs(i32 n) {
+  string[] parts = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) {
+    parts[i] = "struct S" + itoa(i) + " { i32 v; i32 get(this) { return this.v; } }\n";
+  }
+  return joinedParts(parts, n);
+}
+
+i64 timeLower(Core core, string src) {
+  i64 t0 = core.monotonicNanos().wait();
+  lowerSources(["/t/m.wac"], [src], Res.empty());
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **Lowering reads a source once, however many types it declares.** Asking whether a file declares
+// a type with a default argument found each `struct` by copying the rest of the text and searching it
+// again, for `enum ` too, to the end — so a file of many structs cost the square of its length, and
+// `std`, embedded in every build, is such a file. Doubling the structs should double the time.
+export string test_lowering_reads_a_source_once_however_many_types_it_declares(Core core) {
+  T t = T.create();
+  string fewer = manyStructs(3000);
+  string more = manyStructs(6000);
+  timeLower(core, fewer);
+  timeLower(core, more);
+  i64 a = timeLower(core, fewer);
+  i64 b = timeLower(core, more);
+  t.isTrue(b * (2 as i64) < a * (5 as i64),
+           "lowering 3,000 structs: " + itoa(millis(a)) + " ms; 6,000: " + itoa(millis(b)) + " ms");
+  return t.report();
+}
+
+/** `/t/lib.wac` with one `type` declaration, `P` and 4,000 functions. */
+string typedLib() {
+  string[] parts = string[].filled(4002, "");
+  parts[0] = "export struct P { i32 v; }\n";
+  parts[1] = "export type Q = i32;\n";
+  for (i32 i = 0; i < 4000; i++) {
+    parts[2 + i] = "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n";
+  }
+  return joinedParts(parts, 4002);
+}
+
+/** An entry importing `k` of lib's functions, then naming `P` 2,400 times. */
+string manyImports(i32 k) {
+  string[] names = string[].filled(k, "");
+  for (i32 i = 0; i < k; i++) { names[i] = ", g" + itoa(i); }
+  string[] parts = string[].filled(601, "");
+  parts[0] = "import { P, Q" + joinedParts(names, k) + " } from \"./lib.wac\";\n"
+             + "export i32 h() { Q q = g1(); return q; }\n";
+  for (i32 i = 0; i < 600; i++) {
+    parts[1 + i] = "export i32 f" + itoa(i) + "(P a, P b) { P c = P(1); P d = a; return c.v + d.v + b.v; }\n";
+  }
+  return joinedParts(parts, 601);
+}
+
+// **Asking whether a name is a `type` does not walk every import.** In a program with any `type`
+// declaration — `std` has several — each type name the emitter met that was not one walked every import
+// of the graph for a renaming of it. Importing three times as many names should cost what the extra
+// import lines cost and no more; it cost a share of every type name.
+export string test_asking_whether_a_name_is_a_type_does_not_walk_every_import(Core core) {
+  T t = T.create();
+  string lib = typedLib();
+  string fewer = manyImports(1000);
+  string more = manyImports(3000);
+  timeEmitTwo(core, fewer, lib);
+  timeEmitTwo(core, more, lib);
+  i64 a = timeEmitTwo(core, fewer, lib);
+  i64 b = timeEmitTwo(core, more, lib);
+  t.isTrue(b * (4 as i64) < a * (5 as i64),
+           "naming `P` 2,400 times: " + itoa(millis(a)) + " ms importing 1,000 names, " + itoa(millis(b))
+           + " ms importing 3,000");
   return t.report();
 }

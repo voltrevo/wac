@@ -1,0 +1,61 @@
+// The positions in a table of strings, found by key rather than by walking the table.
+//
+// wacc keeps its tables as parallel arrays filled in order, and found an entry by walking all of them —
+// a declaration by name, a signature by spelling, an import by the name it gives. Each walk was linear
+// on its own and was asked once per name the compiler met, so the product grew with the square of the
+// program (`issues/lang/0398b`). This sits beside a table, one entry per row, and answers the same
+// walk without the rows that cannot match.
+//
+// **It answers what the walk answered, in the same order.** A bucket holds the rows whose key hashes
+// there, appended as they were added, so walking `keyFirst(ix, k)` → `ix.next[i]` and skipping rows whose key
+// is not `k` visits exactly the rows a full walk would have matched, earliest first. A caller keeps its
+// own test of the key, which is what makes a collision harmless.
+
+/**
+ * Rows of some table, bucketed by the hash of a key.
+ *
+ * Empty until the first `add`, so a table that never grows costs three empty arrays.
+ */
+export struct KeyIndex {
+  i32[] heads;
+  i32[] tails;
+  i32[] next;
+
+  KeyIndex create() { return KeyIndex(i32[](), i32[](), i32[]()); }
+}
+
+// **Functions rather than methods**, because wac-L5 builds this file and reads no method call made
+// through a field — `cx.impIndex.first(name)` is refused there, `keyFirst(cx.impIndex, name)` is not —
+// and no call in a `for` loop's step, which is why the next row is read from `next` directly.
+
+/** The first row in `k`'s bucket, or -1. Follow `ix.next[row]`, and skip rows whose key is not `k`. */
+export i32 keyFirst(KeyIndex ix, string k) {
+  if (ix.heads.len() == 0) { return 0 - 1; }
+  return ix.heads[keyBucket(ix, k)];
+}
+
+/** Record that row `row` has key `k`. Rows are added in increasing order. */
+export void keyAdd(KeyIndex ix, string k, i32 row) {
+  if (ix.heads.len() == 0) {
+    ix.heads = i32[].filled(4096, 0 - 1);
+    ix.tails = i32[].filled(4096, 0 - 1);
+    ix.next = i32[].filled(1024, 0 - 1);
+  }
+  if (row >= ix.next.len()) {
+    i32 size = ix.next.len() * 2;
+    while (size <= row) { size = size * 2; }
+    i32[] grown = i32[].filled(size, 0 - 1);
+    grown.copyFrom(ix.next, 0, 0, ix.next.len());
+    ix.next = grown;
+  }
+  i32 b = keyBucket(ix, k);
+  if (ix.tails[b] < 0) { ix.heads[b] = row; } else { ix.next[ix.tails[b]] = row; }
+  ix.tails[b] = row;
+}
+
+i32 keyBucket(KeyIndex ix, string k) {
+  u8[] b = k.toBytes();
+  i32 h = 5381;
+  for (i32 i = 0; i < b.len(); i++) { h = h * 33 + b[i] as i32; }
+  return (h & 2147483647) % ix.heads.len();
+}
