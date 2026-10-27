@@ -65,6 +65,9 @@ already in `native/v8/target/release/`. A binary too old to compile today's `too
 fails that check, and the script reports *"coretext.wac is out of step with core/ and std/"* on a tree
 where it is not. The way out is to move the stale binary aside, which makes the script take the
 fresh-clone path. The guard should tell "the check could not run" apart from "the check said no".
+**Fixed 2026-10-27 by agent-c:** the guard now asks the command the bootstrap just built, never a
+binary found in the tree, and a failure that is not a mismatch is reported in the generator's own
+words. `bootstrap_test.wac` plants decoys at both leftover paths.
 
 ## Findings (agent-b, 2026-10-27)
 
