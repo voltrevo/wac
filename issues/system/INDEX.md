@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0367c](open/0367c-the-wasmtime-host-cannot-finish-any-program.md) | The wasmtime host answers *"main cannot finish: nothing that can run will settle what it waits on"* for every program, `export i32 main() { return 0; }` included, and for `wac build`; the v8 binary carrying the byte-identical seed runs them. The seed starts (`wac version` gets its own *unknown command* answer) and stalls at its first host wait. Unseen because the eleven files that drive wasmtime skip when its binary is absent, which is most checkouts; with one present the gate fails 18 cases in 7 files | bug | wrong answer — no program finishes on wasmtime |
 | [0366a](open/0366a-wac-run-suggests-a-spelling-it-then-refuses.md) | `wac run` on a file with no `main` lists `f()` as the thing to name, and `wac run g.wac 'f()'` answers "exports no `f()`. It exports: f()" — the spelling that works is `f` | diagnostic | the suggested spelling is refused |
 | [0365a](open/0365a-a-seed-the-engine-rejects-is-reported-as-the-programs-module.md) | When the binary's own seed fails to load, `wac` says the module compiled from `packages/wac/src/wac.wac` was rejected and that `wac build … -o out` keeps it — the failure is before any build, nothing is kept, and the engine's own message (which names the function) is not shown | diagnostic | wrong module named, advice that keeps nothing |
 | [0364a](open/0364a-a-deep-expression-overflows-the-native-hosts-stack-by-lottery.md) | A 560-deep `+` chain traps the compiler on the native host and not under Deno — the default V8 stack limit, and by lottery: a gate passed it and the next failed it. `manyfiles_test` no longer builds one | bug | trap |
@@ -130,7 +131,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-345 issues, 250 closed.
+346 issues, 250 closed.
 
 The count is checked against the directory by `tools/wac/issuecounts_test.wac`, which reads both
 trackers. It was `compiler/wacSpec.test.ts` until that file went with the TypeScript compiler on
