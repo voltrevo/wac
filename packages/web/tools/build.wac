@@ -685,19 +685,41 @@ export string documentSide() {
           },
         };
         // Files arrive whether or not the program has asked yet; the page keeps them until it does.
-        const take = (files) => {
-          for (const f of files ?? []) {
-            f.arrayBuffer().then(
-              (buf) => emit(["file", true, f.name, new Uint8Array(buf), ""], [buf]),
-              (e) => emit(["file", false, f.name, new Uint8Array(0), String(e?.message ?? e)]));
+        // A file's name is its path below what the user handed over — `photos/2024/a.jpg` for a file
+        // in a folder, picked with `webkitdirectory` or dropped, and `a.jpg` for a file on its own.
+        const send = (f, path) => f.arrayBuffer().then(
+          (buf) => emit(["file", true, path, new Uint8Array(buf), ""], [buf]),
+          (e) => emit(["file", false, path, new Uint8Array(0), String(e?.message ?? e)]));
+        const take = (files) => { for (const f of files ?? []) send(f, f.webkitRelativePath || f.name); };
+        // A dropped folder is a directory entry rather than a file — reading it as one fails — so it is
+        // walked. `readEntries` answers in batches, and an empty batch is the end of the directory.
+        const rel = (p) => p.startsWith("/") ? p.slice(1) : p;
+        const failed = (path, e) => emit(["file", false, path, new Uint8Array(0), String(e?.message ?? e)]);
+        const walk = (entry) => {
+          if (entry.isFile) {
+            entry.file((f) => send(f, rel(entry.fullPath)), (e) => failed(rel(entry.fullPath), e));
+          } else if (entry.isDirectory) {
+            const reader = entry.createReader();
+            const more = () => reader.readEntries(
+              (batch) => { if (batch.length > 0) { batch.forEach(walk); more(); } },
+              (e) => failed(rel(entry.fullPath), e));
+            more();
           }
+        };
+        // The entries are taken during the event: a drop's items are unreadable once it returns. A
+        // browser without them, or a drop of something that is not a file, falls back to `files`.
+        const dropped = (dt) => {
+          const items = [...(dt?.items ?? [])].filter((it) => it.kind === "file");
+          const entries = items.map((it) => it.webkitGetAsEntry?.() ?? null);
+          if (entries.length > 0 && entries.every((x) => x !== null)) entries.forEach(walk);
+          else take(dt?.files);
         };
         root.addEventListener("change", (ev) => { if (ev.target?.files) take(ev.target.files); });
         // A link to `#/somewhere`, and the browser's back and forward, move the location; the program follows.
         addEventListener("hashchange", () => emit(["where", location.hash]));
         // Without preventing dragover a dropped file replaces the page.
         document.addEventListener("dragover", (ev) => ev.preventDefault());
-        document.addEventListener("drop", (ev) => { ev.preventDefault(); take(ev.dataTransfer?.files); });
+        document.addEventListener("drop", (ev) => { ev.preventDefault(); dropped(ev.dataTransfer); });
         const apply = (m) => ops[m[0]](...m.slice(1));
         return (m) => { if (m[0] === "ops") { for (const x of m[1]) apply(x); } else apply(m); };
       };

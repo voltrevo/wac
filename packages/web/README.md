@@ -63,7 +63,7 @@ of the page — `page.mountIn(element, draw)` puts a view in one. `attr` refuses
 | `title(t)`, `log(line)` | the document's title, and a line for the console |
 | `now()` | milliseconds, from a clock that only goes forward |
 | `await sleep(ms)`, `await nextFrame()`, `await painted()` | time: answering `now()` when they settle |
-| `await nextFile()` | the next file the user picks with an `<input type="file">` or drops on the page |
+| `await nextFile()` | the next file the user picks with an `<input type="file">` or drops on the page — one per file for a folder, picked with `webkitdirectory` or dropped, named by its path inside it |
 | `download(name, bytes)` | offer bytes to the user as a file |
 | `sys` | what the build granted — see below |
 
