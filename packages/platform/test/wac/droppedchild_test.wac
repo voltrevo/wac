@@ -78,12 +78,8 @@ export string test_a_dropped_spawn_ticket_stops_its_child(Core core, Cli cli) {
   if (wrote.fault != 0) { return t.report(); }
 
   check(t, cli, binaryPath(cli), path, dir, "v8");
-  string why = nativeHostWhyNot(cli);
-  if (why == "") {
-    check(t, cli, nativeBinaryPath(core, cli, "droppedchild"), path, dir, "wasmtime");
-  } else {
-    core.log("skipping the wasmtime arm: \{why}");
-  }
+  string native = nativeBinaryPath(cli, t);
+  if (native != "") { check(t, cli, native, path, dir, "wasmtime"); }
   cli.remove(path, false).wait();
   return t.report();
 }

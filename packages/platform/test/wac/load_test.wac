@@ -51,7 +51,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { CallResult, Cli, Core, Exec, GRANT_ALL, LoadedModule } from "std";
-import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot }
+import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot, requireNativeHost }
   from "../../../wactest/src/built.wac";
 
 static string PROBE = "packages/platform/test/wac/loadprobe.wac";
@@ -163,12 +163,8 @@ export string test_all_four_hosts_load_one_module_and_answer_the_same(Core core,
   // **And the fourth host.** `wacland` is a separate implementation in Rust over a separate engine,
   // so this is the row that is not sharing any code with the others — the one that would catch the
   // capability having been *described* the same and *implemented* differently. It is asked for rather
-  // than built (`issues/system/0208`), so a checkout without one keeps the three above.
-  string why = nativeHostWhyNot(cli);
-  if (why != "") {
-    core.warn("   skipping the wasmtime column: \{why}");
-    return t.report();
-  }
+  // than built, and required: a checkout without one fails here rather than keeping the three above.
+  if (requireNativeHost(cli, t) == "") { return t.report(); }
   string probe = builtProgram(cli, PROBE, "loadprobe-native", ["--allow-read"]);
   t.isTrue(cli.stat(probe).wait().isFile, "the native probe module built");
   if (!cli.stat(probe).wait().isFile) { return t.report(); }

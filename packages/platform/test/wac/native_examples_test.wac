@@ -37,7 +37,7 @@
 // what `issues/system/0211` had to be fixed for.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
+import { nativeHost, nativeHostWhyNot, requireNativeHost } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, Pending } from "std";
 import { contains } from "../../../wactest/src/strings.wac";
 import { Held } from "../../../wactest/src/daemon.wac";
@@ -63,9 +63,7 @@ string root(Cli cli) { return cli.cwd().wait(); }
  * `tools/wac/seedfresh_test.wac` fails when the binary is older than its sources — over the whole crate,
  * recursively. `issues/system/0208`.
  */
-string nativeBinary(Cli cli) {
-  return nativeHostWhyNot(cli) == "" ? nativeHost(cli) : "";
-}
+string nativeBinary(Cli cli, T t) { return requireNativeHost(cli, t); }
 
 /** One example: what to build it with, what to run it with, and what it reads. */
 struct Case {
@@ -267,7 +265,7 @@ static i32 AT_ONCE = 3;
 
 export string test_the_capability_examples_answer_the_same_on_both_hosts(Core core, Cli cli) {
   T t = T.create();
-  string native = nativeBinary(cli);
+  string native = nativeBinary(cli, t);
   string tmp = "\{root(cli)}/\{BUILT}";
   string whyDir1 = madeDir(cli, tmp);
   t.isTrue(whyDir1 == "", whyDir1);
@@ -358,15 +356,6 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
     }
   }
 
-  // **A missing wasmtime host is a skip, not a failure**, since 2026-08-28. It was an assertion
-  // while `wac task seed:native` built the binary as a matter of course; it is `./bootstrap.sh
-  // --host wasmtime` now and is not built by default, so a checkout without one is the ordinary
-  // case rather than a broken one. The warning names it so this cannot go quiet — the nine other
-  // callers of `nativeHostWhyNot` have said it this way all along.
-  if (native == "") {
-    core.warn("SKIPPED the wasmtime half: \{nativeHostWhyNot(cli)}"
-              + ". The JavaScript half above still ran and still asserted.");
-  }
   cli.remove("\{tmp}/run", true).wait();
   return t.report();
 }

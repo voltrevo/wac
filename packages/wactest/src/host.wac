@@ -12,7 +12,8 @@
 // message about the wrong thing.
 
 import { Change, Core, Cli, Exec } from "std";
-import { nativeHost, nativeHostWhyNot } from "./built.wac";
+import { nativeHost, nativeHostWhyNot, requireNativeHost } from "./built.wac";
+import { T } from "./assert.wac";
 
 /** Where `wac task seed` puts the binary, absolute, so `exec` does not depend on a PATH. */
 export string binaryPath(Cli cli) {
@@ -72,7 +73,7 @@ export string scratch(Cli cli, string name) {
  * drifted in exactly one respect: one warned when the build failed and the other returned `""` in
  * silence. The warning is the version that is kept. `issues/system/0161`.
  */
-export string nativeBinaryPath(Core core, Cli cli, string who) {
+export string nativeBinaryPath(Cli cli, T t) {
   // **Asks; does not build.** The build is `wac task seed`'s, and `wac task seed:native` does this
   // crate alone — `issues/system/0208`, where five files each ran their own cargo with five skip
   // messages and two freshness checks.
@@ -83,12 +84,8 @@ export string nativeBinaryPath(Core core, Cli cli, string who) {
   // -a -quit)`. The first branch carries no action, and `-print` in the second suppresses find's
   // implicit one — so **a changed `.rs` file printed nothing and no rebuild was triggered.** Only
   // `Cargo.toml` was ever watched, in the helper that ten test files share.
-  string why = nativeHostWhyNot(cli);
-  if (why != "") {
-    core.warn("\{who}: SKIPPING the native half — \{why}");
-    return "";
-  }
-  return nativeHost(cli);
+  // **Required, not skipped**: `requireNativeHost` fails `t` when the binary is absent or stale.
+  return requireNativeHost(cli, t);
 }
 
 /**

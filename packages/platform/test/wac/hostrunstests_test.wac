@@ -24,7 +24,7 @@
 
 import { Core, Cli, Exec } from "std";
 import { T } from "../../../wactest/src/assert.wac";
-import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
+import { nativeHost, nativeHostWhyNot, requireNativeHost } from "../../../wactest/src/built.wac";
 import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { trimmed } from "../../../wactest/src/strings.wac";
 
@@ -32,13 +32,7 @@ string SUBJECT() { return "packages/platform/test/wac/worldarrives_test.wac"; }
 
 export string test_the_wasmtime_host_can_run_a_test_that_takes_a_world(Core core, Cli cli) {
   T t = T.create();
-  string why = nativeHostWhyNot(cli);
-  if (why != "") {
-    core.log("skipped: \{why}");
-    // Asserted rather than returned silently, so a skip is not indistinguishable from a run.
-    t.isTrue(why != "", "the wasmtime host is not available: \{why}");
-    return t.report();
-  }
+  if (requireNativeHost(cli, t) == "") { return t.report(); }
 
   Exec r = cli.exec(nativeHost(cli),
                     ["test", "--allow-read", "--allow-write", "--allow-run", SUBJECT()],
@@ -80,12 +74,7 @@ static string AWAITS_CLI =
 
 export string test_an_async_main_awaiting_a_cli_ticket_finishes_on_the_wasmtime_host(Core core, Cli cli) {
   T t = T.create();
-  string why = nativeHostWhyNot(cli);
-  if (why != "") {
-    core.log("skipped: \{why}");
-    t.isTrue(why != "", "the wasmtime host is not available: \{why}");
-    return t.report();
-  }
+  if (requireNativeHost(cli, t) == "") { return t.report(); }
   string dir = scratch(cli, "awaits-cli");
   string fresh = freshDir(cli, dir);
   t.isTrue(fresh == "", fresh);

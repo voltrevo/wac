@@ -224,9 +224,20 @@ fi
 # 2026-08-29 — 577s and a cooldown each time, for a `cargo build` that takes three seconds when the
 # crate is otherwise warm.
 #
-# Only when it exists: a checkout that has never built it has nothing to age, and whichever test wants
-# it builds it. `issues/system/0208` is that it has no owner; this is the gate not needing one.
-if [ -f native/target/release/wac ] && ! (cd native && cargo build --release >/dev/null 2>&1); then
+# **Always, not only when it exists.** This used to skip a checkout that had never built it, on the
+# reasoning that it had nothing to age — and then every file that drives the host skipped its half, so
+# that gate was green having asked one host fewer. A test needs the host or it does not; the gate is
+# what makes sure it is there. The first build in a cold checkout is minutes, every later one seconds.
+#
+# The seed is the v8 crate's, copied: `cargo build` embeds `native/seed/wacc.wasm` and a checkout that
+# never built this crate has none. The two are the same artefact — see the seed refresh below.
+wasmtime_host() {
+  if [ -f native/v8/seed/wacc.wasm ]; then
+    mkdir -p native/seed && cp native/v8/seed/wacc.wasm native/seed/wacc.wasm
+  fi
+  (cd native && cargo build --release >/dev/null 2>&1)
+}
+if ! wasmtime_host; then
   echo "== the wasmtime host will not rebuild: not running the suite ==" >&2
   echo "   Run \`cd native && cargo build --release\` by hand to see why; every two-host test would" >&2
   echo "   otherwise compare against the older one." >&2
@@ -266,8 +277,8 @@ if ! "$WAC" test --allow-read --allow-env tools/wac/seedfresh_test.wac >/dev/nul
   #
   # If they ever diverge, that is a finding rather than a nuisance, and `./bootstrap.sh --host
   # wasmtime` is the way back.
-  if [ -f native/target/release/wac ] && [ -f native/v8/seed/wacc.wasm ]; then
-    cp native/v8/seed/wacc.wasm native/seed/wacc.wasm
+  if [ -f native/v8/seed/wacc.wasm ]; then
+    mkdir -p native/seed && cp native/v8/seed/wacc.wasm native/seed/wacc.wasm
     if ! (cd native && cargo build --release > "$log.seedwt" 2>&1); then
       echo "== the wasmtime host will not rebuild around the new seed: not running the suite ==" >&2
       tail -20 "$log.seedwt" | sed 's/^/   /' >&2
@@ -636,9 +647,8 @@ for attempt in 1 2 3; do
     # a merge touching `native/src/` left `native/target/release/wac` behind — and the retry then
     # failed with `Cli.execWith is not implemented in the native runtime yet`, from a host that
     # predated the merge that added it. `issues/system/0208` is that it has no owner; this is the gate
-    # not needing one. Only when it exists: a checkout that has never built it has nothing to age, and
-    # whichever test wants it builds it.
-    if [ -f native/target/release/wac ] && ! (cd native && cargo build --release >/dev/null 2>&1); then
+    # not needing one, and it builds it whether or not it existed — see `wasmtime_host` above.
+    if ! wasmtime_host; then
       echo "== the wasmtime host would not rebuild after the merge: not retrying ==" >&2
       echo "   Run \`cd native && cargo build --release\` by hand; every two-host test would be" >&2
       echo "   comparing against the older one." >&2
