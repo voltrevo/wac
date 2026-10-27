@@ -137,10 +137,32 @@ was all linear lookups, and these went to indexes or single passes, each with a 
 Per KB of output the shell is now about 6.1 ms against 6.6 ms in August, so the large end is back.
 Its output is byte for byte what round 1 produced except where short literals changed the code.
 
-**What is left is the small end, about 3×,** and it is not one function. A check of a one-line file
-importing `core` spends its time lexing: `withTypeDefaults`, `variadicCallsOf`, `typeDefaultsOf`,
-`enumVariantsOf` and the frontend each lex the embedded `std`/`core` text again for themselves. One
-lexed copy shared across the lowering passes is the likely fix, and a refactor rather than a patch.
+**Third round (agent-b, 2026-10-27): the small end.** A check of a one-line program importing `std`
+lexed `std` about twenty times, and lexing and parsing were two thirds of it. Profiled for inclusive
+time (`--prof-process --preprocess` and a script summing each tick's stack; the self-time list put
+`lex` at 13% when it was 43%):
+
+- Each lowering pass lexed every file it looked at. They now read through one `Reads`
+  (`frontend.wac`), so a text a pass leaves alone gives the next pass the same tokens and tree.
+- `diagnoseFilesWithIn` lexed and parsed every file again per closure only to collect its lex and
+  parse errors; `edgesOfIn` did it once more for the import lists. Both use the first parse.
+- `exportedTypeNames` searched every byte of every file once per closure; now tokens.
+- `lex` zeroed a token array of one token per byte (3.5 MB for `std`, of which it used 260 KB) and
+  sized two stacks by two extra passes over the input.
+- `synthTokens` asked `synthOffset` per word, which rebuilt the word list: the square of the states.
+
+`lexcost_test.wac` and one new test in `linearwalks_test.wac` fail on the old source.
+
+| | Aug/Sep | before | round 2 | round 3 |
+|---|---:|---:|---:|---:|
+| `wac check`, one line importing `std` | — | — | 284 ms | 205 ms |
+| `wac check` one-line file | 30 ms | 372 ms | 100 ms | 94 ms |
+| box's shell, `--no-cache` | 5,994 ms | 65,706 ms | 11,878 ms | 9,215 ms |
+| `./bootstrap.sh` | 36 s | 593 s | 257 s | 189 s |
+
+The shell builds to the same bytes as round 2. A bare check is still about 3× August's, and about 35
+ms of it is starting the binary.
+
 Two leads that did not reproduce in isolation and so were not changed: `Env.sigType` walks every
 signature for each one asked (7% of the shell build, via `pairEverySignature`), and
 `methodInstanceInferred` walks every declaration per generic method call (10%). A V8 code cache for

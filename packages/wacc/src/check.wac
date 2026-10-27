@@ -50,7 +50,7 @@ import {
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
   kLbrace, kQuestion, kSymName, kString, kNull, kConst, kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq,
-  kCaretEq, kInc, kDot,
+  kCaretEq, kInc, kDot, kExport, kIdent,
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, Field, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
@@ -1338,7 +1338,7 @@ bool exportsTypeNamed(ViewInputs v, string name) {
   // (`issues/lang/0398b`). The scan below finds the same names: what follows `export type ` up to the
   // first byte that cannot be in a name.
   if (!isIdentName(name)) { return sourcesSayExportType(v.sources, name); }
-  if (v.typeNames is null) { v.typeNames = exportedTypeNames(v.sources); }
+  if (v.typeNames is null) { v.typeNames = exportedTypeNamesOf(v); }
   return v.typeNames!.indexOf("\n" + name + "\n") >= 0;
 }
 
@@ -1364,6 +1364,34 @@ bool isIdentName(string s) {
 }
 
 /** The name after each `export type ` in `sources`, each between newlines — see `ViewInputs.typeNames`. */
+/**
+ * The names `export type` declares across `v`, each between newlines — from each file's tokens where
+ * the view has them, which skips its comments and is a tenth of its bytes. A view is built per closure
+ * and the closures of a graph overlap, so this runs once per file per importer: by bytes, a large
+ * imported file cost its whole length for every file that imports it (`issues/lang/0398b`).
+ */
+string exportedTypeNamesOf(ViewInputs v) {
+  string out = "\n";
+  i32 st = tokenStride();
+  for (i32 i = 0; i < v.sources.len(); i++) {
+    Lexed? have = i == v.entry ? v.elexed : i < v.lexes.len() ? v.lexes[i] : null;
+    if (have is null) {
+      string one = exportedTypeNames([v.sources[i]] as string[]);
+      out = out + one.slice(1, one.len());
+      continue;
+    }
+    Lexed lx = have!;
+    u8[] src = i == v.entry ? v.esrc : v.sources[i].toBytes();
+    for (i32 t = 0; t + 2 < lx.tokenCount; t++) {
+      if (lx.tokens[t * st] != kExport() || lx.tokens[(t + 1) * st] != kIdent()
+          || lx.tokens[(t + 2) * st] != kIdent() || tokText(src, lx, t + 1) != "type") { continue; }
+      out = out + tokText(src, lx, t + 2) + "\n";
+    }
+  }
+  return out;
+}
+
+/** The same read off the text: what follows each `export type ` up to the first byte that cannot be in a name. */
 string exportedTypeNames(string[] sources) {
   string decl = "export type ";
   string out = "\n";

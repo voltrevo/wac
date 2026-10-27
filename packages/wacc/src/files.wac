@@ -43,8 +43,11 @@ export string[] importSpecs(u8[] src) {
 /** The same, read by whichever frontend `path` names — see `frontend.wac`. */
 export string[] importSpecsOf(string path, u8[] src) {
   Frontend fe = frontendOf(path, src);
-  Lexed lexed = fe.lexed;
-  src = fe.src;
+  return importSpecsLexed(fe.src, fe.lexed);
+}
+
+/** The same, from tokens already read — `src` must be the bytes `lexed` was read from. */
+export string[] importSpecsLexed(u8[] src, Lexed lexed) {
   i32 n = 0;
   for (i32 t = 0; t < lexed.tokenCount; t++) {
     if (fromStringAfter(src, lexed, t) >= 0) { n = n + 1; }

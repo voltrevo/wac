@@ -24,12 +24,13 @@
 // module reached only through a namespace re-export is imported directly, and the re-exporting file
 // is not needed at all.
 
-import { lex, Lexed, tokenStride } from "./lex.wac";
+import { Lexed, tokenStride } from "./lex.wac";
 import {
   kAs, kComma, kConst, kDot, kEnum, kEof, kExport, kIdent, kImport, kLbrace, kLbrack, kLparen,
   kLt, kGt, kRbrace, kRbrack, kRparen, kSemi, kShr, kStar, kStatic, kString, kStruct,
 } from "./kinds.wac";
 import { Res, resolveVia } from "./path.wac";
+import { readLexed, readOf, Reads, readSrc } from "./frontend.wac";
 import { coreExports } from "./coretext.wac";
 
 /** A growable list of strings. */
@@ -141,9 +142,10 @@ struct NsFile {
   u8[] src;
   Lexed lx;
 
-  NsFile of(string text) {
-    u8[] b = text.toBytes();
-    return NsFile(b, lex(b));
+  /** `text` through `reads`, so a file no pass has changed is lexed once. Nothing here writes to it. */
+  NsFile via(Reads reads, string text) {
+    i32 at = readOf(reads, text);
+    return NsFile(readSrc(reads, at), readLexed(reads, at));
   }
 
   i32 count(const this) { return this.lx.tokenCount; }
@@ -253,8 +255,8 @@ struct NsLocal {
  * The first pass: one file's inline namespaces flattened into verbatim-named declarations.
  * Answers the new text; `info` gets what it declared.
  */
-string flattenInline(string text, NsLocal info) {
-  NsFile f = NsFile.of(text);
+string flattenInline(Reads reads, string text, NsLocal info) {
+  NsFile f = NsFile.via(reads, text);
   NsEdits ed = NsEdits.create();
   i32 depth = 0;
   for (i32 t = 0; t < f.count(); t++) {
@@ -536,7 +538,12 @@ struct NsExports {
  * member it reaches, and the imports that reach it.
  */
 export string[] lowerNamespaces(string[] paths, string[] sources, const Res res) {
-  return lowerNamespacesIn(paths, sources, res, false);
+  return lowerNamespacesIn(paths, sources, res, false, Reads.create());
+}
+
+/** `lowerNamespaces`, reading through the caller's `reads` — see `frontend.wac`. */
+export string[] lowerNamespacesWith(string[] paths, string[] sources, const Res res, Reads reads) {
+  return lowerNamespacesIn(paths, sources, res, false, reads);
 }
 
 /**
@@ -546,10 +553,16 @@ export string[] lowerNamespaces(string[] paths, string[] sources, const Res res)
  * a namespace, and nothing declares `@"X.m"` — which is why it is a separate entry.
  */
 export string[] lowerNamespacesForDeclarations(string[] paths, string[] sources, const Res res) {
-  return lowerNamespacesIn(paths, sources, res, true);
+  return lowerNamespacesIn(paths, sources, res, true, Reads.create());
 }
 
-string[] lowerNamespacesIn(string[] paths, string[] sources, const Res res, bool loose) {
+/** `lowerNamespacesForDeclarations`, reading through the caller's `reads`. */
+export string[] lowerNamespacesForDeclarationsWith(string[] paths, string[] sources, const Res res,
+                                                   Reads reads) {
+  return lowerNamespacesIn(paths, sources, res, true, reads);
+}
+
+string[] lowerNamespacesIn(string[] paths, string[] sources, const Res res, bool loose, Reads reads) {
   i32 n = paths.len();
   bool any = false;
   for (i32 i = 0; i < n; i++) {
@@ -561,13 +574,13 @@ string[] lowerNamespacesIn(string[] paths, string[] sources, const Res res, bool
   NsLocal[] locals = NsLocal[].filled(n, NsLocal(NsStrs.create(), NsStrs.create(), NsStrs.create(), NsStrs.create()));
   for (i32 i = 0; i < n; i++) {
     locals[i] = NsLocal(NsStrs.create(), NsStrs.create(), NsStrs.create(), NsStrs.create());
-    flat[i] = i < sources.len() ? flattenInline(sources[i], locals[i]) : "";
+    flat[i] = i < sources.len() ? flattenInline(reads, sources[i], locals[i]) : "";
   }
   NsExports[] exports = NsExports[].filled(n, NsExports(NsStrs.create(), NsStrs.create(), NsStrs.create()));
-  for (i32 i = 0; i < n; i++) { exports[i] = exportsOfFlat(paths, flat, res, i); }
+  for (i32 i = 0; i < n; i++) { exports[i] = exportsOfFlat(reads, paths, flat, res, i); }
 
   string[] out = string[].filled(n, "");
-  for (i32 i = 0; i < n; i++) { out[i] = rewriteUses(paths, flat, res, exports, locals, i, loose); }
+  for (i32 i = 0; i < n; i++) { out[i] = rewriteUses(reads, paths, flat, res, exports, locals, i, loose); }
   return out;
 }
 
@@ -657,9 +670,9 @@ i32 targetOf(string[] paths, const Res res, i32 f, string spec) {
 /** The unquoted text of a string token. */
 string unquote(string q) { return q.len() >= 2 ? q.slice(1, q.len() - 1) : q; }
 
-NsExports exportsOfFlat(string[] paths, string[] flat, const Res res, i32 f) {
+NsExports exportsOfFlat(Reads reads, string[] paths, string[] flat, const Res res, i32 f) {
   NsExports ex = NsExports(NsStrs.create(), NsStrs.create(), NsStrs.create());
-  NsFile src = NsFile.of(flat[f]);
+  NsFile src = NsFile.via(reads, flat[f]);
   i32 depth = 0;
   for (i32 t = 0; t < src.count(); t++) {
     i32 k = src.kind(t);
@@ -867,8 +880,8 @@ string importItem(string name, string local) {
 
 string verbatimIfNeeded(string name) { return name.indexOf(".") >= 0 ? "@\"" + name + "\"" : name; }
 
-string rewriteUses(string[] paths, string[] flat, const Res res, NsExports[] exports, NsLocal[] locals, i32 f, bool loose) {
-  NsFile src = NsFile.of(flat[f]);
+string rewriteUses(Reads reads, string[] paths, string[] flat, const Res res, NsExports[] exports, NsLocal[] locals, i32 f, bool loose) {
+  NsFile src = NsFile.via(reads, flat[f]);
   NsEdits ed = NsEdits.create();
   NsBindings binds = NsBindings(NsStrs.create(), i32[].filled(8, 0), NsStrs.create());
   NsWanted wanted = NsWanted(i32[].filled(8, 0), NsStrs.create(), 0);

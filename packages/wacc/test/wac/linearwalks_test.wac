@@ -12,6 +12,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { diagnoseFiles, emitFiles, lowerSources } from "../../src/api.wac";
 import { Res } from "../../src/path.wac";
+import { lex } from "../../src/lex.wac";
+import { synthSource, synthTokens } from "../../src/asyncsynth.wac";
 import { Core } from "std";
 
 /** `parts` as one string, copied once — `out = out + part` would be the cost being measured. */
@@ -284,5 +286,35 @@ export string test_asking_whether_a_name_is_a_type_does_not_walk_every_import(Co
   t.isTrue(b * (4 as i64) < a * (5 as i64),
            "naming `P` 2,400 times: " + itoa(millis(a)) + " ms importing 1,000 names, " + itoa(millis(b))
            + " ms importing 3,000");
+  return t.report();
+}
+
+i64 timeSynth(Core core, i32 states) {
+  u8[] src = "i32 f() { return 0; }\n".toBytes();
+  u8[] tailed = synthSource(src, 4, states, 2);
+  i64 t0 = core.monotonicNanos().wait();
+  synthTokens(lex(src), tailed, 4, states, 2, 1, 1);
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **The async lowering's tail of spellings is placed in one walk, not one walk per word.** Each word's
+// token needs its byte offset in the tail, and that was asked of `synthOffset` once per word — which
+// rebuilt the whole list of words and summed the lengths of every word before it. A file's tail carries
+// a numeral per state, so the cost was the square of its states: `std` has enough that this was a
+// tenth of checking a one-line program that imports it. Doubling the states should double the work.
+export string test_placing_the_async_tail_does_not_rebuild_it_per_word(Core core) {
+  T t = T.create();
+  timeSynth(core, 1500);
+  i64 a = timeSynth(core, 1500);
+  i64 b = timeSynth(core, 3000);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeSynth(core, 1500);
+    i64 b2 = timeSynth(core, 3000);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "placing the tail: " + itoa(millis(a)) + " ms for 1,500 states, " + itoa(millis(b))
+           + " ms for 3,000");
   return t.report();
 }

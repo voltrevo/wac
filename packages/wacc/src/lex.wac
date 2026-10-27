@@ -1079,8 +1079,7 @@ i32 cInterp() { return 3; }
 /**
  * The mode stack: `(kind, ret, num)` per entry, where `ret` is the mode to restore.
  *
- * Sized by the caller from a count of the bytes that can push one, so it cannot
- * overflow: every push consumes a distinct `<`, `{` or `>`.
+ * Grown when full, so it cannot overflow.
  */
 struct Modes {
   i32[] stk;
@@ -1089,7 +1088,11 @@ struct Modes {
 
   void push(this, i32 kind, i32 ret, i32 num) {
     i32 at = this.sp * 3;
-    if (at + 3 > this.stk.len()) { return; }
+    if (at + 3 > this.stk.len()) {
+      i32[] bigger = i32[].filled(this.stk.len() * 2 + 3, 0);
+      bigger.copyFrom(this.stk, 0, 0, this.stk.len());
+      this.stk = bigger;
+    }
     this.stk[at] = kind;
     this.stk[at + 1] = ret;
     this.stk[at + 2] = num;
@@ -1101,16 +1104,6 @@ struct Modes {
   i32 topNum(const this)  { return this.sp == 0 ? 0 : this.stk[(this.sp - 1) * 3 + 2]; }
   void setTopNum(this, i32 v) { if (this.sp > 0) { this.stk[(this.sp - 1) * 3 + 2] = v; } }
   void pop(this) { if (this.sp > 0) { this.sp--; } }
-}
-
-/** How many entries the stack can need: one per byte that can push one. */
-i32 modeDepth(u8[] src) {
-  i32 count = 0;
-  for (i32 i = 0; i < src.len(); i++) {
-    i32 c = src[i] as i32;
-    if (c == '<' || c == '{' || c == '>') { count++; }
-  }
-  return count + 8;
 }
 
 /**
@@ -1138,7 +1131,7 @@ bool endsExpression(i32 kind) {
  * Decided at the `{` from what precedes it, which is all a lexer has: a name or a `>` before it is a
  * struct literal (`P {`, `Box<i32> {`), and a `)` is a `match` subject when the `(` it closes followed
  * `match` written as a value rather than as a statement. Each `(` remembers what preceded it, and each
- * `{` what it was, on stacks the size of the source's bracket count.
+ * `{` what it was, on stacks that grow as they are pushed.
  */
 struct Nesting {
   i32[] openers;
@@ -1152,7 +1145,11 @@ struct Nesting {
 
   /** The `(` just read, after `prev` — and `before`, the token preceding that one. */
   void openParen(this, i32 prev, i32 before) {
-    if (this.parens >= this.openers.len()) { return; }
+    if (this.parens >= this.openers.len()) {
+      i32[] bigger = i32[].filled(this.openers.len() * 2 + 1, 0);
+      bigger.copyFrom(this.openers, 0, 0, this.openers.len());
+      this.openers = bigger;
+    }
     bool stmt = prev == kMatch() && (before < 0 || before == kSemi() || before == kLbrace() || before == kRbrace());
     this.openers[this.parens] = stmt ? matchStmt() : prev;
     this.parens = this.parens + 1;
@@ -1166,7 +1163,11 @@ struct Nesting {
 
   /** The `{` just read, after `prev` — or `{` opening an expression in markup, which is always one. */
   void openBrace(this, i32 prev, bool always) {
-    if (this.braces >= this.exprs.len()) { return; }
+    if (this.braces >= this.exprs.len()) {
+      bool[] bigger = bool[].filled(this.exprs.len() * 2 + 1, false);
+      for (i32 i = 0; i < this.exprs.len(); i++) { bigger[i] = this.exprs[i]; }
+      this.exprs = bigger;
+    }
     this.exprs[this.braces] = always || prev == kIdent() || prev == kGt()
                            || (prev == kRparen() && this.closedOpener == kMatch());
     this.braces = this.braces + 1;
@@ -1187,16 +1188,6 @@ struct Nesting {
 
 /** An opener mark no token kind uses: `match` at the start of a statement, whose braces are a block. */
 i32 matchStmt() { return 0 - 2; }
-
-/** How many `(` and `{` the source has, which bounds how deep `Nesting` can go. */
-i32 bracketCount(u8[] src) {
-  i32 count = 0;
-  for (i32 i = 0; i < src.len(); i++) {
-    i32 c = src[i] as i32;
-    if (c == '(' || c == '{') { count++; }
-  }
-  return count + 8;
-}
 
 /**
  * Whether `<` at the current position opens or closes a tag rather than being text.
@@ -1290,15 +1281,19 @@ export Lexed lex(u8[] src) {
   // about the same file. A real source file does not come near it — the worst in this repository is a
   // 36 KB HTML document at about 130 diagnostics *in total*, of which few are the lexer's.
   i32 maxErrors = 64;
+  // **Sized for a token per eight bytes and grown by `pushToken`**, not one per byte: `std` is 173 KB
+  // and 13,000 tokens, so one per byte zeroed 3.5 MB to use a fourteenth of it, once per pass that
+  // lexed it (`issues/lang/0398b`).
   Lexed out = Lexed(
-    i32[].filled((n + 1) * tokenStride(), 0), 0,
+    i32[].filled((n / 8 + 16) * tokenStride(), 0), 0,
     i32[].filled(maxErrors * errorStride(), 0), 0,
     0, false
   );
   Lexer lx = Lexer(src, 0, 1, 1);
-  Modes md = Modes(i32[].filled(modeDepth(src) * 3, 0), 0, mNormal());
-  i32 depth = bracketCount(src);
-  Nesting nest = Nesting(i32[].filled(depth, 0), 0, bool[].filled(depth, false), 0, 0 - 1, false);
+  // The stacks grow as they are pushed. They were sized by two passes over the input first, which was
+  // a third of what lexing cost.
+  Modes md = Modes(i32[].filled(16 * 3, 0), 0, mNormal());
+  Nesting nest = Nesting(i32[].filled(16, 0), 0, bool[].filled(16, false), 0, 0 - 1, false);
 
   while (true) {
     // **Text first, and no whitespace skipping**: in an element's children a space is
