@@ -1960,6 +1960,10 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
     // import the symbol itself is still core's conversion (case 0576); a method named by a fresh symbol
     // spelled the same is not (case 0397), and the method tables, keyed by spelling, cannot tell.
     string coreText = "";
+    // **A built-in's own types are core's conversion however a user file reaches them.** Core declares the
+    // symbol and std imports it plainly, so neither has an alias to find below; without this a file that
+    // imported `Stuck` by name, and not `toString`, could not interpolate one (case 0854).
+    if (paths[i] == corePath() || isBuiltinSpec(paths[i])) { coreText = "toString"; }
     for (i32 d = 0; d < iprog.decls.len(); d++) {
       match (iprog.decls[d].kind) {
         Import(tpathTok, tprefixTok, titems): {
