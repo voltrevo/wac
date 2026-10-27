@@ -2092,7 +2092,7 @@ export struct Env {
   }
 
   i32 funcAt(const this, string name) {
-    for (i32 i = 0; i < this.funcCount; i++) {
+    for (i32 i = keyFirst(this.funcIx, name); i >= 0; i = this.funcIx.next[i]) {
       if (this.funcs[i] == name) { return i; }
     }
     return -1;
@@ -2278,7 +2278,7 @@ export struct Env {
 
   i32 structType(this, string name) {
     string n = this.canonType(name);
-    for (i32 i = 0; i < this.structCount; i++) {
+    for (i32 i = keyFirst(this.structIx, n); i >= 0; i = this.structIx.next[i]) {
       if (this.structNames[i] == n) { return this.arrayCount + i; }
     }
     return -1;
@@ -2294,7 +2294,7 @@ export struct Env {
 
   bool isStructName(const this, string name) {
     string n = this.canonType(name);
-    for (i32 i = 0; i < this.structCount; i++) {
+    for (i32 i = keyFirst(this.structIx, n); i >= 0; i = this.structIx.next[i]) {
       if (this.structNames[i] == n) { return true; }
     }
     return false;
@@ -2335,7 +2335,7 @@ export struct Env {
 
   /** A struct's parent, or `""`. */
   string parentOf(const this, string owner) {
-    for (i32 i = 0; i < this.structCount; i++) {
+    for (i32 i = keyFirst(this.structIx, owner); i >= 0; i = this.structIx.next[i]) {
       if (this.structNames[i] == owner) { return this.structParents[i]; }
     }
     return "";
@@ -2358,7 +2358,7 @@ export struct Env {
   i32 fieldIndex(const this, string owner, string field) {
     i32 base = this.inheritedCount(owner);
     i32 n = 0;
-    for (i32 i = 0; i < this.fieldCount; i++) {
+    for (i32 i = keyFirst(this.fieldIx, owner); i >= 0; i = this.fieldIx.next[i]) {
       if (this.fieldOwners[i] != owner) { continue; }
       if (this.fieldNames[i] == field) { return base + n; }
       n = n + 1;
@@ -2369,7 +2369,7 @@ export struct Env {
   /** How many fields a struct has, which decides whether a bare `P()` is a default construction. */
   i32 fieldCountOf(const this, string owner) {
     i32 n = this.inheritedCount(owner);
-    for (i32 f = 0; f < this.fieldCount; f++) {
+    for (i32 f = keyFirst(this.fieldIx, owner); f >= 0; f = this.fieldIx.next[f]) {
       if (this.fieldOwners[f] == owner) { n = n + 1; }
     }
     return n;
@@ -2380,7 +2380,7 @@ export struct Env {
     i32 base3 = this.inheritedCount(owner);
     if (i < base3) { return this.fieldNullableAt(this.parentOf(owner), i); }
     i32 n = base3;
-    for (i32 f = 0; f < this.fieldCount; f++) {
+    for (i32 f = keyFirst(this.fieldIx, owner); f >= 0; f = this.fieldIx.next[f]) {
       if (this.fieldOwners[f] != owner) { continue; }
       if (n == i) { return this.fieldNullable[f]; }
       n = n + 1;
@@ -2393,7 +2393,7 @@ export struct Env {
     i32 baseN = this.inheritedCount(owner);
     if (i < baseN) { return this.fieldNameAt(this.parentOf(owner), i); }
     i32 n = baseN;
-    for (i32 f = 0; f < this.fieldCount; f++) {
+    for (i32 f = keyFirst(this.fieldIx, owner); f >= 0; f = this.fieldIx.next[f]) {
       if (this.fieldOwners[f] != owner) { continue; }
       if (n == i) { return this.fieldNames[f]; }
       n = n + 1;
@@ -2406,7 +2406,7 @@ export struct Env {
     i32 base5 = this.inheritedCount(owner);
     if (i < base5) { return this.fieldIndexOf(this.parentOf(owner), i); }
     i32 n = base5;
-    for (i32 f = 0; f < this.fieldCount; f++) {
+    for (i32 f = keyFirst(this.fieldIx, owner); f >= 0; f = this.fieldIx.next[f]) {
       if (this.fieldOwners[f] != owner) { continue; }
       if (n == i) { return f; }
       n = n + 1;
@@ -2419,7 +2419,7 @@ export struct Env {
     i32 base4 = this.inheritedCount(owner);
     if (i < base4) { return this.fieldTypeAt(this.parentOf(owner), i); }
     i32 n = base4;
-    for (i32 f = 0; f < this.fieldCount; f++) {
+    for (i32 f = keyFirst(this.fieldIx, owner); f >= 0; f = this.fieldIx.next[f]) {
       if (this.fieldOwners[f] != owner) { continue; }
       if (n == i) { return this.fieldTypes[f]; }
       n = n + 1;
@@ -2460,6 +2460,7 @@ export struct Env {
       return;
     }
     this.funcs[this.funcCount] = name;
+    keyAdd(this.funcIx, name, this.funcCount);
     this.funcReturns[this.funcCount] = ret;
     this.funcParamAt[this.funcCount] = this.funcParamTotal;
     this.funcParamCount[this.funcCount] = ptypes.len();
@@ -2496,7 +2497,7 @@ export struct Env {
 
   /** A field's wac type, which decides how it is read and what it produces. */
   string fieldType(const this, string owner, string field) {
-    for (i32 i = 0; i < this.fieldCount; i++) {
+    for (i32 i = keyFirst(this.fieldIx, owner); i >= 0; i = this.fieldIx.next[i]) {
       if (this.fieldOwners[i] == owner && this.fieldNames[i] == field) { return this.fieldTypes[i]; }
     }
     string p2 = this.parentOf(owner);
@@ -3138,6 +3139,16 @@ export struct Env {
    */
   KeyIndex declIndex;
 
+  /**
+   * `structNames`, `fieldOwners` and `funcs` by name, kept as each row is added — `structAdded`,
+   * `fieldAdded`, `addFunc`. The lookups below are `const` and so cannot build one when asked, and
+   * walking the table was half of emitting a program of a few thousand structs (`issues/lang/0398b`).
+   * `fieldIx` is keyed by owner, so a struct's fields come out in declaration order.
+   */
+  KeyIndex structIx;
+  KeyIndex fieldIx;
+  KeyIndex funcIx;
+
   /** The component tag recorded at this position, in this file and instance, or -1. */
   i32 markupSiteAt(const this, i32 line, i32 col) {
     for (i32 i = 0; i < this.markupCount; i++) {
@@ -3487,7 +3498,7 @@ export struct Env {
                i32[].filled(1024, 0), 0,
                0, 0, string[].filled(2048, ""), string[].filled(2048, ""), string[].filled(2048, ""),
                B[].filled(2048, B.create()),
-               KeyIndex.create());
+               KeyIndex.create(), KeyIndex.create(), KeyIndex.create(), KeyIndex.create());
   }
 
   
@@ -6284,7 +6295,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
     env.structNames[env.structCount] = cname;
     env.structParentToks[env.structCount] = -1;
     env.structParents[env.structCount] = "";
-    env.structCount = env.structCount + 1;
+    structAdded(env);
     for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
       if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); break; }
       env.fieldOwners[env.fieldCount] = cname;
@@ -6293,7 +6304,7 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
       // enclosing function hold the same one-field struct, so a write through either is seen by both.
       env.fieldTypes[env.fieldCount] = cellStructName(env.capTypes[li][c]);
       env.fieldNullable[env.fieldCount] = false;
-      env.fieldCount = env.fieldCount + 1;
+      fieldAdded(env);
     }
     // The cell struct for each captured type, registered once.
     for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
@@ -6303,13 +6314,13 @@ Front frontOfRawIn(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[]
       env.structNames[env.structCount] = cellName;
       env.structParentToks[env.structCount] = -1;
       env.structParents[env.structCount] = "";
-      env.structCount = env.structCount + 1;
+      structAdded(env);
       if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); break; }
       env.fieldOwners[env.fieldCount] = cellName;
       env.fieldNames[env.fieldCount] = "v";
       env.fieldTypes[env.fieldCount] = env.capTypes[li][c];
       env.fieldNullable[env.fieldCount] = false;
-      env.fieldCount = env.fieldCount + 1;
+      fieldAdded(env);
     }
   }
 
@@ -18378,7 +18389,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.structParentToks[env.structCount] = pt;
               env.structParents[env.structCount] =
                   pt < 0 ? "" : nameKeyOf(env, src, lexed, pt);
-              env.structCount = env.structCount + 1;
+              structAdded(env);
             }
             for (i32 f = 0; f < fields.len(); f++) {
               if (env.fieldCount >= env.fieldNames.len()) {
@@ -18390,7 +18401,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, fields[f].type);
               env.fieldNullable[env.fieldCount] = isNullableTy(fields[f].type);
               noteFieldInit(env, env.fieldCount, fields[f].init, src, lexed);
-              env.fieldCount = env.fieldCount + 1;
+              fieldAdded(env);
             }
             for (i32 m = 0; m < methods.len(); m++) {
               // **A method with its own letters may not be able to say its types here.** Its entry is
@@ -18503,7 +18514,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.structNames[env.structCount] = inst;
               env.structParentToks[env.structCount] = -1;
               env.structParents[env.structCount] = "";
-              env.structCount = env.structCount + 1;
+              structAdded(env);
             }
             if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); }
             if (env.fieldCount < env.fieldNames.len()) {
@@ -18511,7 +18522,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.fieldNames[env.fieldCount] = " tag";
               env.fieldTypes[env.fieldCount] = "i32";
               env.fieldNullable[env.fieldCount] = false;
-              env.fieldCount = env.fieldCount + 1;
+              fieldAdded(env);
             }
             i32 eslot = 1;
             for (i32 v = 0; v < variants.len(); v++) {
@@ -18535,7 +18546,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
                   tokenTextOf(src, lexed, variants[v].fields[fi].nameTok);
                 env.fieldTypes[env.fieldCount] =
                   typeOfTyName(env, src, lexed, variants[v].fields[fi].type);
-                env.fieldCount = env.fieldCount + 1;
+                fieldAdded(env);
               }
               eslot = eslot + variants[v].fields.len();
             }
@@ -18784,7 +18795,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           // name it resolves to is not known until every struct in the program has been declared.
           env.structParentToks[env.structCount] = parentTok;
           env.structParents[env.structCount] = "";
-          env.structCount = env.structCount + 1;
+          structAdded(env);
         }
         for (i32 i = 0; i < fields.len(); i++) {
           // **A field this table has no room for is not a field it can do without.** `struct.new`
@@ -18802,7 +18813,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           env.fieldTyFiles[env.fieldCount] = env.curFile;
           env.fieldNullable[env.fieldCount] = isNullableTy(fields[i].type);
           noteFieldInit(env, env.fieldCount, fields[i].init, src, lexed);
-          env.fieldCount = env.fieldCount + 1;
+          fieldAdded(env);
         }
       }
       // **An enum is registered as a struct**, because that is what it becomes: slot 0 is the tag
@@ -18818,7 +18829,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           env.structNames[env.structCount] = ename;
           env.structParentToks[env.structCount] = -1;
           env.structParents[env.structCount] = "";
-          env.structCount = env.structCount + 1;
+          structAdded(env);
         }
         if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); }
         if (env.fieldCount < env.fieldNames.len()) {
@@ -18826,7 +18837,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
           env.fieldNames[env.fieldCount] = " tag";
           env.fieldTypes[env.fieldCount] = "i32";
           env.fieldNullable[env.fieldCount] = false;
-          env.fieldCount = env.fieldCount + 1;
+          fieldAdded(env);
         }
         i32 slot = 1;
         for (i32 v = 0; v < variants.len(); v++) {
@@ -18862,7 +18873,7 @@ void declareStructs(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {
             env.fieldTys[env.fieldCount] = variants[v].fields[i].type;
             env.fieldTyFiles[env.fieldCount] = env.curFile;
             env.fieldNullable[env.fieldCount] = isNullableTy(variants[v].fields[i].type);
-            env.fieldCount = env.fieldCount + 1;
+            fieldAdded(env);
           }
           slot = slot + variants[v].fields.len();
         }
@@ -19120,6 +19131,21 @@ void resolveStructRefs(Env env, u8[] src, Lexed lexed, u8[][] srcs, Lexed?[] lex
     }
     if (!moved) { break; }
   }
+  // The rows moved, so the index of them is rebuilt rather than patched.
+  env.structIx = KeyIndex.create();
+  for (i32 i = 0; i < env.structCount; i++) { keyAdd(env.structIx, env.structNames[i], i); }
+}
+
+/** Count the struct just written at `structCount`, and index it by name. */
+void structAdded(Env env) {
+  keyAdd(env.structIx, env.structNames[env.structCount], env.structCount);
+  env.structCount = env.structCount + 1;
+}
+
+/** Count the field just written at `fieldCount`, and index it by owner. */
+void fieldAdded(Env env) {
+  keyAdd(env.fieldIx, env.fieldOwners[env.fieldCount], env.fieldCount);
+  env.fieldCount = env.fieldCount + 1;
 }
 
 void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog, i32 file) {

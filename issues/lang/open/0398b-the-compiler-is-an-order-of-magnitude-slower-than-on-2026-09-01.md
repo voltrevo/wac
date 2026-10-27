@@ -233,6 +233,23 @@ shares its name by comparing it with every other, once per view: now a name inde
 across a project's gathers measured nothing (a second gather over 60 cached imports took 1.9 ms either
 way), so it was reverted. Writing that test found `issues/lang/0399b`.
 
+**Ninth round (agent-b, 2026-10-27): the emitter's struct, field and function tables.** `fieldType`,
+`isStructName`, `parentOf`, `funcAt` and the per-owner field walks searched their tables from the top
+for every name; on 1,600 structs of ten fields that was half of emitting. They are `const`, and `const`
+is deep, so an index cannot be built when asked: `structIx`, `fieldIx` (keyed by owner, so a struct's
+fields stay in order) and `funcIx` are kept as each row is added (`structAdded`, `fieldAdded`, `addFunc`),
+and `structIx` is rebuilt after the parent-first reordering moves rows. `linearwalks_test.wac`'s
+`test_emitting_a_field_does_not_walk_every_field` fails without it: 1,000 against 2,000 structs took
+7,218 against 27,626 ms, now about 3× faster with a ratio near 2.
+
+| | round 8 | round 9 |
+|---|---:|---:|
+| `wac build` of box's shell | 9.0–9.9 s | 7.0 s |
+| `./bootstrap.sh --no-install` | ~188 s | 156 s |
+| `wac check` in `packages/box` | 2,403 ms | 2,411 ms |
+
+Same shell bytes.
+
 Two leads that did not reproduce in isolation and so were not changed: `Env.sigType` walks every
 signature for each one asked (7% of the shell build, via `pairEverySignature`), and
 `methodInstanceInferred` walks every declaration per generic method call (10%). A V8 code cache for

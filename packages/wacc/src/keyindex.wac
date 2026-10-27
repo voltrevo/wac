@@ -29,7 +29,7 @@ export struct KeyIndex {
 // and no call in a `for` loop's step, which is why the next row is read from `next` directly.
 
 /** The first row in `k`'s bucket, or -1. Follow `ix.next[row]`, and skip rows whose key is not `k`. */
-export i32 keyFirst(KeyIndex ix, string k) {
+export i32 keyFirst(const KeyIndex ix, string k) {
   if (ix.heads.len() == 0) { return 0 - 1; }
   return ix.heads[keyBucket(ix, k)];
 }
@@ -53,7 +53,7 @@ export void keyAdd(KeyIndex ix, string k, i32 row) {
   ix.tails[b] = row;
 }
 
-i32 keyBucket(KeyIndex ix, string k) {
+i32 keyBucket(const KeyIndex ix, string k) {
   u8[] b = k.toBytes();
   i32 h = 5381;
   for (i32 i = 0; i < b.len(); i++) { h = h * 33 + b[i] as i32; }

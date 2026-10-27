@@ -401,3 +401,43 @@ export string test_keying_the_static_view_does_not_compare_every_pair(Core core)
            "3,000 declarations: " + itoa(millis(a)) + " ms; 6,000: " + itoa(millis(b)) + " ms");
   return t.report();
 }
+
+/** `n` structs of ten fields, each read whole by one exported function. */
+string wideStructs(i32 n) {
+  string[] parts = string[].filled(2 * n, "");
+  for (i32 i = 0; i < n; i++) {
+    string s = "S" + itoa(i);
+    string decl = "struct " + s + " {";
+    string sum = "0";
+    for (i32 f = 0; f < 10; f++) {
+      decl = decl + " i32 a" + itoa(f) + ";";
+      sum = sum + " + s.a" + itoa(f);
+    }
+    parts[2 * i] = decl + " }\n";
+    parts[2 * i + 1] = "export i32 f" + itoa(i) + "(" + s + " s) { return " + sum + "; }\n";
+  }
+  return joinedParts(parts, 2 * n);
+}
+
+// **Finding a struct or a field does not walk every one the module has.** The emitter searched its
+// tables from the top for each name it met, so twice the structs cost more than three times as much:
+// 4,654 ms for 800 structs of ten fields against 15,616 for 1,600. Found through an index, 163
+// against 361.
+export string test_emitting_a_field_does_not_walk_every_field(Core core) {
+  T t = T.create();
+  string fewer = wideStructs(1000);
+  string more = wideStructs(2000);
+  timeEmit(core, fewer);
+  timeEmit(core, more);
+  i64 a = timeEmit(core, fewer);
+  i64 b = timeEmit(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmit(core, fewer);
+    i64 b2 = timeEmit(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "1,000 structs of ten fields: " + itoa(millis(a)) + " ms; 2,000: " + itoa(millis(b)) + " ms");
+  return t.report();
+}
