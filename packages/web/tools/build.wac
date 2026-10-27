@@ -699,10 +699,12 @@ export string documentSide() {
           if (entry.isFile) {
             entry.file((f) => send(f, rel(entry.fullPath)), (e) => failed(rel(entry.fullPath), e));
           } else if (entry.isDirectory) {
+            // Some browsers refuse to list a dropped folder on a page opened from a `file://` URL: the
+            // error says it was a folder, so a program can say what to do instead.
             const reader = entry.createReader();
             const more = () => reader.readEntries(
               (batch) => { if (batch.length > 0) { batch.forEach(walk); more(); } },
-              (e) => failed(rel(entry.fullPath), e));
+              (e) => failed(rel(entry.fullPath), `a dropped folder could not be listed here (${e?.name}: ${e?.message})`));
             more();
           }
         };
@@ -721,13 +723,16 @@ export string documentSide() {
         const dropped = (dt) => {
           const items = [...(dt?.items ?? [])].filter((it) => it.kind === "file");
           const files = [...(dt?.files ?? [])];
+          // Both are asked for now, while the drop's items can still answer: a handle the browser then
+          // refuses — as it may in a sandboxed frame — falls back to the entry, and that to the file.
+          const entries = items.map((it) => it.webkitGetAsEntry?.() ?? null);
+          const instead = (i) => entries[i] ? walk(entries[i]) : take([files[i]]);
           if (items.length > 0 && items.every((it) => it.getAsFileSystemHandle)) {
             items.map((it) => it.getAsFileSystemHandle()).forEach((pending, i) => pending.then(
-              (h) => h ? walkHandle(h, h.name) : take([files[i]]),
-              () => take([files[i]])));
+              (h) => h ? walkHandle(h, h.name) : instead(i),
+              () => instead(i)));
             return;
           }
-          const entries = items.map((it) => it.webkitGetAsEntry?.() ?? null);
           if (entries.length > 0 && entries.every((x) => x !== null)) entries.forEach(walk);
           else take(dt?.files);
         };
