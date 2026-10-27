@@ -20912,6 +20912,13 @@ string bindNameOf(string spelling) {
       tmp[n] = 95; tmp[n + 1] = 110; tmp[n + 2] = 117; tmp[n + 3] = 108; tmp[n + 4] = 108;
       n = n + 5;
       pending = false;
+    } else if (c == 91 && i + 1 < a.len() && a[i + 1] == 93) {
+      // `[]`, as `Arr` — as `bindArrSuffix` spells it. Dropped with the other punctuation, it made
+      // `MapEntry<string, string[]>` the same name as `MapEntry<string, string>`: a duplicate export.
+      tmp[n] = 65; tmp[n + 1] = 114; tmp[n + 2] = 114;
+      n = n + 3;
+      i = i + 1;
+      pending = false;
     } else if (ok) {
       if (pending && n > 0) { tmp[n] = 36; n = n + 1; }        // `$`, one per run
       pending = false;
