@@ -78,6 +78,10 @@ if [ -n "$out" ]; then
     /*) ;;
     *) out="$(pwd)/$out" ;;
   esac
+  # **And its directory made now**, not at the copy. `syncDemos.ts` asks for `.cache/wac-deno`, and
+  # `.cache/` is gitignored, so a fresh checkout — CI's — has none: the Pages deploy built a correct
+  # command for nine minutes and then failed the `cp`. Made here, an unusable `-o` fails in a second.
+  mkdir -p "$(dirname "$out")" || { echo "bootstrap.sh: cannot make the directory for -o '$out'" >&2; exit 2; }
 fi
 
 say()  { echo "bootstrap: $*" >&2; }

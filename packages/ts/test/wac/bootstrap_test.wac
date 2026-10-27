@@ -92,7 +92,11 @@ string oneHost(Core core, Cli cli, T t, string host, string runtime) {
     return "";
   }
 
-  string out = "\{dir}/wac";
+  // **Into a directory that does not exist yet**, because that is what CI hands it: `syncDemos.ts`
+  // asks for `.cache/wac-deno`, `.cache/` is gitignored, and a fresh checkout has none. Every working
+  // tree has one, so a `-o` into an existing directory passed here while the Pages deploy failed on
+  // `cp: cannot create regular file` after a complete, correct bootstrap.
+  string out = "\{dir}/not-made-yet/wac";
   Exec built = sh(cli, "bash bootstrap.sh --host \{host} -o '\{out}' 2>&1");
   t.eqI32(built.status, 0,
           "bootstrap.sh --host \{host} failed:\n\{string.fromBytes(built.stdout)}");
