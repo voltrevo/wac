@@ -441,3 +441,38 @@ export string test_emitting_a_field_does_not_walk_every_field(Core core) {
            "1,000 structs of ten fields: " + itoa(millis(a)) + " ms; 2,000: " + itoa(millis(b)) + " ms");
   return t.report();
 }
+
+/** `n` structs with a generic method, each called four times with its type argument inferred. */
+string genericMethods(i32 n) {
+  string[] parts = string[].filled(2 * n, "");
+  for (i32 i = 0; i < n; i++) {
+    string s = "S" + itoa(i);
+    parts[2 * i] = "struct " + s + " { i32 v; U id<U>(this, U x) { return x; } }\n";
+    parts[2 * i + 1] = "export i32 f" + itoa(i) + "(i32 x) { " + s + " s = " + s
+        + "(x); return s.id(x) + s.id(1) + s.id(2) + s.id(3); }\n";
+  }
+  return joinedParts(parts, 2 * n);
+}
+
+// **Inferring a generic method's instance does not walk every declaration.** Each call to one found its
+// owner's declaration by reading the name of every declaration of the program in turn, so twice the
+// structs cost about three times as much and the walk was 86% of emitting 2,000 of them.
+export string test_inferring_a_method_instance_does_not_walk_every_declaration(Core core) {
+  T t = T.create();
+  string fewer = genericMethods(1500);
+  string more = genericMethods(3000);
+  timeEmit(core, fewer);
+  timeEmit(core, more);
+  i64 a = timeEmit(core, fewer);
+  i64 b = timeEmit(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmit(core, fewer);
+    i64 b2 = timeEmit(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "1,500 structs with a generic method: " + itoa(millis(a)) + " ms; 3,000: " + itoa(millis(b))
+           + " ms");
+  return t.report();
+}

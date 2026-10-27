@@ -250,9 +250,23 @@ and `structIx` is rebuilt after the parent-first reordering moves rows. `linearw
 
 Same shell bytes.
 
-Two leads that did not reproduce in isolation and so were not changed: `Env.sigType` walks every
-signature for each one asked (7% of the shell build, via `pairEverySignature`), and
-`methodInstanceInferred` walks every declaration per generic method call (10%). A V8 code cache for
+**Tenth round (agent-b, 2026-10-27): a generic method's owner.** `methodInstanceInferred` found the
+declaration of a method call's owner by reading the name of every declaration in the tree, once per call
+to a generic method: 14.6% of the shell build, and 86% of emitting 2,000 structs that each call one.
+`treeDeclFirst` indexes the tree (`mergedDecls`, or the one program's) by name on first use, and the
+index is dropped wherever either is assigned. `test_inferring_a_method_instance_does_not_walk_every_declaration`
+fails without it: 1,500 against 3,000 structs took 2,178 against 7,258 ms. The five other walks of the
+tree by template name (`ownerTemplateOf` callers) could use the same index, but have no test yet.
+
+| | round 9 | round 10 |
+|---|---:|---:|
+| `wac build` of box's shell | 6.95–7.22 s | 6.11–6.37 s |
+| `./bootstrap.sh --no-install` | 156 s | 126 s |
+
+Same shell bytes.
+
+A lead that did not reproduce in isolation and so was not changed: `Env.sigType` walks every
+signature for each one asked (12% of the shell build after round 10, via `pairEverySignature`). A V8 code cache for
 the seed would need the `v8` crate to expose `CompiledWasmModule` serialization, which 152.1 does not.
 
 **Profiling recipe.** Add `if let Ok(f) = std::env::var("WAC_V8_FLAGS") {
