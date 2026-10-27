@@ -116,12 +116,35 @@ fix reverted (3,098 ms against 314; 3,492 ms against 104) and passes with both a
 
 The shell's output is byte for byte what it was, apart from the output file's name in its manifest.
 
-**What is left is not one thing.** Per KB of output the shell is now about 16 ms against about 6.6 ms in
-August, roughly 2.5×, and a one-line file is about 3×. The profile is flat (27,439 ticks): `typeDeclAt`
-from emit's `typeOfTyName` 9%, a linear walk of the declarations per type name, the likeliest next
-target; `str_index_of` 6%, mostly the variant list in `registerNamed`; `Env.keyAt` 4%;
-`methodInstanceInferred` 4%. The bootstrap is mostly the ladder, which these changes do not touch.
-The issue stays open for that remainder.
+**Second round (agent-b, 2026-10-27).** The flat profile had a cause after all: 25% of ticks were
+the engine's runtime, a lock and an allocation per `array.new_data`, which is how every string literal
+was built. Short literals are now `array.new_fixed` (`literalcost_test.wac`). After that the profile
+was all linear lookups, and these went to indexes or single passes, each with a doubling test in
+`linearwalks_test.wac` that fails without its fix:
+
+- `Env.keyAt` and `Env.declareKeyed` walked every declaration; now `keyindex.wac`, by name.
+- `typeDeclAt` walked every declaration for the few `type`s, then every import; both indexed.
+- `mayDeclareTypeDefault` sliced and re-searched the text per `struct`, so `std` cost its square.
+- `registerNamed` built and searched a string per field; now compares an array.
+
+| | Aug/Sep | before | after round 1 | after round 2 |
+|---|---:|---:|---:|---:|
+| `wac check` one-line file | 30 ms | 372 ms | 98 ms | 100 ms |
+| `wac compile fib.wac` | 63 ms | 988 ms | 143 ms | 135 ms |
+| box's shell, `--no-cache` | 5,994 ms (910 KB) | 65,706 ms | 32,722 ms | 12,400 ms (2,025 KB) |
+| `./bootstrap.sh` | 36 s | 593 s | 437 s | 257 s |
+
+Per KB of output the shell is now about 6.1 ms against 6.6 ms in August, so the large end is back.
+Its output is byte for byte what round 1 produced except where short literals changed the code.
+
+**What is left is the small end, about 3×,** and it is not one function. A check of a one-line file
+importing `core` spends its time lexing: `withTypeDefaults`, `variadicCallsOf`, `typeDefaultsOf`,
+`enumVariantsOf` and the frontend each lex the embedded `std`/`core` text again for themselves. One
+lexed copy shared across the lowering passes is the likely fix, and a refactor rather than a patch.
+Two leads that did not reproduce in isolation and so were not changed: `Env.sigType` walks every
+signature for each one asked (7% of the shell build, via `pairEverySignature`), and
+`methodInstanceInferred` walks every declaration per generic method call (10%). A V8 code cache for
+the seed would need the `v8` crate to expose `CompiledWasmModule` serialization, which 152.1 does not.
 
 **Profiling recipe.** Add `if let Ok(f) = std::env::var("WAC_V8_FLAGS") {
 v8::V8::set_flags_from_string(&f); }` before `new_default_platform` in `native/v8/src/main.rs`'s
