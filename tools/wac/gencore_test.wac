@@ -15,7 +15,8 @@
 import { binaryPath } from "../../packages/wactest/src/host.wac";
 import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
-import { coreFileNames } from "../../packages/wacc/src/coretext.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { coreFileNames, stdSource } from "../../packages/wacc/src/coretext.wac";
 import { Core, Cli, Exec, FileResult } from "std";
 
 export string test_the_embeddings_are_in_step_with_the_core_tree(Core core, Cli cli) {
@@ -90,5 +91,38 @@ export string test_core_passes_the_checker(Core core, Cli cli) {
   t.eqI32(r.status, 0, "`wac check` on core:\n" + said);
   // So a check that read nothing is not a pass: it names how many files it took.
   t.isTrue(contains(said, "no diagnostics"), "and it says so — got \"" + said + "\"");
+  return t.report();
+}
+
+/** `bytes` copied once, the work an embedding of the same text cannot avoid. */
+i64 oneCopyNanos(Core core, u8[] bytes) {
+  i64 t0 = core.monotonicNanos().wait();
+  u8[] copy = u8[].filled(bytes.len(), 0);
+  copy.copyFrom(bytes, 0, 0, bytes.len());
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **The embedding is built in time linear in its length.** `stdSource()` and `coreSource()` are
+// called several times per build — lowering, pruning and checking each ask — so their cost is paid
+// by every `wac check` that imports `core` and every `wac compile`. `issues/lang/0398b`: they were
+// built by `s = s + lines[i]`, which copies everything so far once per line, and that one loop was
+// 73% of compiling a one-line file. A wall-clock bound would flake on a loaded machine, so this is a
+// ratio against copying the same bytes once, measured back to back: linear is a small factor,
+// quadratic is about half the line count.
+export string test_the_embedding_is_built_in_linear_time(Core core, Cli cli) {
+  T t = T.create();
+  // Once to warm both paths, so neither side pays for compiling the other.
+  u8[] bytes = stdSource().toBytes();
+  oneCopyNanos(core, bytes);
+  i64 t0 = core.monotonicNanos().wait();
+  string s = stdSource();
+  i64 built = core.monotonicNanos().wait() - t0;
+  i64 copied = oneCopyNanos(core, bytes);
+  if (copied < 1000 as i64) { copied = 1000 as i64; }
+  t.eqI32(s.len(), bytes.len(), "the same text both times");
+  t.isTrue(built < copied * (50 as i64),
+           "stdSource() took " + itoa((built / (1000 as i64)) as! i32) + " µs against "
+           + itoa((copied / (1000 as i64)) as! i32) + " µs to copy its " + itoa(bytes.len())
+           + " bytes once — more than 50×, so it is not linear in its length");
   return t.report();
 }

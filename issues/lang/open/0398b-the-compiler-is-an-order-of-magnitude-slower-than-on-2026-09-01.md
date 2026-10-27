@@ -1,7 +1,7 @@
 # 0398b — the compiler is 11–16× slower than on 2026-09-01, at every input size, and `./bootstrap.sh` takes ten minutes
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-10-26
 - **Kind:** performance
@@ -65,3 +65,50 @@ already in `native/v8/target/release/`. A binary too old to compile today's `too
 fails that check, and the script reports *"coretext.wac is out of step with core/ and std/"* on a tree
 where it is not. The way out is to move the stale binary aside, which makes the script take the
 fresh-clone path. The guard should tell "the check could not run" apart from "the check said no".
+
+## Findings (agent-b, 2026-10-27)
+
+Profiled with V8's `--prof` on the native host and `node --prof-process`. There are three causes, and
+the two big-program ones are separate from the small-file one.
+
+**1. Fixed: the `core`/`std` embedding was rebuilt quadratically on every call.** Since
+`8c3d8b190` (2026-10-03), `gencore.wac`'s `asWac` emitted `for (...) { s = s + lines[i]; }`, so
+`stdSource()` copied the text built so far once per line: about 3,400 lines and 350 MB for a 177 KB
+text. Lowering, pruning and checking each call it, and it was **73%** of `wac compile fib.wac`. It now
+measures the total and copies each line once into one buffer. A/B on the same machine, with the
+old-seed arm measured both before and after the new one:
+
+| command | old seed | new seed |
+|---|---:|---:|
+| `wac check two.wac` | 372 ms | 98 ms |
+| `wac check` with `import { Result } from "core"` | 555 ms | 208 ms |
+| `wac compile fib.wac` | 988 ms | 143 ms |
+
+`tools/wac/gencore_test.wac`'s `test_the_embedding_is_built_in_linear_time` compares one call with a
+single copy of the same bytes. It failed against the old seed (158,051 µs against 109 µs) and passes
+on the new one.
+
+**This does not touch the large end.** `wac build packages/box/src/bin/sh.wac --no-cache` still takes
+65.7 s, and `./bootstrap.sh` still took 593 s. Profile of that build (59,370 ticks):
+
+**2. `namesTypeDeclC` → `exportsTypeNamed`: about 34%** (`check.wac:1313`, `:1342`). While
+`c.viewLater` is set, *every* named type runs `exportsTypeNamed`, which runs `indexOf("export type "
++ name)` over the full text of every source in the graph (179 files for `sh.wac`). The upgrade
+happens only for a name that some file really declares as a `type`, so for every other name the scan
+repeats until the end of checking. It came in with `6d0bb8e79` (2026-10-14). Likely fix: collect the
+`export type` names once per `ViewInputs` and look names up in that.
+
+**3. `registerNamed` → `Env.enumOf`: about 19%** (`emit.wac:543`, `:3611`). For every generic
+instance type named by any expression (`collectArrayTypesOfExpr`), the loop runs over every field
+in the program and calls `enumOf`, a linear scan of every variant. That is fields × variants per
+named type, repeated for types already handled. Likely fix: skip a `t` already processed, or give
+`enumOf` an index.
+
+Together that is about 53% of the build. Removing it would bring the shell to about 28 s, still
+roughly 4.5× the 2026-08-18 figure, so there is more after these two. Neither is fixed yet.
+
+**Profiling recipe.** Add `if let Ok(f) = std::env::var("WAC_V8_FLAGS") {
+v8::V8::set_flags_from_string(&f); }` before `new_default_platform` in `native/v8/src/main.rs`'s
+`start_v8`. Then run `WAC_V8_FLAGS=--prof wac …` in an empty directory and process the large
+`isolate-*.log` with `node --prof-process`. `build` does its work in a second isolate, so a single
+`--logfile` comes out empty. This change was not committed.

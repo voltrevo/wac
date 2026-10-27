@@ -286,10 +286,22 @@ string asWac(string text) {
   }
   // `as string[]` because wac-L5 builds this file too, and it reads an array literal only with
   // its type written after it.
+  //
+  // **Into one buffer, not `s = s + lines[i]`.** That copies everything so far once per line — about
+  // 350 MB to build `std` — and wacc asks for these texts several times per build, so it was most of
+  // the time of compiling anything (`issues/lang/0398b`). Measuring first and copying each line once
+  // is linear in the text.
   out = out + "  ] as string[];\n";
-  out = out + "  string s = \"\";\n";
-  out = out + "  for (i32 i = 0; i < lines.len(); i++) { s = s + lines[i]; }\n";
-  return out + "  return s;";
+  out = out + "  i32 total = 0;\n";
+  out = out + "  for (i32 i = 0; i < lines.len(); i++) { total = total + lines[i].toBytes().len(); }\n";
+  out = out + "  u8[] all = u8[].filled(total, 0);\n";
+  out = out + "  i32 at = 0;\n";
+  out = out + "  for (i32 i = 0; i < lines.len(); i++) {\n";
+  out = out + "    u8[] b = lines[i].toBytes();\n";
+  out = out + "    all.copyFrom(b, 0, at, b.len());\n";
+  out = out + "    at = at + b.len();\n";
+  out = out + "  }\n";
+  return out + "  return string.fromBytes(all);";
 }
 
 /** `"a", "b"` — the body of a `[…]` literal. */
