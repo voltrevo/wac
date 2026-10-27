@@ -2684,7 +2684,7 @@ string bindMethodLetters(C c, i32 methodIx, Ty[] targs, string t) {
     bound[i] = typeOfTy(c, targs[i]);
     if (bound[i] == typeNone() || bound[i] == "") { return t; }
   }
-  return applyBindings(t, names, bound);
+  return applyBindings(c, t, names, bound);
 }
 
 /**
@@ -2713,7 +2713,7 @@ string bindMethodLettersAuto(C c, i32 methodIx, string recv, Ty[] targs, Expr[] 
   for (i32 i = 0; i < n; i++) {
     if (bound[i] == "" || clash[i]) { return t; }
   }
-  return applyBindings(t, names, bound);
+  return applyBindings(c, t, names, bound);
 }
 
 /** How many entries a comma-joined list holds — `""` is none, `"U"` is one, `"K,V"` is two. */
@@ -2832,6 +2832,14 @@ string substituteType(C c, string owner, string written) {
   string inner = genericBase(core);
   if (inner != "") {
     string[] iargs = genericArgs(core);
+    // **A union is normalised again once its arguments are in** (spec ch18 `§wac-union-normalise-9awgxvb`):
+    // `flatten`'s `union<E, Stuck>` with `E` a union of faults is that union's members and `Stuck`, not a
+    // union holding a union — which matched nothing written and converted to no text (case 0853).
+    if (inner == "union") {
+      string[] subs = string[].defaulted(iargs.len());
+      for (i32 i = 0; i < iargs.len(); i++) { subs[i] = substituteType(c, owner, iargs[i]); }
+      return normUnion(c, subs) + suffix;
+    }
     string out = inner + "<";
     for (i32 i = 0; i < iargs.len(); i++) {
       if (i > 0) { out = out + ", "; }
@@ -6096,9 +6104,9 @@ string funcValueTypeWritten(C c, i32 at, Ty[] typeArgs) {
   string out = "fn(";
   for (i32 i = 0; i < c.funcParamCount[at]; i++) {
     if (i > 0) { out = out + ", "; }
-    out = out + applyBindings(c.funcParamTypes[c.funcParamAt[at] + i], names, bound);
+    out = out + applyBindings(c, c.funcParamTypes[c.funcParamAt[at] + i], names, bound);
   }
-  return out + ") -> " + applyBindings(c.funcReturns[at], names, bound);
+  return out + ") -> " + applyBindings(c, c.funcReturns[at], names, bound);
 }
 
 /** The generic function a written instantiation names when it stands alone, or -1. */
@@ -11238,7 +11246,7 @@ void bindTypeParams(C c, string written, string actual, string[] names, string[]
 }
 
 /** A written type with the bound parameters put in, or unknown when any of them is still open. */
-string applyBindings(string written, string[] names, string[] bound) {
+string applyBindings(C c, string written, string[] names, string[] bound) {
   string core = written;
   string suffix = "";
   for (i32 guard = 0; guard < 8; guard++) {
@@ -11266,11 +11274,11 @@ string applyBindings(string written, string[] names, string[] bound) {
       string out = "fn(";
       for (i32 i = 0; i < funcrefParamCount(core); i++) {
         if (i > 0) { out = out + ", "; }
-        string pone = applyBindings(funcrefParamAt(core, i), names, bound);
+        string pone = applyBindings(c, funcrefParamAt(core, i), names, bound);
         if (pone == typeNone()) { return typeNone(); }
         out = out + pone;
       }
-      string rone = applyBindings(fret, names, bound);
+      string rone = applyBindings(c, fret, names, bound);
       if (rone == typeNone()) { return typeNone(); }
       return suffixed(out + ") -> " + rone, suffix);
     }
@@ -11282,9 +11290,18 @@ string applyBindings(string written, string[] names, string[] bound) {
   string base = genericBase(core);
   if (base != "") {
     string[] args = genericArgs(core);
+    // Normalised again once the arguments are in, as `substituteType` does (case 0853).
+    if (base == "union") {
+      string[] subs = string[].defaulted(args.len());
+      for (i32 i = 0; i < args.len(); i++) {
+        subs[i] = applyBindings(c, args[i], names, bound);
+        if (subs[i] == typeNone()) { return typeNone(); }
+      }
+      return normUnion(c, subs) + suffix;
+    }
     string out = base + "<";
     for (i32 i = 0; i < args.len(); i++) {
-      string one = applyBindings(args[i], names, bound);
+      string one = applyBindings(c, args[i], names, bound);
       if (one == typeNone()) { return typeNone(); }
       if (i > 0) { out = out + ", "; }
       out = out + one;
@@ -11322,7 +11339,7 @@ string genericCallReturn(C c, i32 at, Expr[] args) {
   for (i32 i = 0; i < n; i++) {
     if (clashed[i]) { return typeNone(); }
   }
-  return applyBindings(c.funcReturns[at], names, bound);
+  return applyBindings(c, c.funcReturns[at], names, bound);
 }
 
 /**
@@ -11350,7 +11367,7 @@ string genericCallReturnWritten(C c, i32 at, Ty[] typeArgs) {
     bound[i] = typeOfTy(c, typeArgs[i]);
     if (bound[i] == typeNone() || bound[i] == "") { return typeNone(); }
   }
-  return applyBindings(c.funcReturns[at], names, bound);
+  return applyBindings(c, c.funcReturns[at], names, bound);
 }
 
 /** Parameter `i` of generic function `at` with its written type arguments bound, or unknown. */
@@ -11365,7 +11382,7 @@ string genericParamWritten(C c, i32 at, Ty[] typeArgs, i32 i) {
     bound[j] = typeOfTy(c, typeArgs[j]);
     if (bound[j] == typeNone() || bound[j] == "") { return typeNone(); }
   }
-  return applyBindings(c.funcParamTypes[c.funcParamAt[at] + i], names, bound);
+  return applyBindings(c, c.funcParamTypes[c.funcParamAt[at] + i], names, bound);
 }
 
 /**
