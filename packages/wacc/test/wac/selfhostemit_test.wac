@@ -1,6 +1,6 @@
 // Rung 5, the whole claim: **stage 2 equals stage 3**.
 //
-// test-lane: heavy — 95s in a loaded gate on 2026-10-27; stage 2 against stage 3 of the compiler, the claim `bootstrap.sh` and `selfhost_test.wac` already make
+// test-lane: heavy — 95s in a loaded gate, measured 2026-10-27; stage 2 against stage 3 of the compiler, the claim `bootstrap.sh` and `selfhost_test.wac` already make
 //
 // `test/wac/fixpointemit_test.wac` puts one source file through both stages. This puts *the
 // compiler* through them. Stage A is `wacc` built by the reference; stage B is `wacc` built by stage

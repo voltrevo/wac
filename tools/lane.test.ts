@@ -101,9 +101,13 @@ Deno.test("the heavy lane cannot quietly become the suite", async () => {
   // The failure mode this repository keeps finding is the quiet one, and here it would be a lane that
   // grows a file at a time until a push tests nothing. Twelve is roughly the measured set — ten files
   // at about a gigabyte each — with room for two more before somebody has to argue for it.
+  //
+  // **Sixteen since 2026-10-27, and that was argued.** The operator cut the gate after it reached about
+  // forty minutes. Six wacc files moved here, and `issues/system/0275b` has their numbers: 5,003s of a
+  // 7,316s suite. One more file is room to spare; past that, the argument has to be made again.
   const lane = await heavyTests();
   assertEquals(
-    lane.length <= 12,
+    lane.length <= 16,
     true,
     `${lane.length} files are excluded from a whole-suite run. Past this, the question is not which ` +
       `test to exclude next but why the suite costs what it does.`,
