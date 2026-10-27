@@ -229,3 +229,35 @@ export string test_checking_a_program_does_not_check_std(Core core) {
            + " ms, and checking std " + itoa((std / (1000000 as i64)) as! i32) + " ms");
   return t.report();
 }
+
+// **A graph builds `core`'s text once.** Every closure the check walks has `core` in it, and each built
+// the text afresh from the embedded lines — about 300 µs, while checking a one-line file is less.
+// Sixty files that import nothing should cost less per file than building that text once.
+export string test_a_graph_builds_cores_text_once(Core core) {
+  T t = T.create();
+  i32 k = 60;
+  string[] paths = string[].filled(k, "");
+  string[] texts = string[].filled(k, "");
+  for (i32 i = 0; i < k; i++) {
+    paths[i] = "/t/f" + itoa(i) + ".wac";
+    texts[i] = "export i32 f" + itoa(i) + "(i32 n) { return n; }\n";
+  }
+  diagnoseGraph(paths, texts, paths[0]);
+  coreSource();
+  i64 graph = 0 as i64;
+  i64 building = 0 as i64;
+  for (i32 r = 0; r < 5; r++) {
+    i64 t0 = core.monotonicNanos().wait();
+    diagnoseGraph(paths, texts, paths[0]);
+    i64 t1 = core.monotonicNanos().wait();
+    coreSource();
+    i64 t2 = core.monotonicNanos().wait();
+    if (r == 0 || t1 - t0 < graph) { graph = t1 - t0; }
+    if (r == 0 || t2 - t1 < building) { building = t2 - t1; }
+  }
+  i64 perFile = graph / (k as i64);
+  t.isTrue(perFile < building,
+           "each of 60 files took " + itoa((perFile / (1000 as i64)) as! i32) + " µs to check, and core's text "
+           + itoa((building / (1000 as i64)) as! i32) + " µs to build");
+  return t.report();
+}

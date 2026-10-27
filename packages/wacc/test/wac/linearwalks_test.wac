@@ -318,3 +318,49 @@ export string test_placing_the_async_tail_does_not_rebuild_it_per_word(Core core
            + " ms for 3,000");
   return t.report();
 }
+
+/** `/t/lib.wac` with `n` structs, each with a function taking it, and `/t/other.wac` with `n` structs and some bulk each. */
+string[] reachedTypes(i32 n) {
+  string pad = "// filler filler filler filler filler filler filler filler filler filler filler filler filler filler\n";
+  string bulk = joinedParts(string[].filled(24, pad), 24);
+  string[] lib = string[].filled(n, "");
+  string[] other = string[].filled(n, "");
+  string[] names = string[].filled(n, "");
+  for (i32 i = 0; i < n; i++) {
+    lib[i] = "export struct S" + itoa(i) + " { i32 v; }\nexport i32 f" + itoa(i) + "(S" + itoa(i) + " a) { return a.v; }\n";
+    other[i] = "export struct O" + itoa(i) + " { i32 v; }\n" + bulk;
+    names[i] = (i == 0 ? "" : ", ") + "f" + itoa(i);
+  }
+  return ["import { " + joinedParts(names, n) + " } from \"./lib.wac\";\nimport { O0 } from \"./other.wac\";\n"
+          + "export i32 main() { return 0; }\n", joinedParts(lib, n), joinedParts(other, n)] as string[];
+}
+
+i64 timeReached(Core core, string[] texts) {
+  i64 t0 = core.monotonicNanos().wait();
+  diagnoseFiles(["/t/m.wac", "/t/lib.wac", "/t/other.wac"], texts, "/t/m.wac");
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **Whether a reached type is declared by another file is asked of an index, not of every file.** For
+// each type a signature reaches, the checker walked the declarations of every other file in the closure
+// — copying each one's whole text, `std` and `core` included — to see whether the name was ambiguous.
+// The product of reached types and closure size: 6% of checking `packages/box`. Here both double, so
+// the work should double; it took 2.9 times as long.
+export string test_a_reached_type_is_not_looked_for_in_every_file(Core core) {
+  T t = T.create();
+  string[] fewer = reachedTypes(200);
+  string[] more = reachedTypes(400);
+  timeReached(core, fewer);
+  timeReached(core, more);
+  i64 a = timeReached(core, fewer);
+  i64 b = timeReached(core, more);
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeReached(core, fewer);
+    i64 b2 = timeReached(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b * (2 as i64) < a * (5 as i64),
+           "200 reached types: " + itoa(millis(a)) + " ms; 400: " + itoa(millis(b)) + " ms");
+  return t.report();
+}

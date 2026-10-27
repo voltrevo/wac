@@ -212,6 +212,21 @@ the module was refused for a duplicate export: `bindNameOf` dropped `[]` as punc
 types were `MapEntry$string$string`. It now spells `[]` as `Arr`, as `bindArrSuffix` does — the sibling
 of case 0562's `?`. `bindnames_test.wac`. The shell changes only in those export names.
 
+**Seventh round (agent-b, 2026-10-27): per-closure setup in the checker.** Most of what checking
+`packages/box` spent in `checkFilesAutoIn` was before `checkModule`. For each type a signature reached,
+`typeDeclaredElsewhere` walked every other file's declarations, copying each file's text with `std`'s
+and `core`'s among them; it is now an index built once per closure. And each closure rebuilt `core`'s
+text from its 1,500 embedded lines; `diagnoseGraphIn` builds it once and carries it one past the
+closure's files, as it already carried `core`'s count, tokens and tree. A test for each fails without it.
+
+| | round 6 | round 7 |
+|---|---:|---:|
+| `wac check` in `packages/box` (423 files) | 3,137 ms | 2,536 ms |
+
+Same shell bytes. Found on the way and fixed with it: the checker's import tables held 4,096 names but
+their positions only 512, so the 513th imported name trapped the compiler; and the duplicate-name check
+stopped recording at 512 declarations, so a duplicate past that went unreported (`manyimports_test.wac`).
+
 Two leads that did not reproduce in isolation and so were not changed: `Env.sigType` walks every
 signature for each one asked (7% of the shell build, via `pairEverySignature`), and
 `methodInstanceInferred` walks every declaration per generic method call (10%). A V8 code cache for

@@ -816,6 +816,7 @@ export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res
   // thousand edges in it. Taken once, a closure is an integer walk and the loop below does no string
   // work at all.
   Edges edges = edgesOfIn(paths, sources, res, lexes);
+  string coreText = coreSource();
   i32[] seen = i32[].filled(paths.len(), 0);
   for (i32 i = 0; i < paths.len(); i++) {
     // **Not the built-ins.** `std` and `core` are read for what a file imports from them, but checking
@@ -829,7 +830,8 @@ export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res
     // not reach.
     i32 n = closureFrom(edges, i, seen);
     string[] subPaths = string[].filled(n, "");
-    string[] subSources = string[].filled(n, "");
+    // One longer, like the three below: `core`'s text, built once for the whole graph.
+    string[] subSources = string[].filled(n + 1, "");
     // One longer than the closure: `checkFilesWith` keeps `core`'s count in the last slot.
     i32[] subCounts = i32[].filled(n + 1, 0);
     Lexed?[] subLexes = Lexed?[].defaulted(n + 1);
@@ -845,6 +847,7 @@ export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res
       subProgs[k] = at < progs.len() ? progs[at] : null;
     }
     subCounts[n] = counts[paths.len()];
+    subSources[n] = coreText;
     subLexes[n] = lexes[paths.len()];
     subProgs[n] = progs[paths.len()];
     // **The roots have to be re-indexed with the paths**, because `Res.rootAt` pairs `roots[i]` with
@@ -1246,26 +1249,59 @@ void tyNames(u8[] src, Lexed lx, Ty t, string[] out, i32[] n) {
  * imports and re-parsing there is what `issues/lang/0133` was about. Skipping is safe in the
  * direction that matters: it can only make this answer `false`, which leaves the name alone.
  */
-bool typeDeclaredElsewhere(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs,
-                           i32 selfIndex, string name) {
+/** Which files of a closure declare each struct and enum name — one row per declaration. */
+struct TypeHomes {
+  string[] names;
+  i32[] files;
+  i32 n;
+  KeyIndex ix;
+}
+
+/**
+ * Every struct and enum the files of a closure declare, indexed by name — built once per closure. It
+ * was a walk of every other file's declarations per reached type, copying each file's text, `std`'s
+ * and `core`'s included: the product of the two (`issues/lang/0398b`).
+ */
+TypeHomes typeHomesOf(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs) {
+  TypeHomes h = TypeHomes(string[].filled(64, ""), i32[].filled(64, 0), 0, KeyIndex.create());
   for (i32 j = 0; j < paths.len(); j++) {
-    if (j == selfIndex) { continue; }
     if (j >= progs.len() || (progs[j] is null)) { continue; }
     if (j >= lexes.len() || (lexes[j] is null)) { continue; }
     Program jp = progs[j]!;
     Lexed jlx = lexes[j]!;
     u8[] jsrc = sources[j].toBytes();
     for (i32 d = 0; d < jp.decls.len(); d++) {
+      string name = "";
       match (jp.decls[d].kind) {
         StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-          if (tokenTextOf(jsrc, jlx, nameTok) == name) { return true; }
+          name = tokenTextOf(jsrc, jlx, nameTok);
         }
         EnumDecl(nameTok, variants, exported, methods, typeParams): {
-          if (tokenTextOf(jsrc, jlx, nameTok) == name) { return true; }
+          name = tokenTextOf(jsrc, jlx, nameTok);
         }
         default: { }
       }
+      if (name == "") { continue; }
+      if (h.n >= h.names.len()) {
+        string[] names = string[].filled(h.names.len() * 2, "");
+        i32[] files = i32[].filled(h.names.len() * 2, 0);
+        for (i32 k = 0; k < h.n; k++) { names[k] = h.names[k]; files[k] = h.files[k]; }
+        h.names = names;
+        h.files = files;
+      }
+      h.names[h.n] = name;
+      h.files[h.n] = j;
+      keyAdd(h.ix, name, h.n);
+      h.n = h.n + 1;
     }
+  }
+  return h;
+}
+
+/** Whether a file other than `selfIndex` declares a struct or enum called `name`. */
+bool typeDeclaredElsewhere(TypeHomes h, i32 selfIndex, string name) {
+  for (i32 k = keyFirst(h.ix, name); k >= 0; k = h.ix.next[k]) {
+    if (h.names[k] == name && h.files[k] != selfIndex) { return true; }
   }
   return false;
 }
@@ -1579,7 +1615,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   // `issues/lang/0109`. Adding it here rather than in the checker keeps one answer to "what does
   // core declare": `coreSource`, which is also what the emitter compiles.
   string[] paths = string[].filled(callerPaths.len() + 1, "");
-  string[] sources = string[].filled(callerSources.len() + 1, "");
+  string[] sources = string[].filled(callerPaths.len() + 1, "");
   for (i32 i = 0; i < callerPaths.len(); i++) {
     paths[i] = callerPaths[i];
     sources[i] = i < callerSources.len() ? callerSources[i] : "";
@@ -1591,7 +1627,10 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
     }
   }
   paths[callerPaths.len()] = corePath();
-  sources[callerSources.len()] = coreSource();
+  // **Carried by the caller where it has it**, one past its files, as it carries core's count, tokens and
+  // tree: building the text is a few hundred microseconds, once per closure (`issues/lang/0398b`).
+  sources[callerPaths.len()] = callerSources.len() > callerPaths.len() && callerSources[callerPaths.len()] != ""
+    ? callerSources[callerPaths.len()] : coreSource();
 
   u8[] esrc = sourceOf(paths, sources, entry).toBytes();
   // **The entry, too.** `issues/lang/0133` stopped the loop below re-reading each *imported* file
@@ -1837,6 +1876,8 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   // one to the other was a mismatch between two spellings of one type. Built only when something asks.
   ViewInputs view = ViewInputs(paths, sources, lexes, progs, esrc, elexed, eprog, eat, null);
   c.viewLater = view;
+  // Which files declare each type, built the first time a reached type has to be checked for a twin.
+  TypeHomes? homes = null;
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == entry) { continue; }
     i32 want = 0;
@@ -1954,7 +1995,8 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
       // **Only when the name is actually ambiguous.** One file declaring `Link` and three others
       // passing it around is the ordinary case, and renaming there gives a parameter a name the
       // field it is handed does not have — three working files in `packages/tor` reported that way.
-      if (!typeDeclaredElsewhere(paths, sources, lexes, progs, i, tname)) { continue; }
+      if (homes is null) { homes = typeHomesOf(paths, sources, lexes, progs); }
+      if (!typeDeclaredElsewhere(homes!, i, tname)) { continue; }
       c.addRename(tname, tname + "#" + numText(i));
     }
     // **This file's own aliases, in the importer's spelling.** `import { Read as Chunk } from "core"` in
