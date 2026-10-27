@@ -541,13 +541,32 @@ void registerNamed(Env env, string t) {
   // field is `Node<i32>[]` again — round until the compiler's stack ran out. An array is registered
   // before its element is visited, so asking first ends every such cycle at its second step.
   if (t.indexOf("<") > 0 && (env.isStructName(t) || env.isEnumName(t))) {
+    // **`t`'s variants found once, not once per field.** Asking `enumOf` — a walk of every variant —
+    // about every field of the program, for every instance an expression names, was a fifth of
+    // building box's shell (`issues/lang/0398b`).
+    string mine = variantsOwnedBy(env, t);
     for (i32 f = 0; f < env.fieldCount; f++) {
       string owner = env.fieldOwners[f];
-      if (owner != t && env.enumOf(owner) != t) { continue; }
+      if (owner != t && (mine.len() == 1 || mine.indexOf("\n" + owner + "\n") < 0)) { continue; }
       string ft = env.fieldTypes[f];
       if ((isArrayType(ft) && !hasArrayType(env, ft)) || isBoxedName(ft)) { registerNamed(env, ft); }
     }
   }
+}
+
+/**
+ * The variants `env.enumOf` answers `t` for, each between newlines: those `t` owns, less any whose name
+ * an earlier variant already has, since `enumOf` answers with the first.
+ */
+string variantsOwnedBy(Env env, string t) {
+  string out = "\n";
+  for (i32 v = 0; v < env.variantCount; v++) {
+    if (env.variantOwners[v] != t) { continue; }
+    bool first = true;
+    for (i32 j = 0; j < v; j++) { if (env.variantNames[j] == env.variantNames[v]) { first = false; } }
+    if (first) { out = out + env.variantNames[v] + "\n"; }
+  }
+  return out;
 }
 
 /** Whether array type `t` has its type-section entry already. */

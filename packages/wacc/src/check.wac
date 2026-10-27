@@ -1268,6 +1268,11 @@ export struct ViewInputs {
   Lexed elexed;
   Program eprog;
   i32 entry;
+  /**
+   * Every name an `export type ` in `sources` is followed by, each between newlines — read once, on
+   * the first question `exportsTypeNamed` is asked. `null` until then.
+   */
+  string? typeNames;
 }
 
 /**
@@ -1327,15 +1332,61 @@ bool exportsTypeNamed(ViewInputs v, string name) {
       default: { }
     }
   }
+  // **Read once per view, not once per name.** This is asked of every named type the check meets while
+  // the view is not built, and scanning every source for each one made checking a program that imports a
+  // large file cost the file's length once per type name — a third of building box's shell
+  // (`issues/lang/0398b`). The scan below finds the same names: what follows `export type ` up to the
+  // first byte that cannot be in a name.
+  if (!isIdentName(name)) { return sourcesSayExportType(v.sources, name); }
+  if (v.typeNames is null) { v.typeNames = exportedTypeNames(v.sources); }
+  return v.typeNames!.indexOf("\n" + name + "\n") >= 0;
+}
+
+/** The scan the cache replaces, kept for a name no run of name bytes can equal. */
+bool sourcesSayExportType(string[] sources, string name) {
   string decl = "export type " + name;
-  for (i32 i = 0; i < v.sources.len(); i++) {
-    string rest = v.sources[i];
+  for (i32 i = 0; i < sources.len(); i++) {
+    string rest = sources[i];
     while (rest.indexOf(decl) >= 0) {
       rest = rest.slice(rest.indexOf(decl) + decl.len(), rest.len());
       if (rest.len() == 0 || !isIdentByte(rest.toBytes()[0] as i32)) { return true; }
     }
   }
   return false;
+}
+
+/** Whether `s` is non-empty and every byte of it can be in a name. */
+bool isIdentName(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return false; }
+  for (i32 i = 0; i < b.len(); i++) { if (!isIdentByte(b[i] as i32)) { return false; } }
+  return true;
+}
+
+/** The name after each `export type ` in `sources`, each between newlines — see `ViewInputs.typeNames`. */
+string exportedTypeNames(string[] sources) {
+  string decl = "export type ";
+  string out = "\n";
+  for (i32 i = 0; i < sources.len(); i++) {
+    u8[] b = sources[i].toBytes();
+    string rest = sources[i];
+    i32 at = 0;
+    i32 k = rest.indexOf(decl);
+    while (k >= 0) {
+      i32 from = at + k + decl.len();
+      i32 end = from;
+      while (end < b.len() && isIdentByte(b[end] as i32)) { end = end + 1; }
+      if (end > from) {
+        u8[] w = u8[].filled(end - from, 0);
+        w.copyFrom(b, from, 0, end - from);
+        out = out + string.fromBytes(w) + "\n";
+      }
+      at = from;
+      rest = rest.slice(k + decl.len(), rest.len());
+      k = rest.indexOf(decl);
+    }
+  }
+  return out;
 }
 
 /** Whether `name` is a `type` declaration this file can see (spec ch30). */

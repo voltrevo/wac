@@ -1,0 +1,119 @@
+// Two walks in the compiler that must not multiply by the size of the program.
+//
+// `issues/lang/0398b`: building box's shell took 66 s against 6 s in August, and a third of it was the
+// checker scanning every source of the graph once per type name, a fifth the emitter walking every
+// variant once per field once per named instance. Each was linear on its own and the product was the
+// cost. Neither changes an answer, so nothing else here can see them come back.
+//
+// A wall-clock bound would flake on a loaded machine, so each test is a ratio of two runs of the same
+// size made back to back, differing only in the thing the walk multiplies by: with the walk linear the
+// two are close, and before the fix they were 9× and 30× apart.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { diagnoseFiles, emitFiles } from "../../src/api.wac";
+import { Core } from "std";
+
+/** `parts` as one string, copied once — `out = out + part` would be the cost being measured. */
+string joinedParts(string[] parts, i32 n) {
+  i32 total = 0;
+  for (i32 i = 0; i < n; i++) { total = total + parts[i].toBytes().len(); }
+  u8[] out = u8[].filled(total, 0);
+  i32 at = 0;
+  for (i32 i = 0; i < n; i++) {
+    u8[] b = parts[i].toBytes();
+    out.copyFrom(b, 0, at, b.len());
+    at = at + b.len();
+  }
+  return string.fromBytes(out);
+}
+
+i32 millis(i64 nanos) { return (nanos / (1000000 as i64)) as! i32; }
+
+/** An entry naming 300 struct types in signatures, importing one name from `/t/lib.wac`. */
+string namingEntry() {
+  string[] parts = string[].filled(601, "");
+  parts[0] = "import { Lib } from \"./lib.wac\";\n";
+  for (i32 i = 0; i < 300; i++) {
+    parts[1 + 2 * i] = "struct S" + itoa(i) + " { i32 v; }\n";
+    parts[2 + 2 * i] = "i32 f" + itoa(i) + "(S" + itoa(i) + " a, Lib l) { return a.v; }\n";
+  }
+  return joinedParts(parts, 601);
+}
+
+/** `/t/lib.wac`: its one declaration, then `kb` kilobytes of comment. */
+string libWithComment(i32 kb) {
+  string line = "// filler filler filler filler filler filler filler filler filler filler filler filler\n";
+  i32 n = kb * 1024 / line.len() + 1;
+  string[] parts = string[].filled(n + 1, line);
+  parts[0] = "export struct Lib { i32 x; }\n";
+  return joinedParts(parts, n + 1);
+}
+
+i64 timeCheck(Core core, string entry, string lib) {
+  i64 t0 = core.monotonicNanos().wait();
+  diagnoseFiles(["/t/m.wac", "/t/lib.wac"], [entry, lib], "/t/m.wac");
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **The checker reads the graph's `export type` names once, not once per type name.** Until the view of
+// every file is built, each named type asks whether some file declares it as a `type`, and that was a
+// search of every source's whole text. Here the imported file grows from one line to a megabyte: read
+// once, that is a few milliseconds; read once per name, it was 3,478 ms against 371.
+export string test_a_large_imported_file_is_not_rescanned_per_type_name(Core core) {
+  T t = T.create();
+  string entry = namingEntry();
+  string small = libWithComment(0);
+  string big = libWithComment(1024);
+  timeCheck(core, entry, small);
+  i64 a = timeCheck(core, entry, small);
+  i64 b = timeCheck(core, entry, big);
+  t.isTrue(b < a * (3 as i64),
+           "300 named types: " + itoa(millis(a)) + " ms beside a one-line file, "
+           + itoa(millis(b)) + " ms beside a 1 MB one");
+  return t.report();
+}
+
+/**
+ * An enum of 2,000 variants, a struct of 400 fields, and 200 functions — each naming `Box<i32>`, or
+ * when `named` is false doing the same with a bare `i32`, so the two differ only in the instance.
+ */
+string instanceProgram(bool named) {
+  string[] parts = string[].filled(2000 + 400 + 200 + 3, "");
+  i32 n = 0;
+  parts[n] = "struct Box<T> { T v; }\nenum Many {\n"; n++;
+  for (i32 i = 0; i < 2000; i++) { parts[n] = "  V" + itoa(i) + "(i32 x),\n"; n++; }
+  parts[n] = "}\nstruct Wide {\n"; n++;
+  for (i32 i = 0; i < 400; i++) { parts[n] = "  i32 w" + itoa(i) + ";\n"; n++; }
+  parts[n] = "}\n"; n++;
+  for (i32 i = 0; i < 200; i++) {
+    parts[n] = named
+        ? "export i32 f" + itoa(i) + "() { Box<i32> b = Box<i32>(" + itoa(i) + "); return b.v; }\n"
+        : "export i32 f" + itoa(i) + "() { i32 b = " + itoa(i) + "; return b; }\n";
+    n++;
+  }
+  return joinedParts(parts, n);
+}
+
+i64 timeEmit(Core core, string src) {
+  i64 t0 = core.monotonicNanos().wait();
+  emitFiles(["/t/m.wac"], [src], "/t/m.wac");
+  return core.monotonicNanos().wait() - t0;
+}
+
+// **Naming an instance looks at its own variants, not at every variant once per field.** Registering
+// `Box<i32>`'s array fields walks every field of the program, and asked `enumOf` — a walk of every
+// variant — about each. The two programs are the same size; only one names the instance. It was
+// 3,408 ms against 112.
+export string test_naming_an_instance_does_not_walk_every_variant_per_field(Core core) {
+  T t = T.create();
+  string bare = instanceProgram(false);
+  string named = instanceProgram(true);
+  timeEmit(core, bare);
+  i64 a = timeEmit(core, bare);
+  i64 b = timeEmit(core, named);
+  t.isTrue(b < a * (3 as i64),
+           "200 functions beside 2,000 variants and 400 fields: " + itoa(millis(a))
+           + " ms with `i32`, " + itoa(millis(b)) + " ms with `Box<i32>`");
+  return t.report();
+}

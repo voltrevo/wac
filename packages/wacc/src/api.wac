@@ -1806,7 +1806,7 @@ C checkFilesAutoIn(string[] callerPaths, string[] callerSources, const Res res, 
   // `type` that file declares — `i32 which(Fault f)` — is that type and not its bare name. Declared after the view
   // was attached, `Fault` stayed `"Fault"` while the importer's own `Fault a` was the union it names, and passing
   // one to the other was a mismatch between two spellings of one type. Built only when something asks.
-  ViewInputs view = ViewInputs(paths, sources, lexes, progs, esrc, elexed, eprog, eat);
+  ViewInputs view = ViewInputs(paths, sources, lexes, progs, esrc, elexed, eprog, eat, null);
   c.viewLater = view;
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == entry) { continue; }

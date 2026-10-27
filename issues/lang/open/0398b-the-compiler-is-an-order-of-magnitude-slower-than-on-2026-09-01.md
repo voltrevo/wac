@@ -88,24 +88,40 @@ old-seed arm measured both before and after the new one:
 single copy of the same bytes. It failed against the old seed (158,051 µs against 109 µs) and passes
 on the new one.
 
-**This does not touch the large end.** `wac build packages/box/src/bin/sh.wac --no-cache` still takes
-65.7 s, and `./bootstrap.sh` still took 593 s. Profile of that build (59,370 ticks):
+**This did not touch the large end.** After it, `wac build packages/box/src/bin/sh.wac --no-cache` still
+took 65.7 s and `./bootstrap.sh` 593 s. Profiling that build (59,370 ticks) found two more:
 
-**2. `namesTypeDeclC` → `exportsTypeNamed`: about 34%** (`check.wac:1313`, `:1342`). While
-`c.viewLater` is set, *every* named type runs `exportsTypeNamed`, which runs `indexOf("export type "
-+ name)` over the full text of every source in the graph (179 files for `sh.wac`). The upgrade
-happens only for a name that some file really declares as a `type`, so for every other name the scan
-repeats until the end of checking. It came in with `6d0bb8e79` (2026-10-14). Likely fix: collect the
-`export type` names once per `ViewInputs` and look names up in that.
+**2. Fixed: `namesTypeDeclC` → `exportsTypeNamed`, about 34%.** Until the static view is built, every
+named type ran `indexOf("export type " + name)` over the full text of every source in the graph (179
+files for `sh.wac`). This came in with `6d0bb8e79` (2026-10-14). The names are now collected once per
+`ViewInputs` (`typeNames`) and looked up there. A name that cannot be a run of name bytes keeps the old
+scan, so the answers are unchanged.
 
-**3. `registerNamed` → `Env.enumOf`: about 19%** (`emit.wac:543`, `:3611`). For every generic
-instance type named by any expression (`collectArrayTypesOfExpr`), the loop runs over every field
-in the program and calls `enumOf`, a linear scan of every variant. That is fields × variants per
-named type, repeated for types already handled. Likely fix: skip a `t` already processed, or give
-`enumOf` an index.
+**3. Fixed: `registerNamed` → `Env.enumOf`, about 19%.** For every generic instance an expression
+named, the field loop asked `enumOf`, a walk of every variant, about every field in the program. It now
+collects the instance's own variants once (`variantsOwnedBy`, which keeps `enumOf`'s first-match rule)
+and checks each field against that list.
 
-Together that is about 53% of the build. Removing it would bring the shell to about 28 s, still
-roughly 4.5× the 2026-08-18 figure, so there is more after these two. Neither is fixed yet.
+`packages/wacc/test/wac/linearwalks_test.wac` holds one ratio test for each. Each fails with only its own
+fix reverted (3,098 ms against 314; 3,492 ms against 104) and passes with both applied.
+
+**After all three**, on a shared machine:
+
+| | 2026-08/09 | before | after |
+|---|---:|---:|---:|
+| `wac check` one-line file | 30 ms | 372 ms | 98 ms |
+| `wac compile fib.wac` | 63 ms | 988 ms | 143 ms |
+| box's shell, `--no-cache` | 5,994 ms (910 KB) | 65,706 ms | 32,722 ms (2,025 KB) |
+| `./bootstrap.sh` | 36 s | 593 s | 437 s |
+
+The shell's output is byte for byte what it was, apart from the output file's name in its manifest.
+
+**What is left is not one thing.** Per KB of output the shell is now about 16 ms against about 6.6 ms in
+August, roughly 2.5×, and a one-line file is about 3×. The profile is flat (27,439 ticks): `typeDeclAt`
+from emit's `typeOfTyName` 9%, a linear walk of the declarations per type name, the likeliest next
+target; `str_index_of` 6%, mostly the variant list in `registerNamed`; `Env.keyAt` 4%;
+`methodInstanceInferred` 4%. The bootstrap is mostly the ladder, which these changes do not touch.
+The issue stays open for that remainder.
 
 **Profiling recipe.** Add `if let Ok(f) = std::env::var("WAC_V8_FLAGS") {
 v8::V8::set_flags_from_string(&f); }` before `new_default_platform` in `native/v8/src/main.rs`'s
