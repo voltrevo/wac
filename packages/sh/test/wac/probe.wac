@@ -236,6 +236,11 @@ Pending<bool> fakeSend(i32 handle, u8[] data) {
 void fakeCloseSocket(i32 handle) {}
 /** The half-close — `issues/system/0215`. A shell never half-closes; `Cli.of` takes every field. */
 void fakeCloseSend(i32 handle) {}
+Pending<HostSocket> fakeOpenFile(string path, i32 how) {
+  return Pending.of(0, resolveSocket, alwaysSettled, ignoreDrop);
+}
+Pending<bool> fakeCloseFile(i32 handle) { return fakeSend(handle, u8[]()); }
+Pending<bool> fakeCloseOutput(bool toErr) { return fakeSend(0, u8[]()); }
 
 // The datagram half of the same surface. A shell has no use for it and never calls these — they exist
 // because `Cli.of` takes every field, which is what makes this fake break the moment the capability
@@ -383,7 +388,7 @@ Cli fakeCli() {
   return Cli.of(fakeArgCount, fakeArg, fakeEnv, fakeStdin, fakeWrite, fakeWriteErr, fakeReadFile, fakeWriteFile,
                 fakeStat, fakeLinkStat, fakeReadDir, fakeMkdir, fakeRemove, fakeRename, fakeSetExecutable, fakeChmod, fakeOpenInput,
                 fakeReadChunk, fakeOutputError, fakeOpenOutput, fakeConnect, fakeListen, fakeAccept, fakeRecv,
-                fakeSend, fakeCloseSocket, fakeCloseSend, fakeBindDatagram, fakeReceiveFrom, fakeSendTo, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
+                fakeSend, fakeCloseSocket, fakeCloseSend, fakeOpenFile, fakeCloseFile, fakeCloseOutput, fakeBindDatagram, fakeReceiveFrom, fakeSendTo, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
                 fakeCwd, fakePushChild, fakePopChild, fakeExec, fakeLoad, fakeCall, fakeUnload,
                 fakeValidated,
                 // Real, like `Core`'s above and for the same reason: a scheduler is ordinary wac

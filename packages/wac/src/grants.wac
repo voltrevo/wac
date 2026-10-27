@@ -301,12 +301,18 @@ export Cli narrowed(Cli parent, Asked a) {
     a.net ? parent.connect : noConnect,
     a.net ? parent.listen : noConnect,
     a.net ? parent.accept : noAccept,
-    a.net ? parent.recv : noRecv,
-    a.net ? parent.send : noSend,
+    // A file opened as a stream is read and written on the same handles a socket is, so reading one is
+    // the net grant or the read grant, and writing one is the net grant or the write grant. Which files
+    // can be opened at all is `openFile`'s question, below.
+    a.net || a.read ? parent.recv : noRecv,
+    a.net || a.write ? parent.send : noSend,
     // Closing is not a grant: a handle this program never got cannot be closed, and one it did get
     // is its own to release. Refusing here would leak the sockets a granted session opened.
     parent.closeSocket,
     parent.closeSend,
+    (string path, i32 how) => (how == 0 ? a.read : a.write) ? parent.openFile(path, how) : noConnect(path, how),
+    parent.closeFile,
+    parent.closeOutput,
     a.net ? parent.bindDatagram : noConnect,
     a.net ? parent.receiveFrom : noReceiveFrom,
     a.net ? parent.sendTo : noSendTo,

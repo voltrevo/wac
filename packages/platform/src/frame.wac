@@ -448,6 +448,11 @@ export Cli childCli(Frame f, Cli parent) {
     // Straight through, exactly as `closeSocket` is: a frame narrows *which* capabilities a child
     // has, not what one of them means. `issues/system/0215`.
     parent.closeSend,
+    // Straight through as well: a frame's child opens the parent's files, as its `readFile` reads them.
+    (string p, i32 how) => parent.openFile(f.path(p), how),
+    parent.closeFile,
+    // Not the parent's: a frame's output is its capture, which has no end before the frame does.
+    (bool toErr) => ready(false),
     parent.bindDatagram,
     parent.receiveFrom,
     parent.sendTo,

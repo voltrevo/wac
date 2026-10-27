@@ -99,11 +99,13 @@ function lineOf(p: Uint8Array): Uint8Array {
 
 export type FileHandle = {
   getFile(): Promise<Blob & { size: number; lastModified: number }>;
-  createWritable(): Promise<WritableFile>;
+  createWritable(opts?: { keepExistingData?: boolean }): Promise<WritableFile>;
 };
 
 export type WritableFile = {
   write(data: Uint8Array): Promise<void>;
+  /** Where the next write lands — the end, for an append. */
+  seek(position: number): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -148,6 +150,8 @@ export type BrowserWorldOptions = {
    * diagnostics has somewhere to put these; a page that wants them apart passes this.
    */
   writeErr?(bytes: Uint8Array): void | Promise<void>;
+  /** The end of `write`'s stream, or `writeErr`'s: a spawned world's parent reads the end there. */
+  closeOutput?(toErr: boolean): void;
   /**
    * Where standard input comes from. A page has none; a *spawned child* does — what its parent
    * sent — and this is how the queue reaches it. The same option the Deno host takes, for the same
@@ -201,6 +205,17 @@ export type BrowserWorldOptions = {
 /** A path resolved to the directory that holds it, and its last component. */
 type Resolved = { dir: DirHandle; name: string };
 
+/** A handle answered as a `HostSocket`: the handle, a port, then the peer's address. A file has neither. */
+function withPeer(handle: number, peer: string, port = 0): Uint8Array {
+  const text = new TextEncoder().encode(peer);
+  const out = new Uint8Array(8 + text.length);
+  const view = new DataView(out.buffer);
+  view.setInt32(0, handle, true);
+  view.setInt32(4, port, true);
+  out.set(text, 8);
+  return out;
+}
+
 export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
   /**
    * The one reader, resolved once, and what a child is handed.
@@ -231,6 +246,11 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
   const errStreams = new Map<number, ByteQueue>();
   /** A child's filesystem channel, by its own handle — see the note in `deno.ts`. */
   const fsChannels = new Map<number, { req: ByteQueue; rep: ByteQueue }>();
+  // Files opened as streams, in the same handle space — see the note in `deno.ts`. A read is a cursor over
+  // the file as it was when opened, which is what a `Blob` is; a write is a `WritableFile`, which the page's
+  // filesystem makes visible when it is closed.
+  const reading = new Map<number, { blob: Blob & { size: number }; at: number }>();
+  const writing = new Map<number, WritableFile>();
   let nextHandle = FIRST_FREE_HANDLE;
 
   /**
@@ -282,6 +302,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
           if (!await out.push(b)) throw new Error("the child's output is not being read");
         },
         writeErr: async (b: Uint8Array) => { await cerr.push(b); },
+        closeOutput: (toErr: boolean) => { (toErr ? cerr : out).end(); },
         // `readStdin` means *all* of it, which for a child means waiting for its input to end: the
         // bytes arrive over time. Serving it with one chunk made `seq 1 5 | sort -r` print `1`, since
         // `sort` reads to the end before sorting. `readChunk` and `recv` still take one chunk.
@@ -361,6 +382,11 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
   // `write` answers a bool and cannot carry a reason, so this is recorded for `outputError`. The
   // reads no longer need an equivalent: `Read` carries theirs.
   let outputFailure = "";
+  // Closed by `CLOSE_OUTPUT`: a write after it is refused as one to a reader that has gone.
+  const outClosed = [false, false];
+  const refuseClosed = (toErr: boolean) => {
+    if (outClosed[toErr ? 1 : 0]) { outputFailure = ""; throw new Error("the output has been closed"); }
+  };
 
   const canWrite = (): void => {
     if (opts.root === undefined || opts.writable !== true) deny("filesystem write");
@@ -552,6 +578,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     // A page has no standard input of its own; a child running inside it does.
     [OP.READ_STDIN]: async () => kids.readAll() ?? (readIn === undefined ? EMPTY : await readIn()),
     [OP.WRITE_STDOUT]: async (p) => {
+      refuseClosed(false);
       if (kids.active) {
         if (!kids.write(p)) throw new Error("the child's output buffer is full");
         return EMPTY;
@@ -574,6 +601,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
      * UTF-8 survive as far as the page's own decoder rather than being mangled here.
      */
     [OP.WRITE_STDERR]: async (p) => {
+      refuseClosed(true);
       if (kids.active) { kids.warn(p); return EMPTY; }
       await writeErr(p);
       return EMPTY;
@@ -790,6 +818,53 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       });
     },
 
+    /** A file as a stream of its own — see the note in `deno.ts`. */
+    [OP.OPEN_FILE]: async (p) => {
+      const how = readI32le(p);
+      const path = unstr(p.subarray(4));
+      if (how === 0) {
+        const blob = await readOrPhrase(() => fileOf(path));
+        const h = nextHandle++;
+        reading.set(h, { blob, at: 0 });
+        return withPeer(h, "");
+      }
+      canWrite();
+      const { dir, name } = await resolve(path, true);
+      const file = await (await dir.getFileHandle(name, { create: true })).createWritable({ keepExistingData: how === 2 });
+      if (how === 2) await file.seek((await (await dir.getFileHandle(name)).getFile()).size);
+      const h = nextHandle++;
+      writing.set(h, file);
+      return withPeer(h, "");
+    },
+
+    /**
+     * The end of this program's output or its diagnostic output — see the note in `deno.ts`. A page's own
+     * console has no end to give, so there it only refuses later writes.
+     */
+    [OP.CLOSE_OUTPUT]: async (p) => {
+      const toErr = readI32le(p) !== 0;
+      if (kids.active) throw new Error("a pushed child cannot close its parent's output");
+      if (outClosed[toErr ? 1 : 0]) return EMPTY;
+      outClosed[toErr ? 1 : 0] = true;
+      if (!toErr && sink !== null) { await sink.close(); sink = null; }
+      else opts.closeOutput?.(toErr);
+      return EMPTY;
+    },
+    /**
+     * The end of a file opened with `OPEN_FILE`. Awaited, because closing a `WritableFile` is what makes its
+     * bytes the file's: a program that closes and then reads has to find them there.
+     */
+    [OP.CLOSE_FILE]: async (p) => {
+      const h = readI32le(p);
+      const w = writing.get(h);
+      const known = w !== undefined || reading.has(h);
+      writing.delete(h);
+      reading.delete(h);
+      if (!known) throw new Error("not an open file");
+      if (w !== undefined) await w.close();
+      return EMPTY;
+    },
+
     // No TCP in a page, and no honest approximation of one.
     [OP.CONNECT]: () => deny("network access"),
     [OP.LISTEN]: () => deny("network access"),
@@ -837,6 +912,18 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
         const request = await asking.req.next();
         return request.length === 0 ? END : data(request);
       }
+      const file = reading.get(h);
+      if (file !== undefined) {
+        try {
+          const end = Math.min(file.at + CHUNK, file.blob.size);
+          if (end <= file.at) return END;
+          const slice = file.blob.slice(file.at, end);
+          file.at = end;
+          return data(new Uint8Array(await slice.arrayBuffer()));
+        } catch (e) {
+          return failed(e instanceof Error ? e.message : String(e));
+        }
+      }
       return failed("network access is not granted");
     },
     // A child's standard input. Sockets are a page's other missing capability, and asking for one
@@ -863,6 +950,11 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       const answering = fsChannels.get(readI32le(p));
       if (answering !== undefined) {
         await answering.rep.push(p.slice(4));
+        return EMPTY;
+      }
+      const file = writing.get(readI32le(p));
+      if (file !== undefined) {
+        await file.write(p.slice(4));
         return EMPTY;
       }
       return deny("network access");

@@ -79,8 +79,8 @@ export type NodeIo = {
   readStdinChunk(): Promise<Uint8Array>;
   /** A file opened for sequential reading; `read` answers empty at the end. */
   openFile(path: string): Promise<{ read(): Promise<Uint8Array>; close(): Promise<void> }>;
-  /** A file opened for writing, truncated. */
-  createFile(path: string): Promise<{ write(b: Uint8Array): Promise<void>; close(): Promise<void> }>;
+  /** A file opened for writing: truncated, or with `append` added to. Created if absent either way. */
+  createFile(path: string, append?: boolean): Promise<{ write(b: Uint8Array): Promise<void>; close(): Promise<void> }>;
   /**
    * The network, in the same shape Deno's is.
    *
@@ -95,6 +95,8 @@ export type NodeIo = {
   writeStdout(bytes: Uint8Array): Promise<void>;
   /** The error stream as bytes. Optional: a host without one falls back to `warn`'s line. */
   writeStderr?(bytes: Uint8Array): Promise<void>;
+  /** The end of standard output, or of the error stream: the reader sees the end. */
+  closeOutput?(toErr: boolean): Promise<void>;
   stat(
     path: string,
   ): Promise<{ isFile: boolean; isDirectory: boolean; size: number; mtimeMillis: number; mode?: number }>;
@@ -314,6 +316,9 @@ export function nodeWorld(
   const errStreams = new Map<number, ByteQueue>();
   /** A child's filesystem channel, by its own handle — see the note in `deno.ts`. */
   const fsChannels = new Map<number, { req: ByteQueue; rep: ByteQueue }>();
+  // Files opened as streams, in the same handle space — see the note in `deno.ts`.
+  const reading = new Map<number, { read(): Promise<Uint8Array>; close(): Promise<void> }>();
+  const writing = new Map<number, { write(b: Uint8Array): Promise<void>; close(): Promise<void> }>();
   let nextHandle = FIRST_FREE_HANDLE;
 
   /**
@@ -368,6 +373,7 @@ export function nodeWorld(
           if (!await out.push(b)) throw new Error("the child's output is not being read");
         },
         writeStderr: async (b: Uint8Array) => { await cerr.push(b); },
+        closeOutput: async (toErr: boolean) => { (toErr ? cerr : out).end(); },
       };
       return serveHostCalls(bridgeOf(sab), nodeWorld(fs, proc, childIo, {
         args: cargs,
@@ -432,6 +438,11 @@ export function nodeWorld(
   // `write` answers a bool and cannot carry a reason, so this is recorded for `outputError`. The
   // reads no longer need an equivalent: `Read` carries theirs.
   let outputFailure = "";
+  // Closed by `CLOSE_OUTPUT`: a write after it is refused as one to a reader that has gone.
+  const outClosed = [false, false];
+  const refuseClosed = (toErr: boolean) => {
+    if (outClosed[toErr ? 1 : 0]) { outputFailure = ""; throw new Error("the output has been closed"); }
+  };
   const P = (path: string) => joinPath(opts.cwd ?? "", kids.path(path));
 
   return {
@@ -510,6 +521,7 @@ export function nodeWorld(
     // are the user's own doing, not a reach into something they did not offer.
     [OP.READ_STDIN]: async () => kids.readAll() ?? await io.readStdin(),
     [OP.WRITE_STDOUT]: async (p) => {
+      refuseClosed(false);
       if (kids.active) {
         if (!kids.write(p)) throw new Error("the child's output buffer is full");
         return EMPTY;
@@ -530,6 +542,7 @@ export function nodeWorld(
      * that followed a `1>` would leave a program no way to separate them.
      */
     [OP.WRITE_STDERR]: async (p) => {
+      refuseClosed(true);
       if (kids.active) { kids.warn(p); return EMPTY; }
       try {
         if (io.writeStderr === undefined) { warn(unstr(p)); return EMPTY; }
@@ -668,6 +681,45 @@ export function nodeWorld(
       return await changed(async () => { sink = await io.createFile(P(path)); });
     },
 
+    /** A file as a stream of its own — see the note in `deno.ts`. */
+    [OP.OPEN_FILE]: async (p) => {
+      const how = readI32le(p);
+      if (how === 0 ? !opts.fs?.read : !opts.fs?.write) deny(how === 0 ? "filesystem read" : "filesystem write");
+      const path = P(unstr(p.subarray(4)));
+      if (how === 0) {
+        const r = await io.openFile(path);
+        const h = nextHandle++;
+        reading.set(h, r);
+        return withPeer(h, "");
+      }
+      const w = await io.createFile(path, how === 2);
+      const h = nextHandle++;
+      writing.set(h, w);
+      return withPeer(h, "");
+    },
+
+    /** The end of this program's output or its diagnostic output — see the note in `deno.ts`. */
+    [OP.CLOSE_OUTPUT]: async (p) => {
+      const toErr = readI32le(p) !== 0;
+      if (kids.active) throw new Error("a pushed child cannot close its parent's output");
+      if (outClosed[toErr ? 1 : 0]) return EMPTY;
+      outClosed[toErr ? 1 : 0] = true;
+      if (!toErr && sink !== null) { await sink.close(); sink = null; }
+      else await io.closeOutput?.(toErr);
+      return EMPTY;
+    },
+
+    /** The end of a file opened with `OPEN_FILE` — see the note in `deno.ts`. */
+    [OP.CLOSE_FILE]: async (p) => {
+      const h = readI32le(p);
+      const file = reading.get(h) ?? writing.get(h);
+      reading.delete(h);
+      writing.delete(h);
+      if (file === undefined) throw new Error("not an open file");
+      await file.close();
+      return EMPTY;
+    },
+
     [OP.CONNECT]: async (p) => {
       if (!opts.net) deny("network access");
       let c: NodeSock;
@@ -755,6 +807,15 @@ export function nodeWorld(
         const request = await asking.req.next();
         return request.length === 0 ? END : data(request);
       }
+      const file = reading.get(h);
+      if (file !== undefined) {
+        try {
+          const got = await file.read();
+          return got.length === 0 ? END : data(got);
+        } catch (e) {
+          return failed(readFailure(e));
+        }
+      }
       const c = sockets.get(h);
       if (c === undefined) return failed("not an open socket");
       try {
@@ -785,6 +846,11 @@ export function nodeWorld(
       const answering = fsChannels.get(readI32le(p));
       if (answering !== undefined) {
         await answering.rep.push(p.slice(4));
+        return EMPTY;
+      }
+      const file = writing.get(readI32le(p));
+      if (file !== undefined) {
+        await file.write(p.slice(4));
         return EMPTY;
       }
       const c = sockets.get(readI32le(p));

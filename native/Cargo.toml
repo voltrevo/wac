@@ -14,6 +14,7 @@ name = "wac"
 path = "src/main.rs"
 
 [dependencies]
+libc = "0.2"
 # Default features pull in the pooling allocator, profiling, `wat` and `wit-parser`, none of which this
 # needs; issue 0087 measured a 17.2 MB binary that way. `cranelift` is the compiler and `gc` is what
 # carries the funcref and struct references this ABI is made of.

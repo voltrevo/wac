@@ -113,6 +113,9 @@ export const OP = {
    * which is what a git checkout wants. This promises the mode. `issues/system/0296c`.
    */
   CHMOD: 60,
+  OPEN_FILE: 61,
+  CLOSE_FILE: 62,
+  CLOSE_OUTPUT: 63,
   // **`Cli.load`, `Cli.call` and `Cli.unload` have no opcode**, and that is the design rather than an
   // omission. A loaded module lives in the *caller's own realm* and its capabilities are built against
   // the caller's own bridge — so nothing about it crosses to the launcher, and the three are

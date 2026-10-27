@@ -3,9 +3,9 @@
 // Each check reaches the host through a handle and asserts the fault's *type*, because the type is the
 // contract: a caller matches on it. The messages are the host's and are not checked.
 
-import { Sys, Files, Mount, Stat, NotFound, NotADir, NotGranted, Exists, IsDir, Other, Refused, Net, Listener, Socket,
-         Launch, ChildEnv, Exec, Clock, TimedOut, Unsupported } from "std";
-import { Result, Ticket, flatten } from "core";
+import { Sys, Files, Mount, Stat, Input, Output, NotFound, NotADir, NotGranted, Exists, IsDir, Other, Refused, Net, Listener, Socket,
+         Launch, ChildEnv, Exec, Clock, TimedOut, Unsupported, OutputClosed, Procs, SpawnFault } from "std";
+import { Result, Ticket, Read, flatten } from "core";
 import { T } from "../../../wactest/src/assert.wac";
 
 string failed(T t, string what) {
@@ -38,6 +38,156 @@ export async string test_files_read_back_what_was_written(Sys sys) {
     Err(e): { t.fail("readDir failed"); }
   }
   await fs.remove(dir, true);
+  return t.report();
+}
+
+async string drained(Input in) {
+  string all = "";
+  while (true) {
+    match (await in.chunk()) {
+      Ok(c): {
+        match (c) {
+          Data(b): { all = all + string.fromBytes(b); }
+          default: { return all; }
+        }
+      }
+      Err(e): { return all + "<failed>"; }
+    }
+  }
+}
+
+export async string test_a_file_opened_as_a_stream_is_written_appended_and_read(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string dir = base(sys) + "/streams";
+  await fs.remove(dir, true);
+  await fs.mkdir(dir, true);
+  string f = dir + "/s";
+  match (await fs.openWrite(f)) {
+    Ok(out): {
+      t.isTrue((await out.write("ab".toBytes())).isOk(), "the first write");
+      t.isTrue((await out.line("c")).isOk(), "the second write");
+      t.isTrue((await out.close()).isOk(), "close");
+    }
+    Err(e): { return failed(t, "openWrite of a new file failed"); }
+  }
+  t.eqStr(string.fromBytes((await fs.readFile(f)).unwrap()), "abc\n", "both writes are in the file once it is closed");
+  match (await fs.openAppend(f)) {
+    Ok(out): {
+      await out.write("d".toBytes());
+      t.isTrue((await out.close()).isOk(), "close after append");
+    }
+    Err(e): { return failed(t, "openAppend failed"); }
+  }
+  t.eqStr(string.fromBytes((await fs.readFile(f)).unwrap()), "abc\nd", "openAppend writes after what was there");
+  match (await fs.openRead(f)) {
+    Ok(in): {
+      t.eqStr(await drained(in), "abc\nd", "openRead reads it to the end");
+      t.isTrue((await in.close()).isOk(), "closing what was read");
+    }
+    Err(e): { return failed(t, "openRead failed"); }
+  }
+  match (await fs.openRead(f)) {
+    Ok(in): {
+      t.eqStr(string.fromBytes((await in.readAll()).unwrap()), "abc\nd", "readAll on an opened file");
+      await in.close();
+    }
+    Err(e): { return failed(t, "the second openRead failed"); }
+  }
+  match (await fs.openWrite(f)) {
+    Ok(out): {
+      await out.write("x".toBytes());
+      await out.close();
+    }
+    Err(e): { return failed(t, "openWrite of an existing file failed"); }
+  }
+  t.eqStr(string.fromBytes((await fs.readFile(f)).unwrap()), "x", "openWrite truncates");
+  await fs.remove(dir, true);
+  return t.report();
+}
+
+export async string test_a_closed_file_refuses_a_write_and_closes_twice(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string dir = base(sys) + "/closed";
+  await fs.mkdir(dir, true);
+  match (await fs.openWrite(dir + "/f")) {
+    Ok(out): {
+      await out.write("a".toBytes());
+      t.isTrue((await out.close()).isOk(), "close");
+      t.isTrue((await out.close()).isOk(), "closing twice is not an error");
+      match (await out.write("b".toBytes())) {
+        Ok(v): { t.fail("a write after close landed"); }
+        Err(e): { t.isTrue(e is OutputClosed, "a write after close answers OutputClosed"); }
+      }
+    }
+    Err(e): { return failed(t, "openWrite failed"); }
+  }
+  match (await fs.openRead(dir + "/f")) {
+    Ok(in): {
+      t.isTrue((await in.close()).isOk(), "closing what was read");
+      t.isTrue((await in.close()).isOk(), "closing it twice");
+    }
+    Err(e): { return failed(t, "openRead failed"); }
+  }
+  t.eqStr(string.fromBytes((await fs.readFile(dir + "/f")).unwrap()), "a", "only the write before close is there");
+  await fs.remove(dir, true);
+  return t.report();
+}
+
+/** The probe's answer on one host: a file streamed, `a` on its output, and a write after close refused. */
+void probeSaid(T t, string host, Result<Exec, SpawnFault> ran) {
+  match (ran) {
+    Ok(r): {
+      t.eqI32(r.status, 0, host + ": the probe ran: " + string.fromBytes(r.stderr));
+      t.eqStr(string.fromBytes(r.stdout), "a", host + ": only what was written before close");
+      t.eqStr(string.fromBytes(r.stderr), "file xy\nrefused\nclosed\n",
+              host + ": the file written, appended to and read; a write after close is OutputClosed; closing twice is fine");
+    }
+    Err(e): { t.fail(host + ": did not run"); }
+  }
+}
+
+export async string test_files_stream_and_stdout_closes_on_every_host(Sys sys) {
+  T t = T.create();
+  Procs procs = sys.procs();
+  string probe = "packages/platform/test/wac/closeout_probe.wac";
+  string dir = base(sys) + "/closeout";
+  await sys.files().mkdir(dir, true);
+  probeSaid(t, "v8", await procs.exec("native/v8/target/release/wac", ["run", "--allow-read", "--allow-write", probe],
+                                      u8[](), ChildEnv.inherited(), Launch.plain()));
+  string denoOut = dir + "/probe-deno.js";
+  await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-read", "--allow-write",
+                            "--target", "deno", "-o", denoOut], u8[](), ChildEnv.inherited(), Launch.plain());
+  probeSaid(t, "deno", await procs.exec("deno", ["run", "-A", denoOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  string nodeOut = dir + "/probe-node.js";
+  await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--allow-read", "--allow-write",
+                            "--target", "node", "-o", nodeOut], u8[](), ChildEnv.inherited(), Launch.plain());
+  probeSaid(t, "node", await procs.exec("node", [nodeOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  return t.report();
+}
+
+export async string test_opening_a_missing_or_refused_file_is_its_fault(Sys sys) {
+  T t = T.create();
+  Files fs = sys.files();
+  string gone = base(sys) + "/no-such-dir/f";
+  match (await fs.openRead(gone)) {
+    Ok(in): { t.fail("a missing file was opened to read"); }
+    Err(e): { t.isTrue(e is NotFound, "openRead of a missing file answers NotFound"); }
+  }
+  match (await fs.openWrite(gone)) {
+    Ok(out): { t.fail("a file in a missing directory was opened to write"); }
+    Err(e): { t.isTrue(e is NotFound, "openWrite in a missing directory answers NotFound"); }
+  }
+  Files ro = fs.readOnly();
+  match (await ro.openWrite(base(sys) + "/ro")) {
+    Ok(out): { t.fail("openWrite through readOnly opened"); }
+    Err(e): { t.isTrue(e is NotGranted, "openWrite through readOnly answers NotGranted"); }
+  }
+  match (await ro.openAppend(base(sys) + "/ro")) {
+    Ok(out): { t.fail("openAppend through readOnly opened"); }
+    Err(e): { t.isTrue(e is NotGranted, "openAppend through readOnly answers NotGranted"); }
+  }
   return t.report();
 }
 

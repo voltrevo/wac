@@ -162,8 +162,10 @@ the browser terminal are granted it to run applets, and without it an applet is 
 - **Users are a view of a memory store**: `MemoryStore.create(clock)`, `store.as(user)` a `Files` that creates files
   owned by `user` and checks against it, `"root"` exempt. `Files` gains `chown` (the host: `Unsupported`) and `Stat`
   gains `owner` and `mode`. `whoami` and `id` read the session's user and refuse where there is none.
-- **Streams close**: `files.openWrite(path)` answers an `Output` and `files.openRead(path)` an `Input`, and both
-  types gain `close`. `Child.endInput()` is `child.input().close()`; closing `stdout` ends the program's output. The
+- **Streams close**: `files.openWrite(path)` answers an `Output`, `files.openAppend(path)` an `Output`
+  that writes after what is there (so `>>` streams too), and `files.openRead(path)` an `Input`; all
+  gain `close`. `Child.endInput()` is `child.input().close()`; closing `stdout` ends the program's output (`Cli.closeOutput`, in every host, and a spawned child's
+  parent sees the end while the child runs on). The
   host gives a stream per call, which retires `openInput`/`openOutput` switching the program's one stream and the
   `isHostPath` split in box (every path streams).
 - **A composed `Files` handed to a child is served by std** over the parent channel while the parent drives its

@@ -278,6 +278,15 @@ Cover[] coverage() {
       "0182, 0198, 0211"),
     where("OPEN_INPUT", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `cat < f`, refused with no grant"),
     where("OPEN_OUTPUT", "packages/platform/test/wac/native_hostfs_test.wac", "native_hostfs: `echo new > made`"),
+    where("OPEN_FILE", "packages/platform/test/wac/stdhandles_test.wac",
+      "stdhandles: `closeout_probe.wac` writes, appends to and reads back one file through `Files.openWrite`, " +
+      "`openAppend` and `openRead`, run on the V8 binary and built for Deno and Node, each compared with " +
+      "the same expected lines. Not yet on the wasmtime host, which this test does not build for"),
+    sameAs("CLOSE_FILE", "OPEN_FILE", "as OPEN_FILE: every stream the probe opens it closes, and reads back after"),
+    where("CLOSE_OUTPUT", "packages/platform/test/wac/stdhandles_test.wac",
+      "stdhandles: the same probe writes `a`, closes its output twice, and writes again — `a` alone on " +
+      "its output and `refused` on its diagnostic output on each of the three hosts. It does not show " +
+      "the reader seeing the end *before* the program exits, which an `exec` cannot tell apart"),
     where("READ_CHUNK", "packages/platform/test/wac/native_hostfs_test.wac",
       "native_hostfs: `cat sub/deep > out` streams, and 300 KB through stdin — past one chunk, which " +
       "is the only case that makes `readChunk` loop"),

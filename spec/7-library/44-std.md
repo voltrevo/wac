@@ -156,12 +156,14 @@ Reading them needs no grant: they are what the person running the program chose 
 // fragment — from std
 struct Output {
   fn<Ticket<Result<void, OutputFault>>(u8[])> write;
+  fn<Ticket<Result<void, OutputFault>>()> close;    // no more
   Ticket<Result<void, OutputFault>> line(const this, string text);   // text and a newline
 }
 
 struct Input {
   fn<Ticket<Result<Read, HostFault>>()> chunk;     // the next bytes, or the end
   fn<Ticket<Result<u8[], HostFault>>()> readAll;
+  fn<Ticket<Result<void, HostFault>>()> close;     // done reading
 }
 ```
 
@@ -214,6 +216,12 @@ export Result<i32> main(Sys sys) {
 
 `[§wac-std-input-u7m2rjd]` `chunk` answers the next bytes as a `Read` ([41](41-read.md)), data or the end; a failure is
 its `Err`, never `Read.Failed`. `readAll` answers everything up to the end.
+
+`[§wac-std-close-r4v8ndq]` Closing an `Output` ends it: whoever reads it sees the end, a file holds what was written once
+`close` answers, and a write after it answers `OutputClosed`. Closing `sys.stdout()` ends the program's output while the
+program runs on; closing a child's `input()` ends the child's input. Closing an `Input` gives back what it held — a file
+opened to read — and reading after it is not defined; the program's own input and a child's output hold nothing to give
+back. Closing twice is not an error.
 
 ## Time and randomness
 
@@ -288,6 +296,9 @@ not read the environment at all — so the two cannot be confused.
 struct Files {
   fn<Ticket<Result<u8[], ReadFault>>(string)> readFile;
   fn<Ticket<Result<void, WriteFault>>(string, u8[])> writeFile;
+  fn<Ticket<Result<Input, ReadFault>>(string)> openRead;         // to read a piece at a time
+  fn<Ticket<Result<Output, WriteFault>>(string)> openWrite;      // created or emptied, to write a piece at a time
+  fn<Ticket<Result<Output, WriteFault>>(string)> openAppend;     // created or added to
   fn<Ticket<Result<Stat, LookFault>>(string)> stat;
   fn<Ticket<Result<Stat, LookFault>>(string)> linkStat;          // a symbolic link itself
   fn<Ticket<Result<string[], LookFault>>(string)> readDir;
@@ -316,6 +327,30 @@ to the mount that owns it. A rename across two mounts is `Other`, as a rename ac
 async Result<void> copy(Files fs, string from, string to) {
   u8[] bytes = try await fs.readFile(from);
   try await fs.writeFile(to, bytes);
+  return Result.Ok();
+}
+```
+
+`[§wac-std-file-stream-m6t2wqe]` `openRead`, `openWrite` and `openAppend` open a file as a stream of its own, so a program
+holds as many as it likes and none has to fit in memory. Opening fails as reading or writing the whole file would — a
+missing directory is `NotFound`, and opening to write through `readOnly` is `NotGranted`. `openWrite` empties a file that
+exists; `openAppend` writes after what is there. Each creates a file that does not exist.
+
+```wac
+// fragment — the same copy, a piece at a time
+async Result<void> copyStreaming(Files fs, string from, string to) {
+  Input in = try await fs.openRead(from);
+  Output out = try await fs.openWrite(to);
+  bool more = true;
+  while (more) {
+    Read r = try await in.chunk();
+    match (r) {
+      Data(bytes): { try await out.write(bytes); }
+      default: { more = false; }
+    }
+  }
+  try await in.close();
+  try await out.close();
   return Result.Ok();
 }
 ```
@@ -428,8 +463,7 @@ struct Launch {
 struct Child {
   Input output(this);          // what it writes, unless inherited
   Input errors(this);          // what it writes to its diagnostic output, unless inherited
-  Output input(this);          // what it reads, unless inherited
-  void endInput(this);         // the end of its input; it goes on running
+  Output input(this);          // what it reads, unless inherited; closing it ends its input and it goes on running
   async Result<i32, HostFault> exit(this);
   void stop(this);
 }

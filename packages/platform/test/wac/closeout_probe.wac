@@ -1,0 +1,35 @@
+// A file streamed and `sys.stdout().close()` — spec ch44 `§wac-std-file-stream-m6t2wqe`, `§wac-std-close-r4v8ndq`. Run by
+// `stdhandles_test.wac` on each host. It writes, appends to and reads back `.cache/wac-handles/closeout/f`; then it writes
+// `a`, closes its output twice, tries to write again, and says on its diagnostic output what happened at each step.
+
+import { Sys, Files, Input, Output, OutputClosed } from "std";
+
+export async i32 main(Sys sys) {
+  Files fs = sys.files();
+  string f = ".cache/wac-handles/closeout/f";
+  await fs.mkdir(".cache/wac-handles/closeout", true);
+  Output w = (await fs.openWrite(f)).unwrap();
+  await w.write("x".toBytes());
+  await w.close();
+  Output more = (await fs.openAppend(f)).unwrap();
+  await more.write("y".toBytes());
+  await more.close();
+  Input r = (await fs.openRead(f)).unwrap();
+  string got = string.fromBytes((await r.readAll()).unwrap());
+  await r.close();
+  await sys.stderr().line("file " + got);
+
+  Output out = sys.stdout();
+  await out.write("a".toBytes());
+  bool closed = (await out.close()).isOk();
+  bool again = (await out.close()).isOk();
+  // Said after the match rather than in its arms: an `await` in the `Ok` arm of a `Result<void, …>` is 0405a.
+  string said = "";
+  match (await out.write("b".toBytes())) {
+    Ok(v): { said = "written after close"; }
+    Err(e): { said = e is OutputClosed ? "refused" : "failed otherwise"; }
+  }
+  await sys.stderr().line(said);
+  await sys.stderr().line(closed && again ? "closed" : "not closed");
+  return 0;
+}

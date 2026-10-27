@@ -111,6 +111,8 @@ export type DenoWorldOptions = {
   write?(bytes: Uint8Array): void | Promise<void>;
   /** Where exact bytes on the *error* stream go. A spawned world sends both to its parent. */
   writeErr?(bytes: Uint8Array): void | Promise<void>;
+  /** The end of `write`'s stream, or `writeErr`'s: a spawned world's parent reads the end there. */
+  closeOutput?(toErr: boolean): void;
   /**
    * Where this world's relative paths resolve from, and what `cwd` reports.
    *
@@ -346,6 +348,11 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
   };
   const writeOut = opts.write;
   const writeErrOut = opts.writeErr;
+  // Closed by `CLOSE_OUTPUT`: a write after it is refused as one to a reader that has gone.
+  const outClosed = [false, false];
+  const refuseClosed = (toErr: boolean) => {
+    if (outClosed[toErr ? 1 : 0]) { outputFailure = ""; throw new Error("the output has been closed"); }
+  };
   const selfSource = opts.selfSource;
   const readIn = opts.readStdin;
   const readChunkIn = opts.readStdinChunk ?? opts.readStdin;
@@ -406,6 +413,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
           if (!await out.push(b)) throw new Error("the child's output is not being read");
         },
         writeErr: async (b: Uint8Array) => { await cerr.push(b); },
+        closeOutput: (toErr: boolean) => { (toErr ? cerr : out).end(); },
         // `readStdin` means *all* of it, which for a child means waiting for its input to end: the
         // bytes arrive over time. Serving it with one chunk made `seq 1 5 | sort -r` print `1`, since
         // `sort` reads to the end before sorting. `readChunk` and `recv` still take one chunk.
@@ -520,6 +528,9 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
   // Its own map, because a datagram socket is neither: nothing connects to it and nothing is
   // accepted from it, and `recv` on one would have no peer to report. design/system 0007.
   const datagrams = new Map<number, Deno.DatagramConn>();
+  // Files opened as streams, in the same handle space: `recv` reads one, `send` writes one and
+  // `closeSocket` closes it, so a program holds as many as it likes and waits on them like sockets.
+  const files = new Map<number, Deno.FsFile>();
   // Children share the handle space with sockets, so `recv`, `send` and `waitAny` need no
   // idea which they are holding — which is the whole reason a child is a handle.
   const children = new Map<number, Child>();
@@ -634,6 +645,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
     [OP.READ_STDIN]: async () =>
       kids.readAll() ?? (readIn === undefined ? await readAllStdin() : await readIn()),
     [OP.WRITE_STDOUT]: async (p) => {
+      refuseClosed(false);
       if (kids.active) {
         if (!kids.write(p)) throw new Error("the child's output buffer is full");
         return EMPTY;
@@ -672,6 +684,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
      * whole reason a program has two of them.
      */
     [OP.WRITE_STDERR]: async (p) => {
+      refuseClosed(true);
       if (kids.active) { kids.warn(p); return EMPTY; }
       if (writeErrOut !== undefined) { await writeErrOut(p.slice()); return EMPTY; }
       try {
@@ -768,6 +781,44 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       return await changed(async () => {
         source = await onPath(full, () => Deno.open(full, { read: true }));
       });
+    },
+    /**
+     * A file as a stream of its own: `how` is 0 to read, 1 to create or truncate, 2 to create or append.
+     * Its handle is read with `recv`, written with `send` and closed with `closeSocket`, like a socket's.
+     */
+    [OP.OPEN_FILE]: async (p) => {
+      const how = readI32le(p);
+      if (how === 0 ? !opts.fs?.read : !opts.fs?.write) deny(how === 0 ? "filesystem read" : "filesystem write");
+      const path = P(unstr(p.subarray(4)));
+      const file = await onPath(path, () =>
+        Deno.open(path, how === 0 ? { read: true } : { write: true, create: true, truncate: how === 1, append: how === 2 })
+      );
+      const h = nextHandle++;
+      files.set(h, file);
+      return withPeer(h, "");
+    },
+    /** The end of a file opened with `OPEN_FILE`: what was written is there once this answers. */
+    [OP.CLOSE_FILE]: (p) => {
+      const h = readI32le(p);
+      const file = files.get(h);
+      files.delete(h);
+      if (file === undefined) throw new Error("not an open file");
+      file.close();
+      return EMPTY;
+    },
+    /**
+     * The end of this program's output or its diagnostic output; it goes on running. Not under a pushed child,
+     * whose output is its parent's until it is popped.
+     */
+    [OP.CLOSE_OUTPUT]: (p) => {
+      const toErr = readI32le(p) !== 0;
+      if (kids.active) throw new Error("a pushed child cannot close its parent's output");
+      if (outClosed[toErr ? 1 : 0]) return EMPTY;
+      outClosed[toErr ? 1 : 0] = true;
+      if (!toErr && sink !== null) { sink.close(); sink = null; }
+      else if (opts.closeOutput !== undefined) opts.closeOutput(toErr);
+      else if (toErr ? writeErrOut === undefined : writeOut === undefined) (toErr ? Deno.stderr : Deno.stdout).close();
+      return EMPTY;
     },
     [OP.READ_CHUNK]: async () => {
       // A pushed child reads what it was fed and then end of input — never the parent's own
@@ -944,6 +995,15 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         const request = await asking.req.next();
         return request.length === 0 ? END : data(request);
       }
+      const file = files.get(h);
+      if (file !== undefined) {
+        try {
+          const n = await file.read(into);
+          return n === null ? END : data(into.subarray(0, n));
+        } catch (e) {
+          return failed(readFailure(e));
+        }
+      }
       const c = sockets.get(h);
       if (c === undefined) return failed("not an open socket");
       try {
@@ -980,6 +1040,13 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       const answering = fsChannels.get(h);
       if (answering !== undefined) {
         await answering.rep.push(p.slice(4));
+        return EMPTY;
+      }
+      const file = files.get(h);
+      if (file !== undefined) {
+        const bytes = p.subarray(4);
+        let wrote = 0;
+        while (wrote < bytes.length) wrote += await file.write(bytes.subarray(wrote));
         return EMPTY;
       }
       const c = sockets.get(h);

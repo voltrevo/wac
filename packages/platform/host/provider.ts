@@ -687,6 +687,13 @@ export function cliOf(
     (handle: number) => { hostCall(b, OP.CLOSE_SOCKET, i32le(handle)); },
     /*= closeSend */
     (handle: number) => { hostCall(b, OP.CLOSE_SEND, i32le(handle)); },
+    /*= openFile */
+    // How, then the path — the fixed-width part first, as everywhere.
+    (path: string, how: number) => T.socket(send(OP.OPEN_FILE, headed(i32le(how), str(path)))),
+    /*= closeFile */
+    (handle: number) => T.ok(send(OP.CLOSE_FILE, i32le(handle))),
+    /*= closeOutput */
+    (toErr: boolean) => T.ok(send(OP.CLOSE_OUTPUT, i32le(toErr ? 1 : 0))),
 
     /*= bindDatagram */
     // The port, then the address, exactly as `listen` — the same shape because it is the same question.
