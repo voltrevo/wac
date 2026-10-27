@@ -196,6 +196,22 @@ it now only lexes.
 Same shell bytes. V8 flags did not help: lazy compilation is already the default, a larger young
 generation saved 5% on a small check and nothing on the shell, and earlier tier-up cost more.
 
+**Sixth round (agent-b, 2026-10-27): `wac check` on a project.** With no arguments it discovers every
+file and gathers each one's closure in turn, and the closures overlap: checking `packages/box` read
+8,630 files to find 423, `bytes/src/slice.wac` 117 times, each read on a fresh host thread and each
+file lexed again for its imports. One `ReadCache` (`packages/wac/src/sources.wac`) now serves every
+root of the command, keeping each file's bytes, text and import list. `checkproject_test.wac` fails
+without it (a megabyte imported by 40 files added 234 ms against 100 for 10).
+
+| | round 5 | round 6 |
+|---|---:|---:|
+| `wac check` in `packages/box` (423 files) | 5,008 ms | 3,047 ms |
+
+Caching the import lists put a `Map<string, string>` and a `Map<string, string[]>` in one program, and
+the module was refused for a duplicate export: `bindNameOf` dropped `[]` as punctuation, so both entry
+types were `MapEntry$string$string`. It now spells `[]` as `Arr`, as `bindArrSuffix` does — the sibling
+of case 0562's `?`. `bindnames_test.wac`. The shell changes only in those export names.
+
 Two leads that did not reproduce in isolation and so were not changed: `Env.sigType` walks every
 signature for each one asked (7% of the shell build, via `pairEverySignature`), and
 `methodInstanceInferred` walks every declaration per generic method call (10%). A V8 code cache for
