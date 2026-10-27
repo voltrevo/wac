@@ -72,6 +72,14 @@ export string test_a_large_imported_file_is_not_rescanned_per_type_name(Core cor
   timeCheck(core, fewer, big);
   i64 a = timeCheck(core, fewer, big);
   i64 b = timeCheck(core, more, big);
+  // **The best of three**, because a loaded machine only ever adds time: one slow run of either
+  // side was enough to read as a ratio the code does not have.
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeCheck(core, fewer, big);
+    i64 b2 = timeCheck(core, more, big);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
   t.isTrue(b * (5 as i64) < a * (8 as i64),
            "beside a 1 MB file: " + itoa(millis(a)) + " ms checking 300 named types, "
            + itoa(millis(b)) + " ms checking 600");
@@ -116,6 +124,14 @@ export string test_naming_an_instance_does_not_walk_every_variant_per_field(Core
   timeEmit(core, bare);
   i64 a = timeEmit(core, bare);
   i64 b = timeEmit(core, named);
+  // **The best of three**, because a loaded machine only ever adds time: one slow run of either
+  // side was enough to read as a ratio the code does not have.
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmit(core, bare);
+    i64 b2 = timeEmit(core, named);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
   t.isTrue(b < a * (3 as i64),
            "200 functions beside 2,000 variants and 400 fields: " + itoa(millis(a))
            + " ms with `i32`, " + itoa(millis(b)) + " ms with `Box<i32>`");
@@ -164,6 +180,14 @@ export string test_resolving_a_name_does_not_walk_every_declaration(Core core) {
   timeEmitTwo(core, entry, more);
   i64 a = timeEmitTwo(core, entry, fewer);
   i64 b = timeEmitTwo(core, entry, more);
+  // **The best of three**, because a loaded machine only ever adds time: one slow run of either
+  // side was enough to read as a ratio the code does not have.
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmitTwo(core, entry, fewer);
+    i64 b2 = timeEmitTwo(core, entry, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
   t.isTrue(b * (2 as i64) < a * (3 as i64),
            "the same entry: " + itoa(millis(a)) + " ms beside 4,000 declarations, " + itoa(millis(b))
            + " ms beside 8,000");
@@ -188,17 +212,27 @@ i64 timeLower(Core core, string src) {
 // **Lowering reads a source once, however many types it declares.** Asking whether a file declares
 // a type with a default argument found each `struct` by copying the rest of the text and searching it
 // again, for `enum ` too, to the end — so a file of many structs cost the square of its length, and
-// `std`, embedded in every build, is such a file. Doubling the structs should double the time.
+// `std`, embedded in every build, is such a file. Doubling the structs should double the time; it took
+// 4.2× (376 ms against 1,595 at 3,000 and 6,000). The sizes are large enough that a linear pass takes
+// tens of milliseconds, since at 18 ms a busy gate once read a correct pass as 2.7×.
 export string test_lowering_reads_a_source_once_however_many_types_it_declares(Core core) {
   T t = T.create();
-  string fewer = manyStructs(3000);
-  string more = manyStructs(6000);
+  string fewer = manyStructs(6000);
+  string more = manyStructs(12000);
   timeLower(core, fewer);
   timeLower(core, more);
   i64 a = timeLower(core, fewer);
   i64 b = timeLower(core, more);
-  t.isTrue(b * (2 as i64) < a * (5 as i64),
-           "lowering 3,000 structs: " + itoa(millis(a)) + " ms; 6,000: " + itoa(millis(b)) + " ms");
+  // **The best of three**, because a loaded machine only ever adds time: one slow run of either
+  // side was enough to read as a ratio the code does not have.
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeLower(core, fewer);
+    i64 b2 = timeLower(core, more);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
+  t.isTrue(b < a * (3 as i64),
+           "lowering 6,000 structs: " + itoa(millis(a)) + " ms; 12,000: " + itoa(millis(b)) + " ms");
   return t.report();
 }
 
@@ -239,6 +273,14 @@ export string test_asking_whether_a_name_is_a_type_does_not_walk_every_import(Co
   timeEmitTwo(core, more, lib);
   i64 a = timeEmitTwo(core, fewer, lib);
   i64 b = timeEmitTwo(core, more, lib);
+  // **The best of three**, because a loaded machine only ever adds time: one slow run of either
+  // side was enough to read as a ratio the code does not have.
+  for (i32 k = 0; k < 2; k++) {
+    i64 a2 = timeEmitTwo(core, fewer, lib);
+    i64 b2 = timeEmitTwo(core, more, lib);
+    if (a2 < a) { a = a2; }
+    if (b2 < b) { b = b2; }
+  }
   t.isTrue(b * (4 as i64) < a * (5 as i64),
            "naming `P` 2,400 times: " + itoa(millis(a)) + " ms importing 1,000 names, " + itoa(millis(b))
            + " ms importing 3,000");
