@@ -11,15 +11,21 @@
 // impossible — and also invisible, because the construction was the only statement of what a midpoint
 // is. Here the twenty decimals are written down, and the oracle **re-derives the property**: it takes
 // the exact rational value of the string and the exact rational values of the two doubles either side
-// and requires them to be equal. A committed constant that stopped being a midpoint now fails,
-// which is not something the host-side version could have noticed about itself.
+// and says whether one sits exactly halfway. A committed constant that stopped being a midpoint now
+// fails, which is not something the host-side version could have noticed about itself.
+//
+// **`NUMBER` below is the whole oracle, and it only answers.** It was a TypeScript file shared by the
+// four float tests, which took this file's answers and did the comparing; since 2026-10-27 the
+// script says what `Number` says for each question and `agree` compares in wac
+// (`packages/wactest/src/inline.wac`). The decimals travel as themselves: none has a space in it.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Asked, agree } from "../../../wactest/src/inline.wac";
+import { Sys } from "std";
 import { approxBits, atofSpan, scan } from "../../src/atof.wac";
 import { ftoaBytes } from "../../src/ftoa.wac";
 
@@ -37,7 +43,32 @@ f64 nextDouble(Rng rng) {
   return ofBits((hi << 32) | lo);
 }
 
-static string ORACLE = "packages/fmt/test/oracle.ts";
+/**
+ * What `Number` says, one line for each question: `p64 <text>` is the bits of `Number(text)`, as
+ * sixteen hex digits; `midpoint <text>` is `midpoint` when the decimal is *exactly* halfway between
+ * two adjacent doubles, worked in integers scaled by 2^1075 so nothing is divided.
+ *
+ * `Number(s)` lands on *one* of the two doubles the value sits between — which one depends on
+ * ties-to-even, the very rule under test — so both neighbours are tried rather than guessed at.
+ */
+static string NUMBER =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const v = new DataView(new ArrayBuffer(8));\n" +
+  "const bits = (x) => { v.setFloat64(0, x); return v.getBigUint64(0); };\n" +
+  "const scaled = (b) => { const e = (b >> 52n) & 2047n; const f = b & 4503599627370495n; return e === 0n ? f << 1n : (f | 4503599627370496n) << e; };\n" +
+  "const midpoint = (s) => {\n" +
+  "  const m = /^(-?[0-9]+)e-([0-9]+)$/.exec(s);\n" +
+  "  if (m === null) return 'not a plain decimal';\n" +
+  "  const lhs = BigInt(m[1]) << 1076n; const ten = 10n ** BigInt(m[2]); const b = bits(Number(s));\n" +
+  "  const half = (lo, hi) => lhs === (scaled(lo) + scaled(hi)) * ten;\n" +
+  "  return half(b - 1n, b) || half(b, b + 1n) ? 'midpoint' : 'not a midpoint';\n" +
+  "};\n" +
+  "const say = (k, a) => {\n" +
+  "  if (k === 'p64') return bits(Number(a)).toString(16).padStart(16, '0');\n" +
+  "  if (k === 'midpoint') return midpoint(a);\n" +
+  "  return 'no such question: ' + k;\n" +
+  "};\n" +
+  "console.log(L.map((l) => { const [k, a] = l.split(' '); return say(k, a); }).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 
 f64 atof(string s) { return atofSpan(s.toBytes(), 0, s.len()); }
 
@@ -58,13 +89,13 @@ bool isFinite64(f64 x) {
   return ((b >> 52) & 2047) != 2047;
 }
 
-/** One `p64` line: this decimal, and the bits we parsed it to. */
-void parsed(Lines lines, string s) {
-  lines.add("p64 \{hex(s.toBytes())} \{bits64(atof(s))}");
+/** One `p64` question: this decimal, and the bits we parsed it to. */
+void parsed(Asked asked, string s) {
+  asked.add("p64 \{s}", bits64(atof(s)));
 }
 
 
-export string test_atof_the_cases_that_break_naive_conversions(Core core, Cli cli) {
+export async string test_atof_the_cases_that_break_naive_conversions(Sys sys) {
   T t = T.create();
   string[] cases = [
     "0", "-0", "1", "-1", "10", "1.5", "-2.25", "0.1", "0.2", "0.3",
@@ -83,9 +114,9 @@ export string test_atof_the_cases_that_break_naive_conversions(Core core, Cli cl
     "2.2250738585072011360574097967091319759348195463516456480234261097248222015" +
       "6858036286346714528823753e-308"
   ];
-  Lines lines = Lines.create();
-  for (i32 i = 0; i < cases.len(); i++) { parsed(lines, cases[i]); }
-  checkDeno(t, cli, ORACLE, lines, "the naive-conversion cases");
+  Asked asked = Asked.create();
+  for (i32 i = 0; i < cases.len(); i++) { parsed(asked, cases[i]); }
+  await agree(t, sys.procs(), NUMBER, asked, "the naive-conversion cases");
   return t.report();
 }
 
@@ -138,18 +169,18 @@ string[] midpoints() {
   ];
 }
 
-export string test_atof_exact_halfway_cases_round_to_even(Core core, Cli cli) {
+export async string test_atof_exact_halfway_cases_round_to_even(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] ms = midpoints();
   for (i32 i = 0; i < ms.len(); i++) {
     // Two claims per case, and the second is the one the host-side version could not make about
     // itself: that this decimal is a midpoint at all.
-    lines.add("midpoint \{hex(ms[i].toBytes())}");
-    parsed(lines, ms[i]);
+    asked.add("midpoint \{ms[i]}", "midpoint");
+    parsed(asked, ms[i]);
   }
   t.eqI32(ms.len(), 20, "twenty midpoints — five starting values, four steps each");
-  checkDeno(t, cli, ORACLE, lines, "exact halfway cases");
+  await agree(t, sys.procs(), NUMBER, asked, "exact halfway cases");
   return t.report();
 }
 
@@ -159,38 +190,38 @@ export string test_atof_exact_halfway_cases_round_to_even(Core core, Cli cli) {
  * `ftoa`'s output must read back as the original double. Together the two make a closed loop, and a
  * bug in either shows up here.
  */
-export string test_atof_round_trips_every_shortest_representation(Core core, Cli cli) {
+export async string test_atof_round_trips_every_shortest_representation(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x7F4A7C15);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32 checked = 0;
   for (i32 i = 0; i < 4000; i++) {
     f64 x = nextDouble(rng);
     if (!isFinite64(x)) { continue; }
     string s = string.fromBytes(ftoaBytes(x));
     t.eqStr(bits64(atof(s)), bits64(x), "\"\{s}\" parsed back to a different double");
-    // And the same string sent to the oracle, so "our formatter and our parser agree" is not the
+    // And the same string put to the oracle, so "our formatter and our parser agree" is not the
     // whole of the evidence: `Number(s)` has to reach the same double too.
-    parsed(lines, s);
+    parsed(asked, s);
     checked = checked + 1;
   }
   t.isTrue(checked > 2000, "only \{checked} shortest forms were drawn");
-  checkDeno(t, cli, ORACLE, lines, "\{checked} shortest forms");
+  await agree(t, sys.procs(), NUMBER, asked, "\{checked} shortest forms");
   return t.report();
 }
 
-export string test_atof_random_decimals_across_the_exponent_range(Core core, Cli cli) {
+export async string test_atof_random_decimals_across_the_exponent_range(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x2F6E2B1);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 i = 0; i < 4000; i++) {
     i32 digits = 1 + rng.upto(25);
     string mant = "";
     for (i32 d = 0; d < digits; d++) { mant = mant + "\{rng.upto(10)}"; }
     i32 exp = rng.upto(680) - 340;
-    parsed(lines, (rng.upto(2) == 0 ? "-" : "") + mant + "e\{exp}");
+    parsed(asked, (rng.upto(2) == 0 ? "-" : "") + mant + "e\{exp}");
   }
-  checkDeno(t, cli, ORACLE, lines, "random decimals across the exponent range");
+  await agree(t, sys.procs(), NUMBER, asked, "random decimals across the exponent range");
   return t.report();
 }
 
@@ -263,7 +294,7 @@ export string test_atof_the_estimate_is_inside_the_bisection_window() {
  * a fuzzer and a typo both produce; `0.000` is what a formatter emits for a rounded-away value. Node's
  * `Number` is the oracle for all of them, as it is for every other row in this file.
  */
-export string test_atof_the_spellings_a_generator_does_not_produce(Core core, Cli cli) {
+export async string test_atof_the_spellings_a_generator_does_not_produce(Sys sys) {
   T t = T.create();
   string[] cases = [
     // **Uppercase `E`**, which both exponent scanners accept and neither had been given.
@@ -285,8 +316,8 @@ export string test_atof_the_spellings_a_generator_does_not_produce(Core core, Cl
     // Digits dropped before the point rather than after it, which is the other arm of the same count.
     "123456789012345678901234567890123456789", "-123456789012345678901234567890123456789"
   ];
-  Lines lines = Lines.create();
-  for (i32 i = 0; i < cases.len(); i++) { parsed(lines, cases[i]); }
-  checkDeno(t, cli, ORACLE, lines, "the spellings a generator does not produce");
+  Asked asked = Asked.create();
+  for (i32 i = 0; i < cases.len(); i++) { parsed(asked, cases[i]); }
+  await agree(t, sys.procs(), NUMBER, asked, "the spellings a generator does not produce");
   return t.report();
 }

@@ -9,9 +9,9 @@
 //
 // A 400-bit operand cannot be a wac literal, so values are generated as **hex text** and turned into
 // decimal by `fromHex`. That would make the corpus whatever `fromHex` produced, so each one is sent
-// to the oracle as `text fromhex` first: the hex and the decimal we read it as, against `BigInt`.
-// One line per value, and it is what lets the rest be trusted — `text_test.wac` says the same thing
-// about the same anchor.
+// to the oracle as `fromhex` first: the hex, with the decimal we read it as kept beside it, against
+// `BigInt`. One line per value, and it is what lets the rest be trusted — `text_test.wac` says the
+// same thing about the same anchor.
 //
 // The add-back corpus goes further and uses `opMul` and `opAdd` to build `q*d + delta`. That is the
 // code under test building the test's own input, and it is sound here for one reason: the same batch
@@ -19,12 +19,17 @@
 // be mistaken for a wrong quotient. Said out loud because it is the kind of thing that is only sound
 // while somebody is checking.
 //
+// **`BIGINT` below is the whole oracle, and it only answers.** It was a TypeScript file shared with
+// the other two tests, which took this file's answers and did the comparing; since 2026-10-27 the
+// script says what `BigInt` makes of each question and `agree` compares in wac
+// (`packages/wactest/src/inline.wac`).
+//
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { Asked, agree } from "../../../wactest/src/inline.wac";
+import { Sys } from "std";
 import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr, opMulSmall,
          opDivSmall, opRemSmall, opCmp, opCmpAbs, fromHex } from "../probe.wac";
 
@@ -36,7 +41,20 @@ import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr, 
  */
 i32 bit(Rng rng) { return (rng.next() & 1) as@ i32; }
 
-static string ORACLE = "packages/bignum/test/oracle.ts";
+/**
+ * What `BigInt` says, one line for each question `<op> <a> [<b>]`, decimal in and out: `add sub mul
+ * div rem shl shr` (division truncates, `shr` floors, a negative count reverses a shift), `cmp` and
+ * `cmpabs` as -1, 0 or 1, `neg` and `abs`; and `fromhex <hex>`, the decimal a bare hex magnitude names.
+ */
+static string BIGINT =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const abs = (v) => (v < 0n ? -v : v);\n" +
+  "const sgn = (v) => (v < 0n ? -1n : v > 0n ? 1n : 0n);\n" +
+  "const O = { add: (a, b) => a + b, sub: (a, b) => a - b, mul: (a, b) => a * b, div: (a, b) => a / b,\n" +
+  "  rem: (a, b) => a % b, shl: (a, b) => a << b, shr: (a, b) => a >> b, cmp: (a, b) => sgn(a - b),\n" +
+  "  cmpabs: (a, b) => sgn(abs(a) - abs(b)), neg: (a) => -a, abs: abs };\n" +
+  "const say = ([op, a, b]) => String(op === 'fromhex' ? BigInt('0x' + a) : O[op](BigInt(a), BigInt(b ?? 0)));\n" +
+  "console.log(L.map((l) => say(l.split(' '))).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 
 string text(u8[] x) { return string.fromBytes(x); }
 u8[] b(string s) { return s.toBytes(); }
@@ -65,10 +83,10 @@ string randomHex(Rng rng, i32 bits) {
   return out;
 }
 
-/** The decimal a hex string names, anchored: the oracle is told both spellings. */
-string decimalOf(Lines lines, string hexText) {
+/** The decimal a hex string names, anchored: the oracle is asked for it from the hex. */
+string decimalOf(Asked asked, string hexText) {
   string d = text(fromHex(b(hexText)));
-  lines.add("text fromhex \{hexText} \{d}");
+  asked.add("fromhex \{hexText}", d);
   return d;
 }
 
@@ -83,35 +101,35 @@ string powerOfTwoHex(i32 p) {
 }
 
 /** Every binary operation, on one pair. */
-void bothWays(Lines lines, string x, string y) {
-  lines.add("big add \{x} \{y} \{text(opAdd(b(x), b(y)))}");
-  lines.add("big sub \{x} \{y} \{text(opSub(b(x), b(y)))}");
-  lines.add("big mul \{x} \{y} \{text(opMul(b(x), b(y)))}");
+void bothWays(Asked asked, string x, string y) {
+  asked.add("add \{x} \{y}", text(opAdd(b(x), b(y))));
+  asked.add("sub \{x} \{y}", text(opSub(b(x), b(y))));
+  asked.add("mul \{x} \{y}", text(opMul(b(x), b(y))));
   if (y != "0" && y != "-0") {
-    lines.add("big div \{x} \{y} \{text(opDiv(b(x), b(y)))}");
-    lines.add("big rem \{x} \{y} \{text(opRem(b(x), b(y)))}");
+    asked.add("div \{x} \{y}", text(opDiv(b(x), b(y))));
+    asked.add("rem \{x} \{y}", text(opRem(b(x), b(y))));
   }
 }
 
 string negated(string v) { return v == "0" ? "0" : (v.slice(0, 1) == "-" ? v.slice(1, v.len()) : "-\{v}"); }
 
 /** The four sign pairs, which is where truncated division differs from floored. */
-void withSigns(Lines lines, string x, string y) {
-  bothWays(lines, x, y);
-  bothWays(lines, negated(x), y);
-  bothWays(lines, x, negated(y));
-  bothWays(lines, negated(x), negated(y));
+void withSigns(Asked asked, string x, string y) {
+  bothWays(asked, x, y);
+  bothWays(asked, negated(x), y);
+  bothWays(asked, x, negated(y));
+  bothWays(asked, negated(x), negated(y));
 }
 
 /** Small and signed, where every carry, borrow and sign rule is reachable by hand. */
-export string test_arith_exhaustive_over_small_values(Core core, Cli cli) {
+export async string test_arith_exhaustive_over_small_values(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 x = -40; x <= 40; x++) {
-    for (i32 y = -40; y <= 40; y++) { bothWays(lines, "\{x}", "\{y}"); }
+    for (i32 y = -40; y <= 40; y++) { bothWays(asked, "\{x}", "\{y}"); }
   }
-  t.isTrue(lines.n > 20000, "the sweep is every small pair — \{lines.n} rows");
-  checkDeno(t, cli, ORACLE, lines, "small values");
+  t.isTrue(asked.count() > 20000, "the sweep is every small pair — \{asked.count()} rows");
+  await agree(t, sys.procs(), BIGINT, asked, "small values");
   return t.report();
 }
 
@@ -120,25 +138,25 @@ export string test_arith_exhaustive_over_small_values(Core core, Cli cli) {
  *
  * This is where an addition grows a limb, a subtraction sheds one, and `n` is easiest to get wrong.
  */
-export string test_arith_limb_boundaries(Core core, Cli cli) {
+export async string test_arith_limb_boundaries(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32[] powers = [0, 1, 15, 16, 31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 160, 192];
   string[] values = string[].filled(powers.len() * 5, "");
   i32 n = 0;
   for (i32 power in powers) {
-    string anchor = decimalOf(lines, powerOfTwoHex(power));
+    string anchor = decimalOf(asked, powerOfTwoHex(power));
     for (i32 d = -2; d <= 2; d++) {
       string v = text(opAdd(b(anchor), b("\{d}")));
       // The anchor arithmetic is itself checked, so a wrong `+ 1` cannot quietly move the corpus.
-      lines.add("big add \{anchor} \{d} \{v}");
+      asked.add("add \{anchor} \{d}", v);
       if (v.slice(0, 1) != "-") { values[n] = v; n = n + 1; }
     }
   }
   for (i32 i = 0; i < n; i++) {
-    for (i32 k = 0; k < n; k++) { withSigns(lines, values[i], values[k]); }
+    for (i32 k = 0; k < n; k++) { withSigns(asked, values[i], values[k]); }
   }
-  checkDeno(t, cli, ORACLE, lines, "limb boundaries");
+  await agree(t, sys.procs(), BIGINT, asked, "limb boundaries");
   return t.report();
 }
 
@@ -149,42 +167,42 @@ export string test_arith_limb_boundaries(Core core, Cli cli) {
  * propagate the whole length of a value, or a run of zero limbs, which is what makes a borrow do the
  * same.
  */
-export string test_arith_all_ones_and_all_zeros_limb_runs(Core core, Cli cli) {
+export async string test_arith_all_ones_and_all_zeros_limb_runs(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32[] limbCounts = [1, 2, 3, 4, 8, 17];
   string[] values = string[].filled(limbCounts.len() * 6, "");
   i32 n = 0;
   for (i32 limbs in limbCounts) {
     string ones = "";
     for (i32 i = 0; i < limbs; i++) { ones = ones + "ffffffff"; }
-    string onesDec = decimalOf(lines, ones);
+    string onesDec = decimalOf(asked, ones);
     values[n] = onesDec;
     n = n + 1;
     string minusOne = text(opSub(b(onesDec), b("1")));
-    lines.add("big sub \{onesDec} 1 \{minusOne}");
+    asked.add("sub \{onesDec} 1", minusOne);
     values[n] = minusOne;
     n = n + 1;
     // A high limb, then nothing: 0x00000001_00000000_00000000…
     string top = "1";
     for (i32 i = 0; i < limbs; i++) { top = top + "00000000"; }
-    string topDec = decimalOf(lines, top);
+    string topDec = decimalOf(asked, top);
     values[n] = topDec;
     n = n + 1;
     string topPlus = text(opAdd(b(topDec), b("1")));
-    lines.add("big add \{topDec} 1 \{topPlus}");
+    asked.add("add \{topDec} 1", topPlus);
     values[n] = topPlus;
     n = n + 1;
     // Alternating limbs, which random values also under-produce.
     string alt = "";
     for (i32 i = 0; i < limbs; i++) { alt = alt + (i % 2 == 0 ? "ffffffff" : "00000000"); }
-    values[n] = decimalOf(lines, alt);
+    values[n] = decimalOf(asked, alt);
     n = n + 1;
   }
   for (i32 i = 0; i < n; i++) {
-    for (i32 k = 0; k < n; k++) { withSigns(lines, values[i], values[k]); }
+    for (i32 k = 0; k < n; k++) { withSigns(asked, values[i], values[k]); }
   }
-  checkDeno(t, cli, ORACLE, lines, "limb runs");
+  await agree(t, sys.procs(), BIGINT, asked, "limb runs");
   return t.report();
 }
 
@@ -194,18 +212,18 @@ export string test_arith_all_ones_and_all_zeros_limb_runs(Core core, Cli cli) {
  * Sizes chosen independently, so mismatched limb counts are the common case rather than the
  * exception — including the `|a| < |b|` early return in `divmod`.
  */
-export string test_arith_random_operands_across_a_wide_size_range(Core core, Cli cli) {
+export async string test_arith_random_operands_across_a_wide_size_range(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x0BADC0DE);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 trial = 0; trial < 400; trial++) {
     i32 xb = 1 + rng.upto(400);
     i32 yb = 1 + rng.upto(400);
-    string x = decimalOf(lines, randomHex(rng, xb));
-    string y = decimalOf(lines, randomHex(rng, yb));
-    bothWays(lines, bit(rng) == 1 ? negated(x) : x, bit(rng) == 1 ? negated(y) : y);
+    string x = decimalOf(asked, randomHex(rng, xb));
+    string y = decimalOf(asked, randomHex(rng, yb));
+    bothWays(asked, bit(rng) == 1 ? negated(x) : x, bit(rng) == 1 ? negated(y) : y);
   }
-  checkDeno(t, cli, ORACLE, lines, "random operands");
+  await agree(t, sys.procs(), BIGINT, asked, "random operands");
   return t.report();
 }
 
@@ -217,10 +235,10 @@ export string test_arith_random_operands_across_a_wide_size_range(Core core, Cli
  * when the divisor's leading limbs are just below a power of two, so build divisors of exactly that
  * shape and dividends around multiples of them.
  */
-export string test_arith_divisors_engineered_to_need_the_add_back(Core core, Cli cli) {
+export async string test_arith_divisors_engineered_to_need_the_add_back(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x51DE51DE);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32[] limbCounts = [2, 3, 4, 6];
   string[] tops = ["80000000", "80000001", "fffffffe", "ffffffff"];
   string[] rests = ["00000000", "ffffffff", "00000001"];
@@ -229,24 +247,24 @@ export string test_arith_divisors_engineered_to_need_the_add_back(Core core, Cli
       for (string rest in rests) {
         string dHex = top;
         for (i32 i = 1; i < limbCount; i++) { dHex = dHex + rest; }
-        string d = decimalOf(lines, dHex);
+        string d = decimalOf(asked, dHex);
         for (i32 trial = 0; trial < 12; trial++) {
-          string q = decimalOf(lines, randomHex(rng, 1 + rng.upto(130)));
+          string q = decimalOf(asked, randomHex(rng, 1 + rng.upto(130)));
           string product = text(opMul(b(q), b(d)));
           // The product is checked as a product on this line, which is what makes it safe to use as
           // a dividend on the next.
-          lines.add("big mul \{q} \{d} \{product}");
+          asked.add("mul \{q} \{d}", product);
           for (i32 delta = -2; delta <= 2; delta++) {
             string a = text(opAdd(b(product), b("\{delta}")));
-            lines.add("big add \{product} \{delta} \{a}");
+            asked.add("add \{product} \{delta}", a);
             if (a.slice(0, 1) == "-") { continue; }
-            withSigns(lines, a, d);
+            withSigns(asked, a, d);
           }
         }
       }
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "the add-back");
+  await agree(t, sys.procs(), BIGINT, asked, "the add-back");
   return t.report();
 }
 
@@ -270,32 +288,32 @@ export string test_arith_divisors_engineered_to_need_the_add_back(Core core, Cli
  * as a *necessity*, and if it is ever removed on that basis, this paragraph is the thing to
  * disbelieve first.
  */
-export string test_arith_the_quotient_estimate_survives_rhat_reaching_base(Core core, Cli cli) {
+export async string test_arith_the_quotient_estimate_survives_rhat_reaching_base(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] aHex = [
     "ffffffff00000000ffffffff00000000ffffffff0000000000000000",
     "ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000"
   ];
   string dHex = "fffffffffffffffffffffffe";
-  string d = decimalOf(lines, dHex);
+  string d = decimalOf(asked, dHex);
   for (i32 i = 0; i < aHex.len(); i++) {
-    withSigns(lines, decimalOf(lines, aHex[i]), d);
+    withSigns(asked, decimalOf(asked, aHex[i]), d);
   }
   // And a sweep of the same shape, so a variant of the mistake is caught too.
   string[] lowD = ["fffffffe", "ffffffff", "00000000", "00000001"];
   string[] his = ["ffffffff", "fffffffe", "80000000"];
   string[] mids = ["00000000", "00000001", "ffffffff"];
   for (i32 l = 0; l < lowD.len(); l++) {
-    string dv = decimalOf(lines, "ffffffffffffffff\{lowD[l]}");
+    string dv = decimalOf(asked, "ffffffffffffffff\{lowD[l]}");
     for (i32 h = 0; h < his.len(); h++) {
       for (i32 m = 0; m < mids.len(); m++) {
-        string av = decimalOf(lines, "\{his[h]}\{mids[m]}ffffffff00000001");
-        withSigns(lines, av, dv);
+        string av = decimalOf(asked, "\{his[h]}\{mids[m]}ffffffff00000001");
+        withSigns(asked, av, dv);
       }
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "the estimate clamp");
+  await agree(t, sys.procs(), BIGINT, asked, "the estimate clamp");
   return t.report();
 }
 
@@ -303,32 +321,31 @@ export string test_arith_the_quotient_estimate_survives_rhat_reaching_base(Core 
  * The division identity holds.
  *
  * `a == q*b + r`, and `|r| < |b|`, and `r` has the sign of `a`. Checked independently of the
- * per-operation comparison, because it constrains `q` and `r` *together* — so it goes to the oracle
- * as the reconstructed `q*b + r` rather than as two separate answers.
+ * per-operation comparison, because it constrains `q` and `r` *together* — so it is compared as the
+ * reconstructed `q*b + r` rather than as two separate answers.
  */
-export string test_arith_division_identity_holds(Core core, Cli cli) {
+export async string test_arith_division_identity_holds(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x7E577E57);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 trial = 0; trial < 600; trial++) {
-    string a = decimalOf(lines, randomHex(rng, 1 + rng.upto(300)));
-    string d = decimalOf(lines, randomHex(rng, 1 + rng.upto(300)));
+    string a = decimalOf(asked, randomHex(rng, 1 + rng.upto(300)));
+    string d = decimalOf(asked, randomHex(rng, 1 + rng.upto(300)));
     if (bit(rng) == 1) { a = negated(a); }
     if (bit(rng) == 1) { d = negated(d); }
     string q = text(opDiv(b(a), b(d)));
     string r = text(opRem(b(a), b(d)));
     string back = text(opAdd(b(text(opMul(b(q), b(d)))), b(r)));
-    lines.add("big identity \{a} \{d} \{back}");
+    t.eqStr(back, a, "q*d + r for \{a} / \{d}");
     // |r| < |d|, put to the oracle as a claim rather than compared here, because comparing it here
     // would use the comparison this file is also testing.
-    lines.add("big absrem " + text(opAbs(b(r))) + " " + text(opAbs(b(d))) + " " +
-              (opCmpAbs(b(r), b(d)) < 0 ? "1" : "0"));
+    asked.add("cmpabs \{r} \{d}", "-1");
     // The remainder's sign follows the dividend's, which is truncated division's rule.
     bool rNeg = r.slice(0, 1) == "-";
     bool aNeg = a.slice(0, 1) == "-";
     t.isTrue(r == "0" || rNeg == aNeg, "remainder sign: \{a} / \{d} gave r=\{r}");
   }
-  checkDeno(t, cli, ORACLE, lines, "the division identity");
+  await agree(t, sys.procs(), BIGINT, asked, "the division identity");
   return t.report();
 }
 
@@ -409,31 +426,29 @@ export string test_traps_small_remainder_by_zero() {
  * `shr` is arithmetic, so it floors: -5 >> 1 is -3, not -2. That is `BigInt`'s rule and the one place
  * where the sign-magnitude representation has to work against itself.
  */
-export string test_shifts_match_bigint_including_negative_values(Core core, Cli cli) {
+export async string test_shifts_match_bigint_including_negative_values(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x11223344);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] fixed = ["0", "1", "2", "3", "5", "255", "256", "4294967295", "4294967296"];
   i32[] counts = [0, 1, 2, 7, 8, 31, 32, 33, 63, 64, 65, 96, 127, 128, 200, 400];
   string[] values = string[].filled(fixed.len() + 20, "");
   i32 n = 0;
   for (i32 i = 0; i < fixed.len(); i++) { values[n] = fixed[i]; n = n + 1; }
   for (i32 bits = 1; bits <= 200; bits = bits + 11) {
-    values[n] = decimalOf(lines, randomHex(rng, bits));
+    values[n] = decimalOf(asked, randomHex(rng, bits));
     n = n + 1;
   }
   for (i32 i = 0; i < n; i++) {
     string[] both = [values[i], negated(values[i])];
     for (i32 s = 0; s < both.len(); s++) {
       for (i32 k = 0; k < counts.len(); k++) {
-        lines.add("big shl \{both[s]} \{counts[k]} " +
-                  text(opShl(b(both[s]), counts[k])));
-        lines.add("big shr \{both[s]} \{counts[k]} " +
-                  text(opShr(b(both[s]), counts[k])));
+        asked.add("shl \{both[s]} \{counts[k]}", text(opShl(b(both[s]), counts[k])));
+        asked.add("shr \{both[s]} \{counts[k]}", text(opShr(b(both[s]), counts[k])));
       }
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "shifts");
+  await agree(t, sys.procs(), BIGINT, asked, "shifts");
   return t.report();
 }
 
@@ -468,22 +483,22 @@ export string test_traps_shifting_right_by_the_most_negative_count() {
   return "shr by i32::MIN answered instead of refusing";
 }
 
-export string test_shifts_a_negative_count_reverses_direction(Core core, Cli cli) {
+export async string test_shifts_a_negative_count_reverses_direction(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x44332211);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32[] counts = [1, 5, 32, 33, 70];
   for (i32 trial = 0; trial < 60; trial++) {
-    string mag = decimalOf(lines, randomHex(rng, 1 + rng.upto(200)));
+    string mag = decimalOf(asked, randomHex(rng, 1 + rng.upto(200)));
     string v = bit(rng) == 1 ? negated(mag) : mag;
     for (i32 k = 0; k < counts.len(); k++) {
       // A negative count is the same shift the other way, which the oracle states as `shl` by a
       // negative — `BigInt` reverses direction for exactly the same reason.
-      lines.add("big shl \{v} \{-counts[k]} \{text(opShl(b(v), -counts[k]))}");
-      lines.add("big shr \{v} \{-counts[k]} \{text(opShr(b(v), -counts[k]))}");
+      asked.add("shl \{v} \{-counts[k]}", text(opShl(b(v), -counts[k])));
+      asked.add("shr \{v} \{-counts[k]}", text(opShr(b(v), -counts[k])));
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "negative shift counts");
+  await agree(t, sys.procs(), BIGINT, asked, "negative shift counts");
   return t.report();
 }
 
@@ -493,10 +508,10 @@ export string test_shifts_a_negative_count_reverses_direction(Core core, Cli cli
  * Past the whole width: zero for a positive value, -1 for a negative one, because flooring never
  * reaches zero from below.
  */
-export string test_shifts_shifting_everything_out(Core core, Cli cli) {
+export async string test_shifts_shifting_everything_out(Sys sys) {
   T t = T.create();
-  Lines lines = Lines.create();
-  string big = decimalOf(lines, powerOfTwoHex(100));
+  Asked asked = Asked.create();
+  string big = decimalOf(asked, powerOfTwoHex(100));
   string[] mags = ["1", "255", big];
   i32[] counts = [200, 500];
   for (i32 i = 0; i < mags.len(); i++) {
@@ -506,7 +521,7 @@ export string test_shifts_shifting_everything_out(Core core, Cli cli) {
               "\{negated(mags[i])} >> \{counts[k]}");
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "the corpus anchor for shifting out");
+  await agree(t, sys.procs(), BIGINT, asked, "the corpus anchor for shifting out");
   return t.report();
 }
 
@@ -517,23 +532,22 @@ export string test_shifts_shifting_everything_out(Core core, Cli cli) {
  * versions. A negative `m` is a *large unsigned* multiplier — the probe reinterprets it — and that is
  * the point: it reaches the top of the range.
  */
-export string test_mul_small_and_div_small_match_the_general_operations(Core core, Cli cli) {
+export async string test_mul_small_and_div_small_match_the_general_operations(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x2B2B2B2B);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32[] smalls = [1, 2, 3, 10, 255, 65535, 65536, 1000000000, 0x7FFFFFFF, -1, -2];
   for (i32 trial = 0; trial < 120; trial++) {
-    string mag = decimalOf(lines, randomHex(rng, 1 + rng.upto(250)));
+    string mag = decimalOf(asked, randomHex(rng, 1 + rng.upto(250)));
     string v = bit(rng) == 1 ? negated(mag) : mag;
     for (i32 i = 0; i < smalls.len(); i++) {
       // The unsigned value the probe will see, as decimal — 2^32 + m for a negative m.
       string mu = smalls[i] >= 0 ? "\{smalls[i]}"
                                  : text(opAdd(b("4294967296"), b("\{smalls[i]}")));
-      lines.add("big mul \{v} \{mu} \{text(opMulSmall(b(v), smalls[i]))}");
-      lines.add("big div \{v} \{mu} \{text(opDivSmall(b(v), smalls[i]))}");
+      asked.add("mul \{v} \{mu}", text(opMulSmall(b(v), smalls[i])));
+      asked.add("div \{v} \{mu}", text(opDivSmall(b(v), smalls[i])));
       // `divSmall`'s remainder is an unsigned magnitude, unlike `divmod`'s.
-      lines.add("big rem " + text(opAbs(b(v))) + " " + mu + " " +
-                unsignedDecimal(opRemSmall(b(v), smalls[i])));
+      asked.add("rem " + text(opAbs(b(v))) + " " + mu, unsignedDecimal(opRemSmall(b(v), smalls[i])));
       // And against the general operations, which is the second half of the claim.
       t.eqStr(text(opMulSmall(b(v), smalls[i])), text(opMul(b(v), b(mu))),
               "mulSmall against mul, \{v} * \{mu}");
@@ -541,7 +555,7 @@ export string test_mul_small_and_div_small_match_the_general_operations(Core cor
               "divSmall against div, \{v} / \{mu}");
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "the single-limb paths");
+  await agree(t, sys.procs(), BIGINT, asked, "the single-limb paths");
   return t.report();
 }
 
@@ -551,16 +565,16 @@ string unsignedDecimal(i32 v) {
   return text(opAdd(b("4294967296"), b("\{v}")));
 }
 
-export string test_cmp_and_cmp_abs_match_bigint(Core core, Cli cli) {
+export async string test_cmp_and_cmp_abs_match_bigint(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x6A6A6A6A);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] fixed = ["0", "1", "2", "4294967295", "4294967296"];
   string[] values = string[].filled(fixed.len() + 14, "");
   i32 n = 0;
   for (i32 i = 0; i < fixed.len(); i++) { values[n] = fixed[i]; n = n + 1; }
   for (i32 bits = 1; bits <= 200; bits = bits + 17) {
-    values[n] = decimalOf(lines, randomHex(rng, bits));
+    values[n] = decimalOf(asked, randomHex(rng, bits));
     n = n + 1;
   }
   string[] signed = string[].filled(n * 2, "");
@@ -570,37 +584,35 @@ export string test_cmp_and_cmp_abs_match_bigint(Core core, Cli cli) {
   }
   for (i32 i = 0; i < signed.len(); i++) {
     for (i32 k = 0; k < signed.len(); k++) {
-      lines.add("big cmp \{signed[i]} \{signed[k]} " +
-                "\{opCmp(b(signed[i]), b(signed[k]))}");
-      lines.add("big cmpabs \{signed[i]} \{signed[k]} " +
-                "\{opCmpAbs(b(signed[i]), b(signed[k]))}");
+      asked.add("cmp \{signed[i]} \{signed[k]}", "\{opCmp(b(signed[i]), b(signed[k]))}");
+      asked.add("cmpabs \{signed[i]} \{signed[k]}", "\{opCmpAbs(b(signed[i]), b(signed[k]))}");
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "comparison");
+  await agree(t, sys.procs(), BIGINT, asked, "comparison");
   return t.report();
 }
 
-export string test_negate_abs_and_copy_preserve_value(Core core, Cli cli) {
+export async string test_negate_abs_and_copy_preserve_value(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x9E9E9E9E);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   string[] fixed = ["0", "1", "4294967295", "4294967296"];
   string[] values = string[].filled(fixed.len() + 17, "");
   i32 n = 0;
   for (i32 i = 0; i < fixed.len(); i++) { values[n] = fixed[i]; n = n + 1; }
   for (i32 bits = 1; bits <= 200; bits = bits + 13) {
-    values[n] = decimalOf(lines, randomHex(rng, bits));
+    values[n] = decimalOf(asked, randomHex(rng, bits));
     n = n + 1;
   }
   for (i32 i = 0; i < n; i++) {
     string[] both = [values[i], negated(values[i])];
     for (i32 s = 0; s < both.len(); s++) {
-      lines.add("big neg \{both[s]} - \{text(opNeg(b(both[s])))}");
-      lines.add("big abs \{both[s]} - \{text(opAbs(b(both[s])))}");
+      asked.add("neg \{both[s]}", text(opNeg(b(both[s]))));
+      asked.add("abs \{both[s]}", text(opAbs(b(both[s]))));
       t.eqStr(text(opCopy(b(both[s]))), both[s], "copy of \{both[s]}");
     }
   }
-  checkDeno(t, cli, ORACLE, lines, "negate, abs and copy");
+  await agree(t, sys.procs(), BIGINT, asked, "negate, abs and copy");
   return t.report();
 }
 

@@ -124,7 +124,7 @@ string[] hand() {
   ];
 }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
   Cli cli = sys.cli;
   i32 seen = 0;
@@ -248,71 +248,71 @@ export i32 main(Sys sys) {
   // None of the 27 expects a trap, so all of them can be called from here; `packages/bytes` is
   // where that is not true and the twelve trapping ones needed a `trapCase` sweep instead.
   i32 bad = 0;
-  if (fuzz__fuzz_assembled_urls_agree_with_node(core, cli).len() > 0) {
+  if ((await fuzz__fuzz_assembled_urls_agree_with_node(sys)).len() > 0) {
     core.warn("error: FAILED fuzz_test test_fuzz_assembled_urls_agree_with_node");
     bad = bad + 1;
   }
-  if (fuzz__fuzz_a_second_seed_in_case_the_first_is_lucky(core, cli).len() > 0) {
+  if ((await fuzz__fuzz_a_second_seed_in_case_the_first_is_lucky(sys)).len() > 0) {
     core.warn("error: FAILED fuzz_test test_fuzz_a_second_seed_in_case_the_first_is_lucky");
     bad = bad + 1;
   }
-  if (fuzz__fuzz_bare_references_against_every_base(core, cli).len() > 0) {
+  if ((await fuzz__fuzz_bare_references_against_every_base(sys)).len() > 0) {
     core.warn("error: FAILED fuzz_test test_fuzz_bare_references_against_every_base");
     bad = bad + 1;
   }
-  if (parse__absolute_urls_with_every_component(core, cli).len() > 0) {
+  if ((await parse__absolute_urls_with_every_component(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_absolute_urls_with_every_component");
     bad = bad + 1;
   }
-  if (parse__scheme_handling(core, cli).len() > 0) {
+  if ((await parse__scheme_handling(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_scheme_handling");
     bad = bad + 1;
   }
-  if (parse__ports_that_are_not_ports(core, cli).len() > 0) {
+  if ((await parse__ports_that_are_not_ports(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_ports_that_are_not_ports");
     bad = bad + 1;
   }
-  if (parse__path_normalisation(core, cli).len() > 0) {
+  if ((await parse__path_normalisation(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_path_normalisation");
     bad = bad + 1;
   }
-  if (parse__percent_encoding_by_component(core, cli).len() > 0) {
+  if ((await parse__percent_encoding_by_component(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_percent_encoding_by_component");
     bad = bad + 1;
   }
-  if (parse__hosts_ipv4_in_all_its_spellings(core, cli).len() > 0) {
+  if ((await parse__hosts_ipv4_in_all_its_spellings(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_hosts_ipv4_in_all_its_spellings");
     bad = bad + 1;
   }
-  if (parse__hosts_ipv6(core, cli).len() > 0) {
+  if ((await parse__hosts_ipv6(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_hosts_ipv6");
     bad = bad + 1;
   }
-  if (parse__hosts_names_empty_and_forbidden_bytes(core, cli).len() > 0) {
+  if ((await parse__hosts_names_empty_and_forbidden_bytes(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_hosts_names_empty_and_forbidden_bytes");
     bad = bad + 1;
   }
-  if (parse__file_urls(core, cli).len() > 0) {
+  if ((await parse__file_urls(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_file_urls");
     bad = bad + 1;
   }
-  if (parse__relative_resolution_against_a_base(core, cli).len() > 0) {
+  if ((await parse__relative_resolution_against_a_base(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_relative_resolution_against_a_base");
     bad = bad + 1;
   }
-  if (parse__edges_the_main_groups_miss(core, cli).len() > 0) {
+  if ((await parse__edges_the_main_groups_miss(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_edges_the_main_groups_miss");
     bad = bad + 1;
   }
-  if (parse__whitespace_and_control_bytes_are_stripped(core, cli).len() > 0) {
+  if ((await parse__whitespace_and_control_bytes_are_stripped(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_whitespace_and_control_bytes_are_stripped");
     bad = bad + 1;
   }
-  if (parse__inputs_that_must_be_rejected(core, cli).len() > 0) {
+  if ((await parse__inputs_that_must_be_rejected(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_inputs_that_must_be_rejected");
     bad = bad + 1;
   }
-  if (parse__a_non_ascii_domain_is_rejected_rather_than_mapped(core, cli).len() > 0) {
+  if ((await parse__a_non_ascii_domain_is_rejected_rather_than_mapped(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_a_non_ascii_domain_is_rejected_rather_than_mapped");
     bad = bad + 1;
   }
@@ -320,7 +320,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED parse_test test_a_reference_resolves_against_an_opaque_path_only_with_a_hash");
     bad = bad + 1;
   }
-  if (parse__runtime_divergences_judged_against_the_standard(core, cli).len() > 0) {
+  if ((await parse__runtime_divergences_judged_against_the_standard(sys)).len() > 0) {
     core.warn("error: FAILED parse_test test_runtime_divergences_judged_against_the_standard");
     bad = bad + 1;
   }

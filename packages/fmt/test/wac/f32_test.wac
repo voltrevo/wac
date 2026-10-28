@@ -10,19 +10,66 @@
 // The last test here does use ours for both and says so — it is about the pair composing, and it is
 // separate for that reason.
 //
-// Floats travel to `test/oracle.ts` as their **bits**, because a decimal spelling of the input would
-// be the very thing under test.
+// Floats travel to the oracle as their **bits**, because a decimal spelling of the input would be the
+// very thing under test.
+//
+// **`FROUND` below is the whole oracle, and it only answers.** It was a TypeScript file shared by the
+// four float tests, which took this file's answers and did the comparing; since 2026-10-27 the
+// script says what `Math.fround` and `toPrecision` say for each question and `agree` compares in wac
+// (`packages/wactest/src/inline.wac`). Counting our significant digits moved here with it.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Rng } from "../../../wactest/src/rng.wac";
-import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "std";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Asked, agree } from "../../../wactest/src/inline.wac";
+import { Sys } from "std";
+import { Buf } from "core";
 import { ftoa32, ftoa32Bytes } from "../../src/ftoa.wac";
 import { atof32Span } from "../../src/atof.wac";
 
-static string ORACLE = "packages/fmt/test/oracle.ts";
+/**
+ * What `Math.fround` says, one line for each question: `read <text>` is the bits of
+ * `Math.fround(Number(text))`, as eight hex digits; `shorter <bits8> <n>` is the first
+ * `x.toPrecision(p)` with `p < n` that reads back as the f32 `x` those bits name, or `none`.
+ */
+static string FROUND =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const v = new DataView(new ArrayBuffer(4));\n" +
+  "const bits = (x) => { v.setFloat32(0, x); return v.getUint32(0).toString(16).padStart(8, '0'); };\n" +
+  "const shorter = (h, n) => {\n" +
+  "  v.setUint32(0, parseInt(h, 16)); const x = v.getFloat32(0);\n" +
+  "  for (let p = 1; p < n; p++) { const s = x.toPrecision(p); if (Object.is(Math.fround(Number(s)), x)) return s; }\n" +
+  "  return 'none';\n" +
+  "};\n" +
+  "const say = (k, a) => {\n" +
+  "  if (k === 'read') return bits(Math.fround(Number(a[0])));\n" +
+  "  if (k === 'shorter') return shorter(a[0], Number(a[1]));\n" +
+  "  return 'no such question: ' + k;\n" +
+  "};\n" +
+  "console.log(L.map((l) => { const [k, ...a] = l.split(' '); return say(k, a); }).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
+
+/**
+ * Significant digits in a decimal: no sign, point, exponent or padding.
+ *
+ * Trailing zeros are exponent, not information — 8324640000000 carries six significant digits, and
+ * counting thirteen made the shortest check reject a correct answer.
+ */
+i32 significantDigits(string s) {
+  u8[] b = s.toBytes();
+  Buf digits = Buf.create();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == 'e' || b[i] == 'E') { break; }
+    if (b[i] >= '0' && b[i] <= '9') { digits.push(b[i]); }
+  }
+  u8[] d = digits.take();
+  i32 from = 0;
+  i32 to = d.len();
+  while (from < to && d[from] == '0') { from = from + 1; }
+  while (to > from && d[to - 1] == '0') { to = to - 1; }
+  return to == from ? 1 : to - from;
+}
 
 string fmt(f32 x) { return string.fromBytes(ftoa32Bytes(x)); }
 f32 parse32(string s) { return atof32Span(s.toBytes(), 0, s.len()); }
@@ -63,22 +110,25 @@ export string test_f32_specials_and_zeros() {
 /**
  * Output round-trips and is shortest.
  *
- * Two properties, checked separately by the oracle. Round-tripping alone would be satisfied by
- * printing the exact value, which is never what is wanted.
+ * Two properties, asked separately. Round-tripping alone would be satisfied by printing the exact
+ * value, which is never what is wanted — so the second question is whether any decimal with fewer
+ * significant digits than ours also reads back, and the answer we expect is `none`.
  */
-export string test_f32_output_round_trips_and_is_shortest(Core core, Cli cli) {
+export async string test_f32_output_round_trips_and_is_shortest(Sys sys) {
   T t = T.create();
   Rng rng = Rng(0x1F123BB5);
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   i32 checked = 0;
   for (i32 i = 0; i < 6000; i++) {
     f32 x = ofBits(rng.next());
     if (!isFinite32(x)) { continue; }
-    lines.add("f32 \{bits32(x)} \{fmt(x)}");
+    string s = fmt(x);
+    asked.add("read \{s}", bits32(x));
+    asked.add("shorter \{bits32(x)} \{significantDigits(s)}", "none");
     checked = checked + 1;
   }
   t.isTrue(checked > 4000, "only \{checked} finite values were drawn");
-  checkDeno(t, cli, ORACLE, lines, "\{checked} f32 values, round-tripped and minimal");
+  await agree(t, sys.procs(), FROUND, asked, "\{checked} f32 values, round-tripped and minimal");
   return t.report();
 }
 
@@ -131,7 +181,7 @@ export string test_f32_the_boundary_values() {
  * compared against the host's `Math.fround` of the *exact* decimal — which JavaScript computes in one
  * step from the string.
  */
-export string test_f32_parsing_is_correctly_rounded(Core core, Cli cli) {
+export async string test_f32_parsing_is_correctly_rounded(Sys sys) {
   T t = T.create();
   string[] cases = [
     "0", "-0", "1", "-1", "0.1", "0.2", "3.14159265358979",
@@ -140,11 +190,11 @@ export string test_f32_parsing_is_correctly_rounded(Core core, Cli cli) {
     "1.00000005960464477539062", "0.999999940395355224609375",
     "123456789012345678901234567890", "2.5e-324"
   ];
-  Lines lines = Lines.create();
+  Asked asked = Asked.create();
   for (i32 i = 0; i < cases.len(); i++) {
-    lines.add("p32 \{hex(cases[i].toBytes())} \{bits32(parse32(cases[i]))}");
+    asked.add("read \{cases[i]}", bits32(parse32(cases[i])));
   }
-  checkDeno(t, cli, ORACLE, lines, "correctly-rounded parsing");
+  await agree(t, sys.procs(), FROUND, asked, "correctly-rounded parsing");
   return t.report();
 }
 

@@ -10,7 +10,7 @@
 // dividend that is an exact multiple of it, a carry that propagates the whole length of a value — the
 // old `cov.ts` named those with JavaScript's `BigInt` because it *was* JavaScript.
 //
-// So `test/oracle.ts` is an arbitrary-precision arithmetic service and this file is its caller. The
+// So `OPERANDS` below is an arbitrary-precision arithmetic service and this file is its caller. The
 // division of labour is the point:
 //
 //   * **wac decides** which limb boundaries matter, which deltas, how many limbs of ones, how wide the
@@ -34,14 +34,15 @@
 // oracle supplies a value of each width, so what is preserved is what the old file's comments say
 // matters — limb boundaries, all-ones runs, exact multiples — rather than the particular integers.
 //
-// The `DONE <n>` line is checked by `askDeno`, so an oracle that answered half the batch cannot pass
+// The `DONE <n>` line is checked by `askScript`, so an oracle that answered half the batch cannot pass
 // for one that answered all of it. Nothing here would notice otherwise: a missing operand is a shorter
 // loop, not an error.
 
 import { T } from "../../wactest/src/assert.wac";
 import { Rng } from "../../wactest/src/rng.wac";
-import { Lines, Answers, askDeno, word } from "../../wactest/src/oracle.wac";
-import { Core, Cli, Sys } from "std";
+import { Lines } from "../../wactest/src/oracle.wac";
+import { askScript } from "../../wactest/src/inline.wac";
+import { Core, Sys } from "std";
 import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr,
          opMulSmall, opDivSmall, opRemSmall, opCmp, opCmpAbs, opBitLen, opIsZero,
          roundTrip, acceptsDecimal, acceptsHex, toHex, fromHex, fromI64,
@@ -105,7 +106,36 @@ import {
   test_u64_a_u32_product_widens as u64__u64_a_u32_product_widens,
 } from "./wac/u64_test.wac";
 
-static string ORACLE = "packages/bignum/test/operands.ts";
+/**
+ * The operand service, run by `askScript` with no permissions. One line out for each line in:
+ *
+ *     pow2 <p> <delta>            (1 << p) + delta
+ *     ones <limbs> <delta>        (1 << 32·limbs) - 1 + delta
+ *     alt  <limbs>                alternating 0xffffffff / 0 limbs, top first
+ *     word <limbs> <top> <rest>   top, then limbs-1 copies of rest, as u32 limbs
+ *     rand <bits>                 `bits` random bits, top bit set
+ *     mul  <a> <b> <delta>        a·b + delta
+ *
+ * each answered `dec <v>`, or `FAIL` when the value would be negative: the caller asked for something
+ * it did not mean, and a clamp would hide that. It was a TypeScript file beside this one until
+ * 2026-10-27. `rand` is the generator the TypeScript driver used — xorshift32, taking the *high* bits
+ * of each draw — so the corpus is the one this package's coverage has always been measured against.
+ */
+static string OPERANDS =
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "let x = 0x1234abcd;\n" +
+  "const next = () => { x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x; };\n" +
+  "const W = 0xffffffffn;\n" +
+  "const O = {\n" +
+  "  pow2: (p, d) => (1n << p) + d,\n" +
+  "  ones: (l, d) => (1n << (32n * l)) - 1n + d,\n" +
+  "  alt: (l) => { let v = 0n; for (let i = 0n; i < l; i++) v = (v << 32n) | (i % 2n === 0n ? W : 0n); return v; },\n" +
+  "  word: (l, top, rest) => { let v = top & W; for (let i = 1n; i < l; i++) v = (v << 32n) | (rest & W); return v; },\n" +
+  "  rand: (b) => { let v = 1n; for (let have = 1n; have < b; ) { const t = b - have < 32n ? b - have : 32n;\n" +
+  "    v = (v << t) | BigInt(next() >>> (32 - Number(t))); have += t; } return v; },\n" +
+  "  mul: (a, b, d) => a * b + d };\n" +
+  "const say = ([op, ...a]) => { const v = O[op](...a.map(BigInt)); return v < 0n ? 'FAIL ' + op + ' is negative' : 'dec ' + v; };\n" +
+  "console.log(L.map((l) => say(l.split(' '))).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 
 
 /**
@@ -115,11 +145,11 @@ static string ORACLE = "packages/bignum/test/operands.ts";
  * handed `pow2` to the probe as a number — which traps inside `need`, aborting `main` and leaving the
  * report at 123 of 230 with nothing saying why. The empty answer is the caller's problem to skip.
  */
-string decOf(Answers a, i32 i) {
-  if (i >= a.lines.len()) { return ""; }
-  string line = a.lines[i];
+string decOf(string[] a, i32 i) {
+  if (i >= a.len()) { return ""; }
+  string line = a[i];
   if (line.len() < 4 || line.slice(0, 4) != "dec ") { return ""; }
-  return word(line, 1);
+  return line.slice(4, line.len());
 }
 
 /** Both operands, both orders of sign, which is where the sign rules live. */
@@ -138,9 +168,8 @@ i32 both(string x, string y) {
 /** `-x` as text, without arithmetic: the oracle's answers are never negative. */
 string neg(string x) { return x == "0" ? "0" : "-\{x}"; }
 
-export i32 main(Sys sys) {
+export async i32 main(Sys sys) {
   Core core = sys.core;
-  Cli cli = sys.cli;
   T t = T.create();
   i32 seen = 0;
 
@@ -224,8 +253,8 @@ export i32 main(Sys sys) {
   b1.add("ones 1 0");
   nAsked = nAsked + 5;
 
-  Answers a1 = askDeno(t, cli, ORACLE, b1, "the operand oracle");
-  if (!a1.ok) {
+  string[] a1 = await askScript(t, sys.procs(), OPERANDS, b1, "the operand oracle");
+  if (a1.len() == 0) {
     core.warn("bignum coverage: the operand oracle did not answer — is --allow-run granted?");
     return 0;
   }
@@ -244,8 +273,8 @@ export i32 main(Sys sys) {
       nMul = nMul + 3;
     }
   }
-  Answers a2 = askDeno(t, cli, ORACLE, b2, "the exact-multiple oracle");
-  if (!a2.ok) { return 0; }
+  string[] a2 = await askScript(t, sys.procs(), OPERANDS, b2, "the exact-multiple oracle");
+  if (a2.len() == 0) { return 0; }
 
   // ── Now drive the probe with all of it ──
   string[] boundary = string[].filled(nAsked, "");
@@ -391,7 +420,7 @@ export i32 main(Sys sys) {
   seen = seen + test_formatDecimal_pads_interior_chunks().len();
 
 
-  // **The package's own tests.** Twenty-five of the 46 take `(Core, Cli)` — they compare against a
+  // **The package's own tests.** Twenty-five of the 46 take a capability — they compare against a
   // host oracle — so before `issues/system/0221` a coverage driver could not call them.
   //
   // What this recovers: the four points around `bits == -2147483648` in `shl` and `shr`, which
@@ -401,31 +430,31 @@ export i32 main(Sys sys) {
   // Nine expect a trap and go through `trapCase` below rather than here: a trap in `main` ends the
   // run, and the report then looks exactly like the one before the change.
   i32 bad = 0;
-  if (arith__arith_exhaustive_over_small_values(core, cli).len() > 0) {
+  if ((await arith__arith_exhaustive_over_small_values(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_arith_exhaustive_over_small_values");
     bad = bad + 1;
   }
-  if (arith__arith_limb_boundaries(core, cli).len() > 0) {
+  if ((await arith__arith_limb_boundaries(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_arith_limb_boundaries");
     bad = bad + 1;
   }
-  if (arith__arith_all_ones_and_all_zeros_limb_runs(core, cli).len() > 0) {
+  if ((await arith__arith_all_ones_and_all_zeros_limb_runs(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_arith_all_ones_and_all_zeros_limb_runs");
     bad = bad + 1;
   }
-  if (arith__arith_random_operands_across_a_wide_size_range(core, cli).len() > 0) {
+  if ((await arith__arith_random_operands_across_a_wide_size_range(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_arith_random_operands_across_a_wide_size_range");
     bad = bad + 1;
   }
-  if (arith__arith_divisors_engineered_to_need_the_add_back(core, cli).len() > 0) {
+  if ((await arith__arith_divisors_engineered_to_need_the_add_back(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_arith_divisors_engineered_to_need_the_add_back");
     bad = bad + 1;
   }
-  if (arith__arith_the_quotient_estimate_survives_rhat_reaching_base(core, cli).len() > 0) {
+  if ((await arith__arith_the_quotient_estimate_survives_rhat_reaching_base(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_arith_the_quotient_estimate_survives_rhat_reaching_base");
     bad = bad + 1;
   }
-  if (arith__arith_division_identity_holds(core, cli).len() > 0) {
+  if ((await arith__arith_division_identity_holds(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_arith_division_identity_holds");
     bad = bad + 1;
   }
@@ -433,7 +462,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED arith_test test_arith_truncated_division_on_every_sign");
     bad = bad + 1;
   }
-  if (arith__shifts_match_bigint_including_negative_values(core, cli).len() > 0) {
+  if ((await arith__shifts_match_bigint_including_negative_values(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_shifts_match_bigint_including_negative_values");
     bad = bad + 1;
   }
@@ -441,23 +470,23 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED arith_test test_shifts_the_most_negative_count");
     bad = bad + 1;
   }
-  if (arith__shifts_a_negative_count_reverses_direction(core, cli).len() > 0) {
+  if ((await arith__shifts_a_negative_count_reverses_direction(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_shifts_a_negative_count_reverses_direction");
     bad = bad + 1;
   }
-  if (arith__shifts_shifting_everything_out(core, cli).len() > 0) {
+  if ((await arith__shifts_shifting_everything_out(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_shifts_shifting_everything_out");
     bad = bad + 1;
   }
-  if (arith__mul_small_and_div_small_match_the_general_operations(core, cli).len() > 0) {
+  if ((await arith__mul_small_and_div_small_match_the_general_operations(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_mul_small_and_div_small_match_the_general_operations");
     bad = bad + 1;
   }
-  if (arith__cmp_and_cmp_abs_match_bigint(core, cli).len() > 0) {
+  if ((await arith__cmp_and_cmp_abs_match_bigint(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_cmp_and_cmp_abs_match_bigint");
     bad = bad + 1;
   }
-  if (arith__negate_abs_and_copy_preserve_value(core, cli).len() > 0) {
+  if ((await arith__negate_abs_and_copy_preserve_value(sys)).len() > 0) {
     core.warn("error: FAILED arith_test test_negate_abs_and_copy_preserve_value");
     bad = bad + 1;
   }
@@ -481,15 +510,15 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED big_test test_truncated_division");
     bad = bad + 1;
   }
-  if (text__decimal_small_values_round_trip(core, cli).len() > 0) {
+  if ((await text__decimal_small_values_round_trip(sys)).len() > 0) {
     core.warn("error: FAILED text_test test_decimal_small_values_round_trip");
     bad = bad + 1;
   }
-  if (text__decimal_limb_boundaries_round_trip(core, cli).len() > 0) {
+  if ((await text__decimal_limb_boundaries_round_trip(sys)).len() > 0) {
     core.warn("error: FAILED text_test test_decimal_limb_boundaries_round_trip");
     bad = bad + 1;
   }
-  if (text__decimal_random_values_round_trip_across_sizes(core, cli).len() > 0) {
+  if ((await text__decimal_random_values_round_trip_across_sizes(sys)).len() > 0) {
     core.warn("error: FAILED text_test test_decimal_random_values_round_trip_across_sizes");
     bad = bad + 1;
   }
@@ -509,7 +538,7 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED text_test test_decimal_a_non_digit_in_a_later_chunk_is_rejected");
     bad = bad + 1;
   }
-  if (text__hex_matches_bigints_to_string(core, cli).len() > 0) {
+  if ((await text__hex_matches_bigints_to_string(sys)).len() > 0) {
     core.warn("error: FAILED text_test test_hex_matches_bigints_to_string");
     bad = bad + 1;
   }
@@ -517,35 +546,35 @@ export i32 main(Sys sys) {
     core.warn("error: FAILED text_test test_hex_prefix_case_and_malformed_input");
     bad = bad + 1;
   }
-  if (text__from_i64_and_from_u64_cover_the_extremes(core, cli).len() > 0) {
+  if ((await text__from_i64_and_from_u64_cover_the_extremes(sys)).len() > 0) {
     core.warn("error: FAILED text_test test_from_i64_and_from_u64_cover_the_extremes");
     bad = bad + 1;
   }
-  if (text__bit_len_matches_bigint(core, cli).len() > 0) {
+  if ((await text__bit_len_matches_bigint(sys)).len() > 0) {
     core.warn("error: FAILED text_test test_bit_len_matches_bigint");
     bad = bad + 1;
   }
-  if (u64__u64_division_and_remainder_are_unsigned(core, cli).len() > 0) {
+  if ((await u64__u64_division_and_remainder_are_unsigned(sys)).len() > 0) {
     core.warn("error: FAILED u64_test test_u64_division_and_remainder_are_unsigned");
     bad = bad + 1;
   }
-  if (u64__u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four(core, cli).len() > 0) {
+  if ((await u64__u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four(sys)).len() > 0) {
     core.warn("error: FAILED u64_test test_u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four");
     bad = bad + 1;
   }
-  if (u64__u64_shift_right_does_not_sign_extend(core, cli).len() > 0) {
+  if ((await u64__u64_shift_right_does_not_sign_extend(sys)).len() > 0) {
     core.warn("error: FAILED u64_test test_u64_shift_right_does_not_sign_extend");
     bad = bad + 1;
   }
-  if (u64__u64_comparison_is_unsigned(core, cli).len() > 0) {
+  if ((await u64__u64_comparison_is_unsigned(sys)).len() > 0) {
     core.warn("error: FAILED u64_test test_u64_comparison_is_unsigned");
     bad = bad + 1;
   }
-  if (u64__u64_truncation_keeps_the_low_thirty_two_bits(core, cli).len() > 0) {
+  if ((await u64__u64_truncation_keeps_the_low_thirty_two_bits(sys)).len() > 0) {
     core.warn("error: FAILED u64_test test_u64_truncation_keeps_the_low_thirty_two_bits");
     bad = bad + 1;
   }
-  if (u64__u64_a_u32_product_widens(core, cli).len() > 0) {
+  if ((await u64__u64_a_u32_product_widens(sys)).len() > 0) {
     core.warn("error: FAILED u64_test test_u64_a_u32_product_widens");
     bad = bad + 1;
   }

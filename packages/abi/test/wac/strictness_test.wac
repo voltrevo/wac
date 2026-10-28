@@ -38,7 +38,11 @@
 //
 // The host-side version's header said it ran each malformation through `cast` **and `ethers`**. It
 // ran `cast`. The `ethers` column was written down and never checked, so four of the eight cells in
-// the table were assertions about a tool nothing asked. `test/toolsOracle.ts` asks both.
+// the table were assertions about a tool nothing asked. Both are asked now: `cast` is run from here,
+// row by row, and `ethers` is `ETHERS` below — an inline script that only answers, with the
+// comparing done in this file (`packages/wactest/src/inline.wac`). It imports `npm:ethers@6.17.0/abi`
+// rather than the package root, because the root pulls in a websocket library that reads the
+// environment on load, and the script is run with no permissions at all.
 //
 // Asking turned up how to ask. `AbiCoder.decode` in ethers 6 returns a `Result` whose errors are
 // *deferred*: a dirty address comes back without throwing and throws when the value is read. The
@@ -48,12 +52,26 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, Exec } from "std";
+import { Asked, agree } from "../../../wactest/src/inline.wac";
+import { Core, Cli, Exec, Sys } from "std";
 import { decodeRender } from "./probe.wac";
 import { unhex, T_UINT, T_BOOL, T_ADDRESS } from "./descriptor.wac";
 
-static string ORACLE = "packages/abi/test/toolsOracle.ts";
+/**
+ * What `ethers` says, one line for each question: `ethers <type> <data>` is `accepts` or `refuses`.
+ *
+ * **The result has to be touched.** `AbiCoder.decode` in ethers 6 returns a `Result` whose errors are
+ * *deferred*: a dirty address comes back without throwing and throws on access. A verdict taken from
+ * `decode` alone calls that acceptance.
+ */
+static string ETHERS =
+  "const { AbiCoder } = await import('npm:ethers@6.17.0/abi');\n" +
+  "const L = (await new Response(Deno.stdin.readable).text()).split(String.fromCharCode(10)).filter((l) => l.length > 0);\n" +
+  "const say = (type, data) => {\n" +
+  "  try { for (const v of AbiCoder.defaultAbiCoder().decode([type], data)) String(v); return 'accepts'; }\n" +
+  "  catch { return 'refuses'; }\n" +
+  "};\n" +
+  "console.log(L.map((l) => { const [k, t, d] = l.split(' '); return k === 'ethers' ? say(t, d) : 'no such question: ' + k; }).concat(['DONE ' + L.length]).join(String.fromCharCode(10)));\n";
 
 /** One row: the malformation, the type, the bytes, and what each real tool does with them. */
 struct Row {
@@ -137,32 +155,31 @@ string findCast(Core core, Cli cli) {
   return "missing";
 }
 
-export string test_the_table_of_what_the_real_tools_do_is_still_true(Core core, Cli cli) {
+/** What `cast abi-decode` does with a row's bytes: `accepts` when it exits zero. */
+string castVerdict(T t, Cli cli, string cast, Row r) {
+  Exec e = cli.exec(cast, ["abi-decode", "f()(\{r.type})", r.data], u8[]()).wait();
+  t.isTrue(e.ran(), "cast did not run for \"\{r.what}\" — \{e.error}");
+  return e.ran() && e.status == 0 ? "accepts" : "refuses";
+}
+
+export async string test_the_table_of_what_the_real_tools_do_is_still_true(Sys sys) {
   T t = T.create();
-  string cast = findCast(core, cli);
+  string cast = findCast(sys.core, sys.cli);
   t.isTrue(cast != "nolookup",
            "cast could not be looked for: this lane has no --allow-env, so half this table would " +
            "be unmeasured rather than agreed");
 
-  Lines lines = Lines.create();
-  if (cast != "nolookup" && cast != "missing") {
-    lines.add("castpath \{hex(cast.toBytes())}");
-  }
+  Asked asked = Asked.create();
   Row[] rs = rows();
   for (i32 i = 0; i < rs.len(); i++) {
-    // The ethers column always, the cast column only where the tool was found — and the oracle says
-    // "unmeasured" for a cast row it cannot answer rather than passing it.
-    lines.add("ethers \{hex(rs[i].type.toBytes())} \{hex(rs[i].data.toBytes())} " +
-              rs[i].ethers);
-    if (cast != "nolookup" && cast != "missing") {
-      lines.add("cast \{hex(rs[i].type.toBytes())} \{hex(rs[i].data.toBytes())} " +
-                rs[i].cast);
-    }
+    // The ethers column always, the cast column only where the tool was found — a missing `cast`
+    // was already reported above as unmeasured rather than passed.
+    asked.add("ethers \{rs[i].type} \{rs[i].data}", rs[i].ethers);
+    if (cast == "nolookup" || cast == "missing") { continue; }
+    string got = castVerdict(t, sys.cli, cast, rs[i]);
+    t.eqStr(got, rs[i].cast,
+            "cast on \"\{rs[i].what}\" (\{rs[i].type} \{rs[i].data}) — re-measure the table");
   }
-  // `--allow-run` for `cast`, `--allow-read` and `--allow-env` for the npm cache `ethers` resolves
-  // from. Written here rather than in `checkDeno` because this is the test that needs them.
-  check(t, cli, "deno",
-        ["run", "--no-check", "--allow-run", "--allow-read", "--allow-env", ORACLE],
-        lines, "the table of what the real tools do");
+  await agree(t, sys.procs(), ETHERS, asked, "the table's ethers column — re-measure it if this fails");
   return t.report();
 }
