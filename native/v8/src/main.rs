@@ -3130,8 +3130,8 @@ fn dispatch(
                 }
                 // **An absent parent is an answer, not a fault.** `PARENT_FS` is a channel number
                 // rather than a socket, and `Fs.fromParentOrHost` asks on it precisely to find out
-                // whether there is a parent to ask — `packages/fs/src/fs.wac` reads a null back as
-                // "use the host's filesystem". This host has no `serveFs` yet, so the honest answer
+                // whether there is a parent to ask — the wac client that asked, removed in step 5 of
+                // design/system/0013 (385d952b9), read a null back as "use the host's filesystem". This host has no `serveFs` yet, so the honest answer
                 // is always "ended", and throwing instead made every `box` applet trap: `wac sh.wasm
                 // true` died before running anything. The JS host has said this all along, by
                 // checking `n_HANDLE` before its socket table. issues/system/0148.

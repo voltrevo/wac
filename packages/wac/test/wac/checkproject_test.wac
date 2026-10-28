@@ -151,3 +151,82 @@ export string test_a_project_check_reads_a_shared_file_once(Sys sys) {
   }
   return t.report();
 }
+
+/**
+ * **Every root resolves its imports, not only the first.** A project check gathers each discovered
+ * file's closure through one cache, and resolved the whole graph against the *first* root's mapping
+ * table — so a nested project, entered by its directory, was found for the first file that imported it
+ * and for no other. Its namespaced items were then left as written and did not parse. In this
+ * repository that was 950 errors over fifteen pages that each check clean on their own
+ * (`import { html.button } from "../../web"`).
+ *
+ * Two roots, each importing a namespace member from one nested project: both must check clean.
+ */
+export string test_every_root_resolves_a_nested_projects_namespace(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  T t = T.create();
+  string dir = scratch(env, "checkproject-nested");
+  fs.remove(dir, true).wait();
+  fs.mkdir(dir, true).wait();
+  put(fs, "\{dir}/wac.json5", "{}\n");
+  put(fs, "\{dir}/lib/wac.json5", "{ exports: './src/lib.wac' }\n");
+  put(fs, "\{dir}/lib/src/lib.wac", "export * as shapes from \"./shapes.wac\";\n");
+  put(fs, "\{dir}/lib/src/shapes.wac", "export i32 sides() { return 4; }\n");
+  put(fs, "\{dir}/a.wac", "import { shapes.sides } from \"./lib\";\nexport i32 a() { return sides(); }\n");
+  put(fs, "\{dir}/b.wac", "import { shapes.sides } from \"./lib\";\nexport i32 b() { return sides(); }\n");
+  Exec r = checkIn(env, procs, dir, "");
+  t.eqI32(r.status, 0, "both roots check clean — \{said(r)}");
+  t.isTrue(contains(said(r), "no diagnostics"), "and it says so — \{said(r)}");
+  fs.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_directory_argument_checks_what_is_beneath_it_r4kq7zm(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  T t = T.create();
+  string dir = fresh(env, fs, "checkproject-dir");
+  put(fs, "\{dir}/wac.json5", "{ check: { exclude: [\"./lib/fixtures/**\"] } }\n");
+  put(fs, "\{dir}/elsewhere.wac", "i32 broken() { return nonexistent(); }\n");
+  put(fs, "\{dir}/lib/a.wac", "export i32 a() { return 1; }\n");
+  put(fs, "\{dir}/lib/more/b.wac", "export i32 b() { return 2; }\n");
+  put(fs, "\{dir}/lib/fixtures/bad.wac", "i32 broken() { return nonexistent(); }\n");
+  Exec named = checkIn(env, procs, dir, "lib");
+  t.eqI32(named.status, 0, "a directory, less the project's exclusions — \{said(named)}");
+  t.isTrue(contains(said(named), "lib: 2 file(s), no diagnostics"), "both files beneath it — \{said(named)}");
+  // `.` is the spelling the spec gives for "this directory", and was read as a file named `.`.
+  Exec here = checkIn(env, procs, "\{dir}/lib", ".");
+  t.eqI32(here.status, 0, "`.` from inside it — \{said(here)}");
+  t.isTrue(contains(said(here), ".: 2 file(s), no diagnostics"), "the same two files — \{said(here)}");
+  fs.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A file reached by climbing out of the working directory and back in is one module, not two.
+ *
+ * From `pkgs/a`, `../b/b.wac` importing `../a/src/one.wac` joined to `../a/src/one.wac`, where the
+ * entry's own import said `src/one.wac`: one file, two keys, two copies of `P`, and `wac check .` in
+ * `packages/json` reported a method missing from an enum it had declared.
+ */
+export string test_a_file_reached_from_above_the_working_directory_is_one_module(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  T t = T.create();
+  string dir = fresh(env, fs, "checkproject-climb");
+  put(fs, "\{dir}/wac.json5", "{}\n");
+  put(fs, "\{dir}/pkgs/a/src/one.wac", "export struct P { i32 x; }\n");
+  put(fs, "\{dir}/pkgs/b/b.wac", "import { P } from \"../a/src/one.wac\";\nexport P make() { return P(1); }\n");
+  put(fs, "\{dir}/pkgs/a/main.wac",
+      "import { P } from \"./src/one.wac\";\nimport { make } from \"../b/b.wac\";\n" +
+      "export i32 x() { P p = make(); return p.x; }\n");
+  Exec r = checkIn(env, procs, "\{dir}/pkgs/a", "main.wac");
+  t.eqI32(r.status, 0, "one P — \{said(r)}");
+  t.isTrue(contains(said(r), "main.wac: 3 file(s), no diagnostics"), "three files, each once — \{said(r)}");
+  fs.remove(dir, true).wait();
+  return t.report();
+}

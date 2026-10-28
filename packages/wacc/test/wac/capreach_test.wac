@@ -63,10 +63,10 @@ export string test_a_file_handed_nothing_is_sealed_and_one_handed_a_cli_is_not()
 
 export string test_a_capability_inside_a_struct_reaches_the_file_that_takes_the_struct() {
   // **The case a signature scan misses, and it is not hypothetical.**
-  // `packages/platform/src/stream.wac` has `Cli cli;` in `Sink`, and `packages/fs/src/fs.wac` has an
-  // enum variant `Host(Cli cli)`. A file handed one of those holds the entire capability set without
-  // ever writing the word `Cli` — and the audit of `packages/wac/src/wac.wac` finds four such files,
-  // reaching via `Fs`, `Sink` and `Reader`.
+  // Until step 5 of design/system/0013 (385d952b9), `packages/platform/src/stream.wac` had `Cli cli;`
+  // in `Sink`, and packages/fs's `Fs` had an enum variant `Host(Cli cli)`. A file handed one of those
+  // held the entire capability set without ever writing the word `Cli` — and the audit of
+  // `packages/wac/src/wac.wac` found four such files, reaching via `Fs`, `Sink` and `Reader`.
   T t = T.create();
   string table = capReachFiles(
     paths2("holder.wac", "user.wac"),

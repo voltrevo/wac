@@ -3979,9 +3979,9 @@ string bytesBetween(u8[] src, i32 from, i32 to) {
  *
  * A **bearing type** is `Sys`, a type `std` declares whose methods reach the host — `Cli`, `Core`,
  * `Listener`, `Socket`, `Child` — or any type with a field, a variant payload or a method return
- * whose type is bearing, to a fixpoint (spec ch49 `§wac-cli-audit-bearing-9km4txr`). That second clause is not theoretical: `packages/fs/src/remote.wac` and
- * `packages/platform/src/stream.wac` both hold a `Cli cli;` field, so a file handed one of those has
- * the whole capability set without ever naming `Cli`.
+ * whose type is bearing, to a fixpoint (spec ch49 `§wac-cli-audit-bearing-9km4txr`). That second clause was not theoretical: until step 5 of design/system/0013
+ * (385d952b9), the remote filesystem and platform's `stream.wac` both held a `Cli cli;` field, so a
+ * file handed one of those had the whole capability set without ever naming `Cli`.
  *
  * A **file reaches** if any declaration in it mentions a bearing type in a field, a parameter or a
  * return. A file that mentions none is *sealed*: nothing in it can perform an effect, whatever its

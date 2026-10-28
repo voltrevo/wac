@@ -1,6 +1,9 @@
 # 0015 — a page runs a module it is given, and spawns on `file://`
 
 - **Status:** agreed 2026-10-28 — each question was put to the operator in turn; the answers are under *Decisions*
+- **Superseded in part:** decisions 1 and 2 by `0013` step 6 (operator, 2026-10-28). A module that sees
+  the flat host ABI, with `Sys` as the standard way to use it, needs no exported page capabilities and
+  no `load`-specific wiring. Decisions 3 and 4 stand; 4 is on master.
 - **Raised by:** agent-c, from the desktop experiment's requests (items 4 and 5 of its note to wac): a
   terminal on a page that can run what is on its disk, and keep processes when opened from a file
 - **Spans:** `packages/web/tools/build.wac` (the browser half), `packages/web/src/system.wac`,

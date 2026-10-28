@@ -112,7 +112,15 @@ export string resolveFromAt(string fromPath, string spec, string root, string ba
     return joined;
   }
   if (isBareSpecifier(spec)) { return ""; }
-  return resolveFromIn(fromPath, spec, root);
+  string plain = resolveFromIn(fromPath, spec, root);
+  // **A join that climbs above the base is brought back the same way**, for the same reason as a
+  // `@/` above: from `packages/json`, `../wactest/src/oracle.wac` importing `../../json/src/json.wac`
+  // joins to `../json/src/json.wac`, a file the entry's own imports call `src/json.wac`. Two keys,
+  // two modules, and `wac check .` there reported a method missing from an enum it had declared.
+  if (base != "" && base.slice(0, 1) == "/" && plain.len() > 2 && plain.slice(0, 3) == "../") {
+    return relativeTo(base, normalisePath(base + "/" + plain));
+  }
+  return plain;
 }
 
 /**

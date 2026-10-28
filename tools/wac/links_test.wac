@@ -608,6 +608,17 @@ string[][] gone() {
     ["tools/wac/links_test.wac", "tools/x.ts"],
     ["packages/bls/tools/genfips-experiment.py", "packages/bls/test/wac/fips.wac"],
     ["CLAUDE.md", "atoms/wac/"],
+    // **Step 5 of design/system/0013 (385d952b9) deleted packages/fs's `Fs` and platform's frames.**
+    // Each of these is a record of something done or measured against them on a particular day:
+    // a design's measurement table and its step log, a span, a mutation, a false-alarm count, a
+    // stale-host failure. Rewriting them to name a file that did not exist then is the wrong direction.
+    ["design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md", "packages/platform/src/frame.wac"],
+    ["design/lang/0014-async-and-await-over-the-tickets-that-already-exist.md", "packages/platform/test/wac/asynclower_test.wac"],
+    ["design/system/0001-a-self-contained-system.md", "packages/fs/src/remote.wac"],
+    ["design/system/0014-frames-stream-with-backpressure.md", "packages/platform/src/frame.wac"],
+    ["packages/box/test/sealing.test.ts", "packages/fs/src/remote.wac"],
+    ["packages/wacc/src/check.wac", "packages/platform/src/frame.wac"],
+    ["tools/wac/seedfresh_test.wac", "packages/platform/test/wac/frame_test.wac"],
     // **One deletion, 2026-08-21: the suite orchestrator moved from TypeScript to wac.**
     // tools/runTests.ts, tools/killedLane.ts and its test became `tools/runTests.wac`,
     // `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac`. Every sentence below is either an

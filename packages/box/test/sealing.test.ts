@@ -27,7 +27,7 @@
 //
 // wac-mono 0116. A spawned stage no longer *has* a filesystem — it has a **channel to its parent's**,
 // and every operation is a question this session answers out of the one filesystem there is
-// (`packages/fs/src/remote.wac`). So the two lines above now answer `inimage` and "No such file or
+// (the remote filesystem, removed in step 5 of design/system/0013). So the two lines above now answer `inimage` and "No such file or
 // directory", and they answer that way for a reason stronger than a rule about who may spawn: there
 // is nothing else for a stage to read.
 //

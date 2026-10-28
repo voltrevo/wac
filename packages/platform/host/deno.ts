@@ -153,7 +153,8 @@ export type DenoWorldOptions = {
    *
    * Two queues rather than a capability: `req` is what this program asks and `rep` is what its
    * parent answered, reachable as `recv`/`send` on `PARENT_FS_HANDLE` so that the whole of the
-   * protocol lives in wac — see `packages/fs/src/remote.wac`. A world without it is a program
+   * protocol lives in wac. (Its wac half, the remote filesystem, went in step 5 of design/system/0013,
+   * 385d952b9.) A world without it is a program
    * nobody spawned, or one whose parent declined to serve it.
    */
   parentFs?: { req: ByteQueue; rep: ByteQueue };

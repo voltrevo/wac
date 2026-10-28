@@ -1,0 +1,48 @@
+// `$WAC_HOME` is a path like any other: spelled with a `..`, it names the same cache.
+//
+// A dependency fetched by git lives under `$WAC_HOME/cache/git/<repo>/<commit>/`, and a file in it is
+// confined to its mapped subdirectory: an import that resolves outside it is refused. The confinement
+// compares the importer's resolved path with the subdirectory's, and the subdirectory was built from
+// `$WAC_HOME` as it was spelled. So `WAC_HOME=/a/app/../home` put a `..` in one side of the comparison
+// and not the other, and every relative import inside every dependency "left the mapped subdirectory".
+// `wac check` and `wac build` both refused a project that built with `WAC_HOME=/a/home`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, madeDir, putFile, scratch } from "../../../wactest/src/host.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { escapeRepo } from "../../../wacpkg/src/cache.wac";
+import { Exec, Env, Files, Procs, Sys } from "std";
+
+static string REPO = "https://example.invalid/dep.git";
+static string COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
+export string test_a_wac_home_spelled_with_dot_dot_names_the_same_cache(Sys sys) {
+  Env env = sys.env();
+  Files fs = sys.files();
+  Procs procs = sys.procs();
+  T t = T.create();
+  string root = scratch(env, "wachome");
+  fs.remove(root, true).wait();
+  string app = "\{root}/app";
+  string checkout = "\{root}/home/cache/git/\{escapeRepo(REPO)}/\{COMMIT}";
+  t.eqStr(madeDir(fs, app), "", "the project");
+  t.eqStr(putFile(fs, "\{app}/wac.json5", "{ imports: { dep: { git: \"\{REPO}\", ref: \"main\", subdir: \"./src\" } } }\n"), "", "manifest");
+  t.eqStr(putFile(fs, "\{app}/wac.lock", "{ imports: { dep: { git: \"\{REPO}\", ref: \"main\", subdir: \"./src\", commit: \"\{COMMIT}\" } } }\n"), "", "lock");
+  t.eqStr(putFile(fs, "\{app}/main.wac", "import { two } from \"dep\";\nexport i32 main() { return two() - 2; }\n"), "", "main");
+  // The dependency: its entry imports a sibling, which is the relative import the confinement judges.
+  t.eqStr(putFile(fs, "\{checkout}/src/wac.json5", "{ exports: './lib.wac' }\n"), "", "dep manifest");
+  t.eqStr(putFile(fs, "\{checkout}/src/lib.wac", "import { one } from \"./one.wac\";\nexport i32 two() { return one() + one(); }\n"), "", "dep lib");
+  t.eqStr(putFile(fs, "\{checkout}/src/one.wac", "export i32 one() { return 1; }\n"), "", "dep sibling");
+  t.eqStr(putFile(fs, "\{checkout}/pack.pack", "not a real pack\n"), "", "the cache's done marker");
+
+  for (string home in ["\{root}/home", "\{app}/../home"]) {
+    Exec r = withEnv(procs, ["WAC_HOME"], [home], "/bin/sh",
+                     ["-c", "cd \{app} && exec \{binaryPath(env)} check main.wac"]);
+    string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+    t.isTrue(!contains(said, "leaves the mapped subdirectory"), "WAC_HOME=\{home}: \{said}");
+    t.eqI32(r.status, 0, "WAC_HOME=\{home} checks clean: \{said}");
+  }
+  fs.remove(root, true).wait();
+  return t.report();
+}

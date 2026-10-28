@@ -4,4 +4,12 @@
   // files a program reaches through it (spec ch05 `§wac-reach-namespace-lazy-pxz4t63`), so depending on
   // all of it costs what depending on one package would.
   exports: './lib.wac',
+  // **What `wac check` with no files means here: the packages and tools.** The rest is not a library a
+  // project checks — `spec/` and `bootstrap/` hold examples that are invalid on purpose and drivers that
+  // need generated files, and the other trees are prose and sites. A directory is still checked when
+  // named (`wac check spec`), and anything an included file imports is checked whatever this says.
+  check: {
+    exclude: ['./bootstrap/**', './spec/**', './issues/**', './vision/**', './site/**', './templates/**',
+              './design/**', './docs/**', './native/**'],
+  },
 }
