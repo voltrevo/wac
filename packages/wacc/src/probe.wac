@@ -1,0 +1,214 @@
+// Finding the expression a token belongs to, for an editor's questions about a position.
+//
+// **What a position asks about is a token**, and every expression that names something is keyed by one:
+// an identifier by its own token, `a.b` by `b`'s. So "what is at this offset" becomes "which expression
+// is keyed by this token" — no spans needed, which the tree does not keep.
+//
+// **A statement answers for its own expressions only.** The checker visits nested statements itself,
+// inside the outer one, with their own names in scope; the probe hooked into each visit (`check.wac`'s
+// `probeStmt`) asks this of every statement it sees, and the innermost statement that holds the token is
+// the one with the right scope. So nothing here descends into a nested statement list — a block, a loop
+// body, a lambda's body — and those are found by their own visit.
+
+import { Arm, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, NamedArg, Param, Stmt, StmtKind, Ty, TyKind,
+         lvalueExpr } from "./ast.wac";
+
+/** What a token is, in a statement: the expression it keys, and — for `a.b` — the receiver `a`. */
+export struct Hit {
+  /**
+   * "expr" for an expression keyed by the token, "decl" for a name declared by it, "type" for a type it names
+   * where a type is written, "callee" for the name a call or construction is written with, "" for none.
+   */
+  string what;
+  Expr expr;
+  /** The receiver of a member access keyed by the token. */
+  Expr? owner;
+}
+
+Hit none(Expr anyExpr) { return Hit("", anyExpr, null); }
+
+/** A type named by `tok` anywhere in `t` — `Box<Point>[]?` names two. */
+export bool inTy(Ty t, i32 tok) {
+  match (t.kind) {
+    Named(nameTok, typeArgs): {
+      if (nameTok == tok) { return true; }
+      for (i32 i = 0; i < typeArgs.len(); i++) { if (inTy(typeArgs[i], tok)) { return true; } }
+    }
+    Arr(elem): { return inTy(elem, tok); }
+    Nullable(inner): { return inTy(inner, tok); }
+    Funcref(ret, params): {
+      if (inTy(ret, tok)) { return true; }
+      for (i32 i = 0; i < params.len(); i++) { if (inTy(params[i], tok)) { return true; } }
+    }
+    TupleOf(members): {
+      for (i32 i = 0; i < members.len(); i++) { if (inTy(members[i], tok)) { return true; } }
+    }
+    default: { }
+  }
+  return false;
+}
+
+/** What `tok` is in a parameter list: a parameter it declares, or a type one of them names. */
+export Hit inParams(Param[] params, i32 tok, Expr anyExpr) {
+  for (i32 i = 0; i < params.len(); i++) {
+    if (params[i].nameTok == tok) { return Hit("decl", anyExpr, null); }
+    if (inTy(params[i].type, tok)) { return Hit("type", anyExpr, null); }
+  }
+  return none(anyExpr);
+}
+
+/** The expression keyed by `tok` in `e` or anything under it, short of a nested statement list. */
+export Hit inExpr(Expr e, i32 tok) {
+  match (e.kind) {
+    // A type written where a value goes — `Vec<i32>.create()`'s receiver — names its type.
+    TypeName(qual): { if (inTy(qual, tok)) { return Hit("type", e, null); } }
+    Ident(t): { if (t == tok) { return Hit("expr", e, null); } }
+    Member(obj, nameTok): {
+      if (nameTok == tok) { return Hit("expr", e, obj); }
+      return inExpr(obj, tok);
+    }
+    SafeMember(obj, nameTok): {
+      if (nameTok == tok) { return Hit("expr", e, obj); }
+      return inExpr(obj, tok);
+    }
+    MatchExpr(subject, arms): {
+      Hit h = inExpr(subject, tok);
+      if (h.what != "") { return h; }
+      for (i32 i = 0; i < arms.len(); i++) {
+        Expr? v = arms[i].value;
+        if (v is not null) { Hit a = inExpr(v!, tok); if (a.what != "") { return a; } }
+      }
+    }
+    Jsx(tagTok, closeTok, attrs, kids): {
+      for (i32 i = 0; i < attrs.len(); i++) { Hit a = inExpr(attrs[i].value, tok); if (a.what != "") { return a; } }
+      return inList(kids, tok, e);
+    }
+    Unary(op, operand): { return inExpr(operand, tok); }
+    Await(operand): { if (operand is not null) { return inExpr(operand!, tok); } }
+    Try(operand): { return inExpr(operand, tok); }
+    CoroutineOf(call): { return inExpr(call, tok); }
+    Binary(op, left, right): {
+      Hit h = inExpr(left, tok);
+      return h.what != "" ? h : inExpr(right, tok);
+    }
+    Cast(op, operand, target): {
+      if (inTy(target, tok)) { return Hit("type", e, null); }
+      return inExpr(operand, tok);
+    }
+    Is(left, target, other, negated): {
+      Hit h = inExpr(left, tok);
+      if (h.what != "") { return h; }
+      if (target is not null && inTy(target!, tok)) { return Hit("type", e, null); }
+      if (other is not null) { return inExpr(other!, tok); }
+    }
+    Matches(pattern, subject): { return inExpr(subject, tok); }
+    Ternary(cond, then, els): {
+      Hit h = inExpr(cond, tok);
+      if (h.what != "") { return h; }
+      h = inExpr(then, tok);
+      return h.what != "" ? h : inExpr(els, tok);
+    }
+    Call(callee, args, typeArgs): {
+      Hit h = inExpr(callee, tok);
+      return h.what != "" ? h : inList(args, tok, e);
+    }
+    Index(arr, index): {
+      Hit h = inExpr(arr, tok);
+      return h.what != "" ? h : inExpr(index, tok);
+    }
+    SafeCall(call): { return inExpr(call, tok); }
+    Unwrap(operand): { return inExpr(operand, tok); }
+    Construct(ctype, args, named): {
+      // `f(x)` and `Point(x)` are one shape until the checker asks what the name is, so the name is a callee here.
+      match (ctype.kind) {
+        Named(nameTok, typeArgs): { if (nameTok == tok) { return Hit("callee", e, null); } }
+        default: { }
+      }
+      if (inTy(ctype, tok)) { return Hit("type", e, null); }
+      Hit h = inList(args, tok, e);
+      if (h.what != "") { return h; }
+      for (i32 i = 0; i < named.len(); i++) { Hit a = inExpr(named[i].value, tok); if (a.what != "") { return a; } }
+    }
+    StaticTrapE(message): { return inExpr(message, tok); }
+    Incr(target, op, prefix): { return inExpr(lvalueExpr(target), tok); }
+    ArrNew(elem, size, fill, elements): {
+      if (inTy(elem, tok)) { return Hit("type", e, null); }
+      if (size is not null) { Hit a = inExpr(size!, tok); if (a.what != "") { return a; } }
+      if (fill is not null) { Hit b = inExpr(fill!, tok); if (b.what != "") { return b; } }
+      return inList(elements, tok, e);
+    }
+    ArrLit(elements): { return inList(elements, tok, e); }
+    TupleLit(elements): { return inList(elements, tok, e); }
+    StaticMatch(subject, types, values, defaultAt): { return inList(values, tok, e); }
+    default: { }
+  }
+  return none(e);
+}
+
+Hit inList(Expr[] xs, i32 tok, Expr anyExpr) {
+  for (i32 i = 0; i < xs.len(); i++) {
+    Hit h = inExpr(xs[i], tok);
+    if (h.what != "") { return h; }
+  }
+  return none(anyExpr);
+}
+
+Hit inOpt(Expr? e, i32 tok, Expr anyExpr) { return e is null ? none(anyExpr) : inExpr(e!, tok); }
+
+/**
+ * What `tok` is in statement `s`'s own expressions: an expression keyed by it, or a local the statement
+ * declares with it. A nested statement list is not searched — see the header.
+ */
+export Hit inStmt(Stmt s, i32 tok, Expr anyExpr) {
+  match (s.kind) {
+    Var(type, nameTok, init, isConst): {
+      if (nameTok == tok) { return Hit("decl", anyExpr, null); }
+      if (inTy(type, tok)) { return Hit("type", anyExpr, null); }
+      return inOpt(init, tok, anyExpr);
+    }
+    StaticLocal(type, nameTok, init): {
+      if (nameTok == tok) { return Hit("decl", anyExpr, null); }
+      if (inTy(type, tok)) { return Hit("type", anyExpr, null); }
+      return inExpr(init, tok);
+    }
+    ForIn(type, nameTok, iterable, body): {
+      if (nameTok == tok) { return Hit("decl", anyExpr, null); }
+      if (type is not null && inTy(type!, tok)) { return Hit("type", anyExpr, null); }
+      return inExpr(iterable, tok);
+    }
+    Assign(target, op, rhs): {
+      Hit h = inExpr(lvalueExpr(target), tok);
+      return h.what != "" ? h : inExpr(rhs, tok);
+    }
+    IncrStmt(target, op): { return inExpr(lvalueExpr(target), tok); }
+    If(cond, then, els): { return inExpr(cond, tok); }
+    While(cond, body): { return inExpr(cond, tok); }
+    For(init, cond, update, body): { return inOpt(cond, tok, anyExpr); }
+    Destructure(type, pattern, init): { return inExpr(init, tok); }
+    TupleAssign(targets, rhs): {
+      for (i32 i = 0; i < targets.len(); i++) { Hit t = inExpr(lvalueExpr(targets[i]), tok); if (t.what != "") { return t; } }
+      return inExpr(rhs, tok);
+    }
+    DoWhile(body, cond): { return inExpr(cond, tok); }
+    Switch(subject, cases): {
+      Hit h = inExpr(subject, tok);
+      if (h.what != "") { return h; }
+      for (i32 i = 0; i < cases.len(); i++) { Hit c = inOpt(cases[i].value, tok, anyExpr); if (c.what != "") { return c; } }
+    }
+    Return(value): { return inOpt(value, tok, anyExpr); }
+    Trap(value): { return inOpt(value, tok, anyExpr); }
+    Match(subject, arms): {
+      Hit h = inExpr(subject, tok);
+      if (h.what != "") { return h; }
+      for (i32 i = 0; i < arms.len(); i++) { Hit a = inOpt(arms[i].value, tok, anyExpr); if (a.what != "") { return a; } }
+    }
+    ExprStmt(expr): { return inExpr(expr, tok); }
+    Schedule(target): { return inExpr(target, tok); }
+    Yield(value): { return inOpt(value, tok, anyExpr); }
+    StaticIf(cond, then, els): { return inExpr(cond, tok); }
+    StaticTrap(message): { return inExpr(message, tok); }
+    StaticFor(init, cond, update, body): { return inOpt(cond, tok, anyExpr); }
+    default: { }
+  }
+  return none(anyExpr);
+}

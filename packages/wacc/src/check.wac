@@ -45,6 +45,7 @@ import { endsWith, startsWith } from "./path.wac";
 import { flattenUnion, isUnionName, spellUnion, unionMembers } from "./unions.wac";
 import { genericArgs, genericBase, isTupleName, tupleMembers, tupleName } from "./tuples.wac";
 import { methodUsesOwnerLetters } from "./ownerletters.wac";
+import { Hit, inParams, inStmt } from "./probe.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
@@ -839,6 +840,7 @@ string safeMemberTypeOf(C c, Expr obj, i32 nameTok) {
   if (!c.isStruct(tmpl)) { return typeNone(); }
   string ft = c.fieldType(tmpl, tokenText(c, nameTok));
   if (ft == "" || ft == typeNone()) { return typeNone(); }
+  if (c.probeTok >= 0) { probeAt(c, nameTok, c.fieldSiteOf(tmpl, tokenText(c, nameTok))); }
   ft = substituteType(c, base, ft);
   return isNullableName(ft) ? ft : suffixed(ft, "?");
 }
@@ -1535,11 +1537,11 @@ void declareParam(C c, Param p) {
   string name = tokenText(c, p.nameTok);
   string ty = soleAlternative(typeOfTy(c, p.type));
   if (isConstTy(ty)) {
-    c.declareConst(name, constBase(ty), true);
+    c.declareConst(name, constBase(ty), true, p.nameTok, "parameter");
     if (!p.isConst) { c.markAliasOnly(name); }
     return;
   }
-  c.declareConst(name, ty, p.isConst);
+  c.declareConst(name, ty, p.isConst, p.nameTok, "parameter");
 }
 
 /**
@@ -2168,8 +2170,8 @@ void declarePatternNames(C c, Pattern pat, string subjectT) {
     if (pat.nameTok >= 0 && tokenText(c, pat.nameTok) != "_") {
       string bt = typeOfTy(c, pat.type!);
       // `const Rect r` binds a `const` reference to a `Rect` (spec ch18).
-      if (startsWith(bt, "const ")) { c.declareConst(tokenText(c, pat.nameTok), bt.slice(6, bt.len()), true); }
-      else { c.declare(tokenText(c, pat.nameTok), bt); }
+      if (startsWith(bt, "const ")) { c.declareConst(tokenText(c, pat.nameTok), bt.slice(6, bt.len()), true, pat.nameTok, "local"); }
+      else { c.declare(tokenText(c, pat.nameTok), bt, pat.nameTok); }
     }
     return;
   }
@@ -2180,7 +2182,7 @@ void declarePatternNames(C c, Pattern pat, string subjectT) {
     string bn = tokenText(c, pat.slotNames[i]);
     if (bn == "_") { continue; }
     string ft = world == typeNone() ? typeNone() : substituteType(c, world, c.variantFieldAt(world, vname, i));
-    c.declare(bn, ft);
+    c.declare(bn, ft, pat.slotNames[i]);
   }
 }
 
@@ -3307,6 +3309,18 @@ export i32 litString() { return 4; }
 export i32 litNull() { return 5; }
 
 /** The checker's state: what it is reading, and what it has found. */
+/**
+ * Where a declaration is written — its file, and the line and column of the name it declares — and what kind of
+ * declaration it is: "local", "parameter", "static", "import", "function", "struct", "enum", "field", "method" or
+ * "variant".
+ */
+export struct DeclSite {
+  string path;
+  i32 line;
+  i32 col;
+  string kind;
+}
+
 export struct C {
   u8[] src;
   i32[] toks;
@@ -3966,6 +3980,32 @@ export struct C {
    */
   i32 relexed;
   i32 coreBuilt;
+  /** The path of the file `src` holds: where a declaration recorded now was written (`siteOf`). */
+  string srcPath;
+  /**
+   * **Where each entry of each table was declared**, index for index beside the table it describes — what an
+   * editor's go-to-definition answers with (`probeAt`). Null for an entry nothing wrote, such as a name the
+   * checker made up. Recorded always, since a declaration has its token in hand and the site is three words.
+   */
+  DeclSite?[] nameSites;
+  DeclSite?[] funcSites;
+  DeclSite?[] structSites;
+  DeclSite?[] enumSites;
+  DeclSite?[] fieldSites;
+  DeclSite?[] methodSites;
+  DeclSite?[] variantSites;
+  /**
+   * **An editor's question about one token** of the entry, answered as the check passes it (`probeStmt`): the
+   * token, or -1 when nobody asked. Then what the checker made of it — its type, the site of the declaration the
+   * name resolved to, and that declaration's kind — all empty until it is found.
+   */
+  i32 probeTok;
+  /** The file `probeTok` is a token of: a token number names a token only within its own file. */
+  string probePath;
+  bool probed;
+  string probeType;
+  DeclSite? probeSite;
+  string probeKind;
 
   void noteMarkup(this, Expr e, string k) {
     if (this.markupAtN >= this.markupAtE.len()) {
@@ -4088,7 +4128,28 @@ export struct C {
              i32[](), string[](), 0,
              string[](), 0, "", bool[].filled(decls, false), "", string[](), string[](), 0, string[](), 0,
              string[](), string[](), "", "", "", "", "", null, null, 0 - 1, "", 0 - 1, "", "", "", "", "", "", 0, null, "|",
-             Expr[](), string[](), 0, "", 0, "|", 0, 0);
+             Expr[](), string[](), 0, "", 0, "|", 0, 0,
+             "", DeclSite?[].defaulted(locals), DeclSite?[].defaulted(decls), DeclSite?[].defaulted(decls), DeclSite?[].defaulted(decls),
+             DeclSite?[].defaulted(decls), DeclSite?[].defaulted(decls), DeclSite?[].defaulted(decls),
+             0 - 1, "", false, "", null, "");
+  }
+
+  /** Where the binding `name` now in scope was declared, or null. */
+  DeclSite? nameSiteOf(this, string name) {
+    i32 i = this.findName(name);
+    return i >= 0 && i < this.nameSites.len() ? this.nameSites[i] : null;
+  }
+
+  /** Where field `name` of `owner`, or of a parent, was declared, or null. */
+  DeclSite? fieldSiteOf(this, string owner, string name) {
+    i32 i = this.fieldAt(owner, name);
+    return i < 0 ? null : this.fieldSites[i];
+  }
+
+  /** Where token `tok` of the file being read declares a `kind`, or null for no token. */
+  DeclSite? siteOf(const this, i32 tok, string kind) {
+    if (tok < 0) { return null; }
+    return DeclSite(this.srcPath, this.toks[tok * tokenStride() + 3], this.toks[tok * tokenStride() + 4], kind);
   }
 
   /**
@@ -4210,10 +4271,13 @@ export struct C {
    * few names that are declared twice and keeps the checker a subset, which is the property
    * everything here depends on.
    */
-  void declare(this, string name, string ty) { this.declareConst(name, ty, false); }
+  void declare(this, string name, string ty, i32 tok) { this.declareConst(name, ty, false, tok, "local"); }
 
-  /** The same, recording whether the binding is `const`. */
-  void declareConst(this, string name, string ty, bool isConst) {
+  /**
+   * The same, recording whether the binding is `const`, and where it is declared: `tok` is the name as written, or
+   * -1 for one nobody wrote, and `kind` what declares it (`DeclSite`).
+   */
+  void declareConst(this, string name, string ty, bool isConst, i32 tok, string kind) {
     // **Poisoned only by a clash in the *same* scope.** The loop used to run over every name and
     // blank the type of any match, so `{ i32 q = 1; } { string q = "a"; }` left both `q`s
     // untyped — and a name with no type is a name no rule can be wrong about, which is how
@@ -4238,6 +4302,7 @@ export struct C {
     this.names[this.nameCount] = name;
     this.types[this.nameCount] = ty;
     this.nameConsts[this.nameCount] = isConst;
+    if (this.nameCount < this.nameSites.len()) { this.nameSites[this.nameCount] = this.siteOf(tok, kind); }
     this.nameAliasOnly[this.nameCount] = false;
     this.nameImportOnly[this.nameCount] = false;
     if (this.nameCount < this.nameFuncArity.len()) { this.nameFuncArity[this.nameCount] = 0 - 1; }
@@ -4353,13 +4418,14 @@ export struct C {
    * slice will not reach.
    */
   void declareFunc(this, string name, string ret, string[] paramTypes, i32 count,
-                   string[] typeParams, string[] paramNames) {
+                   string[] typeParams, string[] paramNames, i32 tok) {
     for (i32 i = 0; i < this.funcCount; i++) {
       if (this.funcNames[i] == name) { return; }
     }
     if (this.funcCount >= this.funcNames.len()) { return; }
     if (this.funcParamTotal + count > this.funcParamTypes.len()) { return; }
     this.funcNames[this.funcCount] = name;
+    this.funcSites[this.funcCount] = this.siteOf(tok, "function");
     this.funcReturns[this.funcCount] = ret;
     this.funcParamAt[this.funcCount] = this.funcParamTotal;
     this.funcParamCount[this.funcCount] = count;
@@ -4387,12 +4453,13 @@ export struct C {
   }
 
   /** Record a struct declared in this file, and who it inherits from. */
-  void declareStruct(this, string name, string parent, string[] typeParams) {
+  void declareStruct(this, string name, string parent, string[] typeParams, i32 tok) {
     for (i32 i = 0; i < this.structCount; i++) {
       if (this.structNames[i] == name) { return; }
     }
     if (this.structCount >= this.structNames.len()) { return; }
     this.structNames[this.structCount] = name;
+    this.structSites[this.structCount] = this.siteOf(tok, "struct");
     this.structParents[this.structCount] = parent;
     this.structGenerics[this.structCount] = typeParams.len() > 0;
     this.structParamAt[this.structCount] = this.structParamTotal;
@@ -4459,13 +4526,14 @@ export struct C {
   }
 
   /** Record one field of one struct. */
-  void declareField(this, string owner, string name, string ty) {
-    this.declareFieldConst(owner, name, ty, false);
+  void declareField(this, string owner, string name, string ty, i32 tok) {
+    this.declareFieldConst(owner, name, ty, false, tok);
   }
 
   /** The same, recording whether the field is `const`. */
-  void declareFieldConst(this, string owner, string name, string ty, bool isConst) {
+  void declareFieldConst(this, string owner, string name, string ty, bool isConst, i32 tok) {
     if (this.fieldCount >= this.fieldNames.len()) { return; }
+    this.fieldSites[this.fieldCount] = this.siteOf(tok, "field");
     this.fieldOwners[this.fieldCount] = owner;
     this.fieldNames[this.fieldCount] = name;
     this.fieldTypes[this.fieldCount] = ty;
@@ -4483,8 +4551,9 @@ export struct C {
 
   /** Record one method of one struct. */
   void declareMethod(this, string owner, string name, bool isStatic, bool isConst, string ret,
-                     string[] params, Stmt[] body, string ownTypeParams) {
+                     string[] params, Stmt[] body, string ownTypeParams, i32 tok) {
     if (this.methodCount >= this.methodNames.len()) { return; }
+    this.methodSites[this.methodCount] = this.siteOf(tok, "method");
     if (this.methodCount < this.methodTypeParams.len()) {
       this.methodTypeParams[this.methodCount] = ownTypeParams;
     }
@@ -4667,19 +4736,25 @@ export struct C {
     // A tuple's members are its positions (spec ch14).
     string tm = tupleMemberType(owner, name);
     if (tm != "") { return tm; }
-    // The table is keyed by template — `Box`, never `Box<i32>` — so an instantiation resolves to its
-    // template to find the field and substitutes on the way back out.
+    i32 i = this.fieldAt(owner, name);
+    return i < 0 ? typeNone() : substituteType(this, owner, this.fieldTypes[i]);
+  }
+
+  /**
+   * Which entry holds field `name` of `owner` or of a parent, or -1. The table is keyed by template — `Box`, never
+   * `Box<i32>` — so an instantiation resolves to its template to find the field, and `fieldType` substitutes on the
+   * way back out.
+   */
+  i32 fieldAt(this, string owner, string name) {
     string at = templateOf(owner);
     for (i32 hop = 0; hop <= this.structCount; hop++) {
-      if (at == "") { return typeNone(); }
+      if (at == "") { return -1; }
       for (i32 i = 0; i < this.fieldCount; i++) {
-        if (this.fieldOwners[i] == at && this.fieldNames[i] == name) {
-          return substituteType(this, owner, this.fieldTypes[i]);
-        }
+        if (this.fieldOwners[i] == at && this.fieldNames[i] == name) { return i; }
       }
       at = this.parentOf(at);
     }
-    return typeNone();
+    return -1;
   }
 
   /**
@@ -4795,8 +4870,9 @@ export struct C {
     return best;
   }
 
-  void declareEnum(this, string name, string[] typeParams) {
+  void declareEnum(this, string name, string[] typeParams, i32 tok) {
     if (this.enumCount >= this.enumNames.len()) { return; }
+    this.enumSites[this.enumCount] = this.siteOf(tok, "enum");
     this.enumNames[this.enumCount] = name;
     this.enumParamAt[this.enumCount] = this.enumParamTotal;
     this.enumParamCount[this.enumCount] = typeParams.len();
@@ -4828,8 +4904,9 @@ export struct C {
     }
   }
 
-  void declareVariant(this, string owner, string name, i32 arity) {
+  void declareVariant(this, string owner, string name, i32 arity, i32 tok) {
     if (this.variantCount >= this.variantNames.len()) { return; }
+    this.variantSites[this.variantCount] = this.siteOf(tok, "variant");
     this.variantOwners[this.variantCount] = owner;
     this.variantNames[this.variantCount] = name;
     this.variantArities[this.variantCount] = arity;
@@ -4844,11 +4921,15 @@ export struct C {
    * `Opened.Ok` happens to hold.
    */
   i32 variantArityIn(const this, string owner, string name) {
+    i32 at = this.variantAt(owner, name);
+    return at < 0 ? -1 : this.variantArities[at];
+  }
+
+  /** Which entry holds `Enum.Variant`, or -1 — asked with both names, as `variantArityIn` explains. */
+  i32 variantAt(const this, string owner, string name) {
     string want = this.canon(owner);
     for (i32 i = 0; i < this.variantCount; i++) {
-      if (this.variantOwners[i] == want && this.variantNames[i] == name) {
-        return this.variantArities[i];
-      }
+      if (this.variantOwners[i] == want && this.variantNames[i] == name) { return i; }
     }
     return -1;
   }
@@ -5212,6 +5293,7 @@ export string typeOfTy(C c, Ty t) {
       // Under the importing file's name for it, when this is an imported file being declared: a
       // signature that says `Dup` in `b.wac` says `DupB` to the file that imported it that way.
       string base = c.canon(c.renamed(tokenText(c, tok)));
+      if (c.probeTok >= 0) { probeTypeAt(c, tok, base); }
       // **A type parameter of the function being checked is an unknown type**, not a name. `T` in
       // `T oops<T>(T a)` stands for whatever a call site binds, so every question about it has an
       // answer this checker cannot compute — and answering with the letter itself made `return a;` a
@@ -6249,9 +6331,14 @@ export string typeOfExpr(C c, Expr e) {
       // **Except an import's placeholder, which is not a binding.** It is in the table so the name
       // exists; its type is unknown because nothing put one there, and answering unknown here hid
       // the signature `declareModule` had already recorded. `issues/lang/0180a`.
-      if (c.isDeclaredName(idName) && !c.isImportOnlyName(idName)) { return held; }
+      if (bindsLocally(c, idName)) {
+        if (c.probeTok >= 0) { probeAt(c, tok, c.nameSiteOf(idName)); }
+        return held;
+      }
       // **A declared function used as a value is a funcref** — see `funcValueType`.
-      return funcValueType(c, c.funcAt(idName));
+      i32 idFunc = c.funcAt(idName);
+      if (c.probeTok >= 0 && idFunc >= 0) { probeAt(c, tok, c.funcSites[idFunc]); }
+      return funcValueType(c, idFunc);
     }
     // `p.x`, typed from the struct's field declarations and its parents'. The receiver is typed by
     // this same function, so `a.b.c` works by recursion for as long as every step is nameable.
@@ -6262,7 +6349,7 @@ export string typeOfExpr(C c, Expr e) {
         // `S.make` is a `fn() -> S`, which is why assigning it to an `i32` is an ordinary mismatch
         // rather than the *"cannot use method as a value"* an instance method gets — a static is a
         // function, and an instance method is not one until it has a receiver.
-        return staticMethodType(c, obj, tokenText(c, nameTok));
+        return staticMethodType(c, obj, nameTok);
       }
       string mem = tokenText(c, nameTok);
       // `t.[i]` on a tuple selects by the static value of `i` (spec ch14).
@@ -6272,11 +6359,14 @@ export string typeOfExpr(C c, Expr e) {
       }
       // A field first: a field and a method may share a name, and the field is what `p.x` means.
       string ft = c.fieldType(owner, mem);
-      if (ft != typeNone() && ft != "") { return ft; }
+      if (ft != typeNone() && ft != "") {
+        if (c.probeTok >= 0) { probeAt(c, nameTok, c.fieldSiteOf(owner, mem)); }
+        return ft;
+      }
       // **And an instance method named without being called is a bound reference** —
       // `design/lang/0002` tier one. Answering `typeNone()` here is what made it unassignable and
       // therefore refusable; the value it denotes is the method with its receiver already in it.
-      return boundMethodType(c, owner, mem);
+      return boundMethodType(c, owner, nameTok);
     }
     // A cast is its target type, whichever of the four spellings it used. The four differ in what
     // they *permit* — see `checkCast` — and not in what they produce.
@@ -6301,6 +6391,7 @@ export string typeOfExpr(C c, Expr e) {
               string en = tokenText(c, tok);
               if (c.isEnum(en) && !c.isDeclaredName(en) &&
                   c.variantArityIn(en, tokenText(c, nameTok)) >= 0) {
+                if (c.probeTok >= 0) { probeAt(c, nameTok, c.variantSites[c.variantAt(en, tokenText(c, nameTok))]); }
                 return tokenText(c, nameTok);
               }
               // A static on a built-in type: the receiver is a type name rather than a value, so
@@ -6321,6 +6412,7 @@ export string typeOfExpr(C c, Expr e) {
                 Named(qtok, qargs): {
                   string inst = typeOfTy(c, qual);
                   i32 smi = c.methodAt(tokenText(c, qtok), tokenText(c, nameTok));
+                  if (c.probeTok >= 0 && smi >= 0) { probeAt(c, nameTok, c.methodSites[smi]); }
                   if (qargs.len() > 0 && smi >= 0 && inst != typeNone() && inst != "") {
                     return bindMethodLettersAuto(c, smi, inst, callTargs, args,
                                                  substituteType(c, inst, c.methodReturns[smi]));
@@ -6339,6 +6431,7 @@ export string typeOfExpr(C c, Expr e) {
           // files' worth of missed diagnostics were downstream of this one unknown.
           string fref = c.isStruct(recvT) ? c.fieldType(recvT, tokenText(c, nameTok)) : "";
           if (startsWithFn(fref)) {
+            if (c.probeTok >= 0) { probeAt(c, nameTok, c.fieldSiteOf(recvT, tokenText(c, nameTok))); }
             string fret = funcrefReturn(fref);
             return fret == "" ? typeNone() : substituteType(c, recvT, fret);
           }
@@ -6367,6 +6460,7 @@ export string typeOfExpr(C c, Expr e) {
             if (tmplOf != recvT) { mi = c.methodAt(tmplOf, tokenText(c, nameTok)); }
           }
           if (mi < 0) { return typeNone(); }
+          if (c.probeTok >= 0) { probeAt(c, nameTok, c.methodSites[mi]); }
           // **The owner's letters, then the method's** — `design/lang/0010` option C. A method whose
           // return type *is* its own letter answers `U` without the second step, and `i32 total =
           // v.fold<i32>(…)` is then *expected i32, found U*: a complaint about a type nobody wrote,
@@ -6666,9 +6760,11 @@ export string typeOfExpr(C c, Expr e) {
     // name gives what it returns; anything else is unknown.
     Construct(ctype, args, named): {
       string name = "";
+      i32 ctok = 0 - 1;
       match (ctype.kind) {
         Named(tok, typeArgs): {
           name = c.canon(tokenText(c, tok));
+          ctok = tok;
           if (typeArgs.len() > 0) {
             // **A generic function named with its type arguments is a call, not a type.**
             // `zero<i32>()` and `Vec<i32>(…)` are the same syntax, so the name decides which — the
@@ -6677,7 +6773,10 @@ export string typeOfExpr(C c, Expr e) {
             // `unknown type 'zero'`, which is a true sentence about a reading nobody asked for.
             // `design/lang/0011` step 4.
             i32 fat = c.funcAt(name);
-            if (fat >= 0 && c.funcGenerics[fat]) { return genericCallReturnWritten(c, fat, typeArgs); }
+            if (fat >= 0 && c.funcGenerics[fat]) {
+              if (c.probeTok >= 0) { probeAt(c, tok, c.funcSites[fat]); }
+              return genericCallReturnWritten(c, fat, typeArgs);
+            }
             return typeOfTy(c, ctype);
           }
         }
@@ -6688,7 +6787,10 @@ export string typeOfExpr(C c, Expr e) {
       // declared type of whatever the construction flows into, and inside the generic's own methods
       // the bare name means the instantiation being compiled. Neither is knowable from the syntax at
       // hand, so this says unknown rather than guessing `Box`, which would be a type nothing has.
-      if (c.isStruct(name)) { return c.isGeneric(name) ? typeNone() : name; }
+      if (c.isStruct(name)) {
+        if (c.probeTok >= 0) { probeTypeAt(c, ctok, name); }
+        return c.isGeneric(name) ? typeNone() : name;
+      }
       // **A funcref whose type cannot be named is still a funcref**, and the call is still *its* call.
       // Answering with a same-named module function's return type is how `Box.of(f(this.v))` inside
       // `Box<U> map<U>(const this, fn<U(T)> f)` came back `i32` and was then reported against `U`.
@@ -6707,6 +6809,7 @@ export string typeOfExpr(C c, Expr e) {
       if (c.isDeclaredName(name)) {
         string local = c.typeOfName(name);
         if (startsWithFn(local)) {
+          if (c.probeTok >= 0) { probeAt(c, ctok, c.nameSiteOf(name)); }
           string lret = funcrefReturn(local);
           return lret == "" ? typeNone() : lret;
         }
@@ -6723,11 +6826,13 @@ export string typeOfExpr(C c, Expr e) {
         // subject this checker cannot type takes every rule inside the match down with it.
         string held = c.typeOfName(name);
         if (startsWithFn(held)) {
+          if (c.probeTok >= 0) { probeAt(c, ctok, c.nameSiteOf(name)); }
           string hret = funcrefReturn(held);
           return hret == "" ? typeNone() : hret;
         }
         return typeNone();
       }
+      if (c.probeTok >= 0) { probeAt(c, ctok, c.funcSites[at]); }
       if (c.funcGenerics[at]) { return genericCallReturn(c, at, args); }
       return c.funcReturns[at];
     }
@@ -9247,6 +9352,7 @@ void checkLambda(C c, string slot, bool wantUnknown, Expr e, Param[] params, Stm
     declareParam(c, params[i]);
     c.noteFuncArity(funcrefArityOfTy(c, params[i].type));
   }
+  probeParams(c, params);
   // **The locals, before the walk** — the same two passes a function body gets, and for the same
   // reason: a statement may name something declared further down. The enclosing function's
   // `declareAll` cannot do it, because a lambda is an *expression* and `declareStmt` walks
@@ -11171,7 +11277,8 @@ bool checkBuiltinCall(C c, Expr call, Expr recvExpr, string recv, string name, E
  * Generics stay out, as they do for a static: the instantiation is what this checker does not model,
  * and answering the template's own text would claim a type no instance has.
  */
-string boundMethodType(C c, string recv, string name) {
+string boundMethodType(C c, string recv, i32 nameTok) {
+  string name = tokenText(c, nameTok);
   if (recv == "" || c.isGeneric(recv)) { return typeNone(); }
   // **An instantiation binds through its template**, with the receiver's arguments put in:
   // `pending.push` on a `Vec<Continuation>` is an `fn<void(Continuation)>` (spec ch35's
@@ -11179,6 +11286,7 @@ string boundMethodType(C c, string recv, string name) {
   string tmpl = templateOf(recv);
   if (!c.isStruct(tmpl)) { return typeNone(); }
   i32 at = c.methodAt(tmpl, name);
+  if (c.probeTok >= 0 && at >= 0) { probeAt(c, nameTok, c.methodSites[at]); }
   if (at < 0 || c.methodStatics[at]) { return typeNone(); }
   if (at < c.methodTypeParams.len() && c.methodTypeParams[at] != "") { return typeNone(); }
   string out = "fn(";
@@ -11191,7 +11299,8 @@ string boundMethodType(C c, string recv, string name) {
   return out + ") -> " + (tmpl != recv ? substituteType(c, recv, rt) : rt);
 }
 
-string staticMethodType(C c, Expr obj, string name) {
+string staticMethodType(C c, Expr obj, i32 nameTok) {
+  string name = tokenText(c, nameTok);
   string owner = "";
   match (obj.kind) {
     Ident(tok): {
@@ -11203,6 +11312,7 @@ string staticMethodType(C c, Expr obj, string name) {
   if (owner == "" || c.isGeneric(owner)) { return typeNone(); }
   i32 at = c.methodAt(owner, name);
   if (at < 0) { return typeNone(); }
+  if (c.probeTok >= 0) { probeAt(c, nameTok, c.methodSites[at]); }
   // **An instance method reached through its type is an *unbound* reference**, whose first parameter
   // is the receiver: `Base.get` is an `fn<i32(Base)>`, and rung 4's corpus passes those around. This
   // answered `typeNone()` for them, so `return P.m;` in an `i32` function compared nothing against
@@ -11580,6 +11690,15 @@ void checkMember(C c, Expr at, Expr obj, string name) {
   match (obj.kind) {
     Ident(tok): {
       string en = tokenText(c, tok);
+      if (c.probeTok >= 0 && c.isEnum(en) && c.typeOfName(en) == typeNone()) {
+        match (at.kind) {
+          Member(o, nameTok): {
+            i32 vat = c.variantAt(en, name);
+            if (vat >= 0) { probeAt(c, nameTok, c.variantSites[vat]); }
+          }
+          default: { }
+        }
+      }
       if (c.isEnum(en) && c.typeOfName(en) == typeNone() && c.variantArityIn(en, name) < 0) {
         c.report(errNoVariant(), at.line, at.col);
         return;
@@ -12848,7 +12967,7 @@ string destructuredType(C c, Ty? whole, TupleBinding pattern, Expr init) {
 /** Declares each name of a pattern at the member type in its position of `t`. */
 void declareBinding(C c, TupleBinding b, string t) {
   if (b.nameTok >= 0) {
-    c.declare(tokenText(c, b.nameTok), b.type is null ? t : typeOfTy(c, b.type!));
+    c.declare(tokenText(c, b.nameTok), b.type is null ? t : typeOfTy(c, b.type!), b.nameTok);
     return;
   }
   string[] ms = tupleMembers(t);
@@ -12924,7 +13043,7 @@ void declareStmt(C c, Stmt s) {
         string wt = writtenTy(c, type);
         if (wt != "" && !isActiveParam(c, wt) && mentionsActiveParam(c, wt)) { vt = wt; }
       }
-      c.declareConst(tokenText(c, nameTok), vt, isConst || aliasesConst);
+      c.declareConst(tokenText(c, nameTok), vt, isConst || aliasesConst, nameTok, "local");
       // Recorded as the aliasing kind, so a write *through* it is still refused while rebinding the
       // name is not. `while (cur is not null) { cur = cur!.next; }` walks a list in a `const this`
       // method, which is what ten of the spec's own linked-list programs do.
@@ -12938,7 +13057,7 @@ void declareStmt(C c, Stmt s) {
     Defer(body): { declareScoped(c, [body] as Stmt[]); }
     If(cond, then, els): { declareScoped(c, then); declareScoped(c, els); }
     StaticIf(cond, then, els): { declareScoped(c, then); declareScoped(c, els); }
-    StaticLocal(type, nameTok, init): { c.declare(tokenText(c, nameTok), typeOfTy(c, type)); }
+    StaticLocal(type, nameTok, init): { c.declare(tokenText(c, nameTok), typeOfTy(c, type), nameTok); }
     StaticFor(init, cond, update, body): {
       c.pushScope(body);
       if (init is not null) { declareStmt(c, init!); }
@@ -12958,7 +13077,7 @@ void declareStmt(C c, Stmt s) {
     }
     ForIn(elemTy, nameTok, iterable, body): {
       c.pushScope(body);
-      c.declare(tokenText(c, nameTok), forInVarType(c, elemTy, iterable));
+      c.declare(tokenText(c, nameTok), forInVarType(c, elemTy, iterable), nameTok);
       declareAll(c, body);
       c.popScope();
     }
@@ -12978,7 +13097,7 @@ void declareStmt(C c, Stmt s) {
         c.pushScope(arms[i].body);
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
           if (tokenText(c, arms[i].bindingToks[b]) == "is") { continue; }
-          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
+          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b), arms[i].bindingToks[b]);
         }
         declareAll(c, arms[i].body);
         c.popScope();
@@ -13231,8 +13350,74 @@ string runtimeNameIn(C c, string why) {
   return c.isDeclaredName(nm) ? nm : "";
 }
 
-/** Every `return` in a statement, however deeply nested, checked against `want`. */
+/**
+ * Check `s` — and, when an editor asked about a token (`C.probeTok`), see whether `s` holds it. The probe runs after
+ * the statement, with exactly the names in scope that it was checked with; a nested statement is checked, and so
+ * probed, first, so the innermost statement holding the token answers. With no question asked it costs one comparison.
+ */
 void checkStmt(C c, Stmt s, Ty want) {
+  checkStmtOnly(c, s, want);
+  if (c.probeTok >= 0 && !c.probed) { probeHit(c, inStmt(s, c.probeTok, Expr(ExprKind.BoolLit(false), s.line, s.col))); }
+}
+
+/**
+ * **Whether a name in value position is a binding** — a local, a parameter, a module constant — rather than an import's
+ * placeholder, which is in the table so the name exists and is not a binding (`issues/lang/0180a`). One rule for the
+ * typing walk and for an editor's question of where the name is declared, so the two cannot disagree.
+ */
+bool bindsLocally(C c, string name) { return c.isDeclaredName(name) && !c.isImportOnlyName(name); }
+
+/** A parameter list just declared, asked about as a statement is: a name it declares, or a type it names. */
+void probeParams(C c, Param[] params) {
+  if (c.probeTok < 0 || c.probed) { return; }
+  probeHit(c, inParams(params, c.probeTok, Expr(ExprKind.BoolLit(false), 0, 0)));
+}
+
+/**
+ * The token asked about has been found in `h`. Its type is what the typing walk answers — and **where it is declared
+ * is recorded by the walk itself**, at the point each lookup decides (`probeAt`): `typeOfExpr`'s identifier, member,
+ * call and construction arms, `typeOfTy` for a type's name, `checkMember` for a variant. Nothing here resolves anything.
+ * A name the probe finds declared is its own site.
+ */
+void probeHit(C c, Hit h) {
+  if (h.what == "") { return; }
+  c.probed = true;
+  if (h.what == "decl") {
+    i32 i = c.findName(tokenText(c, c.probeTok));
+    c.probeType = i >= 0 ? c.types[i] : typeNone();
+    c.probeSite = i >= 0 && i < c.nameSites.len() ? c.nameSites[i] : null;
+    return;
+  }
+  // A type written in an annotation was resolved, and recorded, when the check read the annotation.
+  if (h.what == "type") { return; }
+  c.probeType = typeOfExpr(c, h.expr);
+}
+
+/**
+ * Where a lookup has just decided token `tok` resolves: record `site` if `tok` is the token asked about, in the file
+ * it was asked about — a token number names a token only within its own file. Callers guard with `c.probeTok >= 0`,
+ * so with nothing asked it costs that comparison.
+ */
+void probeAt(C c, i32 tok, DeclSite? site) {
+  if (tok != c.probeTok || c.srcPath != c.probePath || site is null) { return; }
+  c.probeSite = site;
+}
+
+/** The same, for token `tok` naming the type `name`: the struct or enum declared under it, and the type itself. */
+void probeTypeAt(C c, i32 tok, string name) {
+  if (tok != c.probeTok || c.srcPath != c.probePath) { return; }
+  c.probeType = name;
+  i32 si = c.structAt(name);
+  if (si >= 0) {
+    c.probeSite = c.structSites[si];
+    return;
+  }
+  i32 ei = c.enumAt(name);
+  if (ei >= 0) { c.probeSite = c.enumSites[ei]; }
+}
+
+/** Every `return` in a statement, however deeply nested, checked against `want`. */
+void checkStmtOnly(C c, Stmt s, Ty want) {
   match (s.kind) {
     // **The branch not taken is not checked** (spec ch31 `§wac-static-if-cphqxuz`): that is the
     // whole difference from an `if` with a constant condition. One this checker cannot decide checks both.
@@ -13850,7 +14035,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       c.pushScope(body);
       // **An element of a const array is const** (spec ch17, deep const): the binding is, so a write
       // through it is refused as one through the array would be.
-      c.declare(tokenText(c, nameTok), vt);
+      c.declare(tokenText(c, nameTok), vt, nameTok);
       // The declaring walk already has the name in this scope, so the flag is set on that binding.
       if (constExpr(c, iterable) && writableType(c, vt)) { c.setConstFlags(tokenText(c, nameTok), true, false); }
       c.loopDepth = c.loopDepth + 1;
@@ -13993,7 +14178,7 @@ i32 openArmScope(C c, Expr subject, Arm arm) {
   c.pushScope(Stmt[]());
   for (i32 b = 0; b < arm.bindingToks.len(); b++) {
     if (tokenText(c, arm.bindingToks[b]) == "is") { continue; }
-    c.declare(tokenText(c, arm.bindingToks[b]), armBindingType(c, subject, arm, b));
+    c.declare(tokenText(c, arm.bindingToks[b]), armBindingType(c, subject, arm, b), arm.bindingToks[b]);
   }
   return before;
 }
@@ -14734,7 +14919,7 @@ export void declareModule(C c, Program prog, string[] only) {
     match (prog.decls[d].kind) {
       StaticDecl(nameTok, type, init, exported): {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
-        c.declareConst(c.renamed(tokenText(c, nameTok)), typeOfTy(c, type), true);
+        c.declareConst(c.renamed(tokenText(c, nameTok)), typeOfTy(c, type), true, nameTok, "static");
         c.noteFuncArity(funcrefArityOfTy(c, type));
       }
       SymbolDecl(nameTok, exported): {
@@ -14754,7 +14939,7 @@ export void declareModule(C c, Program prog, string[] only) {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
         string[] etps = string[].defaulted(typeParams.len());
         for (i32 i = 0; i < typeParams.len(); i++) { etps[i] = tokenText(c, typeParams[i]); }
-        c.declareEnum(c.renamed(tokenText(c, nameTok)), etps);
+        c.declareEnum(c.renamed(tokenText(c, nameTok)), etps, nameTok);
         // Each variant is a type of its own, with its payload as fields. `s is Circle` narrows `s`
         // to `Circle`, and `s.radius` then has to find a `radius` somewhere — so the variant has to
         // be as much a struct as anything else here. Registered under its bare name, which is how
@@ -14773,12 +14958,12 @@ export void declareModule(C c, Program prog, string[] only) {
           // The bare struct under the name this file gives it — which is the variant's own unless a
           // file that reaches this enum declares that name itself (`spec/cases/0566`).
           string bareName = c.renamed(vname);
-          if (bare) { c.declareStruct(bareName, "", string[]()); }
+          if (bare) { c.declareStruct(bareName, "", string[](), variants[vi].nameTok); }
           // **Under the name this file calls the enum**, which is `c.renamed` — the same wrapper
           // `declareEnum` seventeen lines above already uses. Without it an aliased import registered
           // the *enum* as `E2` and its variants as belonging to `E`, so `E2.A` was "no variant of that
           // name" while `E2` worked perfectly as a parameter type (`issues/lang/0161`).
-          c.declareVariant(c.renamed(tokenText(c, nameTok)), vname, variants[vi].fields.len());
+          c.declareVariant(c.renamed(tokenText(c, nameTok)), vname, variants[vi].fields.len(), variants[vi].nameTok);
           c.markVariantBare(vname, bare);
           // **And again under `Enum.Variant`**, which is where a payload's slots are looked up. The
           // bare name is shared: core's `Result.Ok(T v)` and a file's own `Outcome.Ok(string, i32)`
@@ -14788,8 +14973,8 @@ export void declareModule(C c, Program prog, string[] only) {
           for (i32 fi = 0; fi < variants[vi].fields.len(); fi++) {
             string fname = tokenText(c, variants[vi].fields[fi].nameTok);
             string fty = typeOfTy(c, variants[vi].fields[fi].type);
-            c.declareFieldConst(bareName, fname, fty, false);
-            c.declareFieldConst(qual, fname, fty, false);
+            c.declareFieldConst(bareName, fname, fty, false, variants[vi].fields[fi].nameTok);
+            c.declareFieldConst(qual, fname, fty, false, variants[vi].fields[fi].nameTok);
           }
         }
         // **An enum's methods, which were never declared at all.** `enum E { … i32 val(const this) }`
@@ -14820,7 +15005,7 @@ export void declareModule(C c, Program prog, string[] only) {
                                                       gen ? writtenTy(c, methods[mi].returnType)
                                                           : typeOfTy(c, methods[mi].returnType)),
                                           methods[mi].isAsync), emps,
-                          methods[mi].body, ownParamNames(c, methods[mi].typeParams));
+                          methods[mi].body, ownParamNames(c, methods[mi].typeParams), methods[mi].nameTok);
           if (methods[mi].isPrivate) { c.notePrivate(ename, tokenText(c, methods[mi].nameTok)); }
         }
       }
@@ -14832,7 +15017,7 @@ export void declareModule(C c, Program prog, string[] only) {
         name = c.renamed(name);
         string[] tps = string[].defaulted(typeParams.len());
         for (i32 i = 0; i < typeParams.len(); i++) { tps[i] = tokenText(c, typeParams[i]); }
-        c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok), tps);
+        c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok), tps, nameTok);
         // A generic struct's fields are not recorded. `struct Box<T> { T v; }` has a field whose
         // type is the *parameter* `T`, which is a name like any other to `typeOfTy` and therefore
         // looks like a struct called `T` — enough to make `Box(1)` a field mismatch against a type
@@ -14848,7 +15033,7 @@ export void declareModule(C c, Program prog, string[] only) {
           // `const struct Config { … }` makes every field const without any of them saying so,
           // which is the whole point of the spelling: one word instead of one per field.
           c.declareFieldConst(name, tokenText(c, fields[i].nameTok),
-                              typeOfTy(c, fields[i].type), isConst || fields[i].isConst);
+                              typeOfTy(c, fields[i].type), isConst || fields[i].isConst, fields[i].nameTok);
           if (!(fields[i].init is null) && c.fieldCount - 1 < c.fieldInits.len()) {
             c.fieldInits[c.fieldCount - 1] = true;
           }
@@ -14881,7 +15066,7 @@ export void declareModule(C c, Program prog, string[] only) {
                                                       ownLetters ? writtenTy(c, methods[i].returnType)
                                                                  : typeOfTy(c, methods[i].returnType)),
                                           methods[i].isAsync), mps,
-                          methods[i].body, ownParamNames(c, methods[i].typeParams));
+                          methods[i].body, ownParamNames(c, methods[i].typeParams), methods[i].nameTok);
           if (methods[i].isPrivate) { c.notePrivate(name, tokenText(c, methods[i].nameTok)); }
           if (typeParams.len() > 0 && !methods[i].hasThis
               && !methodUsesOwnerLetters(c.src, Lexed(c.toks, c.toks.len() / tokenStride(), i32[](), 0, 0, true),
@@ -14932,7 +15117,7 @@ export void declareModule(C c, Program prog, string[] only) {
         string[] pnames = string[].defaulted(params.len());
         for (i32 i = 0; i < params.len(); i++) { pnames[i] = tokenText(c, params[i].nameTok); }
         c.declareFunc(c.renamed(tokenText(c, nameTok)), fret, prims,
-                      params.len(), ftps, pnames);
+                      params.len(), ftps, pnames, nameTok);
       }
       default: { }
     }
@@ -15450,13 +15635,14 @@ void checkMethodBodiesIn(C c, string owner, string parent, Method[] methods) {
     // A method without `this` is static, and `this` means nothing in it. A `const this` method may not
     // write through the receiver, which is the same rule as a `const P p` parameter and reuses it.
     if (methods[mi].hasThis) {
-      c.declareConst("this", selfType, methods[mi].thisConst);
+      c.declareConst("this", selfType, methods[mi].thisConst, 0 - 1, "parameter");
     }
     checkParams(c, methods[mi].params);
     for (i32 i = 0; i < methods[mi].params.len(); i++) {
       declareParam(c, methods[mi].params[i]);
       c.noteFuncArity(funcrefArityOfTy(c, methods[mi].params[i].type));
     }
+    probeParams(c, methods[mi].params);
     declareAll(c, methods[mi].body);
     // Set around the body and put back, exactly as the free-function site does: `await` is only a
     // thing inside an `async` function, and this is the only place that knows which kind this one
@@ -15566,7 +15752,7 @@ export void checkModule(C c, Program prog) {
           // decode(raw);` came out a mismatch that way, with both names imported and both known.
           string alias = tokenText(c, items[i].aliasTok);
           if (c.isDeclaredName(alias) || c.isStruct(alias) || c.isEnum(alias)) { continue; }
-          c.declare(alias, typeNone());
+          c.declareConst(alias, typeNone(), false, items[i].aliasTok, "import");
           // **Declared so the name exists, and marked so nothing reads it as a binding.** The line
           // above is why a single-file check calls an imported name unknown rather than undefined,
           // and `isDeclaredName` is then read by two kinds of rule asking different questions: *does
@@ -15578,7 +15764,7 @@ export void checkModule(C c, Program prog) {
           c.markImportOnly(alias);
         }
         if (prefixTok >= 0 && !c.isDeclaredName(tokenText(c, prefixTok))) {
-          c.declare(tokenText(c, prefixTok), typeNone());
+          c.declareConst(tokenText(c, prefixTok), typeNone(), false, prefixTok, "import");
         }
       }
       default: { }
@@ -15787,6 +15973,7 @@ export void checkModule(C c, Program prog) {
           declareParam(c, params[i]);
           c.noteFuncArity(funcrefArityOfTy(c, params[i].type));
         }
+        probeParams(c, params);
         declareAll(c, body);
         // Set around the body and put back, the way `lambdaReturn` is: `await` is only a thing inside
         // an `async` function, and this is the only place that knows which kind this is.
@@ -15817,6 +16004,50 @@ export void checkModule(C c, Program prog) {
     }
   }
   checkInstances(c, prog);
+  if (c.probeTok >= 0 && !c.probed && c.probeSite is null) { probeDecls(c, prog); }
+}
+
+/**
+ * A token asked about outside every body that the walk did not resolve: a declaration's own name, which is its own
+ * definition — found by its recorded site, so it is the declaration the check registered. A type a signature names
+ * was resolved, and recorded, when the signature was declared.
+ */
+void probeDecls(C c, Program prog) {
+  i32 tok = c.probeTok;
+  DeclSite? own = declaredAt(c, c.siteOf(tok, ""));
+  if (own is null) { return; }
+  c.probed = true;
+  c.probeSite = own;
+  c.probeType = declaredType(c, tokenText(c, tok), own!.kind);
+}
+
+/** The recorded declaration whose site is `at` — the one written at that name — or null. */
+DeclSite? declaredAt(C c, DeclSite? at) {
+  if (at is null) { return null; }
+  DeclSite? f = siteIn(c.funcSites, c.funcCount, at!);
+  if (f is null) { f = siteIn(c.structSites, c.structCount, at!); }
+  if (f is null) { f = siteIn(c.enumSites, c.enumCount, at!); }
+  if (f is null) { f = siteIn(c.fieldSites, c.fieldCount, at!); }
+  if (f is null) { f = siteIn(c.methodSites, c.methodCount, at!); }
+  if (f is null) { f = siteIn(c.variantSites, c.variantCount, at!); }
+  if (f is null) { f = siteIn(c.nameSites, c.globalCount, at!); }
+  return f;
+}
+
+DeclSite? siteIn(DeclSite?[] sites, i32 count, DeclSite at) {
+  for (i32 i = 0; i < count && i < sites.len(); i++) {
+    DeclSite? s = sites[i];
+    if (s is not null && s!.line == at.line && s!.col == at.col && s!.path == at.path) { return s; }
+  }
+  return null;
+}
+
+/** What a declaration of `kind` named `name` is, for an editor: a function's value, a type's name, a constant's type. */
+string declaredType(C c, string name, string kind) {
+  if (kind == "function") { return funcValueType(c, c.funcAt(c.renamed(name))); }
+  if (kind == "struct" || kind == "enum" || kind == "variant") { return c.renamed(name); }
+  if (kind == "static") { return c.typeOfName(c.renamed(name)); }
+  return "";
 }
 
 /**

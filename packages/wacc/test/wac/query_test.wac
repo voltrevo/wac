@@ -1,0 +1,186 @@
+// An editor's questions about a position (`factsAt`): where a name is declared, what its type is, and what its
+// declaration says — answered by the checker, which records where it declared each thing and what each name it
+// typed resolved to. A local, a loop variable, a parameter, an imported function, a struct, a field and a method
+// reached through a value's type, a name inside a lambda, a shadowing local, and an aliased import.
+
+import { PositionFacts, factsAt } from "../../src/api.wac";
+import { Res } from "../../src/path.wac";
+
+static string LIB = """
+/** A point. */
+export struct Point {
+  i32 x;
+  i32 y;
+  /** How far from the origin, squared. */
+  i32 norm(const this) { return this.x * this.x + this.y * this.y; }
+}
+
+/** Make one. */
+export Point at(i32 x, i32 y) { return Point(x, y); }
+""";
+
+static string MAIN = """
+import { Point, at } from "./lib.wac";
+
+export i32 main(i32 extra) {
+  Point p = at(3, 4);
+  i32 total = p.norm() + p.x;
+  for (i32 i = 0; i < 2; i++) { total = total + i; }
+  fn<i32(i32)> twice = (i32 n) => n * 2 + extra;
+  return twice(total);
+}
+""";
+
+/** The byte offset of the `nth` (from 0) occurrence of `needle` in `text`, plus `skip`; -1 when there is none. */
+i32 offsetOf(string text, string needle, i32 nth, i32 skip) {
+  i32 from = 0;
+  i32 at = 0 - 1;
+  for (i32 k = 0; k <= nth; k++) {
+    i32 found = text.slice(from, text.len()).indexOf(needle);
+    if (found < 0) { return 0 - 1; }
+    at = from + found;
+    from = at + 1;
+  }
+  return at + skip;
+}
+
+/** What `factsAt` says about the `nth` `needle` in MAIN. */
+PositionFacts ask(string needle, i32 nth) {
+  return factsAt(["/p/main.wac", "/p/lib.wac"], [MAIN, LIB], Res.of(["/p", "/p"]), "/p/main.wac",
+                 offsetOf(MAIN, needle, nth, 0));
+}
+
+/** Where a fact says the declaration is, as `path line col kind`. */
+string def(PositionFacts f) { return f.defPath + " \{f.defLine} \{f.defCol} " + f.defKind; }
+
+/** The doc comment's lines, joined by `|`. */
+string doc(PositionFacts f) {
+  string out = "";
+  for (i32 i = 0; i < f.doc.len(); i++) { out = out + (i == 0 ? "" : "|") + f.doc[i]; }
+  return out;
+}
+
+export string test_a_local_and_a_loop_variable_are_found_where_the_checker_declared_them() {
+  PositionFacts total = ask("total + i", 0);
+  if (def(total) != "/p/main.wac 5 7 local" || total.type != "i32") { return "total: " + def(total) + " " + total.type; }
+  PositionFacts i = ask("i; }", 0);
+  if (def(i) != "/p/main.wac 6 12 local" || i.type != "i32") { return "i: " + def(i) + " " + i.type; }
+  PositionFacts p = ask("p.norm", 0);
+  if (def(p) != "/p/main.wac 4 9 local" || p.type != "Point") { return "p: " + def(p) + " " + p.type; }
+  if (p.signature != "Point p = at(3, 4);") { return "p's line: " + p.signature; }
+  return "";
+}
+
+export string test_an_imported_function_is_found_where_it_is_declared_with_its_doc() {
+  PositionFacts a = ask("at(3", 0);
+  if (def(a) != "/p/lib.wac 10 14 function") { return "at: " + def(a); }
+  if (a.signature != "export Point at(i32 x, i32 y) { return Point(x, y); }" || doc(a) != "Make one.") {
+    return "at's line and doc: " + a.signature + " / " + doc(a);
+  }
+  PositionFacts pt = ask("Point p", 0);
+  if (def(pt) != "/p/lib.wac 2 15 struct" || doc(pt) != "A point.") { return "Point: " + def(pt) + " / " + doc(pt); }
+  return "";
+}
+
+export string test_a_member_is_found_through_the_type_of_its_receiver() {
+  PositionFacts norm = ask("norm()", 0);
+  if (def(norm) != "/p/lib.wac 6 7 method") { return "norm: " + def(norm); }
+  if (doc(norm) != "How far from the origin, squared.") { return "norm's doc: " + doc(norm); }
+  PositionFacts fx = factsAt(["/p/main.wac", "/p/lib.wac"], [MAIN, LIB], Res.of(["/p", "/p"]), "/p/main.wac",
+                             offsetOf(MAIN, "p.x", 0, 2));
+  if (def(fx) != "/p/lib.wac 3 7 field" || fx.type != "i32") { return "p.x: " + def(fx) + " " + fx.type; }
+  return "";
+}
+
+export string test_a_lambda_sees_its_parameters_and_the_function_s() {
+  PositionFacts n = ask("n * 2", 0);
+  if (def(n) != "/p/main.wac 7 29 parameter" || n.type != "i32") { return "n: " + def(n) + " " + n.type; }
+  PositionFacts extra = ask("extra;", 0);
+  if (def(extra) != "/p/main.wac 3 21 parameter") { return "extra: " + def(extra); }
+  PositionFacts declared = ask("n) =>", 0);
+  if (def(declared) != "/p/main.wac 7 29 parameter") { return "the lambda's own parameter: " + def(declared); }
+  return "";
+}
+
+export string test_a_declaration_is_its_own_definition_and_a_space_is_nothing() {
+  PositionFacts d = ask("total =", 0);
+  if (def(d) != "/p/main.wac 5 7 local" || d.type != "i32") { return "declared: " + def(d) + " " + d.type; }
+  PositionFacts f = factsAt(["/p/lib.wac"], [LIB], Res.of(["/p"]), "/p/lib.wac", offsetOf(LIB, "at(i32", 0, 0));
+  if (def(f) != "/p/lib.wac 10 14 function") { return "a function's own name: " + def(f); }
+  PositionFacts past = factsAt(["/p/main.wac"], [MAIN], Res.of(["/p"]), "/p/main.wac", 1000);
+  if (past.start != 0 - 1 || past.defPath != "") { return "past the end found something"; }
+  PositionFacts space = factsAt(["/p/main.wac"], [MAIN], Res.of(["/p"]), "/p/main.wac", offsetOf(MAIN, " p =", 0, 0));
+  if (space.start != 0 - 1) { return "a space is no token"; }
+  return "";
+}
+
+static string SHAPES = """
+export enum Color { Red, Green }
+
+export struct Box {
+  Color c;
+  i32 side;
+  i32 area(const this) { return this.side * this.side; }
+}
+
+export Color pick(bool warm) { return warm ? Color.Red : Color.Green; }
+""";
+
+PositionFacts inShapes(string needle, i32 skip) {
+  return factsAt(["/p/shapes.wac"], [SHAPES], Res.of(["/p"]), "/p/shapes.wac", offsetOf(SHAPES, needle, 0, skip));
+}
+
+export string test_this_and_a_variant_are_found_in_their_declarations() {
+  PositionFacts side = inShapes("this.side", 5);
+  if (def(side) != "/p/shapes.wac 5 7 field" || side.type != "i32") { return "this.side: " + def(side) + " " + side.type; }
+  PositionFacts red = inShapes("Color.Red", 6);
+  if (def(red) != "/p/shapes.wac 1 21 variant") { return "Color.Red: " + def(red); }
+  PositionFacts color = inShapes("Color c", 0);
+  if (def(color) != "/p/shapes.wac 1 13 enum") { return "Color: " + def(color); }
+  return "";
+}
+
+static string SHADOW = """
+export i32 f(i32 v) {
+  i32 out = v;
+  if (v > 0) {
+    i32 v = 7;
+    out = out + v;
+  }
+  return out + v;
+}
+""";
+
+/**
+ * **A name shadowed in an inner block is the inner declaration**, and the outer one again after the block — the
+ * checker's scopes decide it, which is what a resolver reading the text beside the checker could get wrong.
+ */
+export string test_a_shadowing_local_is_the_declaration_in_scope() {
+  PositionFacts inner = factsAt(["/p/s.wac"], [SHADOW], Res.of(["/p"]), "/p/s.wac", offsetOf(SHADOW, "out + v", 0, 6));
+  if (def(inner) != "/p/s.wac 4 9 local") { return "inside the block: " + def(inner); }
+  PositionFacts outer = factsAt(["/p/s.wac"], [SHADOW], Res.of(["/p"]), "/p/s.wac", offsetOf(SHADOW, "out + v", 1, 6));
+  if (def(outer) != "/p/s.wac 1 18 parameter") { return "after it: " + def(outer); }
+  return "";
+}
+
+static string ALIASED = """
+import { Point as Pt, at as make } from "./lib.wac";
+
+export i32 g() {
+  Pt q = make(1, 2);
+  return q.x;
+}
+""";
+
+/** An import under another name is the declaration it names, in the file that declares it. */
+export string test_an_aliased_import_is_the_declaration_it_names() {
+  string[] paths = ["/p/aliased.wac", "/p/lib.wac"];
+  string[] sources = [ALIASED, LIB];
+  PositionFacts make = factsAt(paths, sources, Res.of(["/p", "/p"]), "/p/aliased.wac", offsetOf(ALIASED, "make(1", 0, 0));
+  if (def(make) != "/p/lib.wac 10 14 function") { return "make: " + def(make); }
+  PositionFacts pt = factsAt(paths, sources, Res.of(["/p", "/p"]), "/p/aliased.wac", offsetOf(ALIASED, "Pt q", 0, 0));
+  if (def(pt) != "/p/lib.wac 2 15 struct") { return "Pt: " + def(pt); }
+  PositionFacts qx = factsAt(paths, sources, Res.of(["/p", "/p"]), "/p/aliased.wac", offsetOf(ALIASED, "q.x", 0, 2));
+  if (def(qx) != "/p/lib.wac 3 7 field") { return "q.x: " + def(qx); }
+  return "";
+}
