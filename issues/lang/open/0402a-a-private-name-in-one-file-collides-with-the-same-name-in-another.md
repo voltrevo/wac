@@ -35,3 +35,8 @@ Found because `core/test/ticket_test.wac` had a helper named `hostTicket`, and `
 emitter typed std's `return t;` (a `Ticket<U>`) with the test's local `t`, a `Ticket<i32>`. The checker is fine with
 both programs; the emitter's tables key some lookups by the bare name rather than by file (`genericFuncFor` takes the
 file; whatever typed the return did not). The test's helper is renamed until this is fixed.
+
+**Again on 2026-10-28**, at scale: `packages/web/src/view.wac`'s private `void flatten(Node, Vec<Node>)` and
+`core`'s `flatten`. Once step 5 put `flatten(t.wait())` in `packages/box/src/shrun.wac` and `site/wac/figures.wac`,
+every graph that also imported `web` — `box`'s `desk`, `term` and `rasterterm`, and the site build — stopped at the
+emitter with *no method void.orElse*, all checking clean. `view.wac`'s helper is `flattenInto` until this is fixed.

@@ -5,6 +5,18 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0418a](open/0418a-a-std-type-used-as-an-expression-needs-no-import.md) | `Launch.plain()` or `Launch(…)` in a file that never imported `Launch` checks clean on the whole graph; a written `Launch l` is refused, and a file checked alone refuses both | bug | accepted program |
+| [0417a](open/0417a-a-std-struct-initialised-from-a-result-is-not-checked.md) | `Datagram d = flatten(s.receive().wait());` checks clean though the right side is a `Result`; the emitter refuses it. The same with a struct the file declares is refused | bug | emit failure |
+| [0416a](open/0416a-a-calls-arguments-are-not-checked-when-it-is-an-awaited-match-subject.md) | `match (await procs.exec(…, string[](), …))` passes the checker where the same call bound with `auto` is refused for its argument type; the module is invalid | bug | invalid wasm |
+| [0415a](open/0415a-wait-on-a-call-result-is-not-checked-against-its-declared-type.md) | `i32 x = Ticket.first(parts).wait();` passes the checker though `wait` answers `Result<i32, Stuck>`; the same through a local is refused | bug | invalid wasm |
+| [0414a](open/0414a-ticket-all-over-async-void-calls-emits-invalid-wasm.md) | `await Ticket.all(f(), g())` over two `async void` calls: the engine rejects a lambda (*not enough arguments on the stack for struct.set*) | bug | invalid wasm |
+| [0413a](open/0413a-a-fault-union-assigned-to-a-string-is-not-refused.md) | `why = e;` with `why` a `string` and `e` a `union<NotFound, Other>` passes the checker; the module is invalid | bug | invalid wasm |
+| [0412a](open/0412a-a-block-local-shadowing-a-parameter-in-an-async-function-emits-invalid-wasm.md) | In an `async` function a block-local that shadows a parameter shares its frame slot: the read after the block is the wrong type and the module is invalid | bug | invalid wasm |
+| [0411a](open/0411a-a-field-read-on-a-result-is-not-checked.md) | `look().isDir` on a `Result<S, E>` passes `wac check`; in an async function the module is invalid (*invalid field index*) | bug | invalid wasm |
+| [0410a](open/0410a-a-method-call-on-a-nullable-array-is-not-checked.md) | `out.write(b)` on a `u8[]? out` passes `wac check` and fails in the emitter; the same call on `u8[]` is *no such method* | diagnostic | compile error |
+| [0409a](open/0409a-a-narrower-union-does-not-widen-into-a-nullable-wider-one.md) | `Wide? n = narrow` is *initialiser does not match*: a narrower union widens into `Wide` and into a `Wide` parameter, not into `Wide?` | bug | compile error |
+| [0408a](closed/0408a-a-core-type-imported-by-name-loses-its-text-conversion.md) | `import { Stuck } from "core"` and `"\{e}"` on a `Stuck` was *no conversion to text*: a built-in's `[toString]` types were recorded only from aliased imports of `toString`. **Closed 2026-10-27** by 3a4b7424e | bug | compile error |
+| [0407a](open/0407a-a-void-type-argument-does-not-erase-a-method-parameter.md) | `Ticket<void>.resolve()` is *wrong number of arguments*: a `void` type argument erases a funcref's parameter and not a method's | bug | compile error |
 | [0406a](open/0406a-a-method-call-on-a-union-value-is-not-checked.md) | `e.nothing()` on a `union<A, B>` passes the checker and fails in the emitter — found as `e.toString()` on a fault union, where `"\{e}"` works | diagnostic | compile error |
 | [0405a](open/0405a-an-await-in-the-ok-arm-of-a-match-on-result-void-emits-invalid-wasm.md) | An `await` inside the `Ok(v)` arm of a match on a `Result<void, E>` in an `async` function emits a module the engine refuses (`array.set` short an operand) | bug | invalid wasm |
 | [0404a](open/0404a-a-generic-call-in-a-lambdas-ternary-or-a-local-lambda-is-not-instantiated.md) | A generic call taking a lambda, inside a lambda, is not instantiated when it is a ternary's branch or the lambda is held by a local: "a call to `make` … which is not in the program" | bug | compile error |
@@ -127,7 +139,7 @@ has been fixed and why.
 
 ## Closed
 
-322 issues, 260 closed.
+334 issues, 261 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
