@@ -25,6 +25,7 @@ import {
   STAT_BYTES,
   STAT_EXEC,
   STAT_FAULT,
+  STAT_MODE,
   statFault,
 } from "../host/faults.ts";
 
@@ -96,9 +97,11 @@ Deno.test("the stat wire layout is one definition, since three hosts write it", 
   // `STAT_BYTES === STAT_FAULT + 1`, which said the fault is the final byte — true until something was
   // appended after it, and the wrong thing to pin: a *later* field is free, while moving the fault is what
   // silently misreads a reply on a host that was not recompiled. `isExecutable` was appended past it for
-  // exactly that reason, so what is checked now is that 20 still means the fault, that the newest field
-  // sits after it, and that the width covers both.
+  // exactly that reason, and the mode bits after it (a u32 at 22, with `Stat.mode`), so what is checked is
+  // that 20 still means the fault, that each later field sits where the hosts write it, and that the width
+  // covers the newest one.
   assertEquals(STAT_FAULT, 20, "the fault byte moved without the hosts being told");
   assertEquals(STAT_EXEC, 21, "the executable bit moved; a host writing the old offset now writes garbage");
-  assertEquals(STAT_BYTES, STAT_EXEC + 1, "the reply is not wide enough to hold every field");
+  assertEquals(STAT_MODE, 22, "the mode bits moved; a host writing the old offset now writes garbage");
+  assertEquals(STAT_BYTES, STAT_MODE + 4, "the reply is not wide enough to hold every field");
 });

@@ -101,7 +101,7 @@ await wacTestRun("packages/wactest/test/wac/itoa64_test.wac", "itoa64");
 await wacTestRun("packages/bignum/test/wac/big_test.wac", "bignum-wac");
 await wacTestRun("packages/bytes/test/wac/buf_test.wac", "buf");
 await wacTestRun("packages/fmt/test/wac/ftoa_test.wac", "ftoa-wac");
-await wacTestRun("packages/fs/test/wac/fs_test.wac", "fs");
+await wacTestRun("packages/fs/test/wac/proc_test.wac", "fs-proc");
 await wacTestRun("packages/gzip/test/wac/huffman_test.wac", "huffman");
 await wacTestRun("packages/json/test/wac/json_test.wac", "json");
 await wacTestRun("core/test/hash_test.wac", "hash");

@@ -252,45 +252,44 @@ static string CONNECT_PROGRAM =
  * `Cli.exec` was refused there for every program, so this probe read 0 of 3 on *both* arms and
  * looked like a broken instrument. A bug that hides evidence about other bugs.
  */
+// **Still on `Cli`**, as `CONNECT_PROGRAM` is: through std the abandoned read is settled by the sleep's own wait
+// before the `cancel`, and `cancel` on a settled ticket does nothing — `issues/system/0370a`. Under load the
+// std version lost the payload; moving it waits on that issue.
 static string OWNSTDIN_PROGRAM =
-  "import { ChildEnv, Clock, Input, Launch, Output, Sys } from \"std\";\n" +
-  "import { flatten } from \"core\";\n" +
+  "import { Core, Cli, Pending, Exec, Sys } from \"std\";\n" +
   "\n" +
-  "export i32 main(Sys sys) {\n" +
-  "  Output out = sys.stdout();\n" +
-  "  Clock clock = sys.clock();\n" +
-  "  string[] argv = sys.args();\n" +
-  "  i32 n = argv.len();\n" +
-  "  string mode = n > 0 ? argv[0] : \"\";\n" +
+  "export i32 main(Sys sys) {\n  Core core = sys.core;\n  Cli cli = sys.cli;\n" +
+  "  i32 n = cli.argCount().wait();\n" +
+  "  string mode = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
   "\n" +
   "  if (mode == \"eater\" || mode == \"eatercontrol\") {\n" +
-  "    Input stdin = sys.stdin();\n" +
   "    if (mode == \"eater\") {\n" +
   "      // The bytes are already here — `exec` gave them to us — so this is the give-up-after case.\n" +
-  "      auto first = stdin.readAll();\n" +
-  "      clock.sleepMillis(250).wait();\n" +
+  "      Pending<u8[]> first = cli.readStdin();\n" +
+  "      core.delay(250).wait();\n" +
   "      first.cancel();\n" +
+  "      core.cancel(first.id);\n" +
   "    }\n" +
-  "    u8[] got = flatten(stdin.readAll().wait()).orElse(u8[]());\n" +
-  "    out.write((\"SAW:\" + string.fromBytes(got)).toBytes()).wait();\n" +
+  "    u8[] got = cli.readStdin().wait();\n" +
+  "    cli.write((\"SAW:\" + string.fromBytes(got)).toBytes());\n" +
   "    return 0;\n" +
   "  }\n" +
   "\n" +
-  "  if (n < 2) { out.line(\"VERDICT lost — no binary given\"); return 1; }\n" +
-  "  string binary = argv[1];\n" +
+  "  if (n < 2) { core.log(\"VERDICT lost — no binary given\"); return 1; }\n" +
+  "  string binary = string.fromBytes(cli.arg(1).wait());\n" +
   "  // **Where this program lives is passed in, not assumed.** The first version computed it, which\n" +
   "  // was true only while the file sat where the standalone probe put it — embedded in a case that\n" +
   "  // writes it somewhere else, the child could never find itself and every arm failed alike.\n" +
-  "  if (n < 3) { out.line(\"VERDICT lost — no path given\"); return 1; }\n" +
-  "  string self = argv[2];\n" +
+  "  if (n < 3) { core.log(\"VERDICT lost — no path given\"); return 1; }\n" +
+  "  string self = string.fromBytes(cli.arg(2).wait());\n" +
   "  string kid = mode == \"control\" ? \"eatercontrol\" : \"eater\";\n" +
-  "  auto ran = flatten(sys.procs().exec(binary,\n" +
+  "  Exec r = cli.exec(binary,\n" +
   "                    [\"run\", \"--allow-read\", \"--allow-write\", \"--allow-run\",\n" +
   "                     \"--allow-env\", \"--allow-net\", self, kid],\n" +
-  "                    \"PAYLOAD\".toBytes(), ChildEnv.inherited(), Launch.plain()).wait());\n" +
-  "  if (ran.isErr()) { out.line(\"VERDICT lost — the binary did not run: \" + \"\\{ran.err()!}\"); return 1; }\n" +
-  "  string said = string.fromBytes(ran.unwrap().stdout) + string.fromBytes(ran.unwrap().stderr);\n" +
-  "  out.line(said.indexOf(\"SAW:PAYLOAD\") >= 0\n" +
+  "                    \"PAYLOAD\".toBytes()).wait();\n" +
+  "  if (!r.ran()) { core.log(\"VERDICT lost — the binary did not run: \" + r.error); return 1; }\n" +
+  "  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);\n" +
+  "  core.log(said.indexOf(\"SAW:PAYLOAD\") >= 0\n" +
   "             ? \"VERDICT kept\" : \"VERDICT lost — the child saw \\\"\" + said + \"\\\"\");\n" +
   "  return 0;\n" +
   "}\n";

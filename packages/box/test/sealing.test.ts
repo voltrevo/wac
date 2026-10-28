@@ -282,10 +282,10 @@ Deno.test("a spawned stage *writes* through the channel, which nothing checked",
 Deno.test("a spawned stage *renames* through the channel, which nothing checked either", () => {
   // The same hole as the test above, one opcode along. `mkdir`, `rm`, `chmod` and `chown` are the
   // shell's builtins, so a sealed script running them never leaves the parent — but `mv` is an
-  // **applet**, so `mv /a /b` in a session is a real child asking its parent to rename, and
-  // `remoteRename` in `packages/fs/src/remote.wac` is the code that carries the question.
+  // **applet**, so `mv /a /b` in a session is a real child asking its parent to rename, through
+  // the files std serves a child (design/system/0013).
   //
-  // Nothing in the gate ran it. `packages/fs`'s coverage ratchet records that whole half of the
+  // Nothing in the gate ran it once. `packages/fs`'s coverage ratchet recorded that half of the
   // wire as "driven by this file" (wac-mono 0134) and this file had no `mv` in it, which is the
   // shape a ledger of remembered coverage takes: the reason is written down once and the thing it
   // points at is never checked again.
@@ -297,12 +297,13 @@ Deno.test("a spawned stage *renames* through the channel, which nothing checked 
   assertEquals(moved.out, "mv=0\none\nb\nbin\ndev\nproc\ntmp\n", moved.out + moved.err);
 
   // A rename that must fail, so the *reason* crosses the channel rather than a generic one: `/bin`
-  // is synthesised and read-only. `mv /b /bin/x` reads nothing first, so unlike a failing `cp` it
-  // reaches the rename itself.
+  // is a mount of its own, and a rename across mounts is refused by name — the parent's mounted
+  // `Files` says so, and the child has to print that, not "failed". `mv /b /bin/x` reads nothing
+  // first, so unlike a failing `cp` it reaches the rename itself.
   const refused = run(sealed, [], "echo one > /b; mv /b /bin/x; echo st=$?");
   assertEquals(refused.out, "st=1\n", refused.out + refused.err);
   assertEquals(
-    refused.err.includes("Read-only file system") || refused.err.includes("not implemented"),
+    refused.err.includes("different mounts"),
     true,
     `the reason did not survive the channel: ${JSON.stringify(refused.err)}`,
   );

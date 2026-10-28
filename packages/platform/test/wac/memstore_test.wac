@@ -528,3 +528,33 @@ export async string test_opening_to_write_truncates_and_what_cannot_open_says_wh
   t.isTrue((await root.stat("/nosuch")).isErr(), "and a failed open made nothing");
   return t.report();
 }
+
+/**
+ * A served child that is stopped leaves nothing waiting in its parent.
+ *
+ * `Child.stop` closed the child and left this program's serving of its files parked on a read of the child's
+ * channel — registered, and so counted, by a host that refuses a program finishing with work outstanding. The
+ * Deno build is the one that says so; v8 does not count, and is the control that the probe itself runs.
+ */
+export async string test_a_stopped_served_child_leaves_nothing_waiting(Sys sys) {
+  T t = T.create();
+  Procs procs = sys.procs();
+  string probe = "packages/platform/test/wac/stoppedserved_probe.wac";
+  string dir = flatten(sys.env().cwd().wait()).unwrap() + "/.cache/wac-stoppedserved";
+  await sys.files().mkdir(dir, true);
+  auto v8 = (await procs.exec("native/v8/target/release/wac", ["run", "--allow-run", probe], u8[](), ChildEnv.inherited(),
+                                     Launch.plain()));
+  t.eqStr(v8.isOk() ? string.fromBytes(v8.unwrap().stdout) : "", "stopped\n", "v8 ran the probe");
+  string denoOut = "\{dir}/probe-deno.js";
+  auto built = (await procs.exec("deno", ["run", "-A", "packages/platform/build.ts", probe, "--target", "deno", "--allow-run",
+                                                 "-o", denoOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  t.isTrue(built.isOk() && built.unwrap().status == 0, "built for Deno");
+  auto ran = (await procs.exec("deno", ["run", "-A", denoOut], u8[](), ChildEnv.inherited(), Launch.plain()));
+  t.isTrue(ran.isOk(), "deno ran it");
+  if (ran.isOk()) {
+    Exec r = ran.unwrap();
+    t.eqStr(string.fromBytes(r.stdout), "stopped\n", "deno: \{string.fromBytes(r.stderr)}");
+    t.eqI32(r.status, 0, "deno: a finished program with nothing waiting — \{string.fromBytes(r.stderr)}");
+  }
+  return t.report();
+}

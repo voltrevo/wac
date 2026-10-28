@@ -3965,7 +3965,11 @@ async Result<string[], LookFault> hostReadDir(Cli cli, HostWait wait, string p) 
     if (s.fault != FAULT_NONE()) { return Result.Err(lookFault(s.fault, s.words(p))); }
     if (!s.exists) { return Result.Err(NotFound(p + ": No such file or directory")); }
     if (!s.isDir) { return Result.Err(NotADir(p + ": Not a directory")); }
-    return Result.Err(Other(p + ": cannot be listed"));
+    // **A directory that is there and will not list is a refusal.** The host's `readDir` answers no reason,
+    // and for something `stat` finds to be a directory the one that happens is a permission — `chmod 000 d;
+    // ls d` is GNU's "cannot open directory 'd': Permission denied". As `Other` this had no category, and
+    // every caller printed "cannot be listed", a phrase no real tool prints.
+    return Result.Err(Denied(p + ": cannot be listed"));
   }
   return Result.Ok(names!);
 }
@@ -4183,6 +4187,31 @@ struct WireLine {
         Data(bytes): { this.held.pushAll(bytes); }
         End: { this.broken = true; }
         Failed(why): { this.broken = true; }
+      }
+    }
+    return brokenReader("the parent channel has ended");
+  }
+
+  /**
+   * `next`, giving up when `stop` settles first: the read in flight is withdrawn and the line is broken. What a
+   * parent serving a child's files waits on, so that stopping the child also ends the serving rather than
+   * leaving a read of a dead channel registered.
+   */
+  async WireReader nextUnless(this, HostWait wait, TicketBase stop) {
+    while (!this.broken) {
+      WireReader whole = this.take();
+      if (!whole.bad) { return whole; }
+      Ticket<Read> got = recvTicket(this.cli, wait, this.handle);
+      i32 won = await Ticket.first([got, stop]);
+      if (won != 0) {
+        got.cancel();
+        this.broken = true;
+      } else {
+        match (got.value()) {
+          Data(bytes): { this.held.pushAll(bytes); }
+          End: { this.broken = true; }
+          Failed(why): { this.broken = true; }
+        }
       }
     }
     return brokenReader("the parent channel has ended");
@@ -4437,6 +4466,11 @@ async Result<void, ModeFault> askMode(ParentLine l, i32 op, string p, i32 mode, 
 
 // ── The parent's end ──
 
+/** A read of `handle` as a ticket the host answers — one that `cancel` withdraws. */
+Ticket<Read> recvTicket(Cli cli, HostWait wait, i32 handle) { return hostTicket(cli.recv(handle), wait, sameRead); }
+
+Read sameRead(Read r) { return r; }
+
 /** The streams a served child has open, by the number it was given; a closed one keeps its number. */
 struct ServedStreams {
   Vec<Input> reads;
@@ -4446,15 +4480,16 @@ struct ServedStreams {
 }
 
 /**
- * Answer a child's questions out of `files` until its channel ends — which is the child exiting — then close what it
- * left open. Runs as this program's scheduler does: nothing else has to drive it.
+ * Answer a child's questions out of `files` until its channel ends — which is the child exiting — or `stop` settles,
+ * which is the child being stopped; then close what it left open. Runs as this program's scheduler does: nothing else
+ * has to drive it.
  */
-async void serveFiles(Cli cli, i32 handle, Files files) {
+async void serveFiles(Cli cli, HostWait wait, i32 handle, Files files, Ticket<bool> stop) {
   WireLine line = WireLine.on(cli, handle);
   ServedStreams open = ServedStreams(Vec.create(), Vec.create(), Vec.create(), Vec.create());
   bool going = true;
   while (going) {
-    WireReader q = await line.next();
+    WireReader q = await line.nextUnless(wait, stop);
     if (q.bad) {
       going = false;
     } else {
@@ -4891,8 +4926,9 @@ export struct Procs {
 /** The started child — and, when it was handed a composed `Files`, this program serving it from now until it ends. */
 Result<Child, SpawnFault> childOf(Cli cli, HostWait wait, HostChild k, Files? served) {
   if (k.handle < 0) { return Result.Err(spawnFault(k.handle, k.error)); }
-  if (served is null) { return Result.Ok(Child(cli, wait, k.handle, k.errHandle, null)); }
-  return Result.Ok(Child(cli, wait, k.handle, k.errHandle, serveFiles(cli, k.fsHandle, served!)));
+  if (served is null) { return Result.Ok(Child(cli, wait, k.handle, k.errHandle, null, null)); }
+  Ticket<bool> stopping;
+  return Result.Ok(Child(cli, wait, k.handle, k.errHandle, serveFiles(cli, wait, k.fsHandle, served!, stopping), stopping));
 }
 
 Result<Exec, SpawnFault> ranOf(Exec r) {
@@ -4923,6 +4959,8 @@ export struct Child {
   i32 errHandle;
   /** This program answering the child's file questions, when it was handed a composed `Files`; done once the child is. */
   Ticket<void>? serving;
+  /** Settled by `stop`, which ends the serving as well as the child. */
+  Ticket<bool>? stopServing;
 
   /** What it writes to its output, unless that was inherited. */
   Input output(this) {
@@ -4955,8 +4993,19 @@ export struct Child {
     return exitAfterServing(code, this.serving!);
   }
 
-  /** Stop it now. */
-  void stop(this) { this.cli.closeSocket(this.handle); }
+  /**
+   * Stop it now — and the serving of its files with it. The serving is driven to its end here rather than left to
+   * the scheduler: a program that stops a child and then finishes would otherwise finish with that serving's read
+   * of the dead channel still registered, which the JavaScript hosts refuse (`stoppedserved_probe.wac`).
+   */
+  void stop(this) {
+    this.cli.closeSocket(this.handle);
+    Ticket<bool>? s = this.stopServing;
+    if (s is null || s!.settled()) { return; }
+    s!.resolve(true);
+    Ticket<void>? serving = this.serving;
+    if (serving is not null) { serving!.wait(); }
+  }
 }
 
 async Result<i32, HostFault> exitAfterServing(Ticket<Result<i32, HostFault>> code, Ticket<void> serving) {

@@ -1761,6 +1761,10 @@ async Authority stageAuthority(Shell sh, i32 pid) {
   if (fs.hostGrants == 0 && (await fs.stat("/proc/self")).isOk()) {
     fs = Files.mounted([Mount("/proc/self", procSelfFiles(sh.table, pid)), Mount("/", sh.fs)]);
   }
+  // **Standing where the shell stands.** `Launch`'s directory is the host's, and reaches only the machine's
+  // own files; served files answer from their root. So a sealed session's `cd d; cat f` spawned `cat` asking
+  // `/f` — the in-process applets were handed `relativeTo` already, and a spawned one is handed the same.
+  if (fs.hostGrants == 0) { fs = fs.relativeTo(sh.cwd); }
   return Authority(fs, sh.net, sh.env, null);
 }
 

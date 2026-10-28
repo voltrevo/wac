@@ -50,7 +50,7 @@ export async i32 nc(Input stdin, Output err, Output out, Net net, Args a) {
       Ok(r): {
         match (r) {
           Data(bytes): {
-            if ((await peer.send(bytes)).isErr()) { break; }
+            if ((await peer.send(bytes)).isErr()) { fromPeer.cancel(); break; }
             fromUser = stdin.chunk();
           }
           // Our input ended; keep printing what the peer sends until it closes.
@@ -62,6 +62,10 @@ export async i32 nc(Input stdin, Output err, Output out, Net net, Args a) {
     }
   }
 
+  // **The read still out on whichever side did not end is abandoned**, not left: a peer that closes before
+  // our input does leaves a `chunk` nobody will collect, and a host that counts what a finished program
+  // left waiting calls the run unfinished. A settled one ignores the cancel.
+  fromUser.cancel();
   peer.close();
   return 0;
 }

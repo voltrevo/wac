@@ -380,10 +380,16 @@ Deno.test("an operation we have not written says so, and blames no file", () => 
     assertEquals(did.out.trim(), "status=0", did.err);
     assertEquals(did.err.trim(), "", "chmod says nothing now that it works");
 
-    // `chown` has not been written, and says so. The sentence is ours because no GNU phrase fits:
-    // GNU never fails here at all.
+    // `chown` cannot be done on the host, and says why. The sentence is ours because no GNU phrase
+    // fits — GNU never fails here at all. It is std's since design/system/0013: the host's owners are
+    // numbers, not names, so there is no name to give a file to (`Stat.owner` is `""` there). The path
+    // leads it as every fault's message does; it names the file without blaming it.
     const own = byteSh(shell, [], `cd ${dir}; chown somebody o`);
-    assertEquals(own.err.trim(), "chown: chown on a host mount is not implemented", own.err);
+    assertEquals(
+      own.err.trim(),
+      `chown: ${dir}/o: the host's owners are not names, so a file cannot be given to one`,
+      own.err,
+    );
     // Not "Permission denied", which is what it said before, and not "cannot access", which frames a
     // fact about us as a fact about the path.
     assertEquals(own.err.includes("Permission denied"), false, own.err);

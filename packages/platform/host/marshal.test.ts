@@ -440,7 +440,7 @@ Deno.test("a struct is built and read through the manifest, not through generate
     } catch (e) {
       threw = e instanceof Error ? e.message : String(e);
     }
-    assertEquals(threw.includes("takes 8 argument(s), not 1"), true, `wrong arity was not named: ${threw}`);
+    assertEquals(threw.includes("takes 9 argument(s), not 1"), true, `wrong arity was not named: ${threw}`);
   }
 });
 
