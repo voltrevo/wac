@@ -636,13 +636,28 @@ export string documentSide() {
           listenOn: (id, kind, prevent) => {
             const n = nodes.get(id);
             if (!n) return;
-            const keys = prevent === "" || prevent === "*" ? [] : prevent.split(" ");
+            // `prevent` names keys: `Tab` matches with any modifiers held, and `Ctrl+s` only with exactly
+            // Ctrl (of Ctrl, Alt, Shift and Meta) — so a page can take Ctrl+S without taking every `s`. A
+            // single letter matches either case, since Shift turns `s` into `S`.
+            const keys = prevent === "" || prevent === "*" ? [] : prevent.split(" ").filter((k) => k !== "").map((k) => {
+              const parts = k.split("+");
+              if (parts.length === 1 || k === "+") return { key: k, mods: -1 };
+              const bit = { Shift: 1, Ctrl: 2, Alt: 4, Meta: 8 };
+              let mods = 0;
+              for (const p of parts.slice(0, -1)) mods |= bit[p] ?? 0;
+              return { key: parts[parts.length - 1], mods };
+            });
+            const keyMatches = (ev) => keys.some((k) => {
+              const held = (ev.shiftKey ? 1 : 0) | (ev.ctrlKey ? 2 : 0) | (ev.altKey ? 4 : 0) | (ev.metaKey ? 8 : 0);
+              if (k.mods >= 0 && k.mods !== held) return false;
+              return k.key.length === 1 ? k.key.toLowerCase() === ev.key.toLowerCase() : k.key === ev.key;
+            });
             n.addEventListener(kind, (ev) => {
               let t = ev.target;
               while (t && t !== n && !handleOf.has(t)) t = t.parentNode;
               if (!t || !handleOf.has(t)) return;
               const keyed = kind === "keydown" || kind === "keyup";
-              if (prevent === "*" || kind === "submit" || (keyed && keys.includes(ev.key))) ev.preventDefault();
+              if (prevent === "*" || kind === "submit" || (keyed && keyMatches(ev))) ev.preventDefault();
               const el = ev.target;
               const value = keyed ? ev.key : (el && "value" in el ? String(el.value) : "");
               // In the listening element's own pixels, whatever is under the pointer inside it: a bar's

@@ -1,0 +1,11 @@
+// The page `keys_live.test.ts` presses keys on: one focusable element that prevents `Ctrl+s` and `Tab`,
+// and logs each key it is handed with the modifiers held, so the test can check both halves — what the
+// browser was stopped from doing, and what the program was told.
+import { ElementEvent, Page, Ui, html.div } from "../../web";
+
+export async i32 main(Page page) {
+  page.mount((Ui ui) => <div id="pad" tabindex="0" prevent="Ctrl+s Tab"
+                             onkeydown={(ElementEvent e) => { page.log("key \{e.value} \{e.mods}"); }}>keys</div>);
+  page.title("ready");
+  return 0;
+}
