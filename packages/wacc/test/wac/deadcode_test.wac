@@ -1,0 +1,105 @@
+// What a built program carries: the functions it calls and the glue its exports need — `issues/lang/0398a`.
+//
+// Reachability keeps a struct whole so that all of it is checked (spec ch05 `§wac-reach-struct-whole-3wx2wun`),
+// and the same chapter says the output need not carry what nothing uses. It carried all of it: every method of
+// every struct and instance the checker kept, and a bindgen export naming each one, which a host never asked for
+// and which pinned the method in place. `main(Sys sys) { sys.log("hi"); }` was 598,156 bytes in 6,219 functions,
+// 777 of them exported, where the code that runs is 58 functions and 2.6 KB.
+//
+// Each case builds with the command, as a user would, runs what it built, and then reads the module.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { ChildEnv, Env, Exec, Files, Launch, Procs, Sys } from "std";
+import { flatten } from "core";
+
+Exec run(Procs procs, string prog, string[] args) {
+  return flatten(procs.exec(prog, args, u8[](), ChildEnv.inherited(), Launch.plain()).wait()).unwrap();
+}
+
+i32 uleb(u8[] b, i32[] at) {
+  i32 r = 0;
+  i32 shift = 0;
+  while (true) {
+    i32 x = b[at[0]] as i32;
+    at[0] = at[0] + 1;
+    r = r | ((x & 127) << shift);
+    if ((x & 128) == 0) { return r; }
+    shift = shift + 7;
+  }
+}
+
+/** How many functions the module defines, and how many of its exports are bindgen glue. */
+struct Shape { i32 functions; i32 binds; }
+
+Shape shapeOf(u8[] wasm) {
+  i32[] at = [8];
+  i32 functions = 0;
+  i32 binds = 0;
+  while (at[0] < wasm.len()) {
+    i32 id = wasm[at[0]] as i32;
+    at[0] = at[0] + 1;
+    i32 size = uleb(wasm, at);
+    i32 end = at[0] + size;
+    if (id == 3) { functions = uleb(wasm, at); }
+    if (id == 7) {
+      i32 n = uleb(wasm, at);
+      for (i32 i = 0; i < n; i++) {
+        i32 len = uleb(wasm, at);
+        if (len > 6 && wasm[at[0]] == '$' && wasm[at[0] + 1] == 'b' && wasm[at[0] + 5] == '$') { binds = binds + 1; }
+        at[0] = at[0] + len + 1;
+        uleb(wasm, at);
+      }
+    }
+    at[0] = end;
+  }
+  return Shape(functions, binds);
+}
+
+/** Build `text` as a program, run it, and answer the module — or null, having said why. */
+u8[]? built(Sys sys, T t, string name, string text, string wantOut) {
+  Files fs = sys.files();
+  Env env = sys.env();
+  string dir = scratch(env, "deadcode-" + name);
+  fs.mkdir(dir, true).wait();
+  string src = dir + "/" + name + ".wac";
+  fs.writeFile(src, text.toBytes()).wait();
+  Exec b = run(sys.procs(), binaryPath(env), ["build", "--no-cache", "--allow-read", src, "-o", dir + "/" + name]);
+  t.eqI32(b.status, 0, name + " builds: " + string.fromBytes(b.stderr));
+  Exec r = run(sys.procs(), binaryPath(env), [dir + "/" + name + ".wasm"]);
+  t.eqI32(r.status, 0, name + " runs: " + string.fromBytes(r.stderr));
+  t.eqStr(string.fromBytes(r.stdout), wantOut, name + "'s output");
+  return flatten(fs.readFile(dir + "/" + name + ".wasm").wait()).ok();
+}
+
+export string test_a_program_that_logs_a_line_carries_what_logging_needs(Sys sys) {
+  T t = T.create();
+  u8[]? w = built(sys, t, "hello", "import { Sys } from \"std\";\nexport void main(Sys sys) { sys.log(\"hi\"); }\n", "hi\n");
+  if (w is null) { return t.report(); }
+  Shape s = shapeOf(w!);
+  // The binders `__wacHost`'s four callbacks need, and the string and array helpers their signatures move:
+  // a handful, where it was 777.
+  t.isTrue(s.binds <= 40, "bindgen exports: " + itoa(s.binds));
+  t.isTrue(s.functions <= 400, "functions: " + itoa(s.functions));
+  t.isTrue(w!.len() <= 100000, "bytes: " + itoa(w!.len()));
+  return t.report();
+}
+
+/** A program that reads a file costs a little more than one that logs — not a second copy of std. */
+export string test_reading_a_file_adds_what_reading_needs(Sys sys) {
+  T t = T.create();
+  string text = "import { Sys } from \"std\";\n"
+              + "export async i32 main(Sys sys) {\n"
+              + "  u8[]? b = (await sys.files().readFile(\"/nonexistent/deadcode\")).ok();\n"
+              + "  sys.log(b is null ? \"none\" : \"some\");\n"
+              + "  return 0;\n"
+              + "}\n";
+  u8[]? w = built(sys, t, "reads", text, "none\n");
+  if (w is null) { return t.report(); }
+  Shape s = shapeOf(w!);
+  t.isTrue(s.binds <= 40, "bindgen exports: " + itoa(s.binds));
+  t.isTrue(s.functions <= 1000, "functions: " + itoa(s.functions));
+  t.isTrue(w!.len() <= 200000, "bytes: " + itoa(w!.len()));
+  return t.report();
+}

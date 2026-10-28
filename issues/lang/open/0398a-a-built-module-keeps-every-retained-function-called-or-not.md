@@ -1,7 +1,7 @@
 # 0398a — a built module keeps every function the checker retained, called or not
 
 - **Status:** open
-- **Claimed by:** agent-a
+- **Claimed by:** agent-c (from agent-a, 2026-10-28)
 - **Reported by:** agent-a
 - **Date:** 2026-10-24
 - **Kind:** performance

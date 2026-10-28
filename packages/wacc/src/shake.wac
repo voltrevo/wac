@@ -1,0 +1,564 @@
+// The functions nothing reaches, taken out of a finished module — `issues/lang/0398a`.
+//
+// Reachability keeps a struct whole so that all of it is *checked* (spec ch05 `§wac-reach-struct-whole-3wx2wun`),
+// and the same chapter says the output need not carry what nothing uses: "retention requires checking; it does not
+// require dead code in the output." The emitter compiles every retained declaration, so the module it writes held
+// every method of every struct a program touched. `main(Sys sys) { sys.log("hi"); }` was 6,219 functions, of which
+// 58 can run.
+//
+// **Over the module, not the declarations** (operator, 2026-10-24): pruning methods in `reach.wac` would weaken what a
+// build checks to get a size the emitter can get exactly. So this reads the finished bytes, walks `call`,
+// `return_call` and `ref.func` from the roots, and writes the module again with only what was reached, every function
+// index renumbered.
+//
+// **Roots** are what something outside a function body can name: the exports, the start function, every function an
+// active or passive element segment holds (`call_indirect`'s table), and every `ref.func` in a global's initialiser. A
+// declarative segment only declares what `ref.func` may name, so it is not a root; it is renumbered and loses what
+// was dropped.
+//
+// **It declines rather than guesses.** An instruction it does not know the immediates of — SIMD, or one added to the
+// emitter after this was written — makes it answer the module unchanged, since a mis-skipped immediate would read
+// the rest of the body wrong. `packages/wacc/test/wac/deadcode_test.wac` fails loudly if that ever becomes the usual
+// answer.
+//
+// Written in the ladder's subset (`bootstrap/`): no `Map`, `Vec` or lambdas, no interpolation, no array literals.
+
+/** A cursor over a module's bytes. `bad` is set, never cleared, by anything it cannot read. */
+struct Rd {
+  u8[] b;
+  i32 at;
+  bool bad;
+
+  i32 byte(this) {
+    if (this.at >= this.b.len()) { this.bad = true; return 0; }
+    i32 v = this.b[this.at] as i32;
+    this.at = this.at + 1;
+    return v;
+  }
+
+  /** An unsigned LEB128 that fits an `i32`. */
+  i32 u32(this) {
+    i32 r = 0;
+    i32 shift = 0;
+    while (true) {
+      i32 x = this.byte();
+      if (this.bad) { return 0; }
+      if (shift < 32) { r = r | ((x & 127) << shift); }
+      if ((x & 128) == 0) { return r; }
+      shift = shift + 7;
+      if (shift > 63) { this.bad = true; return 0; }
+    }
+    return r;
+  }
+
+  /** Any LEB128, signed or not, whose value is not needed. */
+  void skipLeb(this) {
+    for (i32 i = 0; i < 10; i++) {
+      i32 x = this.byte();
+      if (this.bad || (x & 128) == 0) { return; }
+    }
+    this.bad = true;
+  }
+
+  void skip(this, i32 n) {
+    if (n < 0 || this.at + n > this.b.len()) { this.bad = true; return; }
+    this.at = this.at + n;
+  }
+
+  /** A value type: one byte, or `ref`/`ref null` and a heap type. */
+  void valType(this) {
+    i32 t = this.byte();
+    if (t == 99 || t == 100) { this.skipLeb(); }      // 0x63 ref null ht, 0x64 ref ht
+  }
+
+  /** A block type: an empty one, a value type or a type index — all an s33 but the two reference forms. */
+  void blockType(this) {
+    if (this.at >= this.b.len()) { this.bad = true; return; }
+    i32 t = this.b[this.at] as i32;
+    if (t == 99 || t == 100) { this.at = this.at + 1; this.skipLeb(); return; }
+    this.skipLeb();
+  }
+}
+
+/** A growable list of `i32`, since the ladder's subset has no `Vec`. */
+struct Ints {
+  i32[] v;
+  i32 n;
+
+  Ints create() { return Ints(i32[].filled(16, 0), 0); }
+
+  void push(this, i32 x) {
+    if (this.n == this.v.len()) {
+      i32[] g = i32[].filled(this.v.len() * 2, 0);
+      for (i32 i = 0; i < this.n; i++) { g[i] = this.v[i]; }
+      this.v = g;
+    }
+    this.v[this.n] = x;
+    this.n = this.n + 1;
+  }
+}
+
+/** A growable byte buffer. */
+struct Out {
+  u8[] d;
+  i32 n;
+
+  Out create() { return Out(u8[].filled(256, 0), 0); }
+
+  void byte(this, i32 x) {
+    if (this.n == this.d.len()) {
+      u8[] g = u8[].filled(this.d.len() * 2, 0);
+      for (i32 i = 0; i < this.n; i++) { g[i] = this.d[i]; }
+      this.d = g;
+    }
+    this.d[this.n] = x as~ u8;
+    this.n = this.n + 1;
+  }
+
+  void u32(this, i32 v) {
+    i32 x = v;
+    while (true) {
+      i32 lo = x & 127;
+      x = x >>> 7;
+      if (x == 0) { this.byte(lo); return; }
+      this.byte(lo | 128);
+    }
+  }
+
+  void range(this, u8[] src, i32 from, i32 to) {
+    for (i32 i = from; i < to; i++) { this.byte(src[i] as i32); }
+  }
+
+  void all(this, Out o) {
+    for (i32 i = 0; i < o.n; i++) { this.byte(o.d[i] as i32); }
+  }
+
+  /** A section: its id, its length, its bytes. */
+  void section(this, i32 id, Out body) {
+    this.byte(id);
+    this.u32(body.n);
+    this.all(body);
+  }
+}
+
+/**
+ * One instruction sequence, up to and including the `end` that closes it, read from `r`. Every function index an
+ * instruction names goes into `refs`; with `remap` non-empty, the sequence is also written to `o` with each one
+ * renumbered. Answers false at an instruction whose immediates it does not know.
+ */
+bool walk(Rd r, Ints refs, i32[] remap, Out o) {
+  bool writing = remap.len() > 0;
+  i32 depth = 0;
+  while (!r.bad) {
+    i32 start = r.at;
+    i32 op = r.byte();
+    i32 callee = 0 - 1;
+    if (op == 11) {                                  // end
+      if (depth == 0) { if (writing) { o.byte(11); } return true; }
+      depth = depth - 1;
+    } else if (op == 2 || op == 3 || op == 4 || op == 6) {   // block, loop, if, try
+      r.blockType();
+      depth = depth + 1;
+    } else if (op == 31) {                           // try_table
+      r.blockType();
+      i32 n = r.u32();
+      for (i32 i = 0; i < n; i++) {
+        i32 kind = r.byte();
+        if (kind == 0 || kind == 1) { r.skipLeb(); }
+        r.skipLeb();
+      }
+      depth = depth + 1;
+    } else if (op == 0 || op == 1 || op == 5 || op == 10 || op == 15 || op == 25 || op == 26 || op == 27) {
+      // unreachable, nop, else, throw_ref, return, catch_all, drop, select
+    } else if (op == 7 || op == 8 || op == 9 || op == 12 || op == 13) {
+      r.skipLeb();                                    // catch, throw, rethrow, br, br_if
+    } else if (op == 24) {                            // delegate, which closes its try as `end` would
+      r.skipLeb();
+      if (depth == 0) { return false; }
+      depth = depth - 1;
+    } else if (op == 14) {                            // br_table
+      i32 n = r.u32();
+      for (i32 i = 0; i <= n; i++) { r.skipLeb(); }
+    } else if (op == 16 || op == 18) {                // call, return_call
+      callee = r.u32();
+    } else if (op == 17 || op == 19) {                // call_indirect, return_call_indirect
+      r.skipLeb();
+      r.skipLeb();
+    } else if (op == 20 || op == 21) {                // call_ref, return_call_ref
+      r.skipLeb();
+    } else if (op == 28) {                            // select t*
+      i32 n = r.u32();
+      for (i32 i = 0; i < n; i++) { r.valType(); }
+    } else if (op >= 32 && op <= 38) {                // local.*, global.*, table.get/set
+      r.skipLeb();
+    } else if (op >= 40 && op <= 62) {                // loads and stores: a memarg
+      i32 align = r.u32();
+      if ((align & 64) != 0) { r.skipLeb(); }
+      r.skipLeb();
+    } else if (op == 63 || op == 64) {                // memory.size, memory.grow
+      r.skipLeb();
+    } else if (op == 65 || op == 66) {                // i32.const, i64.const
+      r.skipLeb();
+    } else if (op == 67) {                            // f32.const
+      r.skip(4);
+    } else if (op == 68) {                            // f64.const
+      r.skip(8);
+    } else if (op >= 69 && op <= 196) {               // the numeric instructions
+    } else if (op == 208) {                           // ref.null
+      r.skipLeb();
+    } else if (op == 209 || op == 211 || op == 212) { // ref.is_null, ref.eq, ref.as_non_null
+    } else if (op == 210) {                           // ref.func
+      callee = r.u32();
+    } else if (op == 213 || op == 214) {              // br_on_null, br_on_non_null
+      r.skipLeb();
+    } else if (op == 251) {                           // the GC instructions
+      i32 sub = r.u32();
+      if (sub == 0 || sub == 1 || sub == 6 || sub == 7 || sub == 11 || sub == 12 || sub == 13 || sub == 14
+          || sub == 16) {
+        r.skipLeb();
+      } else if (sub == 2 || sub == 3 || sub == 4 || sub == 5 || sub == 8 || sub == 9 || sub == 10 || sub == 17
+                 || sub == 18 || sub == 19) {
+        r.skipLeb();
+        r.skipLeb();
+      } else if (sub == 15 || (sub >= 26 && sub <= 30)) {
+      } else if (sub >= 20 && sub <= 23) {            // ref.test, ref.cast
+        r.skipLeb();
+      } else if (sub == 24 || sub == 25) {            // br_on_cast, br_on_cast_fail
+        r.byte();
+        r.skipLeb();
+        r.skipLeb();
+        r.skipLeb();
+      } else {
+        return false;
+      }
+    } else if (op == 252) {                           // saturating truncation, bulk memory, tables
+      i32 sub = r.u32();
+      if (sub <= 7) {
+      } else if (sub == 8 || sub == 10 || sub == 12 || sub == 14) {
+        r.skipLeb();
+        r.skipLeb();
+      } else if (sub == 9 || sub == 11 || sub == 13 || sub == 15 || sub == 16 || sub == 17) {
+        r.skipLeb();
+      } else {
+        return false;
+      }
+    } else {
+      return false;
+    }
+    if (r.bad) { return false; }
+    if (callee >= 0) { refs.push(callee); }
+    if (writing) {
+      if (callee >= 0) {
+        if (callee >= remap.len() || remap[callee] < 0) { return false; }
+        o.byte(op);
+        o.u32(remap[callee]);
+      } else {
+        o.range(r.b, start, r.at);
+      }
+    }
+  }
+  return false;
+}
+
+/** A section as it was read: where its contents start and end. */
+struct Sec {
+  i32 id;
+  i32 from;
+  i32 to;
+}
+
+/** `wasm` with every function no root reaches taken out, or `wasm` itself if anything in it could not be read. */
+export u8[] shake(u8[] wasm) {
+  if (wasm.len() < 8) { return wasm; }
+  Rd r = Rd(wasm, 8, false);
+  Sec[] secs = Sec[].filled(64, Sec(0, 0, 0));
+  i32 ns = 0;
+  while (r.at < wasm.len() && !r.bad) {
+    i32 id = r.byte();
+    i32 size = r.u32();
+    if (r.bad || r.at + size > wasm.len() || ns >= secs.len()) { return wasm; }
+    secs[ns] = Sec(id, r.at, r.at + size);
+    ns = ns + 1;
+    r.at = r.at + size;
+  }
+  if (r.bad) { return wasm; }
+
+  // How many functions are imported, which is where this module's own begin.
+  i32 imported = 0;
+  i32 defined = 0;
+  i32 codeSec = 0 - 1;
+  for (i32 s = 0; s < ns; s++) {
+    Rd q = Rd(wasm, secs[s].from, false);
+    if (secs[s].id == 2) {
+      i32 n = q.u32();
+      for (i32 i = 0; i < n && !q.bad; i++) {
+        q.skip(q.u32());
+        q.skip(q.u32());
+        i32 kind = q.byte();
+        if (kind == 0) { imported = imported + 1; q.skipLeb(); }
+        else if (kind == 1) { q.valType(); i32 fl = q.byte(); q.skipLeb(); if ((fl & 1) != 0) { q.skipLeb(); } }
+        else if (kind == 2) { i32 fl = q.byte(); q.skipLeb(); if ((fl & 1) != 0) { q.skipLeb(); } }
+        else if (kind == 3) { q.valType(); q.byte(); }
+        else if (kind == 4) { q.byte(); q.skipLeb(); }
+        else { return wasm; }
+      }
+      if (q.bad) { return wasm; }
+    }
+    if (secs[s].id == 3) { defined = q.u32(); }
+    if (secs[s].id == 10) { codeSec = s; }
+  }
+  if (codeSec < 0 || defined == 0) { return wasm; }
+  i32 total = imported + defined;
+
+  // Each body's extent, and what it names.
+  i32[] bodyFrom = i32[].filled(defined, 0);
+  i32[] bodyTo = i32[].filled(defined, 0);
+  i32[] instrFrom = i32[].filled(defined, 0);
+  i32[] edgeFrom = i32[].filled(defined + 1, 0);
+  Ints edges = Ints.create();
+  i32[] none = i32[].filled(0, 0);
+  Out unused = Out.create();
+  Rd c = Rd(wasm, secs[codeSec].from, false);
+  if (c.u32() != defined) { return wasm; }
+  for (i32 f = 0; f < defined; f++) {
+    i32 size = c.u32();
+    bodyFrom[f] = c.at;
+    bodyTo[f] = c.at + size;
+    i32 groups = c.u32();
+    for (i32 g = 0; g < groups; g++) { c.skipLeb(); c.valType(); }
+    instrFrom[f] = c.at;
+    edgeFrom[f] = edges.n;
+    if (c.bad || !walk(c, edges, none, unused) || c.at != bodyTo[f]) { return wasm; }
+  }
+  edgeFrom[defined] = edges.n;
+
+  // The roots.
+  bool[] live = bool[].filled(total, false);
+  for (i32 i = 0; i < imported; i++) { live[i] = true; }
+  Ints work = Ints.create();
+  for (i32 s = 0; s < ns; s++) {
+    Rd q = Rd(wasm, secs[s].from, false);
+    i32 id = secs[s].id;
+    if (id == 7) {
+      i32 n = q.u32();
+      for (i32 i = 0; i < n && !q.bad; i++) {
+        q.skip(q.u32());
+        i32 kind = q.byte();
+        i32 idx = q.u32();
+        if (kind == 0) { work.push(idx); }
+      }
+    } else if (id == 8) {
+      work.push(q.u32());
+    } else if (id == 6) {
+      i32 n = q.u32();
+      for (i32 i = 0; i < n && !q.bad; i++) {
+        q.valType();
+        q.byte();
+        if (!walk(q, work, none, unused)) { return wasm; }
+      }
+    } else if (id == 9) {
+      i32 n = q.u32();
+      for (i32 i = 0; i < n && !q.bad; i++) {
+        i32 flags = q.u32();
+        Ints held = Ints.create();
+        if (!elemSegment(q, flags, held, none, unused)) { return wasm; }
+        // A declarative segment (3 and 7) only says what `ref.func` may name.
+        if (flags != 3 && flags != 7) {
+          for (i32 k = 0; k < held.n; k++) { work.push(held.v[k]); }
+        }
+      }
+    }
+    if (q.bad) { return wasm; }
+  }
+
+  // Everything they reach.
+  i32 head = 0;
+  while (head < work.n) {
+    i32 callee = work.v[head];
+    head = head + 1;
+    if (callee < 0 || callee >= total) { return wasm; }
+    if (live[callee]) { continue; }
+    live[callee] = true;
+    i32 d = callee - imported;
+    for (i32 e = edgeFrom[d]; e < edgeFrom[d + 1]; e++) { work.push(edges.v[e]); }
+  }
+
+  // The new numbering: imports keep theirs, the module's own close up.
+  i32[] remap = i32[].filled(total, 0 - 1);
+  i32 kept = 0;
+  for (i32 i = 0; i < total; i++) {
+    if (live[i]) { remap[i] = kept; kept = kept + 1; }
+  }
+  if (kept == total) { return wasm; }
+
+  Out out = Out.create();
+  out.range(wasm, 0, 8);
+  for (i32 s = 0; s < ns; s++) {
+    i32 id = secs[s].id;
+    Rd q = Rd(wasm, secs[s].from, false);
+    Out body = Out.create();
+    if (id == 3) {
+      q.u32();
+      body.u32(kept - imported);
+      for (i32 f = 0; f < defined; f++) {
+        i32 ty = q.u32();
+        if (live[imported + f]) { body.u32(ty); }
+      }
+    } else if (id == 10) {
+      body.u32(kept - imported);
+      for (i32 f = 0; f < defined; f++) {
+        if (!live[imported + f]) { continue; }
+        Out fb = Out.create();
+        fb.range(wasm, bodyFrom[f], instrFrom[f]);
+        Rd w = Rd(wasm, instrFrom[f], false);
+        Ints seen = Ints.create();
+        if (!walk(w, seen, remap, fb)) { return wasm; }
+        body.u32(fb.n);
+        body.all(fb);
+      }
+    } else if (id == 7) {
+      i32 n = q.u32();
+      body.u32(n);
+      for (i32 i = 0; i < n; i++) {
+        i32 nameFrom = q.at;
+        q.skip(q.u32());
+        body.range(wasm, nameFrom, q.at);
+        i32 kind = q.byte();
+        i32 idx = q.u32();
+        body.byte(kind);
+        body.u32(kind == 0 ? remap[idx] : idx);
+      }
+    } else if (id == 8) {
+      body.u32(remap[q.u32()]);
+    } else if (id == 6) {
+      i32 n = q.u32();
+      body.u32(n);
+      for (i32 i = 0; i < n; i++) {
+        i32 tyFrom = q.at;
+        q.valType();
+        q.byte();
+        body.range(wasm, tyFrom, q.at);
+        Ints seen = Ints.create();
+        if (!walk(q, seen, remap, body)) { return wasm; }
+      }
+    } else if (id == 9) {
+      i32 n = q.u32();
+      body.u32(n);
+      for (i32 i = 0; i < n; i++) {
+        i32 flags = q.u32();
+        body.u32(flags);
+        Ints held = Ints.create();
+        if (!elemSegment(q, flags, held, remap, body)) { return wasm; }
+      }
+    } else if (id == 0 && isNameSection(wasm, secs[s].from)) {
+      if (!names(wasm, secs[s].from, secs[s].to, remap, body)) { return wasm; }
+    } else {
+      body.range(wasm, secs[s].from, secs[s].to);
+    }
+    if (q.bad) { return wasm; }
+    out.section(id, body);
+  }
+  u8[] result = u8[].filled(out.n, 0);
+  for (i32 i = 0; i < out.n; i++) { result[i] = out.d[i]; }
+  return result;
+}
+
+/**
+ * One element segment after its flags: its function indices into `held`, and with `remap` non-empty the segment
+ * written to `o` renumbered — a declarative one losing what was dropped.
+ */
+bool elemSegment(Rd q, i32 flags, Ints held, i32[] remap, Out o) {
+  bool writing = remap.len() > 0;
+  bool declarative = flags == 3 || flags == 7;
+  i32 from = q.at;
+  if (flags == 2 || flags == 6) { q.skipLeb(); }                                  // a table index
+  if (flags == 0 || flags == 2 || flags == 4 || flags == 6) {                     // an offset expression
+    Ints off = Ints.create();
+    i32[] none = i32[].filled(0, 0);
+    Out unused = Out.create();
+    if (!walk(q, off, none, unused)) { return false; }
+  }
+  if (flags == 1 || flags == 2 || flags == 3) { q.byte(); }                       // elemkind
+  if (flags == 5 || flags == 6 || flags == 7) { q.valType(); }                    // reftype
+  if (q.bad) { return false; }
+  if (writing) { o.range(q.b, from, q.at); }
+  i32 n = q.u32();
+  if (flags <= 3) {
+    i32[] idx = i32[].filled(n, 0);
+    i32 keep = 0;
+    for (i32 i = 0; i < n; i++) {
+      idx[i] = q.u32();
+      held.push(idx[i]);
+      if (!writing || !declarative || remap[idx[i]] >= 0) { keep = keep + 1; }
+    }
+    if (writing) {
+      o.u32(keep);
+      for (i32 i = 0; i < n; i++) {
+        if (remap[idx[i]] >= 0) { o.u32(remap[idx[i]]); }
+        else if (!declarative) { return false; }
+      }
+    }
+  } else {
+    if (writing) { o.u32(n); }
+    for (i32 i = 0; i < n; i++) {
+      if (!walk(q, held, remap, o)) { return false; }
+    }
+  }
+  return !q.bad;
+}
+
+/** Whether the custom section starting at `from` is the `name` section. */
+bool isNameSection(u8[] wasm, i32 from) {
+  Rd q = Rd(wasm, from, false);
+  i32 n = q.u32();
+  if (q.bad || n != 4 || q.at + 4 > wasm.len()) { return false; }
+  return wasm[q.at] == 'n' && wasm[q.at + 1] == 'a' && wasm[q.at + 2] == 'm' && wasm[q.at + 3] == 'e';
+}
+
+/**
+ * The `name` section with its function names (subsection 1) and local names (2) renumbered and the dropped ones
+ * gone; every other subsection names types, fields or labels and is copied.
+ */
+bool names(u8[] wasm, i32 from, i32 to, i32[] remap, Out o) {
+  Rd q = Rd(wasm, from, false);
+  q.skip(q.u32());
+  o.range(wasm, from, q.at);
+  while (q.at < to && !q.bad) {
+    i32 sub = q.byte();
+    i32 size = q.u32();
+    i32 end = q.at + size;
+    if (sub != 1 && sub != 2) {
+      o.byte(sub);
+      o.u32(size);
+      o.range(wasm, q.at, end);
+      q.at = end;
+      continue;
+    }
+    Out s = Out.create();
+    i32 n = q.u32();
+    Out entries = Out.create();
+    i32 keep = 0;
+    for (i32 i = 0; i < n && !q.bad; i++) {
+      i32 which = q.u32();
+      i32 at = q.at;
+      if (sub == 1) {
+        q.skip(q.u32());
+      } else {
+        i32 locals = q.u32();
+        for (i32 k = 0; k < locals; k++) { q.skipLeb(); q.skip(q.u32()); }
+      }
+      if (which >= 0 && which < remap.len() && remap[which] >= 0) {
+        entries.u32(remap[which]);
+        entries.range(wasm, at, q.at);
+        keep = keep + 1;
+      }
+    }
+    if (q.bad || q.at != end) { return false; }
+    s.u32(keep);
+    s.all(entries);
+    o.byte(sub);
+    o.u32(s.n);
+    o.all(s);
+  }
+  return !q.bad;
+}
