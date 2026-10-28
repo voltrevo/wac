@@ -110,7 +110,8 @@ export string test_a_program_handed_sys_is_described_by_the_world(Sys sys) {
 
   // `main(Sys)` — the one authority a program is handed (spec ch07), which is `Core` and `Cli`
   // and the ticket shapes their methods answer with, and the `Sched` and continuation queue a world
-  // carries. Asserted as the *whole* list rather than as an absence, because a rule that only forbids
+  // carries — and the watcher list each ticket keeps (`Vec<fn[void()]>`), since `TicketBase` is on the
+  // boundary. Asserted as the *whole* list rather than as an absence, because a rule that only forbids
   // today's capabilities says nothing about the one added next week.
   //
   // It was `main(Core)` and a third of this until `Sys`: a program could ask for less than the world,
@@ -122,7 +123,7 @@ export string test_a_program_handed_sys_is_described_by_the_world(Sys sys) {
             + "Pending<FileResult>, Pending<HostChild>, Pending<HostSocket>, Pending<Read>, Pending<Stat>, "
             + "Pending<bool>, Pending<i32>, Pending<i64>, Pending<string>, Pending<string[]>, "
             + "Pending<string[]?>, Pending<u8[]>, Pending<u8[]?>, Queue<Continuation>, Read, Sched, "
-            + "Stat, TicketBase, Vec<Continuation>",
+            + "Stat, TicketBase, Vec<Continuation>, Vec<fn[void()]>",
           "hello.wac's declared boundary");
 
   // The callback signatures are the other half of the same boundary: each is a dispatcher the host
