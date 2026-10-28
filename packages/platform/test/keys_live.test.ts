@@ -1,3 +1,4 @@
+// test-lane: browser — drives Chromium through Playwright, which needs -A
 // Keys pressed on a built page, in Chromium: which defaults `prevent` stops, and what the program is told.
 //
 // `prevent` named keys only, so a page could not take Ctrl+S (an editor's save) or Ctrl+L (a terminal's
