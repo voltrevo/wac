@@ -257,3 +257,37 @@ export string test_the_res_a_project_on_disk_produces_resolves_too() {
   t.isTrue(wireField(got[0], 4).indexOf("arguments") >= 0, "the wrong rule: " + wireField(got[0], 4));
   return t.report();
 }
+
+// ── A built-in the caller did not supply ─────────────────────────────────────────────────────────
+//
+// `wac check` hands `std` over as a file; the harness's in-process compiler hands over only the
+// program, and `std` is carried. Until 2026-10-28 this route never joined the carried copy, so std's
+// fault structs were names with no declarations behind them and `"\{e}"` on a `NotFound` was refused
+// as having no conversion to text — while the same file compiled with the command.
+export string test_a_carried_std_types_convert_to_text() {
+  T t = T.create();
+  string src = "import { NotFound, Other } from \"std\";\n"
+      + "export string one(NotFound e) { return \"\\{e}\"; }\n"
+      + "export string either(union<NotFound, Other> e) { return \"\\{e}\"; }\n";
+  Res res = Res.of(["/p"]);
+  string[] got = wireLines(diagnoseGraphIn(["/p/m.wac"], [src], res, "/p/m.wac"));
+  t.eqI32(got.len(), 0, "std's faults refused without std supplied — " + joinedWith(got, " | "));
+  return t.report();
+}
+
+// ── A call to a name nothing binds ───────────────────────────────────────────────────────────────
+//
+// The spec says what this is twice — `// ERROR: undefined name 'area'` in ch02 and `'base'` in its
+// namespaces chapter — and the checker said *"this is not something that can be called"*, which sends
+// the reader looking at the callee's type when there is no callee at all. A missing import is the
+// commonest way to arrive here, and that headline hid it.
+export string test_a_call_to_an_unbound_name_is_an_undefined_name() {
+  T t = T.create();
+  string src = "export i32 f() { return nosuch(1); }\n";
+  string[] got = wireLines(diagnoseGraphIn(["/p/m.wac"], [src], Res.of(["/p"]), "/p/m.wac"));
+  t.eqI32(got.len(), 1, "expected one diagnostic — " + joinedWith(got, " | "));
+  if (got.len() != 1) { return t.report(); }
+  t.eqStr(wireField(got[0], 4), "undefined name", "the headline");
+  t.isTrue(wireField(got[0], 5).indexOf("nosuch") >= 0, "and it names the name: " + wireField(got[0], 5));
+  return t.report();
+}

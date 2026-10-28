@@ -798,7 +798,27 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
  * a copy, it had also missed `issues/lang/0133`, so it walked the graph from the text. One body now.
  * `issues/lang/0175a`.
  */
-export string diagnoseGraphIn(string[] paths, string[] rawSources, const Res res, string entry) {
+export string diagnoseGraphIn(string[] givenPaths, string[] givenSources, const Res res, string entry) {
+  // **`std` joins the graph even when the caller did not supply it** — it is carried, as `pruneFor` and
+  // `buildStaticView` already say. Without it std's types were names with nothing declared behind them,
+  // and the harness's in-process check refused `"\{e}"` on a `NotFound` that the command accepted.
+  string[] paths = givenPaths;
+  string[] rawSources = givenSources;
+  // Only where something may import it: parsing std costs more than checking a small graph, and a
+  // graph that never names it was paying that on every call (`lexcost_test.wac`). A mention of the
+  // specifier is enough to say *may*; joining it needlessly costs time and nothing else.
+  bool hasStd = false;
+  bool wantsStd = false;
+  for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == "std") { hasStd = true; } }
+  for (i32 i = 0; i < givenSources.len(); i++) { if (givenSources[i].indexOf("\"std\"") >= 0) { wantsStd = true; } }
+  if (!hasStd && wantsStd) {
+    paths = string[].filled(givenPaths.len() + 1, "std");
+    rawSources = string[].filled(givenPaths.len() + 1, stdSource());
+    for (i32 i = 0; i < givenPaths.len(); i++) {
+      paths[i] = givenPaths[i];
+      rawSources[i] = i < givenSources.len() ? givenSources[i] : "";
+    }
+  }
   // Namespaces are lowered first, so checking a project reads what a build would (spec ch03).
   string[] sources = lowerSources(paths, rawSources, res);
   string out = "";

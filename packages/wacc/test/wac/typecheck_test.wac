@@ -798,7 +798,11 @@ export string test_rung3_a_name_this_slice_cannot_resolve_is_silence_not_a_guess
     // the name is poisoned rather than resolved to whichever declaration was seen last.
     "export i32 sh(i32 a) { if (true) { string a = \"x\"; } return a; }",
     // An ordinary expression, which has no diagnostic in it at all.
-    "export i32 arith(i32 a, i32 b) { return a + b; }"
+    "export i32 arith(i32 a, i32 b) { return a + b; }",
+    // A union of types this slice was never handed. Whether `NotFound` converts to text is a fact
+    // about std, which is not here — so "has no conversion" is a guess, and it was made for
+    // `packages/fs/src/words.wac` once std's faults started converting through their message.
+    "import { NotFound, Other } from \"std\";\nexport string why(union<NotFound, Other> e) { return \"\\{e}\"; }"
   ];
   for (i32 i = 0; i < quiet.len(); i++) {
     string[] mine = ours(quiet[i]);

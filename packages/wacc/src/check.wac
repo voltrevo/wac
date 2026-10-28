@@ -7417,11 +7417,29 @@ bool convertsToText(C c, string t) {
     return true;
   }
   string tt = templateOf(t);
-  if (!c.isStruct(tt) && !c.isEnum(tt)) { return false; }
+  // **A name this checker was never handed is not evidence of anything.** A file checked on its own
+  // imports std's faults without std, and whether one converts is a fact about a file that is not
+  // here — silent, as everywhere a type cannot be named. `void`, `never` and `null` are named and
+  // known, and do not convert.
+  if (!c.isStruct(tt) && !c.isEnum(tt)) {
+    return isBareTypeName(tt) && tt != "void" && tt != "never" && tt != "null";
+  }
   i32 mi = -1;
   if (c.coreToString != "") { mi = c.methodAt(tt, "[" + c.canon(c.coreToString) + "]"); }
   if (mi < 0 && c.coreTextTypes.indexOf("|" + tt + "|") >= 0) { mi = c.methodAt(tt, "[toString]"); }
   return mi >= 0 && !c.methodStatics[mi] && c.methodReturns[mi] == "string";
+}
+
+/** Whether `t` is a type written as one plain name — no arguments, array, nullable or function about it. */
+bool isBareTypeName(string t) {
+  if (t.len() == 0) { return false; }
+  u8[] b = t.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    u8 ch = b[i];
+    bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' || (i > 0 && ch >= '0' && ch <= '9');
+    if (!ok) { return false; }
+  }
+  return true;
 }
 
 void checkJsx(C c, Expr e, string want, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
@@ -8962,7 +8980,10 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
     return;
   }
   if (c.isEnum(name) || isPrimitiveName(name) || name == "string" || name == "bool") { return; }
-  c.report(errNotCallable(), call.line, call.col);
+  // **Nothing binds the name, so there is no callee to be uncallable** — the spec's own wording for
+  // this is *undefined name* (ch02, a re-export does not bind). Saying "not something that can be
+  // called" sent the reader to a type that does not exist, and a missing import is the usual cause.
+  c.reportWith(errUndefinedName(), call.line, call.col, "no " + name + " in scope");
 }
 
 /**
