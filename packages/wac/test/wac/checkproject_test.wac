@@ -6,10 +6,11 @@
 // something prints.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { binaryPath } from "../../../wactest/src/host.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli, Exec } from "std";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Gathered, ReadCache, gatherRoots, gatherWith } from "../../src/sources.wac";
 
 void put(Cli cli, string path, string text) {
   i32 cut = 0 - 1;
@@ -69,7 +70,11 @@ export string test_files_are_roots_and_turn_discovery_off_2ncb9c8_km2e8t2(Core c
 export string test_with_no_manifest_the_directory_is_the_project(Core core, Cli cli) {
   // The README's own example runs `wac check` over a lone file with no `wac.json5`.
   T t = T.create();
-  string dir = fresh(cli, "checkproject-bare");
+  // **Outside the repository**, because the repository has a `wac.json5` at its root: a directory under
+  // it with none of its own is inside that project, so `.cache/` cannot stand for "no manifest" any more.
+  string dir = scratch(cli, "checkproject-bare");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
   put(cli, "\{dir}/main.wac", "i32 unused() { return nonexistent(); }\nexport i32 used() { return 0; }\n");
   Exec r = checkIn(cli, dir, "");
   t.eqI32(r.status, 1, "diagnosed, not a usage error — \{said(r)}");
@@ -94,42 +99,44 @@ string importers(Cli cli, string name, i32 k, i32 lines) {
   return dir;
 }
 
-/** The best of three `wac check` runs in `dir`, in milliseconds. */
-i64 timeCheck(Core core, Cli cli, string dir) {
-  i64 best = 0 as i64;
-  for (i32 r = 0; r < 3; r++) {
-    i64 t0 = core.monotonicNanos().wait();
-    checkIn(cli, dir, "");
-    i64 d = (core.monotonicNanos().wait() - t0) / (1000000 as i64);
-    if (r == 0 || d < best) { best = d; }
-  }
-  return best;
+/** The project's `.wac` files, as `wac check` would find them: `big.wac` and its `k` importers. */
+string[] rootsOf(string dir, i32 k) {
+  string[] roots = string[].filled(k + 1, "");
+  roots[0] = "\{dir}/big.wac";
+  for (i32 i = 0; i < k; i++) { roots[i + 1] = "\{dir}/u\{i}.wac"; }
+  return roots;
 }
 
 // **A project check reads each file once.** Checking a project gathered each discovered file's closure
 // on its own, so a file every other file imports was read and scanned once per importer: checking
-// `packages/box` read 8,630 files to find 423, `bytes/src/slice.wac` 117 times. What a large shared
-// file adds to the check should not grow with the number of files that import it.
+// `packages/box` read 8,630 files to find 423, `bytes/src/slice.wac` 117 times.
+//
+// **Counted, not timed, since 2026-10-28.** This compared what a large shared file added to the check at
+// ten importers and at eighty — a difference of two timings, measured one after the other — and failed
+// gates on correct code under load even with a 3× bar. What it guards is how many times a file is read,
+// so it counts the reads `wac check`'s own gathering (`gatherRoots`) makes, and the canary gathers each
+// root on its own to show the count moves when the cache is not shared.
 export string test_a_project_check_reads_a_shared_file_once(Core core, Cli cli) {
   T t = T.create();
-  string few = importers(cli, "checkproject-few", 10, 14000);
-  string many = importers(cli, "checkproject-many", 80, 14000);
-  string fewSmall = importers(cli, "checkproject-few-small", 10, 0);
-  string manySmall = importers(cli, "checkproject-many-small", 80, 0);
-  Exec ok = checkIn(cli, many, "");
-  t.isTrue(contains(said(ok), ".: 81 file(s), no diagnostics"), "the project checks — \{said(ok)}");
-  i64 addedFew = timeCheck(core, cli, few) - timeCheck(core, cli, fewSmall);
-  i64 addedMany = timeCheck(core, cli, many) - timeCheck(core, cli, manySmall);
-  // **Eighty importers against ten, and a 3× bar, since 2026-10-27.** It was forty against ten with a
-  // 1.5× bar, and a 4-worker suite measured 83 ms against 196 on correct code: 2.36×. That is a
-  // difference of two timings, so load lands in it twice. Reading the file per importer now costs 8×,
-  // and reading it once still costs about 1×, so 3× sits well clear of both.
-  t.isTrue(addedMany < addedFew * (3 as i64),
-           "a megabyte imported by 10 files added \{itoa(addedFew as! i32)} ms to the check, and by 80 "
-           + "\{itoa(addedMany as! i32)} ms");
-  cli.remove(few, true).wait();
-  cli.remove(many, true).wait();
-  cli.remove(fewSmall, true).wait();
-  cli.remove(manySmall, true).wait();
+  Fs fs = Fs.onHost(cli, 0);
+  for (i32 k in [10, 80]) {
+    string dir = importers(cli, "checkproject-reads-\{k}", k, 10);
+    string[] roots = rootsOf(dir, k);
+    Gathered g = gatherRoots(fs, cli, roots).wait().unwrap();
+    t.eqStr(g.error, "", "\{k} importers: gathered");
+    t.eqI32(g.paths.len(), k + 1, "\{k} importers: the files the project holds");
+    t.eqI32(g.reads, k + 1, "\{k} importers: reads, one per file — the shared one is not read per importer");
+    if (k == 10) {
+      // The canary: each root through its own cache reads `big.wac` once per importer.
+      i32 alone = 0;
+      for (string root in roots) {
+        ReadCache own = ReadCache.create();
+        gatherWith(fs, cli, root, false, own).wait().unwrap();
+        alone = alone + own.reads;
+      }
+      t.eqI32(alone, 2 * k + 1, "the canary: gathered root by root, the shared file is read once per importer");
+    }
+    cli.remove(dir, true).wait();
+  }
   return t.report();
 }

@@ -58,7 +58,7 @@ import { renderDiagnostics } from "../../wacc/src/render.wac";
 import { importSpecs } from "../../wacc/src/files.wac";
 import { Res, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/path.wac";
 import { MANIFEST_NAME, candidateRoots, dirOf, isProjectSpecifier } from "../../wacpkg/src/root.wac";
-import { ReadCache, Sources, exactly, gather, gatherWith, projectRootAbs, resOf, wacHomeOf } from "./sources.wac";
+import { Gathered, ReadCache, Sources, exactly, gather, gatherRoots, gatherWith, projectRootAbs, resOf, wacHomeOf } from "./sources.wac";
 import { Manifest, Match, Located, readManifest, manifestWhy, matchSpecifier, locate,
          M_OK } from "../../wacpkg/src/manifest.wac";
 import { Lock, LockEntry, readLock } from "../../wacpkg/src/lock.wac";
@@ -2447,26 +2447,14 @@ async i32 checkCommand(Core core, Cli cli, Fs fs, string[] given) {
     }
   }
   // **One graph from every root**, each file once: two roots that share an import share its check.
-  Vec<string> ps = Vec.create();
-  Vec<string> ts = Vec.create();
-  // **One cache for every root**, whose closures overlap: each read its whole closure again, so a file
-  // every other one imports was read once per importer (`issues/lang/0398b`).
-  ReadCache cache = ReadCache.create();
-  Sources first = await gatherWith(fs, cli, normalisePath(roots[0]), false, cache);
-  for (i32 r = 0; r < roots.len(); r++) {
-    Sources s = r == 0 ? first : (await gatherWith(fs, cli, normalisePath(roots[r]), false, cache));
-    if (s.missing != "" || s.why != "") {
-      core.warn(s.why != "" ? "wacc: \{s.why}" : "wacc: cannot read \{s.missing}");
-      return 1;
-    }
-    for (i32 i = 0; i < s.n; i++) {
-      bool have = false;
-      for (i32 k = 0; k < ps.len(); k++) { if (ps.get(k) == s.paths[i]) { have = true; } }
-      if (!have) { ps.push(s.paths[i]); ts.push(s.texts[i]); }
-    }
+  Gathered g = await gatherRoots(fs, cli, roots);
+  if (g.error != "") {
+    core.warn("wacc: \{g.error}");
+    return 1;
   }
-  string[] paths = ps.toArray();
-  string[] texts = ts.toArray();
+  string[] paths = g.paths;
+  string[] texts = g.texts;
+  Sources first = g.first;
   Res res = resOf(first);
   string wire = diagnoseGraphIn(paths, texts, res, normalisePath(roots[0]));
   string diags = renderDiagnostics(wire, paths, texts);
