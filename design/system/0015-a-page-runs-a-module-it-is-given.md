@@ -1,6 +1,6 @@
 # 0015 — a page runs a module it is given, and spawns on `file://`
 
-- **Status:** proposed 2026-10-28 — the questions at the end are for the operator
+- **Status:** agreed 2026-10-28 — each question was put to the operator in turn; the answers are under *Decisions*
 - **Raised by:** agent-c, from the desktop experiment's requests (items 4 and 5 of its note to wac): a
   terminal on a page that can run what is on its disk, and keep processes when opened from a file
 - **Spans:** `packages/web/tools/build.wac` (the browser half), `packages/web/src/system.wac`,
@@ -23,45 +23,48 @@ capabilities stop short of what the other three hosts give.
   page can still start one. The desktop sets `sh.externalSpawnable = false` and runs box's applets inside
   the shell's own worker, which works until one loops: `^C` cannot stop a program sharing your thread.
 
-The first two are why `wac` cannot run inside the desktop's terminal (its item 7), and why the page is the
-one host where `wac run hello.wasm` has no answer.
+The first two are why the page is the one host where `wac run hello.wasm`, or `wac test`, has no answer —
+`wac test` runs its tests through `load` (`packages/wac/src/testrun.wac`).
 
-## The proposal
+## Decisions
 
-### 1. A third kind of worker: the generic module runner
+### 1. A spawned module's capabilities are the page's own, exported (operator, 2026-10-28)
 
-A page's workers are now of two kinds: the page's own program, and copies of it (`spawnSelf`). Add a third,
-built into every page the same way: a worker whose script **instantiates the bytes it is handed** and
-connects them to the same system half a page copy gets: arguments, standard streams, the filesystem relay
-to the parent, and grants narrowed by the parent.
+A module the page has not compiled into itself imports its `Core` and `Cli` as callbacks its manifest
+names. On Deno and Node those are JavaScript functions talking to the host's bridge
+(`packages/platform/host/entry.ts`, `runAsWorkerEntry`), and `packages/platform/host/childWasm.ts` is the
+worker that wires a module to them, through `driver.ts`, which reads the `wac.manifest` section and uses no
+Deno or Node API — so the page can use it unchanged.
 
-The runner needs no glue specific to the module, because every module `wac build` writes carries a
-`wac.manifest` section that names each import's callback shape. **The Deno and Node launchers already
-have exactly this worker**: `packages/platform/host/childWasm.ts` is "the generic wasm-child entry", added
-by `issues/system/0144` so a launched program's `spawn` can start a module, and it reads the section with
-`manifestIn` (`host/driver.ts`). The page needs the same thing answered by the page's `System` instead of
-by Deno's.
+What the page cannot reuse is the other half: a page's `Cli` is not JavaScript. It is wac
+(`packages/web/src/system.wac`), over a small browser `System` that does the file operation it is asked
+and decides nothing. So **the page module exports its own capabilities**, through bindgen, and `driver.ts`
+connects a spawned module's imports to those exports, marshalling strings and bytes between them as it
+already does for Deno. One implementation of what a page's `Cli` means.
 
-`Cli.spawn(bytes, …)` then chooses by what it is given: a page copy for `spawnSelf`, the runner for module
-bytes. `spawnSelf` is unchanged.
+Rejected: a JavaScript `Cli` for spawned modules — a second copy of `system.wac`'s rules, which would
+drift; and leaving the page able to start only copies of itself.
 
-### 2. `load` through the same runner, in process
+### 2. A page supports `load`, through the same wiring, in the caller's worker (operator, 2026-10-28)
 
-`Cli.load` instantiates a module *in the caller's instance* on the other hosts: no new process, calls by
-handle. In a page that is the runner's reader without the worker: the module is instantiated in the
-caller's worker, and its imports answered from the caller's `System`. Isolation is what a worker buys and
-`load` does not promise it anywhere.
+`load` instantiates a module in the caller's process and calls it by handle, and **it is how `wac test`
+runs tests** (`testrun.wac`: `cli.load`, then `cli.call` per test, and the coverage counters through the
+same handle). In a page it is decision 1's wiring without a new worker: a worker may instantiate and call
+synchronously, which `cli.call` needs. No isolation is promised, as on every host — a looping test hangs
+its runner everywhere.
 
-### 3. Spawn through the page on `file://`
+### 3. Every child is started by the page's main thread, and talks to its parent directly (operator, 2026-10-28)
 
-When a worker cannot construct a worker, it asks the page's main thread to start one for it, as a sibling.
-The page relays the child's streams and its filesystem channel to the requesting worker. Since the main
-thread already relays the page program's own messages, this adds a route, not a new kind of message. On
-`http(s)://` nothing changes: a worker starts its children itself, as now, because a relay costs a hop per
-message.
+On `file://` a worker may not start a worker, and the main thread may. So the main thread starts every
+child — on `http(s)://` too — and **brokers rather than relays**: it makes a `MessageChannel`, hands one
+port to the parent and one to the child, and the two talk directly, as they did over `Worker`. A port is
+transferable whatever the origin, and has the same `postMessage`/`onmessage` shape the code uses now. The
+main thread is involved twice per child: to start it, and to terminate it, since only the thread that
+made a worker can — which is `^C`'s path.
 
-Detection is by trying: `new Worker(…)` in a `try`, falling back to the relay on the security error, so a
-browser that does allow it on `file://` keeps the direct path.
+One route everywhere, so the `http://` tests exercise what a `file://` page depends on. Rejected: brokering
+only where a direct start fails (two routes, one exercised only from `file://`), and relaying every
+message through the main thread (a hop per message, which is what made the fallback look necessary).
 
 ## What it does not do
 
@@ -73,20 +76,17 @@ browser that does allow it on `file://` keeps the direct path.
 
 ## Order of work
 
-1. `childWasm.ts`'s reader and dispatch, made something the page builder can inline beside the page's own
-   `System`, so there is one generic child and not two. This is the piece the others need.
-2. The runner worker and `spawn` of bytes, with a live test: a page that spawns a module it wrote to its own
-   disk, and the module's output arriving on the page.
-3. `load` through the reader.
-4. The `file://` relay, with a live test that opens the page from a file and stops a looping child with `^C`.
+1. The page module exports its capabilities through bindgen, and `driver.ts` is something the page builder
+   can inline. This is the piece the others need.
+2. A spawned module in its own worker, with a live test: a page that writes a module to its disk, spawns
+   it, and shows its output.
+3. `load` and `call` through the same wiring, with `wac test`'s shape as the live test: load a module, call
+   an export by name.
+4. The main-thread broker for every child, with a live test that opens the page from `file://` and stops a
+   looping child with `^C`.
 
-## Questions for the operator
+## Not in this design
 
-1. **One generic child for the page and the launchers**, which means `packages/platform/host/childWasm.ts`
-   and `driver.ts` become something the page builder can inline. Or a page-only copy, accepting two that can
-   drift.
-2. **Does `load` belong in the page at all?** It is the capability with the least to show in a browser, and
-   leaving it `NOT_HERE`, a refusal and not a trap since `0013`, is honest.
-3. **The `file://` relay as default, or only where direct construction fails** (as proposed)?
-4. **The desktop's item 7**, `wac` as an applet, follows from 1 and 2. Should the page carry the whole
-   command, about 3 MB more, or a page-specific subset?
+**What a page carries.** Whether a particular page ships the `wac` command, and how, is that page's
+choice — the desktop experiment that asked for this is a separate project. This design is what makes it
+possible: a page can run any module it holds.
