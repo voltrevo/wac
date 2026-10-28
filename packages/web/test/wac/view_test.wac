@@ -389,7 +389,7 @@ export string test_a_value_the_program_had_not_seen_typed_is_not_written_over() 
   r.doc.seq = r.doc.seq + 1;
   TestNode field = r.doc.at(f);
   field.typed = r.doc.seq + 1;
-  r.es.deliver(r.doc.seq, "input", f, f, "ab", 0, 0, 0);
+  r.es.deliver(r.doc.seq, "input", f, f, "ab", 0, 0, 0, 0 - 1, 0 - 1);
   t.eqStr(r.doc.attr(f, ".value") ?? "unset", "", "a value older than the typing is dropped, and the first render's stays");
   return t.report();
 }

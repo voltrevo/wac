@@ -57,6 +57,16 @@ export struct ElementEvent {
   i32 y;
   /** The modifier keys held, as `MOD_*` bits from `page.wac`. */
   i32 mods;
+  /**
+   * **Where the caret is**, in a text field the event happened in — an `<input>` or a `<textarea>` — as the
+   * field's `selectionStart` and `selectionEnd`, equal when nothing is selected; -1 for an element that has
+   * none. Counted as the browser counts, in UTF-16 code units, not bytes.
+   *
+   * Read when the event happens, so a `keydown` sees the caret before the key acts and a `keyup`, `input`
+   * or `click` sees it after.
+   */
+  i32 selStart;
+  i32 selEnd;
 }
 
 /**
@@ -94,6 +104,13 @@ export struct ElementOps {
   fn<void(i32, i32, i32, i32, i32, u8[])> pixelsIn;
   /** Scroll `id` into view — or, when `named` is not empty, the element under it whose `id` attribute that is. */
   fn<void(i32, string)> scroll;
+  /** Select `start` to `end` of text field `id`, unless the user has typed into it since event `seen`, as `prop`. */
+  fn<void(i32, i32, i32, i32)> select;
+  /**
+   * Type `text` into text field `id` at its caret, replacing the selection, as a keystroke would — into the
+   * field's undo history, with an `input` event after — unless the user has typed into it since event `seen`.
+   */
+  fn<void(i32, string, i32)> typeText;
 
   /** A document that records nothing — for a test, which replaces the functions it watches. */
   ElementOps inert() {
@@ -103,7 +120,7 @@ export struct ElementOps {
       (i32 id, string name, string value, i32 seen) => { }, (i32 id, i32 before) => { }, (i32 id) => { },
       (i32 id, string kind, string prevent) => { }, (i32 id) => { }, (i32 req, i32 id) => { },
       (i32 id, i32 w, i32 h, u8[] rgba) => { }, (i32 id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => { },
-      (i32 id, string named) => { }
+      (i32 id, string named) => { }, (i32 id, i32 start, i32 end, i32 seen) => { }, (i32 id, string text, i32 seen) => { }
     );
   }
 }
@@ -139,13 +156,14 @@ export struct Elements {
    * `seq`. One on a handle the program has already ended is dropped — a late click cannot reach a row
    * that is gone.
    */
-  void deliver(this, i32 seq, string kind, i32 targetId, i32 listenerId, string value, i32 x, i32 y, i32 mods) {
+  void deliver(this, i32 seq, string kind, i32 targetId, i32 listenerId, string value, i32 x, i32 y, i32 mods,
+               i32 selStart, i32 selEnd) {
     if (seq > this.seen) { this.seen = seq; }
     if (listenerId < 0 || listenerId >= this.byId.len() || targetId < 0 || targetId >= this.byId.len()) { return; }
     Element? l = this.byId.get(listenerId);
     Element? t = this.byId.get(targetId);
     if (l is null || t is null) { return; }
-    l!.heard(ElementEvent(kind, t!, value, x, y, mods));
+    l!.heard(ElementEvent(kind, t!, value, x, y, mods, selStart, selEnd));
   }
 
   /** The answer to a `value()` read. */
@@ -265,6 +283,32 @@ export struct Element {
       trap "Element.prop: " + name + " is not a property this sets — value, checked or selected";
     }
     this.es.ops.prop(this.id, name, value, this.es.seen);
+  }
+
+  /**
+   * Select `start` to `end` of this text field — the caret alone, when they are equal — counted as
+   * `ElementEvent.selStart` is. Like a `value` set by a render, it does not land if the user has typed here
+   * since the last event the program saw: a caret moved by a program behind the typing would put the next
+   * keystroke in the wrong place.
+   */
+  void select(this, i32 start, i32 end) {
+    this.alive("select");
+    this.es.ops.select(this.id, start, end, this.es.seen);
+  }
+
+  /**
+   * Type `text` into this text field at its caret, replacing what is selected — as the browser would for a
+   * keystroke, so it joins the field's undo history and an `input` event follows. Setting `value` instead wipes
+   * that history, which is why an editor's Tab uses this.
+   *
+   * Like `select`, it does not land over typing the program has not seen: typed after a key the user pressed
+   * later, it would arrive in the wrong place. So a program typing for a key it intercepted can lose that key
+   * when the user types on faster than the page answers, and never misplaces it. Where the browser can do the
+   * key itself — Enter — let it, and type only what follows.
+   */
+  void typeText(this, string text) {
+    this.alive("typeText");
+    this.es.ops.typeText(this.id, text, this.es.seen);
   }
 
   void focus(this) {

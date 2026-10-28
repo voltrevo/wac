@@ -24,6 +24,9 @@ export struct TestNode {
   Vec<string> prevents;
   /** The number of the last event typed into it; a `prop("value")` the program sent before seeing it is dropped. */
   i32 typed;
+  /** Its caret, for an `input` or a `textarea`: the selection's two ends, equal when nothing is selected; -1 elsewhere. */
+  i32 selStart;
+  i32 selEnd;
 }
 
 export struct TestDoc {
@@ -36,10 +39,17 @@ export struct TestDoc {
   Page? page;
   /** The last scroll asked for, as `"<handle> <name>"` — the name empty when it was the element itself. */
   string scrolled;
+  /**
+   * Fields `typeText` typed into, whose `input` events are still to fire: a browser fires them after the operation,
+   * not inside the handler that sent it, so they are fired once the event being handled is done — or, for text typed
+   * outside any event, with the next one.
+   */
+  Vec<i32> typedInto;
 
   TestDoc create() {
     Vec<TestNode?> nodes = Vec.create();
-    TestDoc d = TestDoc(nodes, 0, 0, null, null, "");
+    Vec<i32> typedInto = Vec.create();
+    TestDoc d = TestDoc(nodes, 0, 0, null, null, "", typedInto);
     d.put(0, "div", 0 - 1);
     return d;
   }
@@ -51,7 +61,8 @@ export struct TestDoc {
     Vec<i32> kids = Vec.create();
     Vec<string> listens = Vec.create();
     Vec<string> prevents = Vec.create();
-    this.nodes.set(id, TestNode(id, tag, "", names, values, kids, parent, listens, prevents, 0));
+    i32 caret = tag == "input" || tag == "textarea" ? 0 : 0 - 1;
+    this.nodes.set(id, TestNode(id, tag, "", names, values, kids, parent, listens, prevents, 0, caret, caret));
   }
 
   TestNode at(this, i32 id) { return this.nodes.get(id)!; }
@@ -122,6 +133,8 @@ export struct TestDoc {
         TestNode n = d.at(id);
         if (name == "value" && n.typed > seen) { return; }
         d.setAttr(n, "." + name, value, true);
+        // A value set by a program puts the caret at its end, as a browser does.
+        if (name == "value" && n.selStart >= 0) { n.selStart = value.len(); n.selEnd = value.len(); }
       },
       (i32 id, i32 before) => {
         d.ops++;
@@ -155,6 +168,22 @@ export struct TestDoc {
       (i32 id, string named) => {
         d.ops++;
         d.scrolled = "\{id} " + named;
+      },
+      (i32 id, i32 start, i32 end, i32 seen) => {
+        d.ops++;
+        TestNode n = d.at(id);
+        if (n.selStart < 0 || n.typed > seen) { return; }
+        d.caret(id, start, end);
+      },
+      (i32 id, string text, i32 seen) => {
+        d.ops++;
+        TestNode n = d.at(id);
+        if (n.selStart < 0 || n.typed > seen) { return; }
+        string v = d.valueOf(id);
+        d.setAttr(n, ".value", v.slice(0, n.selStart) + text + v.slice(n.selEnd, v.len()), true);
+        n.selStart = n.selStart + text.len();
+        n.selEnd = n.selStart;
+        d.typedInto.push(id);
       }
     );
   }
@@ -202,6 +231,20 @@ export struct TestDoc {
     return 0 - 1;
   }
 
+  /** A text field's value: what the program set or the user typed, or `""`. */
+  string valueOf(this, i32 id) { return this.attr(id, ".value") ?? ""; }
+
+  /**
+   * Put text field `id`'s caret at `start`..`end`, clamped to its value — a user's click or drag, so no event:
+   * the next one carries it. Counted in bytes here; a browser counts UTF-16 code units, which agree for ASCII.
+   */
+  void caret(this, i32 id, i32 start, i32 end) {
+    TestNode n = this.at(id);
+    i32 len = this.valueOf(id).len();
+    n.selStart = start < 0 ? 0 : (start > len ? len : start);
+    n.selEnd = end < n.selStart ? n.selStart : (end > len ? len : end);
+  }
+
   /** The text under a node, all of it, in order. */
   string shown(this, i32 id) {
     TestNode n = this.at(id);
@@ -216,24 +259,38 @@ export struct TestDoc {
 
   /**
    * `kind` happens at `target`, carrying `value`: every listener from the target up hears it, nearest
-   * first, as in a browser. An `input` marks the target as typed into, with this event's number.
+   * first, as in a browser, with the target's caret. An `input` is typing: the field holds `value` after it,
+   * the caret at its end, and it is marked as typed into with this event's number. What `typeText` typed while
+   * it was handled fires its own `input` after.
    */
   void fire(this, i32 target, string kind, string value) {
     this.seq = this.seq + 1;
+    TestNode hit = this.at(target);
     if (kind == "input") {
-      TestNode typedInto = this.at(target);
-      typedInto.typed = this.seq;
+      hit.typed = this.seq;
+      if (hit.selStart >= 0 && this.valueOf(target) != value) {
+        this.setAttr(hit, ".value", value, true);
+        hit.selStart = value.len();
+        hit.selEnd = value.len();
+      }
     }
+    i32 selStart = hit.selStart;
+    i32 selEnd = hit.selEnd;
     i32 at = target;
     while (at >= 0) {
       TestNode n = this.at(at);
       for (i32 i = 0; i < n.listens.len(); i++) {
         if (n.listens.get(i) != kind) { continue; }
-        if (this.page is not null) { elementEvent(this.page!, this.seq, kind, target, at, value, 0, 0, 0); }
-        else { this.es!.deliver(this.seq, kind, target, at, value, 0, 0, 0); }
+        if (this.page is not null) { elementEvent(this.page!, this.seq, kind, target, at, value, 0, 0, 0, selStart, selEnd); }
+        else { this.es!.deliver(this.seq, kind, target, at, value, 0, 0, 0, selStart, selEnd); }
       }
-      if (this.nodes.get(at) is null) { return; }
+      if (this.nodes.get(at) is null) { break; }
       at = n.parent;
+    }
+    while (this.typedInto.len() > 0) {
+      i32 field = this.typedInto.remove(0);
+      if (this.nodes.get(field) is null) { continue; }
+      this.fire(field, "input", this.valueOf(field));
     }
   }
 }
