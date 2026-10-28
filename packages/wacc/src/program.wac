@@ -127,7 +127,7 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
   if (isAsync) {
     body = "  Ticket<" + ret + "> __wacT = " + call + ";\n"
          + "  if (!__wacSys.__wacSettle(__wacT)) { return 1; }\n"
-         + "  return __wacFinish(__wacSys, __wacT);\n";
+         + finish;
     yielding = asyncAdapter(ret, call, finish);
   }
 
@@ -163,26 +163,38 @@ ProgramEntry shaped(string text, u8[] src, Lexed lexed, i32 nameTok, Ty returnTy
  * runs it on once an answer has arrived, and `__wacDone` and `__wacStatus` read the outcome. Module
  * statics are compile-time values (spec ch27), which is why the state is a value and not a global.
  *
- * `finish` is what `main` does with the settled ticket, shared through `__wacFinish` so the two entries
- * cannot disagree about a status.
+ * **The `Sys` and the ticket are captured, never fields.** The first version held them in `__WacRun`'s
+ * fields, and an exported struct is kept whole by reachability — so `Sys` and every handle behind it came
+ * along, methods and all, whatever the program used: the `wac` command grew from 3.75 MB to 4.74 MB. And
+ * a generated function taking `Ticket<` the return type `>` cannot always be typed by the emitter (four
+ * spec examples declined). A closure has neither problem: it holds what the program reaches, and its
+ * types are the lambda's. `finish` is what `main` does with the settled ticket, generated from the same
+ * text for both entries so they cannot disagree about a status.
  */
 string asyncAdapter(string ret, string call, string finish) {
-  return "struct __WacRun { Sys sys; Ticket<" + ret + "> t; bool done; i32 status; }\n"
-       + "i32 __wacFinish(Sys __wacSys, Ticket<" + ret + "> __wacT) {\n" + finish + "}\n"
+  return "struct __WacRun { fn<bool()> advance; bool done; i32 status; }\n"
        + "export __WacRun __wacStart(Core __wacCore, Cli __wacCli) {\n"
        + "  Sys __wacSys = Sys.__wacOf(__wacCore, __wacCli);\n"
-       + "  return __wacAdvance(__WacRun(__wacSys, " + call + ", false, 0));\n"
+       + "  Ticket<" + ret + "> __wacT = " + call + ";\n"
+       + "  fn<i32()> __wacFinish = () => {\n" + finish + "  };\n"
+       + "  __WacRun r = __WacRun(() => true, false, 0);\n"
+       + "  r.advance = () => {\n"
+       + "    if (r.done) { return true; }\n"
+       + "    if (!__wacSys.__wacSettle(__wacT)) {\n"
+       + "      if (__wacSys.__wacYielded()) { return false; }\n"
+       + "      r.status = 1;\n"
+       + "      r.done = true;\n"
+       + "      return true;\n"
+       + "    }\n"
+       + "    r.status = __wacFinish();\n"
+       + "    r.done = true;\n"
+       + "    return true;\n"
+       + "  };\n"
+       + "  r.advance();\n"
+       + "  return r;\n"
        + "}\n"
        + "export __WacRun __wacAdvance(__WacRun r) {\n"
-       + "  if (r.done) { return r; }\n"
-       + "  if (!r.sys.__wacSettle(r.t)) {\n"
-       + "    if (r.sys.__wacYielded()) { return r; }\n"
-       + "    r.done = true;\n"
-       + "    r.status = 1;\n"
-       + "    return r;\n"
-       + "  }\n"
-       + "  r.done = true;\n"
-       + "  r.status = __wacFinish(r.sys, r.t);\n"
+       + "  r.advance();\n"
        + "  return r;\n"
        + "}\n"
        + "export bool __wacDone(__WacRun r) { return r.done; }\n"
