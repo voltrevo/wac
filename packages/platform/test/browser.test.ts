@@ -126,10 +126,16 @@ function memDir(): MemDir {
           Object.defineProperty(blob, "lastModified", { value: 1_700_000_000_000 });
           return Promise.resolve(blob);
         },
-        createWritable: () => {
-          const parts: Uint8Array[] = [];
+        // `keepExistingData` and `seek` as the host uses them for an append: start from what is there and
+        // write at its end. A seek anywhere else is not something the host asks for, so it is refused.
+        createWritable: (opts?: { keepExistingData?: boolean }) => {
+          const kept = opts?.keepExistingData ? files.get(name) : undefined;
+          const parts: Uint8Array[] = kept ? [kept.slice()] : [];
+          const length = () => parts.reduce((n, p) => n + p.length, 0);
           return Promise.resolve({
             write: (d: Uint8Array) => { parts.push(d.slice()); return Promise.resolve(); },
+            seek: (position: number) =>
+              position === length() ? Promise.resolve() : Promise.reject(new Error("seek: only to the end")),
             close: () => {
               const total = parts.reduce((n, p) => n + p.length, 0);
               const out = new Uint8Array(total);
